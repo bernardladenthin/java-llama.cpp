@@ -7,6 +7,7 @@ include(FetchContent)
 set(BUILD_SHARED_LIBS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(BUILD_SHARED_LIBS OFF)
+set(LLAMA_BUILD_TOOLS ON)
 
 option(LLAMA_VERBOSE	"llama: verbose output"		OFF)
 
@@ -25,7 +26,7 @@ set(LLAMA_BUILD_COMMON ON)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b5022
+	GIT_TAG        b5688
 )
 FetchContent_MakeAvailable(llama.cpp)
 
@@ -36,14 +37,14 @@ if(NOT DEFINED OS_NAME)
     if(ANDROID_ABI)
         set(OS_NAME "Android")
     else()
-        find_package(Java REQUIRED)
-        find_program(JAVA_EXECUTABLE NAMES java)
-        execute_process(
-            COMMAND ${JAVA_EXECUTABLE} -cp ${CMAKE_SOURCE_DIR}/target/classes de.kherud.llama.OSInfo --os
-            OUTPUT_VARIABLE OS_NAME
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-        )
-    endif()
+    find_package(Java REQUIRED)
+    find_program(JAVA_EXECUTABLE NAMES java)
+	execute_process(
+      COMMAND ${JAVA_EXECUTABLE} -cp ${CMAKE_SOURCE_DIR}/target/classes de.kherud.llama.OSInfo --os
+      OUTPUT_VARIABLE OS_NAME
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+endif()
 endif()
 if(NOT OS_NAME)
     message(FATAL_ERROR "Could not determine OS name")
@@ -54,14 +55,14 @@ if(NOT DEFINED OS_ARCH)
     if(ANDROID_ABI)
         set(OS_ARCH ${ANDROID_ABI})
     else()
-        find_package(Java REQUIRED)
-        find_program(JAVA_EXECUTABLE NAMES java)
-        execute_process(
-            COMMAND ${JAVA_EXECUTABLE} -cp ${CMAKE_SOURCE_DIR}/target/classes de.kherud.llama.OSInfo --arch
-            OUTPUT_VARIABLE OS_ARCH
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-        )
-    endif()
+    find_package(Java REQUIRED)
+    find_program(JAVA_EXECUTABLE NAMES java)
+    execute_process(
+      COMMAND ${JAVA_EXECUTABLE} -cp ${CMAKE_SOURCE_DIR}/target/classes de.kherud.llama.OSInfo --arch
+      OUTPUT_VARIABLE OS_ARCH
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+endif()
 endif()
 if(NOT OS_ARCH)
     message(FATAL_ERROR "Could not determine CPU architecture")
@@ -101,15 +102,15 @@ if(NOT JNI_INCLUDE_DIRS)
         find_package(JNI REQUIRED)
         set(JNI_INCLUDE_DIRS ${JNI_INCLUDE_DIRS})
     else()
-        message(FATAL_ERROR "Could not determine JNI include directories")
-    endif()
+    message(FATAL_ERROR "Could not determine JNI include directories")
+endif()
 endif()
 
 add_library(jllama SHARED src/main/cpp/jllama.cpp src/main/cpp/server.hpp src/main/cpp/utils.hpp)
 
 set_target_properties(jllama PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(jllama PRIVATE src/main/cpp ${JNI_INCLUDE_DIRS})
-target_link_libraries(jllama PRIVATE common llama nlohmann_json)
+target_link_libraries(jllama PRIVATE common mtmd llama nlohmann_json)
 target_compile_features(jllama PRIVATE cxx_std_11)
 
 target_compile_definitions(jllama PRIVATE
