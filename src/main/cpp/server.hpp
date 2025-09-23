@@ -1213,6 +1213,7 @@ struct server_slot {
     llama_batch batch_spec = {};
 
     llama_context *ctx = nullptr;
+    llama_context *ctx_tgt = nullptr;
     llama_context *ctx_dft = nullptr;
 
     // multimodal
@@ -1865,6 +1866,9 @@ struct server_context {
             common_sampler_free(slot.smpl);
             slot.smpl = nullptr;
 
+            llama_free(slot.ctx_tgt);
+            slot.ctx_tgt = nullptr;
+
             llama_free(slot.ctx_dft);
             slot.ctx_dft = nullptr;
 
@@ -1942,7 +1946,7 @@ struct server_context {
 
         chat_templates = common_chat_templates_init(model, params_base.chat_template);
         try {
-            common_chat_format_example(chat_templates.get(), params.use_jinja);
+            common_chat_format_example(chat_templates.get(), params.use_jinja, params.default_template_kwargs);
         } catch (const std::exception &e) {
             SRV_WRN("%s: Chat template parsing error: %s\n", __func__, e.what());
             SRV_WRN("%s: The chat template that comes with this model is not yet supported, falling back to chatml. "
@@ -2020,7 +2024,7 @@ struct server_context {
                     return;
                 }
 
-                slot.spec = common_speculative_init(slot.ctx_dft);
+                slot.spec = common_speculative_init(slot.ctx_tgt, slot.ctx_dft);
                 if (slot.spec == nullptr) {
                     SRV_ERR("%s", "failed to create speculator\n");
                     return;
@@ -2362,7 +2366,7 @@ struct server_context {
         size_t n_probs = slot.params.sampling.n_probs;
         size_t n_vocab = llama_vocab_n_tokens(vocab);
         if (post_sampling) {
-            const auto *cur_p = common_sampler_get_candidates(slot.smpl);
+            const auto *cur_p = common_sampler_get_candidates(slot.smpl, true);
             const size_t max_probs = cur_p->size;
 
             // set probability for sampled token
