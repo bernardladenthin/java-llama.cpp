@@ -39,17 +39,20 @@ jobs:
           if-no-files-found: warn
 
   build-and-test-macos:
-    name: ${{ matrix.target.runner }}
+    name: ${{ matrix.target.name }}
     runs-on: ${{ matrix.target.runner }}
     strategy:
       fail-fast: false
       matrix:
         target:
           - runner: macos-15
-            cmake: -DLLAMA_METAL=OFF -DLLAMA_VERBOSE=ON
+            name: macos-15-no-metal
+            cmake: -DLLAMA_METAL=OFF -DLLAMA_VERBOSE=ON -DGGML_NATIVE=OFF
           - runner: macos-14
+            name: macos-14-metal
             cmake: -DLLAMA_METAL_EMBED_LIBRARY=ON -DLLAMA_VERBOSE=ON
           - runner: macos-15
+            name: macos-15-metal
             cmake: -DLLAMA_METAL_EMBED_LIBRARY=ON -DLLAMA_VERBOSE=ON -DGGML_NATIVE=OFF
     steps:
       - uses: actions/checkout@v4
@@ -72,7 +75,7 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: error-log-${{ matrix.target.runner }}
+          name: error-log-${{ matrix.target.name }}
           path: ${{ github.workspace }}/hs_err_pid*.log
           if-no-files-found: warn
 
