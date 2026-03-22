@@ -48,6 +48,7 @@ public final class InferenceParameters extends JsonParameters {
 	private static final String PARAM_SAMPLERS = "samplers";
 	private static final String PARAM_STREAM = "stream";
 	private static final String PARAM_USE_CHAT_TEMPLATE = "use_chat_template";
+	private static final String PARAM_CHAT_TEMPLATE = "chat_template";
 	private static final String PARAM_USE_JINJA = "use_jinja";
 	private static final String PARAM_MESSAGES = "messages";
 
@@ -490,7 +491,12 @@ public final class InferenceParameters extends JsonParameters {
 		parameters.put(PARAM_USE_JINJA, String.valueOf(useChatTemplate));
 		return this;
 	}
-	
+
+	public InferenceParameters setChatTemplate(String chatTemplate) {
+		parameters.put(PARAM_CHAT_TEMPLATE, toJsonString(chatTemplate));
+		return this;
+	}
+
 	/**
      * Set the messages for chat-based inference.
      * - Allows **only one** system message.
