@@ -15,7 +15,7 @@ option(LLAMA_VERBOSE	"llama: verbose output"		OFF)
 FetchContent_Declare(
 	json
 	GIT_REPOSITORY https://github.com/nlohmann/json
-	GIT_TAG        v3.11.3
+	GIT_TAG        v3.12.0
 )
 FetchContent_MakeAvailable(json)
 
@@ -25,7 +25,7 @@ set(LLAMA_BUILD_COMMON ON)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b4916
+	GIT_TAG        b5022
 )
 FetchContent_MakeAvailable(llama.cpp)
 

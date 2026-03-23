@@ -6,7 +6,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b4916**
+Current llama.cpp pinned version: **b5022**
+
+## Upgrading/Downgrading llama.cpp Version
+
+To change the llama.cpp version, update the following **three** files:
+
+1. **CMakeLists.txt** — Line 28: `GIT_TAG        b5022`
+2. **README.md** — Line 2: Badge and link with version number
+3. **CLAUDE.md** — Line 9: This documentation
+
+Example: To upgrade from b5016 to b5022:
+```bash
+# Edit CMakeLists.txt, line 28: change b5016 to b5022
+# Edit README.md, line 2: change b5016 to b5022 (in both badge and link)
+# Edit CLAUDE.md, line 9: change b5016 to b5022
+git add CMakeLists.txt README.md CLAUDE.md
+git commit -m "Upgrade llama.cpp from b5016 to b5022"
+git push -u origin claude/upgrade-llama-cpp-b4927-EaJcb
+```
+
+**Note:** Always test the build with `cmake -B build && cmake --build build --config Release` after version changes to catch compatibility issues early.
 
 ## Build Commands
 
