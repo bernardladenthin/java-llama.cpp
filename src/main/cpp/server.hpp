@@ -1396,7 +1396,7 @@ struct server_slot {
         auto new_msg = common_chat_parse(generated_text,
                                          /* is_partial= */ stop != STOP_TYPE_EOS, params.oaicompat_chat_syntax);
         if (!new_msg.empty()) {
-            new_msg.ensure_tool_call_ids_set(generated_tool_call_ids, gen_tool_call_id);
+            new_msg.set_tool_call_ids(generated_tool_call_ids, gen_tool_call_id);
             chat_msg = new_msg;
             diffs = common_chat_msg_diff::compute_diffs(previous_msg, new_msg.empty() ? previous_msg : new_msg);
         }
