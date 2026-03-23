@@ -41,12 +41,13 @@ public class LlamaModelTest {
 	@BeforeClass
 	public static void setup() {
 //		LlamaModel.setLogger(LogFormat.TEXT, (level, msg) -> System.out.println(level + ": " + msg));
+		int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
 		model = new LlamaModel(
 				new ModelParameters()
 						.setCtxSize(128)
 						.setModel("models/codellama-7b.Q2_K.gguf")
 						//.setModelUrl("https://huggingface.co/TheBloke/CodeLlama-7B-GGUF/resolve/main/codellama-7b.Q2_K.gguf")
-						.setGpuLayers(43)
+						.setGpuLayers(gpuLayers)
 						.enableEmbedding().enableLogTimestamps().enableLogPrefix()
 		);
 	}
