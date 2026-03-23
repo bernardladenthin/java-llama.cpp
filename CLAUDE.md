@@ -28,6 +28,29 @@ git push -u origin claude/upgrade-llama-cpp-b4927-EaJcb
 
 **Note:** Always test the build with `cmake -B build && cmake --build build --config Release` after version changes to catch compatibility issues early.
 
+### Inspecting API changes between versions
+
+Use the GitHub compare URL to diff any two llama.cpp builds:
+
+```
+https://github.com/ggml-org/llama.cpp/compare/b<FROM>...b<TO>
+```
+
+Example — what changed between b6721 and b6732:
+```
+https://github.com/ggml-org/llama.cpp/compare/b6721...b6732
+```
+
+The GitHub HTML page may time out for large ranges; fall back to the API:
+```
+https://api.github.com/repos/ggml-org/llama.cpp/compare/b<FROM>...b<TO>
+```
+
+For individual file content at a specific build:
+```
+https://raw.githubusercontent.com/ggerganov/llama.cpp/b<VERSION>/common/chat.h
+```
+
 ## Build Commands
 
 ### Java (Maven)
