@@ -48,12 +48,15 @@ jobs:
           - runner: macos-15
             name: macos-15-no-metal
             cmake: -DLLAMA_METAL=OFF -DLLAMA_VERBOSE=ON -DGGML_NATIVE=OFF
+            mvn_test_args: ""
           - runner: macos-14
             name: macos-14-metal
             cmake: -DLLAMA_METAL_EMBED_LIBRARY=ON -DLLAMA_VERBOSE=ON
+            mvn_test_args: "-Dde.kherud.llama.test.ngl=0"
           - runner: macos-15
             name: macos-15-metal
             cmake: -DLLAMA_METAL_EMBED_LIBRARY=ON -DLLAMA_VERBOSE=ON -DGGML_NATIVE=OFF
+            mvn_test_args: ""
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
@@ -71,7 +74,7 @@ jobs:
       - name: List files in models directory
         run: ls -l models/
       - name: Run tests
-        run: mvn test
+        run: mvn test ${{ matrix.target.mvn_test_args }}
       - if: failure()
         uses: actions/upload-artifact@v6
         with:
