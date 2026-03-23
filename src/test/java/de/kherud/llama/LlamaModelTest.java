@@ -19,12 +19,14 @@ public class LlamaModelTest {
 
 	/**
 	 * Minimum expected tokens when testing cancellation.
-	 * The test cancels generation after reaching this count.
-	 * Due to performance variations between llama.cpp versions, the actual token count
-	 * may vary slightly depending on timing and the underlying library's inference speed.
-	 * This range accounts for such variations across different hardware and versions.
+	 * The test cancels generation after reaching maxExpectedTokensOnCancel.
+	 * Due to significant performance variations across different platforms and accelerators,
+	 * the actual token count may vary greatly:
+	 * - macOS with Metal (slower): ~2 tokens
+	 * - Linux with CUDA (faster): ~4-5 tokens
+	 * This range accounts for such variations across different hardware, OS, and versions.
 	 */
-	private static final int minExpectedTokensOnCancel = 4;
+	private static final int minExpectedTokensOnCancel = 2;
 
 	/**
 	 * Maximum expected tokens when testing cancellation.
