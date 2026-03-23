@@ -41,7 +41,7 @@ public class LlamaModelTest {
 	@BeforeClass
 	public static void setup() {
 //		LlamaModel.setLogger(LogFormat.TEXT, (level, msg) -> System.out.println(level + ": " + msg));
-		int gpuLayers = Integer.getInteger("de.kherud.llama.test.ngl", 43);
+		int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
 		model = new LlamaModel(
 				new ModelParameters()
 						.setCtxSize(128)
