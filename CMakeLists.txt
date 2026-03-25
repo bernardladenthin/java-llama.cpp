@@ -27,7 +27,7 @@ set(LLAMA_BUILD_COMMON ON)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b7071
+	GIT_TAG        b7075
 )
 FetchContent_MakeAvailable(llama.cpp)
 
