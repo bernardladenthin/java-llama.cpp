@@ -1,5 +1,5 @@
 ![Java 11+](https://img.shields.io/badge/Java-11%2B-informational)
-[![llama.cpp b7089](https://img.shields.io/badge/llama.cpp-%23b7089-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b7089)
+[![llama.cpp b7091](https://img.shields.io/badge/llama.cpp-%23b7091-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b7091)
 
 # Java Bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp)
 
