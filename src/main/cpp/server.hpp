@@ -1961,7 +1961,6 @@ struct server_context {
             mparams.use_gpu = params_base.mmproj_use_gpu;
             mparams.print_timings = false;
             mparams.n_threads = params_base.cpuparams.n_threads;
-            mparams.verbosity = params_base.verbosity > 0 ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_INFO;
             mctx = mtmd_init_from_file(mmproj_path.c_str(), model, mparams);
             if (mctx == nullptr) {
                 SRV_ERR("failed to load multimodal model, '%s'\n", mmproj_path.c_str());
