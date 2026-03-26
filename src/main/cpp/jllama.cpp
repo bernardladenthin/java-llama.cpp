@@ -398,10 +398,10 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
     ctx_server->slot_prompt_similarity = params.slot_prompt_similarity;
 
     // handle n_parallel auto mode (set by LLAMA_EXAMPLE_SERVER default since b7433)
+    // use 1 (not 4) as the resolved default: this is an embedded library, not a
+    // standalone HTTP server, so the old single-slot default is more appropriate
     if (params.n_parallel < 0) {
-        LOG_INF("%s: n_parallel is set to auto, using n_parallel = 4 and kv_unified = true\n", __func__);
-        params.n_parallel = 4;
-        params.kv_unified = true;
+        params.n_parallel = 1;
     }
 
     LOG_INF("%s: loading model\n", __func__);
