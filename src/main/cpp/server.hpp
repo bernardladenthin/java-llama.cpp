@@ -1820,8 +1820,8 @@ struct server_context {
     common_params params_base;
 
     // note: keep these alive - they determine the lifetime of the model, context, etc.
-    common_init_result llama_init;
-    common_init_result llama_init_dft;
+    common_init_result_ptr llama_init;
+    common_init_result_ptr llama_init_dft;
 
     llama_model *model = nullptr;
     llama_context *ctx = nullptr;
@@ -1888,8 +1888,8 @@ struct server_context {
 
         llama_init = common_init_from_params(params_base);
 
-        model = llama_init.model.get();
-        ctx = llama_init.context.get();
+        model = llama_init->model();
+        ctx = llama_init->context();
 
         if (model == nullptr) {
             SRV_ERR("failed to load model, '%s'\n", params_base.model.path.c_str());
@@ -1921,27 +1921,27 @@ struct server_context {
 
             llama_init_dft = common_init_from_params(params_dft);
 
-            model_dft = llama_init_dft.model.get();
+            model_dft = llama_init_dft->model();
 
             if (model_dft == nullptr) {
                 SRV_ERR("failed to load draft model, '%s'\n", params_base.speculative.model.path.c_str());
                 return false;
             }
 
-            if (!common_speculative_are_compatible(ctx, llama_init_dft.context.get())) {
+            if (!common_speculative_are_compatible(ctx, llama_init_dft->context())) {
                 SRV_ERR("the draft model '%s' is not compatible with the target model '%s'\n",
                         params_base.speculative.model.path.c_str(), params_base.model.path.c_str());
 
                 return false;
             }
 
-            const int n_ctx_dft = llama_n_ctx(llama_init_dft.context.get());
+            const int n_ctx_dft = llama_n_ctx(llama_init_dft->context());
 
             cparams_dft = common_context_params_to_llama(params_dft);
             cparams_dft.n_batch = n_ctx_dft;
 
             // the context is not needed - we will create one for each slot
-            llama_init_dft.context.reset();
+            llama_init_dft->free_context();
         }
 
         chat_templates = common_chat_templates_init(model, params_base.chat_template);

@@ -423,20 +423,20 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
         params_dft.n_gpu_layers = params.speculative.n_gpu_layers;
         params_dft.n_parallel = 1;
 
-        common_init_result llama_init_dft = common_init_from_params(params_dft);
+        auto llama_init_dft = common_init_from_params(params_dft);
 
-        llama_model *model_dft = llama_init_dft.model.get();
+        llama_model *model_dft = llama_init_dft->model();
 
         if (model_dft == nullptr) {
             SRV_ERR("failed to load draft model, '%s'\n", params.speculative.model.path.c_str());
         }
 
-        if (!common_speculative_are_compatible(ctx_server->ctx, llama_init_dft.context.get())) {
+        if (!common_speculative_are_compatible(ctx_server->ctx, llama_init_dft->context())) {
             SRV_ERR("the draft model '%s' is not compatible with the target model '%s'\n",
                     params.speculative.model.path.c_str(), params.model.path.c_str());
         }
 
-        const int n_ctx_dft = llama_n_ctx(llama_init_dft.context.get());
+        const int n_ctx_dft = llama_n_ctx(llama_init_dft->context());
 
         ctx_server->cparams_dft = common_context_params_to_llama(params_dft);
         ctx_server->cparams_dft.n_batch = n_ctx_dft;
@@ -446,7 +446,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
         ctx_server->cparams_dft.type_v = GGML_TYPE_F16;
 
         // the context is not needed - we will create one for each slot
-        llama_init_dft.context.reset();
+        llama_init_dft->free_context();
     }
 
     // print sample chat example to make it clear which template is used
