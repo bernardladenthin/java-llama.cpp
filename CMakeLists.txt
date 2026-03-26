@@ -31,6 +31,12 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama.cpp)
 
+# Workaround: server-context declares mtmd includes as PRIVATE, but server-common.h
+# (a public header) includes mtmd.h, so consumers like llama-cli can't find it.
+if(TARGET server-context)
+    target_include_directories(server-context PUBLIC ${llama.cpp_SOURCE_DIR}/tools/mtmd)
+endif()
+
 #################### jllama ####################
 
 # find which OS we build for if not set (make sure to run mvn compile first)
