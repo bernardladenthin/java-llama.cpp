@@ -16,6 +16,17 @@
 // The references remain valid throughout the whole life of the shared library, on `JNI_OnUnload` they are released.
 
 namespace {
+
+// Sentinel value used by llama.cpp (since b7433) to indicate that n_parallel
+// should be resolved automatically by the host application. Introduced in:
+// common_params_parser_init() for LLAMA_EXAMPLE_SERVER in common/arg.cpp.
+static constexpr int N_PARALLEL_AUTO = -1;
+
+// Default n_parallel for the embedded Java library. Unlike the standalone
+// llama.cpp server (which resolves auto to 4 for multi-client throughput),
+// the Java bindings run in-process with a single caller, so 1 slot is the
+// appropriate default and preserves pre-b7433 behaviour.
+static constexpr int N_PARALLEL_DEFAULT = 1;
 JavaVM *g_vm = nullptr;
 
 // classes
@@ -397,11 +408,9 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
     // Necessary similarity of prompt for slot selection
     ctx_server->slot_prompt_similarity = params.slot_prompt_similarity;
 
-    // handle n_parallel auto mode (set by LLAMA_EXAMPLE_SERVER default since b7433)
-    // use 1 (not 4) as the resolved default: this is an embedded library, not a
-    // standalone HTTP server, so the old single-slot default is more appropriate
-    if (params.n_parallel < 0) {
-        params.n_parallel = 1;
+    // Resolve the auto sentinel before loading the model.
+    if (params.n_parallel <= N_PARALLEL_AUTO) {
+        params.n_parallel = N_PARALLEL_DEFAULT;
     }
 
     LOG_INF("%s: loading model\n", __func__);
