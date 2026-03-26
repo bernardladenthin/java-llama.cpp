@@ -1396,7 +1396,7 @@ struct server_slot {
         auto new_msg = common_chat_parse(generated_text,
                                          /* is_partial= */ stop != STOP_TYPE_EOS, params.oaicompat_chat_syntax);
         if (!new_msg.empty()) {
-            new_msg.ensure_tool_call_ids_set(generated_tool_call_ids, gen_tool_call_id);
+            new_msg.set_tool_call_ids(generated_tool_call_ids, gen_tool_call_id);
             chat_msg = new_msg;
             diffs = common_chat_msg_diff::compute_diffs(previous_msg, new_msg.empty() ? previous_msg : new_msg);
         }
@@ -1961,7 +1961,6 @@ struct server_context {
             mparams.use_gpu = params_base.mmproj_use_gpu;
             mparams.print_timings = false;
             mparams.n_threads = params_base.cpuparams.n_threads;
-            mparams.verbosity = params_base.verbosity > 0 ? GGML_LOG_LEVEL_DEBUG : GGML_LOG_LEVEL_INFO;
             mctx = mtmd_init_from_file(mmproj_path.c_str(), model, mparams);
             if (mctx == nullptr) {
                 SRV_ERR("failed to load multimodal model, '%s'\n", mmproj_path.c_str());

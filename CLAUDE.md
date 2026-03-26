@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b6714**
+Current llama.cpp pinned version: **b7217**
 
 ## Upgrading/Downgrading llama.cpp Version
 
@@ -27,6 +27,29 @@ git push -u origin claude/upgrade-llama-cpp-b4927-EaJcb
 ```
 
 **Note:** Always test the build with `cmake -B build && cmake --build build --config Release` after version changes to catch compatibility issues early.
+
+### Inspecting API changes between versions
+
+Use the GitHub compare URL to diff any two llama.cpp builds:
+
+```
+https://github.com/ggml-org/llama.cpp/compare/b<FROM>...b<TO>
+```
+
+Example — what changed between b6721 and b6732:
+```
+https://github.com/ggml-org/llama.cpp/compare/b6721...b6732
+```
+
+The GitHub HTML page may time out for large ranges; fall back to the API:
+```
+https://api.github.com/repos/ggml-org/llama.cpp/compare/b<FROM>...b<TO>
+```
+
+For individual file content at a specific build:
+```
+https://raw.githubusercontent.com/ggerganov/llama.cpp/b<VERSION>/common/chat.h
+```
 
 ## Build Commands
 
