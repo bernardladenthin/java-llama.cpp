@@ -156,15 +156,16 @@ public class LlamaLoaderTest {
 	@Test
 	public void testGetTempDirDefaultsToJavaIoTmpdir() {
 		System.clearProperty(TMPDIR_PROP);
-		File tmpDir = LlamaLoader.getTempDir();
-		assertEquals(System.getProperty("java.io.tmpdir"), tmpDir.getPath());
+		File expected = new File(System.getProperty("java.io.tmpdir"));
+		assertEquals(expected, LlamaLoader.getTempDir());
 	}
 
 	@Test
 	public void testGetTempDirUsesOverrideProperty() {
-		System.setProperty(TMPDIR_PROP, "/custom/tmp");
-		File tmpDir = LlamaLoader.getTempDir();
-		assertEquals("/custom/tmp", tmpDir.getPath());
+		// Build path with platform separator so File.getPath() round-trips correctly
+		String customPath = new File(System.getProperty("java.io.tmpdir"), "llama-test-custom").getPath();
+		System.setProperty(TMPDIR_PROP, customPath);
+		assertEquals(new File(customPath), LlamaLoader.getTempDir());
 	}
 
 	// -------------------------------------------------------------------------
