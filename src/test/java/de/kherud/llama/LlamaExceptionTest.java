@@ -32,12 +32,13 @@ public class LlamaExceptionTest {
 
 	@Test
 	public void testCanBeThrown() {
+		boolean caught = false;
 		try {
 			throw new LlamaException("thrown");
 		} catch (LlamaException e) {
 			assertEquals("thrown", e.getMessage());
-			return;
+			caught = true;
 		}
-		fail("Expected LlamaException to be thrown");
+		assertTrue("Expected LlamaException to be thrown", caught);
 	}
 }
