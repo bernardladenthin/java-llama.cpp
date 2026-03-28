@@ -16,6 +16,17 @@
 // The references remain valid throughout the whole life of the shared library, on `JNI_OnUnload` they are released.
 
 namespace {
+
+// Sentinel value used by llama.cpp (since b7433) to indicate that n_parallel
+// should be resolved automatically by the host application. Introduced in:
+// common_params_parser_init() for LLAMA_EXAMPLE_SERVER in common/arg.cpp.
+static constexpr int N_PARALLEL_AUTO = -1;
+
+// Default n_parallel for the embedded Java library. Unlike the standalone
+// llama.cpp server (which resolves auto to 4 for multi-client throughput),
+// the Java bindings run in-process with a single caller, so 1 slot is the
+// appropriate default and preserves pre-b7433 behaviour.
+static constexpr int N_PARALLEL_DEFAULT = 1;
 JavaVM *g_vm = nullptr;
 
 // classes
@@ -397,6 +408,11 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
     // Necessary similarity of prompt for slot selection
     ctx_server->slot_prompt_similarity = params.slot_prompt_similarity;
 
+    // Resolve the auto sentinel before loading the model.
+    if (params.n_parallel <= N_PARALLEL_AUTO) {
+        params.n_parallel = N_PARALLEL_DEFAULT;
+    }
+
     LOG_INF("%s: loading model\n", __func__);
 
     // load the model
@@ -423,20 +439,20 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
         params_dft.n_gpu_layers = params.speculative.n_gpu_layers;
         params_dft.n_parallel = 1;
 
-        common_init_result llama_init_dft = common_init_from_params(params_dft);
+        auto llama_init_dft = common_init_from_params(params_dft);
 
-        llama_model *model_dft = llama_init_dft.model.get();
+        llama_model *model_dft = llama_init_dft->model();
 
         if (model_dft == nullptr) {
             SRV_ERR("failed to load draft model, '%s'\n", params.speculative.model.path.c_str());
         }
 
-        if (!common_speculative_are_compatible(ctx_server->ctx, llama_init_dft.context.get())) {
+        if (!common_speculative_are_compatible(ctx_server->ctx, llama_init_dft->context())) {
             SRV_ERR("the draft model '%s' is not compatible with the target model '%s'\n",
                     params.speculative.model.path.c_str(), params.model.path.c_str());
         }
 
-        const int n_ctx_dft = llama_n_ctx(llama_init_dft.context.get());
+        const int n_ctx_dft = llama_n_ctx(llama_init_dft->context());
 
         ctx_server->cparams_dft = common_context_params_to_llama(params_dft);
         ctx_server->cparams_dft.n_batch = n_ctx_dft;
@@ -446,12 +462,12 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
         ctx_server->cparams_dft.type_v = GGML_TYPE_F16;
 
         // the context is not needed - we will create one for each slot
-        llama_init_dft.context.reset();
+        llama_init_dft->free_context();
     }
 
     // print sample chat example to make it clear which template is used
     LOG_INF("%s: chat template, chat_template: %s, example_format: '%s'\n", __func__,
-            common_chat_templates_source(ctx_server->chat_templates.get()),
+            common_chat_templates_source(ctx_server->chat_templates.get()).c_str(),
             common_chat_format_example(ctx_server->chat_templates.get(), ctx_server->params_base.use_jinja, ctx_server->params_base.default_template_kwargs).c_str());
 
     // print sample chat example to make it clear which template is used

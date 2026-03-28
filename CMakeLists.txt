@@ -8,6 +8,7 @@ set(BUILD_SHARED_LIBS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(BUILD_SHARED_LIBS OFF)
 set(LLAMA_BUILD_TOOLS ON)
+set(LLAMA_BUILD_SERVER ON)
 set(LLAMA_CURL OFF)
 
 option(LLAMA_VERBOSE	"llama: verbose output"		OFF)
@@ -27,9 +28,18 @@ set(LLAMA_BUILD_COMMON ON)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b7217
+	GIT_TAG        b7783
 )
 FetchContent_MakeAvailable(llama.cpp)
+
+# Workaround: server-common.h (included transitively by llama-cli) includes
+# mtmd.h, but the mtmd include path is not propagated to llama-cli consumers.
+if(TARGET llama-cli)
+    target_include_directories(llama-cli PRIVATE ${llama.cpp_SOURCE_DIR}/tools/mtmd)
+endif()
+if(TARGET server-context)
+    target_include_directories(server-context PUBLIC ${llama.cpp_SOURCE_DIR}/tools/mtmd)
+endif()
 
 #################### jllama ####################
 

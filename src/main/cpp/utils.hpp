@@ -1,6 +1,6 @@
 #pragma once
 
-#include "arg.h" // common_remote_get_content
+#include "download.h" // common_remote_get_content, common_remote_params
 #include "base64.hpp"
 #include "chat.h"
 #include "common.h"
@@ -651,7 +651,7 @@ static json oaicompat_chat_params_parse(json &body, /* openai api json semantics
                     // download remote image
                     // TODO @ngxson : maybe make these params configurable
                     common_remote_params params;
-                    params.headers.push_back("User-Agent: llama.cpp/" + build_info);
+                    params.headers.push_back({"User-Agent", "llama.cpp/" + build_info});
                     params.max_size = 1024 * 1024 * 10; // 10MB
                     params.timeout = 10;                // seconds
                     SRV_INF("downloading image from '%s'\n", url.c_str());
