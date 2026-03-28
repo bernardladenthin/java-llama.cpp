@@ -12,6 +12,14 @@ import org.junit.Test;
 
 import static org.junit.Assert.*;
 
+@ClaudeGenerated(
+        purpose = "Verify that every InferenceParameters setter correctly stores its value in the " +
+                  "internal JSON parameter map, that the toJsonString helper properly escapes all " +
+                  "special characters (backslash, double-quote, newline, tab, CR, '</' sequence), " +
+                  "that collection-based setters (logit bias, disable tokens, stop strings, samplers) " +
+                  "produce correctly formatted JSON arrays, and that setMessages enforces the " +
+                  "'user'/'assistant'-only role contract."
+)
 public class InferenceParametersTest {
 
 	// -------------------------------------------------------------------------

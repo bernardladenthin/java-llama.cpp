@@ -14,6 +14,15 @@ import java.util.List;
 
 import static org.junit.Assert.*;
 
+@ClaudeGenerated(
+        purpose = "Verify ModelParameters input validation (priority 0-3, repeatLastN/dryPenaltyLastN >= -1), " +
+                  "correct CLI argument formatting for enum-based setters (PoolingType, RopeScalingType, " +
+                  "CacheType, GpuSplitMode, NumaStrategy, MiroStat) and composite-value setters " +
+                  "(loraScaled, controlVectorScaled, controlVectorLayerRange), semicolon-separated " +
+                  "lowercase sampler list, isDefault key-presence check, and the CliParameters base " +
+                  "behaviour: toString omits 'null' for flag-only entries, toArray always prepends an " +
+                  "empty argv[0] string and omits values for null-valued flags."
+)
 public class ModelParametersTest {
 
 	// -------------------------------------------------------------------------

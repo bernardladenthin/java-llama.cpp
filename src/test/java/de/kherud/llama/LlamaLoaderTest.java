@@ -13,6 +13,14 @@ import org.junit.Test;
 
 import static org.junit.Assert.*;
 
+@ClaudeGenerated(
+        purpose = "Verify the helper statics extracted from LlamaLoader without requiring any " +
+                  "native library: shouldCleanPath detects jllama/llama-prefixed files for " +
+                  "cleanup; contentsEquals performs a correct byte-level stream comparison " +
+                  "including BufferedInputStream wrapping and length mismatches; getTempDir " +
+                  "honours the 'de.kherud.llama.tmpdir' system-property override; and " +
+                  "getNativeResourcePath produces the expected classpath resource prefix."
+)
 public class LlamaLoaderTest {
 
 	private static final String TMPDIR_PROP = "de.kherud.llama.tmpdir";

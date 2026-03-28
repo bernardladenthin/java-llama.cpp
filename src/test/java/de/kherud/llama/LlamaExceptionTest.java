@@ -4,6 +4,11 @@ import org.junit.Test;
 
 import static org.junit.Assert.*;
 
+@ClaudeGenerated(
+        purpose = "Verify that LlamaException correctly propagates its message through the " +
+                  "RuntimeException hierarchy, handles null messages without error, and can " +
+                  "be thrown and caught as an unchecked exception."
+)
 public class LlamaExceptionTest {
 
 	@Test

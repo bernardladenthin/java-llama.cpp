@@ -1,9 +1,15 @@
 package de.kherud.llama.args;
 
+import de.kherud.llama.ClaudeGenerated;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
 
+@ClaudeGenerated(
+        purpose = "Verify that every RopeScalingType enum constant returns the exact CLI argument " +
+                  "string expected by llama.cpp (e.g. YARN2 -> \"yarn\", LONGROPE -> \"longrope\") " +
+                  "via getArgValue(), and that the enum has the expected number of constants."
+)
 public class RopeScalingTypeTest {
 
 	@Test

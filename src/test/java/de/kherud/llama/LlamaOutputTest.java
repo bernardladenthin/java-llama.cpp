@@ -9,6 +9,11 @@ import org.junit.Test;
 
 import static org.junit.Assert.*;
 
+@ClaudeGenerated(
+        purpose = "Verify that LlamaOutput correctly decodes raw byte arrays to UTF-8 text " +
+                  "(including multi-byte sequences), stores the probability map and stop flag " +
+                  "unchanged, and that toString() delegates to the text field."
+)
 public class LlamaOutputTest {
 
 	@Test

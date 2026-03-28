@@ -1,9 +1,15 @@
 package de.kherud.llama.args;
 
+import de.kherud.llama.ClaudeGenerated;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
 
+@ClaudeGenerated(
+        purpose = "Verify that every PoolingType enum constant returns the exact CLI argument " +
+                  "string expected by llama.cpp (e.g. MEAN -> \"mean\", RANK -> \"rank\") via " +
+                  "getArgValue(), and that the enum has the expected number of constants."
+)
 public class PoolingTypeTest {
 
 	@Test

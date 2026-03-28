@@ -6,6 +6,13 @@ import org.junit.Test;
 
 import static org.junit.Assert.*;
 
+@ClaudeGenerated(
+        purpose = "Verify that OSInfo correctly maps OS names to folder names used for native " +
+                  "library resolution (Windows, Mac/Darwin, AIX, Linux, unknown with special-char " +
+                  "stripping), that architecture names are normalised, that the system property " +
+                  "'de.kherud.llama.osinfo.architecture' overrides arch detection, and that " +
+                  "getNativeLibFolderPathForCurrentOS returns a two-part os/arch path."
+)
 public class OSInfoTest {
 
 	private static final String ARCH_OVERRIDE_PROP = "de.kherud.llama.osinfo.architecture";
