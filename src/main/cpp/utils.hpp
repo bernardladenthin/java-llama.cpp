@@ -59,7 +59,7 @@ template <typename T> static T json_value(const json &body, const std::string &k
     }
 }
 
-const static std::string build_info("b" + std::to_string(LLAMA_BUILD_NUMBER) + "-" + LLAMA_COMMIT);
+// build_info is now defined in common.h (since b7788)
 
 // thin wrapper around common_grammar_trigger with (de)serialization functions
 struct server_grammar_trigger {

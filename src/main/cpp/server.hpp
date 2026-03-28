@@ -132,7 +132,7 @@ struct slot_params {
     oaicompat_type oaicompat = OAICOMPAT_TYPE_NONE;
     std::string oaicompat_model;
     std::string oaicompat_cmpl_id;
-    common_chat_syntax oaicompat_chat_syntax;
+    common_chat_parser_params oaicompat_chat_syntax;
 
     json to_json() const {
         std::vector<std::string> samplers;
