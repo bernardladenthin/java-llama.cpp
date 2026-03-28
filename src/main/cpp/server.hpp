@@ -778,7 +778,7 @@ struct server_task_result_cmpl_final : server_task_result {
         json choice{
             {"finish_reason", finish_reason},
             {"index", 0},
-            {"message", msg.to_json_oaicompat<json>()},
+            {"message", msg.to_json_oaicompat()},
         };
 
         if (!stream && probs_output.size() > 0) {
@@ -824,7 +824,7 @@ struct server_task_result_cmpl_final : server_task_result {
                                 json{
                                     {"finish_reason", nullptr},
                                     {"index", 0},
-                                    {"delta", common_chat_msg_diff_to_json_oaicompat<json>(diff)},
+                                    {"delta", common_chat_msg_diff_to_json_oaicompat(diff)},
                                 },
                             })},
                 {"created", t},
@@ -992,7 +992,7 @@ struct server_task_result_cmpl_partial : server_task_result {
         }
 
         for (const auto &diff : oaicompat_msg_diffs) {
-            add_delta(common_chat_msg_diff_to_json_oaicompat<json>(diff));
+            add_delta(common_chat_msg_diff_to_json_oaicompat(diff));
         }
 
         if (!deltas.empty()) {
