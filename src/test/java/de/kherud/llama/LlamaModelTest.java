@@ -7,6 +7,7 @@ import java.util.regex.Pattern;
 import de.kherud.llama.args.LogFormat;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -40,6 +41,7 @@ public class LlamaModelTest {
 
 	@BeforeClass
 	public static void setup() {
+		Assume.assumeTrue("Model file not found, skipping LlamaModelTest", new java.io.File("models/codellama-7b.Q2_K.gguf").exists());
 //		LlamaModel.setLogger(LogFormat.TEXT, (level, msg) -> System.out.println(level + ": " + msg));
 		int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
 		model = new LlamaModel(

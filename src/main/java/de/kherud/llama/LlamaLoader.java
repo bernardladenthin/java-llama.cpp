@@ -78,7 +78,7 @@ class LlamaLoader {
 		}
 	}
 
-	private static boolean shouldCleanPath(Path path) {
+	static boolean shouldCleanPath(Path path) {
 		String fileName = path.getFileName().toString();
 		return fileName.startsWith("jllama") || fileName.startsWith("llama");
 	}
@@ -237,7 +237,7 @@ class LlamaLoader {
 		return loadNativeLibrary(path);
 	}
 
-	private static boolean contentsEquals(InputStream in1, InputStream in2) throws IOException {
+	static boolean contentsEquals(InputStream in1, InputStream in2) throws IOException {
 		if (!(in1 instanceof BufferedInputStream)) {
 			in1 = new BufferedInputStream(in1);
 		}
@@ -257,11 +257,11 @@ class LlamaLoader {
 		return ch2 == -1;
 	}
 
-	private static File getTempDir() {
+	static File getTempDir() {
 		return new File(System.getProperty("de.kherud.llama.tmpdir", System.getProperty("java.io.tmpdir")));
 	}
 
-	private static String getNativeResourcePath() {
+	static String getNativeResourcePath() {
 		String packagePath = LlamaLoader.class.getPackage().getName().replace(".", "/");
 		return String.format("/%s/%s", packagePath, OSInfo.getNativeLibFolderPathForCurrentOS());
 	}
