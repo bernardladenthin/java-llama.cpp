@@ -2158,6 +2158,11 @@ struct server_context {
             }
         }
 
+        if (slot.spec) {
+            llama_batch_free(slot.batch_spec);
+            slot.batch_spec = llama_batch_init(slot.params.speculative.n_max + 1, 0, 1);
+        }
+
         slot.state = SLOT_STATE_STARTED;
 
         SLT_INF(slot, "%s", "processing task\n");
@@ -3514,12 +3519,11 @@ struct server_context {
 
                 llama_token id = slot.sampled;
 
-                const llama_tokens &cached_text_tokens = slot.cache_tokens.get_text_tokens();
-                llama_tokens draft = common_speculative_draft(slot.spec, slot.params.speculative, cached_text_tokens, id);
+                common_params_speculative params_spec = slot.params.speculative;
+                params_spec.n_max = n_draft_max;
 
-                if (draft.size() > (size_t) n_draft_max) {
-                    draft.resize(n_draft_max);
-                }
+                const llama_tokens &cached_text_tokens = slot.cache_tokens.get_text_tokens();
+                llama_tokens draft = common_speculative_draft(slot.spec, params_spec, cached_text_tokens, id);
 
                 // ignore small drafts
                 if (slot.params.speculative.n_min > (int)draft.size()) {
