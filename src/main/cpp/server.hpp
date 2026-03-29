@@ -823,7 +823,7 @@ struct server_task_result_cmpl_final : server_task_result {
                 {"choices", json::array({
                                 json{
                                     {"finish_reason", nullptr},
-                                    {"index", 0},
+                                    {"index", index},
                                     {"delta", common_chat_msg_diff_to_json_oaicompat(diff)},
                                 },
                             })},
@@ -839,7 +839,7 @@ struct server_task_result_cmpl_final : server_task_result {
             {"choices", json::array({
                             json{
                                 {"finish_reason", finish_reason},
-                                {"index", 0},
+                                {"index", index},
                                 {"delta", json::object()},
                             },
                         })},
