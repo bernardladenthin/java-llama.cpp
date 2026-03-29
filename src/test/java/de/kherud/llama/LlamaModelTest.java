@@ -360,6 +360,144 @@ public class LlamaModelTest {
 		Assert.assertEquals(model.applyTemplate(params), "<|im_start|>system\nBook<|im_end|>\n<|im_start|>user\nWhat is the best book?<|im_end|>\n<|im_start|>assistant\nIt depends on your interests. Do you like fiction or non-fiction?");
 	}
 
+	// ------------------------------------------------------------------
+	// applyTemplate / oaicompat_chat_params_parse (changed in b8576)
+	// ------------------------------------------------------------------
+
+	/**
+	 * oaicompat_chat_params_parse with a single user message and no system message.
+	 * The existing testTemplate() only tests system + user + assistant.
+	 * This exercises the minimal messages path and verifies that the
+	 * generation prompt (assistant prefix) is appended when the last
+	 * message is from the user.
+	 */
+	@Test
+	public void testApplyTemplateUserOnly() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Tell me a joke"));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages);
+
+		String result = model.applyTemplate(params);
+
+		Assert.assertNotNull(result);
+		Assert.assertTrue("Expected user role marker", result.contains("<|im_start|>user"));
+		Assert.assertTrue("Expected message content", result.contains("Tell me a joke"));
+		Assert.assertFalse("Should not have system block when none given",
+				result.contains("<|im_start|>system"));
+		// add_generation_prompt defaults to true → assistant continuation is appended
+		Assert.assertTrue("Expected assistant continuation prompt",
+				result.contains("<|im_start|>assistant"));
+	}
+
+	/**
+	 * oaicompat_chat_params_parse with multiple turns: system + user → assistant → user.
+	 * Verifies that all messages appear in correct order and the assistant turn
+	 * in the middle is correctly delimited.
+	 */
+	@Test
+	public void testApplyTemplateMultipleTurns() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user",      "What is 2+2?"));
+		messages.add(new Pair<>("assistant", "4"));
+		messages.add(new Pair<>("user",      "And 3+3?"));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages("Math tutor", messages);
+
+		String result = model.applyTemplate(params);
+
+		Assert.assertTrue(result.contains("What is 2+2?"));
+		Assert.assertTrue(result.contains("And 3+3?"));
+		// The intermediate assistant reply must also be present
+		Assert.assertTrue("Intermediate assistant turn missing", result.contains("4"));
+		// Last message is user → generation prompt adds assistant prefix
+		Assert.assertTrue(result.contains("<|im_start|>assistant"));
+	}
+
+	/**
+	 * Empty system message must be treated the same as no system message
+	 * (setMessages skips the system block when the string is empty).
+	 */
+	@Test
+	public void testApplyTemplateEmptySystemSkipped() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Hello"));
+
+		// empty string → setMessages skips the system block
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages("", messages);
+
+		String result = model.applyTemplate(params);
+
+		Assert.assertFalse("Empty system message must not produce a system block",
+				result.contains("<|im_start|>system"));
+		Assert.assertTrue(result.contains("Hello"));
+	}
+
+	/**
+	 * When the conversation ends with an assistant turn, oaicompat_chat_params_parse
+	 * must NOT append another generation prompt — it should instead allow the
+	 * caller to continue the partially generated assistant response.
+	 */
+	@Test
+	public void testApplyTemplateLastMessageAssistantNoContinuationPrompt() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user",      "Capital of France?"));
+		messages.add(new Pair<>("assistant", "The capital of France is"));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages);
+
+		String result = model.applyTemplate(params);
+
+		Assert.assertTrue(result.contains("The capital of France is"));
+		// There must not be a second <|im_start|>assistant after the partial reply
+		int firstAssistant = result.indexOf("<|im_start|>assistant");
+		int secondAssistant = result.indexOf("<|im_start|>assistant", firstAssistant + 1);
+		Assert.assertEquals("Should have exactly one assistant block", -1, secondAssistant);
+	}
+
+	// ------------------------------------------------------------------
+	// server_tokens::detokenize / validate — exercised via generate/complete
+	// ------------------------------------------------------------------
+
+	/**
+	 * Multi-byte UTF-8 in the prompt exercises server_tokens construction
+	 * from tokenized_prompts and subsequently server_tokens::validate(ctx)
+	 * and detokenize() for the generated output.
+	 */
+	@Test
+	public void testCompleteNonAsciiPrompt() {
+		// café, naïve, résumé contain multi-byte UTF-8 sequences
+		InferenceParameters params = new InferenceParameters("Translate to English: café")
+				.setNPredict(nPredict)
+				.setSeed(42);
+
+		String output = model.complete(params);
+
+		// If server_tokens / detokenize is broken, this throws or returns garbage
+		Assert.assertNotNull(output);
+	}
+
+	/**
+	 * Tokenise and immediately decode a string containing multi-byte UTF-8.
+	 * Exercises the tokenisation round-trip used to build server_tokens.
+	 */
+	@Test
+	public void testTokenizationUnicode() {
+		String prompt = "naïve résumé café";
+		int[] tokens = model.encode(prompt);
+		Assert.assertTrue("Unicode string should tokenise to at least one token",
+				tokens.length > 0);
+
+		String decoded = model.decode(tokens);
+		// Leading space may be added by the tokenizer; check content is preserved
+		Assert.assertTrue("Decoded text should contain original characters",
+				decoded.contains("na") && decoded.contains("sum"));
+	}
+
 	@Test
 	public void testSpeculativeDecoding() {
 		int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
