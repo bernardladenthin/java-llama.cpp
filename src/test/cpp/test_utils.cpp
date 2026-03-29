@@ -8,6 +8,11 @@
 //   - server_tokens  (major new type: wraps llama_tokens + optional mtmd chunk map)
 //   - json_value / json_is_array_* helpers  (utility coverage)
 //   - validate_utf8 / is_valid_utf8  (pure-logic helpers)
+//   - json_get_nested_values  (path-based JSON extractor)
+//   - oaicompat_completion_params_parse  (OAI /completions param validation)
+//   - format_embeddings_response_oaicompat  (OAI embedding response formatter)
+//   - format_tokenizer_response / format_detokenized_response / format_logit_bias
+//   - safe_json_to_str  (lossy JSON→string with bad-char replacement)
 
 #include <gtest/gtest.h>
 
@@ -738,4 +743,243 @@ TEST(IsValidUtf8, TruncatedTwoByte_Invalid) {
 
 TEST(IsValidUtf8, TruncatedThreeByte_Invalid) {
     EXPECT_FALSE(is_valid_utf8("\xE2\x82")); // missing final byte
+}
+
+// ============================================================
+// json_get_nested_values
+//   Pure recursive path extractor; paths delimited by '/'.
+// ============================================================
+
+TEST(JsonGetNestedValues, SimpleKey_ExtractsValue) {
+    const json js = {{"a", 42}, {"b", "hello"}};
+    const json res = json_get_nested_values({"a"}, js);
+    ASSERT_TRUE(res.contains("a"));
+    EXPECT_EQ(res.at("a").get<int>(), 42);
+    EXPECT_FALSE(res.contains("b")); // only requested key
+}
+
+TEST(JsonGetNestedValues, NestedPath_ExtractsDeepValue) {
+    const json js = {{"outer", {{"inner", 7}}}};
+    const json res = json_get_nested_values({"outer/inner"}, js);
+    ASSERT_TRUE(res.contains("outer/inner"));
+    EXPECT_EQ(res.at("outer/inner").get<int>(), 7);
+}
+
+TEST(JsonGetNestedValues, MissingPath_Skipped) {
+    const json js = {{"x", 1}};
+    const json res = json_get_nested_values({"x", "y/z"}, js);
+    EXPECT_TRUE(res.contains("x"));
+    EXPECT_FALSE(res.contains("y/z"));
+}
+
+TEST(JsonGetNestedValues, MultiplePaths_AllExtracted) {
+    const json js = {{"a", 1}, {"b", {{"c", 2}}}};
+    const json res = json_get_nested_values({"a", "b/c"}, js);
+    EXPECT_EQ(res.at("a").get<int>(), 1);
+    EXPECT_EQ(res.at("b/c").get<int>(), 2);
+}
+
+TEST(JsonGetNestedValues, EmptyPaths_ReturnsEmptyObject) {
+    const json js = {{"a", 1}};
+    const json res = json_get_nested_values({}, js);
+    EXPECT_TRUE(res.is_object());
+    EXPECT_TRUE(res.empty());
+}
+
+// ============================================================
+// oaicompat_completion_params_parse
+//   Model-free JSON parameter validation for /completions.
+// ============================================================
+
+TEST(OaicompatCompletionParams, MissingPrompt_Throws) {
+    const json body = {{"max_tokens", 50}};
+    EXPECT_THROW(oaicompat_completion_params_parse(body), std::runtime_error);
+}
+
+TEST(OaicompatCompletionParams, StopString_NormalizedToArray) {
+    const json body = {{"prompt", "hello"}, {"stop", "STOP"}};
+    const json res = oaicompat_completion_params_parse(body);
+    ASSERT_TRUE(res.contains("stop"));
+    ASSERT_TRUE(res.at("stop").is_array());
+    EXPECT_EQ(res.at("stop").size(), 1u);
+    EXPECT_EQ(res.at("stop")[0].get<std::string>(), "STOP");
+}
+
+TEST(OaicompatCompletionParams, StopArray_PassedThrough) {
+    const json body = {{"prompt", "hi"}, {"stop", json::array({"A", "B"})}};
+    const json res = oaicompat_completion_params_parse(body);
+    ASSERT_TRUE(res.at("stop").is_array());
+    EXPECT_EQ(res.at("stop").size(), 2u);
+}
+
+TEST(OaicompatCompletionParams, NNotOne_Throws) {
+    const json body = {{"prompt", "hi"}, {"n", 3}};
+    EXPECT_THROW(oaicompat_completion_params_parse(body), std::runtime_error);
+}
+
+TEST(OaicompatCompletionParams, NEqualsOne_OK) {
+    const json body = {{"prompt", "hi"}, {"n", 1}};
+    EXPECT_NO_THROW(oaicompat_completion_params_parse(body));
+}
+
+TEST(OaicompatCompletionParams, EchoTrue_Throws) {
+    const json body = {{"prompt", "hi"}, {"echo", true}};
+    EXPECT_THROW(oaicompat_completion_params_parse(body), std::runtime_error);
+}
+
+TEST(OaicompatCompletionParams, UnsupportedParam_BestOf_Throws) {
+    const json body = {{"prompt", "hi"}, {"best_of", 3}};
+    EXPECT_THROW(oaicompat_completion_params_parse(body), std::runtime_error);
+}
+
+TEST(OaicompatCompletionParams, UnsupportedParam_Suffix_Throws) {
+    const json body = {{"prompt", "hi"}, {"suffix", "end"}};
+    EXPECT_THROW(oaicompat_completion_params_parse(body), std::runtime_error);
+}
+
+TEST(OaicompatCompletionParams, ValidParams_PassedThrough) {
+    const json body = {{"prompt", "hello"}, {"max_tokens", 64}, {"temperature", 0.8}};
+    const json res = oaicompat_completion_params_parse(body);
+    EXPECT_EQ(res.at("prompt").get<std::string>(), "hello");
+    EXPECT_EQ(res.at("max_tokens").get<int>(), 64);
+    EXPECT_DOUBLE_EQ(res.at("temperature").get<double>(), 0.8);
+}
+
+TEST(OaicompatCompletionParams, NPredictOverridesByMaxTokens) {
+    // When both max_tokens and n_predict are in body, n_predict wins (special-cased copy)
+    const json body = {{"prompt", "hi"}, {"max_tokens", 10}, {"n_predict", 99}};
+    const json res = oaicompat_completion_params_parse(body);
+    // n_predict should be present at its given value
+    EXPECT_EQ(res.at("n_predict").get<int>(), 99);
+}
+
+// ============================================================
+// format_embeddings_response_oaicompat
+//   Pure JSON response formatter — no model required.
+// ============================================================
+
+namespace {
+json make_embedding_elem(const std::vector<float> &vec, int tokens = 4) {
+    return json{{"embedding", vec}, {"tokens_evaluated", tokens}};
+}
+} // namespace
+
+TEST(FormatEmbeddingsResponse, SingleEmbedding_Fields) {
+    const json request = {{"model", "test-model"}};
+    const json embeddings = json::array({make_embedding_elem({0.1f, 0.2f, 0.3f})});
+    const json res = format_embeddings_response_oaicompat(request, embeddings);
+    EXPECT_EQ(res.at("object").get<std::string>(), "list");
+    EXPECT_EQ(res.at("model").get<std::string>(), "test-model");
+    EXPECT_EQ(res.at("data").size(), 1u);
+    EXPECT_EQ(res.at("data")[0].at("index").get<int>(), 0);
+    EXPECT_EQ(res.at("data")[0].at("object").get<std::string>(), "embedding");
+}
+
+TEST(FormatEmbeddingsResponse, TokensAccumulated) {
+    const json request = {};
+    const json embeddings = json::array({make_embedding_elem({1.0f}, 3), make_embedding_elem({2.0f}, 7)});
+    const json res = format_embeddings_response_oaicompat(request, embeddings);
+    EXPECT_EQ(res.at("usage").at("prompt_tokens").get<int>(), 10);
+    EXPECT_EQ(res.at("usage").at("total_tokens").get<int>(), 10);
+}
+
+TEST(FormatEmbeddingsResponse, MultipleEmbeddings_IndicesIncrement) {
+    const json request = {};
+    const json embeddings = json::array({
+        make_embedding_elem({0.1f}),
+        make_embedding_elem({0.2f}),
+        make_embedding_elem({0.3f}),
+    });
+    const json res = format_embeddings_response_oaicompat(request, embeddings);
+    EXPECT_EQ(res.at("data").size(), 3u);
+    EXPECT_EQ(res.at("data")[0].at("index").get<int>(), 0);
+    EXPECT_EQ(res.at("data")[1].at("index").get<int>(), 1);
+    EXPECT_EQ(res.at("data")[2].at("index").get<int>(), 2);
+}
+
+TEST(FormatEmbeddingsResponse, Base64Format_EncodingFormatField) {
+    const json request = {};
+    const json embeddings = json::array({make_embedding_elem({1.0f, 0.0f})});
+    const json res = format_embeddings_response_oaicompat(request, embeddings, /*use_base64=*/true);
+    const json &elem = res.at("data")[0];
+    EXPECT_TRUE(elem.contains("encoding_format"));
+    EXPECT_EQ(elem.at("encoding_format").get<std::string>(), "base64");
+    // embedding value should be a string (base64), not an array
+    EXPECT_TRUE(elem.at("embedding").is_string());
+}
+
+// ============================================================
+// format_tokenizer_response / format_detokenized_response /
+// format_logit_bias
+//   Tiny response formatters — pure data wrappers.
+// ============================================================
+
+TEST(FormatTokenizerResponse, WrapsInTokensKey) {
+    const json tokens = json::array({1, 2, 3});
+    const json res = format_tokenizer_response(tokens);
+    ASSERT_TRUE(res.contains("tokens"));
+    EXPECT_EQ(res.at("tokens"), tokens);
+}
+
+TEST(FormatDetokenizedResponse, WrapsInContentKey) {
+    const json res = format_detokenized_response("hello world");
+    ASSERT_TRUE(res.contains("content"));
+    EXPECT_EQ(res.at("content").get<std::string>(), "hello world");
+}
+
+TEST(FormatDetokenizedResponse, EmptyString) {
+    const json res = format_detokenized_response("");
+    EXPECT_EQ(res.at("content").get<std::string>(), "");
+}
+
+TEST(FormatLogitBias, EmptyVector_ReturnsEmptyArray) {
+    const json res = format_logit_bias({});
+    EXPECT_TRUE(res.is_array());
+    EXPECT_TRUE(res.empty());
+}
+
+TEST(FormatLogitBias, SingleEntry_CorrectFields) {
+    llama_logit_bias lb;
+    lb.token = 42;
+    lb.bias  = -1.5f;
+    const json res = format_logit_bias({lb});
+    ASSERT_EQ(res.size(), 1u);
+    EXPECT_EQ(res[0].at("token").get<int>(), 42);
+    EXPECT_FLOAT_EQ(res[0].at("bias").get<float>(), -1.5f);
+}
+
+TEST(FormatLogitBias, MultipleEntries) {
+    llama_logit_bias a; a.token = 1; a.bias = 0.5f;
+    llama_logit_bias b; b.token = 2; b.bias = -2.0f;
+    const json res = format_logit_bias({a, b});
+    EXPECT_EQ(res.size(), 2u);
+}
+
+// ============================================================
+// safe_json_to_str
+//   Converts JSON to compact string, replacing un-serialisable
+//   values (e.g. invalid UTF-8) instead of throwing.
+// ============================================================
+
+TEST(SafeJsonToStr, NormalJson_ProducesCompactString) {
+    const json j = {{"key", "value"}, {"n", 3}};
+    const std::string s = safe_json_to_str(j);
+    EXPECT_FALSE(s.empty());
+    // compact — no newlines
+    EXPECT_EQ(s.find('\n'), std::string::npos);
+}
+
+TEST(SafeJsonToStr, EmptyObject_ProducesEmptyBraces) {
+    EXPECT_EQ(safe_json_to_str(json::object()), "{}");
+}
+
+TEST(SafeJsonToStr, ArrayValue_Roundtrips) {
+    const json j = json::array({1, 2, 3});
+    EXPECT_EQ(safe_json_to_str(j), "[1,2,3]");
+}
+
+TEST(SafeJsonToStr, InvalidUtf8InString_DoesNotThrow) {
+    // nlohmann json with error_handler_t::replace should not throw for bad bytes
+    const json j = json{{"bad", "\xFF\xFE invalid"}};
+    EXPECT_NO_THROW(safe_json_to_str(j));
 }
