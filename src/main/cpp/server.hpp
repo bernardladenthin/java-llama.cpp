@@ -221,7 +221,7 @@ struct server_task {
 
     // used by SERVER_TASK_TYPE_SLOT_SAVE, SERVER_TASK_TYPE_SLOT_RESTORE, SERVER_TASK_TYPE_SLOT_ERASE
     struct slot_action {
-        int slot_id;
+        int id_slot;
         std::string filename;
         std::string filepath;
     };
@@ -1961,9 +1961,9 @@ struct server_context {
                 SRV_WRN("%s\n", "cache_reuse is not supported by multimodal, it will be disabled");
             }
 
-            if (params_base.speculative.has_dft()) {
-                SRV_ERR("%s\n", "err: speculative decode is not supported by multimodal");
-                return false;
+            if (params_base.speculative.type != COMMON_SPECULATIVE_TYPE_NONE) {
+                params_base.speculative.type = COMMON_SPECULATIVE_TYPE_NONE;
+                SRV_WRN("%s\n", "speculative decoding is not supported by multimodal, it will be disabled");
             }
         }
 
@@ -2042,6 +2042,9 @@ struct server_context {
     }
 
     server_slot *get_slot_by_id(int id) {
+        // note: allow id to be out of bounds (wrap around)
+        id = id % (int)slots.size();
+
         for (server_slot &slot : slots) {
             if (slot.id == id) {
                 return &slot;
@@ -2749,7 +2752,7 @@ struct server_context {
                 break;
             }
 
-            int id_slot = task.slot_action.slot_id;
+            int id_slot = task.slot_action.id_slot;
             server_slot *slot = get_slot_by_id(id_slot);
             if (slot == nullptr) {
                 send_error(task, "Invalid slot ID", ERROR_TYPE_INVALID_REQUEST);
@@ -2788,7 +2791,7 @@ struct server_context {
         case SERVER_TASK_TYPE_SLOT_RESTORE: {
             if (!ensure_no_mtmd(task.id))
                 break;
-            int id_slot = task.slot_action.slot_id;
+            int id_slot = task.slot_action.id_slot;
             server_slot *slot = get_slot_by_id(id_slot);
             if (slot == nullptr) {
                 send_error(task, "Invalid slot ID", ERROR_TYPE_INVALID_REQUEST);
@@ -2837,7 +2840,7 @@ struct server_context {
         case SERVER_TASK_TYPE_SLOT_ERASE: {
             if (!ensure_no_mtmd(task.id))
                 break;
-            int id_slot = task.slot_action.slot_id;
+            int id_slot = task.slot_action.id_slot;
             server_slot *slot = get_slot_by_id(id_slot);
             if (slot == nullptr) {
                 send_error(task, "Invalid slot ID", ERROR_TYPE_INVALID_REQUEST);
