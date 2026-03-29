@@ -983,3 +983,223 @@ TEST(SafeJsonToStr, InvalidUtf8InString_DoesNotThrow) {
     const json j = json{{"bad", "\xFF\xFE invalid"}};
     EXPECT_NO_THROW(safe_json_to_str(j));
 }
+
+// ============================================================
+// oaicompat_chat_params_parse — early validation throws
+//   These all fire BEFORE common_chat_templates_apply is called,
+//   so opt.tmpls can remain nullptr safely.
+// ============================================================
+
+namespace {
+// Minimal helper: build body + options + out_files for early-throw tests
+std::vector<raw_buffer> g_out_files;
+
+json make_chat_body_with_messages(const json &messages_override = json::array({
+    {{"role", "user"}, {"content", "hello"}}
+})) {
+    return json{{"messages", messages_override}};
+}
+
+oaicompat_parser_options make_no_jinja_opts() {
+    oaicompat_parser_options opt;
+    opt.use_jinja = false;
+    opt.tmpls = nullptr;
+    return opt;
+}
+} // namespace
+
+TEST(OaicompatChatParams, MissingMessages_Throws) {
+    json body = {{"model", "x"}};
+    oaicompat_parser_options opt = make_no_jinja_opts();
+    std::vector<raw_buffer> files;
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+}
+
+TEST(OaicompatChatParams, MessagesNotArray_Throws) {
+    json body = {{"messages", "not-an-array"}};
+    oaicompat_parser_options opt = make_no_jinja_opts();
+    std::vector<raw_buffer> files;
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+}
+
+TEST(OaicompatChatParams, NonAssistantMissingContent_Throws) {
+    // user message with no "content" field
+    json body = {{"messages", json::array({{{"role", "user"}}})}};
+    oaicompat_parser_options opt = make_no_jinja_opts();
+    std::vector<raw_buffer> files;
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+}
+
+TEST(OaicompatChatParams, AssistantMissingBothContentAndToolCalls_Throws) {
+    // assistant message must have content OR tool_calls
+    json body = {{"messages", json::array({{{"role", "assistant"}}})}};
+    oaicompat_parser_options opt = make_no_jinja_opts();
+    std::vector<raw_buffer> files;
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+}
+
+TEST(OaicompatChatParams, ToolsWithoutJinja_Throws) {
+    json body = {
+        {"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
+        {"tools", json::array({{{"type", "function"}}})}
+    };
+    oaicompat_parser_options opt = make_no_jinja_opts();
+    std::vector<raw_buffer> files;
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+}
+
+TEST(OaicompatChatParams, NonAutoToolChoiceWithoutJinja_Throws) {
+    json body = {
+        {"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
+        {"tool_choice", "none"}
+    };
+    oaicompat_parser_options opt = make_no_jinja_opts();
+    std::vector<raw_buffer> files;
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+}
+
+TEST(OaicompatChatParams, GrammarAndJsonSchema_Throws) {
+    json body = {
+        {"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
+        {"grammar", "root ::= [a-z]+"},
+        {"json_schema", {{"type", "object"}}}
+    };
+    oaicompat_parser_options opt = make_no_jinja_opts();
+    std::vector<raw_buffer> files;
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+}
+
+TEST(OaicompatChatParams, InvalidResponseFormatType_Throws) {
+    json body = {
+        {"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
+        {"response_format", {{"type", "invalid_type"}}}
+    };
+    oaicompat_parser_options opt = make_no_jinja_opts();
+    std::vector<raw_buffer> files;
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+}
+
+TEST(OaicompatChatParams, ContentPartTypeUnsupported_Throws) {
+    json body = {{"messages", json::array({{
+        {"role", "user"},
+        {"content", json::array({{{"type", "video_url"}, {"url", "x"}}})}
+    }})}};
+    oaicompat_parser_options opt = make_no_jinja_opts();
+    std::vector<raw_buffer> files;
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+}
+
+TEST(OaicompatChatParams, ImageUrlWithoutAllowImage_Throws) {
+    json body = {{"messages", json::array({{
+        {"role", "user"},
+        {"content", json::array({{
+            {"type", "image_url"},
+            {"image_url", {{"url", "data:image/png;base64,abc"}}}
+        }})}
+    }})}};
+    oaicompat_parser_options opt = make_no_jinja_opts();
+    opt.allow_image = false;
+    std::vector<raw_buffer> files;
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+}
+
+TEST(OaicompatChatParams, ContentNotStringOrArray_Throws) {
+    // content is an integer — not allowed
+    json body = {{"messages", json::array({{{"role", "user"}, {"content", 42}}})}};
+    oaicompat_parser_options opt = make_no_jinja_opts();
+    std::vector<raw_buffer> files;
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+}
+
+// ============================================================
+// are_lora_equal / parse_lora_request
+//   Pure data-structure helpers; no model needed.
+// ============================================================
+
+namespace {
+common_adapter_lora_info make_lora(float scale, struct llama_adapter_lora *ptr = nullptr) {
+    common_adapter_lora_info info;
+    info.scale = scale;
+    info.ptr   = ptr;
+    return info;
+}
+} // namespace
+
+TEST(AreLoraEqual, BothEmpty_AreEqual) {
+    EXPECT_TRUE(are_lora_equal({}, {}));
+}
+
+TEST(AreLoraEqual, DifferentSizes_NotEqual) {
+    EXPECT_FALSE(are_lora_equal({make_lora(1.0f)}, {}));
+}
+
+TEST(AreLoraEqual, SameScaleNullPtr_AreEqual) {
+    EXPECT_TRUE(are_lora_equal({make_lora(0.5f)}, {make_lora(0.5f)}));
+}
+
+TEST(AreLoraEqual, DifferentScale_NotEqual) {
+    EXPECT_FALSE(are_lora_equal({make_lora(0.5f)}, {make_lora(1.0f)}));
+}
+
+TEST(AreLoraEqual, DifferentPtr_NotEqual) {
+    int dummy = 0;
+    auto *p = reinterpret_cast<struct llama_adapter_lora *>(&dummy);
+    EXPECT_FALSE(are_lora_equal({make_lora(1.0f, p)}, {make_lora(1.0f, nullptr)}));
+}
+
+TEST(AreLoraEqual, PathDifference_Ignored) {
+    common_adapter_lora_info a = make_lora(1.0f);
+    common_adapter_lora_info b = make_lora(1.0f);
+    a.path = "model_a.gguf";
+    b.path = "model_b.gguf";
+    // path is explicitly not checked in are_lora_equal
+    EXPECT_TRUE(are_lora_equal({a}, {b}));
+}
+
+TEST(ParseLoraRequest, EmptyData_ClearsAllScales) {
+    std::vector<common_adapter_lora_info> base = {make_lora(0.8f), make_lora(0.6f)};
+    const auto result = parse_lora_request(base, json::array());
+    ASSERT_EQ(result.size(), 2u);
+    EXPECT_FLOAT_EQ(result[0].scale, 0.0f);
+    EXPECT_FLOAT_EQ(result[1].scale, 0.0f);
+}
+
+TEST(ParseLoraRequest, ValidId_SetsScale) {
+    std::vector<common_adapter_lora_info> base = {make_lora(0.0f), make_lora(0.0f)};
+    const json data = json::array({{{"id", 1}, {"scale", 0.75f}}});
+    const auto result = parse_lora_request(base, data);
+    EXPECT_FLOAT_EQ(result[0].scale, 0.0f); // untouched
+    EXPECT_FLOAT_EQ(result[1].scale, 0.75f);
+}
+
+TEST(ParseLoraRequest, InvalidId_Throws) {
+    std::vector<common_adapter_lora_info> base = {make_lora(0.0f)};
+    const json data = json::array({{{"id", 5}, {"scale", 1.0f}}});
+    EXPECT_THROW(parse_lora_request(base, data), std::runtime_error);
+}
+
+TEST(ParseLoraRequest, NegativeId_Throws) {
+    std::vector<common_adapter_lora_info> base = {make_lora(0.0f)};
+    const json data = json::array({{{"id", -1}, {"scale", 1.0f}}});
+    EXPECT_THROW(parse_lora_request(base, data), std::runtime_error);
+}
+
+TEST(ParseLoraRequest, MultipleIds_AllSet) {
+    std::vector<common_adapter_lora_info> base = {make_lora(0.0f), make_lora(0.0f), make_lora(0.0f)};
+    const json data = json::array({
+        {{"id", 0}, {"scale", 0.3f}},
+        {{"id", 2}, {"scale", 0.9f}}
+    });
+    const auto result = parse_lora_request(base, data);
+    EXPECT_FLOAT_EQ(result[0].scale, 0.3f);
+    EXPECT_FLOAT_EQ(result[1].scale, 0.0f); // not set
+    EXPECT_FLOAT_EQ(result[2].scale, 0.9f);
+}
+
+TEST(ParseLoraRequest, DoesNotModifyOriginalBase) {
+    std::vector<common_adapter_lora_info> base = {make_lora(0.8f)};
+    const json data = json::array({{{"id", 0}, {"scale", 0.2f}}});
+    parse_lora_request(base, data);
+    // original must be unchanged
+    EXPECT_FLOAT_EQ(base[0].scale, 0.8f);
+}

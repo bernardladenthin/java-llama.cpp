@@ -487,3 +487,116 @@ TEST(ServerTaskTypeHelpers, NeedLogits_FalseForOtherTypes) {
     EXPECT_FALSE(server_task_type_need_logits(SERVER_TASK_TYPE_RERANK));
     EXPECT_FALSE(server_task_type_need_logits(SERVER_TASK_TYPE_METRICS));
 }
+
+// ============================================================
+// server_task_result_metrics::to_json
+//   Pure struct → JSON; no model needed.
+// ============================================================
+
+namespace {
+server_task_result_metrics make_metrics() {
+    server_task_result_metrics m;
+    m.n_idle_slots       = 2;
+    m.n_processing_slots = 1;
+    m.n_tasks_deferred   = 3;
+    m.t_start            = 1234567890LL;
+    m.n_prompt_tokens_processed_total = 100;
+    m.t_prompt_processing_total       = 50;
+    m.n_tokens_predicted_total        = 200;
+    m.t_tokens_generation_total       = 80;
+    m.n_prompt_tokens_processed       = 10;
+    m.t_prompt_processing             = 5;
+    m.n_tokens_predicted              = 20;
+    m.t_tokens_generation             = 8;
+    m.n_decode_total                  = 300;
+    m.n_busy_slots_total              = 4;
+    return m;
+}
+} // namespace
+
+TEST(ServerTaskResultMetrics, ToJson_SlotCountFields) {
+    const json j = make_metrics().to_json();
+    EXPECT_EQ(j.at("idle").get<int>(), 2);
+    EXPECT_EQ(j.at("processing").get<int>(), 1);
+    EXPECT_EQ(j.at("deferred").get<int>(), 3);
+}
+
+TEST(ServerTaskResultMetrics, ToJson_TokenCountFields) {
+    const json j = make_metrics().to_json();
+    EXPECT_EQ(j.at("n_prompt_tokens_processed_total").get<uint64_t>(), 100u);
+    EXPECT_EQ(j.at("n_tokens_predicted_total").get<uint64_t>(), 200u);
+    EXPECT_EQ(j.at("n_decode_total").get<uint64_t>(), 300u);
+    EXPECT_EQ(j.at("n_busy_slots_total").get<uint64_t>(), 4u);
+}
+
+TEST(ServerTaskResultMetrics, ToJson_SlotDataIsArray) {
+    server_task_result_metrics m = make_metrics();
+    m.slots_data = json::array({{{"id", 0}}, {{"id", 1}}});
+    const json j = m.to_json();
+    ASSERT_TRUE(j.at("slots").is_array());
+    EXPECT_EQ(j.at("slots").size(), 2u);
+}
+
+// ============================================================
+// server_task_result_slot_save_load::to_json
+//   Two different shapes depending on is_save flag.
+// ============================================================
+
+TEST(ServerTaskResultSlotSaveLoad, SaveMode_CorrectFields) {
+    server_task_result_slot_save_load r;
+    r.id_slot  = 0;
+    r.filename = "slot_0.bin";
+    r.is_save  = true;
+    r.n_tokens = 128;
+    r.n_bytes  = 4096;
+    r.t_ms     = 12.5;
+
+    const json j = r.to_json();
+    EXPECT_EQ(j.at("filename").get<std::string>(), "slot_0.bin");
+    EXPECT_EQ(j.at("n_saved").get<size_t>(), 128u);
+    EXPECT_EQ(j.at("n_written").get<size_t>(), 4096u);
+    EXPECT_DOUBLE_EQ(j.at("timings").at("save_ms").get<double>(), 12.5);
+    // load-only keys must be absent
+    EXPECT_FALSE(j.contains("n_restored"));
+    EXPECT_FALSE(j.contains("n_read"));
+}
+
+TEST(ServerTaskResultSlotSaveLoad, LoadMode_CorrectFields) {
+    server_task_result_slot_save_load r;
+    r.id_slot  = 1;
+    r.filename = "slot_1.bin";
+    r.is_save  = false;
+    r.n_tokens = 64;
+    r.n_bytes  = 2048;
+    r.t_ms     = 7.3;
+
+    const json j = r.to_json();
+    EXPECT_EQ(j.at("n_restored").get<size_t>(), 64u);
+    EXPECT_EQ(j.at("n_read").get<size_t>(), 2048u);
+    EXPECT_DOUBLE_EQ(j.at("timings").at("restore_ms").get<double>(), 7.3);
+    // save-only keys must be absent
+    EXPECT_FALSE(j.contains("n_saved"));
+    EXPECT_FALSE(j.contains("n_written"));
+}
+
+// ============================================================
+// server_task_result_slot_erase::to_json
+// server_task_result_apply_lora::to_json
+// ============================================================
+
+TEST(ServerTaskResultSlotErase, ToJson_NErasedPresent) {
+    server_task_result_slot_erase r;
+    r.id_slot  = 2;
+    r.n_erased = 512;
+
+    const json j = r.to_json();
+    EXPECT_EQ(j.at("id_slot").get<int>(), 2);
+    EXPECT_EQ(j.at("n_erased").get<size_t>(), 512u);
+}
+
+TEST(ServerTaskResultApplyLora, ToJson_SuccessTrue) {
+    server_task_result_apply_lora r;
+    const json j = r.to_json();
+    ASSERT_TRUE(j.contains("success"));
+    EXPECT_TRUE(j.at("success").get<bool>());
+}
