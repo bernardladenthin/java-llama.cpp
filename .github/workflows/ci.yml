@@ -8,6 +8,8 @@ env:
   MODEL_NAME: codellama-7b.Q2_K.gguf
   RERANKING_MODEL_URL: https://huggingface.co/gpustack/jina-reranker-v1-tiny-en-GGUF/resolve/main/jina-reranker-v1-tiny-en-Q4_0.gguf
   RERANKING_MODEL_NAME: jina-reranker-v1-tiny-en-Q4_0.gguf
+  DRAFT_MODEL_URL: https://huggingface.co/QuantFactory/AMD-Llama-135m-code-GGUF/resolve/main/AMD-Llama-135m-code.Q2_K.gguf
+  DRAFT_MODEL_NAME: AMD-Llama-135m-code.Q2_K.gguf
 jobs:
 
   build-and-test-linux:
@@ -27,6 +29,8 @@ jobs:
         run: curl -L ${MODEL_URL} --create-dirs -o models/${MODEL_NAME}
       - name: Download reranking model
         run: curl -L ${RERANKING_MODEL_URL} --create-dirs -o models/${RERANKING_MODEL_NAME}
+      - name: Download draft model
+        run: curl -L ${DRAFT_MODEL_URL} --create-dirs -o models/${DRAFT_MODEL_NAME}
       - name: List files in models directory
         run: ls -l models/
       - name: Run tests
@@ -71,6 +75,8 @@ jobs:
         run: curl -L ${MODEL_URL} --create-dirs -o models/${MODEL_NAME}
       - name: Download reranking model
         run: curl -L ${RERANKING_MODEL_URL} --create-dirs -o models/${RERANKING_MODEL_NAME}
+      - name: Download draft model
+        run: curl -L ${DRAFT_MODEL_URL} --create-dirs -o models/${DRAFT_MODEL_NAME}
       - name: List files in models directory
         run: ls -l models/
       - name: Run tests
@@ -99,6 +105,8 @@ jobs:
         run: curl -L $env:MODEL_URL --create-dirs -o models/$env:MODEL_NAME
       - name: Download reranking model
         run: curl -L $env:RERANKING_MODEL_URL --create-dirs -o models/$env:RERANKING_MODEL_NAME
+      - name: Download draft model
+        run: curl -L $env:DRAFT_MODEL_URL --create-dirs -o models/$env:DRAFT_MODEL_NAME
       - name: List files in models directory
         run: ls -l models/
       - name: Run tests

@@ -45,7 +45,7 @@ public class LlamaModelTest {
 		model = new LlamaModel(
 				new ModelParameters()
 						.setCtxSize(128)
-						.setModel("models/codellama-7b.Q2_K.gguf")
+						.setModel(TestConstants.MODEL_PATH)
 						//.setModelUrl("https://huggingface.co/TheBloke/CodeLlama-7B-GGUF/resolve/main/codellama-7b.Q2_K.gguf")
 						.setGpuLayers(gpuLayers)
 						.enableEmbedding().enableLogTimestamps().enableLogPrefix()
@@ -346,11 +346,11 @@ public class LlamaModelTest {
 	
 	@Test
 	public void testTemplate() {
-		
+
 		List<Pair<String, String>> userMessages = new ArrayList<>();
         userMessages.add(new Pair<>("user", "What is the best book?"));
         userMessages.add(new Pair<>("assistant", "It depends on your interests. Do you like fiction or non-fiction?"));
-        
+
 		InferenceParameters params = new InferenceParameters("A book recommendation system.")
 				.setMessages("Book", userMessages)
 				.setTemperature(0.95f)
@@ -358,5 +358,38 @@ public class LlamaModelTest {
 				.setNPredict(nPredict)
 				.setSeed(42);
 		Assert.assertEquals(model.applyTemplate(params), "<|im_start|>system\nBook<|im_end|>\n<|im_start|>user\nWhat is the best book?<|im_end|>\n<|im_start|>assistant\nIt depends on your interests. Do you like fiction or non-fiction?");
+	}
+
+	@Test
+	public void testSpeculativeDecoding() {
+		int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+		try (LlamaModel specModel = new LlamaModel(
+				new ModelParameters()
+						.setModel(TestConstants.MODEL_PATH)
+						.setModelDraft(TestConstants.DRAFT_MODEL_PATH)
+						.setCtxSize(128)
+						.setCtxSizeDraft(128)
+						.setDraftMax(8)
+						.setDraftMin(1)
+						.setGpuLayers(gpuLayers)
+						.setGpuLayersDraft(gpuLayers)
+		)) {
+			InferenceParameters params = new InferenceParameters(prefix)
+					.setNPredict(nPredict)
+					.setSeed(42);
+
+			// test streaming generation with speculative decoding
+			int generated = 0;
+			for (LlamaOutput ignored : specModel.generate(params)) {
+				generated++;
+			}
+			Assert.assertTrue("Expected tokens from speculative generate, got " + generated,
+					generated > 0 && generated <= nPredict + 1);
+
+			// test complete with speculative decoding
+			String response = specModel.complete(params);
+			Assert.assertNotNull(response);
+			Assert.assertFalse("Expected non-empty response from speculative complete", response.isEmpty());
+		}
 	}
 }
