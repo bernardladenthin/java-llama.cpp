@@ -208,7 +208,7 @@ TEST(GenToolCallId, TwoCallsProduceDifferentValues) {
 
 TEST(GenToolCallId, DifferentFromChatCmplId) {
     const std::string cmpl_id = gen_chatcmplid();
-    EXPECT_NE(cmpl_id.substr(0, 9), std::string("chatcmpl-")); // guard — it has prefix
+    EXPECT_EQ(cmpl_id.substr(0, 9), std::string("chatcmpl-")); // guard — it has prefix
     // gen_tool_call_id has NO "chatcmpl-" prefix
     const std::string tool_id = gen_tool_call_id();
     EXPECT_EQ(tool_id.find("chatcmpl-"), std::string::npos);
