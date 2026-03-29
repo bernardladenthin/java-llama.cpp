@@ -186,14 +186,14 @@ struct slot_params {
             {"logit_bias", format_logit_bias(sampling.logit_bias)},
             {"n_probs", sampling.n_probs},
             {"min_keep", sampling.min_keep},
-            {"grammar", sampling.grammar},
+            {"grammar", common_grammar_value(sampling.grammar)},
             {"grammar_lazy", sampling.grammar_lazy},
             {"grammar_triggers", grammar_triggers},
             {"preserved_tokens", sampling.preserved_tokens},
             {"chat_format", common_chat_format_name(oaicompat_chat_syntax.format)},
             {"reasoning_format", common_reasoning_format_name(oaicompat_chat_syntax.reasoning_format)},
             {"reasoning_in_content", oaicompat_chat_syntax.reasoning_in_content},
-            {"thinking_forced_open", oaicompat_chat_syntax.thinking_forced_open},
+            {"generation_prompt", oaicompat_chat_syntax.generation_prompt},
             {"samplers", samplers},
             {"speculative.n_max", speculative.n_max},
             {"speculative.n_min", speculative.n_min},
@@ -359,14 +359,21 @@ struct server_task {
             try {
                 auto schema = json_value(data, "json_schema", json::object());
                 SRV_DBG("JSON schema: %s\n", schema.dump(2).c_str());
-                params.sampling.grammar = json_schema_to_grammar(schema);
-                SRV_DBG("Converted grammar: %s\n", params.sampling.grammar.c_str());
+                params.sampling.grammar = {COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT, json_schema_to_grammar(schema)};
+                SRV_DBG("Converted grammar: %s\n", common_grammar_value(params.sampling.grammar).c_str());
             } catch (const std::exception &e) {
                 throw std::runtime_error(std::string("\"json_schema\": ") + e.what());
             }
         } else {
-            params.sampling.grammar = json_value(data, "grammar", defaults.sampling.grammar);
-            SRV_DBG("Grammar: %s\n", params.sampling.grammar.c_str());
+            {
+                const std::string grammar_str = json_value(data, "grammar", common_grammar_value(defaults.sampling.grammar));
+                if (!grammar_str.empty()) {
+                    params.sampling.grammar = {COMMON_GRAMMAR_TYPE_USER, grammar_str};
+                } else {
+                    params.sampling.grammar = {};
+                }
+            }
+            SRV_DBG("Grammar: %s\n", common_grammar_value(params.sampling.grammar).c_str());
             params.sampling.grammar_lazy = json_value(data, "grammar_lazy", defaults.sampling.grammar_lazy);
             SRV_DBG("Grammar lazy: %s\n", params.sampling.grammar_lazy ? "true" : "false");
         }
@@ -382,7 +389,7 @@ struct server_task {
             params.oaicompat_chat_syntax.reasoning_format = params_base.reasoning_format;
             params.oaicompat_chat_syntax.reasoning_in_content =
                 params.stream && (params_base.reasoning_format == COMMON_REASONING_FORMAT_DEEPSEEK_LEGACY);
-            params.oaicompat_chat_syntax.thinking_forced_open = json_value(data, "thinking_forced_open", false);
+            params.oaicompat_chat_syntax.generation_prompt = json_value(data, "generation_prompt", std::string());
             params.oaicompat_chat_syntax.parse_tool_calls = json_value(data, "parse_tool_calls", false);
         }
 
