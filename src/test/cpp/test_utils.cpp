@@ -1203,3 +1203,118 @@ TEST(ParseLoraRequest, DoesNotModifyOriginalBase) {
     // original must be unchanged
     EXPECT_FLOAT_EQ(base[0].scale, 0.8f);
 }
+
+// ============================================================
+// StripFlagFromArgv
+//   Helper used by loadModel to remove --vocab-only from argv
+//   before passing to common_params_parse, which does not know
+//   about this flag.
+// ============================================================
+
+// Build a mutable char* array from string literals for use as argv.
+// Lifetime is tied to the vector of strings passed in.
+static std::vector<char *> make_argv(std::vector<std::string> &strings) {
+    std::vector<char *> ptrs;
+    ptrs.reserve(strings.size());
+    for (auto &s : strings) {
+        ptrs.push_back(s.data());
+    }
+    return ptrs;
+}
+
+TEST(StripFlagFromArgv, FlagAbsent_NothingRemoved) {
+    std::vector<std::string> s = {"prog", "--model", "foo.gguf"};
+    auto argv = make_argv(s);
+    bool found = true; // pre-set to true so we verify it gets cleared
+    auto out = strip_flag_from_argv(argv.data(), static_cast<int>(argv.size()), "--vocab-only", &found);
+    EXPECT_FALSE(found);
+    ASSERT_EQ(out.size(), 3u);
+    EXPECT_STREQ(out[0], "prog");
+    EXPECT_STREQ(out[1], "--model");
+    EXPECT_STREQ(out[2], "foo.gguf");
+}
+
+TEST(StripFlagFromArgv, FlagAtStart_Removed) {
+    std::vector<std::string> s = {"--vocab-only", "--model", "foo.gguf"};
+    auto argv = make_argv(s);
+    bool found = false;
+    auto out = strip_flag_from_argv(argv.data(), static_cast<int>(argv.size()), "--vocab-only", &found);
+    EXPECT_TRUE(found);
+    ASSERT_EQ(out.size(), 2u);
+    EXPECT_STREQ(out[0], "--model");
+    EXPECT_STREQ(out[1], "foo.gguf");
+}
+
+TEST(StripFlagFromArgv, FlagAtEnd_Removed) {
+    std::vector<std::string> s = {"prog", "--model", "foo.gguf", "--vocab-only"};
+    auto argv = make_argv(s);
+    bool found = false;
+    auto out = strip_flag_from_argv(argv.data(), static_cast<int>(argv.size()), "--vocab-only", &found);
+    EXPECT_TRUE(found);
+    ASSERT_EQ(out.size(), 3u);
+    EXPECT_STREQ(out[2], "foo.gguf");
+}
+
+TEST(StripFlagFromArgv, FlagInMiddle_OrderPreserved) {
+    std::vector<std::string> s = {"prog", "--ctx-size", "128", "--vocab-only", "--model", "m.gguf"};
+    auto argv = make_argv(s);
+    bool found = false;
+    auto out = strip_flag_from_argv(argv.data(), static_cast<int>(argv.size()), "--vocab-only", &found);
+    EXPECT_TRUE(found);
+    ASSERT_EQ(out.size(), 5u);
+    EXPECT_STREQ(out[0], "prog");
+    EXPECT_STREQ(out[1], "--ctx-size");
+    EXPECT_STREQ(out[2], "128");
+    EXPECT_STREQ(out[3], "--model");
+    EXPECT_STREQ(out[4], "m.gguf");
+}
+
+TEST(StripFlagFromArgv, FlagAppearsMultipleTimes_AllRemoved) {
+    std::vector<std::string> s = {"--vocab-only", "--model", "m.gguf", "--vocab-only"};
+    auto argv = make_argv(s);
+    bool found = false;
+    auto out = strip_flag_from_argv(argv.data(), static_cast<int>(argv.size()), "--vocab-only", &found);
+    EXPECT_TRUE(found);
+    ASSERT_EQ(out.size(), 2u);
+    EXPECT_STREQ(out[0], "--model");
+    EXPECT_STREQ(out[1], "m.gguf");
+}
+
+TEST(StripFlagFromArgv, FlagOnly_ResultEmpty) {
+    std::vector<std::string> s = {"--vocab-only"};
+    auto argv = make_argv(s);
+    bool found = false;
+    auto out = strip_flag_from_argv(argv.data(), static_cast<int>(argv.size()), "--vocab-only", &found);
+    EXPECT_TRUE(found);
+    EXPECT_TRUE(out.empty());
+}
+
+TEST(StripFlagFromArgv, EmptyArgv_NoCrash) {
+    bool found = true;
+    auto out = strip_flag_from_argv(nullptr, 0, "--vocab-only", &found);
+    EXPECT_FALSE(found);
+    EXPECT_TRUE(out.empty());
+}
+
+TEST(StripFlagFromArgv, PartialMatchNotStripped) {
+    // "--vocab-onlyX" must not be treated as "--vocab-only"
+    std::vector<std::string> s = {"prog", "--vocab-onlyX"};
+    auto argv = make_argv(s);
+    bool found = false;
+    auto out = strip_flag_from_argv(argv.data(), static_cast<int>(argv.size()), "--vocab-only", &found);
+    EXPECT_FALSE(found);
+    ASSERT_EQ(out.size(), 2u);
+    EXPECT_STREQ(out[1], "--vocab-onlyX");
+}
+
+TEST(StripFlagFromArgv, OtherFlagsUnchanged) {
+    std::vector<std::string> s = {"prog", "--embedding", "--vocab-only", "--jinja"};
+    auto argv = make_argv(s);
+    bool found = false;
+    auto out = strip_flag_from_argv(argv.data(), static_cast<int>(argv.size()), "--vocab-only", &found);
+    EXPECT_TRUE(found);
+    ASSERT_EQ(out.size(), 3u);
+    EXPECT_STREQ(out[0], "prog");
+    EXPECT_STREQ(out[1], "--embedding");
+    EXPECT_STREQ(out[2], "--jinja");
+}

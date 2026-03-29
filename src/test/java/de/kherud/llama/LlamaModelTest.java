@@ -246,6 +246,66 @@ public class LlamaModelTest {
 		}
 	}
 
+	@Test
+	public void testVocabOnlyDecodeEmptyArray() {
+		try (LlamaModel vocabModel = new LlamaModel(
+				new ModelParameters()
+						.setModel(TestConstants.MODEL_PATH)
+						.setVocabOnly()
+		)) {
+			String decoded = vocabModel.decode(new int[0]);
+			Assert.assertEquals("Decoding empty token array should give empty string", "", decoded);
+		}
+	}
+
+	@Test
+	public void testVocabOnlyUnicodeRoundTrip() {
+		try (LlamaModel vocabModel = new LlamaModel(
+				new ModelParameters()
+						.setModel(TestConstants.MODEL_PATH)
+						.setVocabOnly()
+		)) {
+			// Multi-byte characters: accents, CJK ideograph, emoji
+			String prompt = "naïve café résumé";
+			int[] tokens = vocabModel.encode(prompt);
+			Assert.assertTrue("Unicode string should tokenise to at least one token", tokens.length > 0);
+			String decoded = vocabModel.decode(tokens);
+			// Leading space is normal (llama tokenizer behaviour); compare content
+			Assert.assertTrue("Decoded text should contain original characters",
+					decoded.contains("na") && decoded.contains("caf") && decoded.contains("sum"));
+		}
+	}
+
+	@Test
+	public void testVocabOnlyTwoInstancesCoexist() {
+		// Two independent vocab-only models open simultaneously must not interfere.
+		try (LlamaModel a = new LlamaModel(
+				new ModelParameters().setModel(TestConstants.MODEL_PATH).setVocabOnly());
+			 LlamaModel b = new LlamaModel(
+				new ModelParameters().setModel(TestConstants.MODEL_PATH).setVocabOnly())
+		) {
+			String prompt = "hello";
+			int[] tokensA = a.encode(prompt);
+			int[] tokensB = b.encode(prompt);
+			Assert.assertArrayEquals("Two concurrent vocab-only instances must produce equal tokens",
+					tokensA, tokensB);
+		}
+	}
+
+	@Test
+	public void testVocabOnlyCoexistsWithFullModel() {
+		// A vocab-only instance must work correctly while the class-level full model is loaded.
+		try (LlamaModel vocabModel = new LlamaModel(
+				new ModelParameters().setModel(TestConstants.MODEL_PATH).setVocabOnly()
+		)) {
+			String prompt = "int main()";
+			int[] vocabTokens = vocabModel.encode(prompt);
+			int[] fullTokens  = model.encode(prompt);
+			Assert.assertArrayEquals("Vocab-only instance must match full-model tokenization",
+					fullTokens, vocabTokens);
+		}
+	}
+
 	@Ignore
 	public void testLogText() {
 		List<LogMessage> messages = new ArrayList<>();

@@ -384,15 +384,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
 
     // Strip --vocab-only before common_params_parse (not a common_params flag).
     bool vocab_only = false;
-    std::vector<char *> filtered_argv;
-    for (jsize i = 0; i < argc; i++) {
-        if (strcmp(argv[i], "--vocab-only") == 0) {
-            vocab_only = true;
-        } else {
-            filtered_argv.push_back(argv[i]);
-        }
-    }
-
+    std::vector<char *> filtered_argv = strip_flag_from_argv(argv, static_cast<int>(argc), "--vocab-only", &vocab_only);
     int filtered_argc = static_cast<int>(filtered_argv.size());
     const auto parsed_params = common_params_parse(filtered_argc, filtered_argv.data(), params, LLAMA_EXAMPLE_SERVER);
     free_string_array(argv, argc);

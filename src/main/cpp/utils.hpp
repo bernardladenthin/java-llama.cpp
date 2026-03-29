@@ -471,6 +471,23 @@ static std::string gen_chatcmplid() { return "chatcmpl-" + random_string(); }
 
 static std::string gen_tool_call_id() { return random_string(); }
 
+// Strip an exact-match flag (no value) from an argv array.
+// Returns a new vector of pointers (non-owning) with every occurrence removed.
+// Sets *found = true if the flag was present at least once.
+static std::vector<char *> strip_flag_from_argv(char **argv, int argc, const char *flag, bool *found) {
+    *found = false;
+    std::vector<char *> out;
+    out.reserve(argc);
+    for (int i = 0; i < argc; i++) {
+        if (strcmp(argv[i], flag) == 0) {
+            *found = true;
+        } else {
+            out.push_back(argv[i]);
+        }
+    }
+    return out;
+}
+
 //
 // other common utils
 //
