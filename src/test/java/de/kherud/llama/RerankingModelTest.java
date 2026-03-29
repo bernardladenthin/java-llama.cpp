@@ -73,12 +73,98 @@ public class RerankingModelTest {
 	public void testSortedReRanking() {
 		List<Pair<String, Float>> rankedDocuments = model.rerank(true, query, TEST_DOCUMENTS);
 		Assert.assertEquals(rankedDocuments.size(), TEST_DOCUMENTS.length);
-		
+
 		// Check the ranking order: each score should be >= the next one
 	    for (int i = 0; i < rankedDocuments.size() - 1; i++) {
 	        float currentScore = rankedDocuments.get(i).getValue();
 	        float nextScore = rankedDocuments.get(i + 1).getValue();
 	        Assert.assertTrue("Ranking order incorrect at index " + i, currentScore >= nextScore);
 	    }
+	}
+
+	// ------------------------------------------------------------------
+	// format_rerank(vocab, query, doc) — changed in b8576:
+	//   EOS token falls back to SEP when EOS is LLAMA_TOKEN_NULL.
+	// These tests exercise the full rerank path end-to-end and verify
+	// that the token sequence built by format_rerank produces meaningful
+	// scores (which would be wrong / NaN / zero if BOS/EOS/SEP tokens
+	// were incorrect).
+	// ------------------------------------------------------------------
+
+	/**
+	 * Rerank a single document.
+	 * Exercises the minimal format_rerank path (one BOS+query+EOS+SEP+doc+EOS
+	 * sequence) and verifies a non-zero score is returned.
+	 */
+	@Test
+	public void testRerankSingleDocument() {
+		// The ML document is the most relevant one for the query
+		LlamaOutput output = model.rerank(query, TEST_DOCUMENTS[2]);
+
+		Assert.assertNotNull(output);
+		Assert.assertEquals("Expected exactly one score", 1, output.probabilities.size());
+
+		float score = output.probabilities.values().iterator().next();
+		Assert.assertTrue("Score should be positive for a relevant document: " + score, score > 0.0f);
+	}
+
+	/**
+	 * Verify that all reranking scores are in [0, 1].
+	 * The Jina reranker uses RANK pooling with sigmoid activation, so every
+	 * score must be a valid probability.  A broken format_rerank (wrong
+	 * EOS/SEP tokens) would produce garbage logits and likely scores outside
+	 * this range or NaN values.
+	 */
+	@Test
+	public void testRerankScoreRange() {
+		LlamaOutput output = model.rerank(query, TEST_DOCUMENTS);
+
+		Assert.assertEquals(TEST_DOCUMENTS.length, output.probabilities.size());
+
+		for (Map.Entry<String, Float> entry : output.probabilities.entrySet()) {
+			float score = entry.getValue();
+			Assert.assertFalse("Score must not be NaN: " + entry.getKey(), Float.isNaN(score));
+			Assert.assertFalse("Score must not be Inf: " + entry.getKey(), Float.isInfinite(score));
+			Assert.assertTrue("Score must be >= 0: " + score, score >= 0.0f);
+			Assert.assertTrue("Score must be <= 1: " + score, score <= 1.0f);
+		}
+	}
+
+	/**
+	 * Calling rerank twice with the same input must return identical scores.
+	 * Verifies determinism of the format_rerank token sequence and the
+	 * inference pipeline (server_tokens construction → validate → slot eval).
+	 */
+	@Test
+	public void testRerankConsistency() {
+		String doc = TEST_DOCUMENTS[2]; // ML document
+
+		LlamaOutput first  = model.rerank(query, doc);
+		LlamaOutput second = model.rerank(query, doc);
+
+		float score1 = first.probabilities.values().iterator().next();
+		float score2 = second.probabilities.values().iterator().next();
+
+		Assert.assertEquals("Reranking must be deterministic", score1, score2, 1e-4f);
+	}
+
+	/**
+	 * The irrelevant (French) document must score lower than the directly
+	 * relevant ML document when ranked individually against the same query.
+	 * This validates that format_rerank produces a token sequence that
+	 * encodes semantic content rather than returning a constant score.
+	 */
+	@Test
+	public void testRerankRelevantVsIrrelevant() {
+		LlamaOutput mlOutput     = model.rerank(query, TEST_DOCUMENTS[2]); // ML doc
+		LlamaOutput frenchOutput = model.rerank(query, TEST_DOCUMENTS[3]); // French doc
+
+		float mlScore     = mlOutput.probabilities.values().iterator().next();
+		float frenchScore = frenchOutput.probabilities.values().iterator().next();
+
+		Assert.assertTrue(
+				"ML document should score higher than the French document. " +
+				"ml=" + mlScore + " french=" + frenchScore,
+				mlScore > frenchScore);
 	}
 }
