@@ -600,3 +600,51 @@ TEST(ServerTaskResultApplyLora, ToJson_SuccessTrue) {
     ASSERT_TRUE(j.contains("success"));
     EXPECT_TRUE(j.at("success").get<bool>());
 }
+
+// ============================================================
+// server_context::is_vocab_only
+//   Pure predicate on two pointer fields — testable without a
+//   model by directly manipulating the struct members.
+//
+//   Semantics:
+//     false  — default-constructed (both null): no model at all
+//     true   — model set, ctx null: vocab-only load via load_tokenizer
+//     false  — model and ctx both set: full model loaded via load_model
+// ============================================================
+
+TEST(IsVocabOnly, DefaultConstructed_False) {
+    // Neither model nor ctx is set; we have no model at all.
+    server_context sc;
+    EXPECT_FALSE(sc.is_vocab_only());
+}
+
+TEST(IsVocabOnly, ModelSetCtxNull_True) {
+    // Simulate the state after load_tokenizer():
+    // model_vocab_only owns the real pointer; model is a raw alias.
+    // Use a non-null sentinel without calling llama.cpp.
+    server_context sc;
+    sc.model = reinterpret_cast<llama_model *>(static_cast<uintptr_t>(1));
+    sc.ctx   = nullptr;
+    EXPECT_TRUE(sc.is_vocab_only());
+    sc.model = nullptr; // prevent destructor confusion
+}
+
+TEST(IsVocabOnly, ModelAndCtxSet_False) {
+    // Simulate the state after load_model():
+    // both model and ctx are live pointers.
+    server_context sc;
+    sc.model = reinterpret_cast<llama_model   *>(static_cast<uintptr_t>(1));
+    sc.ctx   = reinterpret_cast<llama_context *>(static_cast<uintptr_t>(2));
+    EXPECT_FALSE(sc.is_vocab_only());
+    sc.model = nullptr; // prevent destructor confusion
+    sc.ctx   = nullptr;
+}
+
+TEST(IsVocabOnly, OnlyCtxSet_False) {
+    // Degenerate: ctx set but model null — not vocab-only either
+    // (model == nullptr fails the first condition).
+    server_context sc;
+    sc.ctx = reinterpret_cast<llama_context *>(static_cast<uintptr_t>(1));
+    EXPECT_FALSE(sc.is_vocab_only());
+    sc.ctx = nullptr;
+}

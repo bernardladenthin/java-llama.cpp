@@ -1836,6 +1836,7 @@ struct server_context {
     const llama_vocab *vocab = nullptr;
 
     llama_model_ptr model_dft;
+    llama_model_ptr model_vocab_only; // owns model when loaded in vocab-only mode
 
     llama_batch batch{};
 
@@ -1860,6 +1861,10 @@ struct server_context {
     common_chat_templates_ptr chat_templates;
     oaicompat_parser_options oai_parser_opt;
 
+    // Returns true when the model was loaded in vocab-only mode:
+    // the vocabulary is available but no inference context was created.
+    bool is_vocab_only() const { return model != nullptr && ctx == nullptr; }
+
     ~server_context() {
         mtmd_free(mctx);
 
@@ -1875,6 +1880,32 @@ struct server_context {
         }
 
         llama_batch_free(batch);
+    }
+
+    // Only load vocabulary for tokenization (no weights, no context).
+    // After calling this, only encode/decode operations are available.
+    bool load_tokenizer(const common_params &params) {
+        SRV_INF("loading tokenizer from '%s'\n", params.model.path.c_str());
+
+        params_base = params;
+
+        llama_model_params model_params = llama_model_default_params();
+        model_params.vocab_only = true;
+
+        llama_model * m = llama_model_load_from_file(params.model.path.c_str(), model_params);
+        if (m == nullptr) {
+            SRV_ERR("failed to load tokenizer, '%s'\n", params.model.path.c_str());
+            return false;
+        }
+
+        model_vocab_only.reset(m);
+        model = m;
+        vocab  = llama_model_get_vocab(model);
+
+        add_bos_token = llama_vocab_get_add_bos(vocab);
+        has_eos_token = llama_vocab_eos(vocab) != LLAMA_TOKEN_NULL;
+
+        return true;
     }
 
     bool load_model(const common_params &params) {
