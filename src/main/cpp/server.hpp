@@ -505,7 +505,7 @@ struct server_task {
             }
         }
 
-        std::string model_name = params_base.model_alias.empty() ? DEFAULT_OAICOMPAT_MODEL : params_base.model_alias;
+        std::string model_name = params_base.model_alias.empty() ? DEFAULT_OAICOMPAT_MODEL : *params_base.model_alias.begin();
         params.oaicompat_model = json_value(data, "model", model_name);
 
         return params;
