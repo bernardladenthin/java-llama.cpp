@@ -502,6 +502,16 @@ template <class Iter> static std::string tokens_to_str(llama_context *ctx, Iter 
     return ret;
 }
 
+// Vocab-only variant: detokenize without an inference context.
+template <class Iter> static std::string tokens_to_str(const llama_vocab *vocab, Iter begin, Iter end) {
+    std::string ret;
+    for (; begin != end; ++begin) {
+        ret += common_token_to_piece(vocab, *begin);
+    }
+
+    return ret;
+}
+
 // format incomplete utf-8 multibyte character for output
 static std::string tokens_to_output_formatted_string(const llama_context *ctx, const llama_token token) {
     std::string out = token == LLAMA_TOKEN_NULL ? "" : common_token_to_piece(ctx, token);

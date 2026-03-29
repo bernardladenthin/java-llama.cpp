@@ -1861,6 +1861,10 @@ struct server_context {
     common_chat_templates_ptr chat_templates;
     oaicompat_parser_options oai_parser_opt;
 
+    // Returns true when the model was loaded in vocab-only mode:
+    // the vocabulary is available but no inference context was created.
+    bool is_vocab_only() const { return model != nullptr && ctx == nullptr; }
+
     ~server_context() {
         mtmd_free(mctx);
 

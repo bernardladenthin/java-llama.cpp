@@ -793,13 +793,11 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv 
     std::vector<llama_token> tokens(elements, elements + length);
 
     std::string text;
-    if (ctx_server->ctx != nullptr) {
+    if (!ctx_server->is_vocab_only()) {
         text = tokens_to_str(ctx_server->ctx, tokens.cbegin(), tokens.cend());
     } else {
         // vocab-only mode: detokenize using vocabulary directly
-        for (const auto &tok : tokens) {
-            text += common_token_to_piece(ctx_server->vocab, tok);
-        }
+        text = tokens_to_str(ctx_server->vocab, tokens.cbegin(), tokens.cend());
     }
 
     env->ReleaseIntArrayElements(java_tokens, elements, 0);
@@ -810,7 +808,7 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobject obj) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
     auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
-    if (ctx_server->ctx != nullptr) {
+    if (!ctx_server->is_vocab_only()) {
         // Full model mode: stop the background task processing loop
         ctx_server->queue_tasks.terminate();
     }
