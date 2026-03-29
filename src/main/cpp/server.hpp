@@ -1213,8 +1213,6 @@ struct server_slot {
     llama_batch batch_spec = {};
 
     llama_context *ctx = nullptr;
-    llama_context *ctx_tgt = nullptr;
-    llama_context *ctx_dft = nullptr;
 
     // multimodal
     mtmd_context *mctx = nullptr;
@@ -1348,7 +1346,7 @@ struct server_slot {
 
     bool is_processing() const { return state != SLOT_STATE_IDLE; }
 
-    bool can_speculate() const { return ctx_dft && params.speculative.n_max > 0 && params.cache_prompt; }
+    bool can_speculate() const { return !!spec && params.speculative.n_max > 0 && params.cache_prompt; }
 
     void add_token(const completion_token_output &token) {
         if (!is_processing()) {
@@ -1821,7 +1819,6 @@ struct server_context {
 
     // note: keep these alive - they determine the lifetime of the model, context, etc.
     common_init_result_ptr llama_init;
-    common_init_result_ptr llama_init_dft;
 
     llama_model *model = nullptr;
     llama_context *ctx = nullptr;
@@ -1831,9 +1828,7 @@ struct server_context {
 
     const llama_vocab *vocab = nullptr;
 
-    llama_model *model_dft = nullptr;
-
-    llama_context_params cparams_dft;
+    llama_model_ptr model_dft;
 
     llama_batch batch{};
 
@@ -1866,12 +1861,6 @@ struct server_context {
             common_sampler_free(slot.smpl);
             slot.smpl = nullptr;
 
-            llama_free(slot.ctx_tgt);
-            slot.ctx_tgt = nullptr;
-
-            llama_free(slot.ctx_dft);
-            slot.ctx_dft = nullptr;
-
             common_speculative_free(slot.spec);
             slot.spec = nullptr;
 
@@ -1903,45 +1892,39 @@ struct server_context {
         add_bos_token = llama_vocab_get_add_bos(vocab);
         has_eos_token = llama_vocab_eos(vocab) != LLAMA_TOKEN_NULL;
 
-        if (!params_base.speculative.model.path.empty() || !params_base.speculative.model.hf_repo.empty()) {
-            SRV_INF("loading draft model '%s'\n", params_base.speculative.model.path.c_str());
+        if (params_base.speculative.has_dft()) {
+            SRV_INF("loading draft model '%s'\n", params_base.speculative.mparams_dft.path.c_str());
+
+            const auto & params_spec = params_base.speculative;
 
             auto params_dft = params_base;
 
-            params_dft.devices = params_base.speculative.devices;
-            params_dft.model = params_base.speculative.model;
-            params_dft.n_ctx = params_base.speculative.n_ctx == 0 ? params_base.n_ctx / params_base.n_parallel
-                                                                  : params_base.speculative.n_ctx;
-            params_dft.n_gpu_layers = params_base.speculative.n_gpu_layers;
-            params_dft.n_parallel = 1;
+            params_dft.n_parallel   = 1;
+            params_dft.n_ctx        = params_spec.n_ctx == 0 ? llama_n_ctx_seq(ctx) : params_spec.n_ctx;
+            params_dft.n_batch      = llama_n_ctx_seq(ctx);
+            params_dft.devices      = params_spec.devices;
+            params_dft.model        = params_spec.mparams_dft;
+            params_dft.n_gpu_layers = params_spec.n_gpu_layers;
+            params_dft.cache_type_k = params_spec.cache_type_k;
+            params_dft.cache_type_v = params_spec.cache_type_v;
 
-            // force F16 KV cache for the draft model for extra performance
-            params_dft.cache_type_k = GGML_TYPE_F16;
-            params_dft.cache_type_v = GGML_TYPE_F16;
+            if (params_spec.cpuparams.n_threads > 0) {
+                params_dft.cpuparams.n_threads       = params_spec.cpuparams.n_threads;
+                params_dft.cpuparams_batch.n_threads = params_spec.cpuparams_batch.n_threads;
+            }
 
-            llama_init_dft = common_init_from_params(params_dft);
+            params_dft.tensor_buft_overrides = params_spec.tensor_buft_overrides;
 
-            model_dft = llama_init_dft->model();
+            auto mparams_dft = common_model_params_to_llama(params_dft);
 
+            model_dft.reset(llama_model_load_from_file(params_dft.model.path.c_str(), mparams_dft));
             if (model_dft == nullptr) {
-                SRV_ERR("failed to load draft model, '%s'\n", params_base.speculative.model.path.c_str());
+                SRV_ERR("failed to load draft model, '%s'\n", params_dft.model.path.c_str());
                 return false;
             }
 
-            if (!common_speculative_are_compatible(ctx, llama_init_dft->context())) {
-                SRV_ERR("the draft model '%s' is not compatible with the target model '%s'\n",
-                        params_base.speculative.model.path.c_str(), params_base.model.path.c_str());
-
-                return false;
-            }
-
-            const int n_ctx_dft = llama_n_ctx(llama_init_dft->context());
-
-            cparams_dft = common_context_params_to_llama(params_dft);
-            cparams_dft.n_batch = n_ctx_dft;
-
-            // the context is not needed - we will create one for each slot
-            llama_init_dft->free_context();
+            params_base.speculative.model_dft   = model_dft.get();
+            params_base.speculative.cparams_dft = common_context_params_to_llama(params_dft);
         }
 
         chat_templates = common_chat_templates_init(model, params_base.chat_template);
@@ -1978,7 +1961,7 @@ struct server_context {
                 SRV_WRN("%s\n", "cache_reuse is not supported by multimodal, it will be disabled");
             }
 
-            if (!params_base.speculative.model.path.empty()) {
+            if (params_base.speculative.has_dft()) {
                 SRV_ERR("%s\n", "err: speculative decode is not supported by multimodal");
                 return false;
             }
@@ -2014,20 +1997,13 @@ struct server_context {
             slot.mctx = mctx;
             slot.cache_tokens.has_mtmd = mctx != nullptr;
 
-            if (model_dft) {
+            slot.spec = common_speculative_init(params_base.speculative, slot.ctx);
+            if (slot.spec) {
+                if (mctx) {
+                    SRV_ERR("%s\n", "speculative decoding is not supported with multimodal");
+                    return;
+                }
                 slot.batch_spec = llama_batch_init(params_base.speculative.n_max + 1, 0, 1);
-
-                slot.ctx_dft = llama_init_from_model(model_dft, cparams_dft);
-                if (slot.ctx_dft == nullptr) {
-                    SRV_ERR("%s", "failed to create draft context\n");
-                    return;
-                }
-
-                slot.spec = common_speculative_init(slot.ctx_tgt, slot.ctx_dft);
-                if (slot.spec == nullptr) {
-                    SRV_ERR("%s", "failed to create speculator\n");
-                    return;
-                }
             }
 
             SLT_INF(slot, "new slot n_ctx_slot = %d\n", slot.n_ctx);
@@ -2182,9 +2158,8 @@ struct server_context {
             }
         }
 
-        if (slot.ctx_dft) {
+        if (slot.spec) {
             llama_batch_free(slot.batch_spec);
-
             slot.batch_spec = llama_batch_init(slot.params.speculative.n_max + 1, 0, 1);
         }
 
@@ -3544,13 +3519,11 @@ struct server_context {
 
                 llama_token id = slot.sampled;
 
-                struct common_speculative_params params_spec;
-                params_spec.n_draft = n_draft_max;
-                params_spec.n_reuse = llama_n_ctx(slot.ctx_dft) - slot.params.speculative.n_max;
-                params_spec.p_min = slot.params.speculative.p_min;
+                common_params_speculative params_spec = slot.params.speculative;
+                params_spec.n_max = n_draft_max;
 
                 const llama_tokens &cached_text_tokens = slot.cache_tokens.get_text_tokens();
-                llama_tokens draft = common_speculative_gen_draft(slot.spec, params_spec, cached_text_tokens, id);
+                llama_tokens draft = common_speculative_draft(slot.spec, params_spec, cached_text_tokens, id);
 
                 // ignore small drafts
                 if (slot.params.speculative.n_min > (int)draft.size()) {
@@ -3582,6 +3555,9 @@ struct server_context {
 
                 // update how many tokens out of those tested were accepted
                 slot.n_draft_accepted += ids.size() - 1;
+
+                // inform the speculative decoding about the number of accepted tokens
+                common_speculative_accept(slot.spec, ids.size() - 1);
 
                 slot.cache_tokens.push_back(id);
                 slot.cache_tokens.insert({ids.begin(), ids.end() - 1});
