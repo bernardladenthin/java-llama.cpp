@@ -366,7 +366,8 @@ struct server_task {
             }
         } else {
             {
-                const std::string grammar_str = json_value(data, "grammar", common_grammar_value(defaults.sampling.grammar));
+                const std::string grammar_str =
+                    json_value(data, "grammar", common_grammar_value(defaults.sampling.grammar));
                 if (!grammar_str.empty()) {
                     params.sampling.grammar = {COMMON_GRAMMAR_TYPE_USER, grammar_str};
                 } else {
@@ -512,7 +513,8 @@ struct server_task {
             }
         }
 
-        std::string model_name = params_base.model_alias.empty() ? DEFAULT_OAICOMPAT_MODEL : *params_base.model_alias.begin();
+        std::string model_name =
+            params_base.model_alias.empty() ? DEFAULT_OAICOMPAT_MODEL : *params_base.model_alias.begin();
         params.oaicompat_model = json_value(data, "model", model_name);
 
         return params;
@@ -595,6 +597,20 @@ inline std::string stop_type_to_str(stop_type type) {
     default:
         return "none";
     }
+}
+
+// Compute the OAI-compatible "finish_reason" string from the internal stop
+// type and (optionally) tool-call presence.
+//
+// Rules:
+//   stop == EOS or WORD  →  "stop"  (completions), or "tool_calls" when
+//                            has_tool_calls is true (chat)
+//   everything else       →  "length"
+inline std::string oaicompat_finish_reason(stop_type stop, bool has_tool_calls = false) {
+    if (stop == STOP_TYPE_WORD || stop == STOP_TYPE_EOS) {
+        return has_tool_calls ? "tool_calls" : "stop";
+    }
+    return "length";
 }
 
 struct completion_token_output {
@@ -738,16 +754,12 @@ struct server_task_result_cmpl_final : server_task_result {
                 {"content", completion_token_output::probs_vector_to_json(probs_output, post_sampling_probs)},
             };
         }
-        json finish_reason = "length";
-        if (stop == STOP_TYPE_WORD || stop == STOP_TYPE_EOS) {
-            finish_reason = "stop";
-        }
         json res = json{
             {"choices", json::array({json{
                             {"text", stream ? "" : content}, // in stream mode, content is already in last partial chunk
                             {"index", index},
                             {"logprobs", logprobs},
-                            {"finish_reason", finish_reason},
+                            {"finish_reason", oaicompat_finish_reason(stop)},
                         }})},
             {"created", t},
             {"model", oaicompat_model},
@@ -770,7 +782,6 @@ struct server_task_result_cmpl_final : server_task_result {
     }
 
     json to_json_oaicompat_chat() {
-        std::string finish_reason = "length";
         common_chat_msg msg;
         if (!oaicompat_msg.empty()) {
             msg = oaicompat_msg;
@@ -778,12 +789,9 @@ struct server_task_result_cmpl_final : server_task_result {
             msg.role = "assistant";
             msg.content = content;
         }
-        if (stop == STOP_TYPE_WORD || stop == STOP_TYPE_EOS) {
-            finish_reason = msg.tool_calls.empty() ? "stop" : "tool_calls";
-        }
 
         json choice{
-            {"finish_reason", finish_reason},
+            {"finish_reason", oaicompat_finish_reason(stop, !msg.tool_calls.empty())},
             {"index", 0},
             {"message", msg.to_json_oaicompat()},
         };
@@ -819,10 +827,7 @@ struct server_task_result_cmpl_final : server_task_result {
 
     json to_json_oaicompat_chat_stream() {
         std::time_t t = std::time(0);
-        std::string finish_reason = "length";
-        if (stop == STOP_TYPE_WORD || stop == STOP_TYPE_EOS) {
-            finish_reason = oaicompat_msg.tool_calls.empty() ? "stop" : "tool_calls";
-        }
+        std::string finish_reason = oaicompat_finish_reason(stop, !oaicompat_msg.tool_calls.empty());
 
         json deltas = json::array();
         for (const auto &diff : oaicompat_msg_diffs) {
@@ -1892,7 +1897,7 @@ struct server_context {
         llama_model_params model_params = llama_model_default_params();
         model_params.vocab_only = true;
 
-        llama_model * m = llama_model_load_from_file(params.model.path.c_str(), model_params);
+        llama_model *m = llama_model_load_from_file(params.model.path.c_str(), model_params);
         if (m == nullptr) {
             SRV_ERR("failed to load tokenizer, '%s'\n", params.model.path.c_str());
             return false;
@@ -1900,7 +1905,7 @@ struct server_context {
 
         model_vocab_only.reset(m);
         model = m;
-        vocab  = llama_model_get_vocab(model);
+        vocab = llama_model_get_vocab(model);
 
         add_bos_token = llama_vocab_get_add_bos(vocab);
         has_eos_token = llama_vocab_eos(vocab) != LLAMA_TOKEN_NULL;
@@ -1933,21 +1938,21 @@ struct server_context {
         if (params_base.speculative.has_dft()) {
             SRV_INF("loading draft model '%s'\n", params_base.speculative.mparams_dft.path.c_str());
 
-            const auto & params_spec = params_base.speculative;
+            const auto &params_spec = params_base.speculative;
 
             auto params_dft = params_base;
 
-            params_dft.n_parallel   = 1;
-            params_dft.n_ctx        = params_spec.n_ctx == 0 ? llama_n_ctx_seq(ctx) : params_spec.n_ctx;
-            params_dft.n_batch      = llama_n_ctx_seq(ctx);
-            params_dft.devices      = params_spec.devices;
-            params_dft.model        = params_spec.mparams_dft;
+            params_dft.n_parallel = 1;
+            params_dft.n_ctx = params_spec.n_ctx == 0 ? llama_n_ctx_seq(ctx) : params_spec.n_ctx;
+            params_dft.n_batch = llama_n_ctx_seq(ctx);
+            params_dft.devices = params_spec.devices;
+            params_dft.model = params_spec.mparams_dft;
             params_dft.n_gpu_layers = params_spec.n_gpu_layers;
             params_dft.cache_type_k = params_spec.cache_type_k;
             params_dft.cache_type_v = params_spec.cache_type_v;
 
             if (params_spec.cpuparams.n_threads > 0) {
-                params_dft.cpuparams.n_threads       = params_spec.cpuparams.n_threads;
+                params_dft.cpuparams.n_threads = params_spec.cpuparams.n_threads;
                 params_dft.cpuparams_batch.n_threads = params_spec.cpuparams_batch.n_threads;
             }
 
@@ -1961,7 +1966,7 @@ struct server_context {
                 return false;
             }
 
-            params_base.speculative.model_dft   = model_dft.get();
+            params_base.speculative.model_dft = model_dft.get();
             params_base.speculative.cparams_dft = common_context_params_to_llama(params_dft);
         }
 

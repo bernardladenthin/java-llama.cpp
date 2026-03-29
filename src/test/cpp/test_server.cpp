@@ -14,6 +14,8 @@
 //   - server_task_result_embd::to_json_*  (oaicompat vs non-oaicompat shapes)
 //   - format_error_response  (all 7 error types → correct HTTP code + type string)
 //   - server_task_type_need_embd / need_logits  (routing helpers)
+//   - stop_type_to_str  (enum → string mapping for all stop types)
+//   - oaicompat_finish_reason  (extracted helper: stop_type + tool_calls → OAI finish_reason)
 
 #include <gtest/gtest.h>
 
@@ -647,4 +649,84 @@ TEST(IsVocabOnly, OnlyCtxSet_False) {
     sc.ctx = reinterpret_cast<llama_context *>(static_cast<uintptr_t>(1));
     EXPECT_FALSE(sc.is_vocab_only());
     sc.ctx = nullptr;
+}
+
+// ============================================================
+// stop_type_to_str
+//   Converts internal stop_type enum to a human-readable string
+//   used in non-OAI-compat JSON responses.
+// ============================================================
+
+TEST(StopTypeToStr, EOS) {
+    EXPECT_EQ(stop_type_to_str(STOP_TYPE_EOS), "eos");
+}
+
+TEST(StopTypeToStr, Word) {
+    EXPECT_EQ(stop_type_to_str(STOP_TYPE_WORD), "word");
+}
+
+TEST(StopTypeToStr, Limit) {
+    EXPECT_EQ(stop_type_to_str(STOP_TYPE_LIMIT), "limit");
+}
+
+TEST(StopTypeToStr, None) {
+    EXPECT_EQ(stop_type_to_str(STOP_TYPE_NONE), "none");
+}
+
+TEST(StopTypeToStr, UnknownValue_FallsBackToNone) {
+    // Cast an out-of-range value — must hit the default branch
+    EXPECT_EQ(stop_type_to_str(static_cast<stop_type>(999)), "none");
+}
+
+// ============================================================
+// oaicompat_finish_reason
+//   Extracted helper that computes the OAI-compatible
+//   "finish_reason" string from stop_type + tool-call presence.
+//
+//   Rules:
+//     EOS  or WORD  →  "stop"  (no tool calls)
+//     EOS  or WORD  →  "tool_calls"  (has tool calls)
+//     anything else →  "length"
+// ============================================================
+
+TEST(OaicompatFinishReason, EOS_NoToolCalls_Stop) {
+    EXPECT_EQ(oaicompat_finish_reason(STOP_TYPE_EOS, false), "stop");
+}
+
+TEST(OaicompatFinishReason, Word_NoToolCalls_Stop) {
+    EXPECT_EQ(oaicompat_finish_reason(STOP_TYPE_WORD, false), "stop");
+}
+
+TEST(OaicompatFinishReason, EOS_WithToolCalls_ToolCalls) {
+    EXPECT_EQ(oaicompat_finish_reason(STOP_TYPE_EOS, true), "tool_calls");
+}
+
+TEST(OaicompatFinishReason, Word_WithToolCalls_ToolCalls) {
+    EXPECT_EQ(oaicompat_finish_reason(STOP_TYPE_WORD, true), "tool_calls");
+}
+
+TEST(OaicompatFinishReason, Limit_NoToolCalls_Length) {
+    EXPECT_EQ(oaicompat_finish_reason(STOP_TYPE_LIMIT, false), "length");
+}
+
+TEST(OaicompatFinishReason, Limit_WithToolCalls_Length) {
+    // Even if tool calls exist, LIMIT means the model ran out of tokens
+    EXPECT_EQ(oaicompat_finish_reason(STOP_TYPE_LIMIT, true), "length");
+}
+
+TEST(OaicompatFinishReason, None_NoToolCalls_Length) {
+    EXPECT_EQ(oaicompat_finish_reason(STOP_TYPE_NONE, false), "length");
+}
+
+TEST(OaicompatFinishReason, None_WithToolCalls_Length) {
+    EXPECT_EQ(oaicompat_finish_reason(STOP_TYPE_NONE, true), "length");
+}
+
+TEST(OaicompatFinishReason, DefaultHasToolCalls_IsFalse) {
+    // The default parameter (has_tool_calls = false) should produce "stop"
+    // for EOS — used by the completions endpoint which has no tool calls
+    EXPECT_EQ(oaicompat_finish_reason(STOP_TYPE_EOS), "stop");
+    EXPECT_EQ(oaicompat_finish_reason(STOP_TYPE_WORD), "stop");
+    EXPECT_EQ(oaicompat_finish_reason(STOP_TYPE_LIMIT), "length");
+    EXPECT_EQ(oaicompat_finish_reason(STOP_TYPE_NONE), "length");
 }
