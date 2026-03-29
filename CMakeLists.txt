@@ -144,3 +144,40 @@ if (LLAMA_METAL AND NOT LLAMA_METAL_EMBED_LIBRARY)
     # copy ggml-common.h and ggml-metal.metal to bin directory
     configure_file(${llama.cpp_SOURCE_DIR}/ggml-metal.metal ${JLLAMA_DIR}/ggml-metal.metal COPYONLY)
 endif()
+
+#################### C++ unit tests ####################
+
+option(BUILD_TESTING "Build C++ unit tests for server.hpp / utils.hpp" OFF)
+
+if(BUILD_TESTING)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG        v1.15.2
+    )
+    # Prevent GTest from overriding our compiler/linker settings on Windows
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+
+    enable_testing()
+    include(GoogleTest)
+
+    add_executable(jllama_test
+        src/test/cpp/test_utils.cpp
+        src/test/cpp/test_server.cpp
+    )
+
+    target_include_directories(jllama_test PRIVATE
+        src/main/cpp
+        # mtmd.h is not always propagated transitively — add it explicitly
+        ${llama.cpp_SOURCE_DIR}/tools/mtmd
+    )
+    target_link_libraries(jllama_test PRIVATE common mtmd llama nlohmann_json GTest::gtest_main)
+    target_compile_features(jllama_test PRIVATE cxx_std_17)
+
+    target_compile_definitions(jllama_test PRIVATE
+        SERVER_VERBOSE=$<BOOL:${LLAMA_VERBOSE}>
+    )
+
+    gtest_discover_tests(jllama_test)
+endif()
