@@ -429,12 +429,12 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
 
     const auto model_meta = ctx_server->model_meta();
 
-    if (!params.speculative.mparams_dft.path.empty() || !params.speculative.mparams_dft.hf_repo.empty()) {
-        SRV_INF("loading draft model '%s'\n", params.speculative.mparams_dft.path.c_str());
+    if (!params.speculative.model.path.empty() || !params.speculative.model.hf_repo.empty()) {
+        SRV_INF("loading draft model '%s'\n", params.speculative.model.path.c_str());
         auto params_dft = params;
 
         params_dft.devices = params.speculative.devices;
-        params_dft.model = params.speculative.mparams_dft;
+        params_dft.model = params.speculative.model;
         params_dft.n_ctx = params.speculative.n_ctx == 0 ? params.n_ctx / params.n_parallel : params.speculative.n_ctx;
         params_dft.n_gpu_layers = params.speculative.n_gpu_layers;
         params_dft.n_parallel = 1;
@@ -444,7 +444,12 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
         llama_model *model_dft = llama_init_dft->model();
 
         if (model_dft == nullptr) {
-            SRV_ERR("failed to load draft model, '%s'\n", params.speculative.mparams_dft.path.c_str());
+            SRV_ERR("failed to load draft model, '%s'\n", params.speculative.model.path.c_str());
+        }
+
+        if (!common_speculative_are_compatible(ctx_server->ctx, llama_init_dft->context())) {
+            SRV_ERR("the draft model '%s' is not compatible with the target model '%s'\n",
+                    params.speculative.model.path.c_str(), params.model.path.c_str());
         }
 
         const int n_ctx_dft = llama_n_ctx(llama_init_dft->context());
@@ -455,6 +460,9 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
         // force F16 KV cache for the draft model for extra performance
         ctx_server->cparams_dft.type_k = GGML_TYPE_F16;
         ctx_server->cparams_dft.type_v = GGML_TYPE_F16;
+
+        // the context is not needed - we will create one for each slot
+        llama_init_dft->free_context();
     }
 
     // print sample chat example to make it clear which template is used
