@@ -959,6 +959,16 @@ public final class ModelParameters extends CliParameters {
         return this;
     }
 
+    /**
+     * Only load the vocabulary for tokenization, no weights (default: false).
+     * A model loaded with this option can only be used for {@link LlamaModel#encode(String)}
+     * and {@link LlamaModel#decode(int[])}. Inference, embedding, and reranking will not work.
+     */
+    public ModelParameters setVocabOnly() {
+        parameters.put("--vocab-only", null);
+        return this;
+    }
+
     public boolean isDefault(String key) {
         return !parameters.containsKey("--" + key);
     }

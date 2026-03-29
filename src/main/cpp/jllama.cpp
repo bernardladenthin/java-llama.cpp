@@ -382,18 +382,42 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
         return;
     }
 
-    const auto parsed_params = common_params_parse(argc, argv, params, LLAMA_EXAMPLE_SERVER);
+    // Strip --vocab-only before common_params_parse (not a common_params flag).
+    bool vocab_only = false;
+    std::vector<char *> filtered_argv;
+    for (jsize i = 0; i < argc; i++) {
+        if (strcmp(argv[i], "--vocab-only") == 0) {
+            vocab_only = true;
+        } else {
+            filtered_argv.push_back(argv[i]);
+        }
+    }
+
+    int filtered_argc = static_cast<int>(filtered_argv.size());
+    const auto parsed_params = common_params_parse(filtered_argc, filtered_argv.data(), params, LLAMA_EXAMPLE_SERVER);
     free_string_array(argv, argc);
     if (!parsed_params) {
         return;
     }
 
-    SRV_INF("loading model '%s'\n", params.model.path.c_str());
-
     common_init();
 
-    // struct that contains llama context and inference
     auto *ctx_server = new server_context();
+
+    // Vocab-only mode: load just the tokenizer, skip inference setup.
+    if (vocab_only) {
+        SRV_INF("loading tokenizer from '%s'\n", params.model.path.c_str());
+        if (!ctx_server->load_tokenizer(params)) {
+            delete ctx_server;
+            llama_backend_free();
+            env->ThrowNew(c_llama_error, "could not load tokenizer from given file path");
+            return;
+        }
+        env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(ctx_server));
+        return;
+    }
+
+    SRV_INF("loading model '%s'\n", params.model.path.c_str());
 
     llama_numa_init(params.numa);
 
@@ -417,6 +441,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
 
     // load the model
     if (!ctx_server->load_model(params)) {
+        delete ctx_server;
         llama_backend_free();
         env->ThrowNew(c_llama_error, "could not load model from given file path");
         return;
@@ -774,7 +799,16 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv 
     jsize length = env->GetArrayLength(java_tokens);
     jint *elements = env->GetIntArrayElements(java_tokens, nullptr);
     std::vector<llama_token> tokens(elements, elements + length);
-    std::string text = tokens_to_str(ctx_server->ctx, tokens.cbegin(), tokens.cend());
+
+    std::string text;
+    if (ctx_server->ctx != nullptr) {
+        text = tokens_to_str(ctx_server->ctx, tokens.cbegin(), tokens.cend());
+    } else {
+        // vocab-only mode: detokenize using vocabulary directly
+        for (const auto &tok : tokens) {
+            text += common_token_to_piece(ctx_server->vocab, tok);
+        }
+    }
 
     env->ReleaseIntArrayElements(java_tokens, elements, 0);
 
@@ -784,7 +818,10 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobject obj) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
     auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
-    ctx_server->queue_tasks.terminate();
+    if (ctx_server->ctx != nullptr) {
+        // Full model mode: stop the background task processing loop
+        ctx_server->queue_tasks.terminate();
+    }
     // delete ctx_server;
 }
 

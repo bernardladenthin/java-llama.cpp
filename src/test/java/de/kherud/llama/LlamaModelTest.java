@@ -217,6 +217,35 @@ public class LlamaModelTest {
 		Assert.assertEquals(" " +prompt, decoded);
 	}
 
+	@Test
+	public void testVocabOnly() {
+		try (LlamaModel vocabModel = new LlamaModel(
+				new ModelParameters()
+						.setModel(TestConstants.MODEL_PATH)
+						.setVocabOnly()
+		)) {
+			String prompt = "Hello, world!";
+			int[] encoded = vocabModel.encode(prompt);
+			Assert.assertTrue("Should produce at least one token", encoded.length > 0);
+			String decoded = vocabModel.decode(encoded);
+			Assert.assertEquals(" " + prompt, decoded);
+		}
+	}
+
+	@Test
+	public void testVocabOnlyMatchesFullModel() {
+		try (LlamaModel vocabModel = new LlamaModel(
+				new ModelParameters()
+						.setModel(TestConstants.MODEL_PATH)
+						.setVocabOnly()
+		)) {
+			String prompt = "def remove_non_ascii(s: str) -> str:";
+			int[] vocabTokens = vocabModel.encode(prompt);
+			int[] fullTokens = model.encode(prompt);
+			Assert.assertArrayEquals("Vocab-only tokenization should match full model", fullTokens, vocabTokens);
+		}
+	}
+
 	@Ignore
 	public void testLogText() {
 		List<LogMessage> messages = new ArrayList<>();
