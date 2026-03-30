@@ -154,53 +154,53 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '11'
+          java-version: '8'
       - name: Run tests
         run: mvn test
 
-#  test-macos:
-#    name: Test Mac
-#    needs: build-macos-native
-#    runs-on: macos-14
-#    steps:
-#      - uses: actions/checkout@v4
-#      - uses: actions/download-artifact@v4
-#        with:
-#          name: macos14-libraries
-#          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
-#      - name: Download model
-#        run: curl -L ${MODEL_URL} --create-dirs -o models/${MODEL_NAME}
-#      - uses: actions/setup-java@v4
-#        with:
-#          distribution: 'zulu'
-#          java-version: '11'
-#      - name: Run tests
-#        run: mvn test
+  test-macos:
+    name: Test Mac
+    needs: build-macos-native
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-14-libraries
+          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+      - name: Download model
+        run: curl -L ${MODEL_URL} --create-dirs -o models/${MODEL_NAME}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '8'
+      - name: Run tests
+        run: mvn test
 
 
-#  test-windows:
-#    name: Test Windows
-#    needs: build-win-native
-#    runs-on: windows-latest
-#    steps:
-#      - uses: actions/checkout@v4
-#      - uses: actions/download-artifact@v4
-#        with:
-#          name: Windows-x86_64-libraries
-#          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
-#      - name: Download model
-#        run: curl -L $env:MODEL_URL --create-dirs -o models/$env:MODEL_NAME
-#      - uses: actions/setup-java@v4
-#        with:
-#          distribution: 'zulu'
-#          java-version: '11'
-#      - name: Run tests
-#        run: mvn test
+  test-windows:
+    name: Test Windows
+    needs: build-win-native
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Windows-x86_64-libraries
+          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+      - name: Download model
+        run: curl -L $env:MODEL_URL --create-dirs -o models/$env:MODEL_NAME
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '8'
+      - name: Run tests
+        run: mvn test
 
 
   publish:
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_only == 'no' }}
-    needs: [ test-linux,build-macos-native,build-win-native ] #,build-linux-cuda
+    needs: [ test-linux,test-macos,test-windows ] #,build-linux-cuda
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
