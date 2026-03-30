@@ -52,13 +52,14 @@ jobs:
             os: Linux-Android,
             arch: aarch64,
             image: dockcross-android-arm64,
+            cmake: "-DANDROID_PLATFORM=android-24",
           }
     steps:
       - uses: actions/checkout@v4
       - name: Build libraries
         shell: bash
         run: |
-          .github/dockcross/${{ matrix.target.image }} .github/build.sh "-DOS_NAME=${{ matrix.target.os }} -DOS_ARCH=${{ matrix.target.arch }}"
+          .github/dockcross/${{ matrix.target.image }} .github/build.sh "${{ matrix.target.cmake }} -DOS_NAME=${{ matrix.target.os }} -DOS_ARCH=${{ matrix.target.arch }}"
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
