@@ -8,20 +8,25 @@ import de.kherud.llama.args.*;
 @SuppressWarnings("unused")
 public final class ModelParameters extends CliParameters {
 
-    private static final String FIT_ON = "on";
-    private static final String FIT_OFF = "off";
+    private static final String ARG_FIT = "--fit";
+    public static final String FIT_ON = "on";
+    public static final String FIT_OFF = "off";
     /** Mirrors the llama.cpp default: {@code fit_params = true}. */
     public static final String DEFAULT_FIT_VALUE = FIT_ON;
 
     public ModelParameters() {
-        parameters.put("--fit", DEFAULT_FIT_VALUE);
+        parameters.put(ARG_FIT, DEFAULT_FIT_VALUE);
+    }
+
+    static String fitValue(boolean fit) {
+        return fit ? FIT_ON : FIT_OFF;
     }
 
     /**
      * Whether to adjust unset arguments to fit in device memory (default: {@value #DEFAULT_FIT_VALUE}).
      */
     public ModelParameters setFit(boolean fit) {
-        parameters.put("--fit", fit ? FIT_ON : FIT_OFF);
+        parameters.put(ARG_FIT, fitValue(fit));
         return this;
     }
 

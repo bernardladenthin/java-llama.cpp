@@ -270,6 +270,16 @@ public class ModelParametersTest {
 	}
 
 	@Test
+	public void testFitValueTrueReturnsFitOn() {
+		assertEquals(ModelParameters.FIT_ON, ModelParameters.fitValue(true));
+	}
+
+	@Test
+	public void testFitValueFalseReturnsFitOff() {
+		assertEquals(ModelParameters.FIT_OFF, ModelParameters.fitValue(false));
+	}
+
+	@Test
 	public void testToStringDefaultContainsFit() {
 		ModelParameters p = new ModelParameters();
 		String s = p.toString();
