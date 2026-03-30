@@ -24,6 +24,12 @@ FetchContent_MakeAvailable(json)
 
 #################### llama.cpp ####################
 
+# GCC < 9 requires explicit linking of stdc++fs for std::filesystem (C++17).
+# This affects cross-compilation toolchains such as dockcross/linux-arm64-lts.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "9.0")
+    link_libraries(stdc++fs)
+endif()
+
 set(LLAMA_BUILD_COMMON ON)
 FetchContent_Declare(
 	llama.cpp
