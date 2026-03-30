@@ -50,6 +50,7 @@ public class LlamaModelTest {
 						.setModel(TestConstants.MODEL_PATH)
 						//.setModelUrl("https://huggingface.co/TheBloke/CodeLlama-7B-GGUF/resolve/main/codellama-7b.Q2_K.gguf")
 						.setGpuLayers(gpuLayers)
+						.setFit(false)
 						.enableEmbedding().enableLogTimestamps().enableLogPrefix()
 		);
 	}
