@@ -589,8 +589,28 @@ public class LlamaModelTest {
 				decoded.contains("na") && decoded.contains("sum"));
 	}
 
+	/**
+	 * Returns true if the file at {@code path} exists and begins with the 4-byte GGUF magic
+	 * (0x47 0x47 0x55 0x46 = "GGUF"), distinguishing a properly downloaded model from a
+	 * truncated file or an HTML error page saved by {@code curl} without {@code --fail}.
+	 */
+	private static boolean isValidGGUF(String path) {
+		File f = new File(path);
+		if (!f.exists() || f.length() < 4) return false;
+		try (FileInputStream fis = new FileInputStream(f)) {
+			byte[] magic = new byte[4];
+			if (fis.read(magic) < 4) return false;
+			return magic[0] == 0x47 && magic[1] == 0x47 && magic[2] == 0x55 && magic[3] == 0x46;
+		} catch (IOException e) {
+			return false;
+		}
+	}
+
 	@Test
 	public void testSpeculativeDecoding() {
+		Assume.assumeTrue(
+				"Draft model not available or not a valid GGUF; skipping speculative decoding test",
+				isValidGGUF(TestConstants.DRAFT_MODEL_PATH));
 		int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
 		try (LlamaModel specModel = new LlamaModel(
 				new ModelParameters()
