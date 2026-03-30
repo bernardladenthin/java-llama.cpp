@@ -8,25 +8,20 @@ import de.kherud.llama.args.*;
 @SuppressWarnings("unused")
 public final class ModelParameters extends CliParameters {
 
-    /**
-     * Creates a new {@code ModelParameters} with safe defaults for the Java binding.
-     *
-     * <p>llama.cpp &ge; b8579 sets {@code fit_params = true} by default, which probes device
-     * memory before loading the model. On CPU-only machines (no dedicated GPU memory) this
-     * probe crashes with SIGABRT. Since fitting only helps when offloading layers to a GPU,
-     * the Java binding disables it by default. Call {@link #setFit(boolean) setFit(true)} to
-     * re-enable it when running with a GPU backend.</p>
-     */
+    private static final String FIT_ON = "on";
+    private static final String FIT_OFF = "off";
+    /** Mirrors the llama.cpp default: {@code fit_params = true}. */
+    public static final String DEFAULT_FIT_VALUE = FIT_ON;
+
     public ModelParameters() {
-        parameters.put("--fit", "off");
+        parameters.put("--fit", DEFAULT_FIT_VALUE);
     }
 
     /**
-     * Whether to adjust unset arguments to fit in device memory (default: false).
-     * Enable only when using a GPU backend; on CPU-only builds this can crash (SIGABRT).
+     * Whether to adjust unset arguments to fit in device memory (default: {@value #DEFAULT_FIT_VALUE}).
      */
     public ModelParameters setFit(boolean fit) {
-        parameters.put("--fit", fit ? "on" : "off");
+        parameters.put("--fit", fit ? FIT_ON : FIT_OFF);
         return this;
     }
 

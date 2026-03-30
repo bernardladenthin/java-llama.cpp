@@ -270,12 +270,11 @@ public class ModelParametersTest {
 	}
 
 	@Test
-	public void testToStringDefaultContainsFitOff() {
-		// ModelParameters() sets --fit off by default to prevent SIGABRT on CPU-only builds
+	public void testToStringDefaultContainsFit() {
 		ModelParameters p = new ModelParameters();
 		String s = p.toString();
 		assertTrue(s.contains("--fit"));
-		assertTrue(s.contains("off"));
+		assertTrue(s.contains(ModelParameters.DEFAULT_FIT_VALUE));
 	}
 
 	// -------------------------------------------------------------------------
@@ -283,20 +282,20 @@ public class ModelParametersTest {
 	// -------------------------------------------------------------------------
 
 	@Test
-	public void testToArrayDefaultParametersHasFitOff() {
-		// ModelParameters() sets --fit off by default; toArray() = ["", "--fit", "off"]
+	public void testToArrayDefaultParametersHasFit() {
+		// toArray() = ["", "--fit", DEFAULT_FIT_VALUE]
 		ModelParameters p = new ModelParameters();
 		String[] arr = p.toArray();
 		assertEquals(3, arr.length);
 		assertEquals("", arr[0]);
 		List<String> list = Arrays.asList(arr);
 		assertTrue(list.contains("--fit"));
-		assertTrue(list.contains("off"));
+		assertTrue(list.contains(ModelParameters.DEFAULT_FIT_VALUE));
 	}
 
 	@Test
 	public void testToArrayScalarParameterHasFiveElements() {
-		// argv[0]="" + "--fit" + "off" (default) + "--threads" + "4" = 5
+		// argv[0]="" + "--fit" + DEFAULT_FIT_VALUE + "--threads" + "4" = 5
 		ModelParameters p = new ModelParameters().setThreads(4);
 		String[] arr = p.toArray();
 		assertEquals(5, arr.length);
@@ -305,12 +304,12 @@ public class ModelParametersTest {
 		assertTrue(list.contains("--threads"));
 		assertTrue(list.contains("4"));
 		assertTrue(list.contains("--fit"));
-		assertTrue(list.contains("off"));
+		assertTrue(list.contains(ModelParameters.DEFAULT_FIT_VALUE));
 	}
 
 	@Test
 	public void testToArrayFlagOnlyHasFourElements() {
-		// argv[0]="" + "--fit" + "off" (default) + "--embedding" (no value) = 4
+		// argv[0]="" + "--fit" + DEFAULT_FIT_VALUE + "--embedding" (no value) = 4
 		ModelParameters p = new ModelParameters().enableEmbedding();
 		String[] arr = p.toArray();
 		assertEquals(4, arr.length);
@@ -318,7 +317,7 @@ public class ModelParametersTest {
 		List<String> list = Arrays.asList(arr);
 		assertTrue(list.contains("--embedding"));
 		assertTrue(list.contains("--fit"));
-		assertTrue(list.contains("off"));
+		assertTrue(list.contains(ModelParameters.DEFAULT_FIT_VALUE));
 	}
 
 	@Test
@@ -327,7 +326,7 @@ public class ModelParametersTest {
 				.setThreads(4)
 				.enableEmbedding();
 		String[] arr = p.toArray();
-		// 1 (argv[0]) + 2 (--fit off, default) + 2 (--threads 4) + 1 (--embedding) = 6
+		// 1 (argv[0]) + 2 (--fit DEFAULT_FIT_VALUE) + 2 (--threads 4) + 1 (--embedding) = 6
 		assertEquals(6, arr.length);
 		assertEquals("", arr[0]);
 		List<String> list = Arrays.asList(arr);
@@ -335,7 +334,7 @@ public class ModelParametersTest {
 		assertTrue(list.contains("4"));
 		assertTrue(list.contains("--embedding"));
 		assertTrue(list.contains("--fit"));
-		assertTrue(list.contains("off"));
+		assertTrue(list.contains(ModelParameters.DEFAULT_FIT_VALUE));
 	}
 
 	// -------------------------------------------------------------------------
