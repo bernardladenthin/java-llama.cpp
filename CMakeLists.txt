@@ -7,8 +7,14 @@ include(FetchContent)
 set(BUILD_SHARED_LIBS ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(BUILD_SHARED_LIBS OFF)
-set(LLAMA_BUILD_TOOLS ON)
-set(LLAMA_BUILD_SERVER ON)
+# Android NDK only declares posix_spawn_file_actions_t as a type alias but
+# does not implement the posix_spawn_* functions; subprocess.h (pulled in by
+# server-tools.cpp) uses them and fails to compile.  The server tools are not
+# needed by the jllama JNI library, so skip them on Android.
+if(NOT ANDROID_ABI)
+    set(LLAMA_BUILD_TOOLS ON)
+    set(LLAMA_BUILD_SERVER ON)
+endif()
 set(LLAMA_CURL OFF)
 
 option(LLAMA_VERBOSE	"llama: verbose output"		OFF)
