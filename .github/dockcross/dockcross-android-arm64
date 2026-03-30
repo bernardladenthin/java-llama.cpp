@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-DEFAULT_DOCKCROSS_IMAGE=dockcross/android-arm64:20240418-88c04a4
+DEFAULT_DOCKCROSS_IMAGE=dockcross/android-arm64:20260312-9b3357c
 
 #------------------------------------------------------------------------------
 # Helpers

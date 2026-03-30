@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-DEFAULT_DOCKCROSS_IMAGE=dockcross/linux-arm64-lts:20230601-c2f5366
+DEFAULT_DOCKCROSS_IMAGE=dockcross/linux-arm64-lts:20260313-9b3357c
 
 #------------------------------------------------------------------------------
 # Helpers
