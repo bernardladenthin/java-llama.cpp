@@ -23,7 +23,7 @@ jobs:
           java-version: "11"
       - name: Build libraries
         run: |
-          mvn compile
+          mvn -q compile
           .github/build.sh -DLLAMA_VERBOSE=ON -DBUILD_TESTING=ON
       - name: Run C++ unit tests
         run: ctest --test-dir build --output-on-failure
@@ -36,7 +36,7 @@ jobs:
       - name: List files in models directory
         run: ls -l models/
       - name: Run Java tests
-        run: mvn test
+        run: mvn -q test
       - if: failure()
         uses: actions/upload-artifact@v6
         with:
@@ -71,7 +71,7 @@ jobs:
           java-version: "11"
       - name: Build libraries
         run: |
-          mvn compile
+          mvn -q compile
           .github/build.sh ${{ matrix.target.cmake }} -DBUILD_TESTING=ON
       - name: Run C++ unit tests
         run: ctest --test-dir build --output-on-failure
@@ -84,7 +84,7 @@ jobs:
       - name: List files in models directory
         run: ls -l models/
       - name: Run Java tests
-        run: mvn test ${{ matrix.target.mvn_test_args }}
+        run: mvn -q test ${{ matrix.target.mvn_test_args }}
       - if: failure()
         uses: actions/upload-artifact@v6
         with:
@@ -103,7 +103,7 @@ jobs:
           java-version: '11'
       - name: Build libraries
         run: |
-          mvn compile
+          mvn -q compile
           .github\build.bat -DLLAMA_VERBOSE=ON -DBUILD_TESTING=ON
       - name: Run C++ unit tests
         run: ctest --test-dir build --output-on-failure
@@ -116,7 +116,7 @@ jobs:
       - name: List files in models directory
         run: ls -l models/
       - name: Run Java tests
-        run: mvn test
+        run: mvn -q test
       - if: failure()
         uses: actions/upload-artifact@v6
         with:
