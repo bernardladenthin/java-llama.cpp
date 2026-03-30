@@ -30,6 +30,14 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_L
     link_libraries(stdc++fs)
 endif()
 
+# Android standalone toolchains default to API level 21, but cpp-httplib uses
+# getifaddrs/freeifaddrs which are only declared in <ifaddrs.h> when
+# __ANDROID_API__ >= 24. NDK unified sysroots (r14b+) include the symbol in
+# libc regardless of level; this exposes the declaration for all targets.
+if(ANDROID_ABI)
+    add_compile_definitions(__ANDROID_API__=24)
+endif()
+
 set(LLAMA_BUILD_COMMON ON)
 FetchContent_Declare(
 	llama.cpp
