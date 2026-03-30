@@ -32,6 +32,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama.cpp)
 
+# Workaround: cpp-httplib gates getifaddrs/freeifaddrs behind `#ifndef ANDROID`,
+# but the Android NDK only defines `__ANDROID__` (not `ANDROID`), so `USE_IF2IP`
+# gets enabled even on Android builds, causing link errors on API < 24.
+# Defining `ANDROID` for this target suppresses `USE_IF2IP` correctly.
+if(ANDROID AND TARGET cpp-httplib)
+    target_compile_definitions(cpp-httplib PRIVATE ANDROID)
+endif()
+
 # Workaround: server-common.h (included transitively by llama-cli) includes
 # mtmd.h, but the mtmd include path is not propagated to llama-cli consumers.
 if(TARGET llama-cli)
