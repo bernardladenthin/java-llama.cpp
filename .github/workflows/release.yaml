@@ -154,8 +154,13 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '11'
-      - name: Run tests
-        run: mvn test
+      - name: Run tests and package
+        run: mvn package
+      - name: Upload JAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-jar
+          path: target/llama-*.jar
 
 #  test-macos:
 #    name: Test Mac
