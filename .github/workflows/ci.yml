@@ -33,7 +33,6 @@ jobs:
         run: curl -L --fail ${RERANKING_MODEL_URL} --create-dirs -o models/${RERANKING_MODEL_NAME}
       - name: Download draft model
         run: curl -L --fail ${DRAFT_MODEL_URL} --create-dirs -o models/${DRAFT_MODEL_NAME}
-        continue-on-error: true
       - name: List files in models directory
         run: ls -l models/
       - name: Run Java tests
@@ -82,7 +81,6 @@ jobs:
         run: curl -L --fail ${RERANKING_MODEL_URL} --create-dirs -o models/${RERANKING_MODEL_NAME}
       - name: Download draft model
         run: curl -L --fail ${DRAFT_MODEL_URL} --create-dirs -o models/${DRAFT_MODEL_NAME}
-        continue-on-error: true
       - name: List files in models directory
         run: ls -l models/
       - name: Run Java tests
@@ -115,7 +113,6 @@ jobs:
         run: curl -L --fail $env:RERANKING_MODEL_URL --create-dirs -o models/$env:RERANKING_MODEL_NAME
       - name: Download draft model
         run: curl -L --fail $env:DRAFT_MODEL_URL --create-dirs -o models/$env:DRAFT_MODEL_NAME
-        continue-on-error: true
       - name: List files in models directory
         run: ls -l models/
       - name: Run Java tests
