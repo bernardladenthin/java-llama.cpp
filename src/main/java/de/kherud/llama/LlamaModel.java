@@ -1,8 +1,6 @@
 package de.kherud.llama;
 
 import de.kherud.llama.args.LogFormat;
-import org.jetbrains.annotations.Nullable;
-
 import java.lang.annotation.Native;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -113,7 +111,7 @@ public class LlamaModel implements AutoCloseable {
 	 * @param format the log format to use
 	 * @param callback a method to call for log messages
 	 */
-	public static native void setLogger(LogFormat format, @Nullable BiConsumer<LogLevel, String> callback);
+	public static native void setLogger(LogFormat format, BiConsumer<LogLevel, String> callback);
 
 	@Override
 	public void close() {
