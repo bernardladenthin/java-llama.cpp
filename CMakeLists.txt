@@ -141,7 +141,7 @@ endif()
 add_library(jllama SHARED src/main/cpp/jllama.cpp src/main/cpp/server.hpp src/main/cpp/utils.hpp)
 
 set_target_properties(jllama PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(jllama PRIVATE src/main/cpp ${JNI_INCLUDE_DIRS})
+target_include_directories(jllama PRIVATE src/main/cpp ${JNI_INCLUDE_DIRS} ${llama.cpp_SOURCE_DIR}/tools/mtmd)
 target_link_libraries(jllama PRIVATE common mtmd llama nlohmann_json)
 target_compile_features(jllama PRIVATE cxx_std_11)
 
