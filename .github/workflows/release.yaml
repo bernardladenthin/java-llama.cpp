@@ -168,8 +168,10 @@ jobs:
         with:
           name: macos-14-libraries
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
-      - name: Download model
+      - name: Download text generation model
         run: curl -L ${MODEL_URL} --create-dirs -o models/${MODEL_NAME}
+      - name: Download reranking model
+        run: curl -L ${RERANKING_MODEL_URL} --create-dirs -o models/${RERANKING_MODEL_NAME}
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
@@ -188,8 +190,10 @@ jobs:
         with:
           name: Windows-x86_64-libraries
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
-      - name: Download model
+      - name: Download text generation model
         run: curl -L $env:MODEL_URL --create-dirs -o models/$env:MODEL_NAME
+      - name: Download reranking model
+        run: curl -L $env:RERANKING_MODEL_URL --create-dirs -o models/$env:RERANKING_MODEL_NAME
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
