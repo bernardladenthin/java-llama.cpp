@@ -11,9 +11,10 @@ set(BUILD_SHARED_LIBS OFF)
 # does not implement the posix_spawn_* functions; subprocess.h (pulled in by
 # server-tools.cpp) uses them and fails to compile.  The server tools are not
 # needed by the jllama JNI library, so skip them on Android.
-if(NOT ANDROID_ABI)
-    set(LLAMA_BUILD_TOOLS ON)
-    set(LLAMA_BUILD_SERVER ON)
+# Must use CACHE BOOL FORCE to override llama.cpp's own option() defaults.
+if(ANDROID_ABI)
+    set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 endif()
 set(LLAMA_CURL OFF)
 
