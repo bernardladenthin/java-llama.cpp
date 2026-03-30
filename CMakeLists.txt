@@ -53,6 +53,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama.cpp)
 
+# mtmd lives in tools/mtmd, which is only built when LLAMA_BUILD_TOOLS=ON.
+# LLAMA_BUILD_TOOLS defaults to LLAMA_STANDALONE, which is OFF when llama.cpp
+# is consumed via FetchContent.  Build mtmd explicitly so the target exists.
+if(NOT TARGET mtmd)
+    add_subdirectory(${llama.cpp_SOURCE_DIR}/tools/mtmd ${llama.cpp_BINARY_DIR}/tools/mtmd)
+endif()
+
 # Workaround: server-common.h (included transitively by llama-cli) includes
 # mtmd.h, but the mtmd include path is not propagated to llama-cli consumers.
 if(TARGET llama-cli)
