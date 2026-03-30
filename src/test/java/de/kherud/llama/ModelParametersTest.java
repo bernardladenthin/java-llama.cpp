@@ -270,9 +270,12 @@ public class ModelParametersTest {
 	}
 
 	@Test
-	public void testToStringEmpty() {
+	public void testToStringDefaultContainsFitOff() {
+		// ModelParameters() sets --fit off by default to prevent SIGABRT on CPU-only builds
 		ModelParameters p = new ModelParameters();
-		assertEquals("", p.toString().trim());
+		String s = p.toString();
+		assertTrue(s.contains("--fit"));
+		assertTrue(s.contains("off"));
 	}
 
 	// -------------------------------------------------------------------------
@@ -280,34 +283,42 @@ public class ModelParametersTest {
 	// -------------------------------------------------------------------------
 
 	@Test
-	public void testToArrayEmptyParametersHasOneElement() {
-		// Even with no params, toArray() always adds the leading empty argv[0]
+	public void testToArrayDefaultParametersHasFitOff() {
+		// ModelParameters() sets --fit off by default; toArray() = ["", "--fit", "off"]
 		ModelParameters p = new ModelParameters();
-		String[] arr = p.toArray();
-		assertEquals(1, arr.length);
-		assertEquals("", arr[0]);
-	}
-
-	@Test
-	public void testToArrayScalarParameterHasThreeElements() {
-		// argv[0]="" + "--threads" + "4"
-		ModelParameters p = new ModelParameters().setThreads(4);
 		String[] arr = p.toArray();
 		assertEquals(3, arr.length);
 		assertEquals("", arr[0]);
 		List<String> list = Arrays.asList(arr);
-		assertTrue(list.contains("--threads"));
-		assertTrue(list.contains("4"));
+		assertTrue(list.contains("--fit"));
+		assertTrue(list.contains("off"));
 	}
 
 	@Test
-	public void testToArrayFlagOnlyHasTwoElements() {
-		// argv[0]="" + "--embedding" (no value)
+	public void testToArrayScalarParameterHasFiveElements() {
+		// argv[0]="" + "--fit" + "off" (default) + "--threads" + "4" = 5
+		ModelParameters p = new ModelParameters().setThreads(4);
+		String[] arr = p.toArray();
+		assertEquals(5, arr.length);
+		assertEquals("", arr[0]);
+		List<String> list = Arrays.asList(arr);
+		assertTrue(list.contains("--threads"));
+		assertTrue(list.contains("4"));
+		assertTrue(list.contains("--fit"));
+		assertTrue(list.contains("off"));
+	}
+
+	@Test
+	public void testToArrayFlagOnlyHasFourElements() {
+		// argv[0]="" + "--fit" + "off" (default) + "--embedding" (no value) = 4
 		ModelParameters p = new ModelParameters().enableEmbedding();
 		String[] arr = p.toArray();
-		assertEquals(2, arr.length);
+		assertEquals(4, arr.length);
 		assertEquals("", arr[0]);
-		assertEquals("--embedding", arr[1]);
+		List<String> list = Arrays.asList(arr);
+		assertTrue(list.contains("--embedding"));
+		assertTrue(list.contains("--fit"));
+		assertTrue(list.contains("off"));
 	}
 
 	@Test
@@ -316,13 +327,15 @@ public class ModelParametersTest {
 				.setThreads(4)
 				.enableEmbedding();
 		String[] arr = p.toArray();
-		// 1 (argv[0]) + 2 (--threads 4) + 1 (--embedding) = 4
-		assertEquals(4, arr.length);
+		// 1 (argv[0]) + 2 (--fit off, default) + 2 (--threads 4) + 1 (--embedding) = 6
+		assertEquals(6, arr.length);
 		assertEquals("", arr[0]);
 		List<String> list = Arrays.asList(arr);
 		assertTrue(list.contains("--threads"));
 		assertTrue(list.contains("4"));
 		assertTrue(list.contains("--embedding"));
+		assertTrue(list.contains("--fit"));
+		assertTrue(list.contains("off"));
 	}
 
 	// -------------------------------------------------------------------------
