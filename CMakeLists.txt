@@ -57,6 +57,13 @@ FetchContent_MakeAvailable(llama.cpp)
 # LLAMA_BUILD_TOOLS defaults to LLAMA_STANDALONE, which is OFF when llama.cpp
 # is consumed via FetchContent.  Build mtmd explicitly so the target exists.
 if(NOT TARGET mtmd)
+    # LLAMA_INSTALL_VERSION is set inside llama.cpp's directory scope and is not
+    # visible here.  tools/mtmd/CMakeLists.txt uses it in set_target_properties()
+    # as a VERSION value; if the variable is empty the token list after PROPERTIES
+    # becomes odd-length and CMake aborts with "incorrect number of arguments".
+    if(NOT DEFINED LLAMA_INSTALL_VERSION)
+        set(LLAMA_INSTALL_VERSION "0")
+    endif()
     add_subdirectory(${llama.cpp_SOURCE_DIR}/tools/mtmd ${llama.cpp_BINARY_DIR}/tools/mtmd)
 endif()
 
