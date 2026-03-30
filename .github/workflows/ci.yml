@@ -35,6 +35,8 @@ jobs:
         run: curl -L --fail ${DRAFT_MODEL_URL} --create-dirs -o models/${DRAFT_MODEL_NAME}
       - name: List files in models directory
         run: ls -l models/
+      - name: Validate model files
+        run: bash .github/validate-models.sh
       - name: Run Java tests
         run: mvn -q test
       - if: failure()
@@ -83,6 +85,8 @@ jobs:
         run: curl -L --fail ${DRAFT_MODEL_URL} --create-dirs -o models/${DRAFT_MODEL_NAME}
       - name: List files in models directory
         run: ls -l models/
+      - name: Validate model files
+        run: bash .github/validate-models.sh
       - name: Run Java tests
         run: mvn -q test ${{ matrix.target.mvn_test_args }}
       - if: failure()
@@ -115,6 +119,8 @@ jobs:
         run: curl -L --fail $env:DRAFT_MODEL_URL --create-dirs -o models/$env:DRAFT_MODEL_NAME
       - name: List files in models directory
         run: ls -l models/
+      - name: Validate model files
+        run: .github\validate-models.bat
       - name: Run Java tests
         run: mvn -q test
       - if: failure()
