@@ -201,9 +201,36 @@ jobs:
         run: mvn --no-transfer-progress test
 
 
+  package:
+    name: Package JARs
+    needs: [ test-linux,test-macos,test-windows,build-linux-cuda ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "*-libraries"
+          merge-multiple: true
+          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-libraries-cuda
+          path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '8'
+      - name: Build JARs
+        run: mvn --batch-mode --no-transfer-progress -P release -Dmaven.test.skip=true -Dgpg.skip=true package
+      - name: Upload JARs
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-jars
+          path: target/*.jar
+
   publish:
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_only == 'no' }}
-    needs: [ test-linux,test-macos,test-windows,build-linux-cuda ]
+    needs: [ package ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
