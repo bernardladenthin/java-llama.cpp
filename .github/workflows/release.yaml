@@ -15,21 +15,20 @@ env:
   RERANKING_MODEL_NAME: "jina-reranker-v1-tiny-en-Q4_0.gguf"
 jobs:
 
-# todo: doesn't work with the newest llama.cpp version
-#  build-linux-cuda:
-#    name: Build Linux x86-64 CUDA12
-#    runs-on: ubuntu-latest
-#    steps:
-#      - uses: actions/checkout@v4
-#      - name: Build libraries
-#        shell: bash
-#        run: |
-#          .github/dockcross/dockcross-manylinux_2_28-x64 .github/build_cuda_linux.sh "-DOS_NAME=Linux -DOS_ARCH=x86_64"
-#      - name: Upload artifacts
-#        uses: actions/upload-artifact@v4
-#        with:
-#          name: linux-libraries-cuda
-#          path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
+  build-linux-cuda:
+    name: Build Linux x86-64 CUDA12
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build libraries
+        shell: bash
+        run: |
+          .github/dockcross/dockcross-manylinux_2_28-x64 .github/build_cuda_linux.sh "-DOS_NAME=Linux -DOS_ARCH=x86_64"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-libraries-cuda
+          path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
 
   build-linux-docker:
     name: Build ${{ matrix.target.os }}-${{ matrix.target.arch }}
@@ -204,7 +203,7 @@ jobs:
 
   publish:
     if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_only == 'no' }}
-    needs: [ test-linux,test-macos,test-windows ] #,build-linux-cuda
+    needs: [ test-linux,test-macos,test-windows,build-linux-cuda ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -213,10 +212,10 @@ jobs:
           pattern: "*-libraries"
           merge-multiple: true
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
-#      - uses: actions/download-artifact@v4
-#        with:
-#          name: linux-libraries-cuda
-#          path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-libraries-cuda
+          path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
       - name: Set up Maven Central Repository
         uses: actions/setup-java@v3
         with:
