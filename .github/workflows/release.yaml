@@ -16,7 +16,7 @@ env:
 jobs:
 
   build-linux-cuda:
-    name: Build Linux x86-64 CUDA12
+    name: Build Linux x86-64 CUDA13
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
