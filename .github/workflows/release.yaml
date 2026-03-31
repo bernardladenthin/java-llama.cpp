@@ -219,7 +219,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '8'
       - name: Build JARs
         run: mvn --batch-mode --no-transfer-progress -P release -Dmaven.test.skip=true -Dgpg.skip=true package
       - name: Upload JARs
