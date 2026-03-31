@@ -198,7 +198,7 @@
 									<goal>jar</goal>
 								</goals>
 								<configuration>
-									<classifier>cuda12-linux-x86-64</classifier>
+									<classifier>cuda13-linux-x86-64</classifier>
 									<classesDirectory>
 										${project.build.outputDirectory}_cuda</classesDirectory>
 								</configuration>

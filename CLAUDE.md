@@ -8,6 +8,36 @@ Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, p
 
 Current llama.cpp pinned version: **b8579**
 
+## Upgrading CUDA Version
+
+Current CUDA version: **13.2**
+
+To change the CUDA version, update the following **three** places:
+
+1. **`.github/build_cuda_linux.sh`** — Line 10: `sudo dnf install -y cuda-toolkit-13-2`
+2. **`.github/build_cuda_linux.sh`** — Line 12: `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.2/bin/nvcc`
+3. **`pom.xml`** — The `<classifier>` tag in the `cuda` jar execution: `cuda13-linux-x86-64`
+
+Also update the header comment in `build_cuda_linux.sh` and the job name in `.github/workflows/release.yaml` for clarity.
+
+Available CUDA versions for RHEL8/Manylinux_2_28 can be browsed at:
+```
+https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/
+```
+
+**Note:** Each CUDA version supports only certain GCC versions. If the dockcross container uses a newer GCC than CUDA supports, the build will fail with `unsupported GNU version`. Check NVIDIA's compatibility table before downgrading CUDA.
+
+Example: To upgrade from 13.2 to a hypothetical 13.3:
+```bash
+# Edit .github/build_cuda_linux.sh:
+#   line 10: cuda-toolkit-13-2 -> cuda-toolkit-13-3
+#   line 12: /usr/local/cuda-13.2/bin/nvcc -> /usr/local/cuda-13.3/bin/nvcc
+# Edit pom.xml classifier: cuda13-linux-x86-64 (major version only, no need to change for minor bumps)
+# Edit CLAUDE.md line: Current CUDA version: **13.2** -> **13.3**
+git add .github/build_cuda_linux.sh pom.xml CLAUDE.md
+git commit -m "Upgrade CUDA from 13.2 to 13.3"
+```
+
 ## Upgrading/Downgrading llama.cpp Version
 
 To change the llama.cpp version, update the following **three** files:
