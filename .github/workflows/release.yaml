@@ -161,6 +161,8 @@ jobs:
       - name: Memory after tests
         if: always()
         run: free -h
+
+  test-macos:
     name: Test Mac
     needs: build-macos-native
     runs-on: macos-14
