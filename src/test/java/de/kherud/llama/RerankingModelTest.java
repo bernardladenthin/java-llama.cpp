@@ -24,7 +24,8 @@ public class RerankingModelTest {
 		int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
 		model = new LlamaModel(
 				new ModelParameters().setCtxSize(128).setModel("models/jina-reranker-v1-tiny-en-Q4_0.gguf")
-						.setGpuLayers(gpuLayers).enableReranking().enableLogTimestamps().enableLogPrefix());
+						.setGpuLayers(gpuLayers).enableReranking().enableLogTimestamps().enableLogPrefix()
+						.skipWarmup());
 	}
 
 	@AfterClass
