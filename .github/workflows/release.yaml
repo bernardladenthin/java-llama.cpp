@@ -87,7 +87,7 @@ jobs:
   # ---------------------------------------------------------------------------
 
   build-macos-arm64-no-metal:
-    name: Build macOS arm64 (no Metal)
+    name: Build and Test macOS arm64 (no Metal)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
@@ -109,7 +109,7 @@ jobs:
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
 
   build-macos-arm64-metal:
-    name: Build macOS arm64 (Metal)
+    name: Build and Test macOS arm64 (Metal)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v6
@@ -131,7 +131,7 @@ jobs:
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
 
   build-windows-x86_64:
-    name: Build Windows x86_64
+    name: Build and Test Windows x86_64
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
@@ -148,7 +148,7 @@ jobs:
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
 
   build-windows-x86:
-    name: Build Windows x86
+    name: Build and Test Windows x86
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
