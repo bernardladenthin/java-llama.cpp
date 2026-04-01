@@ -18,9 +18,15 @@ public final class LlamaIterator implements Iterator<LlamaOutput> {
     private boolean hasNext = true;
 
     LlamaIterator(LlamaModel model, InferenceParameters parameters) {
+        this(model, parameters, false);
+    }
+
+    LlamaIterator(LlamaModel model, InferenceParameters parameters, boolean chat) {
         this.model = model;
         parameters.setStream(true);
-        taskId = model.requestCompletion(parameters.toString());
+        taskId = chat
+                ? model.requestChatCompletion(parameters.toString())
+                : model.requestCompletion(parameters.toString());
     }
 
     @Override

@@ -489,6 +489,52 @@ public class LlamaModelTest {
 	}
 
 	@Test
+	public void testGenerateChat() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Write a single word."));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages)
+				.setNPredict(nPredict)
+				.setSeed(42)
+				.setTemperature(0.0f);
+
+		int generated = 0;
+		StringBuilder sb = new StringBuilder();
+		for (LlamaOutput output : model.generateChat(params)) {
+			sb.append(output.text);
+			generated++;
+		}
+		Assert.assertTrue("Expected at least one token from streaming chat", generated > 0);
+		Assert.assertTrue("Expected at most nPredict+1 tokens", generated <= nPredict + 1);
+		Assert.assertFalse("Streamed content should not be empty", sb.toString().isEmpty());
+	}
+
+	@Test
+	public void testGenerateChatCancel() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Count from 1 to 100."));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages)
+				.setNPredict(nPredict);
+
+		int generated = 0;
+		LlamaIterator iterator = model.generateChat(params).iterator();
+		while (iterator.hasNext()) {
+			iterator.next();
+			generated++;
+			if (generated == maxExpectedTokensOnCancel) {
+				iterator.cancel();
+			}
+		}
+		Assert.assertTrue("Expected at least " + minExpectedTokensOnCancel + " tokens, got " + generated,
+				generated >= minExpectedTokensOnCancel);
+		Assert.assertTrue("Expected at most " + maxExpectedTokensOnCancel + " tokens, got " + generated,
+				generated <= maxExpectedTokensOnCancel);
+	}
+
+	@Test
 	public void testChatCompleteMultiTurn() {
 		List<Pair<String, String>> messages = new ArrayList<>();
 		messages.add(new Pair<>("user", "What is 2+2?"));

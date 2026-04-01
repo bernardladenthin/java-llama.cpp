@@ -105,6 +105,13 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *
  */
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(JNIEnv *, jobject, jstring);
 
+/*
+ * Class:     de_kherud_llama_LlamaModel
+ * Method:    requestChatCompletion
+ * Signature: (Ljava/lang/String;)I
+ */
+JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNIEnv *, jobject, jstring);
+
 #ifdef __cplusplus
 }
 #endif

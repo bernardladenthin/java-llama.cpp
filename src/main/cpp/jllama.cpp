@@ -854,6 +854,71 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
     return env->NewStringUTF(response_str.c_str());
 }
 
+JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNIEnv *env, jobject obj,
+                                                                             jstring jparams) {
+    jlong server_handle = env->GetLongField(obj, f_model_pointer);
+    if (server_handle == 0) {
+        env->ThrowNew(c_llama_error, "Model is not loaded");
+        return 0;
+    }
+    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+
+    std::string c_params = parse_jstring(env, jparams);
+    json body = json::parse(c_params);
+
+    // Apply chat template via OAI-compatible parser
+    json data;
+    try {
+        std::vector<raw_buffer> files;
+        data = oaicompat_chat_params_parse(body, ctx_server->oai_parser_opt, files);
+    } catch (const std::exception &e) {
+        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
+        env->ThrowNew(c_llama_error, err.dump().c_str());
+        return 0;
+    }
+
+    auto completion_id = gen_chatcmplid();
+    std::vector<server_task> tasks;
+
+    try {
+        const auto &prompt = data.at("prompt");
+
+        std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, prompt, true, true);
+
+        tasks.reserve(tokenized_prompts.size());
+        for (size_t i = 0; i < tokenized_prompts.size(); i++) {
+            server_task task = server_task(SERVER_TASK_TYPE_COMPLETION);
+
+            task.id = ctx_server->queue_tasks.get_new_id();
+            task.index = i;
+
+            task.prompt_tokens = server_tokens(tokenized_prompts[i], false);
+            task.params = server_task::params_from_json_cmpl(ctx_server->ctx, ctx_server->params_base, data);
+            task.id_selected_slot = json_value(data, "id_slot", -1);
+
+            task.params.oaicompat = OAICOMPAT_TYPE_CHAT;
+            task.params.oaicompat_cmpl_id = completion_id;
+
+            tasks.push_back(std::move(task));
+        }
+    } catch (const std::exception &e) {
+        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
+        env->ThrowNew(c_llama_error, err.dump().c_str());
+        return 0;
+    }
+
+    ctx_server->queue_results.add_waiting_tasks(tasks);
+    const auto task_ids = server_task::get_list_id(tasks);
+    ctx_server->queue_tasks.post(std::move(tasks));
+
+    if (task_ids.size() != 1) {
+        env->ThrowNew(c_llama_error, "multitasking currently not supported");
+        return 0;
+    }
+
+    return *task_ids.begin();
+}
+
 JNIEXPORT jintArray JNICALL Java_de_kherud_llama_LlamaModel_encode(JNIEnv *env, jobject obj, jstring jprompt) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
     auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)

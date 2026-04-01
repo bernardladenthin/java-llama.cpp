@@ -216,5 +216,33 @@ public class LlamaModel implements AutoCloseable {
 		return handleChatCompletions(parameters.toString());
 	}
 
+	/**
+	 * Stream an OpenAI-compatible chat completion token by token. The parameters must contain a
+	 * "messages" array in the standard OpenAI chat format. The model's chat template is automatically applied.
+	 * <p>
+	 * Example usage:
+	 * <pre>{@code
+	 * List<Pair<String, String>> messages = new ArrayList<>();
+	 * messages.add(new Pair<>("user", "Tell me a story."));
+	 *
+	 * InferenceParameters params = new InferenceParameters("")
+	 *     .setMessages("You are a storyteller.", messages)
+	 *     .setNPredict(128);
+	 *
+	 * for (LlamaOutput output : model.generateChat(params)) {
+	 *     System.out.print(output.text);
+	 * }
+	 * }</pre>
+	 *
+	 * @param parameters the inference parameters including messages
+	 * @return iterable LLM outputs with the chat template applied
+	 * @throws LlamaException if inference fails
+	 */
+	public LlamaIterable generateChat(InferenceParameters parameters) {
+		return () -> new LlamaIterator(this, parameters, true);
+	}
+
 	native String handleChatCompletions(String params) throws LlamaException;
+
+	native int requestChatCompletion(String params) throws LlamaException;
 }
