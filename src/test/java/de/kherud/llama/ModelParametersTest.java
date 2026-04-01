@@ -210,48 +210,48 @@ public class ModelParametersTest {
 	@Test
 	public void testSetPoolingTypeMean() {
 		ModelParameters p = new ModelParameters().setPoolingType(PoolingType.MEAN);
-		assertEquals("mean", p.parameters.get("--pooling"));
+		assertEquals(PoolingType.MEAN.getArgValue(), p.parameters.get(ModelParameters.ARG_POOLING));
 	}
 
 	@Test
 	public void testSetPoolingTypeNone() {
 		ModelParameters p = new ModelParameters().setPoolingType(PoolingType.NONE);
-		assertEquals("none", p.parameters.get("--pooling"));
+		assertEquals(PoolingType.NONE.getArgValue(), p.parameters.get(ModelParameters.ARG_POOLING));
 	}
 
 	@Test
 	public void testSetPoolingTypeCls() {
 		ModelParameters p = new ModelParameters().setPoolingType(PoolingType.CLS);
-		assertEquals("cls", p.parameters.get("--pooling"));
+		assertEquals(PoolingType.CLS.getArgValue(), p.parameters.get(ModelParameters.ARG_POOLING));
 	}
 
 	@Test
 	public void testSetPoolingTypeLast() {
 		ModelParameters p = new ModelParameters().setPoolingType(PoolingType.LAST);
-		assertEquals("last", p.parameters.get("--pooling"));
+		assertEquals(PoolingType.LAST.getArgValue(), p.parameters.get(ModelParameters.ARG_POOLING));
 	}
 
 	@Test
 	public void testSetPoolingTypeRank() {
 		ModelParameters p = new ModelParameters().setPoolingType(PoolingType.RANK);
-		assertEquals("rank", p.parameters.get("--pooling"));
+		assertEquals(PoolingType.RANK.getArgValue(), p.parameters.get(ModelParameters.ARG_POOLING));
 	}
 
 	@Test
 	public void testSetPoolingTypeUnspecifiedDoesNotSetParam() {
 		ModelParameters p = new ModelParameters().setPoolingType(PoolingType.UNSPECIFIED);
-		assertFalse("UNSPECIFIED pooling type must not add --pooling to parameters",
-				p.parameters.containsKey("--pooling"));
+		assertFalse("UNSPECIFIED pooling type must not add " + ModelParameters.ARG_POOLING + " to parameters",
+				p.parameters.containsKey(ModelParameters.ARG_POOLING));
 	}
 
 	@Test
 	public void testSetPoolingTypeUnspecifiedLeavesDefaultUntouched() {
-		// A fresh ModelParameters must not have --pooling set by default either
+		// A fresh ModelParameters must not have ARG_POOLING set by default either
 		ModelParameters fresh = new ModelParameters();
-		assertFalse(fresh.parameters.containsKey("--pooling"));
+		assertFalse(fresh.parameters.containsKey(ModelParameters.ARG_POOLING));
 		// Calling setPoolingType(UNSPECIFIED) must leave that invariant intact
 		fresh.setPoolingType(PoolingType.UNSPECIFIED);
-		assertFalse(fresh.parameters.containsKey("--pooling"));
+		assertFalse(fresh.parameters.containsKey(ModelParameters.ARG_POOLING));
 	}
 
 	@Test
