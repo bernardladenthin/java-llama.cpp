@@ -248,6 +248,61 @@ public class LlamaModel implements AutoCloseable {
 		return () -> new LlamaIterator(this, parameters, true);
 	}
 
+	/**
+	 * Run a blocking completion and return the full result as a JSON string.
+	 * This is the JSON-in/JSON-out equivalent of {@link #complete(InferenceParameters)}.
+	 *
+	 * @param paramsJson JSON string with at least a "prompt" field
+	 * @return JSON response from the server
+	 */
+	public native String handleCompletions(String paramsJson) throws LlamaException;
+
+	/**
+	 * Run an OpenAI-compatible completion (mirrors /v1/completions endpoint).
+	 * Returns the result in OAI format with choices array.
+	 *
+	 * @param paramsJson JSON string with OAI-compatible completion parameters
+	 * @return JSON response in OAI format
+	 */
+	public native String handleCompletionsOai(String paramsJson) throws LlamaException;
+
+	/**
+	 * Run a text infill completion with explicit prefix/suffix.
+	 * The request JSON must contain "input_prefix" and "input_suffix" fields.
+	 *
+	 * @param paramsJson JSON string with infill parameters
+	 * @return JSON response from the server
+	 */
+	public native String handleInfill(String paramsJson) throws LlamaException;
+
+	/**
+	 * Generate embeddings for the given input. The request JSON should contain
+	 * an "input" (OAI-compat) or "content" field.
+	 *
+	 * @param paramsJson JSON string with embedding request
+	 * @param oaiCompat whether to format the response in OAI-compatible format
+	 * @return JSON response with embedding vectors
+	 */
+	public native String handleEmbeddings(String paramsJson, boolean oaiCompat) throws LlamaException;
+
+	/**
+	 * Tokenize text content, optionally including token piece information.
+	 *
+	 * @param content the text to tokenize
+	 * @param addSpecial whether to add special tokens (BOS/EOS)
+	 * @param withPieces whether to include token piece strings in the response
+	 * @return JSON response with token data
+	 */
+	public native String handleTokenize(String content, boolean addSpecial, boolean withPieces) throws LlamaException;
+
+	/**
+	 * Detokenize an array of token IDs back to text.
+	 *
+	 * @param tokens array of token IDs
+	 * @return JSON response with the decoded text
+	 */
+	public native String handleDetokenize(int[] tokens) throws LlamaException;
+
 	native String handleChatCompletions(String params) throws LlamaException;
 
 	native int requestChatCompletion(String params) throws LlamaException;

@@ -707,6 +707,57 @@ public class LlamaModelTest {
 		}
 	}
 
+	// ------------------------------------------------------------------
+	// Phase 5: JSON-in/JSON-out endpoints
+	// ------------------------------------------------------------------
+
+	@Test
+	public void testHandleCompletions() {
+		String json = "{\"prompt\": \"Hello\", \"n_predict\": " + nPredict + ", \"seed\": 42, \"temperature\": 0.0}";
+		String response = model.handleCompletions(json);
+		Assert.assertNotNull(response);
+		Assert.assertTrue("Response should contain content field", response.contains("\"content\""));
+	}
+
+	@Test
+	public void testHandleCompletionsOai() {
+		String json = "{\"prompt\": \"Hello\", \"max_tokens\": " + nPredict + ", \"seed\": 42, \"temperature\": 0.0}";
+		String response = model.handleCompletionsOai(json);
+		Assert.assertNotNull(response);
+		Assert.assertTrue("OAI response should contain choices", response.contains("\"choices\""));
+	}
+
+	@Test
+	public void testHandleEmbeddings() {
+		String json = "{\"content\": \"Hello world\"}";
+		String response = model.handleEmbeddings(json, false);
+		Assert.assertNotNull(response);
+		Assert.assertTrue("Embedding response should contain embedding data", response.contains("\"embedding\""));
+	}
+
+	@Test
+	public void testHandleTokenize() {
+		String response = model.handleTokenize("Hello world", false, false);
+		Assert.assertNotNull(response);
+		Assert.assertTrue("Tokenize response should contain tokens", response.contains("\"tokens\""));
+	}
+
+	@Test
+	public void testHandleTokenizeWithPieces() {
+		String response = model.handleTokenize("Hello world", false, true);
+		Assert.assertNotNull(response);
+		Assert.assertTrue("Response should contain token pieces", response.contains("\"piece\""));
+	}
+
+	@Test
+	public void testHandleDetokenize() {
+		int[] tokens = model.encode("Hello");
+		String response = model.handleDetokenize(tokens);
+		Assert.assertNotNull(response);
+		Assert.assertTrue("Detokenize response should contain content", response.contains("\"content\""));
+		Assert.assertTrue("Detokenize should contain original text", response.contains("Hello"));
+	}
+
 	@Test
 	public void testSpeculativeDecoding() {
 		Assume.assumeTrue(
