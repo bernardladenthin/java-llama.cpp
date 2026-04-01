@@ -23,7 +23,7 @@ jobs:
   # ---------------------------------------------------------------------------
 
   crosscompile-linux-x86_64-cuda:
-    name: Cross-Compile Linux x86_64 (CUDA)
+    name: Cross-Compile manylinux_2_28 x86_64 (CUDA)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -38,7 +38,7 @@ jobs:
           path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
 
   crosscompile-linux-x86_64:
-    name: Cross-Compile Linux x86_64
+    name: Cross-Compile manylinux2014 x86_64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -53,7 +53,7 @@ jobs:
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
 
   crosscompile-linux-aarch64:
-    name: Cross-Compile Linux aarch64
+    name: Cross-Compile Linux aarch64 (LTS)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -87,7 +87,7 @@ jobs:
   # ---------------------------------------------------------------------------
 
   build-macos-arm64-no-metal:
-    name: Build and Test macOS arm64 (no Metal)
+    name: Build and Test macOS 15 arm64 (no Metal)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
@@ -109,7 +109,7 @@ jobs:
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
 
   build-macos-arm64-metal:
-    name: Build and Test macOS arm64 (Metal)
+    name: Build and Test macOS 14 arm64 (Metal)
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v6
@@ -131,7 +131,7 @@ jobs:
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
 
   build-windows-x86_64:
-    name: Build and Test Windows x86_64
+    name: Build and Test Windows 2022 x86_64
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
@@ -148,7 +148,7 @@ jobs:
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
 
   build-windows-x86:
-    name: Build and Test Windows x86
+    name: Build and Test Windows 2022 x86
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
@@ -169,7 +169,7 @@ jobs:
   # ---------------------------------------------------------------------------
 
   test-cpp-linux-x86_64:
-    name: C++ Tests Linux x86_64
+    name: C++ Tests Ubuntu Latest x86_64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -185,7 +185,7 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
   test-macos-arm64-metal-15:
-    name: Build and Test macOS arm64 (Metal, macos-15)
+    name: Build and Test macOS 15 arm64 (Metal)
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
@@ -227,7 +227,7 @@ jobs:
   # ---------------------------------------------------------------------------
 
   test-java-linux-x86_64:
-    name: Java Tests Linux x86_64
+    name: Java Tests Ubuntu Latest x86_64
     needs: crosscompile-linux-x86_64
     runs-on: ubuntu-latest
     steps:
@@ -265,7 +265,7 @@ jobs:
           if-no-files-found: warn
 
   test-java-macos-arm64-metal:
-    name: Java Tests macOS arm64 (Metal)
+    name: Java Tests macOS 14 arm64 (Metal)
     needs: build-macos-arm64-metal
     runs-on: macos-14
     steps:
@@ -303,7 +303,7 @@ jobs:
           if-no-files-found: warn
 
   test-java-macos-arm64-no-metal:
-    name: Java Tests macOS arm64 (no Metal)
+    name: Java Tests macOS 15 arm64 (no Metal)
     needs: build-macos-arm64-no-metal
     runs-on: macos-15
     steps:
@@ -341,7 +341,7 @@ jobs:
           if-no-files-found: warn
 
   test-java-windows-x86_64:
-    name: Java Tests Windows x86_64
+    name: Java Tests Windows Latest x86_64
     needs: build-windows-x86_64
     runs-on: windows-latest
     steps:
