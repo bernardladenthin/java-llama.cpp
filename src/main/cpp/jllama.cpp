@@ -7,6 +7,7 @@
 #include "nlohmann/json.hpp"
 #include "server.hpp"
 
+#include <ctime>
 #include <functional>
 #include <iostream>
 #include <stdexcept>
@@ -171,11 +172,41 @@ bool log_json;
 std::function<void(ggml_log_level, const char *, void *)> log_callback;
 
 /**
- * Invoke the log callback if there is any.
+ * Format a log message as JSON.
+ */
+std::string format_log_as_json(ggml_log_level level, const char *text) {
+    std::string level_str;
+    switch (level) {
+    case GGML_LOG_LEVEL_ERROR:
+        level_str = "ERROR";
+        break;
+    case GGML_LOG_LEVEL_WARN:
+        level_str = "WARN";
+        break;
+    case GGML_LOG_LEVEL_INFO:
+        level_str = "INFO";
+        break;
+    default:
+    case GGML_LOG_LEVEL_DEBUG:
+        level_str = "DEBUG";
+        break;
+    }
+    nlohmann::json log_obj = {{"timestamp", std::time(nullptr)}, {"level", level_str}, {"message", text}};
+    return log_obj.dump();
+}
+
+/**
+ * Invoke the log callback if there is any. When JSON mode is enabled,
+ * the message is formatted as a JSON object before forwarding.
  */
 void log_callback_trampoline(ggml_log_level level, const char *text, void *user_data) {
     if (log_callback != nullptr) {
-        log_callback(level, text, user_data);
+        if (log_json) {
+            std::string json_text = format_log_as_json(level, text);
+            log_callback(level, json_text.c_str(), user_data);
+        } else {
+            log_callback(level, text, user_data);
+        }
     }
 }
 } // namespace
@@ -365,6 +396,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
     const jsize argc = env->GetArrayLength(jparams);
     char **argv = parse_string_array(env, jparams, argc);
     if (argv == nullptr) {
+        env->ThrowNew(c_error_oom, "Failed to allocate memory for parameters");
         return;
     }
 
@@ -375,6 +407,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
     const auto parsed_params = common_params_parse(filtered_argc, filtered_argv.data(), params, LLAMA_EXAMPLE_SERVER);
     free_string_array(argv, argc);
     if (!parsed_params) {
+        env->ThrowNew(c_llama_error, "Failed to parse model parameters");
         return;
     }
 
@@ -921,12 +954,21 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv 
 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobject obj) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
+    if (server_handle == 0) {
+        return; // Already deleted or never initialized
+    }
     auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+
+    SRV_INF("%s: cleaning up resources\n", __func__);
+
     if (!ctx_server->is_vocab_only()) {
         // Full model mode: stop the background task processing loop
         ctx_server->queue_tasks.terminate();
     }
-    // delete ctx_server;
+    delete ctx_server;
+
+    // Clear the pointer to prevent double-free
+    env->SetLongField(obj, f_model_pointer, 0);
 }
 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_cancelCompletion(JNIEnv *env, jobject obj, jint id_task) {
@@ -957,9 +999,8 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_setLogger(JNIEnv *env, jc
             env->CallVoidMethod(o_log_callback, m_biconsumer_accept, log_level, message);
             env->DeleteLocalRef(message);
         };
-        if (!log_json) {
-            llama_log_set(log_callback_trampoline, nullptr);
-        }
+        // Always set the trampoline — it handles JSON formatting internally
+        llama_log_set(log_callback_trampoline, nullptr);
     }
 }
 
