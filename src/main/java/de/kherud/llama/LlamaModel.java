@@ -49,6 +49,7 @@ public class LlamaModel implements AutoCloseable {
 	 * Generate and return a whole answer with custom parameters. Note, that the prompt isn't preprocessed in any
 	 * way, nothing like "User: ", "###Instruction", etc. is added.
 	 *
+	 * @param parameters the inference configuration
 	 * @return an LLM response
 	 */
 	public String complete(InferenceParameters parameters) {
@@ -62,6 +63,7 @@ public class LlamaModel implements AutoCloseable {
 	 * Generate and stream outputs with custom inference parameters. Note, that the prompt isn't preprocessed in any
 	 * way, nothing like "User: ", "###Instruction", etc. is added.
 	 *
+	 * @param parameters the inference configuration
 	 * @return iterable LLM outputs
 	 */
 	public LlamaIterable generate(InferenceParameters parameters) {
@@ -135,10 +137,24 @@ public class LlamaModel implements AutoCloseable {
 
 	private static native byte[] jsonSchemaToGrammarBytes(String schema);
 	
+	/**
+	 * Converts a JSON schema to a grammar string usable by {@link ModelParameters#setGrammar(String)}.
+	 *
+	 * @param schema the JSON schema as a string
+	 * @return the converted grammar string
+	 */
 	public static String jsonSchemaToGrammar(String schema) {
 		return new String(jsonSchemaToGrammarBytes(schema), StandardCharsets.UTF_8);
 	}
 	
+	/**
+	 * Rerank the given documents against the query.
+	 *
+	 * @param reRank whether to sort results by score in descending order
+	 * @param query the query string
+	 * @param documents the documents to rank
+	 * @return a list of document/score pairs, sorted if {@code reRank} is {@code true}
+	 */
 	public List<Pair<String, Float>> rerank(boolean reRank, String query, String ... documents) {
 		LlamaOutput output = rerank(query, documents);
 		
@@ -162,7 +178,13 @@ public class LlamaModel implements AutoCloseable {
 	
 	public native LlamaOutput rerank(String query, String... documents);
 	
-	public  String applyTemplate(InferenceParameters parameters) {
+	/**
+	 * Applies the chat template to the given inference parameters and returns the formatted string.
+	 *
+	 * @param parameters the inference parameters containing message configuration
+	 * @return the formatted chat template string
+	 */
+	public String applyTemplate(InferenceParameters parameters) {
 		return applyTemplate(parameters.toString());
 	}
 	public native String applyTemplate(String parametersJson);

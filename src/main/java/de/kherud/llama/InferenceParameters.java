@@ -59,6 +59,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the prompt to start generation with (default: empty)
+	 *
+	 * @param prompt the prompt to start generation with
+	 * @return this builder
 	 */
 	public InferenceParameters setPrompt(String prompt) {
 		parameters.put(PARAM_PROMPT, toJsonString(prompt));
@@ -67,6 +70,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set a prefix for infilling (default: empty)
+	 *
+	 * @param inputPrefix the prefix for infilling
+	 * @return this builder
 	 */
 	public InferenceParameters setInputPrefix(String inputPrefix) {
 		parameters.put(PARAM_INPUT_PREFIX, toJsonString(inputPrefix));
@@ -75,6 +81,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set a suffix for infilling (default: empty)
+	 *
+	 * @param inputSuffix the suffix for infilling
+	 * @return this builder
 	 */
 	public InferenceParameters setInputSuffix(String inputSuffix) {
 		parameters.put(PARAM_INPUT_SUFFIX, toJsonString(inputSuffix));
@@ -83,6 +92,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Whether to remember the prompt to avoid reprocessing it
+	 *
+	 * @param cachePrompt whether to cache the prompt
+	 * @return this builder
 	 */
 	public InferenceParameters setCachePrompt(boolean cachePrompt) {
 		parameters.put(PARAM_CACHE_PROMPT, String.valueOf(cachePrompt));
@@ -91,6 +103,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the number of tokens to predict (default: -1, -1 = infinity, -2 = until context filled)
+	 *
+	 * @param nPredict number of tokens to predict (-1 = infinity, -2 = until context filled)
+	 * @return this builder
 	 */
 	public InferenceParameters setNPredict(int nPredict) {
 		parameters.put(PARAM_N_PREDICT, String.valueOf(nPredict));
@@ -99,6 +114,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set top-k sampling (default: 40, 0 = disabled)
+	 *
+	 * @param topK the top-k value (0 = disabled)
+	 * @return this builder
 	 */
 	public InferenceParameters setTopK(int topK) {
 		parameters.put(PARAM_TOP_K, String.valueOf(topK));
@@ -107,6 +125,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set top-p sampling (default: 0.9, 1.0 = disabled)
+	 *
+	 * @param topP the top-p value (1.0 = disabled)
+	 * @return this builder
 	 */
 	public InferenceParameters setTopP(float topP) {
 		parameters.put(PARAM_TOP_P, String.valueOf(topP));
@@ -115,6 +136,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set min-p sampling (default: 0.1, 0.0 = disabled)
+	 *
+	 * @param minP the min-p value (0.0 = disabled)
+	 * @return this builder
 	 */
 	public InferenceParameters setMinP(float minP) {
 		parameters.put(PARAM_MIN_P, String.valueOf(minP));
@@ -123,6 +147,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set tail free sampling, parameter z (default: 1.0, 1.0 = disabled)
+	 *
+	 * @param tfsZ tail free sampling parameter z (1.0 = disabled)
+	 * @return this builder
 	 */
 	public InferenceParameters setTfsZ(float tfsZ) {
 		parameters.put(PARAM_TFS_Z, String.valueOf(tfsZ));
@@ -131,6 +158,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set locally typical sampling, parameter p (default: 1.0, 1.0 = disabled)
+	 *
+	 * @param typicalP the locally typical sampling parameter p (1.0 = disabled)
+	 * @return this builder
 	 */
 	public InferenceParameters setTypicalP(float typicalP) {
 		parameters.put(PARAM_TYPICAL_P, String.valueOf(typicalP));
@@ -139,6 +169,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the temperature (default: 0.8)
+	 *
+	 * @param temperature the sampling temperature
+	 * @return this builder
 	 */
 	public InferenceParameters setTemperature(float temperature) {
 		parameters.put(PARAM_TEMPERATURE, String.valueOf(temperature));
@@ -147,6 +180,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the dynamic temperature range (default: 0.0, 0.0 = disabled)
+	 *
+	 * @param dynatempRange the dynamic temperature range (0.0 = disabled)
+	 * @return this builder
 	 */
 	public InferenceParameters setDynamicTemperatureRange(float dynatempRange) {
 		parameters.put(PARAM_DYNATEMP_RANGE, String.valueOf(dynatempRange));
@@ -155,6 +191,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the dynamic temperature exponent (default: 1.0)
+	 *
+	 * @param dynatempExponent the dynamic temperature exponent
+	 * @return this builder
 	 */
 	public InferenceParameters setDynamicTemperatureExponent(float dynatempExponent) {
 		parameters.put(PARAM_DYNATEMP_EXPONENT, String.valueOf(dynatempExponent));
@@ -163,6 +202,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the last n tokens to consider for penalties (default: 64, 0 = disabled, -1 = ctx_size)
+	 *
+	 * @param repeatLastN the number of last tokens to consider for penalties (0 = disabled, -1 = ctx_size)
+	 * @return this builder
 	 */
 	public InferenceParameters setRepeatLastN(int repeatLastN) {
 		parameters.put(PARAM_REPEAT_LAST_N, String.valueOf(repeatLastN));
@@ -171,6 +213,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the penalty of repeated sequences of tokens (default: 1.0, 1.0 = disabled)
+	 *
+	 * @param repeatPenalty the repeat penalty (1.0 = disabled)
+	 * @return this builder
 	 */
 	public InferenceParameters setRepeatPenalty(float repeatPenalty) {
 		parameters.put(PARAM_REPEAT_PENALTY, String.valueOf(repeatPenalty));
@@ -179,6 +224,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the repetition alpha frequency penalty (default: 0.0, 0.0 = disabled)
+	 *
+	 * @param frequencyPenalty the repetition alpha frequency penalty (0.0 = disabled)
+	 * @return this builder
 	 */
 	public InferenceParameters setFrequencyPenalty(float frequencyPenalty) {
 		parameters.put(PARAM_FREQUENCY_PENALTY, String.valueOf(frequencyPenalty));
@@ -187,6 +235,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the repetition alpha presence penalty (default: 0.0, 0.0 = disabled)
+	 *
+	 * @param presencePenalty the repetition alpha presence penalty (0.0 = disabled)
+	 * @return this builder
 	 */
 	public InferenceParameters setPresencePenalty(float presencePenalty) {
 		parameters.put(PARAM_PRESENCE_PENALTY, String.valueOf(presencePenalty));
@@ -195,6 +246,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set MiroStat sampling strategies.
+	 *
+	 * @param mirostat the MiroStat sampling strategy
+	 * @return this builder
 	 */
 	public InferenceParameters setMiroStat(MiroStat mirostat) {
 		parameters.put(PARAM_MIROSTAT, String.valueOf(mirostat.ordinal()));
@@ -203,6 +257,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the MiroStat target entropy, parameter tau (default: 5.0)
+	 *
+	 * @param mirostatTau the MiroStat target entropy parameter tau
+	 * @return this builder
 	 */
 	public InferenceParameters setMiroStatTau(float mirostatTau) {
 		parameters.put(PARAM_MIROSTAT_TAU, String.valueOf(mirostatTau));
@@ -211,6 +268,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the MiroStat learning rate, parameter eta (default: 0.1)
+	 *
+	 * @param mirostatEta the MiroStat learning rate parameter eta
+	 * @return this builder
 	 */
 	public InferenceParameters setMiroStatEta(float mirostatEta) {
 		parameters.put(PARAM_MIROSTAT_ETA, String.valueOf(mirostatEta));
@@ -219,6 +279,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Whether to penalize newline tokens
+	 *
+	 * @param penalizeNl whether to penalize newline tokens
+	 * @return this builder
 	 */
 	public InferenceParameters setPenalizeNl(boolean penalizeNl) {
 		parameters.put(PARAM_PENALIZE_NL, String.valueOf(penalizeNl));
@@ -227,6 +290,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the number of tokens to keep from the initial prompt (default: 0, -1 = all)
+	 *
+	 * @param nKeep the number of tokens to keep from the initial prompt (-1 = all)
+	 * @return this builder
 	 */
 	public InferenceParameters setNKeep(int nKeep) {
 		parameters.put(PARAM_N_KEEP, String.valueOf(nKeep));
@@ -235,6 +301,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the RNG seed (default: -1, use random seed for &lt; 0)
+	 *
+	 * @param seed the RNG seed (use a negative value for a random seed)
+	 * @return this builder
 	 */
 	public InferenceParameters setSeed(int seed) {
 		parameters.put(PARAM_SEED, String.valueOf(seed));
@@ -243,6 +312,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the amount top tokens probabilities to output if greater than 0.
+	 *
+	 * @param nProbs the number of top token probabilities to output
+	 * @return this builder
 	 */
 	public InferenceParameters setNProbs(int nProbs) {
 		parameters.put(PARAM_N_PROBS, String.valueOf(nProbs));
@@ -251,6 +323,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set the amount of tokens the samplers should return at least (0 = disabled)
+	 *
+	 * @param minKeep the minimum number of tokens samplers should return (0 = disabled)
+	 * @return this builder
 	 */
 	public InferenceParameters setMinKeep(int minKeep) {
 		parameters.put(PARAM_MIN_KEEP, String.valueOf(minKeep));
@@ -259,6 +334,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set BNF-like grammar to constrain generations (see samples in grammars/ dir)
+	 *
+	 * @param grammar the BNF-like grammar string
+	 * @return this builder
 	 */
 	public InferenceParameters setGrammar(String grammar) {
 		parameters.put(PARAM_GRAMMAR, toJsonString(grammar));
@@ -269,6 +347,9 @@ public final class InferenceParameters extends JsonParameters {
 	 * Override which part of the prompt is penalized for repetition.
 	 * E.g. if original prompt is "Alice: Hello!" and penaltyPrompt is "Hello!", only the latter will be penalized if
 	 * repeated. See <a href="https://github.com/ggerganov/llama.cpp/pull/3727">pull request 3727</a> for more details.
+	 *
+	 * @param penaltyPrompt the string portion of the prompt to penalize for repetition
+	 * @return this builder
 	 */
 	public InferenceParameters setPenaltyPrompt(String penaltyPrompt) {
 		parameters.put(PARAM_PENALTY_PROMPT, toJsonString(penaltyPrompt));
@@ -280,6 +361,9 @@ public final class InferenceParameters extends JsonParameters {
 	 * E.g. if original prompt is "Alice: Hello!" and penaltyPrompt corresponds to the token ids of "Hello!", only the
 	 * latter will be penalized if repeated.
 	 * See <a href="https://github.com/ggerganov/llama.cpp/pull/3727">pull request 3727</a> for more details.
+	 *
+	 * @param tokens the token ids of the prompt portion to penalize for repetition
+	 * @return this builder
 	 */
 	public InferenceParameters setPenaltyPrompt(int[] tokens) {
 		if (tokens.length > 0) {
@@ -299,6 +383,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set whether to ignore end of stream token and continue generating (implies --logit-bias 2-inf)
+	 *
+	 * @param ignoreEos whether to ignore the end-of-stream token
+	 * @return this builder
 	 */
 	public InferenceParameters setIgnoreEos(boolean ignoreEos) {
 		parameters.put(PARAM_IGNORE_EOS, String.valueOf(ignoreEos));
@@ -314,6 +401,9 @@ public final class InferenceParameters extends JsonParameters {
 	 *     <li>{@link #disableTokens(Collection)}</li>
 	 *     <li>{@link #disableTokenIds(Collection)}}</li>
 	 * </ul>
+	 *
+	 * @param logitBias a map from token id to bias value
+	 * @return this builder
 	 */
 	public InferenceParameters setTokenIdBias(Map<Integer, Float> logitBias) {
 		if (!logitBias.isEmpty()) {
@@ -347,6 +437,9 @@ public final class InferenceParameters extends JsonParameters {
 	 *     <li>{@link #setTokenBias(Map)}</li>
 	 *     <li>{@link #disableTokens(Collection)}</li>
 	 * </ul>
+	 *
+	 * @param tokenIds the collection of token ids to disable
+	 * @return this builder
 	 */
 	public InferenceParameters disableTokenIds(Collection<Integer> tokenIds) {
 		if (!tokenIds.isEmpty()) {
@@ -378,6 +471,9 @@ public final class InferenceParameters extends JsonParameters {
 	 *     <li>{@link #disableTokens(Collection)}</li>
 	 *     <li>{@link #disableTokenIds(Collection)}}</li>
 	 * </ul>
+	 *
+	 * @param logitBias a map from token string to bias value
+	 * @return this builder
 	 */
 	public InferenceParameters setTokenBias(Map<String, Float> logitBias) {
 		if (!logitBias.isEmpty()) {
@@ -411,6 +507,9 @@ public final class InferenceParameters extends JsonParameters {
 	 *     <li>{@link #setTokenIdBias(Map)}</li>
 	 *     <li>{@link #disableTokenIds(Collection)}</li>
 	 * </ul>
+	 *
+	 * @param tokens the collection of token strings to disable
+	 * @return this builder
 	 */
 	public InferenceParameters disableTokens(Collection<String> tokens) {
 		if (!tokens.isEmpty()) {
@@ -435,6 +534,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set strings upon seeing which token generation is stopped
+	 *
+	 * @param stopStrings one or more strings that stop generation when encountered
+	 * @return this builder
 	 */
 	public InferenceParameters setStopStrings(String... stopStrings) {
 		if (stopStrings.length > 0) {
@@ -454,6 +556,9 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set which samplers to use for token generation in the given order
+	 *
+	 * @param samplers the samplers to use for token generation, in order
+	 * @return this builder
 	 */
 	public InferenceParameters setSamplers(Sampler... samplers) {
 		if (samplers.length > 0) {
@@ -486,12 +591,21 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
 	 * Set whether generate should apply a chat template (default: false)
+	 *
+	 * @param useChatTemplate whether to apply a chat template
+	 * @return this builder
 	 */
 	public InferenceParameters setUseChatTemplate(boolean useChatTemplate) {
 		parameters.put(PARAM_USE_JINJA, String.valueOf(useChatTemplate));
 		return this;
 	}
 
+	/**
+	 * Set the chat template string.
+	 *
+	 * @param chatTemplate the Jinja-style chat template to use
+	 * @return this builder
+	 */
 	public InferenceParameters setChatTemplate(String chatTemplate) {
 		parameters.put(PARAM_CHAT_TEMPLATE, toJsonString(chatTemplate));
 		return this;
@@ -499,8 +613,12 @@ public final class InferenceParameters extends JsonParameters {
 
 	/**
      * Set the messages for chat-based inference.
-     * - Allows **only one** system message.
-     * - Allows **one or more** user/assistant messages.
+     * - Allows <b>only one</b> system message.
+     * - Allows <b>one or more</b> user/assistant messages.
+     *
+     * @param systemMessage an optional system message (may be null or empty)
+     * @param messages a list of user/assistant message pairs (role as key, content as value)
+     * @return this builder
      */
     public InferenceParameters setMessages(String systemMessage, List<Pair<String, String>> messages) {
 		StringBuilder messagesBuilder = new StringBuilder();

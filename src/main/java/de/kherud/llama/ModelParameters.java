@@ -24,6 +24,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Whether to adjust unset arguments to fit in device memory (default: {@value #DEFAULT_FIT_VALUE}).
+     *
+     * @param fit whether to adjust unset arguments to fit in device memory
+     * @return this builder
      */
     public ModelParameters setFit(boolean fit) {
         parameters.put(ARG_FIT, fitValue(fit));
@@ -32,6 +35,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the number of threads to use during generation (default: -1).
+     *
+     * @param nThreads the number of threads to use during generation
+     * @return this builder
      */
     public ModelParameters setThreads(int nThreads) {
         parameters.put("--threads", String.valueOf(nThreads));
@@ -40,6 +46,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the number of threads to use during batch and prompt processing (default: same as --threads).
+     *
+     * @param nThreads the number of threads for batch and prompt processing
+     * @return this builder
      */
     public ModelParameters setThreadsBatch(int nThreads) {
         parameters.put("--threads-batch", String.valueOf(nThreads));
@@ -48,6 +57,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the CPU affinity mask: arbitrarily long hex. Complements cpu-range (default: "").
+     *
+     * @param mask the CPU affinity mask as an arbitrarily long hex string
+     * @return this builder
      */
     public ModelParameters setCpuMask(String mask) {
         parameters.put("--cpu-mask", mask);
@@ -56,6 +68,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the range of CPUs for affinity. Complements --cpu-mask.
+     *
+     * @param range the range of CPUs for affinity
+     * @return this builder
      */
     public ModelParameters setCpuRange(String range) {
         parameters.put("--cpu-range", range);
@@ -64,6 +79,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Use strict CPU placement (default: 0).
+     *
+     * @param strictCpu 1 to enable strict CPU placement, 0 to disable
+     * @return this builder
      */
     public ModelParameters setCpuStrict(int strictCpu) {
         parameters.put("--cpu-strict", String.valueOf(strictCpu));
@@ -72,6 +90,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set process/thread priority: 0-normal, 1-medium, 2-high, 3-realtime (default: 0).
+     *
+     * @param priority process/thread priority (0=normal, 1=medium, 2=high, 3=realtime)
+     * @return this builder
      */
     public ModelParameters setPriority(int priority) {
         if (priority < 0 || priority > 3) {
@@ -83,6 +104,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the polling level to wait for work (0 - no polling, default: 0).
+     *
+     * @param poll the polling level (0 = no polling)
+     * @return this builder
      */
     public ModelParameters setPoll(int poll) {
         parameters.put("--poll", String.valueOf(poll));
@@ -91,6 +115,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the CPU affinity mask for batch processing: arbitrarily long hex. Complements cpu-range-batch (default: same as --cpu-mask).
+     *
+     * @param mask the CPU affinity mask for batch processing
+     * @return this builder
      */
     public ModelParameters setCpuMaskBatch(String mask) {
         parameters.put("--cpu-mask-batch", mask);
@@ -99,6 +126,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the ranges of CPUs for batch affinity. Complements --cpu-mask-batch.
+     *
+     * @param range the ranges of CPUs for batch affinity
+     * @return this builder
      */
     public ModelParameters setCpuRangeBatch(String range) {
         parameters.put("--cpu-range-batch", range);
@@ -107,6 +137,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Use strict CPU placement for batch processing (default: same as --cpu-strict).
+     *
+     * @param strictCpuBatch 1 to enable strict CPU placement for batch processing, 0 to disable
+     * @return this builder
      */
     public ModelParameters setCpuStrictBatch(int strictCpuBatch) {
         parameters.put("--cpu-strict-batch", String.valueOf(strictCpuBatch));
@@ -115,6 +148,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set process/thread priority for batch processing: 0-normal, 1-medium, 2-high, 3-realtime (default: 0).
+     *
+     * @param priorityBatch batch process/thread priority (0=normal, 1=medium, 2=high, 3=realtime)
+     * @return this builder
      */
     public ModelParameters setPriorityBatch(int priorityBatch) {
         if (priorityBatch < 0 || priorityBatch > 3) {
@@ -126,6 +162,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the polling level for batch processing (default: same as --poll).
+     *
+     * @param pollBatch the polling level for batch processing
+     * @return this builder
      */
     public ModelParameters setPollBatch(int pollBatch) {
         parameters.put("--poll-batch", String.valueOf(pollBatch));
@@ -134,6 +173,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the size of the prompt context (default: 0, 0 = loaded from model).
+     *
+     * @param ctxSize the prompt context size in tokens (0 = loaded from model)
+     * @return this builder
      */
     public ModelParameters setCtxSize(int ctxSize) {
         parameters.put("--ctx-size", String.valueOf(ctxSize));
@@ -142,6 +184,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the number of tokens to predict (default: -1 = infinity, -2 = until context filled).
+     *
+     * @param nPredict the maximum number of tokens to predict (-1 = infinity, -2 = until context filled)
+     * @return this builder
      */
     public ModelParameters setPredict(int nPredict) {
         parameters.put("--predict", String.valueOf(nPredict));
