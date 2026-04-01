@@ -772,11 +772,6 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
     }
     auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
 
-    if (ctx_server->params_base.embedding) {
-        env->ThrowNew(c_llama_error, "This server does not support completions. Start it without `--embeddings`");
-        return nullptr;
-    }
-
     std::string c_params = parse_jstring(env, jparams);
     json body = json::parse(c_params);
 
