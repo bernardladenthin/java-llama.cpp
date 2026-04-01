@@ -3,7 +3,7 @@ package de.kherud.llama;
 import de.kherud.llama.args.LogFormat;
 import java.lang.annotation.Native;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
@@ -55,8 +55,8 @@ public class LlamaModel implements AutoCloseable {
 	public String complete(InferenceParameters parameters) {
 		parameters.setStream(false);
 		int taskId = requestCompletion(parameters.toString());
-		LlamaOutput output = receiveCompletion(taskId);
-		return output.text;
+		String json = receiveCompletionJson(taskId);
+		return LlamaOutput.getContentFromJson(json);
 	}
 
 	/**
@@ -123,7 +123,7 @@ public class LlamaModel implements AutoCloseable {
 	// don't overload native methods since the C++ function names get nasty
 	native int requestCompletion(String params) throws LlamaException;
 
-	native LlamaOutput receiveCompletion(int taskId) throws LlamaException;
+	native String receiveCompletionJson(int taskId) throws LlamaException;
 
 	native void cancelCompletion(int taskId);
 
@@ -155,28 +155,34 @@ public class LlamaModel implements AutoCloseable {
 	 * @param documents the documents to rank
 	 * @return a list of document/score pairs, sorted if {@code reRank} is {@code true}
 	 */
-	public List<Pair<String, Float>> rerank(boolean reRank, String query, String ... documents) {
-		LlamaOutput output = rerank(query, documents);
-		
-		Map<String, Float> scoredDocumentMap = output.probabilities;
-		
-		List<Pair<String, Float>> rankedDocuments = new ArrayList<>();
-		
+	public List<Pair<String, Float>> rerank(boolean reRank, String query, String... documents) {
+		String json = handleRerank(query, documents);
+		List<Pair<String, Float>> rankedDocuments = LlamaOutput.parseRerankResults(json);
 		if (reRank) {
-            // Sort in descending order based on Float values
-            scoredDocumentMap.entrySet()
-                    .stream()
-                    .sorted((a, b) -> Float.compare(b.getValue(), a.getValue())) // Descending order
-                    .forEach(entry -> rankedDocuments.add(new Pair<>(entry.getKey(), entry.getValue())));
-        } else {
-            // Copy without sorting
-            scoredDocumentMap.forEach((key, value) -> rankedDocuments.add(new Pair<>(key, value)));
-        }
-		
+			rankedDocuments.sort((a, b) -> Float.compare(b.getValue(), a.getValue()));
+		}
 		return rankedDocuments;
 	}
-	
-	public native LlamaOutput rerank(String query, String... documents);
+
+	/**
+	 * Rerank the given documents against the query, returning a {@link LlamaOutput} with scored documents
+	 * in the probabilities map.
+	 *
+	 * @param query the query string
+	 * @param documents the documents to rank
+	 * @return a LlamaOutput with document/score pairs in the probabilities map
+	 */
+	public LlamaOutput rerank(String query, String... documents) {
+		String json = handleRerank(query, documents);
+		List<Pair<String, Float>> results = LlamaOutput.parseRerankResults(json);
+		Map<String, Float> probabilities = new HashMap<>();
+		for (Pair<String, Float> pair : results) {
+			probabilities.put(pair.getKey(), pair.getValue());
+		}
+		return new LlamaOutput(query, probabilities, true);
+	}
+
+	native String handleRerank(String query, String... documents) throws LlamaException;
 	
 	/**
 	 * Applies the chat template to the given inference parameters and returns the formatted string.

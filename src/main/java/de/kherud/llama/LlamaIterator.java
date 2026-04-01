@@ -1,11 +1,11 @@
 package de.kherud.llama;
 
-import java.lang.annotation.Native;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 
 /**
- * This iterator is used by {@link LlamaModel#generate(InferenceParameters)}. In addition to implementing {@link Iterator},
+ * This iterator is used by {@link LlamaModel#generate(InferenceParameters)} and
+ * {@link LlamaModel#generateChat(InferenceParameters)}. In addition to implementing {@link Iterator},
  * it allows to cancel ongoing inference (see {@link #cancel()}).
  */
 public final class LlamaIterator implements Iterator<LlamaOutput> {
@@ -13,8 +13,6 @@ public final class LlamaIterator implements Iterator<LlamaOutput> {
     private final LlamaModel model;
     private final int taskId;
 
-    @Native
-    @SuppressWarnings("FieldMayBeFinal")
     private boolean hasNext = true;
 
     LlamaIterator(LlamaModel model, InferenceParameters parameters) {
@@ -39,7 +37,8 @@ public final class LlamaIterator implements Iterator<LlamaOutput> {
         if (!hasNext) {
             throw new NoSuchElementException();
         }
-        LlamaOutput output = model.receiveCompletion(taskId);
+        String json = model.receiveCompletionJson(taskId);
+        LlamaOutput output = LlamaOutput.fromJson(json);
         hasNext = !output.stop;
         if (output.stop) {
         	model.releaseTask(taskId);

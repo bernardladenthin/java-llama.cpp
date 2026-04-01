@@ -31,9 +31,7 @@ JavaVM *g_vm = nullptr;
 
 // classes
 jclass c_llama_model = nullptr;
-jclass c_llama_iterator = nullptr;
 jclass c_standard_charsets = nullptr;
-jclass c_output = nullptr;
 jclass c_string = nullptr;
 jclass c_hash_map = nullptr;
 jclass c_map = nullptr;
@@ -49,7 +47,6 @@ jclass c_log_format = nullptr;
 jclass c_error_oom = nullptr;
 
 // constructors
-jmethodID cc_output = nullptr;
 jmethodID cc_hash_map = nullptr;
 jmethodID cc_integer = nullptr;
 jmethodID cc_float = nullptr;
@@ -69,9 +66,7 @@ jmethodID m_biconsumer_accept = nullptr;
 
 // fields
 jfieldID f_model_pointer = nullptr;
-jfieldID f_task_id = nullptr;
 jfieldID f_utf_8 = nullptr;
-jfieldID f_iter_has_next = nullptr;
 jfieldID f_log_level_debug = nullptr;
 jfieldID f_log_level_info = nullptr;
 jfieldID f_log_level_warn = nullptr;
@@ -203,9 +198,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 
     // find classes
     c_llama_model = env->FindClass("de/kherud/llama/LlamaModel");
-    c_llama_iterator = env->FindClass("de/kherud/llama/LlamaIterator");
     c_standard_charsets = env->FindClass("java/nio/charset/StandardCharsets");
-    c_output = env->FindClass("de/kherud/llama/LlamaOutput");
     c_string = env->FindClass("java/lang/String");
     c_hash_map = env->FindClass("java/util/HashMap");
     c_map = env->FindClass("java/util/Map");
@@ -220,7 +213,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     c_log_format = env->FindClass("de/kherud/llama/args/LogFormat");
     c_error_oom = env->FindClass("java/lang/OutOfMemoryError");
 
-    if (!(c_llama_model && c_llama_iterator && c_standard_charsets && c_output && c_string && c_hash_map && c_map &&
+    if (!(c_llama_model && c_standard_charsets && c_string && c_hash_map && c_map &&
           c_set && c_entry && c_iterator && c_integer && c_float && c_biconsumer && c_llama_error && c_log_level &&
           c_log_format && c_error_oom)) {
         goto error;
@@ -228,8 +221,6 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 
     // create references
     c_llama_model = (jclass)env->NewGlobalRef(c_llama_model);
-    c_llama_iterator = (jclass)env->NewGlobalRef(c_llama_iterator);
-    c_output = (jclass)env->NewGlobalRef(c_output);
     c_string = (jclass)env->NewGlobalRef(c_string);
     c_hash_map = (jclass)env->NewGlobalRef(c_hash_map);
     c_map = (jclass)env->NewGlobalRef(c_map);
@@ -245,12 +236,11 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     c_error_oom = (jclass)env->NewGlobalRef(c_error_oom);
 
     // find constructors
-    cc_output = env->GetMethodID(c_output, "<init>", "([BLjava/util/Map;Z)V");
     cc_hash_map = env->GetMethodID(c_hash_map, "<init>", "()V");
     cc_integer = env->GetMethodID(c_integer, "<init>", "(I)V");
     cc_float = env->GetMethodID(c_float, "<init>", "(F)V");
 
-    if (!(cc_output && cc_hash_map && cc_integer && cc_float)) {
+    if (!(cc_hash_map && cc_integer && cc_float)) {
         goto error;
     }
 
@@ -274,9 +264,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
 
     // find fields
     f_model_pointer = env->GetFieldID(c_llama_model, "ctx", "J");
-    f_task_id = env->GetFieldID(c_llama_iterator, "taskId", "I");
     f_utf_8 = env->GetStaticFieldID(c_standard_charsets, "UTF_8", "Ljava/nio/charset/Charset;");
-    f_iter_has_next = env->GetFieldID(c_llama_iterator, "hasNext", "Z");
     f_log_level_debug = env->GetStaticFieldID(c_log_level, "DEBUG", "Lde/kherud/llama/LogLevel;");
     f_log_level_info = env->GetStaticFieldID(c_log_level, "INFO", "Lde/kherud/llama/LogLevel;");
     f_log_level_warn = env->GetStaticFieldID(c_log_level, "WARN", "Lde/kherud/llama/LogLevel;");
@@ -284,7 +272,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     f_log_format_json = env->GetStaticFieldID(c_log_format, "JSON", "Lde/kherud/llama/args/LogFormat;");
     f_log_format_text = env->GetStaticFieldID(c_log_format, "TEXT", "Lde/kherud/llama/args/LogFormat;");
 
-    if (!(f_model_pointer && f_task_id && f_utf_8 && f_iter_has_next && f_log_level_debug && f_log_level_info &&
+    if (!(f_model_pointer && f_utf_8 && f_log_level_debug && f_log_level_info &&
           f_log_level_warn && f_log_level_error && f_log_format_json && f_log_format_text)) {
         goto error;
     }
@@ -342,8 +330,6 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     }
 
     env->DeleteGlobalRef(c_llama_model);
-    env->DeleteGlobalRef(c_llama_iterator);
-    env->DeleteGlobalRef(c_output);
     env->DeleteGlobalRef(c_string);
     env->DeleteGlobalRef(c_hash_map);
     env->DeleteGlobalRef(c_map);
@@ -541,7 +527,8 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_releaseTask(JNIEnv *env, 
     ctx_server->queue_results.remove_waiting_task_id(id_task);
 }
 
-JNIEXPORT jobject JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletion(JNIEnv *env, jobject obj, jint id_task) {
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(JNIEnv *env, jobject obj,
+                                                                               jint id_task) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
     auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
 
@@ -553,31 +540,16 @@ JNIEXPORT jobject JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletion(JNIE
         env->ThrowNew(c_llama_error, response.c_str());
         return nullptr;
     }
-    const auto out_res = result->to_json();
 
-    std::string response = out_res["content"].get<std::string>();
+    json response = result->to_json();
+    response["stop"] = result->is_stop();
+
     if (result->is_stop()) {
         ctx_server->queue_results.remove_waiting_task_id(id_task);
     }
 
-    jobject o_probabilities = env->NewObject(c_hash_map, cc_hash_map);
-    if (out_res.contains("completion_probabilities")) {
-        auto completion_probabilities = out_res["completion_probabilities"];
-        for (const auto &entry : completion_probabilities) {
-            auto probs = entry["probs"];
-            for (const auto &tp : probs) {
-                std::string tok_str = tp["tok_str"];
-                jstring jtok_str = env->NewStringUTF(tok_str.c_str());
-                float prob = tp["prob"];
-                jobject jprob = env->NewObject(c_float, cc_float, prob);
-                env->CallObjectMethod(o_probabilities, m_map_put, jtok_str, jprob);
-                env->DeleteLocalRef(jtok_str);
-                env->DeleteLocalRef(jprob);
-            }
-        }
-    }
-    jbyteArray jbytes = parse_jbytes(env, response);
-    return env->NewObject(c_output, cc_output, jbytes, o_probabilities, result->is_stop());
+    std::string response_str = response.dump();
+    return env->NewStringUTF(response_str.c_str());
 }
 
 JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env, jobject obj, jstring jprompt) {
@@ -666,8 +638,8 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
     return j_embedding;
 }
 
-JNIEXPORT jobject JNICALL Java_de_kherud_llama_LlamaModel_rerank(JNIEnv *env, jobject obj, jstring jprompt,
-                                                                 jobjectArray documents) {
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *env, jobject obj, jstring jprompt,
+                                                                      jobjectArray documents) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
     auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
 
@@ -681,8 +653,6 @@ JNIEXPORT jobject JNICALL Java_de_kherud_llama_LlamaModel_rerank(JNIEnv *env, jo
 
     const auto tokenized_query = tokenize_mixed(ctx_server->vocab, prompt, true, true);
 
-    json responses = json::array();
-
     std::vector<server_task> tasks;
     const jsize amount_documents = env->GetArrayLength(documents);
     auto *document_array = parse_string_array(env, documents, amount_documents);
@@ -692,7 +662,7 @@ JNIEXPORT jobject JNICALL Java_de_kherud_llama_LlamaModel_rerank(JNIEnv *env, jo
     std::vector<llama_tokens> tokenized_docs = tokenize_input_prompts(ctx_server->vocab, document_vector, true, true);
 
     tasks.reserve(tokenized_docs.size());
-    for (int i = 0; i < tokenized_docs.size(); i++) {
+    for (size_t i = 0; i < tokenized_docs.size(); i++) {
         auto task = server_task(SERVER_TASK_TYPE_RERANK);
         task.id = ctx_server->queue_tasks.get_new_id();
         task.index = i;
@@ -704,47 +674,33 @@ JNIEXPORT jobject JNICALL Java_de_kherud_llama_LlamaModel_rerank(JNIEnv *env, jo
     std::unordered_set<int> task_ids = server_task::get_list_id(tasks);
 
     ctx_server->queue_tasks.post(std::move(tasks));
-    // get the result
-    std::vector<server_task_result_ptr> results(task_ids.size());
 
-    // Create a new HashMap instance
-    jobject o_probabilities = env->NewObject(c_hash_map, cc_hash_map);
-    if (o_probabilities == nullptr) {
-        env->ThrowNew(c_llama_error, "Failed to create HashMap object.");
-        return nullptr;
-    }
+    json results_json = json::array();
 
-    for (int i = 0; i < (int)task_ids.size(); i++) {
+    for (size_t i = 0; i < task_ids.size(); i++) {
         server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
         if (result->is_error()) {
             auto response = result->to_json()["message"].get<std::string>();
-            for (const int id_task : task_ids) {
-                ctx_server->queue_results.remove_waiting_task_id(id_task);
-            }
+            ctx_server->queue_results.remove_waiting_task_ids(task_ids);
             env->ThrowNew(c_llama_error, response.c_str());
             return nullptr;
         }
 
         const auto out_res = result->to_json();
-
-        if (result->is_stop()) {
-            for (const int id_task : task_ids) {
-                ctx_server->queue_results.remove_waiting_task_id(id_task);
-            }
-        }
-
         int index = out_res["index"].get<int>();
         float score = out_res["score"].get<float>();
-        std::string tok_str = document_vector[index];
-        jstring jtok_str = env->NewStringUTF(tok_str.c_str());
 
-        jobject jprob = env->NewObject(c_float, cc_float, score);
-        env->CallObjectMethod(o_probabilities, m_map_put, jtok_str, jprob);
-        env->DeleteLocalRef(jtok_str);
-        env->DeleteLocalRef(jprob);
+        results_json.push_back({
+            {"document", document_vector[index]},
+            {"index", index},
+            {"score", score}
+        });
     }
-    jbyteArray jbytes = parse_jbytes(env, prompt);
-    return env->NewObject(c_output, cc_output, jbytes, o_probabilities, true);
+
+    ctx_server->queue_results.remove_waiting_task_ids(task_ids);
+
+    std::string response_str = results_json.dump();
+    return env->NewStringUTF(response_str.c_str());
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *env, jobject obj, jstring jparams) {

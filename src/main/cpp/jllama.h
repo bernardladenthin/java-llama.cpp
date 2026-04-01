@@ -37,10 +37,10 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
 
 /*
  * Class:     de_kherud_llama_LlamaModel
- * Method:    receiveCompletion
- * Signature: (I)Lde/kherud/llama/LlamaOutput;
+ * Method:    receiveCompletionJson
+ * Signature: (I)Ljava/lang/String;
  */
-JNIEXPORT jobject JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletion(JNIEnv *, jobject, jint);
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(JNIEnv *, jobject, jint);
 
 /*
  * Class:     de_kherud_llama_LlamaModel
@@ -86,10 +86,10 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_jsonSchemaToGrammar
 
 /*
  * Class:     de_kherud_llama_LlamaModel
- * Method:    rerank
- * Signature: (Ljava/lang/String;[Ljava/lang/String;)Lde/kherud/llama/LlamaOutput;
+ * Method:    handleRerank
+ * Signature: (Ljava/lang/String;[Ljava/lang/String;)Ljava/lang/String;
  */
-JNIEXPORT jobject JNICALL Java_de_kherud_llama_LlamaModel_rerank(JNIEnv *, jobject, jstring, jobjectArray);
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *, jobject, jstring, jobjectArray);
 
 /*
  * Class:     de_kherud_llama_LlamaModel
