@@ -641,7 +641,7 @@ public final class ModelParameters extends CliParameters {
     public ModelParameters setPoolingType(PoolingType type) {
         if (type != PoolingType.UNSPECIFIED) {
             // Don't set if unspecified, as it will use the model's default pooling type
-            parameters.put("--pooling", type.name().toLowerCase());
+            parameters.put("--pooling", type.getArgValue());
         }
         return this;
     }
