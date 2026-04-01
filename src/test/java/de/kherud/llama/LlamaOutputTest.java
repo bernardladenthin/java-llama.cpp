@@ -1,6 +1,5 @@
 package de.kherud.llama;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -10,30 +9,27 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 @ClaudeGenerated(
-        purpose = "Verify that LlamaOutput correctly decodes raw byte arrays to UTF-8 text " +
-                  "(including multi-byte sequences), stores the probability map and stop flag " +
+        purpose = "Verify that LlamaOutput correctly stores text, the probability map and stop flag " +
                   "unchanged, and that toString() delegates to the text field."
 )
 public class LlamaOutputTest {
 
 	@Test
-	public void testTextFromBytes() {
-		byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
-		LlamaOutput output = new LlamaOutput(bytes, Collections.emptyMap(), false);
+	public void testTextFromString() {
+		LlamaOutput output = new LlamaOutput("hello", Collections.emptyMap(), false);
 		assertEquals("hello", output.text);
 	}
 
 	@Test
 	public void testEmptyText() {
-		LlamaOutput output = new LlamaOutput(new byte[0], Collections.emptyMap(), false);
+		LlamaOutput output = new LlamaOutput("", Collections.emptyMap(), false);
 		assertEquals("", output.text);
 	}
 
 	@Test
 	public void testUtf8MultibyteText() {
 		String original = "héllo wörld";
-		byte[] bytes = original.getBytes(StandardCharsets.UTF_8);
-		LlamaOutput output = new LlamaOutput(bytes, Collections.emptyMap(), false);
+		LlamaOutput output = new LlamaOutput(original, Collections.emptyMap(), false);
 		assertEquals(original, output.text);
 	}
 
@@ -42,7 +38,7 @@ public class LlamaOutputTest {
 		Map<String, Float> probs = new HashMap<>();
 		probs.put("hello", 0.9f);
 		probs.put("world", 0.1f);
-		LlamaOutput output = new LlamaOutput(new byte[0], probs, false);
+		LlamaOutput output = new LlamaOutput("", probs, false);
 		assertEquals(2, output.probabilities.size());
 		assertEquals(0.9f, output.probabilities.get("hello"), 0.0001f);
 		assertEquals(0.1f, output.probabilities.get("world"), 0.0001f);
@@ -50,32 +46,53 @@ public class LlamaOutputTest {
 
 	@Test
 	public void testEmptyProbabilities() {
-		LlamaOutput output = new LlamaOutput(new byte[0], Collections.emptyMap(), false);
+		LlamaOutput output = new LlamaOutput("", Collections.emptyMap(), false);
 		assertTrue(output.probabilities.isEmpty());
 	}
 
 	@Test
 	public void testStopFlagFalse() {
-		LlamaOutput output = new LlamaOutput(new byte[0], Collections.emptyMap(), false);
+		LlamaOutput output = new LlamaOutput("", Collections.emptyMap(), false);
 		assertFalse(output.stop);
 	}
 
 	@Test
 	public void testStopFlagTrue() {
-		LlamaOutput output = new LlamaOutput(new byte[0], Collections.emptyMap(), true);
+		LlamaOutput output = new LlamaOutput("", Collections.emptyMap(), true);
 		assertTrue(output.stop);
 	}
 
 	@Test
 	public void testToStringReturnsText() {
-		byte[] bytes = "generated text".getBytes(StandardCharsets.UTF_8);
-		LlamaOutput output = new LlamaOutput(bytes, Collections.emptyMap(), false);
+		LlamaOutput output = new LlamaOutput("generated text", Collections.emptyMap(), false);
 		assertEquals("generated text", output.toString());
 	}
 
 	@Test
 	public void testToStringEmptyText() {
-		LlamaOutput output = new LlamaOutput(new byte[0], Collections.emptyMap(), false);
+		LlamaOutput output = new LlamaOutput("", Collections.emptyMap(), false);
 		assertEquals("", output.toString());
+	}
+
+	@Test
+	public void testFromJson() {
+		String json = "{\"content\":\"hello world\",\"stop\":true}";
+		LlamaOutput output = LlamaOutput.fromJson(json);
+		assertEquals("hello world", output.text);
+		assertTrue(output.stop);
+	}
+
+	@Test
+	public void testFromJsonWithEscapes() {
+		String json = "{\"content\":\"line1\\nline2\\t\\\"quoted\\\"\",\"stop\":false}";
+		LlamaOutput output = LlamaOutput.fromJson(json);
+		assertEquals("line1\nline2\t\"quoted\"", output.text);
+		assertFalse(output.stop);
+	}
+
+	@Test
+	public void testGetContentFromJsonEmpty() {
+		String json = "{\"content\":\"\",\"stop\":true}";
+		assertEquals("", LlamaOutput.getContentFromJson(json));
 	}
 }
