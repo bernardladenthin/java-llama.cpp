@@ -24,6 +24,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Whether to adjust unset arguments to fit in device memory (default: {@value #DEFAULT_FIT_VALUE}).
+     *
+     * @param fit whether to adjust unset arguments to fit in device memory
+     * @return this builder
      */
     public ModelParameters setFit(boolean fit) {
         parameters.put(ARG_FIT, fitValue(fit));
@@ -32,6 +35,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the number of threads to use during generation (default: -1).
+     *
+     * @param nThreads the number of threads to use during generation
+     * @return this builder
      */
     public ModelParameters setThreads(int nThreads) {
         parameters.put("--threads", String.valueOf(nThreads));
@@ -40,6 +46,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the number of threads to use during batch and prompt processing (default: same as --threads).
+     *
+     * @param nThreads the number of threads for batch and prompt processing
+     * @return this builder
      */
     public ModelParameters setThreadsBatch(int nThreads) {
         parameters.put("--threads-batch", String.valueOf(nThreads));
@@ -48,6 +57,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the CPU affinity mask: arbitrarily long hex. Complements cpu-range (default: "").
+     *
+     * @param mask the CPU affinity mask as an arbitrarily long hex string
+     * @return this builder
      */
     public ModelParameters setCpuMask(String mask) {
         parameters.put("--cpu-mask", mask);
@@ -56,6 +68,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the range of CPUs for affinity. Complements --cpu-mask.
+     *
+     * @param range the range of CPUs for affinity
+     * @return this builder
      */
     public ModelParameters setCpuRange(String range) {
         parameters.put("--cpu-range", range);
@@ -64,6 +79,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Use strict CPU placement (default: 0).
+     *
+     * @param strictCpu 1 to enable strict CPU placement, 0 to disable
+     * @return this builder
      */
     public ModelParameters setCpuStrict(int strictCpu) {
         parameters.put("--cpu-strict", String.valueOf(strictCpu));
@@ -72,6 +90,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set process/thread priority: 0-normal, 1-medium, 2-high, 3-realtime (default: 0).
+     *
+     * @param priority process/thread priority (0=normal, 1=medium, 2=high, 3=realtime)
+     * @return this builder
      */
     public ModelParameters setPriority(int priority) {
         if (priority < 0 || priority > 3) {
@@ -83,6 +104,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the polling level to wait for work (0 - no polling, default: 0).
+     *
+     * @param poll the polling level (0 = no polling)
+     * @return this builder
      */
     public ModelParameters setPoll(int poll) {
         parameters.put("--poll", String.valueOf(poll));
@@ -91,6 +115,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the CPU affinity mask for batch processing: arbitrarily long hex. Complements cpu-range-batch (default: same as --cpu-mask).
+     *
+     * @param mask the CPU affinity mask for batch processing
+     * @return this builder
      */
     public ModelParameters setCpuMaskBatch(String mask) {
         parameters.put("--cpu-mask-batch", mask);
@@ -99,6 +126,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the ranges of CPUs for batch affinity. Complements --cpu-mask-batch.
+     *
+     * @param range the ranges of CPUs for batch affinity
+     * @return this builder
      */
     public ModelParameters setCpuRangeBatch(String range) {
         parameters.put("--cpu-range-batch", range);
@@ -107,6 +137,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Use strict CPU placement for batch processing (default: same as --cpu-strict).
+     *
+     * @param strictCpuBatch 1 to enable strict CPU placement for batch processing, 0 to disable
+     * @return this builder
      */
     public ModelParameters setCpuStrictBatch(int strictCpuBatch) {
         parameters.put("--cpu-strict-batch", String.valueOf(strictCpuBatch));
@@ -115,6 +148,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set process/thread priority for batch processing: 0-normal, 1-medium, 2-high, 3-realtime (default: 0).
+     *
+     * @param priorityBatch batch process/thread priority (0=normal, 1=medium, 2=high, 3=realtime)
+     * @return this builder
      */
     public ModelParameters setPriorityBatch(int priorityBatch) {
         if (priorityBatch < 0 || priorityBatch > 3) {
@@ -126,6 +162,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the polling level for batch processing (default: same as --poll).
+     *
+     * @param pollBatch the polling level for batch processing
+     * @return this builder
      */
     public ModelParameters setPollBatch(int pollBatch) {
         parameters.put("--poll-batch", String.valueOf(pollBatch));
@@ -134,6 +173,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the size of the prompt context (default: 0, 0 = loaded from model).
+     *
+     * @param ctxSize the prompt context size in tokens (0 = loaded from model)
+     * @return this builder
      */
     public ModelParameters setCtxSize(int ctxSize) {
         parameters.put("--ctx-size", String.valueOf(ctxSize));
@@ -142,6 +184,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the number of tokens to predict (default: -1 = infinity, -2 = until context filled).
+     *
+     * @param nPredict the maximum number of tokens to predict (-1 = infinity, -2 = until context filled)
+     * @return this builder
      */
     public ModelParameters setPredict(int nPredict) {
         parameters.put("--predict", String.valueOf(nPredict));
@@ -150,6 +195,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the logical maximum batch size (default: 0).
+     *
+     * @param batchSize the logical maximum batch size
+     * @return this builder
      */
     public ModelParameters setBatchSize(int batchSize) {
         parameters.put("--batch-size", String.valueOf(batchSize));
@@ -158,6 +206,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the physical maximum batch size (default: 0).
+     *
+     * @param ubatchSize the physical maximum batch size
+     * @return this builder
      */
     public ModelParameters setUbatchSize(int ubatchSize) {
         parameters.put("--ubatch-size", String.valueOf(ubatchSize));
@@ -166,6 +217,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the number of tokens to keep from the initial prompt (default: -1 = all).
+     *
+     * @param keep the number of tokens to keep from the initial prompt (-1 = all)
+     * @return this builder
      */
     public ModelParameters setKeep(int keep) {
         parameters.put("--keep", String.valueOf(keep));
@@ -174,6 +228,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Disable context shift on infinite text generation (default: enabled).
+     *
+     * @return this builder
      */
     public ModelParameters disableContextShift() {
         parameters.put("--no-context-shift", null);
@@ -182,6 +238,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Enable Flash Attention (default: disabled).
+     *
+     * @return this builder
      */
     public ModelParameters enableFlashAttn() {
         parameters.put("--flash-attn", null);
@@ -190,6 +248,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Disable internal libllama performance timings (default: false).
+     *
+     * @return this builder
      */
     public ModelParameters disablePerf() {
         parameters.put("--no-perf", null);
@@ -198,6 +258,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Process escape sequences (default: true).
+     *
+     * @return this builder
      */
     public ModelParameters enableEscape() {
         parameters.put("--escape", null);
@@ -206,6 +268,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Do not process escape sequences (default: false).
+     *
+     * @return this builder
      */
     public ModelParameters disableEscape() {
         parameters.put("--no-escape", null);
@@ -214,6 +278,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Enable special tokens output (default: true).
+     *
+     * @return this builder
      */
     public ModelParameters enableSpecial() {
         parameters.put("--special", null);
@@ -222,6 +288,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Skip warming up the model with an empty run (default: false).
+     *
+     * @return this builder
      */
     public ModelParameters skipWarmup() {
         parameters.put("--no-warmup", null);
@@ -231,6 +299,8 @@ public final class ModelParameters extends CliParameters {
     /**
      * Use Suffix/Prefix/Middle pattern for infill (instead of Prefix/Suffix/Middle) as some models prefer this.
      * (default: disabled)
+     *
+     * @return this builder
      */
     public ModelParameters setSpmInfill() {
         parameters.put("--spm-infill", null);
@@ -239,6 +309,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set samplers that will be used for generation in the order, separated by ';' (default: all).
+     *
+     * @param samplers the samplers to use, separated by semicolons
+     * @return this builder
      */
     public ModelParameters setSamplers(Sampler... samplers) {
         if (samplers.length > 0) {
@@ -257,6 +330,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set RNG seed (default: -1, use random seed).
+     *
+     * @param seed the RNG seed (-1 = random)
+     * @return this builder
      */
     public ModelParameters setSeed(long seed) {
         parameters.put("--seed", String.valueOf(seed));
@@ -265,6 +341,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Ignore end of stream token and continue generating (implies --logit-bias EOS-inf).
+     *
+     * @return this builder
      */
     public ModelParameters ignoreEos() {
         parameters.put("--ignore-eos", null);
@@ -273,6 +351,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set temperature for sampling (default: 0.8).
+     *
+     * @param temp the sampling temperature
+     * @return this builder
      */
     public ModelParameters setTemp(float temp) {
         parameters.put("--temp", String.valueOf(temp));
@@ -281,6 +362,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set top-k sampling (default: 40, 0 = disabled).
+     *
+     * @param topK the top-k value (0 = disabled)
+     * @return this builder
      */
     public ModelParameters setTopK(int topK) {
         parameters.put("--top-k", String.valueOf(topK));
@@ -289,6 +373,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set top-p sampling (default: 0.95, 1.0 = disabled).
+     *
+     * @param topP the top-p value (1.0 = disabled)
+     * @return this builder
      */
     public ModelParameters setTopP(float topP) {
         parameters.put("--top-p", String.valueOf(topP));
@@ -297,6 +384,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set min-p sampling (default: 0.05, 0.0 = disabled).
+     *
+     * @param minP the min-p value (0.0 = disabled)
+     * @return this builder
      */
     public ModelParameters setMinP(float minP) {
         parameters.put("--min-p", String.valueOf(minP));
@@ -305,6 +395,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set xtc probability (default: 0.0, 0.0 = disabled).
+     *
+     * @param xtcProbability the XTC probability (0.0 = disabled)
+     * @return this builder
      */
     public ModelParameters setXtcProbability(float xtcProbability) {
         parameters.put("--xtc-probability", String.valueOf(xtcProbability));
@@ -313,6 +406,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set xtc threshold (default: 0.1, 1.0 = disabled).
+     *
+     * @param xtcThreshold the XTC threshold (1.0 = disabled)
+     * @return this builder
      */
     public ModelParameters setXtcThreshold(float xtcThreshold) {
         parameters.put("--xtc-threshold", String.valueOf(xtcThreshold));
@@ -321,6 +417,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set locally typical sampling parameter p (default: 1.0, 1.0 = disabled).
+     *
+     * @param typP the locally typical sampling parameter p (1.0 = disabled)
+     * @return this builder
      */
     public ModelParameters setTypical(float typP) {
         parameters.put("--typical", String.valueOf(typP));
@@ -329,6 +428,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set last n tokens to consider for penalize (default: 64, 0 = disabled, -1 = ctx_size).
+     *
+     * @param repeatLastN the number of last tokens to consider for penalties (0 = disabled, -1 = ctx_size)
+     * @return this builder
      */
     public ModelParameters setRepeatLastN(int repeatLastN) {
         if (repeatLastN < -1) {
@@ -340,6 +442,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set penalize repeat sequence of tokens (default: 1.0, 1.0 = disabled).
+     *
+     * @param repeatPenalty the repeat penalty (1.0 = disabled)
+     * @return this builder
      */
     public ModelParameters setRepeatPenalty(float repeatPenalty) {
         parameters.put("--repeat-penalty", String.valueOf(repeatPenalty));
@@ -348,6 +453,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set repeat alpha presence penalty (default: 0.0, 0.0 = disabled).
+     *
+     * @param presencePenalty the alpha presence penalty (0.0 = disabled)
+     * @return this builder
      */
     public ModelParameters setPresencePenalty(float presencePenalty) {
         parameters.put("--presence-penalty", String.valueOf(presencePenalty));
@@ -356,6 +464,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set repeat alpha frequency penalty (default: 0.0, 0.0 = disabled).
+     *
+     * @param frequencyPenalty the alpha frequency penalty (0.0 = disabled)
+     * @return this builder
      */
     public ModelParameters setFrequencyPenalty(float frequencyPenalty) {
         parameters.put("--frequency-penalty", String.valueOf(frequencyPenalty));
@@ -364,6 +475,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set DRY sampling multiplier (default: 0.0, 0.0 = disabled).
+     *
+     * @param dryMultiplier the DRY sampling multiplier (0.0 = disabled)
+     * @return this builder
      */
     public ModelParameters setDryMultiplier(float dryMultiplier) {
         parameters.put("--dry-multiplier", String.valueOf(dryMultiplier));
@@ -372,6 +486,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set DRY sampling base value (default: 1.75).
+     *
+     * @param dryBase the DRY sampling base value
+     * @return this builder
      */
     public ModelParameters setDryBase(float dryBase) {
         parameters.put("--dry-base", String.valueOf(dryBase));
@@ -380,6 +497,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set allowed length for DRY sampling (default: 2).
+     *
+     * @param dryAllowedLength the allowed length for DRY sampling
+     * @return this builder
      */
     public ModelParameters setDryAllowedLength(int dryAllowedLength) {
         parameters.put("--dry-allowed-length", String.valueOf(dryAllowedLength));
@@ -388,6 +508,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set DRY penalty for the last n tokens (default: -1, 0 = disable, -1 = context size).
+     *
+     * @param dryPenaltyLastN the DRY penalty window (-1 = context size, 0 = disabled)
+     * @return this builder
      */
     public ModelParameters setDryPenaltyLastN(int dryPenaltyLastN) {
         if (dryPenaltyLastN < -1) {
@@ -399,6 +522,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Add sequence breaker for DRY sampling, clearing out default breakers (default: none).
+     *
+     * @param drySequenceBreaker the sequence breaker string for DRY sampling
+     * @return this builder
      */
     public ModelParameters setDrySequenceBreaker(String drySequenceBreaker) {
         parameters.put("--dry-sequence-breaker", drySequenceBreaker);
@@ -407,6 +533,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set dynamic temperature range (default: 0.0, 0.0 = disabled).
+     *
+     * @param dynatempRange the dynamic temperature range (0.0 = disabled)
+     * @return this builder
      */
     public ModelParameters setDynatempRange(float dynatempRange) {
         parameters.put("--dynatemp-range", String.valueOf(dynatempRange));
@@ -415,6 +544,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set dynamic temperature exponent (default: 1.0).
+     *
+     * @param dynatempExponent the dynamic temperature exponent
+     * @return this builder
      */
     public ModelParameters setDynatempExponent(float dynatempExponent) {
         parameters.put("--dynatemp-exp", String.valueOf(dynatempExponent));
@@ -423,6 +555,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Use Mirostat sampling (default: PLACEHOLDER, 0 = disabled, 1 = Mirostat, 2 = Mirostat 2.0).
+     *
+     * @param mirostat the Mirostat sampling mode
+     * @return this builder
      */
     public ModelParameters setMirostat(MiroStat mirostat) {
         parameters.put("--mirostat", String.valueOf(mirostat.ordinal()));
@@ -431,6 +566,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set Mirostat learning rate, parameter eta (default: 0.1).
+     *
+     * @param mirostatLR the Mirostat learning rate (eta)
+     * @return this builder
      */
     public ModelParameters setMirostatLR(float mirostatLR) {
         parameters.put("--mirostat-lr", String.valueOf(mirostatLR));
@@ -439,6 +577,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set Mirostat target entropy, parameter tau (default: 5.0).
+     *
+     * @param mirostatEnt the Mirostat target entropy (tau)
+     * @return this builder
      */
     public ModelParameters setMirostatEnt(float mirostatEnt) {
         parameters.put("--mirostat-ent", String.valueOf(mirostatEnt));
@@ -447,6 +588,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Modify the likelihood of token appearing in the completion.
+     *
+     * @param tokenIdAndBias token id and bias value as a formatted string
+     * @return this builder
      */
     public ModelParameters setLogitBias(String tokenIdAndBias) {
         parameters.put("--logit-bias", tokenIdAndBias);
@@ -455,6 +599,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set BNF-like grammar to constrain generations (default: empty).
+     *
+     * @param grammar the BNF-like grammar string
+     * @return this builder
      */
     public ModelParameters setGrammar(String grammar) {
         parameters.put("--grammar", grammar);
@@ -463,6 +610,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Specify the file to read grammar from.
+     *
+     * @param fileName the path to a file containing the grammar
+     * @return this builder
      */
     public ModelParameters setGrammarFile(String fileName) {
         parameters.put("--grammar-file", fileName);
@@ -471,6 +621,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Specify the JSON schema to constrain generations (default: empty).
+     *
+     * @param schema the JSON schema string
+     * @return this builder
      */
     public ModelParameters setJsonSchema(String schema) {
         parameters.put("--json-schema", schema);
@@ -479,6 +632,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set pooling type for embeddings (default: model default if unspecified).
+     *
+     * @param type the pooling type for embeddings
+     * @return this builder
      */
     public ModelParameters setPoolingType(PoolingType type) {
         parameters.put("--pooling", type.getArgValue());
@@ -487,6 +643,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set RoPE frequency scaling method (default: linear unless specified by the model).
+     *
+     * @param type the RoPE frequency scaling method
+     * @return this builder
      */
     public ModelParameters setRopeScaling(RopeScalingType type) {
         parameters.put("--rope-scaling", type.getArgValue());
@@ -495,6 +654,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set RoPE context scaling factor, expands context by a factor of N.
+     *
+     * @param ropeScale the RoPE context scaling factor
+     * @return this builder
      */
     public ModelParameters setRopeScale(float ropeScale) {
         parameters.put("--rope-scale", String.valueOf(ropeScale));
@@ -503,6 +665,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set RoPE base frequency, used by NTK-aware scaling (default: loaded from model).
+     *
+     * @param ropeFreqBase the RoPE base frequency
+     * @return this builder
      */
     public ModelParameters setRopeFreqBase(float ropeFreqBase) {
         parameters.put("--rope-freq-base", String.valueOf(ropeFreqBase));
@@ -511,6 +676,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set RoPE frequency scaling factor, expands context by a factor of 1/N.
+     *
+     * @param ropeFreqScale the RoPE frequency scaling factor
+     * @return this builder
      */
     public ModelParameters setRopeFreqScale(float ropeFreqScale) {
         parameters.put("--rope-freq-scale", String.valueOf(ropeFreqScale));
@@ -519,6 +687,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set YaRN: original context size of model (default: model training context size).
+     *
+     * @param yarnOrigCtx the original context size of the model
+     * @return this builder
      */
     public ModelParameters setYarnOrigCtx(int yarnOrigCtx) {
         parameters.put("--yarn-orig-ctx", String.valueOf(yarnOrigCtx));
@@ -527,6 +698,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set YaRN: extrapolation mix factor (default: 0.0 = full interpolation).
+     *
+     * @param yarnExtFactor the YaRN extrapolation mix factor (0.0 = full interpolation)
+     * @return this builder
      */
     public ModelParameters setYarnExtFactor(float yarnExtFactor) {
         parameters.put("--yarn-ext-factor", String.valueOf(yarnExtFactor));
@@ -535,6 +709,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set YaRN: scale sqrt(t) or attention magnitude (default: 1.0).
+     *
+     * @param yarnAttnFactor the YaRN attention scale factor
+     * @return this builder
      */
     public ModelParameters setYarnAttnFactor(float yarnAttnFactor) {
         parameters.put("--yarn-attn-factor", String.valueOf(yarnAttnFactor));
@@ -543,6 +720,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set YaRN: high correction dim or alpha (default: 1.0).
+     *
+     * @param yarnBetaSlow the YaRN high correction dimension (alpha)
+     * @return this builder
      */
     public ModelParameters setYarnBetaSlow(float yarnBetaSlow) {
         parameters.put("--yarn-beta-slow", String.valueOf(yarnBetaSlow));
@@ -551,6 +731,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set YaRN: low correction dim or beta (default: 32.0).
+     *
+     * @param yarnBetaFast the YaRN low correction dimension (beta)
+     * @return this builder
      */
     public ModelParameters setYarnBetaFast(float yarnBetaFast) {
         parameters.put("--yarn-beta-fast", String.valueOf(yarnBetaFast));
@@ -559,6 +742,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set group-attention factor (default: 1).
+     *
+     * @param grpAttnN the group-attention factor
+     * @return this builder
      */
     public ModelParameters setGrpAttnN(int grpAttnN) {
         parameters.put("--grp-attn-n", String.valueOf(grpAttnN));
@@ -567,6 +753,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set group-attention width (default: 512).
+     *
+     * @param grpAttnW the group-attention width
+     * @return this builder
      */
     public ModelParameters setGrpAttnW(int grpAttnW) {
         parameters.put("--grp-attn-w", String.valueOf(grpAttnW));
@@ -575,6 +764,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Enable verbose printing of the KV cache.
+     *
+     * @return this builder
      */
     public ModelParameters enableDumpKvCache() {
         parameters.put("--dump-kv-cache", null);
@@ -583,6 +774,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Disable KV offload.
+     *
+     * @return this builder
      */
     public ModelParameters disableKvOffload() {
         parameters.put("--no-kv-offload", null);
@@ -591,6 +784,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set KV cache data type for K (allowed values: F16).
+     *
+     * @param type the KV cache data type for K
+     * @return this builder
      */
     public ModelParameters setCacheTypeK(CacheType type) {
         parameters.put("--cache-type-k", type.name().toLowerCase());
@@ -599,6 +795,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set KV cache data type for V (allowed values: F16).
+     *
+     * @param type the KV cache data type for V
+     * @return this builder
      */
     public ModelParameters setCacheTypeV(CacheType type) {
         parameters.put("--cache-type-v", type.name().toLowerCase());
@@ -607,6 +806,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set KV cache defragmentation threshold (default: 0.1, &lt; 0 - disabled).
+     *
+     * @param defragThold the KV cache defragmentation threshold (negative = disabled)
+     * @return this builder
      */
     public ModelParameters setDefragThold(float defragThold) {
         parameters.put("--defrag-thold", String.valueOf(defragThold));
@@ -615,6 +817,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the number of parallel sequences to decode (default: 1).
+     *
+     * @param nParallel the number of parallel sequences to decode
+     * @return this builder
      */
     public ModelParameters setParallel(int nParallel) {
         parameters.put("--parallel", String.valueOf(nParallel));
@@ -623,6 +828,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Enable continuous batching (a.k.a dynamic batching) (default: disabled).
+     *
+     * @return this builder
      */
     public ModelParameters enableContBatching() {
         parameters.put("--cont-batching", null);
@@ -631,6 +838,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Disable continuous batching.
+     *
+     * @return this builder
      */
     public ModelParameters disableContBatching() {
         parameters.put("--no-cont-batching", null);
@@ -639,6 +848,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Force system to keep model in RAM rather than swapping or compressing.
+     *
+     * @return this builder
      */
     public ModelParameters enableMlock() {
         parameters.put("--mlock", null);
@@ -647,6 +858,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Do not memory-map model (slower load but may reduce pageouts if not using mlock).
+     *
+     * @return this builder
      */
     public ModelParameters disableMmap() {
         parameters.put("--no-mmap", null);
@@ -655,6 +868,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set NUMA optimization type for system.
+     *
+     * @param numaStrategy the NUMA optimization strategy
+     * @return this builder
      */
     public ModelParameters setNuma(NumaStrategy numaStrategy) {
         parameters.put("--numa", numaStrategy.name().toLowerCase());
@@ -663,6 +879,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set comma-separated list of devices to use for offloading &lt;dev1,dev2,..&gt; (none = don't offload).
+     *
+     * @param devices comma-separated list of device names to use for offloading
+     * @return this builder
      */
     public ModelParameters setDevices(String devices) {
         parameters.put("--device", devices);
@@ -671,6 +890,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the number of layers to store in VRAM.
+     *
+     * @param gpuLayers the number of model layers to store in VRAM
+     * @return this builder
      */
     public ModelParameters setGpuLayers(int gpuLayers) {
         parameters.put("--gpu-layers", String.valueOf(gpuLayers));
@@ -679,6 +901,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set how to split the model across multiple GPUs (none, layer, row).
+     *
+     * @param splitMode how to split the model across multiple GPUs
+     * @return this builder
      */
     public ModelParameters setSplitMode(GpuSplitMode splitMode) {
         parameters.put("--split-mode", splitMode.name().toLowerCase());
@@ -687,6 +912,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set fraction of the model to offload to each GPU, comma-separated list of proportions N0,N1,N2,....
+     *
+     * @param tensorSplit comma-separated proportions for offloading to each GPU
+     * @return this builder
      */
     public ModelParameters setTensorSplit(String tensorSplit) {
         parameters.put("--tensor-split", tensorSplit);
@@ -695,6 +923,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the GPU to use for the model (with split-mode = none), or for intermediate results and KV (with split-mode = row).
+     *
+     * @param mainGpu the index of the primary GPU
+     * @return this builder
      */
     public ModelParameters setMainGpu(int mainGpu) {
         parameters.put("--main-gpu", String.valueOf(mainGpu));
@@ -703,6 +934,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Enable checking model tensor data for invalid values.
+     *
+     * @return this builder
      */
     public ModelParameters enableCheckTensors() {
         parameters.put("--check-tensors", null);
@@ -711,6 +944,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Override model metadata by key. This option can be specified multiple times.
+     *
+     * @param keyValue the key-value metadata override string
+     * @return this builder
      */
     public ModelParameters setOverrideKv(String keyValue) {
         parameters.put("--override-kv", keyValue);
@@ -719,6 +955,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Add a LoRA adapter (can be repeated to use multiple adapters).
+     *
+     * @param fname the file path of the LoRA adapter
+     * @return this builder
      */
     public ModelParameters addLoraAdapter(String fname) {
         parameters.put("--lora", fname);
@@ -727,6 +966,10 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Add a LoRA adapter with user-defined scaling (can be repeated to use multiple adapters).
+     *
+     * @param fname the file path of the LoRA adapter
+     * @param scale the user-defined scaling factor
+     * @return this builder
      */
     public ModelParameters addLoraScaledAdapter(String fname, float scale) {
         parameters.put("--lora-scaled", fname + "," + scale);
@@ -735,6 +978,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Add a control vector (this argument can be repeated to add multiple control vectors).
+     *
+     * @param fname the file path of the control vector
+     * @return this builder
      */
     public ModelParameters addControlVector(String fname) {
         parameters.put("--control-vector", fname);
@@ -743,6 +989,10 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Add a control vector with user-defined scaling (can be repeated to add multiple scaled control vectors).
+     *
+     * @param fname the file path of the control vector
+     * @param scale the user-defined scaling factor
+     * @return this builder
      */
     public ModelParameters addControlVectorScaled(String fname, float scale) {
         parameters.put("--control-vector-scaled", fname + "," + scale);
@@ -751,6 +1001,10 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the layer range to apply the control vector(s) to (start and end inclusive).
+     *
+     * @param start the first layer to apply the control vector to (inclusive)
+     * @param end the last layer to apply the control vector to (inclusive)
+     * @return this builder
      */
     public ModelParameters setControlVectorLayerRange(int start, int end) {
         parameters.put("--control-vector-layer-range", start + "," + end);
@@ -759,6 +1013,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the model path from which to load the base model.
+     *
+     * @param model the file path of the base model
+     * @return this builder
      */
     public ModelParameters setModel(String model) {
         parameters.put("--model", model);
@@ -767,6 +1024,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the model download URL (default: unused).
+     *
+     * @param modelUrl the URL from which to download the model
+     * @return this builder
      */
     public ModelParameters setModelUrl(String modelUrl) {
         parameters.put("--model-url", modelUrl);
@@ -775,6 +1035,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the Hugging Face model repository (default: unused).
+     *
+     * @param hfRepo the Hugging Face repository identifier
+     * @return this builder
      */
     public ModelParameters setHfRepo(String hfRepo) {
         parameters.put("--hf-repo", hfRepo);
@@ -783,6 +1046,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the Hugging Face model file (default: unused).
+     *
+     * @param hfFile the model file within the Hugging Face repository
+     * @return this builder
      */
     public ModelParameters setHfFile(String hfFile) {
         parameters.put("--hf-file", hfFile);
@@ -791,6 +1057,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the Hugging Face model repository for the vocoder model (default: unused).
+     *
+     * @param hfRepoV the Hugging Face repository for the vocoder model
+     * @return this builder
      */
     public ModelParameters setHfRepoV(String hfRepoV) {
         parameters.put("--hf-repo-v", hfRepoV);
@@ -799,6 +1068,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the Hugging Face model file for the vocoder model (default: unused).
+     *
+     * @param hfFileV the vocoder model file within the Hugging Face repository
+     * @return this builder
      */
     public ModelParameters setHfFileV(String hfFileV) {
         parameters.put("--hf-file-v", hfFileV);
@@ -807,6 +1079,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the Hugging Face access token (default: value from HF_TOKEN environment variable).
+     *
+     * @param hfToken the Hugging Face API access token
+     * @return this builder
      */
     public ModelParameters setHfToken(String hfToken) {
         parameters.put("--hf-token", hfToken);
@@ -815,6 +1090,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Enable embedding use case; use only with dedicated embedding models.
+     *
+     * @return this builder
      */
     public ModelParameters enableEmbedding() {
         parameters.put("--embedding", null);
@@ -823,6 +1100,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Enable reranking endpoint on server.
+     *
+     * @return this builder
      */
     public ModelParameters enableReranking() {
         parameters.put("--reranking", null);
@@ -831,6 +1110,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set minimum chunk size to attempt reusing from the cache via KV shifting.
+     *
+     * @param cacheReuse the minimum chunk size to attempt reusing from KV cache
+     * @return this builder
      */
     public ModelParameters setCacheReuse(int cacheReuse) {
         parameters.put("--cache-reuse", String.valueOf(cacheReuse));
@@ -839,6 +1121,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the path to save the slot kv cache.
+     *
+     * @param slotSavePath the directory path for saving slot KV cache
+     * @return this builder
      */
     public ModelParameters setSlotSavePath(String slotSavePath) {
         parameters.put("--slot-save-path", slotSavePath);
@@ -847,6 +1132,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set custom jinja chat template.
+     *
+     * @param chatTemplate the custom Jinja chat template string
+     * @return this builder
      */
     public ModelParameters setChatTemplate(String chatTemplate) {
         parameters.put("--chat-template", chatTemplate);
@@ -855,6 +1143,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set how much the prompt of a request must match the prompt of a slot in order to use that slot.
+     *
+     * @param similarity the minimum similarity threshold for slot reuse
+     * @return this builder
      */
     public ModelParameters setSlotPromptSimilarity(float similarity) {
         parameters.put("--slot-prompt-similarity", String.valueOf(similarity));
@@ -863,6 +1154,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Load LoRA adapters without applying them (apply later via POST /lora-adapters).
+     *
+     * @return this builder
      */
     public ModelParameters setLoraInitWithoutApply() {
         parameters.put("--lora-init-without-apply", null);
@@ -871,6 +1164,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Disable logging.
+     *
+     * @return this builder
      */
     public ModelParameters disableLog() {
         parameters.put("--log-disable", null);
@@ -879,6 +1174,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the log file path.
+     *
+     * @param logFile the path to the log file
+     * @return this builder
      */
     public ModelParameters setLogFile(String logFile) {
         parameters.put("--log-file", logFile);
@@ -887,6 +1185,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set verbosity level to infinity (log all messages, useful for debugging).
+     *
+     * @return this builder
      */
     public ModelParameters setVerbose() {
         parameters.put("--verbose", null);
@@ -895,6 +1195,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the verbosity threshold (messages with a higher verbosity will be ignored).
+     *
+     * @param verbosity the verbosity threshold level
+     * @return this builder
      */
     public ModelParameters setLogVerbosity(int verbosity) {
         parameters.put("--log-verbosity", String.valueOf(verbosity));
@@ -903,6 +1206,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Enable prefix in log messages.
+     *
+     * @return this builder
      */
     public ModelParameters enableLogPrefix() {
         parameters.put("--log-prefix", null);
@@ -911,6 +1216,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Enable timestamps in log messages.
+     *
+     * @return this builder
      */
     public ModelParameters enableLogTimestamps() {
         parameters.put("--log-timestamps", null);
@@ -919,6 +1226,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the number of tokens to draft for speculative decoding.
+     *
+     * @param draftMax the number of tokens to draft for speculative decoding
+     * @return this builder
      */
     public ModelParameters setDraftMax(int draftMax) {
         parameters.put("--draft-max", String.valueOf(draftMax));
@@ -927,6 +1237,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the minimum number of draft tokens to use for speculative decoding.
+     *
+     * @param draftMin the minimum number of draft tokens for speculative decoding
+     * @return this builder
      */
     public ModelParameters setDraftMin(int draftMin) {
         parameters.put("--draft-min", String.valueOf(draftMin));
@@ -935,6 +1248,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the minimum speculative decoding probability for greedy decoding.
+     *
+     * @param draftPMin the minimum speculative decoding probability for greedy decoding
+     * @return this builder
      */
     public ModelParameters setDraftPMin(float draftPMin) {
         parameters.put("--draft-p-min", String.valueOf(draftPMin));
@@ -943,6 +1259,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the size of the prompt context for the draft model.
+     *
+     * @param ctxSizeDraft the prompt context size for the draft model
+     * @return this builder
      */
     public ModelParameters setCtxSizeDraft(int ctxSizeDraft) {
         parameters.put("--ctx-size-draft", String.valueOf(ctxSizeDraft));
@@ -951,6 +1270,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the comma-separated list of devices to use for offloading the draft model.
+     *
+     * @param deviceDraft comma-separated list of devices for offloading the draft model
+     * @return this builder
      */
     public ModelParameters setDeviceDraft(String deviceDraft) {
         parameters.put("--device-draft", deviceDraft);
@@ -959,6 +1281,9 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the number of layers to store in VRAM for the draft model.
+     *
+     * @param gpuLayersDraft the number of draft model layers to store in VRAM
+     * @return this builder
      */
     public ModelParameters setGpuLayersDraft(int gpuLayersDraft) {
         parameters.put("--gpu-layers-draft", String.valueOf(gpuLayersDraft));
@@ -967,14 +1292,19 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set the draft model for speculative decoding.
+     *
+     * @param modelDraft the file path of the draft model
+     * @return this builder
      */
     public ModelParameters setModelDraft(String modelDraft) {
         parameters.put("--model-draft", modelDraft);
         return this;
     }
-    
+
     /**
      * Enable jinja for templating
+     *
+     * @return this builder
      */
     public ModelParameters enableJinja() {
         parameters.put("--jinja", null);
@@ -985,16 +1315,22 @@ public final class ModelParameters extends CliParameters {
      * Only load the vocabulary for tokenization, no weights (default: false).
      * A model loaded with this option can only be used for {@link LlamaModel#encode(String)}
      * and {@link LlamaModel#decode(int[])}. Inference, embedding, and reranking will not work.
+     *
+     * @return this builder
      */
     public ModelParameters setVocabOnly() {
         parameters.put("--vocab-only", null);
         return this;
     }
 
+    /**
+     * Returns whether the given parameter key has not been explicitly set.
+     *
+     * @param key the parameter key without the {@code --} prefix
+     * @return {@code true} if the key is absent from the configured parameters
+     */
     public boolean isDefault(String key) {
         return !parameters.containsKey("--" + key);
     }
 
 }
-
-
