@@ -265,4 +265,118 @@ public class MemoryManagementTest {
         Assert.assertEquals("Second call must match first",  first, second);
         Assert.assertEquals("Third call must match first",   first, third);
     }
+
+    // ------------------------------------------------------------------
+    // Edge case 1: context shift with n_keep > 0
+    // ------------------------------------------------------------------
+
+    /**
+     * Exercises the context-shift path with an explicit {@code n_keep > 0}, which takes a
+     * completely different index range in the cache-token copy-down loop (server.hpp ~2968–2990).
+     *
+     * <p>With the default {@code n_keep = 0}, the preserved region is just the BOS token and
+     * the loop copies from position {@code n_discard} downward.  When {@code n_keep = 5} the
+     * C++ computes:
+     * <pre>
+     *   int n_keep_eff = slot.params.n_keep + add_bos_token;   // = 5 + 1 = 6
+     *   int n_left     = slot.n_past - n_keep_eff;
+     *   int n_discard  = n_left / 2;
+     *
+     *   llama_memory_seq_rm (..., n_keep_eff, n_keep_eff + n_discard);
+     *   llama_memory_seq_add(..., n_keep_eff + n_discard, n_past, -n_discard);
+     *
+     *   // copy-down starts at n_keep_eff, not 0 — tokens[0..n_keep_eff-1] are frozen
+     *   for (i = n_keep_eff + n_discard; i &lt; size; i++)
+     *       new_tokens[i - n_discard] = new_tokens[i];
+     * </pre>
+     * None of the existing tests set {@code n_keep > 0}, so the frozen-region arithmetic has
+     * never been reached from Java.  A bug here (wrong index, off-by-one in the KV-cache range,
+     * double-free of the kept region) would cause a crash, an assertion abort, or garbage output.
+     */
+    @Test
+    public void testContextShiftWithNKeepPreservesGeneration() {
+        // n_keep=5 asks the shift to freeze the first 5 prompt tokens as a "system prefix".
+        // With ctxSize=32 and nPredict=25 the window is reliably exceeded, so the shift fires
+        // with the non-trivial n_keep_eff = 5 + add_bos_token path.
+        InferenceParameters params = new InferenceParameters(SHORT_PROMPT)
+                .setNKeep(5)
+                .setNPredict(25)
+                .setIgnoreEos(true)
+                .setSeed(42);
+
+        String output = smallCtxModel.complete(params);
+
+        Assert.assertNotNull("Output must not be null after a context shift with n_keep > 0", output);
+        Assert.assertFalse("Output must not be empty after a context shift with n_keep > 0", output.isEmpty());
+    }
+
+    // ------------------------------------------------------------------
+    // Edge case 2: prompt-cache complete miss (disjoint second prompt)
+    // ------------------------------------------------------------------
+
+    /**
+     * Exercises the {@code cache_prompt=true} <em>complete-miss</em> path: after populating the
+     * KV cache with prompt A, a second call with a completely unrelated prompt B causes
+     * {@code get_common_prefix()} to return 0 (utils.hpp ~1204).
+     *
+     * <p>The relevant branch in server.hpp ~3162–3164:
+     * <pre>
+     *   slot.n_past = slot.cache_tokens.get_common_prefix(prompt_tokens);
+     *   // → 0 because first tokens of A and B differ
+     * </pre>
+     * At this point {@code slot.cache_tokens} still holds all of prompt A's tokens and the KV
+     * memory still contains the evaluated key/value vectors for A.  With {@code n_past = 0},
+     * the server re-evaluates the entire prompt B, overwriting those positions.  If the stale A
+     * data leaks into B's evaluation (wrong sequence ID, wrong position offset, residual KV
+     * entries beyond the new prompt length), generation produces wrong tokens or aborts.
+     *
+     * <p>The test also cross-checks output correctness: a fresh call (no prior cache) on the
+     * same disjoint prompt must produce the identical result, confirming that the stale-cache
+     * state had no observable effect on the logits.
+     */
+    @Test
+    public void testPromptCacheCompleteMissAfterWarmup() {
+        // Step 1: warm the cache with a distinct prompt so cache_tokens is fully populated.
+        InferenceParameters warmup = new InferenceParameters(CACHE_PREFIX_PROMPT)
+                .setCachePrompt(true)
+                .setNPredict(5)
+                .setSeed(1);
+        model.complete(warmup);
+
+        // Step 2: call with a completely disjoint prompt.
+        // "x = " shares no leading tokens with CACHE_PREFIX_PROMPT ("def remove_non_ascii…"),
+        // so get_common_prefix() returns 0 and the stale KV data for CACHE_PREFIX_PROMPT must
+        // be silently discarded / overwritten.
+        final String disjointPrompt = "x = ";
+        InferenceParameters missParams = new InferenceParameters(disjointPrompt)
+                .setCachePrompt(true)
+                .setNPredict(8)
+                .setTemperature(0f)
+                .setSeed(99);
+        String afterMiss = model.complete(missParams);
+
+        Assert.assertNotNull(afterMiss);
+        Assert.assertFalse("Cache-miss call must still produce output", afterMiss.isEmpty());
+
+        // Step 3: baseline — fresh model (no prior cache) on the same disjoint prompt.
+        // Output must be identical, proving that the stale A cache had no effect on B's logits.
+        int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+        try (LlamaModel freshModel = new LlamaModel(
+                new ModelParameters()
+                        .setModel(TestConstants.MODEL_PATH)
+                        .setCtxSize(128)
+                        .setGpuLayers(gpuLayers)
+                        .setFit(false))) {
+            InferenceParameters freshParams = new InferenceParameters(disjointPrompt)
+                    .setCachePrompt(true)
+                    .setNPredict(8)
+                    .setTemperature(0f)
+                    .setSeed(99);
+            String fresh = freshModel.complete(freshParams);
+
+            Assert.assertEquals(
+                    "A cache-miss call must produce the same output as a cold-start call on the same prompt",
+                    fresh, afterMiss);
+        }
+    }
 }
