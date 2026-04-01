@@ -1,11 +1,12 @@
-name: Release to Maven Central
+name: Build, Test and Release
 on:
+  pull_request:
   workflow_dispatch:
     inputs:
-      build_only:
-        description: 'Whether to only build the project and skip releasing it (yes/NO)'
+      release_to_maven_central:
+        description: 'Release to Maven Central (true/FALSE)'
         required: false
-        default: 'no'
+        default: 'false'
   release:
     types: [ created ]
 env:
@@ -13,19 +14,21 @@ env:
   MODEL_NAME: "codellama-7b.Q2_K.gguf"
   RERANKING_MODEL_URL: "https://huggingface.co/gpustack/jina-reranker-v1-tiny-en-GGUF/resolve/main/jina-reranker-v1-tiny-en-Q4_0.gguf"
   RERANKING_MODEL_NAME: "jina-reranker-v1-tiny-en-Q4_0.gguf"
+  DRAFT_MODEL_URL: "https://huggingface.co/QuantFactory/AMD-Llama-135m-code-GGUF/resolve/main/AMD-Llama-135m-code.Q2_K.gguf"
+  DRAFT_MODEL_NAME: "AMD-Llama-135m-code.Q2_K.gguf"
 jobs:
 
   build-linux-cuda:
     name: Build Linux x86-64 CUDA13
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build libraries
         shell: bash
         run: |
           .github/dockcross/dockcross-manylinux_2_28-x64 .github/build_cuda_linux.sh "-DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linux-libraries-cuda
           path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
@@ -41,6 +44,7 @@ jobs:
             os: Linux,
             arch: x86_64,
             image: dockcross-manylinux2014-x64,
+            cmake: "-DBUILD_TESTING=ON",
           }
           - {
             os: Linux,
@@ -54,13 +58,16 @@ jobs:
             cmake: "-DANDROID_PLATFORM=android-24",
           }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build libraries
         shell: bash
         run: |
           .github/dockcross/${{ matrix.target.image }} .github/build.sh "${{ matrix.target.cmake }} -DOS_NAME=${{ matrix.target.os }} -DOS_ARCH=${{ matrix.target.arch }}"
+      - name: Run C++ unit tests
+        if: matrix.target.os == 'Linux' && matrix.target.arch == 'x86_64'
+        run: ctest --test-dir build --output-on-failure
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.target.os }}-${{ matrix.target.arch }}-libraries
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
@@ -75,21 +82,27 @@ jobs:
         target:
           - {
             runner: macos-15,
-            cmake: '-DLLAMA_METAL=OFF'
+            cmake: '-DLLAMA_METAL=OFF -DGGML_NATIVE=OFF'
           }
           - {
             runner: macos-14,
             cmake: '-DLLAMA_METAL_EMBED_LIBRARY=ON'
           }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'zulu'
+          java-version: '8'
       - name: Build libraries
         shell: bash
         run: |
           mvn compile
-          .github/build.sh ${{ matrix.target.cmake }}
+          .github/build.sh ${{ matrix.target.cmake }} -DBUILD_TESTING=ON
+      - name: Run C++ unit tests
+        run: ctest --test-dir build --output-on-failure
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.target.runner }}-libraries
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
@@ -124,13 +137,15 @@ jobs:
 #            cmake: '-G "Visual Studio 16 2019" -A "ARM"'
 #          }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Build libraries
         shell: cmd
         run: |
-          .github\build.bat ${{ matrix.target.cmake }} -DOS_NAME=${{ matrix.target.os }} -DOS_ARCH=${{ matrix.target.arch }}
+          .github\build.bat ${{ matrix.target.cmake }} -DOS_NAME=${{ matrix.target.os }} -DOS_ARCH=${{ matrix.target.arch }} -DBUILD_TESTING=ON
+      - name: Run C++ unit tests
+        run: ctest --test-dir build --output-on-failure
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.target.os }}-${{ matrix.target.arch }}-libraries
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
@@ -141,16 +156,22 @@ jobs:
     needs: build-linux-docker
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v6
         with:
           name: Linux-x86_64-libraries
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
       - name: Download text generation model
-        run: curl -L ${MODEL_URL} --create-dirs -o models/${MODEL_NAME}
-      - name: Download reranking model 
-        run: curl -L ${RERANKING_MODEL_URL} --create-dirs -o models/${RERANKING_MODEL_NAME}
-      - uses: actions/setup-java@v4
+        run: curl -L --fail ${MODEL_URL} --create-dirs -o models/${MODEL_NAME}
+      - name: Download reranking model
+        run: curl -L --fail ${RERANKING_MODEL_URL} --create-dirs -o models/${RERANKING_MODEL_NAME}
+      - name: Download draft model
+        run: curl -L --fail ${DRAFT_MODEL_URL} --create-dirs -o models/${DRAFT_MODEL_NAME}
+      - name: List files in models directory
+        run: ls -l models/
+      - name: Validate model files
+        run: bash .github/validate-models.sh
+      - uses: actions/setup-java@v6
         with:
           distribution: 'zulu'
           java-version: '8'
@@ -161,32 +182,64 @@ jobs:
       - name: Memory after tests
         if: always()
         run: free -h
+      - if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: error-log-linux
+          path: ${{ github.workspace }}/hs_err_pid*.log
+          if-no-files-found: warn
 
   test-macos:
-    name: Test Mac
+    name: Test ${{ matrix.target.runner }}
     needs: build-macos-native
-    runs-on: macos-14
+    runs-on: ${{ matrix.target.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - {
+            runner: macos-14,
+            artifact: macos-14-libraries,
+            mvn_test_args: "-Dde.kherud.llama.test.ngl=0"
+          }
+          - {
+            runner: macos-15,
+            artifact: macos-15-libraries,
+            mvn_test_args: ""
+          }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v6
         with:
-          name: macos-14-libraries
+          name: ${{ matrix.target.artifact }}
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
       - name: Download text generation model
-        run: curl -L ${MODEL_URL} --create-dirs -o models/${MODEL_NAME}
+        run: curl -L --fail ${MODEL_URL} --create-dirs -o models/${MODEL_NAME}
       - name: Download reranking model
-        run: curl -L ${RERANKING_MODEL_URL} --create-dirs -o models/${RERANKING_MODEL_NAME}
-      - uses: actions/setup-java@v4
+        run: curl -L --fail ${RERANKING_MODEL_URL} --create-dirs -o models/${RERANKING_MODEL_NAME}
+      - name: Download draft model
+        run: curl -L --fail ${DRAFT_MODEL_URL} --create-dirs -o models/${DRAFT_MODEL_NAME}
+      - name: List files in models directory
+        run: ls -l models/
+      - name: Validate model files
+        run: bash .github/validate-models.sh
+      - uses: actions/setup-java@v6
         with:
           distribution: 'zulu'
           java-version: '8'
       - name: Memory before tests
         run: vm_stat && sysctl hw.memsize hw.physmem
       - name: Run tests
-        run: mvn --no-transfer-progress -Dde.kherud.llama.test.ngl=0 test
+        run: mvn --no-transfer-progress ${{ matrix.target.mvn_test_args }} test
       - name: Memory after tests
         if: always()
         run: vm_stat && sysctl hw.memsize hw.physmem
+      - if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: error-log-${{ matrix.target.runner }}
+          path: ${{ github.workspace }}/hs_err_pid*.log
+          if-no-files-found: warn
 
 
   test-windows:
@@ -194,16 +247,22 @@ jobs:
     needs: build-win-native
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v6
         with:
           name: Windows-x86_64-libraries
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
       - name: Download text generation model
-        run: curl -L $env:MODEL_URL --create-dirs -o models/$env:MODEL_NAME
+        run: curl -L --fail $env:MODEL_URL --create-dirs -o models/$env:MODEL_NAME
       - name: Download reranking model
-        run: curl -L $env:RERANKING_MODEL_URL --create-dirs -o models/$env:RERANKING_MODEL_NAME
-      - uses: actions/setup-java@v4
+        run: curl -L --fail $env:RERANKING_MODEL_URL --create-dirs -o models/$env:RERANKING_MODEL_NAME
+      - name: Download draft model
+        run: curl -L --fail $env:DRAFT_MODEL_URL --create-dirs -o models/$env:DRAFT_MODEL_NAME
+      - name: List files in models directory
+        run: ls -l models/
+      - name: Validate model files
+        run: .github\validate-models.bat
+      - uses: actions/setup-java@v6
         with:
           distribution: 'zulu'
           java-version: '8'
@@ -216,52 +275,60 @@ jobs:
         if: always()
         run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
         shell: pwsh
+      - if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: windows-output
+          path: |
+            ${{ github.workspace }}\hs_err_pid*.log
+            ${{ github.workspace }}/src/main/resources/de/kherud/llama/**/*
+          if-no-files-found: warn
 
 
   package:
     name: Package JARs
-    needs: [ test-linux,test-macos,test-windows,build-linux-cuda ]
+    needs: [ test-linux, test-macos, test-windows, build-linux-cuda ]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v6
         with:
           pattern: "*-libraries"
           merge-multiple: true
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: linux-libraries-cuda
           path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: 'zulu'
           java-version: '8'
       - name: Build JARs
         run: mvn --batch-mode --no-transfer-progress -P release -Dmaven.test.skip=true -Dgpg.skip=true package
       - name: Upload JARs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: llama-jars
           path: target/*.jar
 
   publish:
-    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.build_only == 'no' }}
+    if: ${{ github.event_name == 'release' || github.event.inputs.release_to_maven_central == 'true' }}
     needs: [ package ]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v6
         with:
           pattern: "*-libraries"
           merge-multiple: true
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v6
         with:
           name: linux-libraries-cuda
           path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
       - name: Set up Maven Central Repository
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'zulu'
