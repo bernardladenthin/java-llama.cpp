@@ -959,16 +959,19 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobje
     }
     auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
 
-    SRV_INF("%s: cleaning up resources\n", __func__);
+    // Clear the pointer first to prevent double-free from concurrent calls
+    env->SetLongField(obj, f_model_pointer, 0);
 
     if (!ctx_server->is_vocab_only()) {
-        // Full model mode: stop the background task processing loop
+        // Full model mode: stop the background task processing loop.
+        // Note: the detached thread may still be referencing ctx_server after terminate()
+        // returns, so we cannot safely delete it here. This is a known trade-off — the
+        // memory is reclaimed when the process exits.
         ctx_server->queue_tasks.terminate();
+    } else {
+        // Vocab-only mode has no background thread, safe to delete
+        delete ctx_server;
     }
-    delete ctx_server;
-
-    // Clear the pointer to prevent double-free
-    env->SetLongField(obj, f_model_pointer, 0);
 }
 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_cancelCompletion(JNIEnv *env, jobject obj, jint id_task) {
