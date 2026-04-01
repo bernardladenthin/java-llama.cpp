@@ -62,6 +62,7 @@ public class LlamaEmbeddingsTest {
                         .setModel(TestConstants.MODEL_PATH)
                         .setCtxSize(128)
                         .setGpuLayers(gpuLayers)
+                        .setFit(false)
                         .enableEmbedding()
                         .setPoolingType(type)
         );
