@@ -18,8 +18,8 @@ env:
   DRAFT_MODEL_NAME: "AMD-Llama-135m-code.Q2_K.gguf"
 jobs:
 
-  build-linux-cuda:
-    name: Build Linux x86-64 CUDA13
+  crosscompile-linux-x86_64-cuda:
+    name: Cross-Compile Linux x86_64 (CUDA)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -33,25 +33,27 @@ jobs:
           name: linux-libraries-cuda
           path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
 
-  build-linux-docker:
-    name: Build ${{ matrix.target.os }}-${{ matrix.target.arch }}
+  crosscompile-linux:
+    name: ${{ matrix.target.name }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         target:
           - {
+            name: "Cross-Compile Linux x86_64",
             os: Linux,
             arch: x86_64,
             image: dockcross-manylinux2014-x64,
-            cmake: "-DBUILD_TESTING=ON",
           }
           - {
+            name: "Cross-Compile Linux aarch64",
             os: Linux,
             arch: aarch64,
             image: dockcross-linux-arm64-lts,
           }
           - {
+            name: "Cross-Compile Android aarch64",
             os: Linux-Android,
             arch: aarch64,
             image: dockcross-android-arm64,
@@ -63,9 +65,6 @@ jobs:
         shell: bash
         run: |
           .github/dockcross/${{ matrix.target.image }} .github/build.sh "${{ matrix.target.cmake }} -DOS_NAME=${{ matrix.target.os }} -DOS_ARCH=${{ matrix.target.arch }}"
-      - name: Run C++ unit tests
-        if: matrix.target.os == 'Linux' && matrix.target.arch == 'x86_64'
-        run: ctest --test-dir build --output-on-failure
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
         with:
@@ -73,18 +72,20 @@ jobs:
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
 
 
-  build-macos-native:
-    name: Build ${{ matrix.target.runner }}
+  build-macos:
+    name: ${{ matrix.target.name }}
     runs-on: ${{ matrix.target.runner }}
     strategy:
       fail-fast: false
       matrix:
         target:
           - {
+            name: "Build macOS arm64 (no Metal)",
             runner: macos-15,
             cmake: '-DLLAMA_METAL=OFF -DGGML_NATIVE=OFF'
           }
           - {
+            name: "Build macOS arm64 (Metal)",
             runner: macos-14,
             cmake: '-DLLAMA_METAL_EMBED_LIBRARY=ON'
           }
@@ -108,8 +109,8 @@ jobs:
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
 
 
-  build-win-native:
-    name: Build ${{ matrix.target.os }}-${{ matrix.target.arch }}
+  build-windows:
+    name: Build Windows ${{ matrix.target.arch }}
     runs-on: windows-2022
     strategy:
       fail-fast: false
@@ -151,9 +152,26 @@ jobs:
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
 
 
-  test-linux:
-    name: Test Linux
-    needs: build-linux-docker
+  test-cpp-linux-x86_64:
+    name: C++ Tests Linux x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'zulu'
+          java-version: '8'
+      - name: Build libraries
+        run: |
+          mvn -q compile
+          .github/build.sh -DBUILD_TESTING=ON
+      - name: Run C++ unit tests
+        run: ctest --test-dir build --output-on-failure
+
+
+  test-java-linux-x86_64:
+    name: Java Tests Linux x86_64
+    needs: crosscompile-linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -185,24 +203,26 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@v6
         with:
-          name: error-log-linux
+          name: error-log-linux-x86_64
           path: ${{ github.workspace }}/hs_err_pid*.log
           if-no-files-found: warn
 
-  test-macos:
-    name: Test ${{ matrix.target.runner }}
-    needs: build-macos-native
+  test-java-macos:
+    name: ${{ matrix.target.name }}
+    needs: build-macos
     runs-on: ${{ matrix.target.runner }}
     strategy:
       fail-fast: false
       matrix:
         target:
           - {
+            name: "Java Tests macOS arm64 (Metal)",
             runner: macos-14,
             artifact: macos-14-libraries,
             mvn_test_args: "-Dde.kherud.llama.test.ngl=0"
           }
           - {
+            name: "Java Tests macOS arm64 (no Metal)",
             runner: macos-15,
             artifact: macos-15-libraries,
             mvn_test_args: ""
@@ -242,9 +262,9 @@ jobs:
           if-no-files-found: warn
 
 
-  test-windows:
-    name: Test Windows
-    needs: build-win-native
+  test-java-windows-x86_64:
+    name: Java Tests Windows x86_64
+    needs: build-windows
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -287,7 +307,7 @@ jobs:
 
   package:
     name: Package JARs
-    needs: [ test-linux, test-macos, test-windows, build-linux-cuda ]
+    needs: [ test-cpp-linux-x86_64, test-java-linux-x86_64, test-java-macos, test-java-windows-x86_64, crosscompile-linux-x86_64-cuda ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
