@@ -390,6 +390,9 @@ jobs:
     name: Package JARs
     needs:
       - crosscompile-linux-x86_64-cuda
+      - crosscompile-linux-aarch64
+      - crosscompile-android-aarch64
+      - build-windows-x86
       - test-cpp-linux-x86_64
       - test-macos-arm64-metal-15
       - test-java-linux-x86_64
