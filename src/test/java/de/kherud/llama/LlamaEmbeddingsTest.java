@@ -18,15 +18,17 @@ import java.io.File;
  *   <li>{@link PoolingType#NONE} – instructs llama.cpp to return one embedding <em>per token</em>;
  *       {@link LlamaModel#embed(String)} returns only the first row, so the result would silently
  *       be the embedding of a single BOS token rather than a sentence-level vector.</li>
+ *   <li>{@link PoolingType#CLS} – decoder-only models (LLaMA / CodeLlama) have no CLS token;
+ *       requesting CLS pooling triggers a native {@code SIGABRT} in llama.cpp.</li>
  * </ul>
  *
- * <p>All other types (UNSPECIFIED, MEAN, CLS, LAST) produce a single pooled vector whose
+ * <p>Tested types (UNSPECIFIED, MEAN, LAST) all produce a single pooled vector whose
  * dimension equals the model's hidden size (4 096 for CodeLlama-7B).
  */
 @ClaudeGenerated(
         purpose = "Verify that LlamaModel.embed() returns a correctly-sized float[] for every " +
                   "pooling type that is applicable to decoder-only embedding models, and that " +
-                  "UNSPECIFIED (= model default) behaves the same way."
+                  "UNSPECIFIED (= model default) behaves the same way as MEAN for CodeLlama."
 )
 public class LlamaEmbeddingsTest {
 
@@ -58,6 +60,7 @@ public class LlamaEmbeddingsTest {
         return new LlamaModel(
                 new ModelParameters()
                         .setModel(TestConstants.MODEL_PATH)
+                        .setCtxSize(128)
                         .setGpuLayers(gpuLayers)
                         .enableEmbedding()
                         .setPoolingType(type)
@@ -89,19 +92,6 @@ public class LlamaEmbeddingsTest {
         assertEmbeddingValid(embedding, PoolingType.MEAN);
     }
 
-    /**
-     * CLS pooling uses the first (CLS / BOS) token's representation.
-     * Decoder-only models do not have a dedicated CLS token, so this is equivalent to the BOS
-     * token embedding — still produces a valid 4096-dimensional vector.
-     */
-    @Test
-    public void testEmbedClsPooling() {
-        model = openModel(PoolingType.CLS);
-        float[] embedding = model.embed(TEXT);
-        Assert.assertEquals(EXPECTED_DIM, embedding.length);
-        assertEmbeddingValid(embedding, PoolingType.CLS);
-    }
-
     /** LAST pooling uses the last token's representation. */
     @Test
     public void testEmbedLastPooling() {
@@ -112,12 +102,13 @@ public class LlamaEmbeddingsTest {
     }
 
     // -------------------------------------------------------------------------
-    // Sanity: MEAN and UNSPECIFIED should be numerically close (model default = MEAN)
+    // Sanity: MEAN and UNSPECIFIED should be numerically identical (model default = MEAN)
     // -------------------------------------------------------------------------
 
     /**
      * Because UNSPECIFIED lets CodeLlama fall back to its model-default pooling (MEAN), the
      * embeddings produced by UNSPECIFIED and MEAN must be identical element-wise.
+     * The two models are loaded and freed sequentially so only one is in memory at a time.
      */
     @Test
     public void testUnspecifiedEquivalentToMeanForCodeLlama() {
@@ -135,31 +126,32 @@ public class LlamaEmbeddingsTest {
     }
 
     // -------------------------------------------------------------------------
-    // Sanity: different pooling strategies should differ
+    // Sanity: MEAN and LAST should produce different vectors
     // -------------------------------------------------------------------------
 
     /**
-     * CLS and LAST pool different tokens, so their outputs must not be identical for a
-     * multi-token input.
+     * MEAN and LAST pool over different token positions, so their outputs must not be identical
+     * for a multi-token input.
+     * The two models are loaded and freed sequentially so only one is in memory at a time.
      */
     @Test
-    public void testClsAndLastPoolingDiffer() {
-        model = openModel(PoolingType.CLS);
-        float[] cls = model.embed(TEXT);
+    public void testMeanAndLastPoolingDiffer() {
+        model = openModel(PoolingType.MEAN);
+        float[] mean = model.embed(TEXT);
         model.close();
 
         model = openModel(PoolingType.LAST);
         float[] last = model.embed(TEXT);
 
-        Assert.assertEquals(cls.length, last.length);
+        Assert.assertEquals(mean.length, last.length);
         boolean differ = false;
-        for (int i = 0; i < cls.length; i++) {
-            if (Math.abs(cls[i] - last[i]) > 1e-6f) {
+        for (int i = 0; i < mean.length; i++) {
+            if (Math.abs(mean[i] - last[i]) > 1e-6f) {
                 differ = true;
                 break;
             }
         }
-        Assert.assertTrue("CLS and LAST pooling must produce different vectors for multi-token input", differ);
+        Assert.assertTrue("MEAN and LAST pooling must produce different vectors for multi-token input", differ);
     }
 
     // -------------------------------------------------------------------------
@@ -177,7 +169,6 @@ public class LlamaEmbeddingsTest {
                     Float.isInfinite(embedding[i])
             );
         }
-        // At least some values must be non-zero
         boolean hasNonZero = false;
         for (float v : embedding) {
             if (v != 0.0f) {

@@ -47,6 +47,10 @@ public enum PoolingType {
      * CLS pooling – uses the representation of the first (CLS / BOS) token.
      *
      * <p>CLI string: {@code "cls"} — maps to {@code LLAMA_POOLING_TYPE_CLS = 2}.
+     *
+     * <p><strong>Note:</strong> decoder-only models (e.g. LLaMA / CodeLlama) have no dedicated
+     * CLS token; requesting this pooling type for such models causes a native abort in llama.cpp.
+     * Use only with encoder or encoder-decoder models that include a CLS token.
      */
     CLS("cls"),
 
