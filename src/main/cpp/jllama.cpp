@@ -896,7 +896,9 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
             task.params = server_task::params_from_json_cmpl(ctx_server->ctx, ctx_server->params_base, data);
             task.id_selected_slot = json_value(data, "id_slot", -1);
 
-            task.params.oaicompat = OAICOMPAT_TYPE_CHAT;
+            // Use NONE so receiveCompletion gets the simple {"content":"..."} format.
+            // The chat template was already applied by oaicompat_chat_params_parse above.
+            task.params.oaicompat = OAICOMPAT_TYPE_NONE;
             task.params.oaicompat_cmpl_id = completion_id;
 
             tasks.push_back(std::move(task));
