@@ -453,6 +453,60 @@ public class LlamaModelTest {
 	}
 
 	// ------------------------------------------------------------------
+	// chatComplete / handleChatCompletions
+	// ------------------------------------------------------------------
+
+	@Test
+	public void testChatComplete() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Write a single word."));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages)
+				.setNPredict(nPredict)
+				.setSeed(42)
+				.setTemperature(0.0f);
+
+		String response = model.chatComplete(params);
+		Assert.assertNotNull("Chat completion should return a non-null response", response);
+		Assert.assertFalse("Chat completion should return a non-empty response", response.isEmpty());
+	}
+
+	@Test
+	public void testChatCompleteWithSystemMessage() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Say hello."));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages("You are a helpful assistant.", messages)
+				.setNPredict(nPredict)
+				.setSeed(42)
+				.setTemperature(0.0f);
+
+		String response = model.chatComplete(params);
+		Assert.assertNotNull(response);
+		Assert.assertFalse(response.isEmpty());
+	}
+
+	@Test
+	public void testChatCompleteMultiTurn() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "What is 2+2?"));
+		messages.add(new Pair<>("assistant", "4"));
+		messages.add(new Pair<>("user", "And 3+3?"));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages)
+				.setNPredict(nPredict)
+				.setSeed(42)
+				.setTemperature(0.0f);
+
+		String response = model.chatComplete(params);
+		Assert.assertNotNull(response);
+		Assert.assertFalse(response.isEmpty());
+	}
+
+	// ------------------------------------------------------------------
 	// applyTemplate / oaicompat_chat_params_parse (changed in b8576)
 	// ------------------------------------------------------------------
 

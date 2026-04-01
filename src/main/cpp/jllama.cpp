@@ -763,6 +763,102 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *
     return jtok_str;
 }
 
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(JNIEnv *env, jobject obj,
+                                                                                jstring jparams) {
+    jlong server_handle = env->GetLongField(obj, f_model_pointer);
+    if (server_handle == 0) {
+        env->ThrowNew(c_llama_error, "Model is not loaded");
+        return nullptr;
+    }
+    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+
+    if (ctx_server->params_base.embedding) {
+        env->ThrowNew(c_llama_error, "This server does not support completions. Start it without `--embeddings`");
+        return nullptr;
+    }
+
+    std::string c_params = parse_jstring(env, jparams);
+    json body = json::parse(c_params);
+
+    // Apply chat template via OAI-compatible parser
+    json data;
+    try {
+        std::vector<raw_buffer> files;
+        data = oaicompat_chat_params_parse(body, ctx_server->oai_parser_opt, files);
+    } catch (const std::exception &e) {
+        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
+        env->ThrowNew(c_llama_error, err.dump().c_str());
+        return nullptr;
+    }
+
+    auto completion_id = gen_chatcmplid();
+    std::vector<server_task> tasks;
+
+    try {
+        const auto &prompt = data.at("prompt");
+
+        std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, prompt, true, true);
+
+        tasks.reserve(tokenized_prompts.size());
+        for (size_t i = 0; i < tokenized_prompts.size(); i++) {
+            server_task task = server_task(SERVER_TASK_TYPE_COMPLETION);
+
+            task.id = ctx_server->queue_tasks.get_new_id();
+            task.index = i;
+
+            task.prompt_tokens = server_tokens(tokenized_prompts[i], false);
+            task.params = server_task::params_from_json_cmpl(ctx_server->ctx, ctx_server->params_base, data);
+            task.id_selected_slot = json_value(data, "id_slot", -1);
+
+            task.params.oaicompat = OAICOMPAT_TYPE_CHAT;
+            task.params.oaicompat_cmpl_id = completion_id;
+
+            tasks.push_back(std::move(task));
+        }
+    } catch (const std::exception &e) {
+        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
+        env->ThrowNew(c_llama_error, err.dump().c_str());
+        return nullptr;
+    }
+
+    ctx_server->queue_results.add_waiting_tasks(tasks);
+    const auto task_ids = server_task::get_list_id(tasks);
+    ctx_server->queue_tasks.post(std::move(tasks));
+
+    // Collect all results (blocking)
+    std::vector<server_task_result_ptr> results;
+    results.reserve(task_ids.size());
+
+    for (size_t i = 0; i < task_ids.size(); i++) {
+        server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
+
+        if (result->is_error()) {
+            ctx_server->queue_results.remove_waiting_task_ids(task_ids);
+            std::string error_msg = result->to_json()["message"].get<std::string>();
+            env->ThrowNew(c_llama_error, error_msg.c_str());
+            return nullptr;
+        }
+
+        results.push_back(std::move(result));
+    }
+
+    ctx_server->queue_results.remove_waiting_task_ids(task_ids);
+
+    // Build response JSON
+    json response;
+    if (results.size() == 1) {
+        response = results[0]->to_json();
+    } else {
+        response = json::array();
+        for (auto &res : results) {
+            response.push_back(res->to_json());
+        }
+    }
+
+    std::string response_str = response.dump();
+    return env->NewStringUTF(response_str.c_str());
+}
+
 JNIEXPORT jintArray JNICALL Java_de_kherud_llama_LlamaModel_encode(JNIEnv *env, jobject obj, jstring jprompt) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
     auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)

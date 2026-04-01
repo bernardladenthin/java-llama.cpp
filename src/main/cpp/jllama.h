@@ -98,6 +98,13 @@ JNIEXPORT jobject JNICALL Java_de_kherud_llama_LlamaModel_rerank(JNIEnv *, jobje
  */
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *, jobject, jstring);
 
+/*
+ * Class:     de_kherud_llama_LlamaModel
+ * Method:    handleChatCompletions
+ * Signature: (Ljava/lang/String;)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(JNIEnv *, jobject, jstring);
+
 #ifdef __cplusplus
 }
 #endif
