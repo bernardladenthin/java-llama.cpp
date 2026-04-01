@@ -9,6 +9,7 @@ import de.kherud.llama.args.*;
 public final class ModelParameters extends CliParameters {
 
     private static final String ARG_FIT = "--fit";
+    static final String ARG_POOLING = "--pooling";
     public static final String FIT_ON = "on";
     public static final String FIT_OFF = "off";
     /** Mirrors the llama.cpp default: {@code fit_params = true}. */
@@ -632,12 +633,17 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set pooling type for embeddings (default: model default if unspecified).
+     * When {@link de.kherud.llama.args.PoolingType#UNSPECIFIED} is passed, the parameter is not forwarded
+     * to the native layer, leaving the model to use its built-in default pooling strategy.
      *
      * @param type the pooling type for embeddings
      * @return this builder
      */
     public ModelParameters setPoolingType(PoolingType type) {
-        parameters.put("--pooling", type.getArgValue());
+        if (type != PoolingType.UNSPECIFIED) {
+            // Don't set if unspecified, as it will use the model's default pooling type
+            parameters.put(ARG_POOLING, type.getArgValue());
+        }
         return this;
     }
 
