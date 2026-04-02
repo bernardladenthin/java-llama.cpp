@@ -7,6 +7,8 @@
 #include "nlohmann/json.hpp"
 #include "server.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <ctime>
 #include <functional>
 #include <thread>
@@ -40,6 +42,9 @@ struct jllama_context {
     server_context *server = nullptr;
     std::thread worker;
     bool vocab_only = false;
+    // Signals that the worker thread has entered start_loop() and is ready.
+    // Without this, terminate() can race with start_loop() setting running=true.
+    std::atomic<bool> worker_ready{false};
 };
 
 JavaVM *g_vm = nullptr;
@@ -499,23 +504,36 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
         std::bind(&server_context::process_single_task, ctx_server, std::placeholders::_1));
     ctx_server->queue_tasks.on_update_slots(std::bind(&server_context::update_slots, ctx_server));
 
-    jctx->worker = std::thread([ctx_server]() {
+    jctx->worker = std::thread([jctx, ctx_server]() {
         JNIEnv *env;
         jint res = g_vm->GetEnv((void **)&env, JNI_VERSION_1_6);
         bool attached = false;
         if (res == JNI_EDETACHED) {
             res = g_vm->AttachCurrentThread((void **)&env, nullptr);
             if (res != JNI_OK) {
-                return; // Can't throw across thread boundary; just exit
+                jctx->worker_ready.store(true); // Signal even on failure so close() doesn't hang
+                return;
             }
             attached = true;
         }
+        // Signal that we're about to enter start_loop(). This must happen
+        // after AttachCurrentThread but before start_loop() sets running=true,
+        // so that close() can safely call terminate() knowing the thread is ready.
+        jctx->worker_ready.store(true);
         ctx_server->queue_tasks.start_loop();
         // Detach from JVM before thread exits to prevent writing to closed pipes
         if (attached) {
             g_vm->DetachCurrentThread();
         }
     });
+
+    // Wait for the worker thread to be ready before returning. This prevents
+    // a race where close() calls terminate() before start_loop() has set
+    // running=true, which would cause start_loop() to override the terminate
+    // and result in a deadlock on join().
+    while (!jctx->worker_ready.load()) {
+        std::this_thread::yield();
+    }
 
     env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(jctx));
 }
@@ -987,9 +1005,15 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobje
     env->SetLongField(obj, f_model_pointer, 0);
 
     if (!jctx->vocab_only) {
-        // Signal the background thread to stop and wait for it to exit.
-        // terminate() sets running=false and notifies the condition variable,
-        // causing start_loop() to return on its next iteration.
+        // Wait for the worker thread to be ready (entered start_loop).
+        while (!jctx->worker_ready.load()) {
+            std::this_thread::yield();
+        }
+        // Signal the background thread to stop. We call terminate() twice with
+        // a brief sleep in between to close the race window where the thread
+        // signalled ready but start_loop() hasn't yet set running=true.
+        jctx->server->queue_tasks.terminate();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
         jctx->server->queue_tasks.terminate();
         if (jctx->worker.joinable()) {
             jctx->worker.join();
