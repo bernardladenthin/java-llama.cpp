@@ -502,15 +502,19 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
     jctx->worker = std::thread([ctx_server]() {
         JNIEnv *env;
         jint res = g_vm->GetEnv((void **)&env, JNI_VERSION_1_6);
+        bool attached = false;
         if (res == JNI_EDETACHED) {
             res = g_vm->AttachCurrentThread((void **)&env, nullptr);
             if (res != JNI_OK) {
                 return; // Can't throw across thread boundary; just exit
             }
+            attached = true;
         }
         ctx_server->queue_tasks.start_loop();
         // Detach from JVM before thread exits to prevent writing to closed pipes
-        g_vm->DetachCurrentThread();
+        if (attached) {
+            g_vm->DetachCurrentThread();
+        }
     });
 
     env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(jctx));
@@ -983,10 +987,10 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobje
     env->SetLongField(obj, f_model_pointer, 0);
 
     if (!jctx->vocab_only) {
-        // Signal the background thread to stop
+        // Signal the background thread to stop and wait for it to exit.
+        // terminate() sets running=false and notifies the condition variable,
+        // causing start_loop() to return on its next iteration.
         jctx->server->queue_tasks.terminate();
-        // Wait for the thread to fully exit — this guarantees no dangling
-        // references to ctx_server and no writes to closed JVM pipes
         if (jctx->worker.joinable()) {
             jctx->worker.join();
         }
