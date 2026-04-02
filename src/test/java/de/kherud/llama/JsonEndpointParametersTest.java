@@ -34,6 +34,9 @@ public class JsonEndpointParametersTest {
 
     private static final int N_PREDICT = 5;
     private static final String PROMPT = "int main() {";
+    // Use temperature=0 to produce deterministic ASCII output and avoid incomplete
+    // UTF-8 sequences that crash nlohmann::json on low-quality quantizations (Q2_K).
+    private static final String DETERMINISTIC = ",\"temperature\":0,\"seed\":42";
 
     private static LlamaModel model;
 
@@ -65,6 +68,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testDryMultiplierAccepted() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"dry_multiplier\":0.8,\"dry_base\":1.75,\"dry_allowed_length\":2"
                 + ",\"dry_penalty_last_n\":-1}";
         String result = model.handleCompletions(json);
@@ -75,6 +79,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testDrySequenceBreakersAccepted() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"dry_multiplier\":0.5,\"dry_sequence_breakers\":[\"\\n\",\":\",\"*\"]}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -85,6 +90,7 @@ public class JsonEndpointParametersTest {
     public void testDryDisabledByDefault() {
         // dry_multiplier=0 means DRY is disabled; should still produce output
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"dry_multiplier\":0.0}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -98,6 +104,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testXtcParametersAccepted() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"xtc_probability\":0.5,\"xtc_threshold\":0.1}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -107,6 +114,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testXtcDisabled() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"xtc_probability\":0.0}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -120,6 +128,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testTopNSigmaAccepted() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"top_n_sigma\":2.0}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -129,6 +138,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testTopNSigmaDisabled() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"top_n_sigma\":-1.0}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -142,6 +152,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testReturnTokensTrue() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"return_tokens\":true}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -152,6 +163,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testReturnTokensFalse() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"return_tokens\":false}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -165,6 +177,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testResponseFieldsFiltering() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"response_fields\":[\"content\",\"stop\"]}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -179,6 +192,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testTimingsPerTokenTrue() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"timings_per_token\":true}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -194,6 +208,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testPostSamplingProbsWithNProbs() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"n_probs\":3,\"post_sampling_probs\":true}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -209,6 +224,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testNDiscardAccepted() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"n_discard\":0}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -222,6 +238,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testIdSlotSelection() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"id_slot\":0}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -237,6 +254,7 @@ public class JsonEndpointParametersTest {
     public void testIgnoreEosAccepted() {
         // With ignore_eos=true and n_predict=N_PREDICT, generation should still respect n_predict
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"ignore_eos\":true}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -249,8 +267,9 @@ public class JsonEndpointParametersTest {
 
     @Test
     public void testCombinedAdvancedSampling() {
+        // This test uses its own temperature, but still uses seed for reproducibility
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
-                + ",\"temperature\":0.7,\"top_k\":40,\"top_p\":0.95,\"min_p\":0.05"
+                + ",\"seed\":42,\"temperature\":0.7,\"top_k\":40,\"top_p\":0.95,\"min_p\":0.05"
                 + ",\"dry_multiplier\":0.5,\"dry_base\":1.75,\"dry_allowed_length\":2"
                 + ",\"xtc_probability\":0.3,\"xtc_threshold\":0.1"
                 + ",\"repeat_penalty\":1.1,\"frequency_penalty\":0.1,\"presence_penalty\":0.1}";
@@ -266,6 +285,7 @@ public class JsonEndpointParametersTest {
     @Test
     public void testCustomSamplerChainViaJson() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"samplers\":[\"top_k\",\"top_p\",\"temperature\"]}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);
@@ -280,6 +300,7 @@ public class JsonEndpointParametersTest {
     public void testSpeculativeParamsAccepted() {
         // These speculative params are accepted even without a draft model
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
+                + DETERMINISTIC
                 + ",\"speculative\":{\"n_min\":0,\"n_max\":16,\"p_min\":0.75}}";
         String result = model.handleCompletions(json);
         Assert.assertNotNull(result);

@@ -138,7 +138,8 @@ public class ConfigureParallelInferenceTest {
     public void testModelWorksAfterReconfiguration() {
         model.configureParallelInference("{\"n_threads\":2}");
         InferenceParameters params = new InferenceParameters("int main() {")
-                .setNPredict(5);
+                .setNPredict(5)
+                .setTemperature(0);
         String result = model.complete(params);
         Assert.assertNotNull("Model should produce output after reconfiguration", result);
         Assert.assertFalse("Output should not be empty", result.isEmpty());
