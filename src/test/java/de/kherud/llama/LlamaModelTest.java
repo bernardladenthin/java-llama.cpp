@@ -759,6 +759,43 @@ public class LlamaModelTest {
 	}
 
 	// ------------------------------------------------------------------
+	// Thread cleanup / model lifecycle
+	// ------------------------------------------------------------------
+
+	@Test
+	public void testCreateAndImmediatelyClose() {
+		// Verifies that close() joins the background thread without hanging or crashing.
+		int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+		try (LlamaModel m = new LlamaModel(
+				new ModelParameters()
+						.setModel(TestConstants.MODEL_PATH)
+						.setCtxSize(32)
+						.setGpuLayers(gpuLayers)
+						.setFit(false))) {
+			// Immediately closed by try-with-resources
+		}
+		// If we get here without SIGABRT, the thread was joined cleanly
+	}
+
+	@Test
+	public void testCloseAfterGeneration() {
+		// Verifies that close() works correctly after active generation.
+		int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+		try (LlamaModel m = new LlamaModel(
+				new ModelParameters()
+						.setModel(TestConstants.MODEL_PATH)
+						.setCtxSize(64)
+						.setGpuLayers(gpuLayers)
+						.setFit(false))) {
+			String output = m.complete(new InferenceParameters("Hello")
+					.setNPredict(5)
+					.setSeed(42));
+			Assert.assertNotNull(output);
+		}
+		// Background thread should be fully joined before we reach here
+	}
+
+	// ------------------------------------------------------------------
 	// Phase 6: Server management
 	// ------------------------------------------------------------------
 

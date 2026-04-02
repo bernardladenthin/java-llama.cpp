@@ -9,6 +9,7 @@
 
 #include <ctime>
 #include <functional>
+#include <thread>
 #include <iostream>
 #include <stdexcept>
 
@@ -28,6 +29,19 @@ static constexpr int N_PARALLEL_AUTO = -1;
 // the Java bindings run in-process with a single caller, so 1 slot is the
 // appropriate default and preserves pre-b7433 behaviour.
 static constexpr int N_PARALLEL_DEFAULT = 1;
+
+/**
+ * Wrapper that owns a server_context and the background worker thread.
+ * Stored as the Java-side `ctx` (jlong) pointer. Using a wrapper allows
+ * us to join the thread on close() instead of detaching it, which
+ * eliminates the race between thread teardown and JVM shutdown.
+ */
+struct jllama_context {
+    server_context *server = nullptr;
+    std::thread worker;
+    bool vocab_only = false;
+};
+
 JavaVM *g_vm = nullptr;
 
 // classes
@@ -413,18 +427,22 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
 
     common_init();
 
-    auto *ctx_server = new server_context();
+    auto *jctx = new jllama_context();
+    jctx->server = new server_context();
+    jctx->vocab_only = vocab_only;
+    auto *ctx_server = jctx->server;
 
     // Vocab-only mode: load just the tokenizer, skip inference setup.
     if (vocab_only) {
         SRV_INF("loading tokenizer from '%s'\n", params.model.path.c_str());
         if (!ctx_server->load_tokenizer(params)) {
             delete ctx_server;
+            delete jctx;
             llama_backend_free();
             env->ThrowNew(c_llama_error, "could not load tokenizer from given file path");
             return;
         }
-        env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(ctx_server));
+        env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(jctx));
         return;
     }
 
@@ -453,6 +471,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
     // load the model
     if (!ctx_server->load_model(params)) {
         delete ctx_server;
+        delete jctx;
         llama_backend_free();
         env->ThrowNew(c_llama_error, "could not load model from given file path");
         return;
@@ -480,25 +499,26 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
         std::bind(&server_context::process_single_task, ctx_server, std::placeholders::_1));
     ctx_server->queue_tasks.on_update_slots(std::bind(&server_context::update_slots, ctx_server));
 
-    std::thread t([ctx_server]() {
+    jctx->worker = std::thread([ctx_server]() {
         JNIEnv *env;
         jint res = g_vm->GetEnv((void **)&env, JNI_VERSION_1_6);
         if (res == JNI_EDETACHED) {
             res = g_vm->AttachCurrentThread((void **)&env, nullptr);
             if (res != JNI_OK) {
-                throw std::runtime_error("Failed to attach thread to JVM");
+                return; // Can't throw across thread boundary; just exit
             }
         }
         ctx_server->queue_tasks.start_loop();
+        // Detach from JVM before thread exits to prevent writing to closed pipes
+        g_vm->DetachCurrentThread();
     });
-    t.detach();
 
-    env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(ctx_server));
+    env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(jctx));
 }
 
 JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv *env, jobject obj, jstring jparams) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     std::string c_params = parse_jstring(env, jparams);
     json data = json::parse(c_params);
@@ -556,14 +576,14 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_releaseTask(JNIEnv *env, jobject obj, jint id_task) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
     ctx_server->queue_results.remove_waiting_task_id(id_task);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(JNIEnv *env, jobject obj,
                                                                                jint id_task) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     server_task_result_ptr result = ctx_server->queue_results.recv(id_task);
 
@@ -587,7 +607,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(
 
 JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env, jobject obj, jstring jprompt) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     if (!ctx_server->params_base.embedding) {
         env->ThrowNew(c_llama_error,
@@ -674,7 +694,7 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *env, jobject obj, jstring jprompt,
                                                                       jobjectArray documents) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     if (!ctx_server->params_base.embedding || ctx_server->params_base.pooling_type != LLAMA_POOLING_TYPE_RANK) {
         env->ThrowNew(c_llama_error,
@@ -738,7 +758,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *env, jobject obj, jstring jparams) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
-    const auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    const auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     std::string c_params = parse_jstring(env, jparams);
     json data = json::parse(c_params);
@@ -759,7 +779,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
         env->ThrowNew(c_llama_error, "Model is not loaded");
         return nullptr;
     }
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     std::string c_params = parse_jstring(env, jparams);
     json body = json::parse(c_params);
@@ -850,7 +870,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
         env->ThrowNew(c_llama_error, "Model is not loaded");
         return 0;
     }
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     std::string c_params = parse_jstring(env, jparams);
     json body = json::parse(c_params);
@@ -912,7 +932,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
 
 JNIEXPORT jintArray JNICALL Java_de_kherud_llama_LlamaModel_encode(JNIEnv *env, jobject obj, jstring jprompt) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     const std::string c_prompt = parse_jstring(env, jprompt);
 
@@ -933,7 +953,7 @@ JNIEXPORT jintArray JNICALL Java_de_kherud_llama_LlamaModel_encode(JNIEnv *env, 
 JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv *env, jobject obj,
                                                                          jintArray java_tokens) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     jsize length = env->GetArrayLength(java_tokens);
     jint *elements = env->GetIntArrayElements(java_tokens, nullptr);
@@ -957,26 +977,28 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobje
     if (server_handle == 0) {
         return; // Already deleted or never initialized
     }
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *jctx = reinterpret_cast<jllama_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
 
     // Clear the pointer first to prevent double-free from concurrent calls
     env->SetLongField(obj, f_model_pointer, 0);
 
-    if (!ctx_server->is_vocab_only()) {
-        // Full model mode: stop the background task processing loop.
-        // Note: the detached thread may still be referencing ctx_server after terminate()
-        // returns, so we cannot safely delete it here. This is a known trade-off — the
-        // memory is reclaimed when the process exits.
-        ctx_server->queue_tasks.terminate();
-    } else {
-        // Vocab-only mode has no background thread, safe to delete
-        delete ctx_server;
+    if (!jctx->vocab_only) {
+        // Signal the background thread to stop
+        jctx->server->queue_tasks.terminate();
+        // Wait for the thread to fully exit — this guarantees no dangling
+        // references to ctx_server and no writes to closed JVM pipes
+        if (jctx->worker.joinable()) {
+            jctx->worker.join();
+        }
     }
+
+    delete jctx->server;
+    delete jctx;
 }
 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_cancelCompletion(JNIEnv *env, jobject obj, jint id_task) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
     std::unordered_set<int> id_tasks = {id_task};
     ctx_server->cancel_tasks(id_tasks);
     ctx_server->queue_results.remove_waiting_task_id(id_task);
@@ -1022,7 +1044,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIE
         env->ThrowNew(c_llama_error, "Model is not loaded");
         return nullptr;
     }
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     std::string c_params = parse_jstring(env, jparams);
     json data = json::parse(c_params);
@@ -1101,7 +1123,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
         env->ThrowNew(c_llama_error, "Model is not loaded");
         return nullptr;
     }
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     std::string c_params = parse_jstring(env, jparams);
     json body = json::parse(c_params);
@@ -1181,7 +1203,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
         env->ThrowNew(c_llama_error, "Model is not loaded");
         return nullptr;
     }
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     // Check model compatibility for infill
     std::string err;
@@ -1296,7 +1318,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
         env->ThrowNew(c_llama_error, "Model is not loaded");
         return nullptr;
     }
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     if (!ctx_server->params_base.embedding) {
         env->ThrowNew(c_llama_error,
@@ -1397,7 +1419,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleTokenize(JNIEnv 
         env->ThrowNew(c_llama_error, "Model is not loaded");
         return nullptr;
     }
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     const std::string content = parse_jstring(env, jcontent);
     const bool add_special = jaddSpecial;
@@ -1440,7 +1462,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleDetokenize(JNIEn
         env->ThrowNew(c_llama_error, "Model is not loaded");
         return nullptr;
     }
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     jsize length = env->GetArrayLength(jtokens);
     jint *elements = env->GetIntArrayElements(jtokens, nullptr);
@@ -1467,7 +1489,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
         env->ThrowNew(c_llama_error, "Model is not loaded");
         return nullptr;
     }
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     switch (action) {
     case 0: { // LIST — get slot info via metrics
@@ -1581,7 +1603,7 @@ JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInfe
         env->ThrowNew(c_llama_error, "Model is not loaded");
         return JNI_FALSE;
     }
-    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
 
     std::string config_str = parse_jstring(env, jconfig);
     json config = json::parse(config_str);
