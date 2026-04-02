@@ -552,6 +552,46 @@ public class LlamaModelTest {
 		Assert.assertFalse(response.isEmpty());
 	}
 
+	@Test
+	public void testChatCompleteWithTemplateKwargs() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Hello"));
+
+		Map<String, String> kwargs = new HashMap<>();
+		kwargs.put("custom_var", "\"test_value\"");
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages)
+				.setChatTemplateKwargs(kwargs)
+				.setNPredict(nPredict)
+				.setSeed(42)
+				.setTemperature(0.0f);
+
+		// Template kwargs should pass through without error even if
+		// the template doesn't use them — they're simply ignored.
+		String response = model.chatComplete(params);
+		Assert.assertNotNull(response);
+		Assert.assertFalse(response.isEmpty());
+	}
+
+	@Test
+	public void testApplyTemplateWithKwargs() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Hello"));
+
+		Map<String, String> kwargs = new HashMap<>();
+		kwargs.put("custom_var", "\"test_value\"");
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages)
+				.setChatTemplateKwargs(kwargs);
+
+		// Should not throw — kwargs are passed through to the template
+		String result = model.applyTemplate(params);
+		Assert.assertNotNull(result);
+		Assert.assertTrue(result.contains("Hello"));
+	}
+
 	// ------------------------------------------------------------------
 	// applyTemplate / oaicompat_chat_params_parse (changed in b8576)
 	// ------------------------------------------------------------------

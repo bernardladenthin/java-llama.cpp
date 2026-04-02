@@ -1148,6 +1148,35 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Set custom Jinja template variables that are injected into the chat template context.
+     * Requires {@link #enableJinja()} to be set. Values are JSON-serialized strings that
+     * get parsed and merged into the template's extra_context.
+     * <p>
+     * Example:
+     * <pre>{@code
+     * Map<String, String> kwargs = new HashMap<>();
+     * kwargs.put("enable_thinking", "true");
+     * kwargs.put("custom_var", "\"my_value\"");
+     * params.setChatTemplateKwargs(kwargs);
+     * }</pre>
+     *
+     * @param kwargs map of template variable names to JSON-serialized values
+     * @return this builder
+     */
+    public ModelParameters setChatTemplateKwargs(java.util.Map<String, String> kwargs) {
+        StringBuilder sb = new StringBuilder("{");
+        boolean first = true;
+        for (java.util.Map.Entry<String, String> entry : kwargs.entrySet()) {
+            if (!first) sb.append(",");
+            sb.append("\"").append(entry.getKey()).append("\":").append(entry.getValue());
+            first = false;
+        }
+        sb.append("}");
+        parameters.put("--chat-template-kwargs", sb.toString());
+        return this;
+    }
+
+    /**
      * Set how much the prompt of a request must match the prompt of a slot in order to use that slot.
      *
      * @param similarity the minimum similarity threshold for slot reuse
