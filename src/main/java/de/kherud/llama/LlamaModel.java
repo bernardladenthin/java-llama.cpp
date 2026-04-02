@@ -3,7 +3,7 @@ package de.kherud.llama;
 import de.kherud.llama.args.LogFormat;
 import java.lang.annotation.Native;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiConsumer;
@@ -55,8 +55,8 @@ public class LlamaModel implements AutoCloseable {
 	public String complete(InferenceParameters parameters) {
 		parameters.setStream(false);
 		int taskId = requestCompletion(parameters.toString());
-		LlamaOutput output = receiveCompletion(taskId);
-		return output.text;
+		String json = receiveCompletionJson(taskId);
+		return LlamaOutput.getContentFromJson(json);
 	}
 
 	/**
@@ -123,7 +123,7 @@ public class LlamaModel implements AutoCloseable {
 	// don't overload native methods since the C++ function names get nasty
 	native int requestCompletion(String params) throws LlamaException;
 
-	native LlamaOutput receiveCompletion(int taskId) throws LlamaException;
+	native String receiveCompletionJson(int taskId) throws LlamaException;
 
 	native void cancelCompletion(int taskId);
 
@@ -155,28 +155,34 @@ public class LlamaModel implements AutoCloseable {
 	 * @param documents the documents to rank
 	 * @return a list of document/score pairs, sorted if {@code reRank} is {@code true}
 	 */
-	public List<Pair<String, Float>> rerank(boolean reRank, String query, String ... documents) {
-		LlamaOutput output = rerank(query, documents);
-		
-		Map<String, Float> scoredDocumentMap = output.probabilities;
-		
-		List<Pair<String, Float>> rankedDocuments = new ArrayList<>();
-		
+	public List<Pair<String, Float>> rerank(boolean reRank, String query, String... documents) {
+		String json = handleRerank(query, documents);
+		List<Pair<String, Float>> rankedDocuments = LlamaOutput.parseRerankResults(json);
 		if (reRank) {
-            // Sort in descending order based on Float values
-            scoredDocumentMap.entrySet()
-                    .stream()
-                    .sorted((a, b) -> Float.compare(b.getValue(), a.getValue())) // Descending order
-                    .forEach(entry -> rankedDocuments.add(new Pair<>(entry.getKey(), entry.getValue())));
-        } else {
-            // Copy without sorting
-            scoredDocumentMap.forEach((key, value) -> rankedDocuments.add(new Pair<>(key, value)));
-        }
-		
+			rankedDocuments.sort((a, b) -> Float.compare(b.getValue(), a.getValue()));
+		}
 		return rankedDocuments;
 	}
-	
-	public native LlamaOutput rerank(String query, String... documents);
+
+	/**
+	 * Rerank the given documents against the query, returning a {@link LlamaOutput} with scored documents
+	 * in the probabilities map.
+	 *
+	 * @param query the query string
+	 * @param documents the documents to rank
+	 * @return a LlamaOutput with document/score pairs in the probabilities map
+	 */
+	public LlamaOutput rerank(String query, String... documents) {
+		String json = handleRerank(query, documents);
+		List<Pair<String, Float>> results = LlamaOutput.parseRerankResults(json);
+		Map<String, Float> probabilities = new HashMap<>();
+		for (Pair<String, Float> pair : results) {
+			probabilities.put(pair.getKey(), pair.getValue());
+		}
+		return new LlamaOutput(query, probabilities, true);
+	}
+
+	native String handleRerank(String query, String... documents) throws LlamaException;
 	
 	/**
 	 * Applies the chat template to the given inference parameters and returns the formatted string.
@@ -188,4 +194,177 @@ public class LlamaModel implements AutoCloseable {
 		return applyTemplate(parameters.toString());
 	}
 	public native String applyTemplate(String parametersJson);
+
+	/**
+	 * Run an OpenAI-compatible chat completion. The parameters must contain a "messages" array
+	 * in the standard OpenAI chat format (objects with "role" and "content" fields). The model's
+	 * chat template is automatically applied.
+	 * <p>
+	 * Example usage:
+	 * <pre>{@code
+	 * List<Pair<String, String>> messages = new ArrayList<>();
+	 * messages.add(new Pair<>("user", "What is the capital of France?"));
+	 *
+	 * InferenceParameters params = new InferenceParameters("")
+	 *     .setMessages("You are a helpful assistant.", messages)
+	 *     .setNPredict(128)
+	 *     .setTemperature(0.7f);
+	 *
+	 * String response = model.chatComplete(params);
+	 * }</pre>
+	 *
+	 * @param parameters the inference parameters including messages
+	 * @return the model's response as a JSON string containing the completion result
+	 * @throws LlamaException if the model was loaded in embedding mode or if inference fails
+	 */
+	public String chatComplete(InferenceParameters parameters) {
+		parameters.setStream(false);
+		return handleChatCompletions(parameters.toString());
+	}
+
+	/**
+	 * Stream an OpenAI-compatible chat completion token by token. The parameters must contain a
+	 * "messages" array in the standard OpenAI chat format. The model's chat template is automatically applied.
+	 * <p>
+	 * Example usage:
+	 * <pre>{@code
+	 * List<Pair<String, String>> messages = new ArrayList<>();
+	 * messages.add(new Pair<>("user", "Tell me a story."));
+	 *
+	 * InferenceParameters params = new InferenceParameters("")
+	 *     .setMessages("You are a storyteller.", messages)
+	 *     .setNPredict(128);
+	 *
+	 * for (LlamaOutput output : model.generateChat(params)) {
+	 *     System.out.print(output.text);
+	 * }
+	 * }</pre>
+	 *
+	 * @param parameters the inference parameters including messages
+	 * @return iterable LLM outputs with the chat template applied
+	 * @throws LlamaException if inference fails
+	 */
+	public LlamaIterable generateChat(InferenceParameters parameters) {
+		return () -> new LlamaIterator(this, parameters, true);
+	}
+
+	/**
+	 * Run a blocking completion and return the full result as a JSON string.
+	 * This is the JSON-in/JSON-out equivalent of {@link #complete(InferenceParameters)}.
+	 *
+	 * @param paramsJson JSON string with at least a "prompt" field
+	 * @return JSON response from the server
+	 */
+	public native String handleCompletions(String paramsJson) throws LlamaException;
+
+	/**
+	 * Run an OpenAI-compatible completion (mirrors /v1/completions endpoint).
+	 * Returns the result in OAI format with choices array.
+	 *
+	 * @param paramsJson JSON string with OAI-compatible completion parameters
+	 * @return JSON response in OAI format
+	 */
+	public native String handleCompletionsOai(String paramsJson) throws LlamaException;
+
+	/**
+	 * Run a text infill completion with explicit prefix/suffix.
+	 * The request JSON must contain "input_prefix" and "input_suffix" fields.
+	 *
+	 * @param paramsJson JSON string with infill parameters
+	 * @return JSON response from the server
+	 */
+	public native String handleInfill(String paramsJson) throws LlamaException;
+
+	/**
+	 * Generate embeddings for the given input. The request JSON should contain
+	 * an "input" (OAI-compat) or "content" field.
+	 *
+	 * @param paramsJson JSON string with embedding request
+	 * @param oaiCompat whether to format the response in OAI-compatible format
+	 * @return JSON response with embedding vectors
+	 */
+	public native String handleEmbeddings(String paramsJson, boolean oaiCompat) throws LlamaException;
+
+	/**
+	 * Tokenize text content, optionally including token piece information.
+	 *
+	 * @param content the text to tokenize
+	 * @param addSpecial whether to add special tokens (BOS/EOS)
+	 * @param withPieces whether to include token piece strings in the response
+	 * @return JSON response with token data
+	 */
+	public native String handleTokenize(String content, boolean addSpecial, boolean withPieces) throws LlamaException;
+
+	/**
+	 * Detokenize an array of token IDs back to text.
+	 *
+	 * @param tokens array of token IDs
+	 * @return JSON response with the decoded text
+	 */
+	public native String handleDetokenize(int[] tokens) throws LlamaException;
+
+	// ------------------------------------------------------------------
+	// Server management
+	// ------------------------------------------------------------------
+
+	/**
+	 * Get server metrics and slot information as a JSON string.
+	 *
+	 * @return JSON with slot data, idle/processing counts, and performance metrics
+	 */
+	public String getMetrics() {
+		return handleSlotAction(0, 0, null);
+	}
+
+	/**
+	 * Erase the KV cache for a specific slot.
+	 *
+	 * @param slotId the slot ID to erase
+	 * @return JSON with erase result
+	 */
+	public String eraseSlot(int slotId) {
+		return handleSlotAction(3, slotId, null);
+	}
+
+	/**
+	 * Save a slot's KV cache state to a file.
+	 *
+	 * @param slotId the slot ID to save
+	 * @param filepath the file path to save to
+	 * @return JSON with save result
+	 */
+	public String saveSlot(int slotId, String filepath) {
+		return handleSlotAction(1, slotId, filepath);
+	}
+
+	/**
+	 * Restore a slot's KV cache state from a file.
+	 *
+	 * @param slotId the slot ID to restore
+	 * @param filepath the file path to restore from
+	 * @return JSON with restore result
+	 */
+	public String restoreSlot(int slotId, String filepath) {
+		return handleSlotAction(2, slotId, filepath);
+	}
+
+	/**
+	 * Configure runtime inference parameters.
+	 * Accepts a JSON string with optional keys:
+	 * <ul>
+	 *   <li>"slot_prompt_similarity" (float, 0.0-1.0)</li>
+	 *   <li>"n_threads" (int, &gt; 0)</li>
+	 *   <li>"n_threads_batch" (int, &gt; 0)</li>
+	 * </ul>
+	 *
+	 * @param configJson JSON configuration string
+	 * @return true if configuration was applied successfully
+	 */
+	public native boolean configureParallelInference(String configJson) throws LlamaException;
+
+	native String handleSlotAction(int action, int slotId, String filename) throws LlamaException;
+
+	native String handleChatCompletions(String params) throws LlamaException;
+
+	native int requestChatCompletion(String params) throws LlamaException;
 }

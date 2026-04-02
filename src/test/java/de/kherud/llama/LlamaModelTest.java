@@ -453,6 +453,146 @@ public class LlamaModelTest {
 	}
 
 	// ------------------------------------------------------------------
+	// chatComplete / handleChatCompletions
+	// ------------------------------------------------------------------
+
+	@Test
+	public void testChatComplete() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Write a single word."));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages)
+				.setNPredict(nPredict)
+				.setSeed(42)
+				.setTemperature(0.0f);
+
+		String response = model.chatComplete(params);
+		Assert.assertNotNull("Chat completion should return a non-null response", response);
+		Assert.assertFalse("Chat completion should return a non-empty response", response.isEmpty());
+	}
+
+	@Test
+	public void testChatCompleteWithSystemMessage() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Say hello."));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages("You are a helpful assistant.", messages)
+				.setNPredict(nPredict)
+				.setSeed(42)
+				.setTemperature(0.0f);
+
+		String response = model.chatComplete(params);
+		Assert.assertNotNull(response);
+		Assert.assertFalse(response.isEmpty());
+	}
+
+	@Test
+	public void testGenerateChat() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Write a single word."));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages)
+				.setNPredict(nPredict)
+				.setSeed(42)
+				.setTemperature(0.0f);
+
+		int generated = 0;
+		StringBuilder sb = new StringBuilder();
+		for (LlamaOutput output : model.generateChat(params)) {
+			sb.append(output.text);
+			generated++;
+		}
+		Assert.assertTrue("Expected at least one token from streaming chat", generated > 0);
+		Assert.assertTrue("Expected at most nPredict+1 tokens", generated <= nPredict + 1);
+		Assert.assertFalse("Streamed content should not be empty", sb.toString().isEmpty());
+	}
+
+	@Test
+	public void testGenerateChatCancel() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Count from 1 to 100."));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages)
+				.setNPredict(nPredict);
+
+		int generated = 0;
+		LlamaIterator iterator = model.generateChat(params).iterator();
+		while (iterator.hasNext()) {
+			iterator.next();
+			generated++;
+			if (generated == maxExpectedTokensOnCancel) {
+				iterator.cancel();
+			}
+		}
+		Assert.assertTrue("Expected at least " + minExpectedTokensOnCancel + " tokens, got " + generated,
+				generated >= minExpectedTokensOnCancel);
+		Assert.assertTrue("Expected at most " + maxExpectedTokensOnCancel + " tokens, got " + generated,
+				generated <= maxExpectedTokensOnCancel);
+	}
+
+	@Test
+	public void testChatCompleteMultiTurn() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "What is 2+2?"));
+		messages.add(new Pair<>("assistant", "4"));
+		messages.add(new Pair<>("user", "And 3+3?"));
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages)
+				.setNPredict(nPredict)
+				.setSeed(42)
+				.setTemperature(0.0f);
+
+		String response = model.chatComplete(params);
+		Assert.assertNotNull(response);
+		Assert.assertFalse(response.isEmpty());
+	}
+
+	@Test
+	public void testChatCompleteWithTemplateKwargs() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Hello"));
+
+		Map<String, String> kwargs = new HashMap<>();
+		kwargs.put("custom_var", "\"test_value\"");
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages)
+				.setChatTemplateKwargs(kwargs)
+				.setNPredict(nPredict)
+				.setSeed(42)
+				.setTemperature(0.0f);
+
+		// Template kwargs should pass through without error even if
+		// the template doesn't use them — they're simply ignored.
+		String response = model.chatComplete(params);
+		Assert.assertNotNull(response);
+		Assert.assertFalse(response.isEmpty());
+	}
+
+	@Test
+	public void testApplyTemplateWithKwargs() {
+		List<Pair<String, String>> messages = new ArrayList<>();
+		messages.add(new Pair<>("user", "Hello"));
+
+		Map<String, String> kwargs = new HashMap<>();
+		kwargs.put("custom_var", "\"test_value\"");
+
+		InferenceParameters params = new InferenceParameters("")
+				.setMessages(null, messages)
+				.setChatTemplateKwargs(kwargs);
+
+		// Should not throw — kwargs are passed through to the template
+		String result = model.applyTemplate(params);
+		Assert.assertNotNull(result);
+		Assert.assertTrue(result.contains("Hello"));
+	}
+
+	// ------------------------------------------------------------------
 	// applyTemplate / oaicompat_chat_params_parse (changed in b8576)
 	// ------------------------------------------------------------------
 
@@ -605,6 +745,125 @@ public class LlamaModelTest {
 		} catch (IOException e) {
 			return false;
 		}
+	}
+
+	// ------------------------------------------------------------------
+	// Phase 5: JSON-in/JSON-out endpoints
+	// ------------------------------------------------------------------
+
+	@Test
+	public void testHandleCompletions() {
+		String json = "{\"prompt\": \"Hello\", \"n_predict\": " + nPredict + ", \"seed\": 42, \"temperature\": 0.0}";
+		String response = model.handleCompletions(json);
+		Assert.assertNotNull(response);
+		Assert.assertTrue("Response should contain content field", response.contains("\"content\""));
+	}
+
+	@Test
+	public void testHandleCompletionsOai() {
+		String json = "{\"prompt\": \"Hello\", \"max_tokens\": " + nPredict + ", \"seed\": 42, \"temperature\": 0.0}";
+		String response = model.handleCompletionsOai(json);
+		Assert.assertNotNull(response);
+		Assert.assertTrue("OAI response should contain choices", response.contains("\"choices\""));
+	}
+
+	@Test
+	public void testHandleEmbeddings() {
+		String json = "{\"content\": \"Hello world\"}";
+		String response = model.handleEmbeddings(json, false);
+		Assert.assertNotNull(response);
+		Assert.assertTrue("Embedding response should contain embedding data", response.contains("\"embedding\""));
+	}
+
+	@Test
+	public void testHandleTokenize() {
+		String response = model.handleTokenize("Hello world", false, false);
+		Assert.assertNotNull(response);
+		Assert.assertTrue("Tokenize response should contain tokens", response.contains("\"tokens\""));
+	}
+
+	@Test
+	public void testHandleTokenizeWithPieces() {
+		String response = model.handleTokenize("Hello world", false, true);
+		Assert.assertNotNull(response);
+		Assert.assertTrue("Response should contain token pieces", response.contains("\"piece\""));
+	}
+
+	@Test
+	public void testHandleDetokenize() {
+		int[] tokens = model.encode("Hello");
+		String response = model.handleDetokenize(tokens);
+		Assert.assertNotNull(response);
+		Assert.assertTrue("Detokenize response should contain content", response.contains("\"content\""));
+		Assert.assertTrue("Detokenize should contain original text", response.contains("Hello"));
+	}
+
+	// ------------------------------------------------------------------
+	// Thread cleanup / model lifecycle
+	// ------------------------------------------------------------------
+
+	@Test
+	public void testCreateAndImmediatelyClose() {
+		// Verifies that close() joins the background thread without hanging or crashing.
+		int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+		try (LlamaModel m = new LlamaModel(
+				new ModelParameters()
+						.setModel(TestConstants.MODEL_PATH)
+						.setCtxSize(32)
+						.setGpuLayers(gpuLayers)
+						.setFit(false))) {
+			// Immediately closed by try-with-resources
+		}
+		// If we get here without SIGABRT, the thread was joined cleanly
+	}
+
+	@Test
+	public void testCloseAfterGeneration() {
+		// Verifies that close() works correctly after active generation.
+		int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+		try (LlamaModel m = new LlamaModel(
+				new ModelParameters()
+						.setModel(TestConstants.MODEL_PATH)
+						.setCtxSize(64)
+						.setGpuLayers(gpuLayers)
+						.setFit(false))) {
+			String output = m.complete(new InferenceParameters("Hello")
+					.setNPredict(5)
+					.setSeed(42));
+			Assert.assertNotNull(output);
+		}
+		// Background thread should be fully joined before we reach here
+	}
+
+	// ------------------------------------------------------------------
+	// Phase 6: Server management
+	// ------------------------------------------------------------------
+
+	@Test
+	public void testGetMetrics() {
+		String metrics = model.getMetrics();
+		Assert.assertNotNull(metrics);
+		Assert.assertTrue("Metrics should contain slots data", metrics.contains("\"slots\""));
+		Assert.assertTrue("Metrics should contain idle count", metrics.contains("\"idle\""));
+	}
+
+	@Test
+	public void testEraseSlot() {
+		String result = model.eraseSlot(0);
+		Assert.assertNotNull(result);
+		Assert.assertTrue("Erase result should contain id_slot", result.contains("\"id_slot\""));
+		Assert.assertTrue("Erase result should contain n_erased", result.contains("\"n_erased\""));
+	}
+
+	@Test
+	public void testConfigureParallelInference() {
+		boolean result = model.configureParallelInference("{\"slot_prompt_similarity\": 0.5}");
+		Assert.assertTrue("Configuration should succeed", result);
+	}
+
+	@Test(expected = LlamaException.class)
+	public void testConfigureParallelInferenceInvalidSimilarity() {
+		model.configureParallelInference("{\"slot_prompt_similarity\": 2.0}");
 	}
 
 	@Test

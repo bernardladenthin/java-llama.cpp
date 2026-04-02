@@ -37,10 +37,10 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
 
 /*
  * Class:     de_kherud_llama_LlamaModel
- * Method:    receiveCompletion
- * Signature: (I)Lde/kherud/llama/LlamaOutput;
+ * Method:    receiveCompletionJson
+ * Signature: (I)Ljava/lang/String;
  */
-JNIEXPORT jobject JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletion(JNIEnv *, jobject, jint);
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(JNIEnv *, jobject, jint);
 
 /*
  * Class:     de_kherud_llama_LlamaModel
@@ -86,10 +86,10 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_jsonSchemaToGrammar
 
 /*
  * Class:     de_kherud_llama_LlamaModel
- * Method:    rerank
- * Signature: (Ljava/lang/String;[Ljava/lang/String;)Lde/kherud/llama/LlamaOutput;
+ * Method:    handleRerank
+ * Signature: (Ljava/lang/String;[Ljava/lang/String;)Ljava/lang/String;
  */
-JNIEXPORT jobject JNICALL Java_de_kherud_llama_LlamaModel_rerank(JNIEnv *, jobject, jstring, jobjectArray);
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *, jobject, jstring, jobjectArray);
 
 /*
  * Class:     de_kherud_llama_LlamaModel
@@ -97,6 +97,36 @@ JNIEXPORT jobject JNICALL Java_de_kherud_llama_LlamaModel_rerank(JNIEnv *, jobje
  * Signature: (Ljava/lang/String;)Ljava/lang/String;;
  */
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *, jobject, jstring);
+
+/*
+ * Class:     de_kherud_llama_LlamaModel
+ * Method:    handleChatCompletions
+ * Signature: (Ljava/lang/String;)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(JNIEnv *, jobject, jstring);
+
+/*
+ * Class:     de_kherud_llama_LlamaModel
+ * Method:    requestChatCompletion
+ * Signature: (Ljava/lang/String;)I
+ */
+JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNIEnv *, jobject, jstring);
+
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIEnv *, jobject, jstring);
+
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(JNIEnv *, jobject, jstring);
+
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *, jobject, jstring);
+
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEnv *, jobject, jstring, jboolean);
+
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleTokenize(JNIEnv *, jobject, jstring, jboolean, jboolean);
+
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleDetokenize(JNIEnv *, jobject, jintArray);
+
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEnv *, jobject, jint, jint, jstring);
+
+JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInference(JNIEnv *, jobject, jstring);
 
 #ifdef __cplusplus
 }

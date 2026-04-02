@@ -50,6 +50,7 @@ public final class InferenceParameters extends JsonParameters {
 	private static final String PARAM_USE_CHAT_TEMPLATE = "use_chat_template";
 	private static final String PARAM_CHAT_TEMPLATE = "chat_template";
 	private static final String PARAM_USE_JINJA = "use_jinja";
+	private static final String PARAM_CHAT_TEMPLATE_KWARGS = "chat_template_kwargs";
 	private static final String PARAM_MESSAGES = "messages";
 
 	public InferenceParameters(String prompt) {
@@ -608,6 +609,33 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setChatTemplate(String chatTemplate) {
 		parameters.put(PARAM_CHAT_TEMPLATE, toJsonString(chatTemplate));
+		return this;
+	}
+
+	/**
+	 * Set custom Jinja template variables for this request. These are injected into
+	 * the chat template context during rendering. Values must be valid JSON.
+	 * <p>
+	 * Example:
+	 * <pre>{@code
+	 * Map<String, String> kwargs = new HashMap<>();
+	 * kwargs.put("enable_thinking", "true");
+	 * params.setChatTemplateKwargs(kwargs);
+	 * }</pre>
+	 *
+	 * @param kwargs map of variable names to JSON-serialized values
+	 * @return this builder
+	 */
+	public InferenceParameters setChatTemplateKwargs(java.util.Map<String, String> kwargs) {
+		StringBuilder sb = new StringBuilder("{");
+		boolean first = true;
+		for (java.util.Map.Entry<String, String> entry : kwargs.entrySet()) {
+			if (!first) sb.append(",");
+			sb.append("\"").append(entry.getKey()).append("\":").append(entry.getValue());
+			first = false;
+		}
+		sb.append("}");
+		parameters.put(PARAM_CHAT_TEMPLATE_KWARGS, sb.toString());
 		return this;
 	}
 

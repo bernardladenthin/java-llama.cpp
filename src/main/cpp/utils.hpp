@@ -751,6 +751,13 @@ static json oaicompat_chat_params_parse(json &body, /* openai api json semantics
     inputs.add_generation_prompt = json_value(body, "add_generation_prompt", true);
     inputs.reasoning_format = opt.reasoning_format;
     inputs.enable_thinking = opt.enable_thinking;
+    // Extract custom template kwargs from request body (JSON object with string values).
+    // Values are stored as JSON-serialized strings because upstream does json::parse(value).
+    if (body.contains("chat_template_kwargs") && body.at("chat_template_kwargs").is_object()) {
+        for (auto &el : body.at("chat_template_kwargs").items()) {
+            inputs.chat_template_kwargs[el.key()] = el.value().dump();
+        }
+    }
     if (!inputs.tools.empty() && inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_NONE) {
         if (body.contains("grammar")) {
             throw std::runtime_error("Cannot use custom grammar constraints with tools.");
