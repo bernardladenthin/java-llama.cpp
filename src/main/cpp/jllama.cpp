@@ -1459,3 +1459,155 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleDetokenize(JNIEn
     std::string response_str = data.dump();
     return env->NewStringUTF(response_str.c_str());
 }
+
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEnv *env, jobject obj, jint action,
+                                                                           jint slotId, jstring jfilename) {
+    jlong server_handle = env->GetLongField(obj, f_model_pointer);
+    if (server_handle == 0) {
+        env->ThrowNew(c_llama_error, "Model is not loaded");
+        return nullptr;
+    }
+    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+
+    switch (action) {
+    case 0: { // LIST — get slot info via metrics
+        server_task task(SERVER_TASK_TYPE_METRICS);
+        task.id = ctx_server->queue_tasks.get_new_id();
+        ctx_server->queue_results.add_waiting_task_id(task.id);
+        ctx_server->queue_tasks.post(task, true);
+
+        server_task_result_ptr result = ctx_server->queue_results.recv(task.id);
+        ctx_server->queue_results.remove_waiting_task_id(task.id);
+
+        if (result->is_error()) {
+            std::string error_msg = result->to_json()["message"].get<std::string>();
+            env->ThrowNew(c_llama_error, error_msg.c_str());
+            return nullptr;
+        }
+
+        std::string resp = result->to_json().dump();
+        return env->NewStringUTF(resp.c_str());
+    }
+    case 1: { // SAVE
+        std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
+        if (filename.empty()) {
+            env->ThrowNew(c_llama_error, "Filename is required for slot save");
+            return nullptr;
+        }
+
+        server_task task(SERVER_TASK_TYPE_SLOT_SAVE);
+        task.id = ctx_server->queue_tasks.get_new_id();
+        task.slot_action.id_slot = slotId;
+        task.slot_action.filename = filename;
+        task.slot_action.filepath = filename;
+
+        ctx_server->queue_results.add_waiting_task_id(task.id);
+        ctx_server->queue_tasks.post(task);
+
+        server_task_result_ptr result = ctx_server->queue_results.recv(task.id);
+        ctx_server->queue_results.remove_waiting_task_id(task.id);
+
+        if (result->is_error()) {
+            std::string error_msg = result->to_json()["message"].get<std::string>();
+            env->ThrowNew(c_llama_error, error_msg.c_str());
+            return nullptr;
+        }
+
+        std::string resp = result->to_json().dump();
+        return env->NewStringUTF(resp.c_str());
+    }
+    case 2: { // RESTORE
+        std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
+        if (filename.empty()) {
+            env->ThrowNew(c_llama_error, "Filename is required for slot restore");
+            return nullptr;
+        }
+
+        server_task task(SERVER_TASK_TYPE_SLOT_RESTORE);
+        task.id = ctx_server->queue_tasks.get_new_id();
+        task.slot_action.id_slot = slotId;
+        task.slot_action.filename = filename;
+        task.slot_action.filepath = filename;
+
+        ctx_server->queue_results.add_waiting_task_id(task.id);
+        ctx_server->queue_tasks.post(task);
+
+        server_task_result_ptr result = ctx_server->queue_results.recv(task.id);
+        ctx_server->queue_results.remove_waiting_task_id(task.id);
+
+        if (result->is_error()) {
+            std::string error_msg = result->to_json()["message"].get<std::string>();
+            env->ThrowNew(c_llama_error, error_msg.c_str());
+            return nullptr;
+        }
+
+        std::string resp = result->to_json().dump();
+        return env->NewStringUTF(resp.c_str());
+    }
+    case 3: { // ERASE
+        server_task task(SERVER_TASK_TYPE_SLOT_ERASE);
+        task.id = ctx_server->queue_tasks.get_new_id();
+        task.slot_action.id_slot = slotId;
+
+        ctx_server->queue_results.add_waiting_task_id(task.id);
+        ctx_server->queue_tasks.post(task);
+
+        server_task_result_ptr result = ctx_server->queue_results.recv(task.id);
+        ctx_server->queue_results.remove_waiting_task_id(task.id);
+
+        if (result->is_error()) {
+            std::string error_msg = result->to_json()["message"].get<std::string>();
+            env->ThrowNew(c_llama_error, error_msg.c_str());
+            return nullptr;
+        }
+
+        std::string resp = result->to_json().dump();
+        return env->NewStringUTF(resp.c_str());
+    }
+    default:
+        env->ThrowNew(c_llama_error, "Invalid slot action");
+        return nullptr;
+    }
+}
+
+JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInference(JNIEnv *env, jobject obj,
+                                                                                      jstring jconfig) {
+    jlong server_handle = env->GetLongField(obj, f_model_pointer);
+    if (server_handle == 0) {
+        env->ThrowNew(c_llama_error, "Model is not loaded");
+        return JNI_FALSE;
+    }
+    auto *ctx_server = reinterpret_cast<server_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+
+    std::string config_str = parse_jstring(env, jconfig);
+    json config = json::parse(config_str);
+
+    if (config.contains("slot_prompt_similarity")) {
+        float similarity = config["slot_prompt_similarity"].get<float>();
+        if (similarity < 0.0f || similarity > 1.0f) {
+            env->ThrowNew(c_llama_error, "slot_prompt_similarity must be between 0.0 and 1.0");
+            return JNI_FALSE;
+        }
+        ctx_server->slot_prompt_similarity = similarity;
+    }
+
+    if (config.contains("n_threads")) {
+        int n_threads = config["n_threads"].get<int>();
+        if (n_threads <= 0) {
+            env->ThrowNew(c_llama_error, "n_threads must be greater than 0");
+            return JNI_FALSE;
+        }
+        ctx_server->params_base.cpuparams.n_threads = n_threads;
+    }
+
+    if (config.contains("n_threads_batch")) {
+        int n_threads_batch = config["n_threads_batch"].get<int>();
+        if (n_threads_batch <= 0) {
+            env->ThrowNew(c_llama_error, "n_threads_batch must be greater than 0");
+            return JNI_FALSE;
+        }
+        ctx_server->params_base.cpuparams_batch.n_threads = n_threads_batch;
+    }
+
+    return JNI_TRUE;
+}

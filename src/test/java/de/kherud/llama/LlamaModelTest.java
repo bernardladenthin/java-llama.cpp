@@ -758,6 +758,37 @@ public class LlamaModelTest {
 		Assert.assertTrue("Detokenize should contain original text", response.contains("Hello"));
 	}
 
+	// ------------------------------------------------------------------
+	// Phase 6: Server management
+	// ------------------------------------------------------------------
+
+	@Test
+	public void testGetMetrics() {
+		String metrics = model.getMetrics();
+		Assert.assertNotNull(metrics);
+		Assert.assertTrue("Metrics should contain slots data", metrics.contains("\"slots\""));
+		Assert.assertTrue("Metrics should contain idle count", metrics.contains("\"idle\""));
+	}
+
+	@Test
+	public void testEraseSlot() {
+		String result = model.eraseSlot(0);
+		Assert.assertNotNull(result);
+		Assert.assertTrue("Erase result should contain id_slot", result.contains("\"id_slot\""));
+		Assert.assertTrue("Erase result should contain n_erased", result.contains("\"n_erased\""));
+	}
+
+	@Test
+	public void testConfigureParallelInference() {
+		boolean result = model.configureParallelInference("{\"slot_prompt_similarity\": 0.5}");
+		Assert.assertTrue("Configuration should succeed", result);
+	}
+
+	@Test(expected = LlamaException.class)
+	public void testConfigureParallelInferenceInvalidSimilarity() {
+		model.configureParallelInference("{\"slot_prompt_similarity\": 2.0}");
+	}
+
 	@Test
 	public void testSpeculativeDecoding() {
 		Assume.assumeTrue(

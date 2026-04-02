@@ -303,6 +303,67 @@ public class LlamaModel implements AutoCloseable {
 	 */
 	public native String handleDetokenize(int[] tokens) throws LlamaException;
 
+	// ------------------------------------------------------------------
+	// Server management
+	// ------------------------------------------------------------------
+
+	/**
+	 * Get server metrics and slot information as a JSON string.
+	 *
+	 * @return JSON with slot data, idle/processing counts, and performance metrics
+	 */
+	public String getMetrics() {
+		return handleSlotAction(0, 0, null);
+	}
+
+	/**
+	 * Erase the KV cache for a specific slot.
+	 *
+	 * @param slotId the slot ID to erase
+	 * @return JSON with erase result
+	 */
+	public String eraseSlot(int slotId) {
+		return handleSlotAction(3, slotId, null);
+	}
+
+	/**
+	 * Save a slot's KV cache state to a file.
+	 *
+	 * @param slotId the slot ID to save
+	 * @param filepath the file path to save to
+	 * @return JSON with save result
+	 */
+	public String saveSlot(int slotId, String filepath) {
+		return handleSlotAction(1, slotId, filepath);
+	}
+
+	/**
+	 * Restore a slot's KV cache state from a file.
+	 *
+	 * @param slotId the slot ID to restore
+	 * @param filepath the file path to restore from
+	 * @return JSON with restore result
+	 */
+	public String restoreSlot(int slotId, String filepath) {
+		return handleSlotAction(2, slotId, filepath);
+	}
+
+	/**
+	 * Configure runtime inference parameters.
+	 * Accepts a JSON string with optional keys:
+	 * <ul>
+	 *   <li>"slot_prompt_similarity" (float, 0.0-1.0)</li>
+	 *   <li>"n_threads" (int, &gt; 0)</li>
+	 *   <li>"n_threads_batch" (int, &gt; 0)</li>
+	 * </ul>
+	 *
+	 * @param configJson JSON configuration string
+	 * @return true if configuration was applied successfully
+	 */
+	public native boolean configureParallelInference(String configJson) throws LlamaException;
+
+	native String handleSlotAction(int action, int slotId, String filename) throws LlamaException;
+
 	native String handleChatCompletions(String params) throws LlamaException;
 
 	native int requestChatCompletion(String params) throws LlamaException;
