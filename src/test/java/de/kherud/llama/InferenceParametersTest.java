@@ -210,6 +210,25 @@ public class InferenceParametersTest {
 		assertEquals("\"{{messages}}\"", params.parameters.get("chat_template"));
 	}
 
+	@Test
+	public void testSetChatTemplateKwargs() {
+		java.util.Map<String, String> kwargs = new java.util.LinkedHashMap<>();
+		kwargs.put("enable_thinking", "true");
+		kwargs.put("max_tokens", "1024");
+		InferenceParameters params = new InferenceParameters("").setChatTemplateKwargs(kwargs);
+		String value = params.parameters.get("chat_template_kwargs");
+		assertNotNull(value);
+		assertTrue(value.contains("\"enable_thinking\":true"));
+		assertTrue(value.contains("\"max_tokens\":1024"));
+	}
+
+	@Test
+	public void testSetChatTemplateKwargsEmpty() {
+		java.util.Map<String, String> kwargs = new java.util.LinkedHashMap<>();
+		InferenceParameters params = new InferenceParameters("").setChatTemplateKwargs(kwargs);
+		assertEquals("{}", params.parameters.get("chat_template_kwargs"));
+	}
+
 	// -------------------------------------------------------------------------
 	// MiroStat
 	// -------------------------------------------------------------------------
