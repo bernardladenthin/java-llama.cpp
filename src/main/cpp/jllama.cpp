@@ -1474,10 +1474,11 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
         server_task task(SERVER_TASK_TYPE_METRICS);
         task.id = ctx_server->queue_tasks.get_new_id();
         ctx_server->queue_results.add_waiting_task_id(task.id);
-        ctx_server->queue_tasks.post(task, true);
+        int id = task.id;
+        ctx_server->queue_tasks.post(std::move(task), true);
 
-        server_task_result_ptr result = ctx_server->queue_results.recv(task.id);
-        ctx_server->queue_results.remove_waiting_task_id(task.id);
+        server_task_result_ptr result = ctx_server->queue_results.recv(id);
+        ctx_server->queue_results.remove_waiting_task_id(id);
 
         if (result->is_error()) {
             std::string error_msg = result->to_json()["message"].get<std::string>();
@@ -1501,11 +1502,12 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
         task.slot_action.filename = filename;
         task.slot_action.filepath = filename;
 
-        ctx_server->queue_results.add_waiting_task_id(task.id);
-        ctx_server->queue_tasks.post(task);
+        int tid = task.id;
+        ctx_server->queue_results.add_waiting_task_id(tid);
+        ctx_server->queue_tasks.post(std::move(task));
 
-        server_task_result_ptr result = ctx_server->queue_results.recv(task.id);
-        ctx_server->queue_results.remove_waiting_task_id(task.id);
+        server_task_result_ptr result = ctx_server->queue_results.recv(tid);
+        ctx_server->queue_results.remove_waiting_task_id(tid);
 
         if (result->is_error()) {
             std::string error_msg = result->to_json()["message"].get<std::string>();
@@ -1529,11 +1531,12 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
         task.slot_action.filename = filename;
         task.slot_action.filepath = filename;
 
-        ctx_server->queue_results.add_waiting_task_id(task.id);
-        ctx_server->queue_tasks.post(task);
+        int tid = task.id;
+        ctx_server->queue_results.add_waiting_task_id(tid);
+        ctx_server->queue_tasks.post(std::move(task));
 
-        server_task_result_ptr result = ctx_server->queue_results.recv(task.id);
-        ctx_server->queue_results.remove_waiting_task_id(task.id);
+        server_task_result_ptr result = ctx_server->queue_results.recv(tid);
+        ctx_server->queue_results.remove_waiting_task_id(tid);
 
         if (result->is_error()) {
             std::string error_msg = result->to_json()["message"].get<std::string>();
@@ -1549,11 +1552,12 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
         task.id = ctx_server->queue_tasks.get_new_id();
         task.slot_action.id_slot = slotId;
 
-        ctx_server->queue_results.add_waiting_task_id(task.id);
-        ctx_server->queue_tasks.post(task);
+        int tid = task.id;
+        ctx_server->queue_results.add_waiting_task_id(tid);
+        ctx_server->queue_tasks.post(std::move(task));
 
-        server_task_result_ptr result = ctx_server->queue_results.recv(task.id);
-        ctx_server->queue_results.remove_waiting_task_id(task.id);
+        server_task_result_ptr result = ctx_server->queue_results.recv(tid);
+        ctx_server->queue_results.remove_waiting_task_id(tid);
 
         if (result->is_error()) {
             std::string error_msg = result->to_json()["message"].get<std::string>();
