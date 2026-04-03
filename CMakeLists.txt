@@ -46,7 +46,9 @@ if(ANDROID_ABI)
 endif()
 
 set(LLAMA_BUILD_COMMON ON)
-# Build BoringSSL to include OpenSSL DLLs in Windows packages
+# Enable HTTPS model downloads via curl
+set(LLAMA_CURL ON)
+# Build BoringSSL to include OpenSSL DLLs in Windows packages for HTTPS support
 if(WIN32)
     set(LLAMA_BUILD_BORINGSSL ON CACHE BOOL "" FORCE)
 endif()
