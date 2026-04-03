@@ -62,6 +62,15 @@ class LlamaLoader {
 				System.err.println("'ggml-metal.metal' not found");
 			}
 		}
+
+		// On Windows, extract OpenSSL/BoringSSL DLLs before loading jllama
+		// This ensures jllama.dll can find its dependencies
+		if ("Windows".equals(OSInfo.getOSName())) {
+			String nativeDirName = getNativeResourcePath();
+			String tempFolder = getTempDir().getAbsolutePath();
+			extractOpenSSLDlls(nativeDirName, tempFolder);
+		}
+
 		loadNativeLibrary("jllama");
 		extracted = true;
 	}
@@ -80,7 +89,36 @@ class LlamaLoader {
 
 	static boolean shouldCleanPath(Path path) {
 		String fileName = path.getFileName().toString();
-		return fileName.startsWith("jllama") || fileName.startsWith("llama");
+		return fileName.startsWith("jllama") || fileName.startsWith("llama") ||
+			   fileName.startsWith("libssl") || fileName.startsWith("libcrypto");
+	}
+
+	/**
+	 * Extracts OpenSSL/BoringSSL DLL dependencies on Windows
+	 * These are required by jllama.dll at runtime
+	 *
+	 * @param nativeDirName The native resource directory path
+	 * @param tempFolder    The temporary directory for extraction
+	 */
+	private static void extractOpenSSLDlls(String nativeDirName, String tempFolder) {
+		// Look for libssl and libcrypto DLLs (from BoringSSL/LibreSSL)
+		String[] sslDlls = {
+			"libssl-3-x64.dll",
+			"libssl-3-x86.dll",
+			"libssl-3.dll",
+			"libcrypto-3-x64.dll",
+			"libcrypto-3-x86.dll",
+			"libcrypto-3.dll"
+		};
+
+		for (String dllName : sslDlls) {
+			Path extractedPath = extractFile(nativeDirName, dllName, tempFolder, false);
+			if (extractedPath != null) {
+				// Successfully extracted, don't spam errors for missing optional files
+				continue;
+			}
+			// File not found is expected - only the DLLs that were built will exist
+		}
 	}
 
 	private static void cleanPath(Path path) {
