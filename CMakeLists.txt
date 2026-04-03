@@ -186,21 +186,19 @@ if (LLAMA_METAL AND NOT LLAMA_METAL_EMBED_LIBRARY)
     configure_file(${llama.cpp_SOURCE_DIR}/ggml-metal.metal ${JLLAMA_DIR}/ggml-metal.metal COPYONLY)
 endif()
 
-# Copy OpenSSL/BoringSSL DLLs on Windows
+# Copy OpenSSL/BoringSSL libraries (static or shared, depending on BUILD_SHARED_LIBS)
 # These are built by llama.cpp's BoringSSL/LibreSSL FetchContent and need to be included in the JAR
-# Uses POST_BUILD so DLLs exist when the command runs
-if(OS_NAME STREQUAL "Windows")
-    if(TARGET ssl AND TARGET crypto)
-        add_custom_command(TARGET jllama POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                $<TARGET_FILE:ssl>
-                $<TARGET_FILE:crypto>
-                ${JLLAMA_DIR}
-            COMMENT "Copying OpenSSL/BoringSSL DLLs to ${JLLAMA_DIR}"
-        )
-    else()
-        message(STATUS "ssl/crypto targets not found - OpenSSL DLLs will not be bundled")
-    endif()
+# Uses POST_BUILD so libraries exist when the command runs
+if(TARGET ssl AND TARGET crypto)
+    add_custom_command(TARGET jllama POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:ssl>
+            $<TARGET_FILE:crypto>
+            ${JLLAMA_DIR}
+        COMMENT "Copying OpenSSL/BoringSSL libraries to ${JLLAMA_DIR}"
+    )
+else()
+    message(STATUS "ssl/crypto targets not found - OpenSSL libraries will not be bundled")
 endif()
 
 #################### C++ unit tests ####################
