@@ -46,10 +46,16 @@ if(ANDROID_ABI)
 endif()
 
 set(LLAMA_BUILD_COMMON ON)
+# Enable HTTPS model downloads via curl
+set(LLAMA_CURL ON)
+# Build BoringSSL to include OpenSSL DLLs in Windows packages for HTTPS support
+if(WIN32)
+    set(LLAMA_BUILD_BORINGSSL ON CACHE BOOL "" FORCE)
+endif()
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b8645
+	GIT_TAG        b8648
 )
 FetchContent_MakeAvailable(llama.cpp)
 
@@ -178,6 +184,24 @@ endif()
 if (LLAMA_METAL AND NOT LLAMA_METAL_EMBED_LIBRARY)
     # copy ggml-common.h and ggml-metal.metal to bin directory
     configure_file(${llama.cpp_SOURCE_DIR}/ggml-metal.metal ${JLLAMA_DIR}/ggml-metal.metal COPYONLY)
+endif()
+
+# Copy OpenSSL/BoringSSL DLLs on Windows
+# These are built by llama.cpp's BoringSSL/LibreSSL FetchContent and need to be included in the JAR
+if(OS_NAME STREQUAL "Windows")
+    file(GLOB_RECURSE SSL_CRYPTO_DLLS
+        "${llama.cpp_BINARY_DIR}/**/libssl*.dll"
+        "${llama.cpp_BINARY_DIR}/**/libcrypto*.dll"
+    )
+    if(SSL_CRYPTO_DLLS)
+        message(STATUS "Found OpenSSL/BoringSSL DLLs: ${SSL_CRYPTO_DLLS}")
+        foreach(DLL ${SSL_CRYPTO_DLLS})
+            message(STATUS "Copying ${DLL} to ${JLLAMA_DIR}")
+            file(COPY ${DLL} DESTINATION ${JLLAMA_DIR})
+        endforeach()
+    else()
+        message(STATUS "No OpenSSL/BoringSSL DLLs found in ${llama.cpp_BINARY_DIR} - OpenSSL may not have been built")
+    endif()
 endif()
 
 #################### C++ unit tests ####################
