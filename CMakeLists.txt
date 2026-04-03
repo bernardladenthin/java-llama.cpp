@@ -188,19 +188,18 @@ endif()
 
 # Copy OpenSSL/BoringSSL DLLs on Windows
 # These are built by llama.cpp's BoringSSL/LibreSSL FetchContent and need to be included in the JAR
+# Uses POST_BUILD so DLLs exist when the command runs
 if(OS_NAME STREQUAL "Windows")
-    file(GLOB_RECURSE SSL_CRYPTO_DLLS
-        "${llama.cpp_BINARY_DIR}/**/libssl*.dll"
-        "${llama.cpp_BINARY_DIR}/**/libcrypto*.dll"
-    )
-    if(SSL_CRYPTO_DLLS)
-        message(STATUS "Found OpenSSL/BoringSSL DLLs: ${SSL_CRYPTO_DLLS}")
-        foreach(DLL ${SSL_CRYPTO_DLLS})
-            message(STATUS "Copying ${DLL} to ${JLLAMA_DIR}")
-            file(COPY ${DLL} DESTINATION ${JLLAMA_DIR})
-        endforeach()
+    if(TARGET ssl AND TARGET crypto)
+        add_custom_command(TARGET jllama POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:ssl>
+                $<TARGET_FILE:crypto>
+                ${JLLAMA_DIR}
+            COMMENT "Copying OpenSSL/BoringSSL DLLs to ${JLLAMA_DIR}"
+        )
     else()
-        message(STATUS "No OpenSSL/BoringSSL DLLs found in ${llama.cpp_BINARY_DIR} - OpenSSL may not have been built")
+        message(STATUS "ssl/crypto targets not found - OpenSSL DLLs will not be bundled")
     endif()
 endif()
 
