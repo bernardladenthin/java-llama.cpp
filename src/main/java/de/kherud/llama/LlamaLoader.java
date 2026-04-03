@@ -94,30 +94,46 @@ class LlamaLoader {
 	}
 
 	/**
-	 * Extracts OpenSSL/BoringSSL DLL dependencies on Windows
-	 * These are required by jllama.dll at runtime
+	 * Extracts OpenSSL/BoringSSL library dependencies across all platforms
+	 * These are required by jllama at runtime
 	 *
 	 * @param nativeDirName The native resource directory path
 	 * @param tempFolder    The temporary directory for extraction
 	 */
 	private static void extractOpenSSLDlls(String nativeDirName, String tempFolder) {
-		// Look for libssl and libcrypto DLLs (from BoringSSL/LibreSSL)
-		String[] sslDlls = {
+		// Look for libssl and libcrypto libraries (from BoringSSL/LibreSSL)
+		// Windows: .dll (runtime), .lib (import library)
+		// Linux: .a (static), .so (shared)
+		// macOS: .dylib (dynamic), .a (static)
+		String[] sslLibraries = {
+			// Windows DLLs
 			"libssl-3-x64.dll",
 			"libssl-3-x86.dll",
 			"libssl-3.dll",
 			"libcrypto-3-x64.dll",
 			"libcrypto-3-x86.dll",
-			"libcrypto-3.dll"
+			"libcrypto-3.dll",
+			// Windows import libraries
+			"ssl.lib",
+			"crypto.lib",
+			// Linux static libraries
+			"libssl.a",
+			"libcrypto.a",
+			// Linux shared libraries
+			"libssl.so",
+			"libcrypto.so",
+			// macOS dynamic libraries
+			"libssl.dylib",
+			"libcrypto.dylib"
 		};
 
-		for (String dllName : sslDlls) {
-			Path extractedPath = extractFile(nativeDirName, dllName, tempFolder, false);
+		for (String libName : sslLibraries) {
+			Path extractedPath = extractFile(nativeDirName, libName, tempFolder, false);
 			if (extractedPath != null) {
 				// Successfully extracted, don't spam errors for missing optional files
 				continue;
 			}
-			// File not found is expected - only the DLLs that were built will exist
+			// File not found is expected - only the libraries that were built will exist
 		}
 	}
 
