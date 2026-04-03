@@ -55,7 +55,7 @@ endif()
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b8645
+	GIT_TAG        b8648
 )
 FetchContent_MakeAvailable(llama.cpp)
 
