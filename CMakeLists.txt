@@ -190,7 +190,13 @@ endif()
 # This includes BoringSSL, LibreSSL, and any other dynamically built libraries
 # Files are searched recursively in the build output directories
 add_custom_command(TARGET jllama POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_dll_files.cmake
+    COMMAND ${CMAKE_COMMAND}
+        -D SOURCE_DIR=${CMAKE_SOURCE_DIR}
+        -D BINARY_DIR=${CMAKE_BINARY_DIR}
+        -D OS_NAME=${OS_NAME}
+        -D OS_ARCH=${OS_ARCH}
+        -D GGML_CUDA=${GGML_CUDA}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_dll_files.cmake
     COMMENT "Copying DLL/SO/DYLIB files from llama.cpp build to JAR resources"
 )
 

@@ -1,58 +1,48 @@
 # Script to find and copy DLL/SO/DYLIB files from llama.cpp build directory
 # Run as: cmake -P copy_dll_files.cmake
-# Requires CMake variables:
-#   - CMAKE_SOURCE_DIR: project root
+# Requires CMake variables to be passed via -D flags:
+#   - SOURCE_DIR: project root
 #   - OS_NAME: operating system name (Windows, Linux, Mac)
 #   - OS_ARCH: architecture (x86_64, aarch64, x86, etc.)
-#   - llama.cpp_BINARY_DIR: llama.cpp build directory
+#   - BINARY_DIR: llama.cpp build directory
 
-# Get variables from parent CMake
-get_filename_component(CMAKE_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLUTE)
-
-# Read OS_NAME and OS_ARCH from file if not set in environment
-if(NOT DEFINED OS_NAME)
-    find_package(Java REQUIRED)
-    find_program(JAVA_EXECUTABLE NAMES java)
-    execute_process(
-        COMMAND ${JAVA_EXECUTABLE} -cp ${CMAKE_SOURCE_DIR}/target/classes de.kherud.llama.OSInfo --os
-        OUTPUT_VARIABLE OS_NAME
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
+# Validate required variables
+if(NOT DEFINED SOURCE_DIR)
+    message(FATAL_ERROR "SOURCE_DIR not defined")
 endif()
-
+if(NOT DEFINED OS_NAME)
+    message(FATAL_ERROR "OS_NAME not defined")
+endif()
 if(NOT DEFINED OS_ARCH)
-    find_package(Java REQUIRED)
-    find_program(JAVA_EXECUTABLE NAMES java)
-    execute_process(
-        COMMAND ${JAVA_EXECUTABLE} -cp ${CMAKE_SOURCE_DIR}/target/classes de.kherud.llama.OSInfo --arch
-        OUTPUT_VARIABLE OS_ARCH
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
+    message(FATAL_ERROR "OS_ARCH not defined")
+endif()
+if(NOT DEFINED BINARY_DIR)
+    message(FATAL_ERROR "BINARY_DIR not defined")
 endif()
 
 # Determine output directory
-if(GGML_CUDA)
-    set(OUTPUT_DIR "${CMAKE_SOURCE_DIR}/src/main/resources_linux_cuda/de/kherud/llama/${OS_NAME}/${OS_ARCH}")
+if(DEFINED GGML_CUDA AND GGML_CUDA)
+    set(OUTPUT_DIR "${SOURCE_DIR}/src/main/resources_linux_cuda/de/kherud/llama/${OS_NAME}/${OS_ARCH}")
 else()
-    set(OUTPUT_DIR "${CMAKE_SOURCE_DIR}/src/main/resources/de/kherud/llama/${OS_NAME}/${OS_ARCH}")
+    set(OUTPUT_DIR "${SOURCE_DIR}/src/main/resources/de/kherud/llama/${OS_NAME}/${OS_ARCH}")
 endif()
 
 # Find DLL/SO/DYLIB files in common build locations
 set(SEARCH_DIRS
-    "${CMAKE_BINARY_DIR}/bin"
-    "${CMAKE_BINARY_DIR}/lib"
-    "${CMAKE_BINARY_DIR}/Release"
-    "${CMAKE_BINARY_DIR}/Debug"
-    "${CMAKE_BINARY_DIR}/_deps"
+    "${BINARY_DIR}/bin"
+    "${BINARY_DIR}/lib"
+    "${BINARY_DIR}/Release"
+    "${BINARY_DIR}/Debug"
+    "${BINARY_DIR}/_deps"
 )
 
-message(STATUS "Searching for DLL/SO/DYLIB files in llama.cpp build directory")
-message(STATUS "Output directory: ${OUTPUT_DIR}")
+message(STATUS "[DLL Discovery] Searching for DLL/SO/DYLIB files")
+message(STATUS "[DLL Discovery] OS: ${OS_NAME}/${OS_ARCH}")
+message(STATUS "[DLL Discovery] Output: ${OUTPUT_DIR}")
 
 # Platform-specific library patterns
 if(OS_NAME STREQUAL "Windows")
     set(LIB_PATTERNS "*.dll" "*.lib")
-    set(SEARCH_EXCLUDE_PATTERNS ".*\\.exp$")
 elseif(OS_NAME STREQUAL "Mac")
     set(LIB_PATTERNS "*.dylib" "*.a")
 else()
@@ -75,11 +65,8 @@ endforeach()
 list(REMOVE_DUPLICATES FOUND_FILES)
 
 if(FOUND_FILES)
-    message(STATUS "Found DLL/SO/DYLIB files:")
+    message(STATUS "[DLL Discovery] Found ${FOUND_FILES} files:")
     foreach(FILE ${FOUND_FILES})
-        message(STATUS "  - ${FILE}")
-
-        # Get filename
         get_filename_component(FILENAME "${FILE}" NAME)
         set(DEST "${OUTPUT_DIR}/${FILENAME}")
 
@@ -90,11 +77,12 @@ if(FOUND_FILES)
         )
 
         if(COPY_RESULT EQUAL 0)
-            message(STATUS "    ✓ Copied to ${DEST}")
+            message(STATUS "[DLL Discovery] ✓ ${FILENAME}")
         else()
-            message(WARNING "    ✗ Failed to copy ${FILE}")
+            message(WARNING "[DLL Discovery] ✗ Failed to copy ${FILENAME}")
         endif()
     endforeach()
 else()
-    message(STATUS "No DLL/SO/DYLIB files found in build directory (this is normal for static builds)")
+    message(STATUS "[DLL Discovery] No DLL/SO/DYLIB files found (normal for static builds)")
 endif()
+
