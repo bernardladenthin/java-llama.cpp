@@ -210,6 +210,8 @@ jobs:
         run: ls -l models/
       - name: Validate model files
         run: bash .github/validate-models.sh
+      - name: Enable core dumps
+        run: ulimit -c unlimited
       - name: Run Java tests
         run: mvn --no-transfer-progress test
       - name: Memory after tests
@@ -219,7 +221,10 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: error-log-macos-15-metal
-          path: ${{ github.workspace }}/hs_err_pid*.log
+          path: |
+            ${{ github.workspace }}/hs_err_pid*.log
+            ${{ github.workspace }}/target/surefire-reports/*.dump
+            ${{ github.workspace }}/target/surefire-reports/*.dumpstream
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -252,6 +257,10 @@ jobs:
           java-version: '8'
       - name: Memory before tests
         run: free -h
+      - name: Enable core dumps
+        run: |
+          ulimit -c unlimited
+          echo "${{ github.workspace }}/core.%e.%p" | sudo tee /proc/sys/kernel/core_pattern
       - name: Run tests
         run: mvn --no-transfer-progress test
       - name: Memory after tests
@@ -261,7 +270,11 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: error-log-linux-x86_64
-          path: ${{ github.workspace }}/hs_err_pid*.log
+          path: |
+            ${{ github.workspace }}/hs_err_pid*.log
+            ${{ github.workspace }}/core.*
+            ${{ github.workspace }}/target/surefire-reports/*.dump
+            ${{ github.workspace }}/target/surefire-reports/*.dumpstream
           if-no-files-found: warn
 
   test-java-macos-arm64-metal:
@@ -290,6 +303,8 @@ jobs:
           java-version: '8'
       - name: Memory before tests
         run: vm_stat && sysctl hw.memsize hw.physmem
+      - name: Enable core dumps
+        run: ulimit -c unlimited
       - name: Run tests
         run: mvn --no-transfer-progress -Dde.kherud.llama.test.ngl=0 test
       - name: Memory after tests
@@ -299,7 +314,10 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: error-log-macos-14-metal
-          path: ${{ github.workspace }}/hs_err_pid*.log
+          path: |
+            ${{ github.workspace }}/hs_err_pid*.log
+            ${{ github.workspace }}/target/surefire-reports/*.dump
+            ${{ github.workspace }}/target/surefire-reports/*.dumpstream
           if-no-files-found: warn
 
   test-java-macos-arm64-no-metal:
@@ -328,6 +346,8 @@ jobs:
           java-version: '8'
       - name: Memory before tests
         run: vm_stat && sysctl hw.memsize hw.physmem
+      - name: Enable core dumps
+        run: ulimit -c unlimited
       - name: Run tests
         run: mvn --no-transfer-progress test
       - name: Memory after tests
@@ -337,7 +357,10 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: error-log-macos-15-no-metal
-          path: ${{ github.workspace }}/hs_err_pid*.log
+          path: |
+            ${{ github.workspace }}/hs_err_pid*.log
+            ${{ github.workspace }}/target/surefire-reports/*.dump
+            ${{ github.workspace }}/target/surefire-reports/*.dumpstream
           if-no-files-found: warn
 
   test-java-windows-x86_64:
@@ -379,6 +402,8 @@ jobs:
           name: windows-output
           path: |
             ${{ github.workspace }}\hs_err_pid*.log
+            ${{ github.workspace }}\target\surefire-reports\*.dump
+            ${{ github.workspace }}\target\surefire-reports\*.dumpstream
             ${{ github.workspace }}/src/main/resources/de/kherud/llama/**/*
           if-no-files-found: warn
 
