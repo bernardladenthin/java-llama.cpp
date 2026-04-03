@@ -48,9 +48,6 @@ endif()
 set(LLAMA_BUILD_COMMON ON)
 # Enable HTTPS model downloads via curl
 set(LLAMA_CURL ON)
-# Build BoringSSL as shared library (DLL/SO/DYLIB) not static
-# This ensures OpenSSL DLLs are generated and can be packaged in JAR
-set(BUILD_SHARED_LIBS ON)
 # Build BoringSSL to include OpenSSL DLLs in Windows packages for HTTPS support
 if(WIN32)
     set(LLAMA_BUILD_BORINGSSL ON CACHE BOOL "" FORCE)
@@ -61,8 +58,6 @@ FetchContent_Declare(
 	GIT_TAG        b8648
 )
 FetchContent_MakeAvailable(llama.cpp)
-# Restore default shared library setting after BoringSSL is built
-set(BUILD_SHARED_LIBS OFF)
 
 # mtmd lives in tools/mtmd, which is only built when LLAMA_BUILD_TOOLS=ON.
 # LLAMA_BUILD_TOOLS defaults to LLAMA_STANDALONE, which is OFF when llama.cpp
@@ -191,20 +186,13 @@ if (LLAMA_METAL AND NOT LLAMA_METAL_EMBED_LIBRARY)
     configure_file(${llama.cpp_SOURCE_DIR}/ggml-metal.metal ${JLLAMA_DIR}/ggml-metal.metal COPYONLY)
 endif()
 
-# Copy OpenSSL/BoringSSL libraries (static or shared, depending on BUILD_SHARED_LIBS)
-# These are built by llama.cpp's BoringSSL/LibreSSL FetchContent and need to be included in the JAR
-# Uses POST_BUILD so libraries exist when the command runs
-if(TARGET ssl AND TARGET crypto)
-    add_custom_command(TARGET jllama POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:ssl>
-            $<TARGET_FILE:crypto>
-            ${JLLAMA_DIR}
-        COMMENT "Copying OpenSSL/BoringSSL libraries to ${JLLAMA_DIR}"
-    )
-else()
-    message(STATUS "ssl/crypto targets not found - OpenSSL libraries will not be bundled")
-endif()
+# Copy any available DLL/SO/DYLIB files from llama.cpp build directory
+# This includes BoringSSL, LibreSSL, and any other dynamically built libraries
+# Files are searched recursively in the build output directories
+add_custom_command(TARGET jllama POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_dll_files.cmake
+    COMMENT "Copying DLL/SO/DYLIB files from llama.cpp build to JAR resources"
+)
 
 #################### C++ unit tests ####################
 
