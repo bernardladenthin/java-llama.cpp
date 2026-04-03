@@ -48,6 +48,9 @@ endif()
 set(LLAMA_BUILD_COMMON ON)
 # Enable HTTPS model downloads via curl
 set(LLAMA_CURL ON)
+# Build BoringSSL as shared library (DLL/SO/DYLIB) not static
+# This ensures OpenSSL DLLs are generated and can be packaged in JAR
+set(BUILD_SHARED_LIBS ON)
 # Build BoringSSL to include OpenSSL DLLs in Windows packages for HTTPS support
 if(WIN32)
     set(LLAMA_BUILD_BORINGSSL ON CACHE BOOL "" FORCE)
@@ -58,6 +61,8 @@ FetchContent_Declare(
 	GIT_TAG        b8648
 )
 FetchContent_MakeAvailable(llama.cpp)
+# Restore default shared library setting after BoringSSL is built
+set(BUILD_SHARED_LIBS OFF)
 
 # mtmd lives in tools/mtmd, which is only built when LLAMA_BUILD_TOOLS=ON.
 # LLAMA_BUILD_TOOLS defaults to LLAMA_STANDALONE, which is OFF when llama.cpp
