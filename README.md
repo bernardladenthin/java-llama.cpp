@@ -260,3 +260,29 @@ android {
 ```proguard
 keep class de.kherud.llama.** { *; }
 ```
+
+## Troubleshooting
+
+### Windows: EXCEPTION_ACCESS_VIOLATION with msvcp140.dll
+
+If you encounter a native crash like:
+```
+EXCEPTION_ACCESS_VIOLATION (0xc0000005) at pc=0x00007ffa8f4b2f58
+C [msvcp140.dll+0x12f58]
+```
+
+This is a known issue where the C++ runtime library (`msvcp140.dll`) bundled with some JDK versions is outdated. 
+
+**Solution:** Remove the outdated `msvcp140.dll` from your JDK:
+```bash
+# Locate and remove msvcp140.dll from JDK directory
+# Example for JDK 21:
+del "C:\Program Files\Java\jdk-21\bin\msvcp140.dll"
+del "C:\Program Files\Java\jdk-21\bin\vcruntime140.dll"
+del "C:\Program Files\Java\jdk-21\bin\vcruntime140_1.dll"
+
+# Or on Linux with OpenJDK:
+rm /usr/lib/jvm/java-21/bin/msvcp140.dll
+```
+
+The system's updated C++ runtime will be used instead, resolving the crash.
