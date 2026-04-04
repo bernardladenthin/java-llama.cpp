@@ -628,11 +628,17 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionBy
     const bool is_stop = result->is_stop();
 
     // Access content directly without building a JSON DOM or serializing to string.
+    // For server_task_result_cmpl_final in streaming mode, content is already
+    // delivered via partial chunks — the final result intentionally carries "".
+    // This mirrors server.hpp to_json_non_oaicompat(): stream ? "" : content.
     const std::string *content_ptr = nullptr;
     if (auto *partial = dynamic_cast<server_task_result_cmpl_partial *>(result.get())) {
         content_ptr = &partial->content;
     } else if (auto *final_r = dynamic_cast<server_task_result_cmpl_final *>(result.get())) {
-        content_ptr = &final_r->content;
+        if (!final_r->stream) {
+            content_ptr = &final_r->content; // non-streaming: full text lives here
+        }
+        // streaming: content_ptr stays nullptr → empty bytes, matching to_json behaviour
     }
 
     if (is_stop) {

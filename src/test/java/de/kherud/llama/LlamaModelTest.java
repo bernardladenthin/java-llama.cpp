@@ -155,7 +155,7 @@ public class LlamaModelTest {
 		for (LlamaOutput token : model.generate(params)) {
 			streamOutput.append(token.text);
 		}
-		Assert.assertFalse("Streaming output must not be empty", streamOutput.length() > 0);
+		Assert.assertTrue("Streaming output must not be empty", streamOutput.length() > 0);
 
 		// Both paths must produce non-empty output of equal length
 		Assert.assertEquals(
