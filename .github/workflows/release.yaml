@@ -186,10 +186,17 @@ jobs:
       - name: Display CPU Info
         shell: pwsh
         run: |
-          Write-Host "=== CPU Information ==="
-          Get-CimInstance Win32_Processor | Format-List
-          Write-Host "=== CPU Features ==="
-          Get-WmiObject Win32_ProcessorFeature | Format-List
+          Write-Host "=== CPU Information (Get-CimInstance - All Properties) ==="
+          Get-CimInstance Win32_Processor | Select-Object * | Format-List
+          Write-Host ""
+          Write-Host "=== CPU Information (systeminfo) ==="
+          systeminfo | Select-String "Processor"
+          Write-Host ""
+          Write-Host "=== CPU Information (wmic) ==="
+          wmic cpu get Name,Manufacturer,MaxClockSpeed,Characteristics,Description /format:list
+          Write-Host ""
+          Write-Host "=== CPU Information (Get-ComputerInfo) ==="
+          Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
       - name: Build libraries
         shell: cmd
         run: |
@@ -210,10 +217,17 @@ jobs:
       - name: Display CPU Info
         shell: pwsh
         run: |
-          Write-Host "=== CPU Information ==="
-          Get-CimInstance Win32_Processor | Format-List
-          Write-Host "=== CPU Features ==="
-          Get-WmiObject Win32_ProcessorFeature | Format-List
+          Write-Host "=== CPU Information (Get-CimInstance - All Properties) ==="
+          Get-CimInstance Win32_Processor | Select-Object * | Format-List
+          Write-Host ""
+          Write-Host "=== CPU Information (systeminfo) ==="
+          systeminfo | Select-String "Processor"
+          Write-Host ""
+          Write-Host "=== CPU Information (wmic) ==="
+          wmic cpu get Name,Manufacturer,MaxClockSpeed,Characteristics,Description /format:list
+          Write-Host ""
+          Write-Host "=== CPU Information (Get-ComputerInfo) ==="
+          Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
       - name: Build libraries
         shell: cmd
         run: |
@@ -450,10 +464,17 @@ jobs:
       - name: Display CPU Info
         shell: pwsh
         run: |
-          Write-Host "=== CPU Information ==="
-          Get-CimInstance Win32_Processor | Format-List
-          Write-Host "=== CPU Features ==="
-          Get-WmiObject Win32_ProcessorFeature | Format-List
+          Write-Host "=== CPU Information (Get-CimInstance - All Properties) ==="
+          Get-CimInstance Win32_Processor | Select-Object * | Format-List
+          Write-Host ""
+          Write-Host "=== CPU Information (systeminfo) ==="
+          systeminfo | Select-String "Processor"
+          Write-Host ""
+          Write-Host "=== CPU Information (wmic) ==="
+          wmic cpu get Name,Manufacturer,MaxClockSpeed,Characteristics,Description /format:list
+          Write-Host ""
+          Write-Host "=== CPU Information (Get-ComputerInfo) ==="
+          Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
       - uses: actions/download-artifact@v6
         with:
           name: Windows-x86_64-libraries
