@@ -1359,6 +1359,60 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Enable or disable a single unified KV buffer shared across all sequences.
+     * <p>
+     * When enabled (the default when the number of slots is set to auto), all parallel slots
+     * share one contiguous KV buffer which enables features such as cross-slot cache reuse
+     * ({@link #setCacheRamMib}) and idle-slot eviction ({@link #setClearIdle}).
+     *
+     * @param kvUnified {@code true} to enable unified KV, {@code false} to disable
+     * @return this builder
+     */
+    public ModelParameters setKvUnified(boolean kvUnified) {
+        parameters.put(kvUnified ? "--kv-unified" : "--no-kv-unified", null);
+        parameters.remove(kvUnified ? "--no-kv-unified" : "--kv-unified");
+        return this;
+    }
+
+    /**
+     * Set the maximum RAM cache size in MiB used to store saved slot KV state.
+     * <p>
+     * Requires {@link #setKvUnified(boolean) unified KV} to be enabled.
+     * Set to {@code -1} for no limit, {@code 0} to disable (default: 8192 MiB).
+     * Together with {@link #setClearIdle} this allows idle slots to be evicted
+     * from GPU/CPU memory and restored quickly on the next matching request.
+     *
+     * @param cacheRamMib maximum cache size in MiB, or {@code -1} for unlimited
+     * @return this builder
+     */
+    public ModelParameters setCacheRamMib(int cacheRamMib) {
+        parameters.put("--cache-ram", String.valueOf(cacheRamMib));
+        return this;
+    }
+
+    /**
+     * Enable or disable saving and clearing idle slots when a new task starts.
+     * <p>
+     * When enabled (the default), idle slots have their KV state saved to the
+     * RAM cache ({@link #setCacheRamMib}) and are then cleared, freeing GPU/CPU
+     * memory for the active request.  The saved state is transparently restored
+     * on the next request that shares the same prompt prefix, so cache-hit
+     * latency is preserved.
+     * <p>
+     * Requires {@link #setKvUnified(boolean) unified KV} and a non-zero
+     * {@link #setCacheRamMib RAM cache}.  If either dependency is absent the
+     * server logs a warning and silently disables the feature.
+     *
+     * @param clearIdle {@code true} to enable idle-slot eviction (default), {@code false} to disable
+     * @return this builder
+     */
+    public ModelParameters setClearIdle(boolean clearIdle) {
+        parameters.put(clearIdle ? "--clear-idle" : "--no-clear-idle", null);
+        parameters.remove(clearIdle ? "--no-clear-idle" : "--clear-idle");
+        return this;
+    }
+
+    /**
      * Returns whether the given parameter key has not been explicitly set.
      *
      * @param key the parameter key without the {@code --} prefix

@@ -409,6 +409,117 @@ public class ModelParametersExtendedTest {
         assertNull(p.parameters.get("--dump-kv-cache"));
     }
 
+    @Test
+    public void testSetKvUnifiedTrue() {
+        ModelParameters p = new ModelParameters().setKvUnified(true);
+        assertTrue(p.parameters.containsKey("--kv-unified"));
+        assertNull(p.parameters.get("--kv-unified"));
+        assertFalse(p.parameters.containsKey("--no-kv-unified"));
+    }
+
+    @Test
+    public void testSetKvUnifiedFalse() {
+        ModelParameters p = new ModelParameters().setKvUnified(false);
+        assertTrue(p.parameters.containsKey("--no-kv-unified"));
+        assertNull(p.parameters.get("--no-kv-unified"));
+        assertFalse(p.parameters.containsKey("--kv-unified"));
+    }
+
+    @Test
+    public void testSetKvUnifiedFlipFromTrueToFalse() {
+        ModelParameters p = new ModelParameters().setKvUnified(true).setKvUnified(false);
+        assertTrue(p.parameters.containsKey("--no-kv-unified"));
+        assertFalse(p.parameters.containsKey("--kv-unified"));
+    }
+
+    @Test
+    public void testSetKvUnifiedFlipFromFalseToTrue() {
+        ModelParameters p = new ModelParameters().setKvUnified(false).setKvUnified(true);
+        assertTrue(p.parameters.containsKey("--kv-unified"));
+        assertFalse(p.parameters.containsKey("--no-kv-unified"));
+    }
+
+    @Test
+    public void testSetCacheRamMib() {
+        ModelParameters p = new ModelParameters().setCacheRamMib(4096);
+        assertEquals("4096", p.parameters.get("--cache-ram"));
+    }
+
+    @Test
+    public void testSetCacheRamMibUnlimited() {
+        ModelParameters p = new ModelParameters().setCacheRamMib(-1);
+        assertEquals("-1", p.parameters.get("--cache-ram"));
+    }
+
+    @Test
+    public void testSetCacheRamMibDisabled() {
+        ModelParameters p = new ModelParameters().setCacheRamMib(0);
+        assertEquals("0", p.parameters.get("--cache-ram"));
+    }
+
+    @Test
+    public void testSetClearIdleTrue() {
+        ModelParameters p = new ModelParameters().setClearIdle(true);
+        assertTrue(p.parameters.containsKey("--clear-idle"));
+        assertNull(p.parameters.get("--clear-idle"));
+        assertFalse(p.parameters.containsKey("--no-clear-idle"));
+    }
+
+    @Test
+    public void testSetClearIdleFalse() {
+        ModelParameters p = new ModelParameters().setClearIdle(false);
+        assertTrue(p.parameters.containsKey("--no-clear-idle"));
+        assertNull(p.parameters.get("--no-clear-idle"));
+        assertFalse(p.parameters.containsKey("--clear-idle"));
+    }
+
+    @Test
+    public void testSetClearIdleFlipFromTrueToFalse() {
+        ModelParameters p = new ModelParameters().setClearIdle(true).setClearIdle(false);
+        assertTrue(p.parameters.containsKey("--no-clear-idle"));
+        assertFalse(p.parameters.containsKey("--clear-idle"));
+    }
+
+    @Test
+    public void testSetClearIdleFlipFromFalseToTrue() {
+        ModelParameters p = new ModelParameters().setClearIdle(false).setClearIdle(true);
+        assertTrue(p.parameters.containsKey("--clear-idle"));
+        assertFalse(p.parameters.containsKey("--no-clear-idle"));
+    }
+
+    @Test
+    public void testKvUnifiedCacheRamClearIdleChaining() {
+        // All three features wired together as they would be in production use
+        ModelParameters p = new ModelParameters()
+                .setKvUnified(true)
+                .setCacheRamMib(8192)
+                .setClearIdle(true);
+        assertTrue(p.parameters.containsKey("--kv-unified"));
+        assertEquals("8192", p.parameters.get("--cache-ram"));
+        assertTrue(p.parameters.containsKey("--clear-idle"));
+        // Opposite flags must be absent
+        assertFalse(p.parameters.containsKey("--no-kv-unified"));
+        assertFalse(p.parameters.containsKey("--no-clear-idle"));
+    }
+
+    @Test
+    public void testSetKvUnifiedReturnsSameInstance() {
+        ModelParameters p = new ModelParameters();
+        assertSame(p, p.setKvUnified(true));
+    }
+
+    @Test
+    public void testSetCacheRamMibReturnsSameInstance() {
+        ModelParameters p = new ModelParameters();
+        assertSame(p, p.setCacheRamMib(4096));
+    }
+
+    @Test
+    public void testSetClearIdleReturnsSameInstance() {
+        ModelParameters p = new ModelParameters();
+        assertSame(p, p.setClearIdle(true));
+    }
+
     // -------------------------------------------------------------------------
     // GPU / Split mode
     // -------------------------------------------------------------------------
