@@ -188,8 +188,6 @@ jobs:
         run: |
           Write-Host "=== CPU Information ==="
           Get-CimInstance Win32_Processor | Format-List
-          Write-Host "=== CPU Features ==="
-          Get-ItemProperty 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0' | Format-List
       - name: Build libraries
         shell: cmd
         run: |
@@ -212,8 +210,6 @@ jobs:
         run: |
           Write-Host "=== CPU Information ==="
           Get-CimInstance Win32_Processor | Format-List
-          Write-Host "=== CPU Features ==="
-          Get-ItemProperty 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0' | Format-List
       - name: Build libraries
         shell: cmd
         run: |
@@ -452,8 +448,6 @@ jobs:
         run: |
           Write-Host "=== CPU Information ==="
           Get-CimInstance Win32_Processor | Format-List
-          Write-Host "=== CPU Features ==="
-          Get-ItemProperty 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0' | Format-List
       - uses: actions/download-artifact@v6
         with:
           name: Windows-x86_64-libraries
