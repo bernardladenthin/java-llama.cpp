@@ -118,8 +118,11 @@ jobs:
       - name: Display CPU Info
         shell: bash
         run: |
-          echo "CPU Model:"
-          sysctl -a | grep "brand_string"
+          echo "=== CPU Information ==="
+          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
+          echo ""
+          echo "=== Processor Details ==="
+          system_profiler SPHardwareDataType
       - name: Build libraries
         shell: bash
         run: |
@@ -145,8 +148,11 @@ jobs:
       - name: Display CPU Info
         shell: bash
         run: |
-          echo "CPU Model:"
-          sysctl -a | grep "brand_string"
+          echo "=== CPU Information ==="
+          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
+          echo ""
+          echo "=== Processor Details ==="
+          system_profiler SPHardwareDataType
       - name: Build libraries
         shell: bash
         run: |
@@ -168,8 +174,10 @@ jobs:
       - name: Display CPU Info
         shell: pwsh
         run: |
-          Write-Host "CPU Model:"
-          Get-CimInstance Win32_Processor | Select-Object Name
+          Write-Host "=== CPU Information ==="
+          Get-CimInstance Win32_Processor | Format-List
+          Write-Host "=== CPU Features ==="
+          Get-ItemProperty 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0' | Format-List
       - name: Build libraries
         shell: cmd
         run: |
@@ -190,8 +198,10 @@ jobs:
       - name: Display CPU Info
         shell: pwsh
         run: |
-          Write-Host "CPU Model:"
-          Get-CimInstance Win32_Processor | Select-Object Name
+          Write-Host "=== CPU Information ==="
+          Get-CimInstance Win32_Processor | Format-List
+          Write-Host "=== CPU Features ==="
+          Get-ItemProperty 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0' | Format-List
       - name: Build libraries
         shell: cmd
         run: |
@@ -219,8 +229,11 @@ jobs:
           java-version: '8'
       - name: Display CPU Info
         run: |
-          echo "CPU Model:"
-          cat /proc/cpuinfo | grep "model name" | head -1
+          echo "=== CPU Information ==="
+          lscpu
+          echo ""
+          echo "=== CPU Details from /proc/cpuinfo ==="
+          head -30 /proc/cpuinfo
       - name: Build libraries
         run: |
           mvn -q compile
@@ -240,8 +253,11 @@ jobs:
       - name: Display CPU Info
         shell: bash
         run: |
-          echo "CPU Model:"
-          sysctl -a | grep "brand_string"
+          echo "=== CPU Information ==="
+          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
+          echo ""
+          echo "=== Processor Details ==="
+          system_profiler SPHardwareDataType
       - name: Build libraries
         shell: bash
         run: |
@@ -327,8 +343,11 @@ jobs:
       - name: Display CPU Info
         shell: bash
         run: |
-          echo "CPU Model:"
-          sysctl -a | grep "brand_string"
+          echo "=== CPU Information ==="
+          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
+          echo ""
+          echo "=== Processor Details ==="
+          system_profiler SPHardwareDataType
       - uses: actions/download-artifact@v6
         with:
           name: macos-14-libraries
@@ -370,8 +389,11 @@ jobs:
       - name: Display CPU Info
         shell: bash
         run: |
-          echo "CPU Model:"
-          sysctl -a | grep "brand_string"
+          echo "=== CPU Information ==="
+          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
+          echo ""
+          echo "=== Processor Details ==="
+          system_profiler SPHardwareDataType
       - uses: actions/download-artifact@v6
         with:
           name: macos-15-libraries
@@ -413,8 +435,10 @@ jobs:
       - name: Display CPU Info
         shell: pwsh
         run: |
-          Write-Host "CPU Model:"
-          Get-CimInstance Win32_Processor | Select-Object Name
+          Write-Host "=== CPU Information ==="
+          Get-CimInstance Win32_Processor | Format-List
+          Write-Host "=== CPU Features ==="
+          Get-ItemProperty 'HKLM:\HARDWARE\DESCRIPTION\System\CentralProcessor\0' | Format-List
       - uses: actions/download-artifact@v6
         with:
           name: Windows-x86_64-libraries
