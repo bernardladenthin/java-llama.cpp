@@ -27,6 +27,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "Host CPU Model:"
+          cat /proc/cpuinfo | grep "model name" | head -1
       - name: Build libraries
         shell: bash
         run: |
@@ -42,6 +47,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "Host CPU Model:"
+          cat /proc/cpuinfo | grep "model name" | head -1
       - name: Build libraries
         shell: bash
         run: |
@@ -57,6 +67,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "Host CPU Model:"
+          cat /proc/cpuinfo | grep "model name" | head -1
       - name: Build libraries
         shell: bash
         run: |
@@ -72,6 +87,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "Host CPU Model:"
+          cat /proc/cpuinfo | grep "model name" | head -1
       - name: Build libraries
         shell: bash
         run: |
@@ -95,6 +115,11 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '8'
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "CPU Model:"
+          sysctl -a | grep "brand_string"
       - name: Build libraries
         shell: bash
         run: |
@@ -117,6 +142,11 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '8'
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "CPU Model:"
+          sysctl -a | grep "brand_string"
       - name: Build libraries
         shell: bash
         run: |
@@ -135,6 +165,11 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: pwsh
+        run: |
+          Write-Host "CPU Model:"
+          Get-CimInstance Win32_Processor | Select-Object Name
       - name: Build libraries
         shell: cmd
         run: |
@@ -152,6 +187,11 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: pwsh
+        run: |
+          Write-Host "CPU Model:"
+          Get-CimInstance Win32_Processor | Select-Object Name
       - name: Build libraries
         shell: cmd
         run: |
@@ -177,6 +217,10 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '8'
+      - name: Display CPU Info
+        run: |
+          echo "CPU Model:"
+          cat /proc/cpuinfo | grep "model name" | head -1
       - name: Build libraries
         run: |
           mvn -q compile
@@ -193,6 +237,11 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '8'
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "CPU Model:"
+          sysctl -a | grep "brand_string"
       - name: Build libraries
         shell: bash
         run: |
@@ -232,6 +281,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "CPU Model:"
+          cat /proc/cpuinfo | grep "model name" | head -1
       - uses: actions/download-artifact@v6
         with:
           name: Linux-x86_64-libraries
@@ -270,6 +324,11 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "CPU Model:"
+          sysctl -a | grep "brand_string"
       - uses: actions/download-artifact@v6
         with:
           name: macos-14-libraries
@@ -308,6 +367,11 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "CPU Model:"
+          sysctl -a | grep "brand_string"
       - uses: actions/download-artifact@v6
         with:
           name: macos-15-libraries
@@ -346,6 +410,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: pwsh
+        run: |
+          Write-Host "CPU Model:"
+          Get-CimInstance Win32_Processor | Select-Object Name
       - uses: actions/download-artifact@v6
         with:
           name: Windows-x86_64-libraries
