@@ -192,9 +192,6 @@ jobs:
           Write-Host "=== CPU Information (systeminfo) ==="
           systeminfo | Select-String "Processor"
           Write-Host ""
-          Write-Host "=== CPU Information (wmic) ==="
-          wmic cpu get Name,Manufacturer,MaxClockSpeed,Characteristics,Description /format:list
-          Write-Host ""
           Write-Host "=== CPU Information (Get-ComputerInfo) ==="
           Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
       - name: Build libraries
@@ -222,9 +219,6 @@ jobs:
           Write-Host ""
           Write-Host "=== CPU Information (systeminfo) ==="
           systeminfo | Select-String "Processor"
-          Write-Host ""
-          Write-Host "=== CPU Information (wmic) ==="
-          wmic cpu get Name,Manufacturer,MaxClockSpeed,Characteristics,Description /format:list
           Write-Host ""
           Write-Host "=== CPU Information (Get-ComputerInfo) ==="
           Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
@@ -469,9 +463,6 @@ jobs:
           Write-Host ""
           Write-Host "=== CPU Information (systeminfo) ==="
           systeminfo | Select-String "Processor"
-          Write-Host ""
-          Write-Host "=== CPU Information (wmic) ==="
-          wmic cpu get Name,Manufacturer,MaxClockSpeed,Characteristics,Description /format:list
           Write-Host ""
           Write-Host "=== CPU Information (Get-ComputerInfo) ==="
           Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
