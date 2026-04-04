@@ -34,7 +34,7 @@ jobs:
           lscpu
           echo ""
           echo "=== CPU Details from /proc/cpuinfo ==="
-          head -30 /proc/cpuinfo
+          cat /proc/cpuinfo
       - name: Build libraries
         shell: bash
         run: |
@@ -57,7 +57,7 @@ jobs:
           lscpu
           echo ""
           echo "=== CPU Details from /proc/cpuinfo ==="
-          head -30 /proc/cpuinfo
+          cat /proc/cpuinfo
       - name: Build libraries
         shell: bash
         run: |
@@ -80,7 +80,7 @@ jobs:
           lscpu
           echo ""
           echo "=== CPU Details from /proc/cpuinfo ==="
-          head -30 /proc/cpuinfo
+          cat /proc/cpuinfo
       - name: Build libraries
         shell: bash
         run: |
@@ -103,7 +103,7 @@ jobs:
           lscpu
           echo ""
           echo "=== CPU Details from /proc/cpuinfo ==="
-          head -30 /proc/cpuinfo
+          cat /proc/cpuinfo
       - name: Build libraries
         shell: bash
         run: |
@@ -245,7 +245,7 @@ jobs:
           lscpu
           echo ""
           echo "=== CPU Details from /proc/cpuinfo ==="
-          head -30 /proc/cpuinfo
+          cat /proc/cpuinfo
       - name: Build libraries
         run: |
           mvn -q compile
@@ -316,7 +316,7 @@ jobs:
           lscpu
           echo ""
           echo "=== CPU Details from /proc/cpuinfo ==="
-          head -30 /proc/cpuinfo
+          cat /proc/cpuinfo
       - uses: actions/download-artifact@v6
         with:
           name: Linux-x86_64-libraries
