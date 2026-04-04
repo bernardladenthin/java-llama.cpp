@@ -30,8 +30,11 @@ jobs:
       - name: Display CPU Info
         shell: bash
         run: |
-          echo "Host CPU Model:"
-          cat /proc/cpuinfo | grep "model name" | head -1
+          echo "=== Host CPU Information ==="
+          lscpu
+          echo ""
+          echo "=== CPU Details from /proc/cpuinfo ==="
+          head -30 /proc/cpuinfo
       - name: Build libraries
         shell: bash
         run: |
@@ -50,8 +53,11 @@ jobs:
       - name: Display CPU Info
         shell: bash
         run: |
-          echo "Host CPU Model:"
-          cat /proc/cpuinfo | grep "model name" | head -1
+          echo "=== Host CPU Information ==="
+          lscpu
+          echo ""
+          echo "=== CPU Details from /proc/cpuinfo ==="
+          head -30 /proc/cpuinfo
       - name: Build libraries
         shell: bash
         run: |
@@ -70,8 +76,11 @@ jobs:
       - name: Display CPU Info
         shell: bash
         run: |
-          echo "Host CPU Model:"
-          cat /proc/cpuinfo | grep "model name" | head -1
+          echo "=== Host CPU Information ==="
+          lscpu
+          echo ""
+          echo "=== CPU Details from /proc/cpuinfo ==="
+          head -30 /proc/cpuinfo
       - name: Build libraries
         shell: bash
         run: |
@@ -90,8 +99,11 @@ jobs:
       - name: Display CPU Info
         shell: bash
         run: |
-          echo "Host CPU Model:"
-          cat /proc/cpuinfo | grep "model name" | head -1
+          echo "=== Host CPU Information ==="
+          lscpu
+          echo ""
+          echo "=== CPU Details from /proc/cpuinfo ==="
+          head -30 /proc/cpuinfo
       - name: Build libraries
         shell: bash
         run: |
@@ -300,8 +312,11 @@ jobs:
       - name: Display CPU Info
         shell: bash
         run: |
-          echo "CPU Model:"
-          cat /proc/cpuinfo | grep "model name" | head -1
+          echo "=== CPU Information ==="
+          lscpu
+          echo ""
+          echo "=== CPU Details from /proc/cpuinfo ==="
+          head -30 /proc/cpuinfo
       - uses: actions/download-artifact@v6
         with:
           name: Linux-x86_64-libraries
