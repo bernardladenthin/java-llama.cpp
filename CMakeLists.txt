@@ -186,20 +186,6 @@ if (LLAMA_METAL AND NOT LLAMA_METAL_EMBED_LIBRARY)
     configure_file(${llama.cpp_SOURCE_DIR}/ggml-metal.metal ${JLLAMA_DIR}/ggml-metal.metal COPYONLY)
 endif()
 
-# Copy any available DLL/SO/DYLIB files from llama.cpp build directory
-# This includes BoringSSL, LibreSSL, and any other dynamically built libraries
-# Files are searched recursively in the build output directories
-add_custom_command(TARGET jllama POST_BUILD
-    COMMAND ${CMAKE_COMMAND}
-        -D SOURCE_DIR=${CMAKE_SOURCE_DIR}
-        -D BINARY_DIR=${CMAKE_BINARY_DIR}
-        -D OS_NAME=${OS_NAME}
-        -D OS_ARCH=${OS_ARCH}
-        -D GGML_CUDA=${GGML_CUDA}
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_dll_files.cmake
-    COMMENT "Copying DLL/SO/DYLIB files from llama.cpp build to JAR resources"
-)
-
 #################### C++ unit tests ####################
 
 option(BUILD_TESTING "Build C++ unit tests for server.hpp / utils.hpp" OFF)

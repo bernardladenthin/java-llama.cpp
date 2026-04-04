@@ -27,6 +27,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "=== Host CPU Information ==="
+          lscpu
+          echo ""
+          echo "=== CPU Details from /proc/cpuinfo ==="
+          cat /proc/cpuinfo
       - name: Build libraries
         shell: bash
         run: |
@@ -42,6 +50,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "=== Host CPU Information ==="
+          lscpu
+          echo ""
+          echo "=== CPU Details from /proc/cpuinfo ==="
+          cat /proc/cpuinfo
       - name: Build libraries
         shell: bash
         run: |
@@ -57,6 +73,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "=== Host CPU Information ==="
+          lscpu
+          echo ""
+          echo "=== CPU Details from /proc/cpuinfo ==="
+          cat /proc/cpuinfo
       - name: Build libraries
         shell: bash
         run: |
@@ -72,6 +96,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "=== Host CPU Information ==="
+          lscpu
+          echo ""
+          echo "=== CPU Details from /proc/cpuinfo ==="
+          cat /proc/cpuinfo
       - name: Build libraries
         shell: bash
         run: |
@@ -95,6 +127,14 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '8'
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "=== CPU Information ==="
+          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
+          echo ""
+          echo "=== Processor Details ==="
+          system_profiler SPHardwareDataType
       - name: Build libraries
         shell: bash
         run: |
@@ -117,6 +157,14 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '8'
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "=== CPU Information ==="
+          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
+          echo ""
+          echo "=== Processor Details ==="
+          system_profiler SPHardwareDataType
       - name: Build libraries
         shell: bash
         run: |
@@ -135,6 +183,17 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: pwsh
+        run: |
+          Write-Host "=== CPU Information (Get-CimInstance - All Properties) ==="
+          Get-CimInstance Win32_Processor | Select-Object * | Format-List
+          Write-Host ""
+          Write-Host "=== CPU Information (systeminfo) ==="
+          systeminfo | Select-String "Processor"
+          Write-Host ""
+          Write-Host "=== CPU Information (Get-ComputerInfo) ==="
+          Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
       - name: Build libraries
         shell: cmd
         run: |
@@ -152,6 +211,17 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: pwsh
+        run: |
+          Write-Host "=== CPU Information (Get-CimInstance - All Properties) ==="
+          Get-CimInstance Win32_Processor | Select-Object * | Format-List
+          Write-Host ""
+          Write-Host "=== CPU Information (systeminfo) ==="
+          systeminfo | Select-String "Processor"
+          Write-Host ""
+          Write-Host "=== CPU Information (Get-ComputerInfo) ==="
+          Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
       - name: Build libraries
         shell: cmd
         run: |
@@ -177,6 +247,13 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '8'
+      - name: Display CPU Info
+        run: |
+          echo "=== CPU Information ==="
+          lscpu
+          echo ""
+          echo "=== CPU Details from /proc/cpuinfo ==="
+          cat /proc/cpuinfo
       - name: Build libraries
         run: |
           mvn -q compile
@@ -193,6 +270,14 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '8'
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "=== CPU Information ==="
+          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
+          echo ""
+          echo "=== Processor Details ==="
+          system_profiler SPHardwareDataType
       - name: Build libraries
         shell: bash
         run: |
@@ -237,6 +322,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "=== CPU Information ==="
+          lscpu
+          echo ""
+          echo "=== CPU Details from /proc/cpuinfo ==="
+          cat /proc/cpuinfo
       - uses: actions/download-artifact@v6
         with:
           name: Linux-x86_64-libraries
@@ -283,6 +376,14 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "=== CPU Information ==="
+          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
+          echo ""
+          echo "=== Processor Details ==="
+          system_profiler SPHardwareDataType
       - uses: actions/download-artifact@v6
         with:
           name: macos-14-libraries
@@ -326,6 +427,14 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: bash
+        run: |
+          echo "=== CPU Information ==="
+          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
+          echo ""
+          echo "=== Processor Details ==="
+          system_profiler SPHardwareDataType
       - uses: actions/download-artifact@v6
         with:
           name: macos-15-libraries
@@ -369,6 +478,17 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+      - name: Display CPU Info
+        shell: pwsh
+        run: |
+          Write-Host "=== CPU Information (Get-CimInstance - All Properties) ==="
+          Get-CimInstance Win32_Processor | Select-Object * | Format-List
+          Write-Host ""
+          Write-Host "=== CPU Information (systeminfo) ==="
+          systeminfo | Select-String "Processor"
+          Write-Host ""
+          Write-Host "=== CPU Information (Get-ComputerInfo) ==="
+          Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
       - uses: actions/download-artifact@v6
         with:
           name: Windows-x86_64-libraries
