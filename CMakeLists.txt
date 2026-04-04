@@ -186,20 +186,19 @@ if (LLAMA_METAL AND NOT LLAMA_METAL_EMBED_LIBRARY)
     configure_file(${llama.cpp_SOURCE_DIR}/ggml-metal.metal ${JLLAMA_DIR}/ggml-metal.metal COPYONLY)
 endif()
 
-# Copy OpenSSL/BoringSSL libraries (static or shared, depending on BUILD_SHARED_LIBS)
-# These are built by llama.cpp's BoringSSL/LibreSSL FetchContent and need to be included in the JAR
-# Uses POST_BUILD so libraries exist when the command runs
-if(TARGET ssl AND TARGET crypto)
-    add_custom_command(TARGET jllama POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:ssl>
-            $<TARGET_FILE:crypto>
-            ${JLLAMA_DIR}
-        COMMENT "Copying OpenSSL/BoringSSL libraries to ${JLLAMA_DIR}"
-    )
-else()
-    message(STATUS "ssl/crypto targets not found - OpenSSL libraries will not be bundled")
-endif()
+# Copy any available DLL/SO/DYLIB files from llama.cpp build directory
+# This includes BoringSSL, LibreSSL, and any other dynamically built libraries
+# Files are searched recursively in the build output directories
+add_custom_command(TARGET jllama POST_BUILD
+    COMMAND ${CMAKE_COMMAND}
+        -D SOURCE_DIR=${CMAKE_SOURCE_DIR}
+        -D BINARY_DIR=${CMAKE_BINARY_DIR}
+        -D OS_NAME=${OS_NAME}
+        -D OS_ARCH=${OS_ARCH}
+        -D GGML_CUDA=${GGML_CUDA}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/copy_dll_files.cmake
+    COMMENT "Copying DLL/SO/DYLIB files from llama.cpp build to JAR resources"
+)
 
 #################### C++ unit tests ####################
 
