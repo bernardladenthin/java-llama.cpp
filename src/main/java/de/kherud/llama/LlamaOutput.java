@@ -2,6 +2,7 @@ package de.kherud.llama;
 
 import org.jetbrains.annotations.NotNull;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -41,9 +42,32 @@ public final class LlamaOutput {
     }
 
     /**
+     * Decode a LlamaOutput from the compact byte[] returned by receiveCompletionBytes.
+     *
+     * <p>Layout: {@code bytes[0]} is the stop flag (1 = stop, 0 = not stop);
+     * {@code bytes[1..n]} are the raw UTF-8 content bytes.
+     *
+     * <p>This is the fast path used by {@link LlamaIterator} and
+     * {@link LlamaModel#complete}: it avoids JSON DOM construction, JSON string
+     * serialization, UTF-16 conversion, and character-by-character Java parsing
+     * that the old {@link #fromJson} path performed on every token.
+     */
+    static LlamaOutput fromBytes(byte[] bytes) {
+        boolean stop = bytes[0] == 1;
+        String text = bytes.length > 1
+                ? new String(bytes, 1, bytes.length - 1, StandardCharsets.UTF_8)
+                : "";
+        return new LlamaOutput(text, Collections.emptyMap(), stop);
+    }
+
+    /**
      * Parse a LlamaOutput from a JSON string returned by the native receiveCompletionJson method.
      * The JSON has the structure: {"content": "...", "stop": true/false, ...}
+     *
+     * @deprecated Use {@link #fromBytes(byte[])} for the fast path. Kept for use cases
+     *             that require probability data from the full JSON response.
      */
+    @Deprecated
     static LlamaOutput fromJson(String json) {
         String content = getContentFromJson(json);
         boolean stop = json.contains("\"stop\":true");

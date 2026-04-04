@@ -1,5 +1,6 @@
 package de.kherud.llama;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -94,5 +95,107 @@ public class LlamaOutputTest {
 	public void testGetContentFromJsonEmpty() {
 		String json = "{\"content\":\"\",\"stop\":true}";
 		assertEquals("", LlamaOutput.getContentFromJson(json));
+	}
+
+	// -----------------------------------------------------------------------
+	// fromBytes() — the fast path that bypasses JSON serialization
+	// -----------------------------------------------------------------------
+
+	/** Helper: build the byte[] that receiveCompletionBytes returns. */
+	private static byte[] makeResultBytes(boolean stop, String content) {
+		byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
+		byte[] result = new byte[1 + contentBytes.length];
+		result[0] = stop ? (byte) 1 : (byte) 0;
+		System.arraycopy(contentBytes, 0, result, 1, contentBytes.length);
+		return result;
+	}
+
+	@Test
+	public void testFromBytesNonStop() {
+		LlamaOutput output = LlamaOutput.fromBytes(makeResultBytes(false, "hello"));
+		assertEquals("hello", output.text);
+		assertFalse(output.stop);
+		assertTrue(output.probabilities.isEmpty());
+	}
+
+	@Test
+	public void testFromBytesStop() {
+		LlamaOutput output = LlamaOutput.fromBytes(makeResultBytes(true, "world"));
+		assertEquals("world", output.text);
+		assertTrue(output.stop);
+	}
+
+	@Test
+	public void testFromBytesEmptyContent() {
+		LlamaOutput output = LlamaOutput.fromBytes(makeResultBytes(true, ""));
+		assertEquals("", output.text);
+		assertTrue(output.stop);
+	}
+
+	@Test
+	public void testFromBytesOnlyStopByte() {
+		// Array of length 1 — only the stop flag, no content bytes
+		byte[] bytes = { 1 };
+		LlamaOutput output = LlamaOutput.fromBytes(bytes);
+		assertEquals("", output.text);
+		assertTrue(output.stop);
+	}
+
+	@Test
+	public void testFromBytesMultibyteUtf8TwoByteSeq() {
+		// 2-byte UTF-8: ü = U+00FC (0xC3 0xBC)
+		String original = "über";
+		LlamaOutput output = LlamaOutput.fromBytes(makeResultBytes(false, original));
+		assertEquals(original, output.text);
+	}
+
+	@Test
+	public void testFromBytesMultibyteUtf8ThreeByteSeq() {
+		// 3-byte UTF-8: CJK ideographs
+		String original = "日本語";
+		LlamaOutput output = LlamaOutput.fromBytes(makeResultBytes(false, original));
+		assertEquals(original, output.text);
+	}
+
+	@Test
+	public void testFromBytesMixedAsciiAndMultibyte() {
+		String original = "résumé 日本語 über";
+		LlamaOutput output = LlamaOutput.fromBytes(makeResultBytes(false, original));
+		assertEquals(original, output.text);
+	}
+
+	@Test
+	public void testFromBytesWithEscapeCharacters() {
+		// Content with newlines, tabs, quotes — should pass through unchanged
+		// (unlike fromJson, no escaping is needed because we send raw UTF-8 bytes)
+		String original = "line1\nline2\t\"quoted\"\\backslash";
+		LlamaOutput output = LlamaOutput.fromBytes(makeResultBytes(false, original));
+		assertEquals(original, output.text);
+	}
+
+	@Test
+	public void testFromBytesStopFlagIsZeroForNonStop() {
+		byte[] bytes = makeResultBytes(false, "token");
+		assertEquals(0, bytes[0]);
+	}
+
+	@Test
+	public void testFromBytesStopFlagIsOneForStop() {
+		byte[] bytes = makeResultBytes(true, "token");
+		assertEquals(1, bytes[0]);
+	}
+
+	/**
+	 * Regression: fromBytes must produce the same text as fromJson for the
+	 * content field, confirming that the fast path is equivalent to the JSON path
+	 * for typical ASCII content.
+	 */
+	@Test
+	public void testFromBytesEquivalentToFromJsonForAscii() {
+		String content = "hello world";
+		LlamaOutput fromJson = LlamaOutput.fromJson("{\"content\":\"hello world\",\"stop\":false}");
+		LlamaOutput fromBytes = LlamaOutput.fromBytes(makeResultBytes(false, content));
+		assertEquals(fromJson.text, fromBytes.text);
+		assertEquals(fromJson.stop, fromBytes.stop);
 	}
 }

@@ -37,11 +37,11 @@ public final class LlamaIterator implements Iterator<LlamaOutput> {
         if (!hasNext) {
             throw new NoSuchElementException();
         }
-        String json = model.receiveCompletionJson(taskId);
-        LlamaOutput output = LlamaOutput.fromJson(json);
+        byte[] bytes = model.receiveCompletionBytes(taskId);
+        LlamaOutput output = LlamaOutput.fromBytes(bytes);
         hasNext = !output.stop;
         if (output.stop) {
-        	model.releaseTask(taskId);
+            model.releaseTask(taskId);
         }
         return output;
     }

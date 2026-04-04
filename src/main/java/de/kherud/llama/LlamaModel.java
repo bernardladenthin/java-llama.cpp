@@ -55,8 +55,8 @@ public class LlamaModel implements AutoCloseable {
 	public String complete(InferenceParameters parameters) {
 		parameters.setStream(false);
 		int taskId = requestCompletion(parameters.toString());
-		String json = receiveCompletionJson(taskId);
-		return LlamaOutput.getContentFromJson(json);
+		byte[] result = receiveCompletionBytes(taskId);
+		return result.length > 1 ? new String(result, 1, result.length - 1, StandardCharsets.UTF_8) : "";
 	}
 
 	/**
@@ -123,6 +123,16 @@ public class LlamaModel implements AutoCloseable {
 	// don't overload native methods since the C++ function names get nasty
 	native int requestCompletion(String params) throws LlamaException;
 
+	/**
+	 * Fast token receiver that bypasses JSON serialization.
+	 * Returns [stop_byte | utf8_content_bytes]:
+	 *   bytes[0] == 1 signals the final (stop) token; bytes[1..n] are the UTF-8 content.
+	 * Replaces receiveCompletionJson for the hot streaming and complete() paths.
+	 */
+	native byte[] receiveCompletionBytes(int taskId) throws LlamaException;
+
+	/** @deprecated Use receiveCompletionBytes for new code. Kept for binary compatibility. */
+	@Deprecated
 	native String receiveCompletionJson(int taskId) throws LlamaException;
 
 	native void cancelCompletion(int taskId);

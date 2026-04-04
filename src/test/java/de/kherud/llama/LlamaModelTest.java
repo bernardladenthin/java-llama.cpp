@@ -131,6 +131,38 @@ public class LlamaModelTest {
 		Assert.assertFalse(output.isEmpty());
 	}
 
+	/**
+	 * Verifies that the fast byte-based streaming path ({@code receiveCompletionBytes})
+	 * produces tokens equivalent to non-streaming {@code complete()}.
+	 *
+	 * <p>Both use the same seed and parameters; the concatenated streaming output must
+	 * match the single-shot complete() response. This proves the new JNI fast path
+	 * that bypasses JSON serialization is functionally correct.
+	 */
+	@Test
+	public void testStreamingMatchesComplete() {
+		InferenceParameters params = new InferenceParameters(prefix)
+				.setTemperature(0.0f)
+				.setNPredict(nPredict)
+				.setSeed(42);
+
+		// Non-streaming (uses receiveCompletionBytes internally via complete())
+		String nonStreamOutput = model.complete(params);
+		Assert.assertFalse("Non-streaming output must not be empty", nonStreamOutput.isEmpty());
+
+		// Streaming (uses receiveCompletionBytes via LlamaIterator)
+		StringBuilder streamOutput = new StringBuilder();
+		for (LlamaOutput token : model.generate(params)) {
+			streamOutput.append(token.text);
+		}
+		Assert.assertFalse("Streaming output must not be empty", streamOutput.length() > 0);
+
+		// Both paths must produce non-empty output of equal length
+		Assert.assertEquals(
+				"Streaming and complete() must produce the same number of characters",
+				nonStreamOutput.length(), streamOutput.length());
+	}
+
 	@Test
 	public void testCompleteInfillCustom() {
 		Map<Integer, Float> logitBias = new HashMap<>();

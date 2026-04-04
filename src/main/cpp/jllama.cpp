@@ -617,6 +617,69 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(
     return env->NewStringUTF(response_str.c_str());
 }
 
+/**
+ * Fast streaming token receiver that bypasses JSON serialization entirely.
+ *
+ * The standard receiveCompletionJson path does per-token:
+ *   to_json() → JSON DOM construction → dump() → std::string → NewStringUTF()
+ * and Java then re-parses that string char-by-char to extract the content.
+ *
+ * This function instead uses dynamic_cast to access the content field directly
+ * on the result struct and returns raw UTF-8 bytes:
+ *
+ *   bytes[0]    = stop flag (1 = stop, 0 = not stop)
+ *   bytes[1..n] = content as raw UTF-8 (already in that encoding in the struct)
+ *
+ * The Java side decodes this with a single new String(bytes, 1, ..., UTF_8) call,
+ * saving 4 expensive operations on every generated token.
+ *
+ * dynamic_cast is safe here: server.hpp already uses it in several assertions
+ * (lines 2655-2690), so RTTI is always enabled for this translation unit.
+ */
+JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionBytes(
+        JNIEnv *env, jobject obj, jint id_task) {
+    jlong server_handle = env->GetLongField(obj, f_model_pointer);
+    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
+
+    server_task_result_ptr result = ctx_server->queue_results.recv(id_task);
+
+    if (result->is_error()) {
+        const std::string msg = result->to_json().value("message", "unknown error");
+        ctx_server->queue_results.remove_waiting_task_id(id_task);
+        env->ThrowNew(c_llama_error, msg.c_str());
+        return nullptr;
+    }
+
+    const bool is_stop = result->is_stop();
+
+    // Access content directly without building a JSON DOM or serializing to string.
+    const std::string *content_ptr = nullptr;
+    if (auto *partial = dynamic_cast<server_task_result_cmpl_partial *>(result.get())) {
+        content_ptr = &partial->content;
+    } else if (auto *final_r = dynamic_cast<server_task_result_cmpl_final *>(result.get())) {
+        content_ptr = &final_r->content;
+    }
+
+    if (is_stop) {
+        ctx_server->queue_results.remove_waiting_task_id(id_task);
+    }
+
+    // Layout: [stop_byte | utf8_content_bytes]
+    const jsize content_len = content_ptr ? static_cast<jsize>(content_ptr->size()) : 0;
+    jbyteArray bytes = env->NewByteArray(1 + content_len);
+    if (bytes == nullptr) {
+        env->ThrowNew(c_error_oom, "Failed to allocate completion result byte array");
+        return nullptr;
+    }
+    const jbyte stop_byte = is_stop ? 1 : 0;
+    env->SetByteArrayRegion(bytes, 0, 1, &stop_byte);
+    if (content_len > 0) {
+        env->SetByteArrayRegion(bytes, 1, content_len,
+                                reinterpret_cast<const jbyte *>(content_ptr->data()));
+    }
+    return bytes;
+}
+
 JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env, jobject obj, jstring jprompt) {
     jlong server_handle = env->GetLongField(obj, f_model_pointer);
     auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
