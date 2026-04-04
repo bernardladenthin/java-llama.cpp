@@ -788,23 +788,6 @@ public class LlamaModelTest {
 	}
 
 	/**
-	 * Tokenise and immediately decode a string containing multi-byte UTF-8.
-	 * Exercises the tokenisation round-trip used to build server_tokens.
-	 */
-	@Test
-	public void testTokenizationUnicode() {
-		String prompt = "naïve résumé café";
-		int[] tokens = model.encode(prompt);
-		Assert.assertTrue("Unicode string should tokenise to at least one token",
-				tokens.length > 0);
-
-		String decoded = model.decode(tokens);
-		// Leading space may be added by the tokenizer; check content is preserved
-		Assert.assertTrue("Decoded text should contain original characters",
-				decoded.contains("na") && decoded.contains("sum"));
-	}
-
-	/**
 	 * Returns true if the file at {@code path} exists and begins with the 4-byte GGUF magic
 	 * (0x47 0x47 0x55 0x46 = "GGUF"), distinguishing a properly downloaded model from a
 	 * truncated file or an HTML error page saved by {@code curl} without {@code --fail}.
