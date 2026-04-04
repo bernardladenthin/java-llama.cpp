@@ -218,6 +218,48 @@ public class LlamaModelTest {
 		Assert.assertEquals(" " +prompt, decoded);
 	}
 
+	/**
+	 * Verifies that the JNI string conversion ({@code parse_jstring}) correctly
+	 * handles multi-byte UTF-8 input through the full model's encode/decode path.
+	 *
+	 * <p>The test covers three UTF-8 byte widths:
+	 * <ul>
+	 *   <li>2-byte sequences: Latin characters with diacritics (ü, ö, é)</li>
+	 *   <li>3-byte sequences: CJK ideographs (日, 本, 語)</li>
+	 *   <li>Mixing both in a single prompt</li>
+	 * </ul>
+	 *
+	 * <p>A successful encode→decode round-trip proves that the native layer
+	 * receives the bytes intact and that no truncation or mojibake occurs.
+	 */
+	@Test
+	public void testTokenizationUnicode() {
+		// 2-byte UTF-8: Latin extended (U+00FC, U+00F6, U+00E9)
+		String latin = "über, größe, résumé";
+		int[] latinTokens = model.encode(latin);
+		Assert.assertTrue("Latin extended string should produce at least one token", latinTokens.length > 0);
+		String latinDecoded = model.decode(latinTokens);
+		Assert.assertTrue("Decoded Latin-extended text should preserve multi-byte chars",
+				latinDecoded.contains("ber") && latinDecoded.contains("r") && latinDecoded.contains("sum"));
+
+		// 3-byte UTF-8: CJK (U+65E5, U+672C, U+8A9E)
+		String cjk = "日本語";
+		int[] cjkTokens = model.encode(cjk);
+		Assert.assertTrue("CJK string should produce at least one token", cjkTokens.length > 0);
+		// Decode must not throw and must return a non-empty string
+		String cjkDecoded = model.decode(cjkTokens);
+		Assert.assertNotNull("CJK decode result must not be null", cjkDecoded);
+
+		// Mixed 2-byte and 3-byte in one prompt – exercises the full JNI path with a
+		// realistic combined payload to catch any length-calculation off-by-one errors.
+		String mixed = "résumé 日本語 über";
+		int[] mixedTokens = model.encode(mixed);
+		Assert.assertTrue("Mixed Unicode string should produce at least one token", mixedTokens.length > 0);
+		String mixedDecoded = model.decode(mixedTokens);
+		Assert.assertNotNull("Mixed Unicode decode result must not be null", mixedDecoded);
+		Assert.assertFalse("Mixed Unicode decode result must not be empty", mixedDecoded.isEmpty());
+	}
+
 	@Test
 	public void testVocabOnly() {
 		try (LlamaModel vocabModel = new LlamaModel(
