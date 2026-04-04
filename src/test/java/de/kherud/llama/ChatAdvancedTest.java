@@ -142,10 +142,9 @@ public class ChatAdvancedTest {
         int tokens = 0;
         boolean done = false;
         while (!done) {
-            String json = model.receiveCompletionJson(taskId);
-            Assert.assertNotNull("receiveCompletionJson must not be null", json);
-            LlamaOutput output = LlamaOutput.fromJson(json);
-            if (json.contains("\"completion_probabilities\"")) {
+            byte[] bytes = model.receiveCompletionBytes(taskId);
+            LlamaOutput output = LlamaOutput.fromBytes(bytes);
+            if (!output.probabilities.isEmpty()) {
                 foundProbabilities = true;
             }
             tokens++;
@@ -318,7 +317,7 @@ public class ChatAdvancedTest {
     // ------------------------------------------------------------------
 
     /**
-     * {@code requestCompletion()} + {@code receiveCompletionJson()} loop
+     * {@code requestCompletion()} + {@code receiveCompletionBytes()} loop
      * exercises the raw (non-chat) native streaming path directly, bypassing
      * {@link LlamaIterator}. The task must complete cleanly with a stop token.
      */
@@ -336,9 +335,7 @@ public class ChatAdvancedTest {
         int tokens = 0;
         boolean stopped = false;
         while (!stopped) {
-            String json = model.receiveCompletionJson(taskId);
-            Assert.assertNotNull("receiveCompletionJson must not return null", json);
-            LlamaOutput output = LlamaOutput.fromJson(json);
+            LlamaOutput output = LlamaOutput.fromBytes(model.receiveCompletionBytes(taskId));
             sb.append(output.text);
             tokens++;
             if (output.stop) {

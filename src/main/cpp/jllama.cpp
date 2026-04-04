@@ -592,37 +592,12 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_releaseTask(JNIEnv *env, 
     ctx_server->queue_results.remove_waiting_task_id(id_task);
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(JNIEnv *env, jobject obj,
-                                                                               jint id_task) {
-    jlong server_handle = env->GetLongField(obj, f_model_pointer);
-    auto *ctx_server = reinterpret_cast<jllama_context *>(server_handle)->server; // NOLINT(*-no-int-to-ptr)
-
-    server_task_result_ptr result = ctx_server->queue_results.recv(id_task);
-
-    if (result->is_error()) {
-        std::string response = result->to_json()["message"].get<std::string>();
-        ctx_server->queue_results.remove_waiting_task_id(id_task);
-        env->ThrowNew(c_llama_error, response.c_str());
-        return nullptr;
-    }
-
-    json response = result->to_json();
-    response["stop"] = result->is_stop();
-
-    if (result->is_stop()) {
-        ctx_server->queue_results.remove_waiting_task_id(id_task);
-    }
-
-    std::string response_str = response.dump();
-    return env->NewStringUTF(response_str.c_str());
-}
-
 /**
  * Fast streaming token receiver that bypasses JSON serialization entirely.
  *
- * The standard receiveCompletionJson path does per-token:
+ * The previous JSON-based path did per-token:
  *   to_json() → JSON DOM construction → dump() → std::string → NewStringUTF()
- * and Java then re-parses that string char-by-char to extract the content.
+ * and Java re-parsed that string char-by-char to extract the content.
  *
  * This function instead uses dynamic_cast to access the content field directly
  * on the result struct and returns raw UTF-8 bytes:

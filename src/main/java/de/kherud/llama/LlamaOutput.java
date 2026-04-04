@@ -61,13 +61,9 @@ public final class LlamaOutput {
     }
 
     /**
-     * Parse a LlamaOutput from a JSON string returned by the native receiveCompletionJson method.
+     * Parse a LlamaOutput from a JSON string.
      * The JSON has the structure: {"content": "...", "stop": true/false, ...}
-     *
-     * @deprecated Use {@link #fromBytes(byte[])} for the fast path. Kept for use cases
-     *             that require probability data from the full JSON response.
      */
-    @Deprecated
     static LlamaOutput fromJson(String json) {
         String content = getContentFromJson(json);
         boolean stop = json.contains("\"stop\":true");

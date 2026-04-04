@@ -123,7 +123,7 @@ public class ChatScenarioTest {
     // ------------------------------------------------------------------
 
     /**
-     * requestChatCompletion returns a task ID; receiveCompletionJson must then be
+     * requestChatCompletion returns a task ID; receiveCompletionBytes must then be
      * called in a loop until a stop token is received. This exercises the raw
      * streaming path (bypassing LlamaIterator) used for chat.
      */
@@ -145,9 +145,7 @@ public class ChatScenarioTest {
         int tokens = 0;
         boolean stopped = false;
         while (!stopped) {
-            String json = model.receiveCompletionJson(taskId);
-            Assert.assertNotNull("receiveCompletionJson must not return null", json);
-            LlamaOutput output = LlamaOutput.fromJson(json);
+            LlamaOutput output = LlamaOutput.fromBytes(model.receiveCompletionBytes(taskId));
             sb.append(output.text);
             tokens++;
             if (output.stop) {

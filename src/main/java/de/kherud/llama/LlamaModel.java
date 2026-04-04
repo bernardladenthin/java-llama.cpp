@@ -127,13 +127,9 @@ public class LlamaModel implements AutoCloseable {
 	 * Fast token receiver that bypasses JSON serialization.
 	 * Returns [stop_byte | utf8_content_bytes]:
 	 *   bytes[0] == 1 signals the final (stop) token; bytes[1..n] are the UTF-8 content.
-	 * Replaces receiveCompletionJson for the hot streaming and complete() paths.
+	 * Used by LlamaIterator and complete() for streaming and single-shot generation.
 	 */
 	native byte[] receiveCompletionBytes(int taskId) throws LlamaException;
-
-	/** @deprecated Use receiveCompletionBytes for new code. Kept for binary compatibility. */
-	@Deprecated
-	native String receiveCompletionJson(int taskId) throws LlamaException;
 
 	native void cancelCompletion(int taskId);
 

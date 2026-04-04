@@ -37,10 +37,10 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
 
 /*
  * Class:     de_kherud_llama_LlamaModel
- * Method:    receiveCompletionJson
- * Signature: (I)Ljava/lang/String;
+ * Method:    receiveCompletionBytes
+ * Signature: (I)[B
  */
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(JNIEnv *, jobject, jint);
+JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionBytes(JNIEnv *, jobject, jint);
 
 /*
  * Class:     de_kherud_llama_LlamaModel
