@@ -213,3 +213,28 @@
     std::string s = j.dump();
     return env->NewStringUTF(s.c_str());
 }
+
+// ---------------------------------------------------------------------------
+// check_infill_support_impl
+//
+// Checks that the model vocabulary has all three fill-in-the-middle (FIM)
+// tokens (prefix, suffix, middle).  Returns true if infill is supported.
+// On failure: populates a descriptive error message, throws via JNI using
+// error_class, and returns false.
+//
+// Extracted from the 10-line compatibility block in handleInfill so it can
+// be unit-tested independently of the JNI dispatch layer.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline bool check_infill_support_impl(JNIEnv          *env,
+                                                     const llama_vocab *vocab,
+                                                     jclass            error_class) {
+    std::string err;
+    if (llama_vocab_fim_pre(vocab) == LLAMA_TOKEN_NULL) { err += "prefix token is missing. "; }
+    if (llama_vocab_fim_suf(vocab) == LLAMA_TOKEN_NULL) { err += "suffix token is missing. "; }
+    if (llama_vocab_fim_mid(vocab) == LLAMA_TOKEN_NULL) { err += "middle token is missing. "; }
+    if (!err.empty()) {
+        env->ThrowNew(error_class, ("Infill is not supported by this model: " + err).c_str());
+        return false;
+    }
+    return true;
+}

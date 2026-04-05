@@ -1152,25 +1152,19 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
     return collect_and_serialize(env, ctx_server, task_ids);
 }
 
+/**
+ * Convenience wrapper around check_infill_support_impl.
+ * Returns false (with a JNI exception pending) when the model lacks FIM tokens.
+ */
+[[nodiscard]] static bool check_infill_support(JNIEnv *env, server_context *ctx_server) {
+    return check_infill_support_impl(env, ctx_server->vocab, c_llama_error);
+}
+
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *env, jobject obj, jstring jparams) {
     auto *ctx_server = get_server_context(env, obj);
     if (!ctx_server) return nullptr;
 
-    // Check model compatibility for infill
-    std::string err;
-    if (llama_vocab_fim_pre(ctx_server->vocab) == LLAMA_TOKEN_NULL) {
-        err += "prefix token is missing. ";
-    }
-    if (llama_vocab_fim_suf(ctx_server->vocab) == LLAMA_TOKEN_NULL) {
-        err += "suffix token is missing. ";
-    }
-    if (llama_vocab_fim_mid(ctx_server->vocab) == LLAMA_TOKEN_NULL) {
-        err += "middle token is missing. ";
-    }
-    if (!err.empty()) {
-        env->ThrowNew(c_llama_error, ("Infill is not supported by this model: " + err).c_str());
-        return nullptr;
-    }
+    if (!check_infill_support(env, ctx_server)) return nullptr;
 
     json data = parse_json_params(env, jparams);
 
