@@ -199,6 +199,34 @@ static int dispatch_single_task(server_context *ctx_server,
 }
 
 /**
+ * Validates `jfilename`, builds a SAVE or RESTORE slot task, dispatches it,
+ * and returns the result as a jstring.  Shared by the SAVE (case 1) and
+ * RESTORE (case 2) branches of handleSlotAction, which are identical except
+ * for the task type and the error message when the filename is empty.
+ *
+ * On missing filename: throws via JNI and returns nullptr.
+ * On success: returns the result JSON as a jstring.
+ */
+[[nodiscard]] static jstring exec_slot_file_task(JNIEnv           *env,
+                                                  server_context   *ctx_server,
+                                                  jint              slotId,
+                                                  jstring           jfilename,
+                                                  server_task_type  task_type,
+                                                  const char       *empty_filename_error) {
+    const std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
+    if (filename.empty()) {
+        env->ThrowNew(c_llama_error, empty_filename_error);
+        return nullptr;
+    }
+    server_task task(task_type);
+    task.id = ctx_server->queue_tasks.get_new_id();
+    task.slot_action.id_slot  = slotId;
+    task.slot_action.filename = filename;
+    task.slot_action.filepath = filename;
+    return recv_slot_task_result(env, ctx_server, dispatch_single_task(ctx_server, task));
+}
+
+/**
  * Asserts that exactly one task was created after dispatch and returns its ID.
  * Returns 0 (with a JNI exception pending) if the count is not exactly 1.
  *
@@ -1323,32 +1351,14 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
         return recv_slot_task_result(env, ctx_server,
                                      dispatch_single_task(ctx_server, task, /*priority=*/true));
     }
-    case 1: { // SAVE
-        std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
-        if (filename.empty()) {
-            env->ThrowNew(c_llama_error, "Filename is required for slot save");
-            return nullptr;
-        }
-        server_task task(SERVER_TASK_TYPE_SLOT_SAVE);
-        task.id = ctx_server->queue_tasks.get_new_id();
-        task.slot_action.id_slot = slotId;
-        task.slot_action.filename = filename;
-        task.slot_action.filepath = filename;
-        return recv_slot_task_result(env, ctx_server, dispatch_single_task(ctx_server, task));
-    }
-    case 2: { // RESTORE
-        std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
-        if (filename.empty()) {
-            env->ThrowNew(c_llama_error, "Filename is required for slot restore");
-            return nullptr;
-        }
-        server_task task(SERVER_TASK_TYPE_SLOT_RESTORE);
-        task.id = ctx_server->queue_tasks.get_new_id();
-        task.slot_action.id_slot = slotId;
-        task.slot_action.filename = filename;
-        task.slot_action.filepath = filename;
-        return recv_slot_task_result(env, ctx_server, dispatch_single_task(ctx_server, task));
-    }
+    case 1: // SAVE
+        return exec_slot_file_task(env, ctx_server, slotId, jfilename,
+                                    SERVER_TASK_TYPE_SLOT_SAVE,
+                                    "Filename is required for slot save");
+    case 2: // RESTORE
+        return exec_slot_file_task(env, ctx_server, slotId, jfilename,
+                                    SERVER_TASK_TYPE_SLOT_RESTORE,
+                                    "Filename is required for slot restore");
     case 3: { // ERASE
         server_task task(SERVER_TASK_TYPE_SLOT_ERASE);
         task.id = ctx_server->queue_tasks.get_new_id();
