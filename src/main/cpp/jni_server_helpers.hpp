@@ -13,9 +13,13 @@
 //
 // All parameters are explicit (no module-level globals) so the function can
 // be exercised in unit tests using a local server_response and a mock JNIEnv.
+//
+// IMPORTANT — include order:
+//   server.hpp must be included by the including translation unit BEFORE this
+//   header.  server.hpp has no include guard, so including it here would cause
+//   redefinition errors in any TU that already includes server.hpp directly.
 
 #include "jni.h"
-#include "server.hpp"
 
 #include <unordered_set>
 #include <vector>

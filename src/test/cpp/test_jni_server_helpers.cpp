@@ -28,7 +28,8 @@
 #include <thread>
 #include <unordered_set>
 
-// Unit under test — brings in server.hpp transitively.
+// server.hpp must come before jni_server_helpers.hpp (no include guard in server.hpp).
+#include "server.hpp"
 #include "jni_server_helpers.hpp"
 
 // ============================================================
