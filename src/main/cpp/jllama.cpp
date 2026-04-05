@@ -1148,7 +1148,13 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
     json body = json::parse(c_params);
 
     // Parse OAI-compatible completion parameters
-    json data = oaicompat_completion_params_parse(body);
+    json data;
+    try {
+        data = oaicompat_completion_params_parse(body);
+    } catch (const std::exception &e) {
+        throw_invalid_request(env, e);
+        return nullptr;
+    }
 
     auto completion_id = gen_chatcmplid();
     std::vector<server_task> tasks;
