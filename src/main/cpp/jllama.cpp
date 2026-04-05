@@ -172,6 +172,15 @@ std::string parse_jstring(JNIEnv *env, jstring java_string) {
     return string;
 }
 
+/**
+ * Convert a Java string to a parsed JSON object.
+ * Combines parse_jstring + json::parse, which every parameter-taking JNI
+ * function needs before it can read its arguments.
+ */
+static json parse_json_params(JNIEnv *env, jstring jparams) {
+    return json::parse(parse_jstring(env, jparams));
+}
+
 char **parse_string_array(JNIEnv *env, const jobjectArray string_array, const jsize length) {
     auto *const result = static_cast<char **>(malloc(length * sizeof(char *)));
 
@@ -593,8 +602,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
     auto *ctx_server = get_server_context(env, obj);
     if (!ctx_server) return 0;
 
-    std::string c_params = parse_jstring(env, jparams);
-    json data = json::parse(c_params);
+    json data = parse_json_params(env, jparams);
 
     server_task_type type = SERVER_TASK_TYPE_COMPLETION;
 
@@ -807,8 +815,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *
     auto *ctx_server = get_server_context(env, obj);
     if (!ctx_server) return nullptr;
 
-    std::string c_params = parse_jstring(env, jparams);
-    json data = json::parse(c_params);
+    json data = parse_json_params(env, jparams);
 
     std::vector<raw_buffer> files;
     json templateData = oaicompat_chat_params_parse(data, ctx_server->oai_parser_opt, files);
@@ -824,8 +831,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
     auto *ctx_server = get_server_context(env, obj);
     if (!ctx_server) return nullptr;
 
-    std::string c_params = parse_jstring(env, jparams);
-    json body = json::parse(c_params);
+    json body = parse_json_params(env, jparams);
 
     // Apply chat template via OAI-compatible parser
     json data;
@@ -871,8 +877,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
     auto *ctx_server = get_server_context(env, obj);
     if (!ctx_server) return 0;
 
-    std::string c_params = parse_jstring(env, jparams);
-    json body = json::parse(c_params);
+    json body = parse_json_params(env, jparams);
 
     // Apply chat template via OAI-compatible parser
     json data;
@@ -1017,8 +1022,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIE
     auto *ctx_server = get_server_context(env, obj);
     if (!ctx_server) return nullptr;
 
-    std::string c_params = parse_jstring(env, jparams);
-    json data = json::parse(c_params);
+    json data = parse_json_params(env, jparams);
 
     auto completion_id = gen_chatcmplid();
     std::vector<server_task> tasks;
@@ -1053,8 +1057,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
     auto *ctx_server = get_server_context(env, obj);
     if (!ctx_server) return nullptr;
 
-    std::string c_params = parse_jstring(env, jparams);
-    json body = json::parse(c_params);
+    json body = parse_json_params(env, jparams);
 
     // Parse OAI-compatible completion parameters
     json data;
@@ -1112,8 +1115,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
         return nullptr;
     }
 
-    std::string c_params = parse_jstring(env, jparams);
-    json data = json::parse(c_params);
+    json data = parse_json_params(env, jparams);
 
     if (!data.contains("input_prefix")) {
         env->ThrowNew(c_llama_error, "\"input_prefix\" is required");
@@ -1183,8 +1185,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
         return nullptr;
     }
 
-    std::string c_params = parse_jstring(env, jparams);
-    json body = json::parse(c_params);
+    json body = parse_json_params(env, jparams);
 
     json prompt;
     if (body.count("input") != 0) {
@@ -1398,8 +1399,7 @@ JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInfe
     auto *ctx_server = get_server_context(env, obj);
     if (!ctx_server) return JNI_FALSE;
 
-    std::string config_str = parse_jstring(env, jconfig);
-    json config = json::parse(config_str);
+    json config = parse_json_params(env, jconfig);
 
     if (config.contains("slot_prompt_similarity")) {
         float similarity = config["slot_prompt_similarity"].get<float>();
