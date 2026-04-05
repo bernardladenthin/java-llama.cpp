@@ -278,6 +278,31 @@ static int require_single_task_id(JNIEnv *env,
 }
 
 /**
+ * Collect all results for the given task IDs from the server response queue,
+ * then serialise them to a JNI string.
+ *
+ * Combines the repeated four-line pipeline used by handleCompletions,
+ * handleCompletionsOai, handleChatCompletions, and handleInfill:
+ *
+ *   std::vector<server_task_result_ptr> results;
+ *   results.reserve(task_ids.size());
+ *   if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
+ *   return results_to_jstring(env, results);
+ *
+ * On error (collect_task_results returns false): a JNI exception is already
+ * pending; this function returns nullptr so the caller can propagate it.
+ */
+[[nodiscard]] static jstring collect_and_serialize(
+        JNIEnv *env,
+        server_context *ctx_server,
+        const std::unordered_set<int> &task_ids) {
+    std::vector<server_task_result_ptr> results;
+    results.reserve(task_ids.size());
+    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
+    return results_to_jstring(env, results);
+}
+
+/**
  * Convert a Java string to a std::string
  */
 std::string parse_jstring(JNIEnv *env, jstring java_string) {
@@ -937,12 +962,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
-    // Collect all results (blocking)
-    std::vector<server_task_result_ptr> results;
-    results.reserve(task_ids.size());
-    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
-
-    return results_to_jstring(env, results);
+    return collect_and_serialize(env, ctx_server, task_ids);
 }
 
 JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNIEnv *env, jobject obj,
@@ -1097,12 +1117,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIE
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
-    // Collect all results (blocking)
-    std::vector<server_task_result_ptr> results;
-    results.reserve(task_ids.size());
-    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
-
-    return results_to_jstring(env, results);
+    return collect_and_serialize(env, ctx_server, task_ids);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(JNIEnv *env, jobject obj,
@@ -1128,11 +1143,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
-    std::vector<server_task_result_ptr> results;
-    results.reserve(task_ids.size());
-    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
-
-    return results_to_jstring(env, results);
+    return collect_and_serialize(env, ctx_server, task_ids);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *env, jobject obj, jstring jparams) {
@@ -1186,11 +1197,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
-    std::vector<server_task_result_ptr> results;
-    results.reserve(task_ids.size());
-    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
-
-    return results_to_jstring(env, results);
+    return collect_and_serialize(env, ctx_server, task_ids);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEnv *env, jobject obj,
