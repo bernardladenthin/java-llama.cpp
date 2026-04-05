@@ -134,7 +134,7 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
  */
 [[nodiscard]] static bool parse_oai_chat_params(JNIEnv *env,
                                                  server_context *ctx_server,
-                                                 const json &body,
+                                                 json &body,
                                                  json &out) {
     try {
         std::vector<raw_buffer> files;
@@ -885,13 +885,11 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *
 
     json data = parse_json_params(env, jparams);
 
-    std::vector<raw_buffer> files;
-    json templateData = oaicompat_chat_params_parse(data, ctx_server->oai_parser_opt, files);
+    json templateData;
+    if (!parse_oai_chat_params(env, ctx_server, data, templateData)) return nullptr;
 
     std::string tok_str = templateData.at("prompt");
-    jstring jtok_str = env->NewStringUTF(tok_str.c_str());
-
-    return jtok_str;
+    return env->NewStringUTF(tok_str.c_str());
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(JNIEnv *env, jobject obj,

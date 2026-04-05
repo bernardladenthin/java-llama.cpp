@@ -127,7 +127,7 @@ TEST_F(MockJniFixture, ValidHandle_ReturnsServerContextAndDoesNotThrow) {
 TEST_F(MockJniFixture, NullHandle_ErrorMessageIsExact) {
     g_mock_handle = 0;
 
-    get_server_context_impl(env, nullptr, dummy_field, dummy_class);
+    (void)get_server_context_impl(env, nullptr, dummy_field, dummy_class);
 
     ASSERT_TRUE(g_throw_called);
     EXPECT_EQ(g_throw_message, "Model is not loaded");
@@ -143,7 +143,7 @@ TEST_F(MockJniFixture, ValidHandle_NeverCallsThrowNew) {
     fake_ctx.server = sentinel;
     g_mock_handle = reinterpret_cast<jlong>(&fake_ctx);
 
-    get_server_context_impl(env, nullptr, dummy_field, dummy_class);
+    (void)get_server_context_impl(env, nullptr, dummy_field, dummy_class);
 
     EXPECT_FALSE(g_throw_called);
 }

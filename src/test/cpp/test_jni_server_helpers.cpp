@@ -210,7 +210,7 @@ TEST_F(CollectResultsFixture, SuccessPath_WaitingIdsRemovedAfterCollect) {
 
     std::unordered_set<int> ids = {30};
     std::vector<server_task_result_ptr> out;
-    collect_task_results_impl(env, queue, ids, out, dummy_eclass);
+    (void)collect_task_results_impl(env, queue, ids, out, dummy_eclass);
 
     // After collect, the id must no longer be in the waiting set.
     // We verify indirectly: sending a second result for id=30 should
@@ -230,7 +230,7 @@ TEST_F(CollectResultsFixture, ErrorPath_WaitingIdsRemovedAfterError) {
 
     std::unordered_set<int> ids = {40};
     std::vector<server_task_result_ptr> out;
-    collect_task_results_impl(env, queue, ids, out, dummy_eclass);
+    (void)collect_task_results_impl(env, queue, ids, out, dummy_eclass);
 
     EXPECT_FALSE(queue.waiting_task_ids.count(40))
         << "remove_waiting_task_ids must clear the id on error";
@@ -328,7 +328,7 @@ TEST_F(CollectResultsFixture, RecvSlotResult_WaitingIdRemovedAfterSuccess) {
     queue.add_waiting_task_id(52);
     queue.send(make_ok(52));
 
-    recv_slot_task_result_impl(env, queue, 52, dummy_eclass);
+    (void)recv_slot_task_result_impl(env, queue, 52, dummy_eclass);
 
     EXPECT_FALSE(queue.waiting_task_ids.count(52))
         << "remove_waiting_task_id must clear the id on success";
@@ -338,7 +338,7 @@ TEST_F(CollectResultsFixture, RecvSlotResult_WaitingIdRemovedAfterError) {
     queue.add_waiting_task_id(53);
     queue.send(make_error(53, "err"));
 
-    recv_slot_task_result_impl(env, queue, 53, dummy_eclass);
+    (void)recv_slot_task_result_impl(env, queue, 53, dummy_eclass);
 
     EXPECT_FALSE(queue.waiting_task_ids.count(53))
         << "remove_waiting_task_id must clear the id on error";
