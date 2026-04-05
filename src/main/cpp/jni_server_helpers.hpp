@@ -45,7 +45,7 @@
 // On success: `tasks` is populated, returns true.
 // On error:   throws via JNI using error_class, returns false.
 // ---------------------------------------------------------------------------
-inline bool build_completion_tasks_impl(JNIEnv                   *env,
+[[nodiscard]] inline bool build_completion_tasks_impl(JNIEnv                   *env,
                                          server_context           *ctx_server,
                                          const json               &data,
                                          const std::string        &completion_id,
@@ -97,7 +97,7 @@ inline bool build_completion_tasks_impl(JNIEnv                   *env,
 // On success: returns a new jstring containing result->to_json().dump().
 // On error:   removes the waiting task id, throws via JNI, returns nullptr.
 // ---------------------------------------------------------------------------
-inline jstring recv_slot_task_result_impl(JNIEnv          *env,
+[[nodiscard]] inline jstring recv_slot_task_result_impl(JNIEnv          *env,
                                            server_response &queue,
                                            int              task_id,
                                            jclass           error_class) {
@@ -124,7 +124,7 @@ inline jstring recv_slot_task_result_impl(JNIEnv          *env,
 //             returns false.  The caller must return nullptr (or equivalent
 //             sentinel) immediately — the JNI exception is already pending.
 // ---------------------------------------------------------------------------
-inline bool collect_task_results_impl(JNIEnv                               *env,
+[[nodiscard]] inline bool collect_task_results_impl(JNIEnv                               *env,
                                        server_response                     &queue,
                                        const std::unordered_set<int>       &task_ids,
                                        std::vector<server_task_result_ptr> &out,

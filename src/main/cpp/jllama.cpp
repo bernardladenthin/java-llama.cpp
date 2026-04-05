@@ -99,7 +99,7 @@ jobject o_log_callback = nullptr;
  * globals.  Returns nullptr (with a JNI exception pending) when the model
  * is not loaded.
  */
-static server_context *get_server_context(JNIEnv *env, jobject obj) {
+[[nodiscard]] static server_context *get_server_context(JNIEnv *env, jobject obj) {
     return get_server_context_impl(env, obj, f_model_pointer, c_llama_error);
 }
 
@@ -109,7 +109,7 @@ static server_context *get_server_context(JNIEnv *env, jobject obj) {
  * Returns nullptr silently when the handle is 0 — a valid no-op for a dtor.
  * See get_jllama_context_impl in jni_helpers.hpp for the full contract.
  */
-static jllama_context *get_jllama_context(JNIEnv *env, jobject obj) {
+[[nodiscard]] static jllama_context *get_jllama_context(JNIEnv *env, jobject obj) {
     return get_jllama_context_impl(env, obj, f_model_pointer);
 }
 
@@ -127,7 +127,7 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
  * Convenience wrapper around build_completion_tasks_impl (jni_server_helpers.hpp)
  * that supplies the module-level globals so call sites need no boilerplate.
  */
-static bool build_completion_tasks(JNIEnv *env, server_context *ctx_server,
+[[nodiscard]] static bool build_completion_tasks(JNIEnv *env, server_context *ctx_server,
                                     const json &data, const std::string &completion_id,
                                     server_task_type task_type, oaicompat_type oaicompat,
                                     std::vector<server_task> &tasks) {
@@ -140,7 +140,7 @@ static bool build_completion_tasks(JNIEnv *env, server_context *ctx_server,
  * Caller must have already registered task_id with add_waiting_task_id() and
  * posted the task; this wrapper covers recv → check → return.
  */
-static jstring recv_slot_task_result(JNIEnv *env, server_context *ctx_server, int task_id) {
+[[nodiscard]] static jstring recv_slot_task_result(JNIEnv *env, server_context *ctx_server, int task_id) {
     return recv_slot_task_result_impl(env, ctx_server->queue_results, task_id, c_llama_error);
 }
 
@@ -148,7 +148,7 @@ static jstring recv_slot_task_result(JNIEnv *env, server_context *ctx_server, in
  * Convenience wrapper around collect_task_results_impl (jni_server_helpers.hpp)
  * that supplies the module-level globals so call sites need no boilerplate.
  */
-static bool collect_task_results(JNIEnv *env,
+[[nodiscard]] static bool collect_task_results(JNIEnv *env,
                                   server_context *ctx_server,
                                   const std::unordered_set<int> &task_ids,
                                   std::vector<server_task_result_ptr> &out) {

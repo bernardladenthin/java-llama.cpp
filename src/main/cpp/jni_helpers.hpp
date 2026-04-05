@@ -46,9 +46,9 @@ struct jllama_context {
 // Parameters are passed explicitly (no module-level globals) so the function
 // can be exercised from unit tests using a mock JNIEnv.
 // ---------------------------------------------------------------------------
-inline server_context *get_server_context_impl(JNIEnv *env, jobject obj,
-                                               jfieldID field_id,
-                                               jclass   error_class) {
+[[nodiscard]] inline server_context *get_server_context_impl(JNIEnv *env, jobject obj,
+                                                              jfieldID field_id,
+                                                              jclass   error_class) {
     const jlong handle = env->GetLongField(obj, field_id);
     if (handle == 0) {
         env->ThrowNew(error_class, "Model is not loaded");
@@ -73,8 +73,8 @@ inline server_context *get_server_context_impl(JNIEnv *env, jobject obj,
 // On success:    returns a non-null jllama_context*.
 // On null handle: returns nullptr silently (no JNI exception is thrown).
 // ---------------------------------------------------------------------------
-inline jllama_context *get_jllama_context_impl(JNIEnv *env, jobject obj,
-                                               jfieldID field_id) {
+[[nodiscard]] inline jllama_context *get_jllama_context_impl(JNIEnv *env, jobject obj,
+                                                              jfieldID field_id) {
     const jlong handle = env->GetLongField(obj, field_id);
     if (handle == 0) {
         return nullptr; // already deleted or never initialised — silent no-op
