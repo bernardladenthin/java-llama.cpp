@@ -3,11 +3,11 @@
 #include "arg.h"
 #include "json-schema-to-grammar.h"
 #include "jni_helpers.hpp"
-#include "jni_server_helpers.hpp"
 #include "llama.h"
 #include "log.h"
 #include "nlohmann/json.hpp"
 #include "server.hpp"
+#include "jni_server_helpers.hpp"
 
 #include <atomic>
 #include <chrono>
