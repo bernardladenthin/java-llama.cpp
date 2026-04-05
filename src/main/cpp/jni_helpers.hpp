@@ -56,3 +56,28 @@ inline server_context *get_server_context_impl(JNIEnv *env, jobject obj,
     }
     return reinterpret_cast<jllama_context *>(handle)->server; // NOLINT(*-no-int-to-ptr)
 }
+
+// ---------------------------------------------------------------------------
+// get_jllama_context_impl
+//
+// Like get_server_context_impl, but returns the jllama_context wrapper
+// itself instead of its inner server_context.  Used ONLY by the delete
+// path, which must call `delete jctx` and therefore needs the outer struct,
+// not just its .server member.
+//
+// Intentionally does NOT throw on null: a zero handle means the model was
+// already deleted (or never fully initialised), which is a valid no-op for
+// a destructor-style call.  All other callers should use
+// get_server_context_impl instead, which does throw.
+//
+// On success:    returns a non-null jllama_context*.
+// On null handle: returns nullptr silently (no JNI exception is thrown).
+// ---------------------------------------------------------------------------
+inline jllama_context *get_jllama_context_impl(JNIEnv *env, jobject obj,
+                                               jfieldID field_id) {
+    const jlong handle = env->GetLongField(obj, field_id);
+    if (handle == 0) {
+        return nullptr; // already deleted or never initialised — silent no-op
+    }
+    return reinterpret_cast<jllama_context *>(handle); // NOLINT(*-no-int-to-ptr)
+}

@@ -146,3 +146,74 @@ TEST_F(MockJniFixture, ValidHandle_NeverCallsThrowNew) {
 
     EXPECT_FALSE(g_throw_called);
 }
+
+// ============================================================
+// Tests for get_jllama_context_impl()
+//
+// Key contract differences from get_server_context_impl:
+//   - Returns the jllama_context* wrapper itself, NOT its inner .server
+//   - Returns nullptr SILENTLY on null handle (no ThrowNew)
+//   - Used only by the delete path, where null == valid "already gone" no-op
+// ============================================================
+
+TEST_F(MockJniFixture, GetJllamaContext_NullHandle_ReturnsNullptrWithoutThrow) {
+    g_mock_handle = 0;
+
+    jllama_context *result =
+        get_jllama_context_impl(env, /*obj=*/nullptr, dummy_field);
+
+    EXPECT_EQ(result, nullptr)
+        << "Expected nullptr when the model handle is 0";
+    EXPECT_FALSE(g_throw_called)
+        << "get_jllama_context_impl must NOT throw on null handle (delete is a no-op)";
+}
+
+TEST_F(MockJniFixture, GetJllamaContext_ValidHandle_ReturnsWrapperAndDoesNotThrow) {
+    jllama_context fake_ctx;
+    fake_ctx.server = nullptr; // .server content is irrelevant for this test
+
+    g_mock_handle = reinterpret_cast<jlong>(&fake_ctx);
+
+    jllama_context *result =
+        get_jllama_context_impl(env, /*obj=*/nullptr, dummy_field);
+
+    EXPECT_EQ(result, &fake_ctx)
+        << "Expected the jllama_context wrapper pointer itself, not the inner .server";
+    EXPECT_FALSE(g_throw_called)
+        << "ThrowNew must not be called for a valid handle";
+}
+
+TEST_F(MockJniFixture, GetJllamaContext_ReturnsWrapperNotInnerServer) {
+    // Verify that the returned pointer is the outer struct, not .server,
+    // which is what distinguishes this helper from get_server_context_impl.
+    server_context *sentinel = reinterpret_cast<server_context *>(0xDEADBEEF);
+    jllama_context  fake_ctx;
+    fake_ctx.server = sentinel;
+
+    g_mock_handle = reinterpret_cast<jlong>(&fake_ctx);
+
+    jllama_context *result =
+        get_jllama_context_impl(env, /*obj=*/nullptr, dummy_field);
+
+    EXPECT_EQ(result, &fake_ctx)
+        << "Must return the outer jllama_context wrapper";
+    EXPECT_NE(static_cast<void *>(result), static_cast<void *>(sentinel))
+        << "Must NOT return the inner .server — use get_server_context_impl for that";
+}
+
+TEST_F(MockJniFixture, GetJllamaContext_ContractComparison_GetServerContextThrowsWhereGetJllamaContextDoesNot) {
+    // Regression guard: get_server_context_impl throws on null, but
+    // get_jllama_context_impl must not.  Both are tested with the same
+    // zero handle so any future merge of the two helpers breaks this test.
+    g_mock_handle = 0;
+
+    server_context *sc = get_server_context_impl(env, nullptr, dummy_field, dummy_class);
+    EXPECT_TRUE(g_throw_called) << "get_server_context_impl should throw on null";
+    EXPECT_EQ(sc, nullptr);
+
+    // Reset and test the delete-path helper
+    g_throw_called = false;
+    jllama_context *jc = get_jllama_context_impl(env, nullptr, dummy_field);
+    EXPECT_FALSE(g_throw_called) << "get_jllama_context_impl must NOT throw on null";
+    EXPECT_EQ(jc, nullptr);
+}

@@ -103,6 +103,26 @@ static server_context *get_server_context(JNIEnv *env, jobject obj) {
 }
 
 /**
+ * Convenience wrapper for the delete path only: returns the jllama_context
+ * wrapper itself (not its inner .server) so the caller can call `delete jctx`.
+ * Returns nullptr silently when the handle is 0 — a valid no-op for a dtor.
+ * See get_jllama_context_impl in jni_helpers.hpp for the full contract.
+ */
+static jllama_context *get_jllama_context(JNIEnv *env, jobject obj) {
+    return get_jllama_context_impl(env, obj, f_model_pointer);
+}
+
+/**
+ * Formats e as a JSON invalid-request error and throws it via JNI.
+ * Call inside catch(const std::exception &) blocks that must propagate
+ * request-parse failures back to Java as LlamaException.
+ */
+static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
+    const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
+    env->ThrowNew(c_llama_error, err.dump().c_str());
+}
+
+/**
  * Convert a Java string to a std::string
  */
 std::string parse_jstring(JNIEnv *env, jstring java_string) {
@@ -576,8 +596,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
             tasks.push_back(std::move(task));
         }
     } catch (const std::exception &e) {
-        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
-        env->ThrowNew(c_llama_error, err.dump().c_str());
+        throw_invalid_request(env, e);
         return 0;
     }
 
@@ -806,8 +825,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
         std::vector<raw_buffer> files;
         data = oaicompat_chat_params_parse(body, ctx_server->oai_parser_opt, files);
     } catch (const std::exception &e) {
-        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
-        env->ThrowNew(c_llama_error, err.dump().c_str());
+        throw_invalid_request(env, e);
         return nullptr;
     }
 
@@ -836,8 +854,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
             tasks.push_back(std::move(task));
         }
     } catch (const std::exception &e) {
-        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
-        env->ThrowNew(c_llama_error, err.dump().c_str());
+        throw_invalid_request(env, e);
         return nullptr;
     }
 
@@ -893,8 +910,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
         std::vector<raw_buffer> files;
         data = oaicompat_chat_params_parse(body, ctx_server->oai_parser_opt, files);
     } catch (const std::exception &e) {
-        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
-        env->ThrowNew(c_llama_error, err.dump().c_str());
+        throw_invalid_request(env, e);
         return 0;
     }
 
@@ -925,8 +941,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
             tasks.push_back(std::move(task));
         }
     } catch (const std::exception &e) {
-        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
-        env->ThrowNew(c_llama_error, err.dump().c_str());
+        throw_invalid_request(env, e);
         return 0;
     }
 
@@ -985,11 +1000,8 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv 
 }
 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobject obj) {
-    jlong server_handle = env->GetLongField(obj, f_model_pointer);
-    if (server_handle == 0) {
-        return; // Already deleted or never initialized
-    }
-    auto *jctx = reinterpret_cast<jllama_context *>(server_handle); // NOLINT(*-no-int-to-ptr)
+    auto *jctx = get_jllama_context(env, obj);
+    if (!jctx) return; // Already deleted or never initialized
 
     // Clear the pointer first to prevent double-free from concurrent calls
     env->SetLongField(obj, f_model_pointer, 0);
@@ -1088,8 +1100,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIE
             tasks.push_back(std::move(task));
         }
     } catch (const std::exception &e) {
-        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
-        env->ThrowNew(c_llama_error, err.dump().c_str());
+        throw_invalid_request(env, e);
         return nullptr;
     }
 
@@ -1166,8 +1177,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
             tasks.push_back(std::move(task));
         }
     } catch (const std::exception &e) {
-        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
-        env->ThrowNew(c_llama_error, err.dump().c_str());
+        throw_invalid_request(env, e);
         return nullptr;
     }
 
@@ -1276,8 +1286,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
             tasks.push_back(std::move(task));
         }
     } catch (const std::exception &e) {
-        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
-        env->ThrowNew(c_llama_error, err.dump().c_str());
+        throw_invalid_request(env, e);
         return nullptr;
     }
 
