@@ -718,13 +718,9 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
     const auto id_task = *task_ids.begin();
-    json responses = json::array();
-
-    json error = nullptr;
 
     server_task_result_ptr result = ctx_server->queue_results.recv(id_task);
 
-    json response_str = result->to_json();
     if (result->is_error()) {
         std::string response = result->to_json()["message"].get<std::string>();
         ctx_server->queue_results.remove_waiting_task_id(id_task);
