@@ -124,6 +124,29 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
 }
 
 /**
+ * Parse the OAI chat-completion body through oaicompat_chat_params_parse and
+ * write the result into `out`.  Returns true on success.  On parse failure
+ * throws an invalid-request JNI exception and returns false; the caller must
+ * return its own sentinel value (nullptr or 0) immediately.
+ *
+ * handleChatCompletions and requestChatCompletion share this identical 9-line
+ * try/catch block — they differ only in what sentinel they return on error.
+ */
+[[nodiscard]] static bool parse_oai_chat_params(JNIEnv *env,
+                                                 server_context *ctx_server,
+                                                 const json &body,
+                                                 json &out) {
+    try {
+        std::vector<raw_buffer> files;
+        out = oaicompat_chat_params_parse(body, ctx_server->oai_parser_opt, files);
+        return true;
+    } catch (const std::exception &e) {
+        throw_invalid_request(env, e);
+        return false;
+    }
+}
+
+/**
  * Convenience wrapper around build_completion_tasks_impl (jni_server_helpers.hpp)
  * that supplies the module-level globals so call sites need no boilerplate.
  */
@@ -878,15 +901,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
 
     json body = parse_json_params(env, jparams);
 
-    // Apply chat template via OAI-compatible parser
     json data;
-    try {
-        std::vector<raw_buffer> files;
-        data = oaicompat_chat_params_parse(body, ctx_server->oai_parser_opt, files);
-    } catch (const std::exception &e) {
-        throw_invalid_request(env, e);
-        return nullptr;
-    }
+    if (!parse_oai_chat_params(env, ctx_server, body, data)) return nullptr;
 
     auto completion_id = gen_chatcmplid();
     std::vector<server_task> tasks;
@@ -910,19 +926,12 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
 
     json body = parse_json_params(env, jparams);
 
-    // Apply chat template via OAI-compatible parser
+    // OAICOMPAT_TYPE_NONE: chat template is applied by parse_oai_chat_params below.
     json data;
-    try {
-        std::vector<raw_buffer> files;
-        data = oaicompat_chat_params_parse(body, ctx_server->oai_parser_opt, files);
-    } catch (const std::exception &e) {
-        throw_invalid_request(env, e);
-        return 0;
-    }
+    if (!parse_oai_chat_params(env, ctx_server, body, data)) return 0;
 
     auto completion_id = gen_chatcmplid();
     std::vector<server_task> tasks;
-    // OAICOMPAT_TYPE_NONE: chat template was already applied by oaicompat_chat_params_parse above.
     if (!build_completion_tasks(env, ctx_server, data, completion_id,
                                  SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_NONE, tasks)) return 0;
 
