@@ -199,34 +199,6 @@ static int dispatch_single_task(server_context *ctx_server,
 }
 
 /**
- * Validates `jfilename`, builds a SAVE or RESTORE slot task, dispatches it,
- * and returns the result as a jstring.  Shared by the SAVE (case 1) and
- * RESTORE (case 2) branches of handleSlotAction, which are identical except
- * for the task type and the error message when the filename is empty.
- *
- * On missing filename: throws via JNI and returns nullptr.
- * On success: returns the result JSON as a jstring.
- */
-[[nodiscard]] static jstring exec_slot_file_task(JNIEnv           *env,
-                                                  server_context   *ctx_server,
-                                                  jint              slotId,
-                                                  jstring           jfilename,
-                                                  server_task_type  task_type,
-                                                  const char       *empty_filename_error) {
-    const std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
-    if (filename.empty()) {
-        env->ThrowNew(c_llama_error, empty_filename_error);
-        return nullptr;
-    }
-    server_task task(task_type);
-    task.id = ctx_server->queue_tasks.get_new_id();
-    task.slot_action.id_slot  = slotId;
-    task.slot_action.filename = filename;
-    task.slot_action.filepath = filename;
-    return recv_slot_task_result(env, ctx_server, dispatch_single_task(ctx_server, task));
-}
-
-/**
  * Asserts that exactly one task was created after dispatch and returns its ID.
  * Returns 0 (with a JNI exception pending) if the count is not exactly 1.
  *
@@ -326,6 +298,37 @@ std::string parse_jstring(JNIEnv *env, jstring java_string) {
  */
 static json parse_json_params(JNIEnv *env, jstring jparams) {
     return json::parse(parse_jstring(env, jparams));
+}
+
+/**
+ * Validates `jfilename`, builds a SAVE or RESTORE slot task, dispatches it,
+ * and returns the result as a jstring.  Shared by the SAVE (case 1) and
+ * RESTORE (case 2) branches of handleSlotAction, which are identical except
+ * for the task type and the error message when the filename is empty.
+ *
+ * On missing filename: throws via JNI and returns nullptr.
+ * On success: returns the result JSON as a jstring.
+ *
+ * Placed here (after parse_jstring and recv_slot_task_result) because both
+ * helpers must be visible at the point of definition.
+ */
+[[nodiscard]] static jstring exec_slot_file_task(JNIEnv           *env,
+                                                  server_context   *ctx_server,
+                                                  jint              slotId,
+                                                  jstring           jfilename,
+                                                  server_task_type  task_type,
+                                                  const char       *empty_filename_error) {
+    const std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
+    if (filename.empty()) {
+        env->ThrowNew(c_llama_error, empty_filename_error);
+        return nullptr;
+    }
+    server_task task(task_type);
+    task.id = ctx_server->queue_tasks.get_new_id();
+    task.slot_action.id_slot  = slotId;
+    task.slot_action.filename = filename;
+    task.slot_action.filepath = filename;
+    return recv_slot_task_result(env, ctx_server, dispatch_single_task(ctx_server, task));
 }
 
 char **parse_string_array(JNIEnv *env, const jobjectArray string_array, const jsize length) {
