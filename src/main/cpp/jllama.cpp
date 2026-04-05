@@ -123,6 +123,34 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
 }
 
 /**
+ * Collects results for all task_ids from the server result queue (blocking).
+ *
+ * Iterates over task_ids, receiving one result per id.  If any result carries
+ * an error the remaining waiting ids are cleaned up, a JNI exception is thrown,
+ * and the function returns false.  The caller must return nullptr immediately.
+ *
+ * On success: all results are appended to `out` and true is returned.
+ * On error:   JNI exception is pending, `out` is in a partial state, false returned.
+ */
+static bool collect_task_results(JNIEnv *env,
+                                  server_context *ctx_server,
+                                  const std::unordered_set<int> &task_ids,
+                                  std::vector<server_task_result_ptr> &out) {
+    for (size_t i = 0; i < task_ids.size(); i++) {
+        server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
+        if (result->is_error()) {
+            ctx_server->queue_results.remove_waiting_task_ids(task_ids);
+            std::string error_msg = result->to_json()["message"].get<std::string>();
+            env->ThrowNew(c_llama_error, error_msg.c_str());
+            return false;
+        }
+        out.push_back(std::move(result));
+    }
+    ctx_server->queue_results.remove_waiting_task_ids(task_ids);
+    return true;
+}
+
+/**
  * Convert a Java string to a std::string
  */
 std::string parse_jstring(JNIEnv *env, jstring java_string) {
@@ -1111,21 +1139,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIE
     // Collect all results (blocking)
     std::vector<server_task_result_ptr> results;
     results.reserve(task_ids.size());
-
-    for (size_t i = 0; i < task_ids.size(); i++) {
-        server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
-
-        if (result->is_error()) {
-            ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-            std::string error_msg = result->to_json()["message"].get<std::string>();
-            env->ThrowNew(c_llama_error, error_msg.c_str());
-            return nullptr;
-        }
-
-        results.push_back(std::move(result));
-    }
-
-    ctx_server->queue_results.remove_waiting_task_ids(task_ids);
+    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
     json response;
     if (results.size() == 1) {
@@ -1187,21 +1201,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
 
     std::vector<server_task_result_ptr> results;
     results.reserve(task_ids.size());
-
-    for (size_t i = 0; i < task_ids.size(); i++) {
-        server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
-
-        if (result->is_error()) {
-            ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-            std::string error_msg = result->to_json()["message"].get<std::string>();
-            env->ThrowNew(c_llama_error, error_msg.c_str());
-            return nullptr;
-        }
-
-        results.push_back(std::move(result));
-    }
-
-    ctx_server->queue_results.remove_waiting_task_ids(task_ids);
+    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
     json response;
     if (results.size() == 1) {
@@ -1296,21 +1296,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
 
     std::vector<server_task_result_ptr> results;
     results.reserve(task_ids.size());
-
-    for (size_t i = 0; i < task_ids.size(); i++) {
-        server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
-
-        if (result->is_error()) {
-            ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-            std::string error_msg = result->to_json()["message"].get<std::string>();
-            env->ThrowNew(c_llama_error, error_msg.c_str());
-            return nullptr;
-        }
-
-        results.push_back(std::move(result));
-    }
-
-    ctx_server->queue_results.remove_waiting_task_ids(task_ids);
+    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
     json response;
     if (results.size() == 1) {
