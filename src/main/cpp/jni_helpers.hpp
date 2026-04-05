@@ -9,9 +9,12 @@
 // the function is self-contained and unit-testable with mock JNI environments.
 
 #include "jni.h"
+#include "nlohmann/json.hpp"
 
 #include <atomic>
+#include <string>
 #include <thread>
+#include <unordered_set>
 
 // Forward declaration — callers that need the full definition must include
 // server.hpp themselves.
@@ -46,13 +49,106 @@ struct jllama_context {
 // Parameters are passed explicitly (no module-level globals) so the function
 // can be exercised from unit tests using a mock JNIEnv.
 // ---------------------------------------------------------------------------
-inline server_context *get_server_context_impl(JNIEnv *env, jobject obj,
-                                               jfieldID field_id,
-                                               jclass   error_class) {
+[[nodiscard]] inline server_context *get_server_context_impl(JNIEnv *env, jobject obj,
+                                                              jfieldID field_id,
+                                                              jclass   error_class) {
     const jlong handle = env->GetLongField(obj, field_id);
     if (handle == 0) {
         env->ThrowNew(error_class, "Model is not loaded");
         return nullptr;
     }
     return reinterpret_cast<jllama_context *>(handle)->server; // NOLINT(*-no-int-to-ptr)
+}
+
+// ---------------------------------------------------------------------------
+// get_jllama_context_impl
+//
+// Like get_server_context_impl, but returns the jllama_context wrapper
+// itself instead of its inner server_context.  Used ONLY by the delete
+// path, which must call `delete jctx` and therefore needs the outer struct,
+// not just its .server member.
+//
+// Intentionally does NOT throw on null: a zero handle means the model was
+// already deleted (or never fully initialised), which is a valid no-op for
+// a destructor-style call.  All other callers should use
+// get_server_context_impl instead, which does throw.
+//
+// On success:    returns a non-null jllama_context*.
+// On null handle: returns nullptr silently (no JNI exception is thrown).
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline jllama_context *get_jllama_context_impl(JNIEnv *env, jobject obj,
+                                                              jfieldID field_id) {
+    const jlong handle = env->GetLongField(obj, field_id);
+    if (handle == 0) {
+        return nullptr; // already deleted or never initialised — silent no-op
+    }
+    return reinterpret_cast<jllama_context *>(handle); // NOLINT(*-no-int-to-ptr)
+}
+
+// ---------------------------------------------------------------------------
+// require_single_task_id_impl
+//
+// Validates that exactly one task was created after dispatch and returns its
+// ID.  Returns 0 (with a JNI exception pending) when the count is not 1.
+//
+// Used by requestCompletion and requestChatCompletion, which hand the returned
+// ID back to the Java caller for streaming consumption via
+// receiveCompletionJson.  Both functions are restricted to single-prompt,
+// single-task invocations.
+//
+// On success: returns the single task id (> 0 in practice).
+// On failure: throws via JNI, returns 0.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline int require_single_task_id_impl(
+        JNIEnv *env,
+        const std::unordered_set<int> &task_ids,
+        jclass error_class) {
+    if (task_ids.size() != 1) {
+        env->ThrowNew(error_class, "multitasking currently not supported");
+        return 0;
+    }
+    return *task_ids.begin();
+}
+
+// ---------------------------------------------------------------------------
+// require_json_field_impl
+//
+// Checks that `data` contains the given key.  Returns true if present.
+// On missing key: throws "<field> is required" via JNI and returns false.
+//
+// Extracted from the repeated pattern in handleInfill:
+//   if (!data.contains("input_prefix")) { ThrowNew(...); return nullptr; }
+//   if (!data.contains("input_suffix")) { ThrowNew(...); return nullptr; }
+//
+// Parameters are explicit so the function can be unit-tested without a real JVM.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline bool require_json_field_impl(JNIEnv            *env,
+                                                   const nlohmann::json &data,
+                                                   const char        *field,
+                                                   jclass             error_class) {
+    if (data.contains(field)) {
+        return true;
+    }
+    const std::string msg = std::string("\"") + field + "\" is required";
+    env->ThrowNew(error_class, msg.c_str());
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// jint_array_to_tokens_impl
+//
+// Reads a Java int array into a std::vector<llama_token> and releases the
+// JNI array elements with JNI_ABORT (read-only — no writeback needed).
+//
+// Extracted from the identical 4-line pattern repeated in decodeBytes and
+// handleDetokenize.  Parameters are explicit so the function is unit-testable
+// without a real JVM.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline std::vector<int32_t> jint_array_to_tokens_impl(
+        JNIEnv *env, jintArray array) {
+    const jsize length   = env->GetArrayLength(array);
+    jint *elements       = env->GetIntArrayElements(array, nullptr);
+    std::vector<int32_t> tokens(elements, elements + length);
+    env->ReleaseIntArrayElements(array, elements, JNI_ABORT);
+    return tokens;
 }
