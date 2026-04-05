@@ -124,6 +124,18 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
 }
 
 /**
+ * Convenience wrapper around build_completion_tasks_impl (jni_server_helpers.hpp)
+ * that supplies the module-level globals so call sites need no boilerplate.
+ */
+static bool build_completion_tasks(JNIEnv *env, server_context *ctx_server,
+                                    const json &data, const std::string &completion_id,
+                                    server_task_type task_type, oaicompat_type oaicompat,
+                                    std::vector<server_task> &tasks) {
+    return build_completion_tasks_impl(env, ctx_server, data, completion_id,
+                                       task_type, oaicompat, tasks, c_llama_error);
+}
+
+/**
  * Convenience wrapper around collect_task_results_impl (jni_server_helpers.hpp)
  * that supplies the module-level globals so call sites need no boilerplate.
  */
@@ -583,34 +595,9 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
 
     auto completion_id = gen_chatcmplid();
     std::vector<server_task> tasks;
-
-    try {
-        const auto &prompt = data.at("prompt");
-
-        std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, prompt, true, true);
-
-        tasks.reserve(tokenized_prompts.size());
-        for (size_t i = 0; i < tokenized_prompts.size(); i++) {
-            server_task task = server_task(type);
-
-            task.id = ctx_server->queue_tasks.get_new_id();
-            task.index = i;
-
-            task.prompt_tokens = server_tokens(tokenized_prompts[i], false);
-            task.params = server_task::params_from_json_cmpl(ctx_server->ctx, ctx_server->params_base, data);
-            task.id_selected_slot = json_value(data, "id_slot", -1);
-
-            // OAI-compat
-            task.params.oaicompat = OAICOMPAT_TYPE_NONE;
-            task.params.oaicompat_cmpl_id = completion_id;
-            // oaicompat_model is already populated by params_from_json_cmpl
-
-            tasks.push_back(std::move(task));
-        }
-    } catch (const std::exception &e) {
-        throw_invalid_request(env, e);
-        return 0;
-    }
+    // oaicompat_model is already populated by params_from_json_cmpl inside the helper
+    if (!build_completion_tasks(env, ctx_server, data, completion_id,
+                                 type, OAICOMPAT_TYPE_NONE, tasks)) return 0;
 
     ctx_server->queue_results.add_waiting_tasks(tasks);
     const auto task_ids = server_task::get_list_id(tasks);
@@ -843,32 +830,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
 
     auto completion_id = gen_chatcmplid();
     std::vector<server_task> tasks;
-
-    try {
-        const auto &prompt = data.at("prompt");
-
-        std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, prompt, true, true);
-
-        tasks.reserve(tokenized_prompts.size());
-        for (size_t i = 0; i < tokenized_prompts.size(); i++) {
-            server_task task = server_task(SERVER_TASK_TYPE_COMPLETION);
-
-            task.id = ctx_server->queue_tasks.get_new_id();
-            task.index = i;
-
-            task.prompt_tokens = server_tokens(tokenized_prompts[i], false);
-            task.params = server_task::params_from_json_cmpl(ctx_server->ctx, ctx_server->params_base, data);
-            task.id_selected_slot = json_value(data, "id_slot", -1);
-
-            task.params.oaicompat = OAICOMPAT_TYPE_CHAT;
-            task.params.oaicompat_cmpl_id = completion_id;
-
-            tasks.push_back(std::move(task));
-        }
-    } catch (const std::exception &e) {
-        throw_invalid_request(env, e);
-        return nullptr;
-    }
+    if (!build_completion_tasks(env, ctx_server, data, completion_id,
+                                 SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_CHAT, tasks)) return nullptr;
 
     ctx_server->queue_results.add_waiting_tasks(tasks);
     const auto task_ids = server_task::get_list_id(tasks);
@@ -928,34 +891,9 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
 
     auto completion_id = gen_chatcmplid();
     std::vector<server_task> tasks;
-
-    try {
-        const auto &prompt = data.at("prompt");
-
-        std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, prompt, true, true);
-
-        tasks.reserve(tokenized_prompts.size());
-        for (size_t i = 0; i < tokenized_prompts.size(); i++) {
-            server_task task = server_task(SERVER_TASK_TYPE_COMPLETION);
-
-            task.id = ctx_server->queue_tasks.get_new_id();
-            task.index = i;
-
-            task.prompt_tokens = server_tokens(tokenized_prompts[i], false);
-            task.params = server_task::params_from_json_cmpl(ctx_server->ctx, ctx_server->params_base, data);
-            task.id_selected_slot = json_value(data, "id_slot", -1);
-
-            // Use NONE so receiveCompletion gets the simple {"content":"..."} format.
-            // The chat template was already applied by oaicompat_chat_params_parse above.
-            task.params.oaicompat = OAICOMPAT_TYPE_NONE;
-            task.params.oaicompat_cmpl_id = completion_id;
-
-            tasks.push_back(std::move(task));
-        }
-    } catch (const std::exception &e) {
-        throw_invalid_request(env, e);
-        return 0;
-    }
+    // OAICOMPAT_TYPE_NONE: chat template was already applied by oaicompat_chat_params_parse above.
+    if (!build_completion_tasks(env, ctx_server, data, completion_id,
+                                 SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_NONE, tasks)) return 0;
 
     ctx_server->queue_results.add_waiting_tasks(tasks);
     const auto task_ids = server_task::get_list_id(tasks);
@@ -1089,32 +1027,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIE
 
     auto completion_id = gen_chatcmplid();
     std::vector<server_task> tasks;
-
-    try {
-        const auto &prompt = data.at("prompt");
-
-        std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, prompt, true, true);
-
-        tasks.reserve(tokenized_prompts.size());
-        for (size_t i = 0; i < tokenized_prompts.size(); i++) {
-            server_task task = server_task(SERVER_TASK_TYPE_COMPLETION);
-
-            task.id = ctx_server->queue_tasks.get_new_id();
-            task.index = i;
-
-            task.prompt_tokens = server_tokens(tokenized_prompts[i], false);
-            task.params = server_task::params_from_json_cmpl(ctx_server->ctx, ctx_server->params_base, data);
-            task.id_selected_slot = json_value(data, "id_slot", -1);
-
-            task.params.oaicompat = OAICOMPAT_TYPE_NONE;
-            task.params.oaicompat_cmpl_id = completion_id;
-
-            tasks.push_back(std::move(task));
-        }
-    } catch (const std::exception &e) {
-        throw_invalid_request(env, e);
-        return nullptr;
-    }
+    if (!build_completion_tasks(env, ctx_server, data, completion_id,
+                                 SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_NONE, tasks)) return nullptr;
 
     ctx_server->queue_results.add_waiting_tasks(tasks);
     const auto task_ids = server_task::get_list_id(tasks);
@@ -1158,32 +1072,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
 
     auto completion_id = gen_chatcmplid();
     std::vector<server_task> tasks;
-
-    try {
-        const auto &prompt = data.at("prompt");
-
-        std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, prompt, true, true);
-
-        tasks.reserve(tokenized_prompts.size());
-        for (size_t i = 0; i < tokenized_prompts.size(); i++) {
-            server_task task = server_task(SERVER_TASK_TYPE_COMPLETION);
-
-            task.id = ctx_server->queue_tasks.get_new_id();
-            task.index = i;
-
-            task.prompt_tokens = server_tokens(tokenized_prompts[i], false);
-            task.params = server_task::params_from_json_cmpl(ctx_server->ctx, ctx_server->params_base, data);
-            task.id_selected_slot = json_value(data, "id_slot", -1);
-
-            task.params.oaicompat = OAICOMPAT_TYPE_COMPLETION;
-            task.params.oaicompat_cmpl_id = completion_id;
-
-            tasks.push_back(std::move(task));
-        }
-    } catch (const std::exception &e) {
-        throw_invalid_request(env, e);
-        return nullptr;
-    }
+    if (!build_completion_tasks(env, ctx_server, data, completion_id,
+                                 SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_COMPLETION, tasks)) return nullptr;
 
     ctx_server->queue_results.add_waiting_tasks(tasks);
     const auto task_ids = server_task::get_list_id(tasks);
@@ -1254,31 +1144,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
 
     auto completion_id = gen_chatcmplid();
     std::vector<server_task> tasks;
-
-    try {
-        std::vector<llama_tokens> infill_prompts =
-            tokenize_input_prompts(ctx_server->vocab, data.at("prompt"), true, true);
-
-        tasks.reserve(infill_prompts.size());
-        for (size_t i = 0; i < infill_prompts.size(); i++) {
-            server_task task = server_task(SERVER_TASK_TYPE_INFILL);
-
-            task.id = ctx_server->queue_tasks.get_new_id();
-            task.index = i;
-
-            task.prompt_tokens = server_tokens(infill_prompts[i], false);
-            task.params = server_task::params_from_json_cmpl(ctx_server->ctx, ctx_server->params_base, data);
-            task.id_selected_slot = json_value(data, "id_slot", -1);
-
-            task.params.oaicompat = OAICOMPAT_TYPE_NONE;
-            task.params.oaicompat_cmpl_id = completion_id;
-
-            tasks.push_back(std::move(task));
-        }
-    } catch (const std::exception &e) {
-        throw_invalid_request(env, e);
-        return nullptr;
-    }
+    if (!build_completion_tasks(env, ctx_server, data, completion_id,
+                                 SERVER_TASK_TYPE_INFILL, OAICOMPAT_TYPE_NONE, tasks)) return nullptr;
 
     ctx_server->queue_results.add_waiting_tasks(tasks);
     const auto task_ids = server_task::get_list_id(tasks);

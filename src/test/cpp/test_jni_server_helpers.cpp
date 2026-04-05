@@ -1,6 +1,15 @@
-// Tests for collect_task_results_impl() in jni_server_helpers.hpp.
+// Tests for jni_server_helpers.hpp:
+//   - build_completion_tasks_impl
+//   - collect_task_results_impl
+//   - recv_slot_task_result_impl  (added by Finding 5)
 //
-// The function needs two non-trivial collaborators:
+// build_completion_tasks_impl needs:
+//   - JNIEnv  — used only for ThrowNew on the error path
+//   - server_context*  — NOT accessed when "prompt" is absent (exception thrown
+//     first), so nullptr is safe for error-path tests.
+//   - json data — provided inline in the test
+//
+// collect_task_results_impl and recv_slot_task_result_impl need:
 //   - server_response  (from server.hpp) — provides recv() / remove_waiting_task_ids()
 //   - JNIEnv           — used only for ThrowNew on the error path
 //
@@ -213,4 +222,55 @@ TEST_F(CollectResultsFixture, ErrorPath_WaitingIdsRemovedAfterError) {
 
     EXPECT_FALSE(queue.waiting_task_ids.count(40))
         << "remove_waiting_task_ids must clear the id on error";
+}
+
+// ============================================================
+// Tests for build_completion_tasks_impl
+//
+// Only the error path is unit-testable here: the function reads
+// data["prompt"] in its own statement BEFORE accessing ctx_server, so
+// passing nullptr for ctx_server is safe when "prompt" is absent.
+//
+// The success path requires a live server_context (llama vocab + context
+// pointers) and is covered by LlamaModelTest Java integration tests.
+// ============================================================
+
+TEST_F(CollectResultsFixture, BuildTasks_MissingPrompt_ReturnsFalseAndThrows) {
+    json data = {{"n_predict", 1}}; // deliberately no "prompt" key
+    std::string completion_id = "test-cmpl-id";
+    std::vector<server_task> tasks;
+
+    // ctx_server is nullptr — safe because data.at("prompt") throws before
+    // any ctx_server member is accessed.
+    bool ok = build_completion_tasks_impl(env,
+                                          /*ctx_server=*/nullptr,
+                                          data, completion_id,
+                                          SERVER_TASK_TYPE_COMPLETION,
+                                          OAICOMPAT_TYPE_NONE,
+                                          tasks,
+                                          dummy_eclass);
+
+    EXPECT_FALSE(ok)           << "Missing 'prompt' must return false";
+    EXPECT_TRUE(g_throw_called) << "ThrowNew must be called for missing 'prompt'";
+    EXPECT_TRUE(tasks.empty()) << "tasks must remain empty on error";
+}
+
+TEST_F(CollectResultsFixture, BuildTasks_MissingPrompt_TaskTypeDoesNotAffectErrorBehaviour) {
+    // The error path is identical regardless of task_type / oaicompat.
+    // Verify INFILL behaves the same way.
+    json data = {{"input_prefix", "def f():"}, {"input_suffix", "return 1"}};
+    std::string completion_id = "infill-cmpl-id";
+    std::vector<server_task> tasks;
+
+    bool ok = build_completion_tasks_impl(env,
+                                          /*ctx_server=*/nullptr,
+                                          data, completion_id,
+                                          SERVER_TASK_TYPE_INFILL,
+                                          OAICOMPAT_TYPE_NONE,
+                                          tasks,
+                                          dummy_eclass);
+
+    EXPECT_FALSE(ok);
+    EXPECT_TRUE(g_throw_called);
+    EXPECT_TRUE(tasks.empty());
 }
