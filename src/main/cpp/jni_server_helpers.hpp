@@ -84,6 +84,35 @@ inline bool build_completion_tasks_impl(JNIEnv                   *env,
 }
 
 // ---------------------------------------------------------------------------
+// recv_slot_task_result_impl
+//
+// Receives a single slot-action result from the response queue, checks for
+// an error, and returns the result JSON as a JNI string.
+//
+// Used by all four handleSlotAction switch cases (LIST / SAVE / RESTORE /
+// ERASE).  The caller is responsible for constructing the task, registering
+// the task ID with queue.add_waiting_task_id(), and posting it to the task
+// queue; this helper only covers the recv → check → return leg.
+//
+// On success: returns a new jstring containing result->to_json().dump().
+// On error:   removes the waiting task id, throws via JNI, returns nullptr.
+// ---------------------------------------------------------------------------
+inline jstring recv_slot_task_result_impl(JNIEnv          *env,
+                                           server_response &queue,
+                                           int              task_id,
+                                           jclass           error_class) {
+    server_task_result_ptr result = queue.recv(task_id);
+    queue.remove_waiting_task_id(task_id);
+    if (result->is_error()) {
+        std::string error_msg = result->to_json()["message"].get<std::string>();
+        env->ThrowNew(error_class, error_msg.c_str());
+        return nullptr;
+    }
+    std::string resp = result->to_json().dump();
+    return env->NewStringUTF(resp.c_str());
+}
+
+// ---------------------------------------------------------------------------
 // collect_task_results_impl
 //
 // Precondition: each ID in task_ids has already been registered with

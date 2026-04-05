@@ -76,6 +76,11 @@ static server_task_result_ptr make_ok(int id_, const std::string &msg = "ok") {
 static bool        g_throw_called  = false;
 static std::string g_throw_message;
 
+// NewStringUTF stub: stores the string so tests can inspect it, returns a
+// non-null sentinel so callers can distinguish success from nullptr (error).
+static std::string g_new_string_utf_value;
+static jstring     g_new_string_utf_sentinel = reinterpret_cast<jstring>(0xBEEF);
+
 static jint JNICALL stub_ThrowNew(JNIEnv *, jclass, const char *msg) {
     g_throw_called  = true;
     g_throw_message = msg ? msg : "";
@@ -84,10 +89,16 @@ static jint JNICALL stub_ThrowNew(JNIEnv *, jclass, const char *msg) {
 
 static jlong JNICALL stub_GetLongField(JNIEnv *, jobject, jfieldID) { return 0; }
 
+static jstring JNICALL stub_NewStringUTF(JNIEnv *, const char *utf) {
+    g_new_string_utf_value = utf ? utf : "";
+    return g_new_string_utf_sentinel;
+}
+
 JNIEnv *make_mock_env(JNINativeInterface_ &table, JNIEnv_ &env_obj) {
     std::memset(&table, 0, sizeof(table));
     table.ThrowNew     = stub_ThrowNew;
     table.GetLongField = stub_GetLongField; // unused but avoids a null slot crash
+    table.NewStringUTF = stub_NewStringUTF;
     env_obj.functions  = &table;
     return &env_obj;
 }
@@ -105,6 +116,7 @@ struct CollectResultsFixture : ::testing::Test {
         env            = make_mock_env(table, env_obj);
         g_throw_called = false;
         g_throw_message.clear();
+        g_new_string_utf_value.clear();
     }
 };
 
@@ -273,4 +285,61 @@ TEST_F(CollectResultsFixture, BuildTasks_MissingPrompt_TaskTypeDoesNotAffectErro
     EXPECT_FALSE(ok);
     EXPECT_TRUE(g_throw_called);
     EXPECT_TRUE(tasks.empty());
+}
+
+// ============================================================
+// Tests for recv_slot_task_result_impl
+//
+// Pre-seed the server_response queue (same technique as collect tests):
+// calling send() before recv() satisfies the condvar predicate immediately,
+// so recv() returns without blocking even from the same thread.
+//
+// NewStringUTF is stubbed to return a sentinel non-null jstring and capture
+// the serialised JSON so we can verify the success path.
+// ============================================================
+
+TEST_F(CollectResultsFixture, RecvSlotResult_SuccessResult_ReturnsNonNullAndDoesNotThrow) {
+    queue.add_waiting_task_id(50);
+    queue.send(make_ok(50, "slot-ok"));
+
+    jstring result = recv_slot_task_result_impl(env, queue, 50, dummy_eclass);
+
+    EXPECT_NE(result, nullptr)       << "success result must return non-null jstring";
+    EXPECT_FALSE(g_throw_called)     << "ThrowNew must not be called on success";
+    // The stub captures the serialised JSON passed to NewStringUTF.
+    EXPECT_FALSE(g_new_string_utf_value.empty())
+        << "NewStringUTF must be called with the result JSON";
+    EXPECT_NE(g_new_string_utf_value.find("slot-ok"), std::string::npos)
+        << "result JSON must contain the content from the fake result";
+}
+
+TEST_F(CollectResultsFixture, RecvSlotResult_ErrorResult_ReturnsNullAndThrows) {
+    queue.add_waiting_task_id(51);
+    queue.send(make_error(51, "slot operation failed"));
+
+    jstring result = recv_slot_task_result_impl(env, queue, 51, dummy_eclass);
+
+    EXPECT_EQ(result, nullptr)      << "error result must return nullptr";
+    EXPECT_TRUE(g_throw_called)     << "ThrowNew must be called on error";
+    EXPECT_EQ(g_throw_message, "slot operation failed");
+}
+
+TEST_F(CollectResultsFixture, RecvSlotResult_WaitingIdRemovedAfterSuccess) {
+    queue.add_waiting_task_id(52);
+    queue.send(make_ok(52));
+
+    recv_slot_task_result_impl(env, queue, 52, dummy_eclass);
+
+    EXPECT_FALSE(queue.waiting_task_ids.count(52))
+        << "remove_waiting_task_id must clear the id on success";
+}
+
+TEST_F(CollectResultsFixture, RecvSlotResult_WaitingIdRemovedAfterError) {
+    queue.add_waiting_task_id(53);
+    queue.send(make_error(53, "err"));
+
+    recv_slot_task_result_impl(env, queue, 53, dummy_eclass);
+
+    EXPECT_FALSE(queue.waiting_task_ids.count(53))
+        << "remove_waiting_task_id must clear the id on error";
 }

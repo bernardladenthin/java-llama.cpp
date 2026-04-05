@@ -136,6 +136,15 @@ static bool build_completion_tasks(JNIEnv *env, server_context *ctx_server,
 }
 
 /**
+ * Convenience wrapper around recv_slot_task_result_impl (jni_server_helpers.hpp).
+ * Caller must have already registered task_id with add_waiting_task_id() and
+ * posted the task; this wrapper covers recv → check → return.
+ */
+static jstring recv_slot_task_result(JNIEnv *env, server_context *ctx_server, int task_id) {
+    return recv_slot_task_result_impl(env, ctx_server->queue_results, task_id, c_llama_error);
+}
+
+/**
  * Convenience wrapper around collect_task_results_impl (jni_server_helpers.hpp)
  * that supplies the module-level globals so call sites need no boilerplate.
  */
@@ -1341,17 +1350,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
         int id = task.id;
         ctx_server->queue_tasks.post(std::move(task), true);
 
-        server_task_result_ptr result = ctx_server->queue_results.recv(id);
-        ctx_server->queue_results.remove_waiting_task_id(id);
-
-        if (result->is_error()) {
-            std::string error_msg = result->to_json()["message"].get<std::string>();
-            env->ThrowNew(c_llama_error, error_msg.c_str());
-            return nullptr;
-        }
-
-        std::string resp = result->to_json().dump();
-        return env->NewStringUTF(resp.c_str());
+        return recv_slot_task_result(env, ctx_server, id);
     }
     case 1: { // SAVE
         std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
@@ -1370,17 +1369,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
         ctx_server->queue_results.add_waiting_task_id(tid);
         ctx_server->queue_tasks.post(std::move(task));
 
-        server_task_result_ptr result = ctx_server->queue_results.recv(tid);
-        ctx_server->queue_results.remove_waiting_task_id(tid);
-
-        if (result->is_error()) {
-            std::string error_msg = result->to_json()["message"].get<std::string>();
-            env->ThrowNew(c_llama_error, error_msg.c_str());
-            return nullptr;
-        }
-
-        std::string resp = result->to_json().dump();
-        return env->NewStringUTF(resp.c_str());
+        return recv_slot_task_result(env, ctx_server, tid);
     }
     case 2: { // RESTORE
         std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
@@ -1399,17 +1388,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
         ctx_server->queue_results.add_waiting_task_id(tid);
         ctx_server->queue_tasks.post(std::move(task));
 
-        server_task_result_ptr result = ctx_server->queue_results.recv(tid);
-        ctx_server->queue_results.remove_waiting_task_id(tid);
-
-        if (result->is_error()) {
-            std::string error_msg = result->to_json()["message"].get<std::string>();
-            env->ThrowNew(c_llama_error, error_msg.c_str());
-            return nullptr;
-        }
-
-        std::string resp = result->to_json().dump();
-        return env->NewStringUTF(resp.c_str());
+        return recv_slot_task_result(env, ctx_server, tid);
     }
     case 3: { // ERASE
         server_task task(SERVER_TASK_TYPE_SLOT_ERASE);
@@ -1420,17 +1399,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
         ctx_server->queue_results.add_waiting_task_id(tid);
         ctx_server->queue_tasks.post(std::move(task));
 
-        server_task_result_ptr result = ctx_server->queue_results.recv(tid);
-        ctx_server->queue_results.remove_waiting_task_id(tid);
-
-        if (result->is_error()) {
-            std::string error_msg = result->to_json()["message"].get<std::string>();
-            env->ThrowNew(c_llama_error, error_msg.c_str());
-            return nullptr;
-        }
-
-        std::string resp = result->to_json().dump();
-        return env->NewStringUTF(resp.c_str());
+        return recv_slot_task_result(env, ctx_server, tid);
     }
     default:
         env->ThrowNew(c_llama_error, "Invalid slot action");
