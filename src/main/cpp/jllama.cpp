@@ -787,9 +787,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(
     server_task_result_ptr result = ctx_server->queue_results.recv(id_task);
 
     if (result->is_error()) {
-        std::string response = result->to_json()["message"].get<std::string>();
         ctx_server->queue_results.remove_waiting_task_id(id_task);
-        env->ThrowNew(c_llama_error, response.c_str());
+        env->ThrowNew(c_llama_error, get_result_error_message(result).c_str());
         return nullptr;
     }
 
@@ -837,9 +836,8 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
     server_task_result_ptr result = ctx_server->queue_results.recv(id_task);
 
     if (result->is_error()) {
-        std::string response = result->to_json()["message"].get<std::string>();
         ctx_server->queue_results.remove_waiting_task_id(id_task);
-        env->ThrowNew(c_llama_error, response.c_str());
+        env->ThrowNew(c_llama_error, get_result_error_message(result).c_str());
         return nullptr;
     }
 
@@ -921,9 +919,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
     for (size_t i = 0; i < task_ids.size(); i++) {
         server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
         if (result->is_error()) {
-            auto response = result->to_json()["message"].get<std::string>();
             ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-            env->ThrowNew(c_llama_error, response.c_str());
+            env->ThrowNew(c_llama_error, get_result_error_message(result).c_str());
             return nullptr;
         }
 

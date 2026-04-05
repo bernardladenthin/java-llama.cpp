@@ -104,11 +104,27 @@
     server_task_result_ptr result = queue.recv(task_id);
     queue.remove_waiting_task_id(task_id);
     if (result->is_error()) {
-        std::string error_msg = result->to_json()["message"].get<std::string>();
-        env->ThrowNew(error_class, error_msg.c_str());
+        env->ThrowNew(error_class, get_result_error_message(result).c_str());
         return nullptr;
     }
     return json_to_jstring_impl(env, result->to_json());
+}
+
+// ---------------------------------------------------------------------------
+// get_result_error_message
+//
+// Extracts the human-readable error string from a failed task result.
+// Equivalent to result->to_json()["message"].get<std::string>(), which
+// appears verbatim in five places:
+//
+//   receiveCompletionJson, embed, handleRerank   (in jllama.cpp)
+//   collect_task_results_impl, recv_slot_task_result_impl  (in this header)
+//
+// Placed here (before the two _impl users) so both can call it.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline std::string get_result_error_message(
+        const server_task_result_ptr &result) {
+    return result->to_json()["message"].get<std::string>();
 }
 
 // ---------------------------------------------------------------------------
@@ -132,8 +148,7 @@
         server_task_result_ptr result = queue.recv(task_ids);
         if (result->is_error()) {
             queue.remove_waiting_task_ids(task_ids);
-            std::string error_msg = result->to_json()["message"].get<std::string>();
-            env->ThrowNew(error_class, error_msg.c_str());
+            env->ThrowNew(error_class, get_result_error_message(result).c_str());
             return false;
         }
         out.push_back(std::move(result));

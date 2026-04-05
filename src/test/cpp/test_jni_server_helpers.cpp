@@ -123,6 +123,23 @@ struct CollectResultsFixture : ::testing::Test {
 } // namespace
 
 // ============================================================
+// Tests for get_result_error_message()
+//
+// No JNI needed — the function only calls result->to_json() and
+// performs a JSON key lookup, both of which are pure C++.
+// ============================================================
+
+TEST(GetResultErrorMessage, ErrorResult_ReturnsMessageString) {
+    server_task_result_ptr r = make_error(1, "something went wrong");
+    EXPECT_EQ(get_result_error_message(r), "something went wrong");
+}
+
+TEST(GetResultErrorMessage, DifferentMessage_ReturnsCorrectString) {
+    server_task_result_ptr r = make_error(2, "out of memory");
+    EXPECT_EQ(get_result_error_message(r), "out of memory");
+}
+
+// ============================================================
 // Single success result
 // ============================================================
 
