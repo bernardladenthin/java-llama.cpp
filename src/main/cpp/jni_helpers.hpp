@@ -107,3 +107,22 @@ struct jllama_context {
     }
     return *task_ids.begin();
 }
+
+// ---------------------------------------------------------------------------
+// jint_array_to_tokens_impl
+//
+// Reads a Java int array into a std::vector<llama_token> and releases the
+// JNI array elements with JNI_ABORT (read-only — no writeback needed).
+//
+// Extracted from the identical 4-line pattern repeated in decodeBytes and
+// handleDetokenize.  Parameters are explicit so the function is unit-testable
+// without a real JVM.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline std::vector<int32_t> jint_array_to_tokens_impl(
+        JNIEnv *env, jintArray array) {
+    const jsize length   = env->GetArrayLength(array);
+    jint *elements       = env->GetIntArrayElements(array, nullptr);
+    std::vector<int32_t> tokens(elements, elements + length);
+    env->ReleaseIntArrayElements(array, elements, JNI_ABORT);
+    return tokens;
+}

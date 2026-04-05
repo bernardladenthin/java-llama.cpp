@@ -245,3 +245,95 @@ TEST_F(MockJniFixture, RequireSingleTaskId_Multiple_ReturnsZeroAndThrows) {
     EXPECT_TRUE(g_throw_called);
     EXPECT_EQ(g_throw_message, "multitasking currently not supported");
 }
+
+// ============================================================
+// Tests for jint_array_to_tokens_impl()
+//
+// Needs GetArrayLength, GetIntArrayElements, and
+// ReleaseIntArrayElements stubs.  GetIntArrayElements returns a
+// pointer to a static buffer.  ReleaseIntArrayElements is a no-op.
+// ============================================================
+
+namespace {
+
+static jint  g_array_data[8]  = {};
+static jsize g_array_length   = 0;
+static bool  g_release_called = false;
+static jint  g_release_mode   = -1;
+
+static jsize JNICALL stub_GetArrayLength(JNIEnv * /*env*/, jarray /*arr*/) {
+    return g_array_length;
+}
+static jint *JNICALL stub_GetIntArrayElements(JNIEnv * /*env*/,
+                                               jintArray /*arr*/,
+                                               jboolean * /*isCopy*/) {
+    return g_array_data;
+}
+static void JNICALL stub_ReleaseIntArrayElements(JNIEnv * /*env*/,
+                                                  jintArray /*arr*/,
+                                                  jint * /*elems*/,
+                                                  jint mode) {
+    g_release_called = true;
+    g_release_mode   = mode;
+}
+
+JNIEnv *make_array_env(JNINativeInterface_ &table, JNIEnv_ &env_obj) {
+    std::memset(&table, 0, sizeof(table));
+    table.GetArrayLength          = stub_GetArrayLength;
+    table.GetIntArrayElements     = stub_GetIntArrayElements;
+    table.ReleaseIntArrayElements = stub_ReleaseIntArrayElements;
+    env_obj.functions             = &table;
+    return &env_obj;
+}
+
+struct ArrayFixture : ::testing::Test {
+    JNINativeInterface_ table{};
+    JNIEnv_             env_obj{};
+    JNIEnv             *env = nullptr;
+
+    void SetUp() override {
+        env              = make_array_env(table, env_obj);
+        g_release_called = false;
+        g_release_mode   = -1;
+        std::memset(g_array_data, 0, sizeof(g_array_data));
+        g_array_length = 0;
+    }
+};
+
+} // namespace
+
+TEST_F(ArrayFixture, JintArrayToTokens_EmptyArray_ReturnsEmptyVector) {
+    g_array_length = 0;
+
+    auto tokens = jint_array_to_tokens_impl(env, nullptr);
+
+    EXPECT_TRUE(tokens.empty());
+    EXPECT_TRUE(g_release_called);
+    EXPECT_EQ(g_release_mode, JNI_ABORT);
+}
+
+TEST_F(ArrayFixture, JintArrayToTokens_ThreeElements_CopiedCorrectly) {
+    g_array_data[0] = 10;
+    g_array_data[1] = 20;
+    g_array_data[2] = 30;
+    g_array_length  = 3;
+
+    auto tokens = jint_array_to_tokens_impl(env, nullptr);
+
+    ASSERT_EQ(tokens.size(), 3u);
+    EXPECT_EQ(tokens[0], 10);
+    EXPECT_EQ(tokens[1], 20);
+    EXPECT_EQ(tokens[2], 30);
+}
+
+TEST_F(ArrayFixture, JintArrayToTokens_ReleasesWithAbortFlag) {
+    // JNI_ABORT means no writeback — required since we only read the array.
+    g_array_length = 1;
+    g_array_data[0] = 42;
+
+    (void)jint_array_to_tokens_impl(env, nullptr);
+
+    EXPECT_TRUE(g_release_called);
+    EXPECT_EQ(g_release_mode, JNI_ABORT)
+        << "must use JNI_ABORT (no writeback) for read-only array access";
+}

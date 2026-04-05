@@ -358,6 +358,14 @@ void free_string_array(char **array, jsize length) {
 }
 
 /**
+ * Convenience wrapper around jint_array_to_tokens_impl (jni_helpers.hpp).
+ * Reads a Java int array into a vector<llama_token> using JNI_ABORT (read-only).
+ */
+[[nodiscard]] static std::vector<llama_token> jint_array_to_tokens(JNIEnv *env, jintArray array) {
+    return jint_array_to_tokens_impl(env, array);
+}
+
+/**
  * Since Java expects utf16 but std::strings are utf8, we can't directly use `env->NewString` or `env-NewString`,
  * but we directly send the bytes and do the conversion in Java. Unfortunately, there isn't a nice/standardized way to
  * do this conversion in C++
@@ -1029,12 +1037,7 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv 
     auto *ctx_server = get_server_context(env, obj);
     if (!ctx_server) return nullptr;
 
-    jsize length = env->GetArrayLength(java_tokens);
-    jint *elements = env->GetIntArrayElements(java_tokens, nullptr);
-    std::vector<llama_token> tokens(elements, elements + length);
-
-    env->ReleaseIntArrayElements(java_tokens, elements, 0);
-
+    const auto tokens = jint_array_to_tokens(env, java_tokens);
     return parse_jbytes(env, detokenize(ctx_server, tokens));
 }
 
@@ -1339,11 +1342,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleDetokenize(JNIEn
     auto *ctx_server = get_server_context(env, obj);
     if (!ctx_server) return nullptr;
 
-    jsize length = env->GetArrayLength(jtokens);
-    jint *elements = env->GetIntArrayElements(jtokens, nullptr);
-    std::vector<llama_token> tokens(elements, elements + length);
-    env->ReleaseIntArrayElements(jtokens, elements, JNI_ABORT);
-
+    const auto tokens = jint_array_to_tokens(env, jtokens);
     json data = format_detokenized_response(detokenize(ctx_server, tokens));
 
     return json_to_jstring(env, data);
