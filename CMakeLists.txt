@@ -52,6 +52,18 @@ set(LLAMA_CURL ON)
 if(WIN32)
     set(LLAMA_BUILD_BORINGSSL ON CACHE BOOL "" FORCE)
 endif()
+
+# Disable AVX-512 for all builds.
+#
+# AVX-512 is only available on newer Intel CPUs (e.g. Intel Xeon Platinum 8370C).
+# Many common CI and production machines do NOT support it, including the
+# AMD EPYC 7763 used by GitHub Actions runners.  If a library compiled with
+# AVX-512 instructions is loaded on a CPU without AVX-512 support the JVM
+# crashes immediately with SIGILL (illegal instruction).
+#
+# Keeping AVX-512 off produces a binary that runs on any x86-64 machine with
+# at least AVX2, which covers the vast majority of hardware since ~2013.
+set(GGML_AVX512 OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
