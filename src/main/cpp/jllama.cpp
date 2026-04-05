@@ -1372,23 +1372,18 @@ JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInfe
         ctx_server->slot_prompt_similarity = similarity;
     }
 
-    if (config.contains("n_threads")) {
-        int n_threads = config["n_threads"].get<int>();
-        if (n_threads <= 0) {
-            env->ThrowNew(c_llama_error, "n_threads must be greater than 0");
-            return JNI_FALSE;
+    auto apply_thread_count = [&](const char *key, int &target) -> bool {
+        if (!config.contains(key)) return true;
+        int v = config[key].get<int>();
+        if (v <= 0) {
+            env->ThrowNew(c_llama_error, (std::string(key) + " must be greater than 0").c_str());
+            return false;
         }
-        ctx_server->params_base.cpuparams.n_threads = n_threads;
-    }
-
-    if (config.contains("n_threads_batch")) {
-        int n_threads_batch = config["n_threads_batch"].get<int>();
-        if (n_threads_batch <= 0) {
-            env->ThrowNew(c_llama_error, "n_threads_batch must be greater than 0");
-            return JNI_FALSE;
-        }
-        ctx_server->params_base.cpuparams_batch.n_threads = n_threads_batch;
-    }
+        target = v;
+        return true;
+    };
+    if (!apply_thread_count("n_threads",       ctx_server->params_base.cpuparams.n_threads))       return JNI_FALSE;
+    if (!apply_thread_count("n_threads_batch", ctx_server->params_base.cpuparams_batch.n_threads)) return JNI_FALSE;
 
     return JNI_TRUE;
 }
