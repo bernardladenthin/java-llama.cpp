@@ -19,11 +19,56 @@
 //   server.hpp must be included by the including translation unit BEFORE this
 //   header.  server.hpp has no include guard, so including it here would cause
 //   redefinition errors in any TU that already includes server.hpp directly.
+//
+// Declaration order (each function must be defined before its first caller):
+//   1. get_result_error_message    — used by recv_slot_task_result_impl,
+//                                    collect_task_results_impl
+//   2. json_to_jstring_impl        — used by recv_slot_task_result_impl,
+//                                    results_to_jstring_impl
+//   3. build_completion_tasks_impl — no dependencies on helpers above
+//   4. recv_slot_task_result_impl  — uses 1 + 2
+//   5. collect_task_results_impl   — uses 1
+//   6. results_to_json_impl        — no dependencies on helpers above
+//   7. results_to_jstring_impl     — uses 2 + 6
+//   8. check_infill_support_impl   — no dependencies on helpers above
 
 #include "jni.h"
 
 #include <unordered_set>
 #include <vector>
+
+// ---------------------------------------------------------------------------
+// get_result_error_message
+//
+// Extracts the human-readable error string from a failed task result.
+// Equivalent to result->to_json()["message"].get<std::string>(), which
+// appears verbatim in five places:
+//
+//   receiveCompletionJson, embed, handleRerank   (in jllama.cpp)
+//   collect_task_results_impl, recv_slot_task_result_impl  (in this header)
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline std::string get_result_error_message(
+        const server_task_result_ptr &result) {
+    return result->to_json()["message"].get<std::string>();
+}
+
+// ---------------------------------------------------------------------------
+// json_to_jstring_impl
+//
+// Serialises any json value to a JNI string via dump() + NewStringUTF.
+// Extracted from the repeated two-line pattern:
+//
+//   std::string response_str = some_json.dump();
+//   return env->NewStringUTF(response_str.c_str());
+//
+// Used by recv_slot_task_result_impl, results_to_jstring_impl,
+// receiveCompletionJson, handleRerank, handleEmbeddings,
+// handleTokenize, and handleDetokenize.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline jstring json_to_jstring_impl(JNIEnv *env, const json &j) {
+    std::string s = j.dump();
+    return env->NewStringUTF(s.c_str());
+}
 
 // ---------------------------------------------------------------------------
 // build_completion_tasks_impl
@@ -111,23 +156,6 @@
 }
 
 // ---------------------------------------------------------------------------
-// get_result_error_message
-//
-// Extracts the human-readable error string from a failed task result.
-// Equivalent to result->to_json()["message"].get<std::string>(), which
-// appears verbatim in five places:
-//
-//   receiveCompletionJson, embed, handleRerank   (in jllama.cpp)
-//   collect_task_results_impl, recv_slot_task_result_impl  (in this header)
-//
-// Placed here (before the two _impl users) so both can call it.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline std::string get_result_error_message(
-        const server_task_result_ptr &result) {
-    return result->to_json()["message"].get<std::string>();
-}
-
-// ---------------------------------------------------------------------------
 // collect_task_results_impl
 //
 // Precondition: each ID in task_ids has already been registered with
@@ -198,23 +226,6 @@
 }
 
 // ---------------------------------------------------------------------------
-// json_to_jstring_impl
-//
-// Serialises any json value to a JNI string via dump() + NewStringUTF.
-// Extracted from the repeated two-line pattern:
-//
-//   std::string response_str = some_json.dump();
-//   return env->NewStringUTF(response_str.c_str());
-//
-// Used by receiveCompletionJson, handleRerank, handleEmbeddings,
-// handleTokenize, and handleDetokenize.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline jstring json_to_jstring_impl(JNIEnv *env, const json &j) {
-    std::string s = j.dump();
-    return env->NewStringUTF(s.c_str());
-}
-
-// ---------------------------------------------------------------------------
 // check_infill_support_impl
 //
 // Checks that the model vocabulary has all three fill-in-the-middle (FIM)
@@ -225,9 +236,9 @@
 // Extracted from the 10-line compatibility block in handleInfill so it can
 // be unit-tested independently of the JNI dispatch layer.
 // ---------------------------------------------------------------------------
-[[nodiscard]] inline bool check_infill_support_impl(JNIEnv          *env,
+[[nodiscard]] inline bool check_infill_support_impl(JNIEnv            *env,
                                                      const llama_vocab *vocab,
-                                                     jclass            error_class) {
+                                                     jclass             error_class) {
     std::string err;
     if (llama_vocab_fim_pre(vocab) == LLAMA_TOKEN_NULL) { err += "prefix token is missing. "; }
     if (llama_vocab_fim_suf(vocab) == LLAMA_TOKEN_NULL) { err += "suffix token is missing. "; }
