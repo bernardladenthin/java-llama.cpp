@@ -442,7 +442,7 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     env->DeleteGlobalRef(c_biconsumer);
     env->DeleteGlobalRef(c_llama_error);
     env->DeleteGlobalRef(c_log_level);
-    env->DeleteGlobalRef(c_log_level);
+    env->DeleteGlobalRef(c_log_format);
     env->DeleteGlobalRef(c_error_oom);
 
     env->DeleteGlobalRef(o_utf_8);
