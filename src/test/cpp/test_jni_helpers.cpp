@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <unordered_set>
 
 // jni_helpers.hpp is the unit under test; it includes jni.h which defines
 // JNIEnv_ and JNINativeInterface_.
@@ -216,4 +217,31 @@ TEST_F(MockJniFixture, GetJllamaContext_ContractComparison_GetServerContextThrow
     jllama_context *jc = get_jllama_context_impl(env, nullptr, dummy_field);
     EXPECT_FALSE(g_throw_called) << "get_jllama_context_impl must NOT throw on null";
     EXPECT_EQ(jc, nullptr);
+}
+
+// ============================================================
+// Tests for require_single_task_id_impl()
+// ============================================================
+
+TEST_F(MockJniFixture, RequireSingleTaskId_ExactlyOne_ReturnsIdNoThrow) {
+    std::unordered_set<int> ids = {42};
+    int result = require_single_task_id_impl(env, ids, dummy_class);
+    EXPECT_EQ(result, 42);
+    EXPECT_FALSE(g_throw_called);
+}
+
+TEST_F(MockJniFixture, RequireSingleTaskId_Empty_ReturnsZeroAndThrows) {
+    std::unordered_set<int> ids;
+    int result = require_single_task_id_impl(env, ids, dummy_class);
+    EXPECT_EQ(result, 0);
+    EXPECT_TRUE(g_throw_called);
+    EXPECT_EQ(g_throw_message, "multitasking currently not supported");
+}
+
+TEST_F(MockJniFixture, RequireSingleTaskId_Multiple_ReturnsZeroAndThrows) {
+    std::unordered_set<int> ids = {1, 2, 3};
+    int result = require_single_task_id_impl(env, ids, dummy_class);
+    EXPECT_EQ(result, 0);
+    EXPECT_TRUE(g_throw_called);
+    EXPECT_EQ(g_throw_message, "multitasking currently not supported");
 }

@@ -157,6 +157,19 @@ static std::unordered_set<int> dispatch_tasks(server_context *ctx_server,
 }
 
 /**
+ * Asserts that exactly one task was created after dispatch and returns its ID.
+ * Returns 0 (with a JNI exception pending) if the count is not exactly 1.
+ *
+ * Used by requestCompletion and requestChatCompletion, which hand the task ID
+ * back to the Java caller for streaming consumption via receiveCompletionJson.
+ * Both functions are restricted to single-prompt, single-task invocations.
+ */
+static int require_single_task_id(JNIEnv *env,
+                                   const std::unordered_set<int> &task_ids) {
+    return require_single_task_id_impl(env, task_ids, c_llama_error);
+}
+
+/**
  * Convenience wrapper around recv_slot_task_result_impl (jni_server_helpers.hpp).
  * Caller must have already registered task_id with add_waiting_task_id() and
  * posted the task; this wrapper covers recv → check → return.
@@ -649,12 +662,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
-    if (task_ids.size() != 1) {
-        env->ThrowNew(c_llama_error, "multitasking currently not supported");
-        return 0;
-    }
-
-    return *task_ids.begin();
+    return require_single_task_id(env, task_ids);
 }
 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_releaseTask(JNIEnv *env, jobject obj, jint id_task) {
@@ -901,12 +909,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
-    if (task_ids.size() != 1) {
-        env->ThrowNew(c_llama_error, "multitasking currently not supported");
-        return 0;
-    }
-
-    return *task_ids.begin();
+    return require_single_task_id(env, task_ids);
 }
 
 JNIEXPORT jintArray JNICALL Java_de_kherud_llama_LlamaModel_encode(JNIEnv *env, jobject obj, jstring jprompt) {

@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <thread>
+#include <unordered_set>
 
 // Forward declaration — callers that need the full definition must include
 // server.hpp themselves.
@@ -80,4 +81,29 @@ struct jllama_context {
         return nullptr; // already deleted or never initialised — silent no-op
     }
     return reinterpret_cast<jllama_context *>(handle); // NOLINT(*-no-int-to-ptr)
+}
+
+// ---------------------------------------------------------------------------
+// require_single_task_id_impl
+//
+// Validates that exactly one task was created after dispatch and returns its
+// ID.  Returns 0 (with a JNI exception pending) when the count is not 1.
+//
+// Used by requestCompletion and requestChatCompletion, which hand the returned
+// ID back to the Java caller for streaming consumption via
+// receiveCompletionJson.  Both functions are restricted to single-prompt,
+// single-task invocations.
+//
+// On success: returns the single task id (> 0 in practice).
+// On failure: throws via JNI, returns 0.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline int require_single_task_id_impl(
+        JNIEnv *env,
+        const std::unordered_set<int> &task_ids,
+        jclass error_class) {
+    if (task_ids.size() != 1) {
+        env->ThrowNew(error_class, "multitasking currently not supported");
+        return 0;
+    }
+    return *task_ids.begin();
 }
