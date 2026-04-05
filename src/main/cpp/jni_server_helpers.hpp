@@ -11,6 +11,7 @@
 //   build_completion_tasks_impl  — tokenise and build a server_task vector
 //   collect_task_results_impl    — drain results from the response queue
 //   recv_slot_task_result_impl   — recv + check a single slot-action result
+//   append_task                  — construct and push a single server_task
 //
 // All parameters are explicit (no module-level globals) so each function can
 // be exercised in unit tests using local server objects and a mock JNIEnv.
@@ -31,6 +32,8 @@
 //   6. results_to_json_impl        — no dependencies on helpers above
 //   7. results_to_jstring_impl     — uses 2 + 6
 //   8. check_infill_support_impl   — no dependencies on helpers above
+//   9. rerank_results_to_json      — no dependencies on helpers above
+//  10. append_task                 — no dependencies on helpers above
 
 #include "jni.h"
 
@@ -236,6 +239,68 @@
 // Extracted from the 10-line compatibility block in handleInfill so it can
 // be unit-tested independently of the JNI dispatch layer.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// rerank_results_to_json
+//
+// Converts a collected vector of rerank task results to a JSON array.
+// Each element contains the original document text (looked up via the
+// result's "index" field), the index, and the relevance score.
+//
+// Pure computation — no JNI calls, no llama context required.
+// Unit-testable with any vector of server_task_result_ptr and strings.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline json rerank_results_to_json(
+        const std::vector<server_task_result_ptr> &results,
+        const std::vector<std::string>            &documents) {
+    json arr = json::array();
+    for (const auto &result : results) {
+        const auto out = result->to_json();
+        int   index = out["index"].get<int>();
+        float score = out["score"].get<float>();
+        arr.push_back({
+            {"document", documents[index]},
+            {"index",    index},
+            {"score",    score}
+        });
+    }
+    return arr;
+}
+
+// ---------------------------------------------------------------------------
+// append_task
+//
+// Constructs a server_task of the given type and appends it to `tasks`.
+// Captures the repeated 5–6-line block that appears in embed (single task),
+// handleEmbeddings (loop), and handleRerank (loop):
+//
+//   server_task task(type);
+//   task.id            = ctx_server->queue_tasks.get_new_id();
+//   task.index         = index;
+//   task.prompt_tokens = server_tokens(prompt_tokens, false);
+//   task.params.oaicompat = oaicompat;
+//   tasks.push_back(std::move(task));
+//
+// The caller is responsible for pre-computing `prompt_tokens` (e.g. via
+// format_rerank() for rerank tasks).  Taken by value because server_tokens
+// constructor requires a non-const lvalue reference.  `oaicompat` defaults
+// to NONE so the rerank call site needs no explicit argument.
+//
+// Unit-testable without JNI: takes only C++ objects, no JNIEnv calls.
+// ---------------------------------------------------------------------------
+inline void append_task(server_context           *ctx_server,
+                        std::vector<server_task> &tasks,
+                        server_task_type          type,
+                        llama_tokens              prompt_tokens,
+                        size_t                    index,
+                        oaicompat_type            oaicompat = OAICOMPAT_TYPE_NONE) {
+    server_task task(type);
+    task.id               = ctx_server->queue_tasks.get_new_id();
+    task.index            = index;
+    task.prompt_tokens    = server_tokens(prompt_tokens, false);
+    task.params.oaicompat = oaicompat;
+    tasks.push_back(std::move(task));
+}
+
 [[nodiscard]] inline bool check_infill_support_impl(JNIEnv            *env,
                                                      const llama_vocab *vocab,
                                                      jclass             error_class) {

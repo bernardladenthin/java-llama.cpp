@@ -457,6 +457,13 @@ void log_callback_trampoline(ggml_log_level level, const char *text, void *user_
 }
 } // namespace
 
+// Validates the server_context at every JNI entry point.  Declares `ctx_server`
+// in the caller's scope and returns the given sentinel (omit for void functions)
+// if the model is not loaded.
+#define REQUIRE_SERVER_CONTEXT(...) \
+    auto *ctx_server = get_server_context(env, obj); \
+    if (!ctx_server) return __VA_ARGS__
+
 /**
  * The VM calls JNI_OnLoad when the native library is loaded (for example, through `System.loadLibrary`).
  * `JNI_OnLoad` must return the JNI version needed by the native library.
@@ -688,11 +695,8 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
 
     llama_numa_init(params.numa);
 
-    LOG_INF("system info: n_threads = %d, n_threads_batch = %d, total_threads = %d\n", params.cpuparams.n_threads,
-            params.cpuparams_batch.n_threads, std::thread::hardware_concurrency());
-    LOG_INF("\n");
+    LOG_INF("build_info: %s\n", build_info.c_str());
     LOG_INF("%s\n", common_params_get_system_info(params).c_str());
-    LOG_INF("\n");
 
     std::atomic<server_state> state{SERVER_STATE_LOADING_MODEL};
 
@@ -763,8 +767,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
 }
 
 JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv *env, jobject obj, jstring jparams) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return 0;
+    REQUIRE_SERVER_CONTEXT(0);
 
     json data = parse_json_params(env, jparams);
 
@@ -786,15 +789,13 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
 }
 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_releaseTask(JNIEnv *env, jobject obj, jint id_task) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return;
+    REQUIRE_SERVER_CONTEXT();
     ctx_server->queue_results.remove_waiting_task_id(id_task);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(JNIEnv *env, jobject obj,
                                                                                jint id_task) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     server_task_result_ptr result = ctx_server->queue_results.recv(id_task);
 
@@ -815,8 +816,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(
 }
 
 JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env, jobject obj, jstring jprompt) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     if (!ctx_server->params_base.embedding) {
         env->ThrowNew(c_llama_error,
@@ -831,16 +831,7 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
     auto tokens = tokenize_mixed(ctx_server->vocab, prompt, true, true);
     std::vector<server_task> tasks;
 
-    server_task task = server_task(SERVER_TASK_TYPE_EMBEDDING);
-
-    task.id = ctx_server->queue_tasks.get_new_id();
-    task.index = 0;
-    task.prompt_tokens = server_tokens(tokens, false);
-
-    // OAI-compat
-    task.params.oaicompat = OAICOMPAT_TYPE_NONE;
-
-    tasks.push_back(std::move(task));
+    append_task(ctx_server, tasks, SERVER_TASK_TYPE_EMBEDDING, tokens, 0);
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
     const auto id_task = *task_ids.begin();
@@ -894,8 +885,7 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *env, jobject obj, jstring jprompt,
                                                                       jobjectArray documents) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     if (!ctx_server->params_base.embedding || ctx_server->params_base.pooling_type != LLAMA_POOLING_TYPE_RANK) {
         env->ThrowNew(c_llama_error,
@@ -917,44 +907,20 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
 
     tasks.reserve(tokenized_docs.size());
     for (size_t i = 0; i < tokenized_docs.size(); i++) {
-        auto task = server_task(SERVER_TASK_TYPE_RERANK);
-        task.id = ctx_server->queue_tasks.get_new_id();
-        task.index = i;
-        auto tokens = format_rerank(ctx_server->vocab, tokenized_query, tokenized_docs[i]);
-        task.prompt_tokens = server_tokens(tokens, false);
-        tasks.push_back(std::move(task));
+        append_task(ctx_server, tasks, SERVER_TASK_TYPE_RERANK,
+                    format_rerank(ctx_server->vocab, tokenized_query, tokenized_docs[i]), i);
     }
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
-    json results_json = json::array();
+    std::vector<server_task_result_ptr> results;
+    results.reserve(task_ids.size());
+    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
-    for (size_t i = 0; i < task_ids.size(); i++) {
-        server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
-        if (result->is_error()) {
-            ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-            env->ThrowNew(c_llama_error, get_result_error_message(result).c_str());
-            return nullptr;
-        }
-
-        const auto out_res = result->to_json();
-        int index = out_res["index"].get<int>();
-        float score = out_res["score"].get<float>();
-
-        results_json.push_back({
-            {"document", document_vector[index]},
-            {"index", index},
-            {"score", score}
-        });
-    }
-
-    ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-
-    return json_to_jstring(env, results_json);
+    return json_to_jstring(env, rerank_results_to_json(results, document_vector));
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *env, jobject obj, jstring jparams) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     json data = parse_json_params(env, jparams);
 
@@ -967,8 +933,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(JNIEnv *env, jobject obj,
                                                                                 jstring jparams) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     json body = parse_json_params(env, jparams);
 
@@ -987,8 +952,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
 
 JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNIEnv *env, jobject obj,
                                                                              jstring jparams) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return 0;
+    REQUIRE_SERVER_CONTEXT(0);
 
     json body = parse_json_params(env, jparams);
 
@@ -1007,8 +971,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
 }
 
 JNIEXPORT jintArray JNICALL Java_de_kherud_llama_LlamaModel_encode(JNIEnv *env, jobject obj, jstring jprompt) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     const std::string c_prompt = parse_jstring(env, jprompt);
 
@@ -1043,8 +1006,7 @@ static std::string detokenize(const server_context *ctx_server,
 
 JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv *env, jobject obj,
                                                                          jintArray java_tokens) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     const auto tokens = jint_array_to_tokens(env, java_tokens);
     return parse_jbytes(env, detokenize(ctx_server, tokens));
@@ -1078,8 +1040,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobje
 }
 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_cancelCompletion(JNIEnv *env, jobject obj, jint id_task) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return;
+    REQUIRE_SERVER_CONTEXT();
     std::unordered_set<int> id_tasks = {id_task};
     ctx_server->cancel_tasks(id_tasks);
     ctx_server->queue_results.remove_waiting_task_id(id_task);
@@ -1120,8 +1081,7 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_jsonSchemaToGrammar
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIEnv *env, jobject obj,
                                                                             jstring jparams) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     json data = parse_json_params(env, jparams);
 
@@ -1137,8 +1097,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIE
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(JNIEnv *env, jobject obj,
                                                                                jstring jparams) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     json body = parse_json_params(env, jparams);
 
@@ -1170,8 +1129,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *env, jobject obj, jstring jparams) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     if (!check_infill_support(env, ctx_server)) return nullptr;
 
@@ -1205,8 +1163,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEnv *env, jobject obj,
                                                                            jstring jparams, jboolean joaiCompat) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     if (!ctx_server->params_base.embedding) {
         env->ThrowNew(c_llama_error,
@@ -1259,34 +1216,19 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
     tasks.reserve(tokenized_prompts.size());
 
     for (size_t i = 0; i < tokenized_prompts.size(); i++) {
-        server_task task = server_task(SERVER_TASK_TYPE_EMBEDDING);
-
-        task.id = ctx_server->queue_tasks.get_new_id();
-        task.index = i;
-        task.prompt_tokens = server_tokens(tokenized_prompts[i], false);
-        task.params.oaicompat = oaicompat;
-
-        tasks.push_back(std::move(task));
+        append_task(ctx_server, tasks, SERVER_TASK_TYPE_EMBEDDING, tokenized_prompts[i], i, oaicompat);
     }
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
+    std::vector<server_task_result_ptr> results;
+    results.reserve(task_ids.size());
+    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
+
     json responses = json::array();
-
-    for (size_t i = 0; i < task_ids.size(); i++) {
-        server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
-
-        if (result->is_error()) {
-            ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-            std::string error_msg = result->to_json()["message"].get<std::string>();
-            env->ThrowNew(c_llama_error, error_msg.c_str());
-            return nullptr;
-        }
-
+    for (const auto &result : results) {
         responses.push_back(result->to_json());
     }
-
-    ctx_server->queue_results.remove_waiting_task_ids(task_ids);
 
     json root = oaicompat == OAICOMPAT_TYPE_EMBEDDING
                     ? format_embeddings_response_oaicompat(body, responses, use_base64)
@@ -1298,8 +1240,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleTokenize(JNIEnv *env, jobject obj, jstring jcontent,
                                                                          jboolean jaddSpecial,
                                                                          jboolean jwithPieces) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     const std::string content = parse_jstring(env, jcontent);
     const bool add_special = jaddSpecial;
@@ -1336,8 +1277,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleTokenize(JNIEnv 
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleDetokenize(JNIEnv *env, jobject obj,
                                                                            jintArray jtokens) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     const auto tokens = jint_array_to_tokens(env, jtokens);
     json data = format_detokenized_response(detokenize(ctx_server, tokens));
@@ -1347,8 +1287,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleDetokenize(JNIEn
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEnv *env, jobject obj, jint action,
                                                                            jint slotId, jstring jfilename) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return nullptr;
+    REQUIRE_SERVER_CONTEXT(nullptr);
 
     switch (action) {
     case 0: { // LIST — get slot info via metrics (priority post)
@@ -1379,8 +1318,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
 
 JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInference(JNIEnv *env, jobject obj,
                                                                                       jstring jconfig) {
-    auto *ctx_server = get_server_context(env, obj);
-    if (!ctx_server) return JNI_FALSE;
+    REQUIRE_SERVER_CONTEXT(JNI_FALSE);
 
     json config = parse_json_params(env, jconfig);
 
@@ -1393,23 +1331,18 @@ JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInfe
         ctx_server->slot_prompt_similarity = similarity;
     }
 
-    if (config.contains("n_threads")) {
-        int n_threads = config["n_threads"].get<int>();
-        if (n_threads <= 0) {
-            env->ThrowNew(c_llama_error, "n_threads must be greater than 0");
-            return JNI_FALSE;
+    auto apply_thread_count = [&](const char *key, int &target) -> bool {
+        if (!config.contains(key)) return true;
+        int v = config[key].get<int>();
+        if (v <= 0) {
+            env->ThrowNew(c_llama_error, (std::string(key) + " must be greater than 0").c_str());
+            return false;
         }
-        ctx_server->params_base.cpuparams.n_threads = n_threads;
-    }
-
-    if (config.contains("n_threads_batch")) {
-        int n_threads_batch = config["n_threads_batch"].get<int>();
-        if (n_threads_batch <= 0) {
-            env->ThrowNew(c_llama_error, "n_threads_batch must be greater than 0");
-            return JNI_FALSE;
-        }
-        ctx_server->params_base.cpuparams_batch.n_threads = n_threads_batch;
-    }
+        target = v;
+        return true;
+    };
+    if (!apply_thread_count("n_threads",       ctx_server->params_base.cpuparams.n_threads))       return JNI_FALSE;
+    if (!apply_thread_count("n_threads_batch", ctx_server->params_base.cpuparams_batch.n_threads)) return JNI_FALSE;
 
     return JNI_TRUE;
 }
