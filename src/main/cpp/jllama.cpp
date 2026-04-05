@@ -35,16 +35,6 @@ static constexpr int N_PARALLEL_DEFAULT = 1;
 
 // jllama_context is defined in jni_helpers.hpp.
 
-/**
- * Convenience wrapper: extracts and validates the server_context from the
- * Java-side model object using the module-level field-ID and error-class
- * globals.  Returns nullptr (with a JNI exception pending) when the model
- * is not loaded.
- */
-static server_context *get_server_context(JNIEnv *env, jobject obj) {
-    return get_server_context_impl(env, obj, f_model_pointer, c_llama_error);
-}
-
 JavaVM *g_vm = nullptr;
 
 // classes
@@ -101,6 +91,16 @@ jobject o_log_level_error = nullptr;
 jobject o_log_format_json = nullptr;
 jobject o_log_format_text = nullptr;
 jobject o_log_callback = nullptr;
+
+/**
+ * Convenience wrapper: extracts and validates the server_context from the
+ * Java-side model object using the module-level field-ID and error-class
+ * globals.  Returns nullptr (with a JNI exception pending) when the model
+ * is not loaded.
+ */
+static server_context *get_server_context(JNIEnv *env, jobject obj) {
+    return get_server_context_impl(env, obj, f_model_pointer, c_llama_error);
+}
 
 /**
  * Convert a Java string to a std::string
