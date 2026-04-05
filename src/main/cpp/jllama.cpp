@@ -655,14 +655,20 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
     jctx->vocab_only = vocab_only;
     auto *ctx_server = jctx->server;
 
+    // Shared cleanup for load failures: tear down the context and throw.
+    // Used by both the vocab-only and full-model error paths below.
+    auto fail_load = [&](const char *msg) {
+        delete ctx_server;
+        delete jctx;
+        llama_backend_free();
+        env->ThrowNew(c_llama_error, msg);
+    };
+
     // Vocab-only mode: load just the tokenizer, skip inference setup.
     if (vocab_only) {
         SRV_INF("loading tokenizer from '%s'\n", params.model.path.c_str());
         if (!ctx_server->load_tokenizer(params)) {
-            delete ctx_server;
-            delete jctx;
-            llama_backend_free();
-            env->ThrowNew(c_llama_error, "could not load tokenizer from given file path");
+            fail_load("could not load tokenizer from given file path");
             return;
         }
         env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(jctx));
@@ -693,10 +699,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
 
     // load the model
     if (!ctx_server->load_model(params)) {
-        delete ctx_server;
-        delete jctx;
-        llama_backend_free();
-        env->ThrowNew(c_llama_error, "could not load model from given file path");
+        fail_load("could not load model from given file path");
         return;
     }
 
