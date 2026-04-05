@@ -849,21 +849,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
     // Collect all results (blocking)
     std::vector<server_task_result_ptr> results;
     results.reserve(task_ids.size());
-
-    for (size_t i = 0; i < task_ids.size(); i++) {
-        server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
-
-        if (result->is_error()) {
-            ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-            std::string error_msg = result->to_json()["message"].get<std::string>();
-            env->ThrowNew(c_llama_error, error_msg.c_str());
-            return nullptr;
-        }
-
-        results.push_back(std::move(result));
-    }
-
-    ctx_server->queue_results.remove_waiting_task_ids(task_ids);
+    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
     // Build response JSON
     json response;
