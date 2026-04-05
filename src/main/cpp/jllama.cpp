@@ -157,6 +157,25 @@ static std::unordered_set<int> dispatch_tasks(server_context *ctx_server,
 }
 
 /**
+ * Register a single task for result waiting, post it, and return its ID.
+ *
+ * Variant of dispatch_tasks for one-shot tasks (slot actions) that are
+ * dispatched individually rather than in a batch.  The `priority` flag maps
+ * to the second argument of queue_tasks.post() — set true for metrics/LIST
+ * queries that must jump ahead of normal completion work.
+ *
+ * After the call, `task` is in a valid but unspecified state (moved-from).
+ */
+static int dispatch_single_task(server_context *ctx_server,
+                                 server_task &task,
+                                 bool priority = false) {
+    const int tid = task.id;
+    ctx_server->queue_results.add_waiting_task_id(tid);
+    ctx_server->queue_tasks.post(std::move(task), priority);
+    return tid;
+}
+
+/**
  * Asserts that exactly one task was created after dispatch and returns its ID.
  * Returns 0 (with a JNI exception pending) if the count is not exactly 1.
  *
@@ -1294,14 +1313,11 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
     if (!ctx_server) return nullptr;
 
     switch (action) {
-    case 0: { // LIST — get slot info via metrics
+    case 0: { // LIST — get slot info via metrics (priority post)
         server_task task(SERVER_TASK_TYPE_METRICS);
         task.id = ctx_server->queue_tasks.get_new_id();
-        ctx_server->queue_results.add_waiting_task_id(task.id);
-        int id = task.id;
-        ctx_server->queue_tasks.post(std::move(task), true);
-
-        return recv_slot_task_result(env, ctx_server, id);
+        return recv_slot_task_result(env, ctx_server,
+                                     dispatch_single_task(ctx_server, task, /*priority=*/true));
     }
     case 1: { // SAVE
         std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
@@ -1309,18 +1325,12 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
             env->ThrowNew(c_llama_error, "Filename is required for slot save");
             return nullptr;
         }
-
         server_task task(SERVER_TASK_TYPE_SLOT_SAVE);
         task.id = ctx_server->queue_tasks.get_new_id();
         task.slot_action.id_slot = slotId;
         task.slot_action.filename = filename;
         task.slot_action.filepath = filename;
-
-        int tid = task.id;
-        ctx_server->queue_results.add_waiting_task_id(tid);
-        ctx_server->queue_tasks.post(std::move(task));
-
-        return recv_slot_task_result(env, ctx_server, tid);
+        return recv_slot_task_result(env, ctx_server, dispatch_single_task(ctx_server, task));
     }
     case 2: { // RESTORE
         std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
@@ -1328,29 +1338,18 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
             env->ThrowNew(c_llama_error, "Filename is required for slot restore");
             return nullptr;
         }
-
         server_task task(SERVER_TASK_TYPE_SLOT_RESTORE);
         task.id = ctx_server->queue_tasks.get_new_id();
         task.slot_action.id_slot = slotId;
         task.slot_action.filename = filename;
         task.slot_action.filepath = filename;
-
-        int tid = task.id;
-        ctx_server->queue_results.add_waiting_task_id(tid);
-        ctx_server->queue_tasks.post(std::move(task));
-
-        return recv_slot_task_result(env, ctx_server, tid);
+        return recv_slot_task_result(env, ctx_server, dispatch_single_task(ctx_server, task));
     }
     case 3: { // ERASE
         server_task task(SERVER_TASK_TYPE_SLOT_ERASE);
         task.id = ctx_server->queue_tasks.get_new_id();
         task.slot_action.id_slot = slotId;
-
-        int tid = task.id;
-        ctx_server->queue_results.add_waiting_task_id(tid);
-        ctx_server->queue_tasks.post(std::move(task));
-
-        return recv_slot_task_result(env, ctx_server, tid);
+        return recv_slot_task_result(env, ctx_server, dispatch_single_task(ctx_server, task));
     }
     default:
         env->ThrowNew(c_llama_error, "Invalid slot action");
