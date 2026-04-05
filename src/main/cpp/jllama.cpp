@@ -831,16 +831,7 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
     auto tokens = tokenize_mixed(ctx_server->vocab, prompt, true, true);
     std::vector<server_task> tasks;
 
-    server_task task = server_task(SERVER_TASK_TYPE_EMBEDDING);
-
-    task.id = ctx_server->queue_tasks.get_new_id();
-    task.index = 0;
-    task.prompt_tokens = server_tokens(tokens, false);
-
-    // OAI-compat
-    task.params.oaicompat = OAICOMPAT_TYPE_NONE;
-
-    tasks.push_back(std::move(task));
+    append_task(ctx_server, tasks, SERVER_TASK_TYPE_EMBEDDING, tokens, 0);
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
     const auto id_task = *task_ids.begin();
@@ -917,12 +908,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
 
     tasks.reserve(tokenized_docs.size());
     for (size_t i = 0; i < tokenized_docs.size(); i++) {
-        auto task = server_task(SERVER_TASK_TYPE_RERANK);
-        task.id = ctx_server->queue_tasks.get_new_id();
-        task.index = i;
-        auto tokens = format_rerank(ctx_server->vocab, tokenized_query, tokenized_docs[i]);
-        task.prompt_tokens = server_tokens(tokens, false);
-        tasks.push_back(std::move(task));
+        append_task(ctx_server, tasks, SERVER_TASK_TYPE_RERANK,
+                    format_rerank(ctx_server->vocab, tokenized_query, tokenized_docs[i]), i);
     }
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
@@ -1259,14 +1246,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
     tasks.reserve(tokenized_prompts.size());
 
     for (size_t i = 0; i < tokenized_prompts.size(); i++) {
-        server_task task = server_task(SERVER_TASK_TYPE_EMBEDDING);
-
-        task.id = ctx_server->queue_tasks.get_new_id();
-        task.index = i;
-        task.prompt_tokens = server_tokens(tokenized_prompts[i], false);
-        task.params.oaicompat = oaicompat;
-
-        tasks.push_back(std::move(task));
+        append_task(ctx_server, tasks, SERVER_TASK_TYPE_EMBEDDING, tokenized_prompts[i], i, oaicompat);
     }
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
