@@ -932,6 +932,21 @@ JNIEXPORT jintArray JNICALL Java_de_kherud_llama_LlamaModel_encode(JNIEnv *env, 
     return java_tokens;
 }
 
+/**
+ * Detokenise a token sequence to a UTF-8 string, dispatching on whether the
+ * context is vocab-only (no llama_context available) or full.
+ *
+ * Both decodeBytes and handleDetokenize repeat this identical branch; placing
+ * the helper immediately above keeps the three related blocks adjacent.
+ */
+static std::string detokenize(const server_context *ctx_server,
+                               const std::vector<llama_token> &tokens) {
+    if (!ctx_server->is_vocab_only()) {
+        return tokens_to_str(ctx_server->ctx, tokens.cbegin(), tokens.cend());
+    }
+    return tokens_to_str(ctx_server->vocab, tokens.cbegin(), tokens.cend());
+}
+
 JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv *env, jobject obj,
                                                                          jintArray java_tokens) {
     auto *ctx_server = get_server_context(env, obj);
@@ -941,17 +956,9 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv 
     jint *elements = env->GetIntArrayElements(java_tokens, nullptr);
     std::vector<llama_token> tokens(elements, elements + length);
 
-    std::string text;
-    if (!ctx_server->is_vocab_only()) {
-        text = tokens_to_str(ctx_server->ctx, tokens.cbegin(), tokens.cend());
-    } else {
-        // vocab-only mode: detokenize using vocabulary directly
-        text = tokens_to_str(ctx_server->vocab, tokens.cbegin(), tokens.cend());
-    }
-
     env->ReleaseIntArrayElements(java_tokens, elements, 0);
 
-    return parse_jbytes(env, text);
+    return parse_jbytes(env, detokenize(ctx_server, tokens));
 }
 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobject obj) {
@@ -1275,14 +1282,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleDetokenize(JNIEn
     std::vector<llama_token> tokens(elements, elements + length);
     env->ReleaseIntArrayElements(jtokens, elements, JNI_ABORT);
 
-    std::string content;
-    if (!ctx_server->is_vocab_only()) {
-        content = tokens_to_str(ctx_server->ctx, tokens.cbegin(), tokens.cend());
-    } else {
-        content = tokens_to_str(ctx_server->vocab, tokens.cbegin(), tokens.cend());
-    }
-
-    json data = format_detokenized_response(content);
+    json data = format_detokenized_response(detokenize(ctx_server, tokens));
 
     std::string response_str = data.dump();
     return env->NewStringUTF(response_str.c_str());
