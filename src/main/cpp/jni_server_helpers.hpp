@@ -253,15 +253,16 @@
 //   tasks.push_back(std::move(task));
 //
 // The caller is responsible for pre-computing `prompt_tokens` (e.g. via
-// format_rerank() for rerank tasks).  `oaicompat` defaults to NONE so the
-// rerank call site needs no explicit argument.
+// format_rerank() for rerank tasks).  Taken by value because server_tokens
+// constructor requires a non-const lvalue reference.  `oaicompat` defaults
+// to NONE so the rerank call site needs no explicit argument.
 //
 // Unit-testable without JNI: takes only C++ objects, no JNIEnv calls.
 // ---------------------------------------------------------------------------
 inline void append_task(server_context           *ctx_server,
                         std::vector<server_task> &tasks,
                         server_task_type          type,
-                        const llama_tokens       &prompt_tokens,
+                        llama_tokens              prompt_tokens,
                         size_t                    index,
                         oaicompat_type            oaicompat = OAICOMPAT_TYPE_NONE) {
     server_task task(type);
