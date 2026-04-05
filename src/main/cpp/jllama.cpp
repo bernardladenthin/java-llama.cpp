@@ -3,6 +3,7 @@
 #include "arg.h"
 #include "json-schema-to-grammar.h"
 #include "jni_helpers.hpp"
+#include "jni_server_helpers.hpp"
 #include "llama.h"
 #include "log.h"
 #include "nlohmann/json.hpp"
@@ -123,31 +124,14 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
 }
 
 /**
- * Collects results for all task_ids from the server result queue (blocking).
- *
- * Iterates over task_ids, receiving one result per id.  If any result carries
- * an error the remaining waiting ids are cleaned up, a JNI exception is thrown,
- * and the function returns false.  The caller must return nullptr immediately.
- *
- * On success: all results are appended to `out` and true is returned.
- * On error:   JNI exception is pending, `out` is in a partial state, false returned.
+ * Convenience wrapper around collect_task_results_impl (jni_server_helpers.hpp)
+ * that supplies the module-level globals so call sites need no boilerplate.
  */
 static bool collect_task_results(JNIEnv *env,
                                   server_context *ctx_server,
                                   const std::unordered_set<int> &task_ids,
                                   std::vector<server_task_result_ptr> &out) {
-    for (size_t i = 0; i < task_ids.size(); i++) {
-        server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
-        if (result->is_error()) {
-            ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-            std::string error_msg = result->to_json()["message"].get<std::string>();
-            env->ThrowNew(c_llama_error, error_msg.c_str());
-            return false;
-        }
-        out.push_back(std::move(result));
-    }
-    ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-    return true;
+    return collect_task_results_impl(env, ctx_server->queue_results, task_ids, out, c_llama_error);
 }
 
 /**

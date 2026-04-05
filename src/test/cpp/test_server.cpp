@@ -17,22 +17,7 @@
 //   - stop_type_to_str  (enum → string mapping for all stop types)
 //   - oaicompat_finish_reason  (extracted helper: stop_type + tool_calls → OAI finish_reason)
 //
-// NOT covered here — collect_task_results() (jllama.cpp):
-//   collect_task_results() lives in jllama.cpp's anonymous namespace and
-//   cannot be reached from a separate compilation unit without extracting it
-//   to a header.  Moving it to a header would drag server.hpp (and llama.h)
-//   into jni_helpers.hpp, breaking its deliberately minimal include surface.
-//
-//   Coverage instead comes from two directions:
-//     - Success path: any LlamaModelTest Java integration test that calls
-//       handleCompletions / handleCompletionsOai / handleInfill exercises the
-//       loop and the remove_waiting_task_ids cleanup.
-//     - Error path: the Java integration tests in ErrorHandlingTest verify
-//       that malformed requests propagate a LlamaException through the
-//       refactored catch/throw_invalid_request path that guards the call site.
-//       The result->is_error() branch (server-side error) requires a live
-//       inference run that returns an error result, which is not feasible
-//       in a unit test without a full model + server stack.
+// collect_task_results_impl() is tested in test_jni_server_helpers.cpp.
 
 #include <gtest/gtest.h>
 
