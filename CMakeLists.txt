@@ -206,12 +206,15 @@ if(BUILD_TESTING)
     add_executable(jllama_test
         src/test/cpp/test_utils.cpp
         src/test/cpp/test_server.cpp
+        src/test/cpp/test_jni_helpers.cpp
     )
 
     target_include_directories(jllama_test PRIVATE
         src/main/cpp
         # mtmd.h is not always propagated transitively — add it explicitly
         ${llama.cpp_SOURCE_DIR}/tools/mtmd
+        # jni.h / jni_md.h needed by jni_helpers.hpp (mock JNI tests, no JVM required)
+        ${JNI_INCLUDE_DIRS}
     )
     target_link_libraries(jllama_test PRIVATE common mtmd llama nlohmann_json GTest::gtest_main)
     target_compile_features(jllama_test PRIVATE cxx_std_17)
