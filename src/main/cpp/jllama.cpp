@@ -269,7 +269,6 @@ static int require_single_task_id(JNIEnv *env,
         server_context *ctx_server,
         const std::unordered_set<int> &task_ids) {
     std::vector<server_task_result_ptr> results;
-    results.reserve(task_ids.size());
     if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
     return results_to_jstring(env, results);
 }
@@ -913,7 +912,6 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
     std::vector<server_task_result_ptr> results;
-    results.reserve(task_ids.size());
     if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
     return json_to_jstring(env, rerank_results_to_json(results, document_vector));
@@ -1222,7 +1220,6 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
     std::vector<server_task_result_ptr> results;
-    results.reserve(task_ids.size());
     if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
     json responses = json::array();
