@@ -919,19 +919,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
     results.reserve(task_ids.size());
     if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
-    json results_json = json::array();
-    for (const auto &result : results) {
-        const auto out_res = result->to_json();
-        int index = out_res["index"].get<int>();
-        float score = out_res["score"].get<float>();
-        results_json.push_back({
-            {"document", document_vector[index]},
-            {"index", index},
-            {"score", score}
-        });
-    }
-
-    return json_to_jstring(env, results_json);
+    return json_to_jstring(env, rerank_results_to_json(results, document_vector));
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *env, jobject obj, jstring jparams) {
