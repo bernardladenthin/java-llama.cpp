@@ -172,3 +172,20 @@
     std::string s = response.dump();
     return env->NewStringUTF(s.c_str());
 }
+
+// ---------------------------------------------------------------------------
+// json_to_jstring_impl
+//
+// Serialises any json value to a JNI string via dump() + NewStringUTF.
+// Extracted from the repeated two-line pattern:
+//
+//   std::string response_str = some_json.dump();
+//   return env->NewStringUTF(response_str.c_str());
+//
+// Used by receiveCompletionJson, handleRerank, handleEmbeddings,
+// handleTokenize, and handleDetokenize.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline jstring json_to_jstring_impl(JNIEnv *env, const json &j) {
+    std::string s = j.dump();
+    return env->NewStringUTF(s.c_str());
+}

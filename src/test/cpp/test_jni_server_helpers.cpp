@@ -399,3 +399,47 @@ TEST_F(CollectResultsFixture, ResultsToJstring_EmptyVector_ReturnsEmptyArray) {
     EXPECT_TRUE(parsed.is_array());
     EXPECT_TRUE(parsed.empty());
 }
+
+// ============================================================
+// Tests for json_to_jstring_impl
+//
+// Verifies that any json value is serialised correctly via
+// dump() + NewStringUTF.  The stub captures the string so tests
+// can round-trip parse it.
+// ============================================================
+
+TEST_F(CollectResultsFixture, JsonToJstring_Object_RoundTrips) {
+    json j = {{"key", "value"}, {"n", 42}};
+
+    jstring js = json_to_jstring_impl(env, j);
+
+    EXPECT_NE(js, nullptr);
+    EXPECT_FALSE(g_new_string_utf_value.empty());
+    json parsed = json::parse(g_new_string_utf_value);
+    EXPECT_TRUE(parsed.is_object());
+    EXPECT_EQ(parsed.value("key", ""), "value");
+    EXPECT_EQ(parsed.value("n", 0), 42);
+}
+
+TEST_F(CollectResultsFixture, JsonToJstring_Array_RoundTrips) {
+    json j = json::array({1, 2, 3});
+
+    jstring js = json_to_jstring_impl(env, j);
+
+    EXPECT_NE(js, nullptr);
+    json parsed = json::parse(g_new_string_utf_value);
+    EXPECT_TRUE(parsed.is_array());
+    ASSERT_EQ(parsed.size(), 3u);
+    EXPECT_EQ(parsed[0], 1);
+    EXPECT_EQ(parsed[2], 3);
+}
+
+TEST_F(CollectResultsFixture, JsonToJstring_ReturnsSentinelFromStub) {
+    // The mock NewStringUTF returns the 0xBEEF sentinel — verify the
+    // function propagates it unchanged so callers get a non-null jstring.
+    json j = {{"ok", true}};
+
+    jstring js = json_to_jstring_impl(env, j);
+
+    EXPECT_EQ(js, reinterpret_cast<jstring>(0xBEEF));
+}

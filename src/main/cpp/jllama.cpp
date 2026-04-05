@@ -242,6 +242,14 @@ static int require_single_task_id(JNIEnv *env,
 }
 
 /**
+ * Convenience wrapper around json_to_jstring_impl (jni_server_helpers.hpp).
+ * Serialises any json value to a JNI string via dump() + NewStringUTF.
+ */
+[[nodiscard]] static jstring json_to_jstring(JNIEnv *env, const json &j) {
+    return json_to_jstring_impl(env, j);
+}
+
+/**
  * Convert a Java string to a std::string
  */
 std::string parse_jstring(JNIEnv *env, jstring java_string) {
@@ -728,8 +736,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(
         ctx_server->queue_results.remove_waiting_task_id(id_task);
     }
 
-    std::string response_str = response.dump();
-    return env->NewStringUTF(response_str.c_str());
+    return json_to_jstring(env, response);
 }
 
 JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env, jobject obj, jstring jprompt) {
@@ -869,8 +876,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
 
     ctx_server->queue_results.remove_waiting_task_ids(task_ids);
 
-    std::string response_str = results_json.dump();
-    return env->NewStringUTF(response_str.c_str());
+    return json_to_jstring(env, results_json);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *env, jobject obj, jstring jparams) {
@@ -1248,8 +1254,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
                     ? format_embeddings_response_oaicompat(body, responses, use_base64)
                     : json(responses);
 
-    std::string response_str = root.dump();
-    return env->NewStringUTF(response_str.c_str());
+    return json_to_jstring(env, root);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleTokenize(JNIEnv *env, jobject obj, jstring jcontent,
@@ -1288,8 +1293,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleTokenize(JNIEnv 
 
     json data = format_tokenizer_response(tokens_response);
 
-    std::string response_str = data.dump();
-    return env->NewStringUTF(response_str.c_str());
+    return json_to_jstring(env, data);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleDetokenize(JNIEnv *env, jobject obj,
@@ -1304,8 +1308,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleDetokenize(JNIEn
 
     json data = format_detokenized_response(detokenize(ctx_server, tokens));
 
-    std::string response_str = data.dump();
-    return env->NewStringUTF(response_str.c_str());
+    return json_to_jstring(env, data);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEnv *env, jobject obj, jint action,
