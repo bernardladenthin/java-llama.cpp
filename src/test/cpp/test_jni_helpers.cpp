@@ -337,3 +337,39 @@ TEST_F(ArrayFixture, JintArrayToTokens_ReleasesWithAbortFlag) {
     EXPECT_EQ(g_release_mode, JNI_ABORT)
         << "must use JNI_ABORT (no writeback) for read-only array access";
 }
+
+// ============================================================
+// Tests for require_json_field_impl()
+//
+// Uses the ThrowNew stub from MockJniFixture to verify that the
+// function throws (or does not throw) correctly.
+// ============================================================
+
+TEST_F(MockJniFixture, RequireJsonField_PresentField_ReturnsTrueNoThrow) {
+    nlohmann::json data = {{"input_prefix", "hello"}, {"other", 1}};
+
+    bool ok = require_json_field_impl(env, data, "input_prefix", dummy_class);
+
+    EXPECT_TRUE(ok);
+    EXPECT_FALSE(g_throw_called);
+}
+
+TEST_F(MockJniFixture, RequireJsonField_MissingField_ReturnsFalseAndThrows) {
+    nlohmann::json data = {{"other", 1}};
+
+    bool ok = require_json_field_impl(env, data, "input_prefix", dummy_class);
+
+    EXPECT_FALSE(ok);
+    EXPECT_TRUE(g_throw_called);
+    EXPECT_EQ(g_throw_message, "\"input_prefix\" is required");
+}
+
+TEST_F(MockJniFixture, RequireJsonField_EmptyJson_ReturnsFalseAndThrows) {
+    nlohmann::json data = nlohmann::json::object();
+
+    bool ok = require_json_field_impl(env, data, "input_suffix", dummy_class);
+
+    EXPECT_FALSE(ok);
+    EXPECT_TRUE(g_throw_called);
+    EXPECT_EQ(g_throw_message, "\"input_suffix\" is required");
+}

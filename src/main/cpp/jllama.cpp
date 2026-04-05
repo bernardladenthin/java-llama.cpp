@@ -301,6 +301,15 @@ static json parse_json_params(JNIEnv *env, jstring jparams) {
 }
 
 /**
+ * Convenience wrapper around require_json_field_impl (jni_helpers.hpp).
+ * Returns false and throws if `field` is absent from `data`.
+ */
+[[nodiscard]] static bool require_json_field(JNIEnv *env, const json &data,
+                                              const char *field) {
+    return require_json_field_impl(env, data, field, c_llama_error);
+}
+
+/**
  * Validates `jfilename`, builds a SAVE or RESTORE slot task, dispatches it,
  * and returns the result as a jstring.  Shared by the SAVE (case 1) and
  * RESTORE (case 2) branches of handleSlotAction, which are identical except
@@ -1168,14 +1177,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
 
     json data = parse_json_params(env, jparams);
 
-    if (!data.contains("input_prefix")) {
-        env->ThrowNew(c_llama_error, "\"input_prefix\" is required");
-        return nullptr;
-    }
-    if (!data.contains("input_suffix")) {
-        env->ThrowNew(c_llama_error, "\"input_suffix\" is required");
-        return nullptr;
-    }
+    if (!require_json_field(env, data, "input_prefix")) return nullptr;
+    if (!require_json_field(env, data, "input_suffix")) return nullptr;
 
     json input_extra = json_value(data, "input_extra", json::array());
     data["input_extra"] = input_extra;

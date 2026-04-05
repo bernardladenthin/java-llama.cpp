@@ -9,8 +9,10 @@
 // the function is self-contained and unit-testable with mock JNI environments.
 
 #include "jni.h"
+#include "nlohmann/json.hpp"
 
 #include <atomic>
+#include <string>
 #include <thread>
 #include <unordered_set>
 
@@ -106,6 +108,30 @@ struct jllama_context {
         return 0;
     }
     return *task_ids.begin();
+}
+
+// ---------------------------------------------------------------------------
+// require_json_field_impl
+//
+// Checks that `data` contains the given key.  Returns true if present.
+// On missing key: throws "<field> is required" via JNI and returns false.
+//
+// Extracted from the repeated pattern in handleInfill:
+//   if (!data.contains("input_prefix")) { ThrowNew(...); return nullptr; }
+//   if (!data.contains("input_suffix")) { ThrowNew(...); return nullptr; }
+//
+// Parameters are explicit so the function can be unit-tested without a real JVM.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline bool require_json_field_impl(JNIEnv            *env,
+                                                   const nlohmann::json &data,
+                                                   const char        *field,
+                                                   jclass             error_class) {
+    if (data.contains(field)) {
+        return true;
+    }
+    const std::string msg = std::string("\"") + field + "\" is required";
+    env->ThrowNew(error_class, msg.c_str());
+    return false;
 }
 
 // ---------------------------------------------------------------------------
