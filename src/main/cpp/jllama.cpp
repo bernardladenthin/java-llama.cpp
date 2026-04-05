@@ -1250,18 +1250,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleTokenize(JNIEnv 
     if (with_pieces) {
         for (const auto &token : tokens) {
             std::string piece = common_token_to_piece(ctx_server->ctx, token);
-            json piece_json;
-
-            if (is_valid_utf8(piece)) {
-                piece_json = piece;
-            } else {
-                piece_json = json::array();
-                for (unsigned char c : piece) {
-                    piece_json.push_back(static_cast<int>(c));
-                }
-            }
-
-            tokens_response.push_back({{"id", token}, {"piece", piece_json}});
+            tokens_response.push_back({{"id", token}, {"piece", token_piece_value(piece)}});
         }
     } else {
         tokens_response = tokens;
