@@ -136,6 +136,27 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
 }
 
 /**
+ * Register all tasks for result waiting, post them to the task queue, and
+ * return the set of task IDs.
+ *
+ * This covers the repeated three-line pattern used by every batch dispatch
+ * point (completion, chat, infill, embedding, rerank):
+ *
+ *   ctx_server->queue_results.add_waiting_tasks(tasks);
+ *   auto task_ids = server_task::get_list_id(tasks);
+ *   ctx_server->queue_tasks.post(std::move(tasks));
+ *
+ * After the call, `tasks` is in a valid but unspecified state (moved-from).
+ */
+static std::unordered_set<int> dispatch_tasks(server_context *ctx_server,
+                                               std::vector<server_task> &tasks) {
+    ctx_server->queue_results.add_waiting_tasks(tasks);
+    auto task_ids = server_task::get_list_id(tasks);
+    ctx_server->queue_tasks.post(std::move(tasks));
+    return task_ids;
+}
+
+/**
  * Convenience wrapper around recv_slot_task_result_impl (jni_server_helpers.hpp).
  * Caller must have already registered task_id with add_waiting_task_id() and
  * posted the task; this wrapper covers recv → check → return.
@@ -616,10 +637,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
     if (!build_completion_tasks(env, ctx_server, data, completion_id,
                                  type, OAICOMPAT_TYPE_NONE, tasks)) return 0;
 
-    ctx_server->queue_results.add_waiting_tasks(tasks);
-    const auto task_ids = server_task::get_list_id(tasks);
-
-    ctx_server->queue_tasks.post(std::move(tasks));
+    const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
     if (task_ids.size() != 1) {
         env->ThrowNew(c_llama_error, "multitasking currently not supported");
@@ -688,10 +706,7 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
 
     tasks.push_back(std::move(task));
 
-    ctx_server->queue_results.add_waiting_tasks(tasks);
-    std::unordered_set<int> task_ids = server_task::get_list_id(tasks);
-
-    ctx_server->queue_tasks.post(std::move(tasks));
+    const auto task_ids = dispatch_tasks(ctx_server, tasks);
     const auto id_task = *task_ids.begin();
     json responses = json::array();
 
@@ -778,10 +793,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
         task.prompt_tokens = server_tokens(tokens, false);
         tasks.push_back(std::move(task));
     }
-    ctx_server->queue_results.add_waiting_tasks(tasks);
-    std::unordered_set<int> task_ids = server_task::get_list_id(tasks);
-
-    ctx_server->queue_tasks.post(std::move(tasks));
+    const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
     json results_json = json::array();
 
@@ -848,9 +860,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
     if (!build_completion_tasks(env, ctx_server, data, completion_id,
                                  SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_CHAT, tasks)) return nullptr;
 
-    ctx_server->queue_results.add_waiting_tasks(tasks);
-    const auto task_ids = server_task::get_list_id(tasks);
-    ctx_server->queue_tasks.post(std::move(tasks));
+    const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
     // Collect all results (blocking)
     std::vector<server_task_result_ptr> results;
@@ -895,9 +905,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
     if (!build_completion_tasks(env, ctx_server, data, completion_id,
                                  SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_NONE, tasks)) return 0;
 
-    ctx_server->queue_results.add_waiting_tasks(tasks);
-    const auto task_ids = server_task::get_list_id(tasks);
-    ctx_server->queue_tasks.post(std::move(tasks));
+    const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
     if (task_ids.size() != 1) {
         env->ThrowNew(c_llama_error, "multitasking currently not supported");
@@ -1029,9 +1037,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIE
     if (!build_completion_tasks(env, ctx_server, data, completion_id,
                                  SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_NONE, tasks)) return nullptr;
 
-    ctx_server->queue_results.add_waiting_tasks(tasks);
-    const auto task_ids = server_task::get_list_id(tasks);
-    ctx_server->queue_tasks.post(std::move(tasks));
+    const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
     // Collect all results (blocking)
     std::vector<server_task_result_ptr> results;
@@ -1073,9 +1079,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
     if (!build_completion_tasks(env, ctx_server, data, completion_id,
                                  SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_COMPLETION, tasks)) return nullptr;
 
-    ctx_server->queue_results.add_waiting_tasks(tasks);
-    const auto task_ids = server_task::get_list_id(tasks);
-    ctx_server->queue_tasks.post(std::move(tasks));
+    const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
     std::vector<server_task_result_ptr> results;
     results.reserve(task_ids.size());
@@ -1144,9 +1148,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
     if (!build_completion_tasks(env, ctx_server, data, completion_id,
                                  SERVER_TASK_TYPE_INFILL, OAICOMPAT_TYPE_NONE, tasks)) return nullptr;
 
-    ctx_server->queue_results.add_waiting_tasks(tasks);
-    const auto task_ids = server_task::get_list_id(tasks);
-    ctx_server->queue_tasks.post(std::move(tasks));
+    const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
     std::vector<server_task_result_ptr> results;
     results.reserve(task_ids.size());
@@ -1232,13 +1234,11 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
         tasks.push_back(std::move(task));
     }
 
-    ctx_server->queue_results.add_waiting_tasks(tasks);
-    std::unordered_set<int> task_ids = server_task::get_list_id(tasks);
-    ctx_server->queue_tasks.post(std::move(tasks));
+    const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
     json responses = json::array();
 
-    for (size_t i = 0; i < tasks.size(); i++) {
+    for (size_t i = 0; i < task_ids.size(); i++) {
         server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
 
         if (result->is_error()) {
