@@ -143,33 +143,43 @@
 }
 
 // ---------------------------------------------------------------------------
-// results_to_jstring_impl
+// results_to_json_impl
 //
-// Serialises a vector of task results to a jstring.
+// Converts a vector of task results to a json value without touching JNI.
 //
 // When there is exactly one result, the top-level JSON is that result's object
 // directly.  When there are multiple results, they are wrapped in a JSON array.
 // This mirrors the OpenAI API convention used by handleCompletions,
 // handleCompletionsOai, handleChatCompletions, and handleInfill.
 //
-// Parameters are passed explicitly so the function is testable without a real
-// JVM.  The caller is responsible for checking that `results` is non-empty
-// before calling (an empty vector produces an empty JSON array).
+// Separated from results_to_jstring_impl so the construction logic is
+// unit-testable without any JNI mock.  The caller is responsible for checking
+// that `results` is non-empty before calling (an empty vector produces an
+// empty JSON array).
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline json results_to_json_impl(
+        const std::vector<server_task_result_ptr> &results) {
+    if (results.size() == 1) {
+        return results[0]->to_json();
+    }
+    json arr = json::array();
+    for (const auto &res : results) {
+        arr.push_back(res->to_json());
+    }
+    return arr;
+}
+
+// ---------------------------------------------------------------------------
+// results_to_jstring_impl
+//
+// Serialises a vector of task results to a jstring by delegating JSON
+// construction to results_to_json_impl and serialisation to
+// json_to_jstring_impl.
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline jstring results_to_jstring_impl(
         JNIEnv *env,
         const std::vector<server_task_result_ptr> &results) {
-    json response;
-    if (results.size() == 1) {
-        response = results[0]->to_json();
-    } else {
-        response = json::array();
-        for (const auto &res : results) {
-            response.push_back(res->to_json());
-        }
-    }
-    std::string s = response.dump();
-    return env->NewStringUTF(s.c_str());
+    return json_to_jstring_impl(env, results_to_json_impl(results));
 }
 
 // ---------------------------------------------------------------------------

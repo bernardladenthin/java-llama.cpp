@@ -401,6 +401,44 @@ TEST_F(CollectResultsFixture, ResultsToJstring_EmptyVector_ReturnsEmptyArray) {
 }
 
 // ============================================================
+// Tests for results_to_json_impl
+//
+// Pure-logic counterpart to results_to_jstring_impl — no JNI needed.
+// ============================================================
+
+TEST(ResultsToJsonImpl, SingleResult_ReturnsObjectDirectly) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_ok(1, "only"));
+
+    json out = results_to_json_impl(results);
+
+    EXPECT_TRUE(out.is_object());
+    EXPECT_EQ(out.value("content", ""), "only");
+}
+
+TEST(ResultsToJsonImpl, MultipleResults_ReturnsArray) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_ok(1, "a"));
+    results.push_back(make_ok(2, "b"));
+
+    json out = results_to_json_impl(results);
+
+    EXPECT_TRUE(out.is_array());
+    ASSERT_EQ(out.size(), 2u);
+    EXPECT_EQ(out[0].value("content", ""), "a");
+    EXPECT_EQ(out[1].value("content", ""), "b");
+}
+
+TEST(ResultsToJsonImpl, EmptyVector_ReturnsEmptyArray) {
+    std::vector<server_task_result_ptr> results;
+
+    json out = results_to_json_impl(results);
+
+    EXPECT_TRUE(out.is_array());
+    EXPECT_TRUE(out.empty());
+}
+
+// ============================================================
 // Tests for json_to_jstring_impl
 //
 // Verifies that any json value is serialised correctly via
