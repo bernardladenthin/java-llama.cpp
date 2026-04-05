@@ -108,8 +108,7 @@
         env->ThrowNew(error_class, error_msg.c_str());
         return nullptr;
     }
-    std::string resp = result->to_json().dump();
-    return env->NewStringUTF(resp.c_str());
+    return json_to_jstring_impl(env, result->to_json());
 }
 
 // ---------------------------------------------------------------------------
