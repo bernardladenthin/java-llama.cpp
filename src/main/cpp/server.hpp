@@ -662,6 +662,7 @@ struct completion_token_output {
 
     static std::vector<unsigned char> str_to_bytes(const std::string &str) {
         std::vector<unsigned char> bytes;
+        bytes.reserve(str.size());
         for (unsigned char c : str) {
             bytes.push_back(c);
         }
