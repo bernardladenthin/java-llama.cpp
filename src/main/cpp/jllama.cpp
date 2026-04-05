@@ -177,6 +177,16 @@ static std::unordered_set<int> dispatch_tasks(server_context *ctx_server,
 }
 
 /**
+ * Convenience wrapper around results_to_jstring_impl (jni_server_helpers.hpp).
+ * Serialises results to a jstring (single object or JSON array).
+ */
+[[nodiscard]] static jstring results_to_jstring(
+        JNIEnv *env,
+        const std::vector<server_task_result_ptr> &results) {
+    return results_to_jstring_impl(env, results);
+}
+
+/**
  * Convert a Java string to a std::string
  */
 std::string parse_jstring(JNIEnv *env, jstring java_string) {
@@ -867,19 +877,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
     results.reserve(task_ids.size());
     if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
-    // Build response JSON
-    json response;
-    if (results.size() == 1) {
-        response = results[0]->to_json();
-    } else {
-        response = json::array();
-        for (auto &res : results) {
-            response.push_back(res->to_json());
-        }
-    }
-
-    std::string response_str = response.dump();
-    return env->NewStringUTF(response_str.c_str());
+    return results_to_jstring(env, results);
 }
 
 JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNIEnv *env, jobject obj,
@@ -1044,18 +1042,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIE
     results.reserve(task_ids.size());
     if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
-    json response;
-    if (results.size() == 1) {
-        response = results[0]->to_json();
-    } else {
-        response = json::array();
-        for (auto &res : results) {
-            response.push_back(res->to_json());
-        }
-    }
-
-    std::string response_str = response.dump();
-    return env->NewStringUTF(response_str.c_str());
+    return results_to_jstring(env, results);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(JNIEnv *env, jobject obj,
@@ -1085,18 +1072,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
     results.reserve(task_ids.size());
     if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
-    json response;
-    if (results.size() == 1) {
-        response = results[0]->to_json();
-    } else {
-        response = json::array();
-        for (auto &res : results) {
-            response.push_back(res->to_json());
-        }
-    }
-
-    std::string response_str = response.dump();
-    return env->NewStringUTF(response_str.c_str());
+    return results_to_jstring(env, results);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *env, jobject obj, jstring jparams) {
@@ -1154,18 +1130,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
     results.reserve(task_ids.size());
     if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
-    json response;
-    if (results.size() == 1) {
-        response = results[0]->to_json();
-    } else {
-        response = json::array();
-        for (auto &res : results) {
-            response.push_back(res->to_json());
-        }
-    }
-
-    std::string response_str = response.dump();
-    return env->NewStringUTF(response_str.c_str());
+    return results_to_jstring(env, results);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEnv *env, jobject obj,

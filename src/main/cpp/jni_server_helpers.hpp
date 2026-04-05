@@ -142,3 +142,33 @@
     queue.remove_waiting_task_ids(task_ids);
     return true;
 }
+
+// ---------------------------------------------------------------------------
+// results_to_jstring_impl
+//
+// Serialises a vector of task results to a jstring.
+//
+// When there is exactly one result, the top-level JSON is that result's object
+// directly.  When there are multiple results, they are wrapped in a JSON array.
+// This mirrors the OpenAI API convention used by handleCompletions,
+// handleCompletionsOai, handleChatCompletions, and handleInfill.
+//
+// Parameters are passed explicitly so the function is testable without a real
+// JVM.  The caller is responsible for checking that `results` is non-empty
+// before calling (an empty vector produces an empty JSON array).
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline jstring results_to_jstring_impl(
+        JNIEnv *env,
+        const std::vector<server_task_result_ptr> &results) {
+    json response;
+    if (results.size() == 1) {
+        response = results[0]->to_json();
+    } else {
+        response = json::array();
+        for (const auto &res : results) {
+            response.push_back(res->to_json());
+        }
+    }
+    std::string s = response.dump();
+    return env->NewStringUTF(s.c_str());
+}

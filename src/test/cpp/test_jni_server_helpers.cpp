@@ -343,3 +343,59 @@ TEST_F(CollectResultsFixture, RecvSlotResult_WaitingIdRemovedAfterError) {
     EXPECT_FALSE(queue.waiting_task_ids.count(53))
         << "remove_waiting_task_id must clear the id on error";
 }
+
+// ============================================================
+// Tests for results_to_jstring_impl
+//
+// Verifies that the serialisation helper produces the right shape:
+//   - single result  → bare JSON object
+//   - multiple results → JSON array
+//
+// NewStringUTF is stubbed via the fixture's mock env; g_new_string_utf_value
+// captures whatever string was passed to it.
+// ============================================================
+
+TEST_F(CollectResultsFixture, ResultsToJstring_SingleResult_ReturnsBareObject) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_ok(1, "hello"));
+
+    jstring js = results_to_jstring_impl(env, results);
+
+    EXPECT_NE(js, nullptr);
+    EXPECT_FALSE(g_new_string_utf_value.empty());
+
+    // The top-level JSON must be an object (not an array).
+    json parsed = json::parse(g_new_string_utf_value);
+    EXPECT_TRUE(parsed.is_object())
+        << "single result must serialise as a bare JSON object, got: "
+        << g_new_string_utf_value;
+    EXPECT_EQ(parsed.value("content", ""), "hello");
+}
+
+TEST_F(CollectResultsFixture, ResultsToJstring_MultipleResults_ReturnsArray) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_ok(2, "first"));
+    results.push_back(make_ok(3, "second"));
+
+    jstring js = results_to_jstring_impl(env, results);
+
+    EXPECT_NE(js, nullptr);
+    json parsed = json::parse(g_new_string_utf_value);
+    EXPECT_TRUE(parsed.is_array())
+        << "multiple results must serialise as a JSON array, got: "
+        << g_new_string_utf_value;
+    ASSERT_EQ(parsed.size(), 2u);
+    EXPECT_EQ(parsed[0].value("content", ""), "first");
+    EXPECT_EQ(parsed[1].value("content", ""), "second");
+}
+
+TEST_F(CollectResultsFixture, ResultsToJstring_EmptyVector_ReturnsEmptyArray) {
+    std::vector<server_task_result_ptr> results;
+
+    jstring js = results_to_jstring_impl(env, results);
+
+    EXPECT_NE(js, nullptr);
+    json parsed = json::parse(g_new_string_utf_value);
+    EXPECT_TRUE(parsed.is_array());
+    EXPECT_TRUE(parsed.empty());
+}
