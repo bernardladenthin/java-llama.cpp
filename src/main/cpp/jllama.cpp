@@ -1258,8 +1258,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
 
         if (result->is_error()) {
             ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-            std::string error_msg = result->to_json()["message"].get<std::string>();
-            env->ThrowNew(c_llama_error, error_msg.c_str());
+            env->ThrowNew(c_llama_error, get_result_error_message(result).c_str());
             return nullptr;
         }
 
