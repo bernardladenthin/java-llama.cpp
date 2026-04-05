@@ -913,28 +913,21 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
     }
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
+    std::vector<server_task_result_ptr> results;
+    results.reserve(task_ids.size());
+    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
+
     json results_json = json::array();
-
-    for (size_t i = 0; i < task_ids.size(); i++) {
-        server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
-        if (result->is_error()) {
-            ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-            env->ThrowNew(c_llama_error, get_result_error_message(result).c_str());
-            return nullptr;
-        }
-
+    for (const auto &result : results) {
         const auto out_res = result->to_json();
         int index = out_res["index"].get<int>();
         float score = out_res["score"].get<float>();
-
         results_json.push_back({
             {"document", document_vector[index]},
             {"index", index},
             {"score", score}
         });
     }
-
-    ctx_server->queue_results.remove_waiting_task_ids(task_ids);
 
     return json_to_jstring(env, results_json);
 }
@@ -1251,21 +1244,14 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
 
+    std::vector<server_task_result_ptr> results;
+    results.reserve(task_ids.size());
+    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
+
     json responses = json::array();
-
-    for (size_t i = 0; i < task_ids.size(); i++) {
-        server_task_result_ptr result = ctx_server->queue_results.recv(task_ids);
-
-        if (result->is_error()) {
-            ctx_server->queue_results.remove_waiting_task_ids(task_ids);
-            env->ThrowNew(c_llama_error, get_result_error_message(result).c_str());
-            return nullptr;
-        }
-
+    for (const auto &result : results) {
         responses.push_back(result->to_json());
     }
-
-    ctx_server->queue_results.remove_waiting_task_ids(task_ids);
 
     json root = oaicompat == OAICOMPAT_TYPE_EMBEDDING
                     ? format_embeddings_response_oaicompat(body, responses, use_base64)
