@@ -498,3 +498,52 @@ TEST_F(CollectResultsFixture, JsonToJstring_ReturnsSentinelFromStub) {
 
     EXPECT_EQ(js, reinterpret_cast<jstring>(0xBEEF));
 }
+
+// ============================================================
+// Tests for extract_first_embedding_row
+//
+// Pure computation — no JNI or llama context needed.
+// ============================================================
+
+TEST(ExtractFirstEmbeddingRow, SingleRow_ReturnsRow) {
+    json j = {{"embedding", {{0.1f, 0.2f, 0.3f}}}};
+    auto row = extract_first_embedding_row(j);
+    ASSERT_EQ(row.size(), 3u);
+    EXPECT_FLOAT_EQ(row[0], 0.1f);
+    EXPECT_FLOAT_EQ(row[1], 0.2f);
+    EXPECT_FLOAT_EQ(row[2], 0.3f);
+}
+
+TEST(ExtractFirstEmbeddingRow, MultipleRows_ReturnsFirstRowOnly) {
+    json j = {{"embedding", {{1.0f, 2.0f}, {3.0f, 4.0f}, {5.0f, 6.0f}}}};
+    auto row = extract_first_embedding_row(j);
+    ASSERT_EQ(row.size(), 2u);
+    EXPECT_FLOAT_EQ(row[0], 1.0f);
+    EXPECT_FLOAT_EQ(row[1], 2.0f);
+}
+
+TEST(ExtractFirstEmbeddingRow, MissingEmbeddingKey_ThrowsJsonException) {
+    json j = {{"other_key", "value"}};
+    EXPECT_THROW(extract_first_embedding_row(j), nlohmann::json::exception);
+}
+
+TEST(ExtractFirstEmbeddingRow, EmptyOuterArray_ThrowsRuntimeError) {
+    json j = {{"embedding", json::array()}};
+    EXPECT_THROW(extract_first_embedding_row(j), std::runtime_error);
+}
+
+TEST(ExtractFirstEmbeddingRow, EmptyInnerArray_ThrowsRuntimeError) {
+    json j = {{"embedding", {json::array()}}};
+    EXPECT_THROW(extract_first_embedding_row(j), std::runtime_error);
+}
+
+TEST(ExtractFirstEmbeddingRow, LargeRow_AllValuesPreserved) {
+    std::vector<float> vals(128);
+    for (int i = 0; i < 128; ++i) vals[i] = static_cast<float>(i) * 0.01f;
+    json j = {{"embedding", {vals}}};
+    auto row = extract_first_embedding_row(j);
+    ASSERT_EQ(row.size(), 128u);
+    for (int i = 0; i < 128; ++i) {
+        EXPECT_FLOAT_EQ(row[i], static_cast<float>(i) * 0.01f);
+    }
+}

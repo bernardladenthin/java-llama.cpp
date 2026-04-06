@@ -22,18 +22,19 @@
 //   redefinition errors in any TU that already includes server.hpp directly.
 //
 // Declaration order (each function must be defined before its first caller):
-//   1. get_result_error_message    — used by recv_slot_task_result_impl,
-//                                    collect_task_results_impl
-//   2. json_to_jstring_impl        — used by recv_slot_task_result_impl,
-//                                    results_to_jstring_impl
-//   3. build_completion_tasks_impl — no dependencies on helpers above
-//   4. recv_slot_task_result_impl  — uses 1 + 2
-//   5. collect_task_results_impl   — uses 1
-//   6. results_to_json_impl        — no dependencies on helpers above
-//   7. results_to_jstring_impl     — uses 2 + 6
-//   8. check_infill_support_impl   — no dependencies on helpers above
-//   9. rerank_results_to_json      — no dependencies on helpers above
-//  10. append_task                 — no dependencies on helpers above
+//   1. get_result_error_message       — used by recv_slot_task_result_impl,
+//                                       collect_task_results_impl
+//   2. json_to_jstring_impl           — used by recv_slot_task_result_impl,
+//                                       results_to_jstring_impl
+//   3. build_completion_tasks_impl    — no dependencies on helpers above
+//   4. recv_slot_task_result_impl     — uses 1 + 2
+//   5. collect_task_results_impl      — uses 1
+//   6. results_to_json_impl           — no dependencies on helpers above
+//   7. results_to_jstring_impl        — uses 2 + 6
+//   8. check_infill_support_impl      — no dependencies on helpers above
+//   9. rerank_results_to_json         — no dependencies on helpers above
+//  10. append_task                    — no dependencies on helpers above
+//  11. extract_first_embedding_row    — no dependencies on helpers above
 
 #include "jni.h"
 
@@ -314,4 +315,27 @@ inline void append_task(server_context           *ctx_server,
         return false;
     }
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// extract_first_embedding_row
+//
+// Parses out_res["embedding"] as a 2D float array and returns the first row.
+//
+// Throws std::runtime_error  if the outer or inner array is empty.
+// Throws nlohmann::json::exception if the "embedding" key is absent or the
+// value cannot be coerced to vector<vector<float>>.
+//
+// Pure computation — no JNI calls, no llama context.
+// Unit-testable with any JSON literal:
+//   {"embedding": [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]}
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline std::vector<float>
+extract_first_embedding_row(const json &out_res) {
+    // .at() throws json::out_of_range if "embedding" is absent.
+    const auto embedding = out_res.at("embedding").get<std::vector<std::vector<float>>>();
+    if (embedding.empty() || embedding[0].empty()) {
+        throw std::runtime_error("embedding array is empty");
+    }
+    return embedding[0];
 }

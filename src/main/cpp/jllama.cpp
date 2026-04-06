@@ -849,36 +849,25 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
 
     const auto out_res = result->to_json();
 
-    // Extract "embedding" as a vector of vectors (2D array)
-    std::vector<std::vector<float>> embedding = out_res["embedding"].get<std::vector<std::vector<float>>>();
-
-    // Get total number of rows in the embedding
-    jsize embedding_rows = embedding.size();
-
-    // Get total number of columns in the first row (assuming all rows are of equal length)
-    jsize embedding_cols = embedding_rows > 0 ? embedding[0].size() : 0;
-
-    SRV_INF("Embedding has %d rows and %d columns\n", embedding_rows, embedding_cols);
-
-    // Ensure embedding is not empty
-    if (embedding.empty() || embedding[0].empty()) {
-        env->ThrowNew(c_error_oom, "embedding array is empty");
+    std::vector<float> first_row;
+    try {
+        first_row = extract_first_embedding_row(out_res);
+    } catch (const std::exception &e) {
+        env->ThrowNew(c_error_oom, e.what());
         return nullptr;
     }
 
-    // Extract only the first row
-    const std::vector<float> &first_row = embedding[0]; // Reference to avoid copying
+    const jsize embedding_cols = static_cast<jsize>(first_row.size());
+    SRV_INF("Embedding has %d columns\n", embedding_cols);
 
-    // Create a new float array in JNI
     jfloatArray j_embedding = env->NewFloatArray(embedding_cols);
     if (j_embedding == nullptr) {
         env->ThrowNew(c_error_oom, "could not allocate embedding");
         return nullptr;
     }
 
-    // Copy the first row into the JNI float array
-    env->SetFloatArrayRegion(j_embedding, 0, embedding_cols, reinterpret_cast<const jfloat *>(first_row.data()));
-
+    env->SetFloatArrayRegion(j_embedding, 0, embedding_cols,
+                             reinterpret_cast<const jfloat *>(first_row.data()));
     return j_embedding;
 }
 
