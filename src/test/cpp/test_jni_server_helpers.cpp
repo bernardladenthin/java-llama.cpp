@@ -547,3 +547,47 @@ TEST(ExtractFirstEmbeddingRow, LargeRow_AllValuesPreserved) {
         EXPECT_FLOAT_EQ(row[i], static_cast<float>(i) * 0.01f);
     }
 }
+
+// ============================================================
+// Tests for parse_encoding_format_impl
+//
+// Pure computation — no JNI or llama context needed.
+// ============================================================
+
+TEST(ParseEncodingFormat, FieldAbsent_ReturnsFalse) {
+    json body = {{"model", "text-embedding-ada-002"}};
+    EXPECT_FALSE(parse_encoding_format_impl(body));
+}
+
+TEST(ParseEncodingFormat, ExplicitFloat_ReturnsFalse) {
+    json body = {{"encoding_format", "float"}};
+    EXPECT_FALSE(parse_encoding_format_impl(body));
+}
+
+TEST(ParseEncodingFormat, Base64_ReturnsTrue) {
+    json body = {{"encoding_format", "base64"}};
+    EXPECT_TRUE(parse_encoding_format_impl(body));
+}
+
+TEST(ParseEncodingFormat, UnknownFormat_ThrowsInvalidArgument) {
+    json body = {{"encoding_format", "binary"}};
+    EXPECT_THROW(parse_encoding_format_impl(body), std::invalid_argument);
+}
+
+TEST(ParseEncodingFormat, EmptyString_ThrowsInvalidArgument) {
+    json body = {{"encoding_format", ""}};
+    EXPECT_THROW(parse_encoding_format_impl(body), std::invalid_argument);
+}
+
+TEST(ParseEncodingFormat, UnknownFormat_MessageMentionsValidOptions) {
+    json body = {{"encoding_format", "hex"}};
+    try {
+        parse_encoding_format_impl(body);
+        FAIL() << "Expected std::invalid_argument";
+    } catch (const std::invalid_argument &e) {
+        EXPECT_NE(std::string(e.what()).find("float"), std::string::npos)
+            << "error message should mention \"float\"";
+        EXPECT_NE(std::string(e.what()).find("base64"), std::string::npos)
+            << "error message should mention \"base64\"";
+    }
+}

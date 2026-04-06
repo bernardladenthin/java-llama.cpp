@@ -35,6 +35,7 @@
 //   9. rerank_results_to_json         — no dependencies on helpers above
 //  10. append_task                    — no dependencies on helpers above
 //  11. extract_first_embedding_row    — no dependencies on helpers above
+//  12. parse_encoding_format_impl     — no dependencies on helpers above
 
 #include "jni.h"
 
@@ -338,4 +339,32 @@ extract_first_embedding_row(const json &out_res) {
         throw std::runtime_error("embedding array is empty");
     }
     return embedding[0];
+}
+
+// ---------------------------------------------------------------------------
+// parse_encoding_format_impl
+//
+// Reads the optional "encoding_format" field from `body` and returns whether
+// base64 encoding was requested.
+//
+// Returns false  — field absent, or value is "float"  → use float encoding.
+// Returns true   — value is "base64"                  → use base64 encoding.
+// Throws std::invalid_argument — value is present but neither "float" nor
+//   "base64", with a message suitable for forwarding to JNI ThrowNew.
+//
+// Pure computation — no JNI calls, no llama context.
+// Unit-testable with any JSON literal.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline bool parse_encoding_format_impl(const json &body) {
+    if (!body.contains("encoding_format")) {
+        return false;
+    }
+    const std::string format = body.at("encoding_format").get<std::string>();
+    if (format == "base64") {
+        return true;
+    }
+    if (format == "float") {
+        return false;
+    }
+    throw std::invalid_argument("encoding_format must be \"float\" or \"base64\"");
 }

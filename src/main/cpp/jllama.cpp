@@ -1180,15 +1180,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
     }
 
     bool use_base64 = false;
-    if (body.count("encoding_format") != 0) {
-        const std::string &format = body.at("encoding_format");
-        if (format == "base64") {
-            use_base64 = true;
-        } else if (format != "float") {
-            env->ThrowNew(c_llama_error, "encoding_format must be \"float\" or \"base64\"");
-            return nullptr;
-        }
-    }
+    try { use_base64 = parse_encoding_format_impl(body); }
+    catch (const std::exception &e) { env->ThrowNew(c_llama_error, e.what()); return nullptr; }
 
     std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, prompt, true, true);
 
