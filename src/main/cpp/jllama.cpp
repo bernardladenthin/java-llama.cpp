@@ -2,12 +2,11 @@
 
 #include "arg.h"
 #include "json-schema-to-grammar.h"
-#include "jni_helpers.hpp"
 #include "llama.h"
 #include "log.h"
 #include "nlohmann/json.hpp"
 #include "server.hpp"
-#include "jni_server_helpers.hpp"
+#include "jni_helpers.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -147,7 +146,7 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
 }
 
 /**
- * Convenience wrapper around build_completion_tasks_impl (jni_server_helpers.hpp)
+ * Convenience wrapper around build_completion_tasks_impl (jni_helpers.hpp)
  * that supplies the module-level globals so call sites need no boilerplate.
  */
 [[nodiscard]] static bool build_completion_tasks(JNIEnv *env, server_context *ctx_server,
@@ -212,7 +211,7 @@ static int require_single_task_id(JNIEnv *env,
 }
 
 /**
- * Convenience wrapper around recv_slot_task_result_impl (jni_server_helpers.hpp).
+ * Convenience wrapper around recv_slot_task_result_impl (jni_helpers.hpp).
  * Caller must have already registered task_id with add_waiting_task_id() and
  * posted the task; this wrapper covers recv → check → return.
  */
@@ -221,7 +220,7 @@ static int require_single_task_id(JNIEnv *env,
 }
 
 /**
- * Convenience wrapper around collect_task_results_impl (jni_server_helpers.hpp)
+ * Convenience wrapper around collect_task_results_impl (jni_helpers.hpp)
  * that supplies the module-level globals so call sites need no boilerplate.
  */
 [[nodiscard]] static bool collect_task_results(JNIEnv *env,
@@ -232,7 +231,7 @@ static int require_single_task_id(JNIEnv *env,
 }
 
 /**
- * Convenience wrapper around results_to_jstring_impl (jni_server_helpers.hpp).
+ * Convenience wrapper around results_to_jstring_impl (jni_helpers.hpp).
  * Serialises results to a jstring (single object or JSON array).
  */
 [[nodiscard]] static jstring results_to_jstring(
@@ -242,7 +241,7 @@ static int require_single_task_id(JNIEnv *env,
 }
 
 /**
- * Convenience wrapper around json_to_jstring_impl (jni_server_helpers.hpp).
+ * Convenience wrapper around json_to_jstring_impl (jni_helpers.hpp).
  * Serialises any json value to a JNI string via dump() + NewStringUTF.
  */
 [[nodiscard]] static jstring json_to_jstring(JNIEnv *env, const json &j) {
@@ -770,11 +769,9 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
 
     json data = parse_json_params(env, jparams);
 
-    server_task_type type = SERVER_TASK_TYPE_COMPLETION;
-
-    if (data.contains("input_prefix") || data.contains("input_suffix")) {
-        type = SERVER_TASK_TYPE_INFILL;
-    }
+    const server_task_type type = is_infill_request(data)
+                                       ? SERVER_TASK_TYPE_INFILL
+                                       : SERVER_TASK_TYPE_COMPLETION;
 
     auto completion_id = gen_chatcmplid();
     std::vector<server_task> tasks;
@@ -1170,12 +1167,12 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
 
     bool force_no_oaicompat = false;
     json prompt;
-    try { prompt = extract_embedding_prompt_impl(body, force_no_oaicompat); }
+    try { prompt = extract_embedding_prompt(body, force_no_oaicompat); }
     catch (const std::exception &e) { env->ThrowNew(c_llama_error, e.what()); return nullptr; }
     if (force_no_oaicompat) oaicompat = OAICOMPAT_TYPE_NONE;
 
     bool use_base64 = false;
-    try { use_base64 = parse_encoding_format_impl(body); }
+    try { use_base64 = parse_encoding_format(body); }
     catch (const std::exception &e) { env->ThrowNew(c_llama_error, e.what()); return nullptr; }
 
     std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, prompt, true, true);
@@ -1199,7 +1196,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
     std::vector<server_task_result_ptr> results;
     if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
-    return json_to_jstring(env, build_embeddings_response_json_impl(results, body, oaicompat, use_base64));
+    return json_to_jstring(env, build_embeddings_response_json(results, body, oaicompat, use_base64));
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleTokenize(JNIEnv *env, jobject obj, jstring jcontent,
@@ -1276,27 +1273,20 @@ JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInfe
 
     json config = parse_json_params(env, jconfig);
 
-    if (config.contains("slot_prompt_similarity")) {
-        float similarity = config["slot_prompt_similarity"].get<float>();
-        if (similarity < 0.0f || similarity > 1.0f) {
-            env->ThrowNew(c_llama_error, "slot_prompt_similarity must be between 0.0 and 1.0");
-            return JNI_FALSE;
+    try {
+        if (auto v = parse_slot_prompt_similarity(config)) {
+            ctx_server->slot_prompt_similarity = *v;
         }
-        ctx_server->slot_prompt_similarity = similarity;
+        if (auto v = parse_positive_int_config(config, "n_threads")) {
+            ctx_server->params_base.cpuparams.n_threads = *v;
+        }
+        if (auto v = parse_positive_int_config(config, "n_threads_batch")) {
+            ctx_server->params_base.cpuparams_batch.n_threads = *v;
+        }
+    } catch (const std::exception &e) {
+        env->ThrowNew(c_llama_error, e.what());
+        return JNI_FALSE;
     }
-
-    auto apply_thread_count = [&](const char *key, int &target) -> bool {
-        if (!config.contains(key)) return true;
-        int v = config[key].get<int>();
-        if (v <= 0) {
-            env->ThrowNew(c_llama_error, (std::string(key) + " must be greater than 0").c_str());
-            return false;
-        }
-        target = v;
-        return true;
-    };
-    if (!apply_thread_count("n_threads",       ctx_server->params_base.cpuparams.n_threads))       return JNI_FALSE;
-    if (!apply_thread_count("n_threads_batch", ctx_server->params_base.cpuparams_batch.n_threads)) return JNI_FALSE;
 
     return JNI_TRUE;
 }

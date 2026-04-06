@@ -242,7 +242,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_utils.cpp
         src/test/cpp/test_server.cpp
         src/test/cpp/test_jni_helpers.cpp
-        src/test/cpp/test_jni_server_helpers.cpp
+        src/test/cpp/test_json_helpers.cpp
     )
 
     target_include_directories(jllama_test PRIVATE

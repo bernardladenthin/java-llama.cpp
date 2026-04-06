@@ -17,7 +17,7 @@
 //   - stop_type_to_str  (enum → string mapping for all stop types)
 //   - oaicompat_finish_reason  (extracted helper: stop_type + tool_calls → OAI finish_reason)
 //
-// collect_task_results_impl() is tested in test_jni_server_helpers.cpp.
+// collect_task_results_impl() is tested in test_jni_helpers.cpp.
 
 #include <gtest/gtest.h>
 
