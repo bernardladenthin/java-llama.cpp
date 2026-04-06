@@ -53,38 +53,36 @@ if(WIN32)
     set(LLAMA_BUILD_BORINGSSL ON CACHE BOOL "" FORCE)
 endif()
 
-# Instruction-set policy: target AVX2, disable AVX-512, disable native-CPU detection.
+# Instruction-set policy: target the "Haswell" baseline (x86-64-v3).
 #
-# GGML_NATIVE (default ON) compiles the library for the exact CPU that runs the
-# build.  On MSVC it runs FindSIMD.cmake, which probes the build machine with
-# CheckCSourceRuns and then does a plain set(GGML_AVX512 ON) — a local variable
-# that shadows the cache — before the /arch:AVX512 flag is added.  This means
-# a plain GGML_AVX512=OFF FORCE in the parent scope is not enough: FindSIMD
-# silently re-enables AVX-512 inside its own scope.  Turning GGML_NATIVE OFF
-# prevents FindSIMD from running at all, so the individual GGML_AVX* cache
-# variables are respected.
+# This set of flags matches GGML's own "haswell" named variant in
+# GGML_CPU_ALL_VARIANTS and covers every x86-64 CPU since:
+#   - Intel Haswell   (2013)
+#   - AMD Ryzen / EPYC (2017)
 #
-# AVX-512 is disabled for several reasons:
+# GGML_NATIVE is OFF so the build never probes the build machine's CPU.
+# Without this, MSVC runs FindSIMD.cmake which shadow-sets GGML_AVX512=ON
+# via a local variable that bypasses our CACHE FORCE, and GCC/Clang uses
+# -march=native which embeds whatever the build machine supports.
 #
-# 1. Many CPUs do not support AVX-512.  Loading such a binary crashes the JVM
-#    immediately with SIGILL.  Real CI example: AMD EPYC 7763 (test runner, no
-#    AVX-512) vs Intel Xeon Platinum 8370C (build machine, has AVX-512).
+# The individual flags are set explicitly because with GGML_NATIVE=OFF
+# they all default to OFF.  On MSVC the elseif chain in ggml-cpu cmake
+# picks the highest level (/arch:AVX2) and bundles FMA + F16C defines
+# automatically; SSE42, AVX, FMA, F16C have no additional effect there
+# but are needed for GCC/Clang where each flag independently adds its
+# -m flag and GGML_* preprocessor define.
 #
-# 2. Intel disabled AVX-512 on 12th-gen (Alder Lake) and later desktop CPUs.
-#    The hybrid P+E-core design makes AVX-512 unsafe at the OS scheduler level;
-#    Intel has since fused it off in silicon on all current desktop chips.
-#
-# 3. CPUs that do support AVX-512 often throttle clock speed while executing it,
-#    and take 100+ ms to ramp back up — a net loss for bursty inference workloads.
-#
-# 4. High instantaneous power draw from AVX-512 can destabilise systems running
-#    near their voltage limits.
-#
-# AVX2 (default ON in GGML) covers virtually all x86-64 hardware built since
-# 2013 and is set explicitly here for clarity.
+# AVX-512 stays OFF:
+#   - Many CPUs lack it (AMD EPYC 7763, all Intel desktop since Alder Lake).
+#   - MSVC's /arch:AVX512 applies to the entire TU — no per-function gating.
+#   - Frequency throttling and power draw make it a net loss for bursty work.
 set(GGML_NATIVE  OFF CACHE BOOL "" FORCE)
+set(GGML_SSE42   ON  CACHE BOOL "" FORCE)
+set(GGML_AVX     ON  CACHE BOOL "" FORCE)
 set(GGML_AVX2    ON  CACHE BOOL "" FORCE)
 set(GGML_BMI2    ON  CACHE BOOL "" FORCE)
+set(GGML_FMA     ON  CACHE BOOL "" FORCE)
+set(GGML_F16C    ON  CACHE BOOL "" FORCE)
 set(GGML_AVX512  OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
