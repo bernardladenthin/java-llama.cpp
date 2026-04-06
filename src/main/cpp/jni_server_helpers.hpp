@@ -36,6 +36,7 @@
 //  10. append_task                    — no dependencies on helpers above
 //  11. extract_first_embedding_row    — no dependencies on helpers above
 //  12. parse_encoding_format_impl     — no dependencies on helpers above
+//  13. extract_embedding_prompt_impl  — no dependencies on helpers above
 
 #include "jni.h"
 
@@ -367,4 +368,32 @@ extract_first_embedding_row(const json &out_res) {
         return false;
     }
     throw std::invalid_argument("encoding_format must be \"float\" or \"base64\"");
+}
+
+// ---------------------------------------------------------------------------
+// extract_embedding_prompt_impl
+//
+// Selects the prompt value from an embedding request body using OpenAI-style
+// key precedence: "input" is preferred (OAI-compatible); "content" is the
+// fallback (legacy, non-OAI path).
+//
+// On success: returns the prompt JSON value and sets force_no_oaicompat=true
+//   when "content" was used (caller must downgrade oaicompat to NONE).
+// Throws std::invalid_argument if neither "input" nor "content" is present,
+//   with a message suitable for forwarding to JNI ThrowNew.
+//
+// Pure computation — no JNI calls, no llama context.
+// Unit-testable with any JSON literal.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline json extract_embedding_prompt_impl(const json &body,
+                                                        bool       &force_no_oaicompat) {
+    force_no_oaicompat = false;
+    if (body.count("input") != 0) {
+        return body.at("input");
+    }
+    if (body.contains("content")) {
+        force_no_oaicompat = true;
+        return body.at("content");
+    }
+    throw std::invalid_argument("\"input\" or \"content\" must be provided");
 }

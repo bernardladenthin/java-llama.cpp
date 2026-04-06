@@ -591,3 +591,57 @@ TEST(ParseEncodingFormat, UnknownFormat_MessageMentionsValidOptions) {
             << "error message should mention \"base64\"";
     }
 }
+
+// ============================================================
+// Tests for extract_embedding_prompt_impl
+//
+// Pure computation — no JNI or llama context needed.
+// ============================================================
+
+TEST(ExtractEmbeddingPrompt, InputKey_ReturnsValueAndDoesNotSetFlag) {
+    bool flag = true; // pre-set to verify it gets cleared
+    json body = {{"input", "hello world"}};
+    json prompt = extract_embedding_prompt_impl(body, flag);
+    EXPECT_EQ(prompt, "hello world");
+    EXPECT_FALSE(flag) << "force_no_oaicompat must be false when \"input\" is used";
+}
+
+TEST(ExtractEmbeddingPrompt, ContentKey_ReturnsValueAndSetsFlag) {
+    bool flag = false;
+    json body = {{"content", "some text"}};
+    json prompt = extract_embedding_prompt_impl(body, flag);
+    EXPECT_EQ(prompt, "some text");
+    EXPECT_TRUE(flag) << "force_no_oaicompat must be true when \"content\" is used";
+}
+
+TEST(ExtractEmbeddingPrompt, InputTakesPriorityOverContent) {
+    bool flag = false;
+    json body = {{"input", "from input"}, {"content", "from content"}};
+    json prompt = extract_embedding_prompt_impl(body, flag);
+    EXPECT_EQ(prompt, "from input");
+    EXPECT_FALSE(flag) << "\"input\" path must not set force_no_oaicompat";
+}
+
+TEST(ExtractEmbeddingPrompt, NeitherKey_ThrowsInvalidArgument) {
+    bool flag = false;
+    json body = {{"model", "text-embedding-ada-002"}};
+    EXPECT_THROW(extract_embedding_prompt_impl(body, flag), std::invalid_argument);
+}
+
+TEST(ExtractEmbeddingPrompt, EmptyBody_ThrowsInvalidArgument) {
+    bool flag = false;
+    EXPECT_THROW(extract_embedding_prompt_impl(json::object(), flag), std::invalid_argument);
+}
+
+TEST(ExtractEmbeddingPrompt, ArrayPrompt_ReturnedAsIs) {
+    // "input" may be an array of strings (batch embedding); the function must
+    // return the JSON value unchanged without trying to coerce it.
+    bool flag = false;
+    json body = {{"input", {"sentence one", "sentence two"}}};
+    json prompt = extract_embedding_prompt_impl(body, flag);
+    ASSERT_TRUE(prompt.is_array());
+    ASSERT_EQ(prompt.size(), 2u);
+    EXPECT_EQ(prompt[0], "sentence one");
+    EXPECT_EQ(prompt[1], "sentence two");
+    EXPECT_FALSE(flag);
+}

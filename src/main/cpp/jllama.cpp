@@ -1168,16 +1168,11 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
 
     json body = parse_json_params(env, jparams);
 
+    bool force_no_oaicompat = false;
     json prompt;
-    if (body.count("input") != 0) {
-        prompt = body.at("input");
-    } else if (body.contains("content")) {
-        oaicompat = OAICOMPAT_TYPE_NONE;
-        prompt = body.at("content");
-    } else {
-        env->ThrowNew(c_llama_error, "\"input\" or \"content\" must be provided");
-        return nullptr;
-    }
+    try { prompt = extract_embedding_prompt_impl(body, force_no_oaicompat); }
+    catch (const std::exception &e) { env->ThrowNew(c_llama_error, e.what()); return nullptr; }
+    if (force_no_oaicompat) oaicompat = OAICOMPAT_TYPE_NONE;
 
     bool use_base64 = false;
     try { use_base64 = parse_encoding_format_impl(body); }
