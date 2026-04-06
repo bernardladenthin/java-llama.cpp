@@ -175,6 +175,7 @@
                                        const std::unordered_set<int>       &task_ids,
                                        std::vector<server_task_result_ptr> &out,
                                        jclass                               error_class) {
+    out.reserve(task_ids.size());
     for (size_t i = 0; i < task_ids.size(); i++) {
         server_task_result_ptr result = queue.recv(task_ids);
         if (result->is_error()) {

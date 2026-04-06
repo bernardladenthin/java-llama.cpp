@@ -288,23 +288,23 @@ TEST(CompletionTokenOutput, Logarithm_PositiveIsNaturalLog) {
     EXPECT_NEAR(completion_token_output::logarithm(std::exp(1.0f)), 1.0f, 1e-5f);
 }
 
-TEST(CompletionTokenOutput, StrToBytes_AsciiChars) {
-    auto bytes = completion_token_output::str_to_bytes("ABC");
+TEST(StrToBytes, AsciiChars) {
+    json bytes = str_to_bytes("ABC");
     ASSERT_EQ(bytes.size(), 3u);
-    EXPECT_EQ(bytes[0], static_cast<unsigned char>('A'));
-    EXPECT_EQ(bytes[1], static_cast<unsigned char>('B'));
-    EXPECT_EQ(bytes[2], static_cast<unsigned char>('C'));
+    EXPECT_EQ(bytes[0].get<int>(), static_cast<int>('A'));
+    EXPECT_EQ(bytes[1].get<int>(), static_cast<int>('B'));
+    EXPECT_EQ(bytes[2].get<int>(), static_cast<int>('C'));
 }
 
-TEST(CompletionTokenOutput, StrToBytes_EmptyString) {
-    EXPECT_TRUE(completion_token_output::str_to_bytes("").empty());
+TEST(StrToBytes, EmptyString) {
+    EXPECT_TRUE(str_to_bytes("").empty());
 }
 
-TEST(CompletionTokenOutput, StrToBytes_HighBytes) {
+TEST(StrToBytes, HighByte) {
     // Byte 0xFF must survive the conversion unchanged
-    auto bytes = completion_token_output::str_to_bytes("\xFF");
+    json bytes = str_to_bytes("\xFF");
     ASSERT_EQ(bytes.size(), 1u);
-    EXPECT_EQ(bytes[0], static_cast<unsigned char>(0xFF));
+    EXPECT_EQ(bytes[0].get<int>(), 0xFF);
 }
 
 TEST(CompletionTokenOutput, ToJson_PostSampling_UsesProbLabel) {

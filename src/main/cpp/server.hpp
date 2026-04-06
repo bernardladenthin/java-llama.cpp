@@ -627,14 +627,10 @@ struct completion_token_output {
     json to_json(bool post_sampling_probs) const {
         json probs_for_token = json::array();
         for (const auto &p : probs) {
-            std::string txt(p.txt);
-            txt.resize(validate_utf8(txt));
-            probs_for_token.push_back(json{
-                {"id", p.tok},
-                {"token", txt},
-                {"bytes", str_to_bytes(p.txt)},
-                {post_sampling_probs ? "prob" : "logprob", post_sampling_probs ? p.prob : logarithm(p.prob)},
-            });
+            json entry = token_piece_oai_fields(p.txt);
+            entry["id"] = p.tok;
+            entry[post_sampling_probs ? "prob" : "logprob"] = post_sampling_probs ? p.prob : logarithm(p.prob);
+            probs_for_token.push_back(entry);
         }
         return probs_for_token;
     }
@@ -642,15 +638,11 @@ struct completion_token_output {
     static json probs_vector_to_json(const std::vector<completion_token_output> &probs, bool post_sampling_probs) {
         json out = json::array();
         for (const auto &p : probs) {
-            std::string txt(p.text_to_send);
-            txt.resize(validate_utf8(txt));
-            out.push_back(json{
-                {"id", p.tok},
-                {"token", txt},
-                {"bytes", str_to_bytes(p.text_to_send)},
-                {post_sampling_probs ? "prob" : "logprob", post_sampling_probs ? p.prob : logarithm(p.prob)},
-                {post_sampling_probs ? "top_probs" : "top_logprobs", p.to_json(post_sampling_probs)},
-            });
+            json entry = token_piece_oai_fields(p.text_to_send);
+            entry["id"] = p.tok;
+            entry[post_sampling_probs ? "prob" : "logprob"] = post_sampling_probs ? p.prob : logarithm(p.prob);
+            entry[post_sampling_probs ? "top_probs" : "top_logprobs"] = p.to_json(post_sampling_probs);
+            out.push_back(entry);
         }
         return out;
     }
@@ -658,15 +650,6 @@ struct completion_token_output {
     static float logarithm(float x) {
         // nlohmann::json converts -inf to null, so we need to prevent that
         return x == 0.0f ? std::numeric_limits<float>::lowest() : std::log(x);
-    }
-
-    static std::vector<unsigned char> str_to_bytes(const std::string &str) {
-        std::vector<unsigned char> bytes;
-        bytes.reserve(str.size());
-        for (unsigned char c : str) {
-            bytes.push_back(c);
-        }
-        return bytes;
     }
 };
 

@@ -262,6 +262,105 @@ static size_t validate_utf8(const std::string &text) {
     return len;
 }
 
+static bool is_valid_utf8(const std::string &str) {
+    const unsigned char *bytes = reinterpret_cast<const unsigned char *>(str.data());
+    const unsigned char *end = bytes + str.length();
+
+    while (bytes < end) {
+        if (*bytes <= 0x7F) {
+            // 1-byte sequence (0xxxxxxx)
+            bytes++;
+        } else if ((*bytes & 0xE0) == 0xC0) {
+            // 2-byte sequence (110xxxxx 10xxxxxx)
+            if (end - bytes < 2 || (bytes[1] & 0xC0) != 0x80)
+                return false;
+            bytes += 2;
+        } else if ((*bytes & 0xF0) == 0xE0) {
+            // 3-byte sequence (1110xxxx 10xxxxxx 10xxxxxx)
+            if (end - bytes < 3 || (bytes[1] & 0xC0) != 0x80 || (bytes[2] & 0xC0) != 0x80)
+                return false;
+            bytes += 3;
+        } else if ((*bytes & 0xF8) == 0xF0) {
+            // 4-byte sequence (11110xxx 10xxxxxx 10xxxxxx 10xxxxxx)
+            if (end - bytes < 4 || (bytes[1] & 0xC0) != 0x80 || (bytes[2] & 0xC0) != 0x80 || (bytes[3] & 0xC0) != 0x80)
+                return false;
+            bytes += 4;
+        } else {
+            // Invalid UTF-8 lead byte
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Token-piece JSON serialisation helpers
+//
+// There are two distinct wire formats for representing a token piece that may
+// not be valid UTF-8, used in different parts of the API.  The helpers below
+// implement each format exactly once and are documented so the two are never
+// accidentally conflated.
+//
+// 1. token_piece_value()   — llama.cpp /tokenize endpoint (native format)
+//    Schema  : a single JSON value that is EITHER a string OR a byte array.
+//    Use for : handleTokenize, and any endpoint that follows the llama.cpp
+//              /tokenize wire format.
+//    Example : {"id": 123, "piece": "hello"}
+//              {"id": 456, "piece": [195, 169]}
+//
+// 2. token_piece_oai_fields() — OpenAI completion probabilities format
+//    Schema  : a partial JSON object with BOTH "token" (truncated UTF-8
+//              string) AND "bytes" (full raw-byte array) always present.
+//    Use for : completion_token_output::to_json / probs_vector_to_json, and
+//              any endpoint that follows the OpenAI logprobs wire format.
+//    Example : {"token": "hell", "bytes": [104,101,108,108,111], ...}
+//
+// Shared building block used by both:
+//
+// 3. str_to_bytes() — converts every byte of a string to an int in a JSON
+//    array.  Used directly by token_piece_value (invalid-UTF-8 branch) and
+//    token_piece_oai_fields ("bytes" field).
+// ---------------------------------------------------------------------------
+
+// Converts every byte of `str` to its integer value and returns them as a
+// JSON array.  The raw bytes are preserved exactly — no UTF-8 truncation.
+static json str_to_bytes(const std::string &str) {
+    json bytes = json::array();
+    bytes.get_ref<json::array_t &>().reserve(str.size());
+    for (unsigned char c : str) {
+        bytes.push_back(static_cast<int>(c));
+    }
+    return bytes;
+}
+
+// Returns the JSON value for the "piece" key in a llama.cpp /tokenize
+// response.  Valid UTF-8 pieces become a JSON string; invalid ones become a
+// JSON array of byte values (via str_to_bytes).
+//
+// NEVER use this for completion probability responses — use
+// token_piece_oai_fields() instead, which always emits both "token" and
+// "bytes" per the OpenAI spec.
+static json token_piece_value(const std::string &piece) {
+    if (is_valid_utf8(piece)) {
+        return piece;
+    }
+    return str_to_bytes(piece);
+}
+
+// Returns a partial JSON object {"token": <truncated-utf8>, "bytes": <raw>}
+// for use in OpenAI-compatible completion probability responses.
+// "token" is always a string (piece truncated at the last valid UTF-8
+// boundary).  "bytes" is always the full raw-byte array via str_to_bytes.
+//
+// NEVER use this for /tokenize responses — use token_piece_value() instead,
+// which follows the llama.cpp native "piece" field schema.
+static json token_piece_oai_fields(const std::string &piece) {
+    std::string txt = piece;
+    txt.resize(validate_utf8(txt));
+    return json{{"token", txt}, {"bytes", str_to_bytes(piece)}};
+}
+
 //
 // template utils
 //
@@ -907,38 +1006,6 @@ static json format_response_rerank(const json &request, const json &ranks, bool 
                    {"results", results}};
 
     return res;
-}
-
-static bool is_valid_utf8(const std::string &str) {
-    const unsigned char *bytes = reinterpret_cast<const unsigned char *>(str.data());
-    const unsigned char *end = bytes + str.length();
-
-    while (bytes < end) {
-        if (*bytes <= 0x7F) {
-            // 1-byte sequence (0xxxxxxx)
-            bytes++;
-        } else if ((*bytes & 0xE0) == 0xC0) {
-            // 2-byte sequence (110xxxxx 10xxxxxx)
-            if (end - bytes < 2 || (bytes[1] & 0xC0) != 0x80)
-                return false;
-            bytes += 2;
-        } else if ((*bytes & 0xF0) == 0xE0) {
-            // 3-byte sequence (1110xxxx 10xxxxxx 10xxxxxx)
-            if (end - bytes < 3 || (bytes[1] & 0xC0) != 0x80 || (bytes[2] & 0xC0) != 0x80)
-                return false;
-            bytes += 3;
-        } else if ((*bytes & 0xF8) == 0xF0) {
-            // 4-byte sequence (11110xxx 10xxxxxx 10xxxxxx 10xxxxxx)
-            if (end - bytes < 4 || (bytes[1] & 0xC0) != 0x80 || (bytes[2] & 0xC0) != 0x80 || (bytes[3] & 0xC0) != 0x80)
-                return false;
-            bytes += 4;
-        } else {
-            // Invalid UTF-8 lead byte
-            return false;
-        }
-    }
-
-    return true;
 }
 
 static json format_tokenizer_response(const json &tokens) { return json{{"tokens", tokens}}; }
