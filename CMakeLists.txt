@@ -53,40 +53,38 @@ if(WIN32)
     set(LLAMA_BUILD_BORINGSSL ON CACHE BOOL "" FORCE)
 endif()
 
-# Disable AVX-512 for all builds.
+# Instruction-set policy: target AVX2, disable AVX-512, disable native-CPU detection.
 #
-# AVX-512 causes problems in several well-known scenarios, so we turn it off
-# unconditionally to keep the distributed library safe and broadly compatible.
+# GGML_NATIVE (default ON) compiles the library for the exact CPU that runs the
+# build.  On MSVC it runs FindSIMD.cmake, which probes the build machine with
+# CheckCSourceRuns and then does a plain set(GGML_AVX512 ON) — a local variable
+# that shadows the cache — before the /arch:AVX512 flag is added.  This means
+# a plain GGML_AVX512=OFF FORCE in the parent scope is not enough: FindSIMD
+# silently re-enables AVX-512 inside its own scope.  Turning GGML_NATIVE OFF
+# prevents FindSIMD from running at all, so the individual GGML_AVX* cache
+# variables are respected.
 #
-# 1. Many CPUs simply do not support AVX-512 at all.  Loading a binary that
-#    contains AVX-512 instructions on such a machine crashes the JVM immediately
-#    with SIGILL (illegal instruction).  A real example from CI: the AMD EPYC
-#    7763 used by GitHub Actions runners has no AVX-512, while the Intel Xeon
-#    Platinum 8370C used in the manylinux build container does.  A library built
-#    on the Xeon would crash on the EPYC.
+# AVX-512 is disabled for several reasons:
+#
+# 1. Many CPUs do not support AVX-512.  Loading such a binary crashes the JVM
+#    immediately with SIGILL.  Real CI example: AMD EPYC 7763 (test runner, no
+#    AVX-512) vs Intel Xeon Platinum 8370C (build machine, has AVX-512).
 #
 # 2. Intel disabled AVX-512 on 12th-gen (Alder Lake) and later desktop CPUs.
-#    Alder Lake mixes big P-cores (which have AVX-512 hardware) with small
-#    E-cores (which do not).  Because the OS scheduler can move a thread between
-#    core types at any time, running AVX-512 instructions is unsafe.  Intel
-#    first locked it out via BIOS/microcode updates, then began physically fusing
-#    it off in silicon on new chips.  All current shipping Alder Lake, Raptor
-#    Lake, and newer Intel desktop CPUs have AVX-512 permanently disabled.
+#    The hybrid P+E-core design makes AVX-512 unsafe at the OS scheduler level;
+#    Intel has since fused it off in silicon on all current desktop chips.
 #
-# 3. Even CPUs that do support AVX-512 often throttle their clock speed while
-#    executing it.  Older Intel server chips (Skylake-X era) can drop hundreds
-#    of MHz across all cores — even cores not running AVX-512.  AMD Ryzen 9000
-#    (Zen 5) drops roughly 10 % in frequency when AVX-512 is active and takes
-#    more than 100 ms to ramp back up after the workload ends.
+# 3. CPUs that do support AVX-512 often throttle clock speed while executing it,
+#    and take 100+ ms to ramp back up — a net loss for bursty inference workloads.
 #
-# 4. AVX-512's high instantaneous power draw can destabilize systems that are
-#    running near their voltage limits, leading to random crashes.
+# 4. High instantaneous power draw from AVX-512 can destabilise systems running
+#    near their voltage limits.
 #
-# Keeping AVX-512 off produces a binary that runs correctly on any x86-64
-# machine with at least AVX2 support, which covers virtually all hardware
-# built since 2013.  FORCE prevents llama.cpp's own cmake defaults from
-# re-enabling it regardless of the build flags passed on the command line.
-set(GGML_AVX512 OFF CACHE BOOL "" FORCE)
+# AVX2 (default ON in GGML) covers virtually all x86-64 hardware built since
+# 2013 and is set explicitly here for clarity.
+set(GGML_NATIVE  OFF CACHE BOOL "" FORCE)
+set(GGML_AVX2    ON  CACHE BOOL "" FORCE)
+set(GGML_AVX512  OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
