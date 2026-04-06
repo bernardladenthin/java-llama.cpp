@@ -14,7 +14,8 @@
 // Layer B tests (need server.hpp + mock JNIEnv + pre-seeded server_response):
 //   json_to_jstring_impl, results_to_jstring_impl,
 //   build_completion_tasks_impl, recv_slot_task_result_impl,
-//   collect_task_results_impl, embedding_to_jfloat_array_impl
+//   collect_task_results_impl, embedding_to_jfloat_array_impl,
+//   tokens_to_jint_array_impl
 //
 // JNIEnv is mocked via a zero-filled JNINativeInterface_ table with only the
 // slots exercised by each test patched.  server_response is used directly:
@@ -597,4 +598,70 @@ TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_AllocFails_ThrowsOomAndReturnsN
     EXPECT_EQ(result, nullptr);
     EXPECT_TRUE(g_throw_called);
     EXPECT_EQ(g_throw_message, "could not allocate embedding");
+}
+
+// ============================================================
+// tokens_to_jint_array_impl
+// ============================================================
+
+namespace {
+
+static bool  g_int_new_called  = false;
+static jsize g_int_alloc_size  = -1;
+static jsize g_int_copied_size = -1;
+
+static jintArray JNICALL stub_NewIntArray(JNIEnv *, jsize n) {
+    g_int_new_called = true;
+    g_int_alloc_size = n;
+    return reinterpret_cast<jintArray>(0xF2);
+}
+static void JNICALL stub_SetIntArrayRegion(JNIEnv *, jintArray, jsize, jsize n, const jint *) {
+    g_int_copied_size = n;
+}
+
+struct IntArrayFixture : MockJniFixture {
+    void SetUp() override {
+        MockJniFixture::SetUp();
+        g_int_new_called  = false;
+        g_int_alloc_size  = -1;
+        g_int_copied_size = -1;
+        table.NewIntArray       = stub_NewIntArray;
+        table.SetIntArrayRegion = stub_SetIntArrayRegion;
+    }
+};
+
+} // namespace
+
+TEST_F(IntArrayFixture, TokensToJintArray_ReturnsSentinel) {
+    std::vector<int32_t> v = {1, 2, 3};
+    auto *result = tokens_to_jint_array_impl(env, v, dummy_class);
+    EXPECT_EQ(result, reinterpret_cast<jintArray>(0xF2));
+}
+
+TEST_F(IntArrayFixture, TokensToJintArray_AllocatesCorrectSize) {
+    std::vector<int32_t> v = {10, 20};
+    tokens_to_jint_array_impl(env, v, dummy_class);
+    EXPECT_EQ(g_int_alloc_size, 2);
+}
+
+TEST_F(IntArrayFixture, TokensToJintArray_CopiesAllElements) {
+    std::vector<int32_t> v(7, 42);
+    tokens_to_jint_array_impl(env, v, dummy_class);
+    EXPECT_EQ(g_int_copied_size, 7);
+}
+
+TEST_F(IntArrayFixture, TokensToJintArray_EmptyVector_AllocatesZeroLen) {
+    std::vector<int32_t> v;
+    tokens_to_jint_array_impl(env, v, dummy_class);
+    EXPECT_EQ(g_int_alloc_size, 0);
+    EXPECT_FALSE(g_throw_called);
+}
+
+TEST_F(IntArrayFixture, TokensToJintArray_AllocFails_ThrowsOomAndReturnsNull) {
+    table.NewIntArray = [](JNIEnv *, jsize) -> jintArray { return nullptr; };
+    std::vector<int32_t> v = {1};
+    auto *result = tokens_to_jint_array_impl(env, v, dummy_class);
+    EXPECT_EQ(result, nullptr);
+    EXPECT_TRUE(g_throw_called);
+    EXPECT_EQ(g_throw_message, "could not allocate token memory");
 }

@@ -273,6 +273,50 @@ static int require_single_task_id(JNIEnv *env,
 }
 
 /**
+ * Build completion tasks from `data`, dispatch them, collect all results, and
+ * serialise to a JNI string.  Used by handleCompletions, handleCompletionsOai,
+ * handleChatCompletions, and handleInfill — all of which follow exactly this
+ * pipeline and differ only in task_type and oaicompat.
+ *
+ * On error (build or collect fails): a JNI exception is already pending;
+ * returns nullptr so the caller can propagate it.
+ */
+[[nodiscard]] static jstring dispatch_completion_and_serialize(
+        JNIEnv            *env,
+        server_context    *ctx_server,
+        const json        &data,
+        server_task_type   task_type,
+        oaicompat_type     oaicompat) {
+    auto completion_id = gen_chatcmplid();
+    std::vector<server_task> tasks;
+    if (!build_completion_tasks(env, ctx_server, data, completion_id,
+                                 task_type, oaicompat, tasks)) return nullptr;
+    const auto task_ids = dispatch_tasks(ctx_server, tasks);
+    return collect_and_serialize(env, ctx_server, task_ids);
+}
+
+/**
+ * Build completion tasks from `data`, dispatch them, and return the single
+ * task ID to the Java caller for streaming via receiveCompletionJson.
+ * Used by requestCompletion and requestChatCompletion.
+ *
+ * On error: a JNI exception is already pending; returns 0.
+ */
+[[nodiscard]] static int request_completion_task_id(
+        JNIEnv            *env,
+        server_context    *ctx_server,
+        const json        &data,
+        server_task_type   task_type,
+        oaicompat_type     oaicompat) {
+    auto completion_id = gen_chatcmplid();
+    std::vector<server_task> tasks;
+    if (!build_completion_tasks(env, ctx_server, data, completion_id,
+                                 task_type, oaicompat, tasks)) return 0;
+    const auto task_ids = dispatch_tasks(ctx_server, tasks);
+    return require_single_task_id(env, task_ids);
+}
+
+/**
  * Convert a Java string to a std::string
  */
 std::string parse_jstring(JNIEnv *env, jstring java_string) {
@@ -773,15 +817,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
                                        ? SERVER_TASK_TYPE_INFILL
                                        : SERVER_TASK_TYPE_COMPLETION;
 
-    auto completion_id = gen_chatcmplid();
-    std::vector<server_task> tasks;
-    // oaicompat_model is already populated by params_from_json_cmpl inside the helper
-    if (!build_completion_tasks(env, ctx_server, data, completion_id,
-                                 type, OAICOMPAT_TYPE_NONE, tasks)) return 0;
-
-    const auto task_ids = dispatch_tasks(ctx_server, tasks);
-
-    return require_single_task_id(env, task_ids);
+    return request_completion_task_id(env, ctx_server, data, type, OAICOMPAT_TYPE_NONE);
 }
 
 JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_releaseTask(JNIEnv *env, jobject obj, jint id_task) {
@@ -900,14 +936,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
     json data;
     if (!parse_oai_chat_params(env, ctx_server, body, data)) return nullptr;
 
-    auto completion_id = gen_chatcmplid();
-    std::vector<server_task> tasks;
-    if (!build_completion_tasks(env, ctx_server, data, completion_id,
-                                 SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_CHAT, tasks)) return nullptr;
-
-    const auto task_ids = dispatch_tasks(ctx_server, tasks);
-
-    return collect_and_serialize(env, ctx_server, task_ids);
+    return dispatch_completion_and_serialize(env, ctx_server, data,
+                                             SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_CHAT);
 }
 
 JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNIEnv *env, jobject obj,
@@ -920,14 +950,8 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
     json data;
     if (!parse_oai_chat_params(env, ctx_server, body, data)) return 0;
 
-    auto completion_id = gen_chatcmplid();
-    std::vector<server_task> tasks;
-    if (!build_completion_tasks(env, ctx_server, data, completion_id,
-                                 SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_NONE, tasks)) return 0;
-
-    const auto task_ids = dispatch_tasks(ctx_server, tasks);
-
-    return require_single_task_id(env, task_ids);
+    return request_completion_task_id(env, ctx_server, data,
+                                      SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_NONE);
 }
 
 JNIEXPORT jintArray JNICALL Java_de_kherud_llama_LlamaModel_encode(JNIEnv *env, jobject obj, jstring jprompt) {
@@ -936,17 +960,7 @@ JNIEXPORT jintArray JNICALL Java_de_kherud_llama_LlamaModel_encode(JNIEnv *env, 
     const std::string c_prompt = parse_jstring(env, jprompt);
 
     llama_tokens tokens = tokenize_mixed(ctx_server->vocab, c_prompt, false, true);
-    jsize token_size = tokens.size(); // NOLINT(*-narrowing-conversions)
-
-    jintArray java_tokens = env->NewIntArray(token_size);
-    if (java_tokens == nullptr) {
-        env->ThrowNew(c_error_oom, "could not allocate token memory");
-        return nullptr;
-    }
-
-    env->SetIntArrayRegion(java_tokens, 0, token_size, reinterpret_cast<const jint *>(tokens.data()));
-
-    return java_tokens;
+    return tokens_to_jint_array_impl(env, tokens, c_error_oom);
 }
 
 /**
@@ -1045,14 +1059,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIE
 
     json data = parse_json_params(env, jparams);
 
-    auto completion_id = gen_chatcmplid();
-    std::vector<server_task> tasks;
-    if (!build_completion_tasks(env, ctx_server, data, completion_id,
-                                 SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_NONE, tasks)) return nullptr;
-
-    const auto task_ids = dispatch_tasks(ctx_server, tasks);
-
-    return collect_and_serialize(env, ctx_server, task_ids);
+    return dispatch_completion_and_serialize(env, ctx_server, data,
+                                             SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_NONE);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(JNIEnv *env, jobject obj,
@@ -1070,14 +1078,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
         return nullptr;
     }
 
-    auto completion_id = gen_chatcmplid();
-    std::vector<server_task> tasks;
-    if (!build_completion_tasks(env, ctx_server, data, completion_id,
-                                 SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_COMPLETION, tasks)) return nullptr;
-
-    const auto task_ids = dispatch_tasks(ctx_server, tasks);
-
-    return collect_and_serialize(env, ctx_server, task_ids);
+    return dispatch_completion_and_serialize(env, ctx_server, data,
+                                             SERVER_TASK_TYPE_COMPLETION, OAICOMPAT_TYPE_COMPLETION);
 }
 
 /**
@@ -1111,14 +1113,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
                                    ctx_server->params_base.spm_infill,
                                    tokenized_prompts.empty() ? llama_tokens() : tokenized_prompts[0]);
 
-    auto completion_id = gen_chatcmplid();
-    std::vector<server_task> tasks;
-    if (!build_completion_tasks(env, ctx_server, data, completion_id,
-                                 SERVER_TASK_TYPE_INFILL, OAICOMPAT_TYPE_NONE, tasks)) return nullptr;
-
-    const auto task_ids = dispatch_tasks(ctx_server, tasks);
-
-    return collect_and_serialize(env, ctx_server, task_ids);
+    return dispatch_completion_and_serialize(env, ctx_server, data,
+                                             SERVER_TASK_TYPE_INFILL, OAICOMPAT_TYPE_NONE);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEnv *env, jobject obj,

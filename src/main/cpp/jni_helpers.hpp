@@ -47,6 +47,7 @@
 //    12.  check_infill_support_impl
 //    13.  append_task
 //    14.  embedding_to_jfloat_array_impl
+//    15.  tokens_to_jint_array_impl
 
 #include "jni.h"
 #include "nlohmann/json.hpp"
@@ -371,5 +372,29 @@ inline void append_task(server_context           *ctx_server,
     }
     env->SetFloatArrayRegion(arr, 0, len,
                              reinterpret_cast<const jfloat *>(values.data()));
+    return arr;
+}
+
+// ---------------------------------------------------------------------------
+// tokens_to_jint_array_impl
+//
+// Converts a token vector to a Java jintArray.  Symmetric with
+// embedding_to_jfloat_array_impl for the int (token) case.
+//
+// On success: returns a new jintArray filled with the token values.
+// On allocation failure: throws via JNI with oom_class and returns nullptr.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline jintArray tokens_to_jint_array_impl(
+        JNIEnv                       *env,
+        const std::vector<int32_t>   &tokens,
+        jclass                        oom_class) {
+    const jsize len = static_cast<jsize>(tokens.size());
+    jintArray arr = env->NewIntArray(len);
+    if (arr == nullptr) {
+        env->ThrowNew(oom_class, "could not allocate token memory");
+        return nullptr;
+    }
+    env->SetIntArrayRegion(arr, 0, len,
+                           reinterpret_cast<const jint *>(tokens.data()));
     return arr;
 }

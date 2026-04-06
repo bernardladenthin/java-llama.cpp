@@ -239,6 +239,7 @@ Includes `json_helpers.hpp` so all bridge helpers can call transforms directly.
 - `check_infill_support_impl` — validates FIM prefix/suffix/middle tokens present.
 - `append_task` — constructs and appends a `server_task` of a given type.
 - `embedding_to_jfloat_array_impl` — converts `std::vector<float>` to a Java `jfloatArray`; throws OOM on allocation failure.
+- `tokens_to_jint_array_impl` — converts `std::vector<int32_t>` to a Java `jintArray`; throws OOM on allocation failure.
 
 Functions with `_impl` suffix have a thin module-level wrapper in `jllama.cpp`; functions
 without the suffix (in `json_helpers.hpp`) are called directly.
