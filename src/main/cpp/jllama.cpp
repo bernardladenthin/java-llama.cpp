@@ -249,27 +249,25 @@ static int require_single_task_id(JNIEnv *env,
 }
 
 /**
- * Collect all results for the given task IDs from the server response queue,
- * then serialise them to a JNI string.
+ * Dispatch tasks and collect all results into `out`.
  *
- * Combines the repeated four-line pipeline used by handleCompletions,
- * handleCompletionsOai, handleChatCompletions, and handleInfill:
+ * Combines the repeated three-line pipeline used by embed, handleRerank,
+ * handleEmbeddings, and dispatch_completion_and_serialize:
  *
+ *   const auto task_ids = dispatch_tasks(ctx_server, tasks);
  *   std::vector<server_task_result_ptr> results;
- *   results.reserve(task_ids.size());
  *   if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
- *   return results_to_jstring(env, results);
  *
  * On error (collect_task_results returns false): a JNI exception is already
- * pending; this function returns nullptr so the caller can propagate it.
+ * pending; returns false so the caller can propagate it.
  */
-[[nodiscard]] static jstring collect_and_serialize(
-        JNIEnv *env,
-        server_context *ctx_server,
-        const std::unordered_set<int> &task_ids) {
-    std::vector<server_task_result_ptr> results;
-    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
-    return results_to_jstring(env, results);
+[[nodiscard]] static bool dispatch_and_collect(
+        JNIEnv                              *env,
+        server_context                      *ctx_server,
+        std::vector<server_task>             tasks,
+        std::vector<server_task_result_ptr> &out) {
+    const auto task_ids = dispatch_tasks(ctx_server, std::move(tasks));
+    return collect_task_results(env, ctx_server, task_ids, out);
 }
 
 /**
@@ -291,8 +289,9 @@ static int require_single_task_id(JNIEnv *env,
     std::vector<server_task> tasks;
     if (!build_completion_tasks(env, ctx_server, data, completion_id,
                                  task_type, oaicompat, tasks)) return nullptr;
-    const auto task_ids = dispatch_tasks(ctx_server, tasks);
-    return collect_and_serialize(env, ctx_server, task_ids);
+    std::vector<server_task_result_ptr> results;
+    if (!dispatch_and_collect(env, ctx_server, std::move(tasks), results)) return nullptr;
+    return results_to_jstring(env, results);
 }
 
 /**
@@ -864,9 +863,8 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
     std::vector<server_task> tasks;
     append_task(ctx_server, tasks, SERVER_TASK_TYPE_EMBEDDING, tokens, 0);
 
-    const auto task_ids = dispatch_tasks(ctx_server, tasks);
     std::vector<server_task_result_ptr> results;
-    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
+    if (!dispatch_and_collect(env, ctx_server, std::move(tasks), results)) return nullptr;
 
     std::vector<float> first_row;
     try {
@@ -907,10 +905,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
         append_task(ctx_server, tasks, SERVER_TASK_TYPE_RERANK,
                     format_rerank(ctx_server->vocab, tokenized_query, tokenized_docs[i]), i);
     }
-    const auto task_ids = dispatch_tasks(ctx_server, tasks);
-
     std::vector<server_task_result_ptr> results;
-    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
+    if (!dispatch_and_collect(env, ctx_server, std::move(tasks), results)) return nullptr;
 
     return json_to_jstring(env, rerank_results_to_json(results, document_vector));
 }
@@ -1165,10 +1161,8 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
         append_task(ctx_server, tasks, SERVER_TASK_TYPE_EMBEDDING, tokenized_prompts[i], i, oaicompat);
     }
 
-    const auto task_ids = dispatch_tasks(ctx_server, tasks);
-
     std::vector<server_task_result_ptr> results;
-    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
+    if (!dispatch_and_collect(env, ctx_server, std::move(tasks), results)) return nullptr;
 
     return json_to_jstring(env, build_embeddings_response_json(results, body, oaicompat, use_base64));
 }
