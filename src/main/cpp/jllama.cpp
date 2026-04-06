@@ -266,7 +266,7 @@ static int require_single_task_id(JNIEnv *env,
         server_context                      *ctx_server,
         std::vector<server_task>             tasks,
         std::vector<server_task_result_ptr> &out) {
-    const auto task_ids = dispatch_tasks(ctx_server, std::move(tasks));
+    const auto task_ids = dispatch_tasks(ctx_server, tasks);
     return collect_task_results(env, ctx_server, task_ids, out);
 }
 
