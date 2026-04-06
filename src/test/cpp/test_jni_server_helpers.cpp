@@ -54,6 +54,22 @@ struct fake_ok_result : server_task_result {
     json to_json() override { return {{"content", msg}}; }
 };
 
+// An embedding result whose to_json() returns the shape expected by
+// format_embeddings_response_oaicompat: {"embedding": [...], "tokens_evaluated": N}.
+struct fake_embedding_result : server_task_result {
+    std::vector<float> vec;
+    int tokens_evaluated;
+    explicit fake_embedding_result(int id_, std::vector<float> v, int tok = 4)
+        : vec(std::move(v)), tokens_evaluated(tok) { id = id_; }
+    json to_json() override {
+        return {{"embedding", vec}, {"tokens_evaluated", tokens_evaluated}};
+    }
+};
+
+static server_task_result_ptr make_embedding(int id_, std::vector<float> v = {0.1f, 0.2f, 0.3f}) {
+    return std::make_unique<fake_embedding_result>(id_, std::move(v));
+}
+
 // An error result — reuses the real server_task_result_error so that
 // to_json() → format_error_response() → {"message": err_msg, ...} matches
 // the exact JSON key that collect_task_results_impl reads.
@@ -644,4 +660,82 @@ TEST(ExtractEmbeddingPrompt, ArrayPrompt_ReturnedAsIs) {
     EXPECT_EQ(prompt[0], "sentence one");
     EXPECT_EQ(prompt[1], "sentence two");
     EXPECT_FALSE(flag);
+}
+
+// ============================================================
+// Tests for build_embeddings_response_json_impl
+//
+// Pure computation — no JNI or llama context needed.
+// Uses fake_embedding_result (added above) for OAI-path tests that
+// need "embedding" + "tokens_evaluated" in the result JSON.
+// ============================================================
+
+TEST(BuildEmbeddingsResponseJson, NonOai_SingleResult_ReturnsBareArray) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_embedding(1, {0.1f, 0.2f}));
+
+    json out = build_embeddings_response_json_impl(results, json::object(),
+                                                    OAICOMPAT_TYPE_NONE, false);
+
+    ASSERT_TRUE(out.is_array());
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_TRUE(out[0].contains("embedding"));
+}
+
+TEST(BuildEmbeddingsResponseJson, NonOai_MultipleResults_AllInArray) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_embedding(1, {0.1f}));
+    results.push_back(make_embedding(2, {0.2f}));
+    results.push_back(make_embedding(3, {0.3f}));
+
+    json out = build_embeddings_response_json_impl(results, json::object(),
+                                                    OAICOMPAT_TYPE_NONE, false);
+
+    ASSERT_TRUE(out.is_array());
+    EXPECT_EQ(out.size(), 3u);
+}
+
+TEST(BuildEmbeddingsResponseJson, OaiFloat_WrapsWithOaiStructure) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_embedding(1, {0.5f, 0.6f, 0.7f}));
+
+    json body = {{"model", "text-embedding-ada-002"}};
+    json out = build_embeddings_response_json_impl(results, body,
+                                                    OAICOMPAT_TYPE_EMBEDDING, false);
+
+    EXPECT_TRUE(out.is_object())          << "OAI response must be an object";
+    EXPECT_EQ(out.value("object", ""),   "list");
+    EXPECT_TRUE(out.contains("data"))    << "OAI response must have \"data\"";
+    EXPECT_TRUE(out.contains("usage"))   << "OAI response must have \"usage\"";
+    EXPECT_EQ(out.value("model", ""),    "text-embedding-ada-002");
+
+    ASSERT_TRUE(out["data"].is_array());
+    ASSERT_EQ(out["data"].size(), 1u);
+    EXPECT_EQ(out["data"][0].value("object", ""), "embedding");
+}
+
+TEST(BuildEmbeddingsResponseJson, OaiBase64_EmbeddingEncodedAsString) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_embedding(1, {1.0f, 2.0f}));
+
+    json out = build_embeddings_response_json_impl(results, json::object(),
+                                                    OAICOMPAT_TYPE_EMBEDDING, /*use_base64=*/true);
+
+    ASSERT_TRUE(out["data"].is_array());
+    ASSERT_EQ(out["data"].size(), 1u);
+    // base64 path stores embedding as a string, not an array
+    EXPECT_TRUE(out["data"][0]["embedding"].is_string())
+        << "base64 embedding must be serialised as a string";
+}
+
+TEST(BuildEmbeddingsResponseJson, OaiUsage_TokensSummedAcrossResults) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(std::make_unique<fake_embedding_result>(1, std::vector<float>{0.1f}, /*tok=*/3));
+    results.push_back(std::make_unique<fake_embedding_result>(2, std::vector<float>{0.2f}, /*tok=*/5));
+
+    json out = build_embeddings_response_json_impl(results, json::object(),
+                                                    OAICOMPAT_TYPE_EMBEDDING, false);
+
+    EXPECT_EQ(out["usage"].value("prompt_tokens", 0), 8)
+        << "usage.prompt_tokens must be sum of tokens_evaluated across all results";
 }

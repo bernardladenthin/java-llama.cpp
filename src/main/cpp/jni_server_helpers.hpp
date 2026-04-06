@@ -35,8 +35,9 @@
 //   9. rerank_results_to_json         — no dependencies on helpers above
 //  10. append_task                    — no dependencies on helpers above
 //  11. extract_first_embedding_row    — no dependencies on helpers above
-//  12. parse_encoding_format_impl     — no dependencies on helpers above
-//  13. extract_embedding_prompt_impl  — no dependencies on helpers above
+//  12. parse_encoding_format_impl          — no dependencies on helpers above
+//  13. extract_embedding_prompt_impl       — no dependencies on helpers above
+//  14. build_embeddings_response_json_impl — no dependencies on helpers above
 
 #include "jni.h"
 
@@ -396,4 +397,32 @@ extract_first_embedding_row(const json &out_res) {
         return body.at("content");
     }
     throw std::invalid_argument("\"input\" or \"content\" must be provided");
+}
+
+// ---------------------------------------------------------------------------
+// build_embeddings_response_json_impl
+//
+// Collects task results into a JSON array, then formats the final response:
+//   - OAICOMPAT_TYPE_EMBEDDING → wraps via format_embeddings_response_oaicompat
+//     (adds "object":"list", "usage", and per-embedding "object":"embedding")
+//   - any other oaicompat      → returns the bare JSON array
+//
+// Symmetric counterpart to rerank_results_to_json.
+//
+// Pure computation — no JNI calls, no llama context.
+// Unit-testable with fake_ok_result mocks and any JSON body literal.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline json build_embeddings_response_json_impl(
+        const std::vector<server_task_result_ptr> &results,
+        const json                                &body,
+        oaicompat_type                             oaicompat,
+        bool                                       use_base64) {
+    json responses = json::array();
+    for (const auto &result : results) {
+        responses.push_back(result->to_json());
+    }
+    if (oaicompat == OAICOMPAT_TYPE_EMBEDDING) {
+        return format_embeddings_response_oaicompat(body, responses, use_base64);
+    }
+    return responses;
 }

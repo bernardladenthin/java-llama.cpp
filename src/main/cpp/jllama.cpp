@@ -1199,16 +1199,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
     std::vector<server_task_result_ptr> results;
     if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
-    json responses = json::array();
-    for (const auto &result : results) {
-        responses.push_back(result->to_json());
-    }
-
-    json root = oaicompat == OAICOMPAT_TYPE_EMBEDDING
-                    ? format_embeddings_response_oaicompat(body, responses, use_base64)
-                    : json(responses);
-
-    return json_to_jstring(env, root);
+    return json_to_jstring(env, build_embeddings_response_json_impl(results, body, oaicompat, use_base64));
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleTokenize(JNIEnv *env, jobject obj, jstring jcontent,
