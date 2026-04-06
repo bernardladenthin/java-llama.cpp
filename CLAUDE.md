@@ -197,7 +197,66 @@ clang-format -i src/main/cpp/*.cpp src/main/cpp/*.hpp   # Format C++ code
 - `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp.
 - `server.hpp` — Inference server logic (adapted from llama.cpp's server).
 - `utils.hpp` — Helper utilities.
+- `json_helpers.hpp` — Pure JSON transformation helpers (no JNI, no llama state). Independently unit-testable.
+- `jni_helpers.hpp` — JNI bridge helpers (handle management + server orchestration). Includes `json_helpers.hpp`.
 - Uses `nlohmann/json` for JSON deserialization of parameters.
+
+### Native Helper Architecture
+
+The project C++ helpers follow a strict semantic split:
+
+**`json_helpers.hpp`** — Pure data transforms.
+- Input: `nlohmann::json`, `server_task_result_ptr`, plain C++ types.
+- Output: `json`, `std::vector`, `std::optional`, plain C++ types.
+- Zero JNI calls (`JNIEnv*` never appears).
+- Zero llama state (`llama_context*`, `llama_vocab*`, `server_context*` never appear).
+- Functions are named without `_impl` suffix — they are the canonical implementation.
+- Testable with JSON literals and fake result objects; no JVM and no loaded model required.
+- Requires `server.hpp` to be included by the translation unit first (TU convention — `server.hpp` has no include guard).
+
+Functions: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`,
+`build_embeddings_response_json`, `extract_first_embedding_row`, `parse_encoding_format`,
+`extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`,
+`parse_positive_int_config`.
+
+**`jni_helpers.hpp`** — JNI bridge helpers, split into two layers:
+
+*Layer A* (no `server.hpp` required): handle management.
+- `jllama_context` struct — owns `server_context*` and background worker thread.
+- `get_server_context_impl` — reads Java `ctx` handle, throws on null.
+- `get_jllama_context_impl` — like above but returns the wrapper (delete path only).
+- `require_single_task_id_impl` — validates exactly one task ID was created.
+- `require_json_field_impl` — throws `"<field> is required"` if key is absent.
+- `jint_array_to_tokens_impl` — reads a Java `int[]` into `std::vector<int32_t>`.
+
+*Layer B* (requires `server.hpp` in the TU before `jni_helpers.hpp`): server orchestration.
+Includes `json_helpers.hpp` so all bridge helpers can call transforms directly.
+- `json_to_jstring_impl` — serialises any `json` value to a JNI string.
+- `build_completion_tasks_impl` — tokenises prompt and populates `server_task` vector.
+- `recv_slot_task_result_impl` — receives one slot result, throws on error.
+- `collect_task_results_impl` — receives all results for a task-id set, throws on error.
+- `results_to_jstring_impl` — delegates to `results_to_json` then `json_to_jstring_impl`.
+- `check_infill_support_impl` — validates FIM prefix/suffix/middle tokens present.
+- `append_task` — constructs and appends a `server_task` of a given type.
+
+Functions with `_impl` suffix have a thin module-level wrapper in `jllama.cpp`; functions
+without the suffix (in `json_helpers.hpp`) are called directly.
+
+**Include order rule:**
+```
+// In jllama.cpp and any TU that uses Layer B helpers:
+#include "server.hpp"     // must come first — no include guard
+#include "jni_helpers.hpp"  // includes json_helpers.hpp internally
+```
+
+**Adding a new pure transform** (e.g. a new JSON field parser):
+- Add it to `json_helpers.hpp`. No JNI, no llama types.
+- Add tests to `src/test/cpp/test_json_helpers.cpp`.
+
+**Adding a new JNI bridge helper:**
+- Add it to `jni_helpers.hpp` in the appropriate layer.
+- If it needs `server.hpp` types, put it in Layer B (after the `json_helpers.hpp` include).
+- Add tests to `src/test/cpp/test_jni_helpers.cpp`.
 
 ### Parameter Flow
 Java parameters are serialized to JSON strings and passed to native code, which deserializes them using nlohmann/json. This avoids complex JNI field mapping for the many llama.cpp parameters.
@@ -213,13 +272,31 @@ Docker-based cross-compilation scripts are in `.github/dockcross/` for ARM/Andro
 
 ## Testing
 
-Tests require a model file. The CI downloads models from HuggingFace:
+### Java tests
+Require a model file. The CI downloads models from HuggingFace:
 - **LlamaModel tests**: CodeLlama-7B-GGUF (`codellama-7b.Q2_K.gguf`)
 - **RerankingModel tests**: Jina-Reranker model
 
 Set the model path via system property or environment variable (see test files for exact property names).
 
 Test files are in `src/test/java/de/kherud/llama/` and `src/test/java/examples/`.
+
+### C++ unit tests
+No JVM or model file required. Built as `jllama_test` via CMake when `BUILD_TESTING=ON`.
+
+| File | What it tests |
+|------|---------------|
+| `test_json_helpers.cpp` | All functions in `json_helpers.hpp` — pure JSON transforms, using fake result objects |
+| `test_jni_helpers.cpp` | All functions in `jni_helpers.hpp` — mock `JNIEnv`, pre-seeded `server_response` queue |
+| `test_server.cpp` | Selected `server.hpp` internals (result types, error formatting, routing helpers) |
+| `test_utils.cpp` | Utilities from `utils.hpp` |
+
+Run C++ tests:
+```bash
+cmake -B build -DBUILD_TESTING=ON
+cmake --build build --config Release
+ctest --test-dir build --output-on-failure
+```
 
 ## Key Constraints
 
