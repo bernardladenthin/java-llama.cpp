@@ -14,7 +14,7 @@
 // Layer B tests (need server.hpp + mock JNIEnv + pre-seeded server_response):
 //   json_to_jstring_impl, results_to_jstring_impl,
 //   build_completion_tasks_impl, recv_slot_task_result_impl,
-//   collect_task_results_impl
+//   collect_task_results_impl, embedding_to_jfloat_array_impl
 //
 // JNIEnv is mocked via a zero-filled JNINativeInterface_ table with only the
 // slots exercised by each test patched.  server_response is used directly:
@@ -32,6 +32,8 @@
 // server.hpp must precede jni_helpers.hpp (no include guard in server.hpp).
 #include "server.hpp"
 #include "jni_helpers.hpp"
+
+// embedding_to_jfloat_array_impl is also tested in this file (see bottom).
 
 // ============================================================
 // Shared fake result types
@@ -529,4 +531,70 @@ TEST_F(MockJniFixture, BuildTasks_MissingPrompt_InfillTypeHasSameBehaviour) {
     EXPECT_FALSE(ok);
     EXPECT_TRUE(g_throw_called);
     EXPECT_TRUE(tasks.empty());
+}
+
+// ============================================================
+// embedding_to_jfloat_array_impl
+// ============================================================
+
+namespace {
+
+static bool  g_float_new_called  = false;
+static jsize g_float_alloc_size  = -1;
+static jsize g_float_copied_size = -1;
+
+static jfloatArray JNICALL stub_NewFloatArray(JNIEnv *, jsize n) {
+    g_float_new_called = true;
+    g_float_alloc_size = n;
+    return reinterpret_cast<jfloatArray>(0xF1);
+}
+static void JNICALL stub_SetFloatArrayRegion(JNIEnv *, jfloatArray, jsize, jsize n, const jfloat *) {
+    g_float_copied_size = n;
+}
+
+struct FloatArrayFixture : MockJniFixture {
+    void SetUp() override {
+        MockJniFixture::SetUp();
+        g_float_new_called  = false;
+        g_float_alloc_size  = -1;
+        g_float_copied_size = -1;
+        table.NewFloatArray       = stub_NewFloatArray;
+        table.SetFloatArrayRegion = stub_SetFloatArrayRegion;
+    }
+};
+
+} // namespace
+
+TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_ReturnsSentinel) {
+    std::vector<float> v = {1.0f, 2.0f, 3.0f};
+    auto *result = embedding_to_jfloat_array_impl(env, v, dummy_class);
+    EXPECT_EQ(result, reinterpret_cast<jfloatArray>(0xF1));
+}
+
+TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_AllocatesCorrectSize) {
+    std::vector<float> v = {0.1f, 0.2f};
+    embedding_to_jfloat_array_impl(env, v, dummy_class);
+    EXPECT_EQ(g_float_alloc_size, 2);
+}
+
+TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_CopiesAllElements) {
+    std::vector<float> v(5, 0.5f);
+    embedding_to_jfloat_array_impl(env, v, dummy_class);
+    EXPECT_EQ(g_float_copied_size, 5);
+}
+
+TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_EmptyVector_AllocatesZeroLen) {
+    std::vector<float> v;
+    embedding_to_jfloat_array_impl(env, v, dummy_class);
+    EXPECT_EQ(g_float_alloc_size, 0);
+    EXPECT_FALSE(g_throw_called);
+}
+
+TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_AllocFails_ThrowsOomAndReturnsNull) {
+    table.NewFloatArray = [](JNIEnv *, jsize) -> jfloatArray { return nullptr; };
+    std::vector<float> v = {1.0f};
+    auto *result = embedding_to_jfloat_array_impl(env, v, dummy_class);
+    EXPECT_EQ(result, nullptr);
+    EXPECT_TRUE(g_throw_called);
+    EXPECT_EQ(g_throw_message, "could not allocate embedding");
 }

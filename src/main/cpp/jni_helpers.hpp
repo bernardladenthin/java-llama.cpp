@@ -46,6 +46,7 @@
 //    11.  results_to_jstring_impl        — uses results_to_json (json_helpers), json_to_jstring_impl
 //    12.  check_infill_support_impl
 //    13.  append_task
+//    14.  embedding_to_jfloat_array_impl
 
 #include "jni.h"
 #include "nlohmann/json.hpp"
@@ -348,4 +349,27 @@ inline void append_task(server_context           *ctx_server,
     task.prompt_tokens    = server_tokens(prompt_tokens, false);
     task.params.oaicompat = oaicompat;
     tasks.push_back(std::move(task));
+}
+
+// ---------------------------------------------------------------------------
+// embedding_to_jfloat_array_impl
+//
+// Converts a float vector to a Java jfloatArray.
+//
+// On success: returns a new jfloatArray filled with the embedding values.
+// On allocation failure: throws via JNI with oom_class and returns nullptr.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline jfloatArray embedding_to_jfloat_array_impl(
+        JNIEnv                   *env,
+        const std::vector<float> &values,
+        jclass                    oom_class) {
+    const jsize len = static_cast<jsize>(values.size());
+    jfloatArray arr = env->NewFloatArray(len);
+    if (arr == nullptr) {
+        env->ThrowNew(oom_class, "could not allocate embedding");
+        return nullptr;
+    }
+    env->SetFloatArrayRegion(arr, 0, len,
+                             reinterpret_cast<const jfloat *>(values.data()));
+    return arr;
 }

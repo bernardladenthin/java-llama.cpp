@@ -826,46 +826,22 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
 
     auto tokens = tokenize_mixed(ctx_server->vocab, prompt, true, true);
     std::vector<server_task> tasks;
-
     append_task(ctx_server, tasks, SERVER_TASK_TYPE_EMBEDDING, tokens, 0);
 
     const auto task_ids = dispatch_tasks(ctx_server, tasks);
-    const auto id_task = *task_ids.begin();
-
-    server_task_result_ptr result = ctx_server->queue_results.recv(id_task);
-
-    if (result->is_error()) {
-        ctx_server->queue_results.remove_waiting_task_id(id_task);
-        env->ThrowNew(c_llama_error, get_result_error_message(result).c_str());
-        return nullptr;
-    }
-
-    if (result->is_stop()) {
-        ctx_server->queue_results.remove_waiting_task_id(id_task);
-    }
-
-    const auto out_res = result->to_json();
+    std::vector<server_task_result_ptr> results;
+    if (!collect_task_results(env, ctx_server, task_ids, results)) return nullptr;
 
     std::vector<float> first_row;
     try {
-        first_row = extract_first_embedding_row(out_res);
+        first_row = extract_first_embedding_row(results[0]->to_json());
     } catch (const std::exception &e) {
-        env->ThrowNew(c_error_oom, e.what());
+        env->ThrowNew(c_llama_error, e.what());
         return nullptr;
     }
 
-    const jsize embedding_cols = static_cast<jsize>(first_row.size());
-    SRV_INF("Embedding has %d columns\n", embedding_cols);
-
-    jfloatArray j_embedding = env->NewFloatArray(embedding_cols);
-    if (j_embedding == nullptr) {
-        env->ThrowNew(c_error_oom, "could not allocate embedding");
-        return nullptr;
-    }
-
-    env->SetFloatArrayRegion(j_embedding, 0, embedding_cols,
-                             reinterpret_cast<const jfloat *>(first_row.data()));
-    return j_embedding;
+    SRV_INF("Embedding has %d columns\n", static_cast<jsize>(first_row.size()));
+    return embedding_to_jfloat_array_impl(env, first_row, c_error_oom);
 }
 
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *env, jobject obj, jstring jprompt,
@@ -1167,13 +1143,15 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
 
     bool force_no_oaicompat = false;
     json prompt;
-    try { prompt = extract_embedding_prompt(body, force_no_oaicompat); }
-    catch (const std::exception &e) { env->ThrowNew(c_llama_error, e.what()); return nullptr; }
-    if (force_no_oaicompat) oaicompat = OAICOMPAT_TYPE_NONE;
-
     bool use_base64 = false;
-    try { use_base64 = parse_encoding_format(body); }
-    catch (const std::exception &e) { env->ThrowNew(c_llama_error, e.what()); return nullptr; }
+    try {
+        prompt      = extract_embedding_prompt(body, force_no_oaicompat);
+        use_base64  = parse_encoding_format(body);
+    } catch (const std::exception &e) {
+        env->ThrowNew(c_llama_error, e.what());
+        return nullptr;
+    }
+    if (force_no_oaicompat) oaicompat = OAICOMPAT_TYPE_NONE;
 
     std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, prompt, true, true);
 
