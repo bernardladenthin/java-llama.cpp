@@ -72,6 +72,12 @@ endif()
 # but are needed for GCC/Clang where each flag independently adds its
 # -m flag and GGML_* preprocessor define.
 #
+# BMI2 is enabled on 64-bit targets only.  MSVC's 32-bit (x86) compiler
+# does not expose __pdep_u64 / __pext_u64; ggml's quants.c uses them in
+# _ggml_vec_dot_iq1_m_q8_K, causing an unresolved-external link error.
+# GCC/Clang on x86 can lower the 64-bit intrinsics to two 32-bit ops,
+# but disabling BMI2 entirely is safer and consistent across compilers.
+#
 # AVX-512 stays OFF:
 #   - Many CPUs lack it (AMD EPYC 7763, all Intel desktop since Alder Lake).
 #   - MSVC's /arch:AVX512 applies to the entire TU — no per-function gating.
@@ -80,7 +86,11 @@ set(GGML_NATIVE  OFF CACHE BOOL "" FORCE)
 set(GGML_SSE42   ON  CACHE BOOL "" FORCE)
 set(GGML_AVX     ON  CACHE BOOL "" FORCE)
 set(GGML_AVX2    ON  CACHE BOOL "" FORCE)
-set(GGML_BMI2    ON  CACHE BOOL "" FORCE)
+if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(GGML_BMI2 ON  CACHE BOOL "" FORCE)
+else()
+    set(GGML_BMI2 OFF CACHE BOOL "" FORCE)
+endif()
 set(GGML_FMA     ON  CACHE BOOL "" FORCE)
 set(GGML_F16C    ON  CACHE BOOL "" FORCE)
 set(GGML_AVX512  OFF CACHE BOOL "" FORCE)
