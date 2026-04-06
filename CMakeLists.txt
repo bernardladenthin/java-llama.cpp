@@ -84,6 +84,7 @@ endif()
 # 2013 and is set explicitly here for clarity.
 set(GGML_NATIVE  OFF CACHE BOOL "" FORCE)
 set(GGML_AVX2    ON  CACHE BOOL "" FORCE)
+set(GGML_BMI2    ON  CACHE BOOL "" FORCE)
 set(GGML_AVX512  OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
