@@ -35,6 +35,18 @@ abstract class JsonParameters {
 		return builder.toString();
 	}
 
+	static String mapToJsonObject(Map<String, String> map) {
+		StringBuilder sb = new StringBuilder("{");
+		boolean first = true;
+		for (Map.Entry<String, String> entry : map.entrySet()) {
+			if (!first) sb.append(",");
+			sb.append("\"").append(entry.getKey()).append("\":").append(entry.getValue());
+			first = false;
+		}
+		sb.append("}");
+		return sb.toString();
+	}
+
 	// taken from org.json.JSONObject#quote(String, Writer)
 	String toJsonString(String text) {
 		if (text == null) return null;

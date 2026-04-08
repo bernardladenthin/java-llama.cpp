@@ -353,48 +353,46 @@ inline void append_task(server_context           *ctx_server,
 }
 
 // ---------------------------------------------------------------------------
-// embedding_to_jfloat_array_impl
+// vec_to_jarray_impl
 //
-// Converts a float vector to a Java jfloatArray.
-//
-// On success: returns a new jfloatArray filled with the embedding values.
+// Generic helper: converts a C++ vector to a JNI primitive array.
+// Parameterized on JNI array/element types and the alloc/copy member fns.
 // On allocation failure: throws via JNI with oom_class and returns nullptr.
 // ---------------------------------------------------------------------------
+template <typename JArray, typename JElem, typename CppElem>
+[[nodiscard]] inline JArray vec_to_jarray_impl(
+        JNIEnv                     *env,
+        const std::vector<CppElem> &values,
+        jclass                      oom_class,
+        const char                 *oom_msg,
+        JArray (JNIEnv_::*alloc)(jsize),
+        void (JNIEnv_::*copy)(JArray, jsize, jsize, const JElem *)) {
+    const jsize len = static_cast<jsize>(values.size());
+    JArray arr = (env->*alloc)(len);
+    if (arr == nullptr) {
+        env->ThrowNew(oom_class, oom_msg);
+        return nullptr;
+    }
+    (env->*copy)(arr, 0, len, reinterpret_cast<const JElem *>(values.data()));
+    return arr;
+}
+
+// Converts a float vector to a Java jfloatArray.
 [[nodiscard]] inline jfloatArray embedding_to_jfloat_array_impl(
         JNIEnv                   *env,
         const std::vector<float> &values,
         jclass                    oom_class) {
-    const jsize len = static_cast<jsize>(values.size());
-    jfloatArray arr = env->NewFloatArray(len);
-    if (arr == nullptr) {
-        env->ThrowNew(oom_class, "could not allocate embedding");
-        return nullptr;
-    }
-    env->SetFloatArrayRegion(arr, 0, len,
-                             reinterpret_cast<const jfloat *>(values.data()));
-    return arr;
+    return vec_to_jarray_impl<jfloatArray, jfloat>(
+            env, values, oom_class, "could not allocate embedding",
+            &JNIEnv_::NewFloatArray, &JNIEnv_::SetFloatArrayRegion);
 }
 
-// ---------------------------------------------------------------------------
-// tokens_to_jint_array_impl
-//
-// Converts a token vector to a Java jintArray.  Symmetric with
-// embedding_to_jfloat_array_impl for the int (token) case.
-//
-// On success: returns a new jintArray filled with the token values.
-// On allocation failure: throws via JNI with oom_class and returns nullptr.
-// ---------------------------------------------------------------------------
+// Converts a token vector to a Java jintArray.
 [[nodiscard]] inline jintArray tokens_to_jint_array_impl(
         JNIEnv                       *env,
         const std::vector<int32_t>   &tokens,
         jclass                        oom_class) {
-    const jsize len = static_cast<jsize>(tokens.size());
-    jintArray arr = env->NewIntArray(len);
-    if (arr == nullptr) {
-        env->ThrowNew(oom_class, "could not allocate token memory");
-        return nullptr;
-    }
-    env->SetIntArrayRegion(arr, 0, len,
-                           reinterpret_cast<const jint *>(tokens.data()));
-    return arr;
+    return vec_to_jarray_impl<jintArray, jint>(
+            env, tokens, oom_class, "could not allocate token memory",
+            &JNIEnv_::NewIntArray, &JNIEnv_::SetIntArrayRegion);
 }

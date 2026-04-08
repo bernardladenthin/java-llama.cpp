@@ -351,6 +351,19 @@ static json parse_json_params(JNIEnv *env, jstring jparams) {
 }
 
 /**
+ * Throws if the model was not loaded with embedding support.  Returns false
+ * (after throwing) when embedding is unavailable, true otherwise.
+ */
+[[nodiscard]] static bool require_embedding_support(JNIEnv *env, server_context *ctx_server) {
+    if (!ctx_server->params_base.embedding) {
+        env->ThrowNew(c_llama_error,
+                      "Model was not loaded with embedding support (see ModelParameters#setEmbedding(boolean))");
+        return false;
+    }
+    return true;
+}
+
+/**
  * Validates `jfilename`, builds a SAVE or RESTORE slot task, dispatches it,
  * and returns the result as a jstring.  Shared by the SAVE (case 1) and
  * RESTORE (case 2) branches of handleSlotAction, which are identical except
@@ -849,11 +862,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(
 JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env, jobject obj, jstring jprompt) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
-    if (!ctx_server->params_base.embedding) {
-        env->ThrowNew(c_llama_error,
-                      "model was not loaded with embedding support (see ModelParameters#setEmbedding(boolean))");
-        return nullptr;
-    }
+    if (!require_embedding_support(env, ctx_server)) return nullptr;
 
     const std::string prompt = parse_jstring(env, jprompt);
 
@@ -1117,11 +1126,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
                                                                            jstring jparams, jboolean joaiCompat) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
-    if (!ctx_server->params_base.embedding) {
-        env->ThrowNew(c_llama_error,
-                      "Model was not loaded with embedding support (see ModelParameters#enableEmbedding())");
-        return nullptr;
-    }
+    if (!require_embedding_support(env, ctx_server)) return nullptr;
 
     oaicompat_type oaicompat = joaiCompat ? OAICOMPAT_TYPE_EMBEDDING : OAICOMPAT_TYPE_NONE;
 
