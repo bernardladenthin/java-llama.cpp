@@ -1164,15 +1164,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setChatTemplateKwargs(java.util.Map<String, String> kwargs) {
-        StringBuilder sb = new StringBuilder("{");
-        boolean first = true;
-        for (java.util.Map.Entry<String, String> entry : kwargs.entrySet()) {
-            if (!first) sb.append(",");
-            sb.append("\"").append(entry.getKey()).append("\":").append(entry.getValue());
-            first = false;
-        }
-        sb.append("}");
-        parameters.put("--chat-template-kwargs", sb.toString());
+        parameters.put("--chat-template-kwargs", JsonParameters.mapToJsonObject(kwargs));
         return this;
     }
 
