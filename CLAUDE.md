@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b8778**
+Current llama.cpp pinned version: **b8808**
 
 ## Upgrading CUDA Version
 
@@ -105,33 +105,38 @@ jllama.cpp / server.hpp / utils.hpp
 └── mtmd-helper.h
 ```
 
-**Priority-ordered review list** (highest break risk first):
+**Priority-ordered review list for upgrade diffs** (highest break risk first)
+
+The top 8 rows cover all known breaking changes from b5022 → b8808.
+For future upgrades, provide diffs for at least these 8 files rather than the full patch.
 
 | File | What to watch for |
 |------|-------------------|
-| `include/llama.h` | Core llama_ function signatures, token types, `llama_model_ptr`, renamed structs |
-| `include/llama-cpp.h` | C++ smart pointer types: `llama_model_ptr`, `common_init_result_ptr`; access pattern changes (`.get()` vs `->method()`) |
-| `common/common.h` | `common_params` / `common_params_speculative` struct fields, `model_alias` type, `common_init_result` shape |
-| `common/common.cpp` | Implementation of any inline API used directly |
-| `common/speculative.h` | `common_speculative_init`, `common_speculative_draft`, `common_speculative_accept` signatures |
-| `common/speculative.cpp` | Speculative decoding implementation details |
+| `common/common.h` | `common_params`/`common_params_speculative` struct fields, `model_alias` container type, `common_init_result` shape, `build_info` symbol |
 | `common/chat.h` | `common_chat_parser_params` (was `common_chat_syntax`), `to_json_oaicompat`, `common_chat_msg_diff_to_json_oaicompat`, `set_tool_call_ids` |
-| `common/chat.cpp` | Chat parsing implementation |
-| `common/arg.h` | Parameter parsing; check what moved to `download.h` across versions |
+| `common/speculative.h` | `common_speculative_init`, `common_speculative_draft`, `common_speculative_accept` signatures, struct names |
+| `tools/mtmd/mtmd.h` | `mtmd_context_params` fields, `image_marker`/`media_marker` API, deprecated symbols (was `common/mtmd.h` before ~b8190) |
+| `include/llama-cpp.h` | `common_init_result_ptr` type, access pattern changes (`.get()` vs `->method()`) |
+| `common/arg.h` | `n_parallel` sentinel value, what moved to `download.h` across versions |
+| `include/llama.h` | Core llama_ function signatures, token types, `llama_model_ptr`, renamed structs |
 | `common/download.h` | `common_remote_params` struct, `headers` field format (string vs key-value pair) |
+| `common/common.cpp` | Implementation of any inline API used directly |
+| `common/speculative.cpp` | Speculative decoding implementation details |
+| `common/chat.cpp` | Chat parsing implementation |
 | `common/sampling.h` | Sampler API, `common_sampler_*` functions |
 | `common/log.h` | Log macro signatures |
-| `common/mtmd.h` | Multimodal API, `mtmd_init_params` fields |
-| `common/mtmd-helper.h` | Multimodal helper functions |
+| `tools/mtmd/mtmd-helper.h` | Multimodal helper functions |
 | `common/json-schema-to-grammar.h` | Grammar API |
 | `ggml/include/ggml.h` | `ggml_type` enum values (e.g. `GGML_TYPE_F16`), tensor primitives |
 | `ggml/include/ggml-backend.h` | Backend/device abstraction types |
 | `ggml/include/ggml-opt.h` | Optimizer params pulled in via `common.h` |
 
-**Safe to skip** (stable leaf headers, not used directly by project code):
+**Safe to skip** (have never caused a break; not used directly by project code):
+`common/sampling.h`, `common/log.h`, `tools/mtmd/mtmd-helper.h`, `common/json-schema-to-grammar.h`,
+`ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
-**Known breaking changes by version range** (b5022 → b8190):
+**Known breaking changes by version range** (b5022 → b8808):
 
 | Version | File | Change |
 |---------|------|--------|
@@ -145,6 +150,7 @@ jllama.cpp / server.hpp / utils.hpp
 | ~b7858–b7864 | `server.hpp` (internal) | `slot_action.slot_id` → `slot_action.id_slot`; `llama_init_dft` removed from `server_context`; `model_dft` changed from `llama_model*` to `llama_model_ptr`; `slot.ctx_tgt`/`ctx_dft` removed |
 | ~b7864 | `common/mtmd.h` | `mtmd_init_params.verbosity` field removed |
 | ~b7904–b8190 | `common/common.h` | `params_base.model_alias` changed from `std::string` to a container; use `*model_alias.begin()` instead of direct string cast |
+| ~b8778–b8808 | `tools/mtmd/mtmd.h` | `MTMD_DEFAULT_IMAGE_MARKER` macro removed; `mtmd_image_tokens_get_nx/ny` deprecated; new `mtmd_decoder_pos` struct + `mtmd_image_tokens_get_decoder_pos()`; `mtmd_context_params_default()` now sets `image_marker = nullptr` (throws `"custom image_marker is not supported anymore"` if non-null); upstream server adds randomized `get_media_marker()` in `server-common.h` — our `server.hpp` is unaffected since it does not include that header and uses `mtmd_default_marker()` consistently |
 
 ## Build Commands
 
