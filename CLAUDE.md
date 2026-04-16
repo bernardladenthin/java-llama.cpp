@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b8778**
+Current llama.cpp pinned version: **b8808**
 
 ## Upgrading CUDA Version
 
@@ -131,7 +131,7 @@ jllama.cpp / server.hpp / utils.hpp
 **Safe to skip** (stable leaf headers, not used directly by project code):
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
-**Known breaking changes by version range** (b5022 → b8190):
+**Known breaking changes by version range** (b5022 → b8808):
 
 | Version | File | Change |
 |---------|------|--------|
@@ -145,6 +145,7 @@ jllama.cpp / server.hpp / utils.hpp
 | ~b7858–b7864 | `server.hpp` (internal) | `slot_action.slot_id` → `slot_action.id_slot`; `llama_init_dft` removed from `server_context`; `model_dft` changed from `llama_model*` to `llama_model_ptr`; `slot.ctx_tgt`/`ctx_dft` removed |
 | ~b7864 | `common/mtmd.h` | `mtmd_init_params.verbosity` field removed |
 | ~b7904–b8190 | `common/common.h` | `params_base.model_alias` changed from `std::string` to a container; use `*model_alias.begin()` instead of direct string cast |
+| ~b8778–b8808 | `tools/mtmd/mtmd.h` | `MTMD_DEFAULT_IMAGE_MARKER` macro removed; `mtmd_image_tokens_get_nx/ny` deprecated; new `mtmd_decoder_pos` struct + `mtmd_image_tokens_get_decoder_pos()`; `mtmd_context_params_default()` now sets `image_marker = nullptr` (throws `"custom image_marker is not supported anymore"` if non-null); upstream server adds randomized `get_media_marker()` in `server-common.h` — our `server.hpp` is unaffected since it does not include that header and uses `mtmd_default_marker()` consistently |
 
 ## Build Commands
 
