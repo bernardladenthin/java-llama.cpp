@@ -105,51 +105,35 @@ jllama.cpp / server.hpp / utils.hpp
 └── mtmd-helper.h
 ```
 
-**Minimum file set for upgrade diffs**
+**Priority-ordered review list for upgrade diffs** (highest break risk first)
 
-Based on all breaking changes from b5022 → b8808, the following 8 files cover every known incompatibility.
-When providing a future upgrade diff, include **only these files** rather than the full patch:
-
-| Priority | File (current path) | Historical breaks | What broke |
-|----------|---------------------|-------------------|------------|
-| 1 | `common/common.h` | **4×** | `common_init_result` shape, `build_info` symbol, speculative-params fields, `model_alias` container type |
-| 2 | `common/chat.h` | 1× | `common_chat_syntax` → `common_chat_parser_params`; `to_json_oaicompat` template removed; `ensure_tool_call_ids_set` → `set_tool_call_ids` |
-| 3 | `common/speculative.h` | 1× | Full API redesign — init/draft/accept signatures, struct names |
-| 4 | `tools/mtmd/mtmd.h` | 2× | `verbosity` field removed; `MTMD_DEFAULT_IMAGE_MARKER` macro removed; `image_marker` deprecated in favour of `media_marker` (was at `common/mtmd.h` before ~b8190) |
-| 5 | `include/llama-cpp.h` | 1× | `common_init_result` → `common_init_result_ptr`; access changed to `->model()` / `->context()` |
-| 6 | `common/arg.h` | 1× | `n_parallel` default changed to sentinel `-1` (auto) |
-| 7 | `include/llama.h` | 0× | Core API — no break yet, but any change here would be catastrophic |
-| 8 | `common/download.h` | 1× | Split out from `arg.h`; `common_remote_params::headers` changed from `vector<string>` to `vector<pair>` |
-
-Files that have **never** caused a break and can be skipped even if they changed:
-`common/sampling.h`, `common/log.h`, `tools/mtmd/mtmd-helper.h`, `common/json-schema-to-grammar.h`,
-`ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
-`ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
-
-**Priority-ordered review list** (highest break risk first):
+The top 8 rows cover all known breaking changes from b5022 → b8808.
+For future upgrades, provide diffs for at least these 8 files rather than the full patch.
 
 | File | What to watch for |
 |------|-------------------|
-| `include/llama.h` | Core llama_ function signatures, token types, `llama_model_ptr`, renamed structs |
-| `include/llama-cpp.h` | C++ smart pointer types: `llama_model_ptr`, `common_init_result_ptr`; access pattern changes (`.get()` vs `->method()`) |
-| `common/common.h` | `common_params` / `common_params_speculative` struct fields, `model_alias` type, `common_init_result` shape |
-| `common/common.cpp` | Implementation of any inline API used directly |
-| `common/speculative.h` | `common_speculative_init`, `common_speculative_draft`, `common_speculative_accept` signatures |
-| `common/speculative.cpp` | Speculative decoding implementation details |
+| `common/common.h` | `common_params`/`common_params_speculative` struct fields, `model_alias` container type, `common_init_result` shape, `build_info` symbol |
 | `common/chat.h` | `common_chat_parser_params` (was `common_chat_syntax`), `to_json_oaicompat`, `common_chat_msg_diff_to_json_oaicompat`, `set_tool_call_ids` |
-| `common/chat.cpp` | Chat parsing implementation |
-| `common/arg.h` | Parameter parsing; check what moved to `download.h` across versions |
+| `common/speculative.h` | `common_speculative_init`, `common_speculative_draft`, `common_speculative_accept` signatures, struct names |
+| `tools/mtmd/mtmd.h` | `mtmd_context_params` fields, `image_marker`/`media_marker` API, deprecated symbols (was `common/mtmd.h` before ~b8190) |
+| `include/llama-cpp.h` | `common_init_result_ptr` type, access pattern changes (`.get()` vs `->method()`) |
+| `common/arg.h` | `n_parallel` sentinel value, what moved to `download.h` across versions |
+| `include/llama.h` | Core llama_ function signatures, token types, `llama_model_ptr`, renamed structs |
 | `common/download.h` | `common_remote_params` struct, `headers` field format (string vs key-value pair) |
+| `common/common.cpp` | Implementation of any inline API used directly |
+| `common/speculative.cpp` | Speculative decoding implementation details |
+| `common/chat.cpp` | Chat parsing implementation |
 | `common/sampling.h` | Sampler API, `common_sampler_*` functions |
 | `common/log.h` | Log macro signatures |
-| `tools/mtmd/mtmd.h` | Multimodal API, `mtmd_context_params` fields, marker API (was `common/mtmd.h` before ~b8190) |
 | `tools/mtmd/mtmd-helper.h` | Multimodal helper functions |
 | `common/json-schema-to-grammar.h` | Grammar API |
 | `ggml/include/ggml.h` | `ggml_type` enum values (e.g. `GGML_TYPE_F16`), tensor primitives |
 | `ggml/include/ggml-backend.h` | Backend/device abstraction types |
 | `ggml/include/ggml-opt.h` | Optimizer params pulled in via `common.h` |
 
-**Safe to skip** (stable leaf headers, not used directly by project code):
+**Safe to skip** (have never caused a break; not used directly by project code):
+`common/sampling.h`, `common/log.h`, `tools/mtmd/mtmd-helper.h`, `common/json-schema-to-grammar.h`,
+`ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
 **Known breaking changes by version range** (b5022 → b8808):
