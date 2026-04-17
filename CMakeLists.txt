@@ -101,12 +101,12 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama.cpp)
 
-# b8831 added ggml_graph_next_uid() which uses __InterlockedIncrement64, an
-# MSVC intrinsic not available on 32-bit x86. Map it to the Win32 API
-# InterlockedIncrement64 (same signature, available on all Windows via CMPXCHG8B).
+# b8831 added ggml_graph_next_uid() which calls _InterlockedIncrement64 via
+# <intrin.h> on x86. The intrinsic only exists on x64; provide the
+# implementation in a compat TU so the linker resolves __InterlockedIncrement64.
 if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
-    target_compile_definitions(ggml-base PRIVATE
-        __InterlockedIncrement64=InterlockedIncrement64)
+    target_sources(ggml-base PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/main/cpp/compat/ggml_x86_compat.c)
 endif()
 
 # mtmd lives in tools/mtmd, which is only built when LLAMA_BUILD_TOOLS=ON.
