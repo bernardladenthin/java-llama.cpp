@@ -749,7 +749,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
 
     llama_numa_init(params.numa);
 
-    LOG_INF("build_info: %s\n", build_info.c_str());
+    LOG_INF("build_info: %s\n", llama_build_info());
     LOG_INF("%s\n", common_params_get_system_info(params).c_str());
 
     std::atomic<server_state> state{SERVER_STATE_LOADING_MODEL};

@@ -2,6 +2,7 @@
 #include "utils.hpp"
 
 #include "arg.h"
+#include "build-info.h"
 #include "common.h"
 #include "json-schema-to-grammar.h"
 #include "llama.h"
@@ -747,7 +748,7 @@ struct server_task_result_cmpl_final : server_task_result {
                         }})},
             {"created", t},
             {"model", oaicompat_model},
-            {"system_fingerprint", build_info},
+            {"system_fingerprint", std::string(llama_build_info())},
             {"object", "text_completion"},
             {"usage", json{{"completion_tokens", n_decoded},
                            {"prompt_tokens", n_prompt_tokens},
@@ -791,7 +792,7 @@ struct server_task_result_cmpl_final : server_task_result {
         json res = json{{"choices", json::array({choice})},
                         {"created", t},
                         {"model", oaicompat_model},
-                        {"system_fingerprint", build_info},
+                        {"system_fingerprint", std::string(llama_build_info())},
                         {"object", "chat.completion"},
                         {"usage", json{{"completion_tokens", n_decoded},
                                        {"prompt_tokens", n_prompt_tokens},
@@ -826,7 +827,7 @@ struct server_task_result_cmpl_final : server_task_result {
                 {"created", t},
                 {"id", oaicompat_cmpl_id},
                 {"model", oaicompat_model},
-                {"system_fingerprint", build_info},
+                {"system_fingerprint", std::string(llama_build_info())},
                 {"object", "chat.completion.chunk"},
             });
         }
@@ -842,7 +843,7 @@ struct server_task_result_cmpl_final : server_task_result {
             {"created", t},
             {"id", oaicompat_cmpl_id},
             {"model", oaicompat_model},
-            {"system_fingerprint", build_info},
+            {"system_fingerprint", std::string(llama_build_info())},
             {"object", "chat.completion.chunk"},
             {"usage",
              json{
@@ -942,7 +943,7 @@ struct server_task_result_cmpl_partial : server_task_result {
                                     }})},
                         {"created", t},
                         {"model", oaicompat_model},
-                        {"system_fingerprint", build_info},
+                        {"system_fingerprint", std::string(llama_build_info())},
                         {"object", "text_completion"},
                         {"id", oaicompat_cmpl_id}};
 
@@ -975,7 +976,7 @@ struct server_task_result_cmpl_partial : server_task_result {
                 {"created", t},
                 {"id", oaicompat_cmpl_id},
                 {"model", oaicompat_model},
-                {"system_fingerprint", build_info},
+                {"system_fingerprint", std::string(llama_build_info())},
                 {"object", "chat.completion.chunk"},
             });
         };
