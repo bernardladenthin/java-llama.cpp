@@ -3,6 +3,7 @@
 #include "download.h" // common_remote_get_content, common_remote_params
 #include "base64.hpp"
 #include "chat.h"
+#include "build-info.h"
 #include "common.h"
 #include "llama.h"
 #include "log.h"
@@ -59,7 +60,7 @@ template <typename T> static T json_value(const json &body, const std::string &k
     }
 }
 
-// build_info is now defined in common.h (since b7788)
+// build_info removed in b8831; use llama_build_info() from build-info.h
 
 // thin wrapper around common_grammar_trigger with (de)serialization functions
 struct server_grammar_trigger {
@@ -777,7 +778,7 @@ static json oaicompat_chat_params_parse(json &body, /* openai api json semantics
                     // download remote image
                     // TODO @ngxson : maybe make these params configurable
                     common_remote_params params;
-                    params.headers.push_back({"User-Agent", "llama.cpp/" + build_info});
+                    params.headers.push_back({"User-Agent", "llama.cpp/" + std::string(llama_build_info())});
                     params.max_size = 1024 * 1024 * 10; // 10MB
                     params.timeout = 10;                // seconds
                     SRV_INF("downloading image from '%s'\n", url.c_str());

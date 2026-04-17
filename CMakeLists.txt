@@ -97,9 +97,17 @@ set(GGML_AVX512  OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b8808
+	GIT_TAG        b8831
 )
 FetchContent_MakeAvailable(llama.cpp)
+
+# b8831 added ggml_graph_next_uid() which calls _InterlockedIncrement64 via
+# <intrin.h> on x86. The intrinsic only exists on x64; provide the
+# implementation in a compat TU so the linker resolves __InterlockedIncrement64.
+if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
+    target_sources(ggml-base PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/main/cpp/compat/ggml_x86_compat.c)
+endif()
 
 # mtmd lives in tools/mtmd, which is only built when LLAMA_BUILD_TOOLS=ON.
 # LLAMA_BUILD_TOOLS defaults to LLAMA_STANDALONE, which is OFF when llama.cpp
@@ -204,7 +212,7 @@ add_library(jllama SHARED src/main/cpp/jllama.cpp src/main/cpp/server.hpp src/ma
 
 set_target_properties(jllama PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(jllama PRIVATE src/main/cpp ${JNI_INCLUDE_DIRS} ${llama.cpp_SOURCE_DIR}/tools/mtmd)
-target_link_libraries(jllama PRIVATE common mtmd llama nlohmann_json)
+target_link_libraries(jllama PRIVATE llama-common mtmd llama nlohmann_json)
 target_compile_features(jllama PRIVATE cxx_std_11)
 
 target_compile_definitions(jllama PRIVATE
@@ -259,7 +267,7 @@ if(BUILD_TESTING)
         # jni.h / jni_md.h needed by jni_helpers.hpp (mock JNI tests, no JVM required)
         ${JNI_INCLUDE_DIRS}
     )
-    target_link_libraries(jllama_test PRIVATE common mtmd llama nlohmann_json GTest::gtest_main)
+    target_link_libraries(jllama_test PRIVATE llama-common mtmd llama nlohmann_json GTest::gtest_main)
     target_compile_features(jllama_test PRIVATE cxx_std_17)
 
     target_compile_definitions(jllama_test PRIVATE
