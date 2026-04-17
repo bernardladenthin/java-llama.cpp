@@ -107,7 +107,7 @@ jllama.cpp / server.hpp / utils.hpp
 
 **Priority-ordered review list for upgrade diffs** (highest break risk first)
 
-The top 8 rows cover all known breaking changes from b5022 → b8808.
+The top 8 rows cover all known breaking changes from b5022 → b8831.
 For future upgrades, provide diffs for at least these 8 files rather than the full patch.
 
 | File | What to watch for |
@@ -136,7 +136,7 @@ For future upgrades, provide diffs for at least these 8 files rather than the fu
 `ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
-**Known breaking changes by version range** (b5022 → b8808):
+**Known breaking changes by version range** (b5022 → b8831):
 
 | Version | File | Change |
 |---------|------|--------|
@@ -151,6 +151,9 @@ For future upgrades, provide diffs for at least these 8 files rather than the fu
 | ~b7864 | `common/mtmd.h` | `mtmd_init_params.verbosity` field removed |
 | ~b7904–b8190 | `common/common.h` | `params_base.model_alias` changed from `std::string` to a container; use `*model_alias.begin()` instead of direct string cast |
 | ~b8778–b8808 | `tools/mtmd/mtmd.h` | `MTMD_DEFAULT_IMAGE_MARKER` macro removed; `mtmd_image_tokens_get_nx/ny` deprecated; new `mtmd_decoder_pos` struct + `mtmd_image_tokens_get_decoder_pos()`; `mtmd_context_params_default()` now sets `image_marker = nullptr` (throws `"custom image_marker is not supported anymore"` if non-null); upstream server adds randomized `get_media_marker()` in `server-common.h` — our `server.hpp` is unaffected since it does not include that header and uses `mtmd_default_marker()` consistently |
+| ~b8808–b8831 | project `CMakeLists.txt` | CMake target `common` renamed to `llama-common`; update `target_link_libraries` for `jllama` and `jllama_test` |
+| ~b8808–b8831 | `common/common.h` → new `common/build-info.h` | `build_info` `std::string` removed; replaced by `llama_build_info()` (`const char*`) in new `build-info.h`; add `#include "build-info.h"` in `server.hpp` and `utils.hpp`; call sites: `std::string(llama_build_info())` in `server.hpp` (6×), `llama_build_info()` in `jllama.cpp` (1×) and `utils.hpp` (1×) |
+| ~b8808–b8831 | `ggml/src/ggml.c` | New `ggml_graph_next_uid()` uses `__InterlockedIncrement64` intrinsic unavailable on 32-bit MSVC x86; workaround: `target_compile_definitions(ggml-base PRIVATE __InterlockedIncrement64=InterlockedIncrement64)` guarded by `MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4` |
 
 ## Build Commands
 
