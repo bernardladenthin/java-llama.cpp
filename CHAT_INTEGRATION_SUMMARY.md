@@ -4,7 +4,7 @@
 
 ## Origin
 
-Based on a large patch by **@vaiju1981** that proposed OpenAI-compatible chat completions and JSON-in/JSON-out endpoints for the java-llama.cpp project. The patch was reimplemented from scratch against the current codebase (llama.cpp b8611) with significant improvements.
+Based on a large patch by **@vaiju1981** that proposed OpenAI-compatible chat completions and JSON-in/JSON-out endpoints for the java-llama.cpp project. The patch was reimplemented from scratch against the codebase at llama.cpp b8611 with significant improvements.
 
 ### CI Status: All 16/16 jobs green
 
@@ -109,9 +109,9 @@ macOS 14 (Metal), macOS 15 (Metal + no-Metal), Ubuntu, Windows (x86 + x86\_64), 
 
 ---
 
-## Upstream Compatibility (llama.cpp b8611)
+## Upstream Compatibility (originally verified at llama.cpp b8611; compatible through b8831)
 
-Verified against `ggml-org/llama.cpp` master:
+Verified against `ggml-org/llama.cpp` at b8611; no chat-specific breaking changes were introduced in any subsequent upgrade through b8831.
 
 | Feature | Status |
 |---------|--------|
