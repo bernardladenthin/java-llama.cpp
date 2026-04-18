@@ -42,18 +42,18 @@ git commit -m "Upgrade CUDA from 13.2 to 13.3"
 
 To change the llama.cpp version, update the following **three** files:
 
-1. **CMakeLists.txt** — Line 28: `GIT_TAG        b5022`
-2. **README.md** — Line 2: Badge and link with version number
-3. **CLAUDE.md** — Line 9: This documentation
+1. **CMakeLists.txt** — the `GIT_TAG` line for llama.cpp: `GIT_TAG        b8831`
+2. **README.md** — the badge and link line with the version number
+3. **CLAUDE.md** — the "Current llama.cpp pinned version" line
 
-Example: To upgrade from b5016 to b5022:
+Example: To upgrade from b8808 to b8831:
 ```bash
-# Edit CMakeLists.txt, line 28: change b5016 to b5022
-# Edit README.md, line 2: change b5016 to b5022 (in both badge and link)
-# Edit CLAUDE.md, line 9: change b5016 to b5022
+# Edit CMakeLists.txt: change GIT_TAG b8808 to b8831
+# Edit README.md: change b8808 to b8831 (in both badge and link)
+# Edit CLAUDE.md: change b8808 to b8831
 git add CMakeLists.txt README.md CLAUDE.md
-git commit -m "Upgrade llama.cpp from b5016 to b5022"
-git push -u origin claude/upgrade-llama-cpp-b4927-EaJcb
+git commit -m "Upgrade llama.cpp from b8808 to b8831"
+git push -u origin <your-branch>
 ```
 
 **Note:** Always test the build with `cmake -B build && cmake --build build --config Release` after version changes to catch compatibility issues early.
@@ -107,12 +107,13 @@ jllama.cpp / server.hpp / utils.hpp
 
 **Priority-ordered review list for upgrade diffs** (highest break risk first)
 
-The top 8 rows cover all known breaking changes from b5022 → b8831.
+The top 8 rows cover all known API-level breaking changes from b5022 → b8831.
 For future upgrades, provide diffs for at least these 8 files rather than the full patch.
+Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. renamed link targets, new required headers) — those are not visible in header file diffs alone.
 
 | File | What to watch for |
 |------|-------------------|
-| `common/common.h` | `common_params`/`common_params_speculative` struct fields, `model_alias` container type, `common_init_result` shape, `build_info` symbol |
+| `common/common.h` | `common_params`/`common_params_speculative` struct fields, `model_alias` container type, `common_init_result` shape, `build_info` symbol (removed in b8831 — now `llama_build_info()` from `build-info.h`) |
 | `common/chat.h` | `common_chat_parser_params` (was `common_chat_syntax`), `to_json_oaicompat`, `common_chat_msg_diff_to_json_oaicompat`, `set_tool_call_ids` |
 | `common/speculative.h` | `common_speculative_init`, `common_speculative_draft`, `common_speculative_accept` signatures, struct names |
 | `tools/mtmd/mtmd.h` | `mtmd_context_params` fields, `image_marker`/`media_marker` API, deprecated symbols (was `common/mtmd.h` before ~b8190) |

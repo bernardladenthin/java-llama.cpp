@@ -3,6 +3,10 @@
 Use this prompt in a fresh Claude Code session to reproduce all AI-generated
 unit tests in this repository.
 
+> **Status:** All tasks in this prompt have been executed. The 8 test files listed below already exist.
+> Re-running this prompt as-is will conflict with the existing files.
+> Update or skip steps that have already been completed.
+
 ---
 
 ## Prompt
@@ -93,7 +97,7 @@ Create each file below.  Follow the existing style exactly: JUnit 4,
 - `testSetTokenIdBiasMultiple`
 
 #### `src/test/java/de/kherud/llama/LlamaOutputTest.java`
-- `testTextFromBytes` — `new LlamaOutput("hello".getBytes(UTF_8), emptyMap, false)` → text == "hello"
+- `testTextFromString` — `new LlamaOutput("hello", emptyMap, false)` → text == "hello"
 - `testEmptyText`
 - `testUtf8MultibyteText` — round-trip with "héllo wörld"
 - `testProbabilitiesStored` — map with 2 entries
