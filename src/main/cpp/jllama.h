@@ -128,6 +128,13 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
 
 JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInference(JNIEnv *, jobject, jstring);
 
+/*
+ * Class:     de_kherud_llama_LlamaModel
+ * Method:    getModelMetaJson
+ * Signature: ()Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_getModelMetaJson(JNIEnv *, jobject);
+
 #ifdef __cplusplus
 }
 #endif

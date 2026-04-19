@@ -316,6 +316,31 @@ public class LlamaModel implements AutoCloseable {
 		return handleSlotAction(0, 0, null);
 	}
 
+	private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER =
+			new com.fasterxml.jackson.databind.ObjectMapper();
+
+	/**
+	 * Returns model metadata with typed accessors for vocab, context, embedding,
+	 * parameter count, size, and modality support flags (vision, audio).
+	 * <p>
+	 * The returned {@link ModelMeta} wraps the raw JSON from the native layer.
+	 * Call {@link ModelMeta#toString()} to re-serialize to compact JSON for use
+	 * in {@code assertEquals}.
+	 * </p>
+	 *
+	 * @return {@link ModelMeta} parsed from the native {@code model_meta()} response
+	 * @throws LlamaException if the native call fails or the response cannot be parsed
+	 */
+	public ModelMeta getModelMeta() throws LlamaException {
+		try {
+			return new ModelMeta(OBJECT_MAPPER.readTree(getModelMetaJson()));
+		} catch (java.io.IOException e) {
+			throw new LlamaException("Failed to parse model meta JSON: " + e.getMessage());
+		}
+	}
+
+	native String getModelMetaJson() throws LlamaException;
+
 	/**
 	 * Erase the KV cache for a specific slot.
 	 *
