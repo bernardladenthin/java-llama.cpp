@@ -926,4 +926,42 @@ public class LlamaModelTest {
 			Assert.assertFalse("Expected non-empty response from speculative complete", response.isEmpty());
 		}
 	}
+
+	@Test
+	public void testGetModelMeta() throws LlamaException {
+		ModelMeta meta = model.getModelMeta();
+
+		// Typed getters — exact values depend on the loaded model; fill in after first run
+		Assert.assertTrue("n_vocab must be positive", meta.getNVocab() > 0);
+		Assert.assertTrue("n_ctx_train must be positive", meta.getNCtxTrain() > 0);
+		Assert.assertTrue("n_embd must be positive", meta.getNEmbd() > 0);
+		Assert.assertTrue("n_params must be positive", meta.getNParams() > 0);
+		Assert.assertTrue("size must be positive", meta.getSize() > 0);
+
+		// CodeLlama (text-only model) must not report multimodal support
+		Assert.assertFalse("text-only model must not report vision support", meta.supportsVision());
+		Assert.assertFalse("text-only model must not report audio support", meta.supportsAudio());
+
+		// Dynamic access via the underlying JsonNode
+		Assert.assertTrue("modalities field must be present", meta.asJson().has("modalities"));
+		Assert.assertTrue("vocab_type field must be present", meta.asJson().has("vocab_type"));
+
+		// Round-trip: toString() must produce valid compact JSON containing all top-level keys
+		String json = meta.toString();
+		Assert.assertNotNull(json);
+		Assert.assertTrue(json.contains("\"vocab_type\""));
+		Assert.assertTrue(json.contains("\"n_vocab\""));
+		Assert.assertTrue(json.contains("\"n_ctx_train\""));
+		Assert.assertTrue(json.contains("\"n_embd\""));
+		Assert.assertTrue(json.contains("\"n_params\""));
+		Assert.assertTrue(json.contains("\"size\""));
+		Assert.assertTrue(json.contains("\"modalities\""));
+		Assert.assertTrue(json.contains("\"vision\""));
+		Assert.assertTrue(json.contains("\"audio\""));
+
+		// Uncomment and fill in after running once to pin exact values:
+		// Assert.assertEquals("{\"vocab_type\":2,\"n_vocab\":32016,\"n_ctx_train\":16384,"
+		//         + "\"n_embd\":4096,\"n_params\":6738415616,\"size\":2744325024,"
+		//         + "\"modalities\":{\"vision\":false,\"audio\":false}}", json);
+	}
 }

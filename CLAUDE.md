@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b8838**
+Current llama.cpp pinned version: **b8841**
 
 ## Upgrading CUDA Version
 
@@ -137,7 +137,7 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 `ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
-**Known breaking changes by version range** (b5022 → b8831):
+**Known breaking changes by version range** (b5022 → b8841):
 
 | Version | File | Change |
 |---------|------|--------|
@@ -155,6 +155,7 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b8808–b8831 | project `CMakeLists.txt` | CMake target `common` renamed to `llama-common`; update `target_link_libraries` for `jllama` and `jllama_test` |
 | ~b8808–b8831 | `common/common.h` → new `common/build-info.h` | `build_info` `std::string` removed; replaced by `llama_build_info()` (`const char*`) in new `build-info.h`; add `#include "build-info.h"` in `server.hpp` and `utils.hpp`; call sites: `std::string(llama_build_info())` in `server.hpp` (6×), `llama_build_info()` in `jllama.cpp` (1×) and `utils.hpp` (1×) |
 | ~b8808–b8831 | `ggml/src/ggml.c` | New `ggml_graph_next_uid()` calls `_InterlockedIncrement64` via `<intrin.h>` on x86; intrinsic unavailable on 32-bit MSVC; fix: `src/main/cpp/compat/ggml_x86_compat.c` provides `__cdecl _InterlockedIncrement64` via `InterlockedIncrement64` (CMPXCHG8B), added to `ggml-base` via `target_sources` guarded by `MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4` |
+| ~b8838–b8841 | `src/llama-model.h` | Attention bias fields renamed: `bq`→`wq_b`, `bk`→`wk_b`, `bv`→`wv_b`, `bo`→`wo_b`, `bqkv`→`wqkv_b`; internal to llama.cpp, no impact on this project |
 
 ## Build Commands
 

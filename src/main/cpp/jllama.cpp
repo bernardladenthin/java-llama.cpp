@@ -820,6 +820,11 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
     env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(jctx));
 }
 
+JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_getModelMetaJson(JNIEnv *env, jobject obj) {
+    REQUIRE_SERVER_CONTEXT(nullptr);
+    return json_to_jstring(env, ctx_server->model_meta());
+}
+
 JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv *env, jobject obj, jstring jparams) {
     REQUIRE_SERVER_CONTEXT(0);
 
