@@ -960,8 +960,8 @@ public class LlamaModelTest {
 		Assert.assertTrue(json.contains("\"audio\""));
 
 		// Fill in the expected value from the failure message and re-run to pin exact output:
-		Assert.assertEquals("{\"vocab_type\":2,\"n_vocab\":32016,\"n_ctx_train\":16384,"
-				+ "\"n_embd\":4096,\"n_params\":6738415616,\"size\":2744325024,"
+		Assert.assertEquals("{\"vocab_type\":1,\"n_vocab\":32016,\"n_ctx_train\":16384,"
+				+ "\"n_embd\":4096,\"n_params\":6738546688,\"size\":2825274880,"
 				+ "\"modalities\":{\"vision\":false,\"audio\":false}}", json);
 	}
 }
