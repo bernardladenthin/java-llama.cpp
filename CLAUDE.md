@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b8841**
+Current llama.cpp pinned version: **b8854**
 
 ## Upgrading CUDA Version
 
@@ -156,6 +156,9 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b8808–b8831 | `common/common.h` → new `common/build-info.h` | `build_info` `std::string` removed; replaced by `llama_build_info()` (`const char*`) in new `build-info.h`; add `#include "build-info.h"` in `server.hpp` and `utils.hpp`; call sites: `std::string(llama_build_info())` in `server.hpp` (6×), `llama_build_info()` in `jllama.cpp` (1×) and `utils.hpp` (1×) |
 | ~b8808–b8831 | `ggml/src/ggml.c` | New `ggml_graph_next_uid()` calls `_InterlockedIncrement64` via `<intrin.h>` on x86; intrinsic unavailable on 32-bit MSVC; fix: `src/main/cpp/compat/ggml_x86_compat.c` provides `__cdecl _InterlockedIncrement64` via `InterlockedIncrement64` (CMPXCHG8B), added to `ggml-base` via `target_sources` guarded by `MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4` |
 | ~b8838–b8841 | `src/llama-model.h` | Attention bias fields renamed: `bq`→`wq_b`, `bk`→`wk_b`, `bv`→`wv_b`, `bo`→`wo_b`, `bqkv`→`wqkv_b`; internal to llama.cpp, no impact on this project |
+| ~b8841–b8854 | `common/common.h` | `common_params::clear_idle` renamed to `cache_idle_slots`; new `common_context_seq_rm_type` enum + `common_context_can_seq_rm()` replacing `common_speculative_is_compat()`; `get_model_endpoint()` → `common_get_model_endpoint()` |
+| ~b8841–b8854 | `tools/mtmd/mtmd.h` + `mtmd-helper.h` | `mtmd_decoder_pos` gains `z` field; `mtmd_image_tokens_get_decoder_pos()` + `mtmd_helper_image_get_decoder_pos()` gain new `pos_0` parameter |
+| ~b8841–b8854 | project `utils.hpp` / `server.hpp` | `server_tokens::get_text_tokens()` split: `get_tokens()` returns raw `const llama_tokens &`; new `get_text_tokens()` returns filtered copy (removes `LLAMA_TOKEN_NULL` mtmd placeholders); save/load and context-shift call sites updated to `get_tokens()` |
 
 ## Build Commands
 

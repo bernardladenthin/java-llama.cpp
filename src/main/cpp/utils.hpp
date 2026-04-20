@@ -1216,9 +1216,21 @@ struct server_tokens {
     }
 
     // for compatibility with speculative decoding, ctx shift, slot save/load
-    const llama_tokens &get_text_tokens() const {
+    const llama_tokens &get_tokens() const {
         GGML_ASSERT(!has_mtmd); // only allow this if mtmd is disabled
         return tokens;
+    }
+
+    // returns a copy with LLAMA_TOKEN_NULL entries filtered out (mtmd image placeholders)
+    llama_tokens get_text_tokens() const {
+        llama_tokens res;
+        res.reserve(tokens.size());
+        for (llama_token t : tokens) {
+            if (t != LLAMA_TOKEN_NULL) {
+                res.push_back(t);
+            }
+        }
+        return res;
     }
 
     // for compatibility with speculative decoding

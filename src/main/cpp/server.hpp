@@ -2799,7 +2799,7 @@ struct server_context {
             std::string filename = task.slot_action.filename;
             std::string filepath = task.slot_action.filepath;
 
-            const llama_tokens &tokens = slot->cache_tokens.get_text_tokens();
+            const llama_tokens &tokens = slot->cache_tokens.get_tokens();
             const size_t nwrite =
                 llama_state_seq_save_file(ctx, filepath.c_str(), slot->id, tokens.data(), token_count);
 
@@ -2962,7 +2962,7 @@ struct server_context {
 
                 // add generated tokens to cache
                 {
-                    llama_tokens new_tokens = slot.cache_tokens.get_text_tokens(); // copy
+                    llama_tokens new_tokens = slot.cache_tokens.get_tokens(); // copy
                     for (size_t i = n_keep + n_discard; i < new_tokens.size(); i++) {
                         new_tokens[i - n_discard] = new_tokens[i];
                     }
@@ -3123,7 +3123,7 @@ struct server_context {
                                 const int erased_blocks =
                                     (slot.n_prompt_tokens - slot.params.n_keep - n_block_size) / n_block_size;
 
-                                const llama_tokens &curr_tokens = slot.prompt_tokens.get_text_tokens();
+                                const llama_tokens &curr_tokens = slot.prompt_tokens.get_tokens();
                                 llama_tokens new_tokens(curr_tokens.begin(), curr_tokens.begin() + slot.params.n_keep);
 
                                 new_tokens.insert(new_tokens.end(),
