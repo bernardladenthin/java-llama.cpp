@@ -112,14 +112,89 @@ public final class LlamaOutput {
 
     /**
      * Parse token probabilities from a JSON response. Returns an empty map if no probabilities are present.
+     *
+     * <p>The native server produces a {@code completion_probabilities} array where each element
+     * represents one generated token:
+     * <pre>{"token":"txt","bytes":[...],"id":N,"prob":F,"top_probs":[...]}</pre>
+     * or with {@code "logprob"} instead of {@code "prob"} when post-sampling mode is off.
+     * We map each outer {@code token → prob/logprob} value, ignoring the nested
+     * {@code top_probs} / {@code top_logprobs} arrays.
      */
     private static Map<String, Float> parseProbabilities(String json) {
-        if (!json.contains("\"completion_probabilities\"")) {
+        int arrayStart = json.indexOf("\"completion_probabilities\"");
+        if (arrayStart < 0) {
             return Collections.emptyMap();
         }
-        // For now, return empty map. Full probability parsing can be added later if needed.
-        // The probabilities data is available in the raw JSON for advanced users.
-        return Collections.emptyMap();
+        int bracketOpen = json.indexOf('[', arrayStart + 26);
+        if (bracketOpen < 0) {
+            return Collections.emptyMap();
+        }
+
+        Map<String, Float> result = new HashMap<>();
+        int idx = bracketOpen + 1;
+
+        while (idx < json.length()) {
+            // Skip whitespace and commas between array entries
+            while (idx < json.length() && (json.charAt(idx) == ',' || Character.isWhitespace(json.charAt(idx)))) {
+                idx++;
+            }
+            if (idx >= json.length() || json.charAt(idx) == ']') break;
+            if (json.charAt(idx) != '{') { idx++; continue; }
+
+            // Find the closing brace of this entry, respecting nested objects/arrays
+            int entryStart = idx;
+            int depth = 0;
+            int entryEnd = idx;
+            for (int i = idx; i < json.length(); i++) {
+                char ch = json.charAt(i);
+                if (ch == '{' || ch == '[') depth++;
+                else if (ch == '}' || ch == ']') {
+                    depth--;
+                    if (depth == 0) { entryEnd = i + 1; break; }
+                }
+            }
+            String entry = json.substring(entryStart, entryEnd);
+            idx = entryEnd;
+
+            // Extract outer "token" value (first occurrence = the generated token)
+            int tokenKey = entry.indexOf("\"token\"");
+            if (tokenKey < 0) continue;
+            int colonT = entry.indexOf(':', tokenKey + 7);
+            if (colonT < 0) continue;
+            int sq = entry.indexOf('"', colonT + 1);
+            if (sq < 0) continue;
+            int eq = findEndQuote(entry, sq + 1);
+            String token = unescapeJson(entry.substring(sq + 1, eq));
+
+            // Find "prob" or "logprob" before "top_probs" / "top_logprobs"
+            int topIdx = entry.indexOf("\"top_");
+            int searchLimit = topIdx > 0 ? topIdx : entry.length();
+
+            int probKey = entry.indexOf("\"prob\"");
+            int logprobKey = entry.indexOf("\"logprob\"");
+
+            int valueStart;
+            if (probKey >= 0 && probKey < searchLimit) {
+                valueStart = entry.indexOf(':', probKey + 6);
+            } else if (logprobKey >= 0 && logprobKey < searchLimit) {
+                valueStart = entry.indexOf(':', logprobKey + 9);
+            } else {
+                continue;
+            }
+            if (valueStart < 0 || valueStart >= searchLimit) continue;
+            int vs = valueStart + 1;
+            while (vs < entry.length() && entry.charAt(vs) == ' ') vs++;
+            int ve = vs;
+            while (ve < entry.length()) {
+                char ch = entry.charAt(ve);
+                if (Character.isDigit(ch) || ch == '.' || ch == '-' || ch == 'e' || ch == 'E' || ch == '+') ve++;
+                else break;
+            }
+            if (ve == vs) continue;
+            result.put(token, Float.parseFloat(entry.substring(vs, ve)));
+        }
+
+        return result.isEmpty() ? Collections.emptyMap() : result;
     }
 
     /**

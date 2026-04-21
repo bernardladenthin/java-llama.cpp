@@ -96,6 +96,56 @@ public class LlamaOutputTest {
 		assertEquals("", LlamaOutput.getContentFromJson(json));
 	}
 
+	// --- parseProbabilities tests ---
+
+	@Test
+	public void testProbabilitiesAbsentWhenNoProbsKey() {
+		String json = "{\"content\":\"hi\",\"stop\":true,\"stop_type\":\"eos\"}";
+		LlamaOutput output = LlamaOutput.fromJson(json);
+		assertTrue("No completion_probabilities key → empty map", output.probabilities.isEmpty());
+	}
+
+	@Test
+	public void testProbabilitiesParsedPostSampling() {
+		// post_sampling_probs=true → "prob" key
+		String json = "{\"content\":\"hi\",\"stop\":true,\"stop_type\":\"eos\"," +
+				"\"completion_probabilities\":[" +
+				"{\"token\":\"Hello\",\"bytes\":[72],\"id\":15043,\"prob\":0.82," +
+				"\"top_probs\":[{\"token\":\"Hi\",\"bytes\":[72],\"id\":9932,\"prob\":0.1}]}," +
+				"{\"token\":\" world\",\"bytes\":[32,119],\"id\":1917,\"prob\":0.65," +
+				"\"top_probs\":[{\"token\":\" World\",\"bytes\":[32,87],\"id\":2304,\"prob\":0.2}]}" +
+				"]}";
+		LlamaOutput output = LlamaOutput.fromJson(json);
+		assertEquals(2, output.probabilities.size());
+		assertEquals(0.82f, output.probabilities.get("Hello"), 0.001f);
+		assertEquals(0.65f, output.probabilities.get(" world"), 0.001f);
+	}
+
+	@Test
+	public void testProbabilitiesParsedPreSampling() {
+		// post_sampling_probs=false → "logprob" key
+		String json = "{\"content\":\"hi\",\"stop\":true,\"stop_type\":\"eos\"," +
+				"\"completion_probabilities\":[" +
+				"{\"token\":\"Hello\",\"bytes\":[72],\"id\":15043,\"logprob\":-0.2," +
+				"\"top_logprobs\":[{\"token\":\"Hi\",\"bytes\":[72],\"id\":9932,\"logprob\":-2.3}]}" +
+				"]}";
+		LlamaOutput output = LlamaOutput.fromJson(json);
+		assertEquals(1, output.probabilities.size());
+		assertEquals(-0.2f, output.probabilities.get("Hello"), 0.001f);
+	}
+
+	@Test
+	public void testProbabilitiesTokenWithEscapedChars() {
+		String json = "{\"content\":\"hi\",\"stop\":true,\"stop_type\":\"eos\"," +
+				"\"completion_probabilities\":[" +
+				"{\"token\":\"say \\\"yes\\\"\",\"bytes\":[],\"id\":1,\"prob\":0.5," +
+				"\"top_probs\":[]}" +
+				"]}";
+		LlamaOutput output = LlamaOutput.fromJson(json);
+		assertEquals(1, output.probabilities.size());
+		assertEquals(0.5f, output.probabilities.get("say \"yes\""), 0.001f);
+	}
+
 	// --- StopReason tests ---
 
 	@Test
