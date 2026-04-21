@@ -122,12 +122,7 @@ public final class ParameterJsonSerializer {
     public static ArrayNode buildSamplers(Sampler... samplers) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
         for (Sampler sampler : samplers) {
-            switch (sampler) {
-                case TOP_K:       arr.add("top_k");       break;
-                case TOP_P:       arr.add("top_p");       break;
-                case MIN_P:       arr.add("min_p");       break;
-                case TEMPERATURE: arr.add("temperature"); break;
-            }
+            arr.add(sampler.getArgValue());
         }
         return arr;
     }

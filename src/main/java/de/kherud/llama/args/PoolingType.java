@@ -17,7 +17,7 @@ package de.kherud.llama.args;
  * @see <a href="https://github.com/ggerganov/llama.cpp/blob/b8609/include/llama.h">
  *      llama.cpp b8609 – include/llama.h: {@code llama_pooling_type} enum</a>
  */
-public enum PoolingType {
+public enum PoolingType implements CliArg {
 
     /**
      * Use the model's built-in default pooling type.

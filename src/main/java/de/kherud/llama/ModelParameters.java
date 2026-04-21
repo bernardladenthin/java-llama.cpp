@@ -310,8 +310,7 @@ public final class ModelParameters extends CliParameters {
         if (samplers.length > 0) {
             StringBuilder builder = new StringBuilder();
             for (int i = 0; i < samplers.length; i++) {
-                Sampler sampler = samplers[i];
-                builder.append(sampler.name().toLowerCase());
+                builder.append(samplers[i].getArgValue());
                 if (i < samplers.length - 1) {
                     builder.append(";");
                 }
@@ -552,7 +551,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMirostat(MiroStat mirostat) {
-        parameters.put("--mirostat", String.valueOf(mirostat.ordinal()));
+        parameters.put("--mirostat", mirostat.getArgValue());
         return this;
     }
 
@@ -784,7 +783,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCacheTypeK(CacheType type) {
-        parameters.put("--cache-type-k", type.name().toLowerCase());
+        parameters.put("--cache-type-k", type.getArgValue());
         return this;
     }
 
@@ -795,7 +794,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCacheTypeV(CacheType type) {
-        parameters.put("--cache-type-v", type.name().toLowerCase());
+        parameters.put("--cache-type-v", type.getArgValue());
         return this;
     }
 
@@ -864,7 +863,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setNuma(NumaStrategy numaStrategy) {
-        parameters.put("--numa", numaStrategy.name().toLowerCase());
+        parameters.put("--numa", numaStrategy.getArgValue());
         return this;
     }
 
@@ -897,7 +896,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setSplitMode(GpuSplitMode splitMode) {
-        parameters.put("--split-mode", splitMode.name().toLowerCase());
+        parameters.put("--split-mode", splitMode.getArgValue());
         return this;
     }
 
