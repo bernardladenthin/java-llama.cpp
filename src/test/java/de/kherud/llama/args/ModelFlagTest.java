@@ -1,10 +1,68 @@
 package de.kherud.llama.args;
 
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static org.junit.Assert.*;
 
+@RunWith(Parameterized.class)
 public class ModelFlagTest {
+
+    @Parameterized.Parameters(name = "{0} -> {1}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+            {ModelFlag.NO_CONTEXT_SHIFT,       "--no-context-shift"},
+            {ModelFlag.FLASH_ATTN,             "--flash-attn"},
+            {ModelFlag.NO_PERF,                "--no-perf"},
+            {ModelFlag.ESCAPE,                 "--escape"},
+            {ModelFlag.NO_ESCAPE,              "--no-escape"},
+            {ModelFlag.SPECIAL,                "--special"},
+            {ModelFlag.NO_WARMUP,              "--no-warmup"},
+            {ModelFlag.SPM_INFILL,             "--spm-infill"},
+            {ModelFlag.IGNORE_EOS,             "--ignore-eos"},
+            {ModelFlag.DUMP_KV_CACHE,          "--dump-kv-cache"},
+            {ModelFlag.NO_KV_OFFLOAD,          "--no-kv-offload"},
+            {ModelFlag.CONT_BATCHING,          "--cont-batching"},
+            {ModelFlag.NO_CONT_BATCHING,       "--no-cont-batching"},
+            {ModelFlag.MLOCK,                  "--mlock"},
+            {ModelFlag.NO_MMAP,                "--no-mmap"},
+            {ModelFlag.CHECK_TENSORS,          "--check-tensors"},
+            {ModelFlag.EMBEDDING,              "--embedding"},
+            {ModelFlag.RERANKING,              "--reranking"},
+            {ModelFlag.LORA_INIT_WITHOUT_APPLY,"--lora-init-without-apply"},
+            {ModelFlag.LOG_DISABLE,            "--log-disable"},
+            {ModelFlag.VERBOSE,                "--verbose"},
+            {ModelFlag.LOG_PREFIX,             "--log-prefix"},
+            {ModelFlag.LOG_TIMESTAMPS,         "--log-timestamps"},
+            {ModelFlag.JINJA,                  "--jinja"},
+            {ModelFlag.VOCAB_ONLY,             "--vocab-only"},
+            {ModelFlag.KV_UNIFIED,             "--kv-unified"},
+            {ModelFlag.NO_KV_UNIFIED,          "--no-kv-unified"},
+            {ModelFlag.CLEAR_IDLE,             "--clear-idle"},
+            {ModelFlag.NO_CLEAR_IDLE,          "--no-clear-idle"},
+        });
+    }
+
+    private final ModelFlag flag;
+    private final String expectedCliFlag;
+
+    public ModelFlagTest(ModelFlag flag, String expectedCliFlag) {
+        this.flag = flag;
+        this.expectedCliFlag = expectedCliFlag;
+    }
+
+    @Test
+    public void testGetCliFlag() {
+        assertEquals(expectedCliFlag, flag.getCliFlag());
+    }
+
+    // ------------------------------------------------------------------
+    // Structural invariants
+    // ------------------------------------------------------------------
 
     @Test
     public void testEnumCount() {
@@ -12,161 +70,12 @@ public class ModelFlagTest {
     }
 
     @Test
-    public void testNoContextShift() {
-        assertEquals("--no-context-shift", ModelFlag.NO_CONTEXT_SHIFT.getCliFlag());
+    public void testCliFlagStartsWithDoubleDash() {
+        assertTrue("Flag " + flag + " must start with --", flag.getCliFlag().startsWith("--"));
     }
 
     @Test
-    public void testFlashAttn() {
-        assertEquals("--flash-attn", ModelFlag.FLASH_ATTN.getCliFlag());
-    }
-
-    @Test
-    public void testNoPerf() {
-        assertEquals("--no-perf", ModelFlag.NO_PERF.getCliFlag());
-    }
-
-    @Test
-    public void testEscape() {
-        assertEquals("--escape", ModelFlag.ESCAPE.getCliFlag());
-    }
-
-    @Test
-    public void testNoEscape() {
-        assertEquals("--no-escape", ModelFlag.NO_ESCAPE.getCliFlag());
-    }
-
-    @Test
-    public void testSpecial() {
-        assertEquals("--special", ModelFlag.SPECIAL.getCliFlag());
-    }
-
-    @Test
-    public void testNoWarmup() {
-        assertEquals("--no-warmup", ModelFlag.NO_WARMUP.getCliFlag());
-    }
-
-    @Test
-    public void testSpmInfill() {
-        assertEquals("--spm-infill", ModelFlag.SPM_INFILL.getCliFlag());
-    }
-
-    @Test
-    public void testIgnoreEos() {
-        assertEquals("--ignore-eos", ModelFlag.IGNORE_EOS.getCliFlag());
-    }
-
-    @Test
-    public void testDumpKvCache() {
-        assertEquals("--dump-kv-cache", ModelFlag.DUMP_KV_CACHE.getCliFlag());
-    }
-
-    @Test
-    public void testNoKvOffload() {
-        assertEquals("--no-kv-offload", ModelFlag.NO_KV_OFFLOAD.getCliFlag());
-    }
-
-    @Test
-    public void testContBatching() {
-        assertEquals("--cont-batching", ModelFlag.CONT_BATCHING.getCliFlag());
-    }
-
-    @Test
-    public void testNoContBatching() {
-        assertEquals("--no-cont-batching", ModelFlag.NO_CONT_BATCHING.getCliFlag());
-    }
-
-    @Test
-    public void testMlock() {
-        assertEquals("--mlock", ModelFlag.MLOCK.getCliFlag());
-    }
-
-    @Test
-    public void testNoMmap() {
-        assertEquals("--no-mmap", ModelFlag.NO_MMAP.getCliFlag());
-    }
-
-    @Test
-    public void testCheckTensors() {
-        assertEquals("--check-tensors", ModelFlag.CHECK_TENSORS.getCliFlag());
-    }
-
-    @Test
-    public void testEmbedding() {
-        assertEquals("--embedding", ModelFlag.EMBEDDING.getCliFlag());
-    }
-
-    @Test
-    public void testReranking() {
-        assertEquals("--reranking", ModelFlag.RERANKING.getCliFlag());
-    }
-
-    @Test
-    public void testLoraInitWithoutApply() {
-        assertEquals("--lora-init-without-apply", ModelFlag.LORA_INIT_WITHOUT_APPLY.getCliFlag());
-    }
-
-    @Test
-    public void testLogDisable() {
-        assertEquals("--log-disable", ModelFlag.LOG_DISABLE.getCliFlag());
-    }
-
-    @Test
-    public void testVerbose() {
-        assertEquals("--verbose", ModelFlag.VERBOSE.getCliFlag());
-    }
-
-    @Test
-    public void testLogPrefix() {
-        assertEquals("--log-prefix", ModelFlag.LOG_PREFIX.getCliFlag());
-    }
-
-    @Test
-    public void testLogTimestamps() {
-        assertEquals("--log-timestamps", ModelFlag.LOG_TIMESTAMPS.getCliFlag());
-    }
-
-    @Test
-    public void testJinja() {
-        assertEquals("--jinja", ModelFlag.JINJA.getCliFlag());
-    }
-
-    @Test
-    public void testVocabOnly() {
-        assertEquals("--vocab-only", ModelFlag.VOCAB_ONLY.getCliFlag());
-    }
-
-    @Test
-    public void testKvUnified() {
-        assertEquals("--kv-unified", ModelFlag.KV_UNIFIED.getCliFlag());
-    }
-
-    @Test
-    public void testNoKvUnified() {
-        assertEquals("--no-kv-unified", ModelFlag.NO_KV_UNIFIED.getCliFlag());
-    }
-
-    @Test
-    public void testClearIdle() {
-        assertEquals("--clear-idle", ModelFlag.CLEAR_IDLE.getCliFlag());
-    }
-
-    @Test
-    public void testNoClearIdle() {
-        assertEquals("--no-clear-idle", ModelFlag.NO_CLEAR_IDLE.getCliFlag());
-    }
-
-    @Test
-    public void testAllFlagsStartWithDoubleDash() {
-        for (ModelFlag flag : ModelFlag.values()) {
-            assertTrue("Flag " + flag + " must start with --", flag.getCliFlag().startsWith("--"));
-        }
-    }
-
-    @Test
-    public void testAllFlagsNonEmpty() {
-        for (ModelFlag flag : ModelFlag.values()) {
-            assertFalse("Flag " + flag + " has empty CLI string", flag.getCliFlag().isEmpty());
-        }
+    public void testCliFlagNonEmpty() {
+        assertFalse("Flag " + flag + " has empty CLI string", flag.getCliFlag().isEmpty());
     }
 }

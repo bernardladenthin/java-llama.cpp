@@ -1,86 +1,62 @@
 package de.kherud.llama;
 
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static org.junit.Assert.*;
 
+/**
+ * Round-trip tests for {@link StopReason}.
+ *
+ * <p>The parameterised suite drives one test per enum constant: it obtains the
+ * constant's {@code "stop_type"} string via {@link StopReason#getStopType()} and
+ * verifies that feeding it back into {@link StopReason#fromStopType(String)} returns
+ * the original constant.  The data provider is {@link StopReason#values()} so the
+ * suite automatically covers any future constant added to the enum.
+ *
+ * <p>Edge cases (null, empty string, unknown value) are tested in separate
+ * {@code @Test} methods below the round-trip test.
+ */
+@RunWith(Parameterized.class)
 public class StopReasonTest {
 
-    // ------------------------------------------------------------------
-    // getStopType — forward direction
-    // ------------------------------------------------------------------
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<StopReason> data() {
+        return Arrays.asList(StopReason.values());
+    }
 
-    @Test
-    public void testNoneStopTypeIsNull() {
-        assertNull(StopReason.NONE.getStopType());
+    private final StopReason reason;
+
+    public StopReasonTest(StopReason reason) {
+        this.reason = reason;
     }
 
     @Test
-    public void testEosStopType() {
-        assertEquals("eos", StopReason.EOS.getStopType());
-    }
-
-    @Test
-    public void testStopStringStopType() {
-        assertEquals("word", StopReason.STOP_STRING.getStopType());
-    }
-
-    @Test
-    public void testMaxTokensStopType() {
-        assertEquals("limit", StopReason.MAX_TOKENS.getStopType());
+    public void testRoundTrip() {
+        assertSame(reason, StopReason.fromStopType(reason.getStopType()));
     }
 
     // ------------------------------------------------------------------
-    // fromStopType — reverse direction
+    // Edge cases — tested separately from the round-trip
     // ------------------------------------------------------------------
 
     @Test
-    public void testFromStopType_eos() {
-        assertEquals(StopReason.EOS, StopReason.fromStopType("eos"));
-    }
-
-    @Test
-    public void testFromStopType_word() {
-        assertEquals(StopReason.STOP_STRING, StopReason.fromStopType("word"));
-    }
-
-    @Test
-    public void testFromStopType_limit() {
-        assertEquals(StopReason.MAX_TOKENS, StopReason.fromStopType("limit"));
+    public void testFromStopType_nullReturnsNone() {
+        assertSame(StopReason.NONE, StopReason.fromStopType(null));
     }
 
     @Test
     public void testFromStopType_emptyStringReturnsNone() {
-        assertEquals(StopReason.NONE, StopReason.fromStopType(""));
-    }
-
-    @Test
-    public void testFromStopType_nullReturnsNone() {
-        assertEquals(StopReason.NONE, StopReason.fromStopType(null));
+        assertSame(StopReason.NONE, StopReason.fromStopType(""));
     }
 
     @Test
     public void testFromStopType_unknownReturnsNone() {
-        assertEquals(StopReason.NONE, StopReason.fromStopType("something_else"));
-    }
-
-    // ------------------------------------------------------------------
-    // Round-trips
-    // ------------------------------------------------------------------
-
-    @Test
-    public void testRoundTrip_eos() {
-        assertEquals(StopReason.EOS, StopReason.fromStopType(StopReason.EOS.getStopType()));
-    }
-
-    @Test
-    public void testRoundTrip_stopString() {
-        assertEquals(StopReason.STOP_STRING, StopReason.fromStopType(StopReason.STOP_STRING.getStopType()));
-    }
-
-    @Test
-    public void testRoundTrip_maxTokens() {
-        assertEquals(StopReason.MAX_TOKENS, StopReason.fromStopType(StopReason.MAX_TOKENS.getStopType()));
+        assertSame(StopReason.NONE, StopReason.fromStopType("something_else"));
     }
 
     @Test

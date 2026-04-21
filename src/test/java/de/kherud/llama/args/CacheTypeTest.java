@@ -1,10 +1,48 @@
 package de.kherud.llama.args;
 
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static org.junit.Assert.*;
 
+@RunWith(Parameterized.class)
 public class CacheTypeTest {
+
+    @Parameterized.Parameters(name = "{0} -> {1}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+            {CacheType.F32,    "f32"},
+            {CacheType.F16,    "f16"},
+            {CacheType.BF16,   "bf16"},
+            {CacheType.Q8_0,   "q8_0"},
+            {CacheType.Q4_0,   "q4_0"},
+            {CacheType.Q4_1,   "q4_1"},
+            {CacheType.IQ4_NL, "iq4_nl"},
+            {CacheType.Q5_0,   "q5_0"},
+            {CacheType.Q5_1,   "q5_1"},
+        });
+    }
+
+    private final CacheType cacheType;
+    private final String expectedArgValue;
+
+    public CacheTypeTest(CacheType cacheType, String expectedArgValue) {
+        this.cacheType = cacheType;
+        this.expectedArgValue = expectedArgValue;
+    }
+
+    @Test
+    public void testGetArgValue() {
+        assertEquals(expectedArgValue, cacheType.getArgValue());
+    }
+
+    // ------------------------------------------------------------------
+    // Structural invariants — tested separately from the per-value check
+    // ------------------------------------------------------------------
 
     @Test
     public void testEnumCount() {
@@ -12,60 +50,13 @@ public class CacheTypeTest {
     }
 
     @Test
-    public void testF32() {
-        assertEquals("f32", CacheType.F32.getArgValue());
-    }
-
-    @Test
-    public void testF16() {
-        assertEquals("f16", CacheType.F16.getArgValue());
-    }
-
-    @Test
-    public void testBF16() {
-        assertEquals("bf16", CacheType.BF16.getArgValue());
-    }
-
-    @Test
-    public void testQ8_0() {
-        assertEquals("q8_0", CacheType.Q8_0.getArgValue());
-    }
-
-    @Test
-    public void testQ4_0() {
-        assertEquals("q4_0", CacheType.Q4_0.getArgValue());
-    }
-
-    @Test
-    public void testQ4_1() {
-        assertEquals("q4_1", CacheType.Q4_1.getArgValue());
-    }
-
-    @Test
-    public void testIQ4_NL() {
-        assertEquals("iq4_nl", CacheType.IQ4_NL.getArgValue());
-    }
-
-    @Test
-    public void testQ5_0() {
-        assertEquals("q5_0", CacheType.Q5_0.getArgValue());
-    }
-
-    @Test
-    public void testQ5_1() {
-        assertEquals("q5_1", CacheType.Q5_1.getArgValue());
-    }
-
-    @Test
-    public void testAllValuesHaveNonEmptyArgValue() {
-        for (CacheType ct : CacheType.values()) {
-            assertNotNull(ct.getArgValue());
-            assertFalse("CacheType " + ct + " has empty argValue", ct.getArgValue().isEmpty());
-        }
-    }
-
-    @Test
     public void testImplementsCliArg() {
-        assertTrue(CacheType.F16 instanceof CliArg);
+        assertTrue(cacheType instanceof CliArg);
+    }
+
+    @Test
+    public void testArgValueNonEmpty() {
+        assertNotNull(cacheType.getArgValue());
+        assertFalse(cacheType.getArgValue().isEmpty());
     }
 }

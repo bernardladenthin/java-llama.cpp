@@ -1,10 +1,42 @@
 package de.kherud.llama.args;
 
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static org.junit.Assert.*;
 
+@RunWith(Parameterized.class)
 public class MiroStatTest {
+
+    @Parameterized.Parameters(name = "{0} -> {1}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+            {MiroStat.DISABLED, "0"},
+            {MiroStat.V1,       "1"},
+            {MiroStat.V2,       "2"},
+        });
+    }
+
+    private final MiroStat miroStat;
+    private final String expectedArgValue;
+
+    public MiroStatTest(MiroStat miroStat, String expectedArgValue) {
+        this.miroStat = miroStat;
+        this.expectedArgValue = expectedArgValue;
+    }
+
+    @Test
+    public void testGetArgValue() {
+        assertEquals(expectedArgValue, miroStat.getArgValue());
+    }
+
+    // ------------------------------------------------------------------
+    // Structural invariants
+    // ------------------------------------------------------------------
 
     @Test
     public void testEnumCount() {
@@ -12,30 +44,13 @@ public class MiroStatTest {
     }
 
     @Test
-    public void testDisabled() {
-        assertEquals("0", MiroStat.DISABLED.getArgValue());
-    }
-
-    @Test
-    public void testV1() {
-        assertEquals("1", MiroStat.V1.getArgValue());
-    }
-
-    @Test
-    public void testV2() {
-        assertEquals("2", MiroStat.V2.getArgValue());
-    }
-
-    @Test
-    public void testAllValuesHaveNonEmptyArgValue() {
-        for (MiroStat m : MiroStat.values()) {
-            assertNotNull(m.getArgValue());
-            assertFalse("MiroStat " + m + " has empty argValue", m.getArgValue().isEmpty());
-        }
-    }
-
-    @Test
     public void testImplementsCliArg() {
-        assertTrue(MiroStat.DISABLED instanceof CliArg);
+        assertTrue(miroStat instanceof CliArg);
+    }
+
+    @Test
+    public void testArgValueNonEmpty() {
+        assertNotNull(miroStat.getArgValue());
+        assertFalse(miroStat.getArgValue().isEmpty());
     }
 }
