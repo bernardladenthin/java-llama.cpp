@@ -61,6 +61,23 @@ public final class ModelMeta {
     }
 
     /**
+     * The model architecture string from GGUF {@code general.architecture} metadata
+     * (e.g. {@code "llama"}, {@code "gemma3"}, {@code "mistral"}).
+     * Returns an empty string if the field is absent in the GGUF file.
+     */
+    public String getArchitecture() {
+        return node.path("architecture").asText("");
+    }
+
+    /**
+     * The human-readable model name from GGUF {@code general.name} metadata.
+     * Returns an empty string if the field is absent in the GGUF file.
+     */
+    public String getModelName() {
+        return node.path("name").asText("");
+    }
+
+    /**
      * Returns the underlying {@link JsonNode} for direct access to any field,
      * including fields added in future llama.cpp versions.
      */

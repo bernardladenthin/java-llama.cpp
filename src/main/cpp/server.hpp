@@ -3624,17 +3624,26 @@ struct server_context {
     }
 
     json model_meta() const {
+        // Read optional string metadata from GGUF headers; empty string if absent.
+        auto read_meta_str = [&](const char * key) -> std::string {
+            char buf[512] = {};
+            int32_t n = llama_model_meta_val_str(model, key, buf, sizeof(buf));
+            return n >= 0 ? std::string(buf, n) : std::string();
+        };
+
         return json{
-            {"vocab_type",  llama_vocab_type(vocab)},
-            {"n_vocab",     llama_vocab_n_tokens(vocab)},
-            {"n_ctx_train", llama_model_n_ctx_train(model)},
-            {"n_embd",      llama_model_n_embd(model)},
-            {"n_params",    llama_model_n_params(model)},
-            {"size",        llama_model_size(model)},
-            {"modalities",  json{
+            {"vocab_type",   llama_vocab_type(vocab)},
+            {"n_vocab",      llama_vocab_n_tokens(vocab)},
+            {"n_ctx_train",  llama_model_n_ctx_train(model)},
+            {"n_embd",       llama_model_n_embd(model)},
+            {"n_params",     llama_model_n_params(model)},
+            {"size",         llama_model_size(model)},
+            {"modalities",   json{
                 {"vision", mctx ? mtmd_support_vision(mctx) : false},
                 {"audio",  mctx ? mtmd_support_audio(mctx)  : false},
             }},
+            {"architecture", read_meta_str("general.architecture")},
+            {"name",         read_meta_str("general.name")},
         };
     }
 };
