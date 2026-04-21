@@ -16,6 +16,8 @@ abstract class JsonParameters {
 	// The JNI code for a proper Java-typed data object is comparatively too complex and hard to maintain.
 	final Map<String, String> parameters = new HashMap<>();
 
+	protected final ParameterJsonSerializer serializer = new ParameterJsonSerializer();
+
 	@Override
 	public String toString() {
 		StringBuilder builder = new StringBuilder();
@@ -37,12 +39,8 @@ abstract class JsonParameters {
 		return builder.toString();
 	}
 
-	static String mapToJsonObject(Map<String, String> map) {
-		return ParameterJsonSerializer.buildRawValueObject(map).toString();
-	}
-
 	String toJsonString(String text) {
 		if (text == null) return null;
-		return ParameterJsonSerializer.toJsonString(text);
+		return serializer.toJsonString(text);
 	}
 }

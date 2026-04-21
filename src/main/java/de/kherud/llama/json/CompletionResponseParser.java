@@ -32,12 +32,10 @@ import java.util.Map;
  *
  * <p>This is the Java analogue of {@code json_helpers.hpp} in the C++ layer.
  */
-public final class CompletionResponseParser {
+public class CompletionResponseParser {
 
-    /** Shared Jackson mapper; all methods are stateless and thread-safe. */
+    /** Shared Jackson mapper; thread-safe and reused across all instances. */
     public static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
-    private CompletionResponseParser() {}
 
     /**
      * Parse a {@link LlamaOutput} from a raw JSON string returned by the native
@@ -47,7 +45,7 @@ public final class CompletionResponseParser {
      * @param json raw JSON string from the native completion response
      * @return parsed {@link LlamaOutput}; empty output on parse failure
      */
-    public static LlamaOutput parse(String json) {
+    public LlamaOutput parse(String json) {
         try {
             return parse(OBJECT_MAPPER.readTree(json));
         } catch (IOException e) {
@@ -62,7 +60,7 @@ public final class CompletionResponseParser {
      * @param node pre-parsed completion response node
      * @return parsed {@link LlamaOutput}
      */
-    public static LlamaOutput parse(JsonNode node) {
+    public LlamaOutput parse(JsonNode node) {
         String content = extractContent(node);
         boolean stop = node.path("stop").asBoolean(false);
         Map<String, Float> probabilities = parseProbabilities(node);
@@ -77,7 +75,7 @@ public final class CompletionResponseParser {
      * @param node completion response node
      * @return the content string, or {@code ""} if absent
      */
-    public static String extractContent(JsonNode node) {
+    public String extractContent(JsonNode node) {
         return node.path("content").asText("");
     }
 
@@ -95,7 +93,7 @@ public final class CompletionResponseParser {
      * @param root the top-level completion response node
      * @return map from token string to probability; empty when no probability data is present
      */
-    public static Map<String, Float> parseProbabilities(JsonNode root) {
+    public Map<String, Float> parseProbabilities(JsonNode root) {
         JsonNode array = root.path("completion_probabilities");
         if (!array.isArray() || array.size() == 0) {
             return Collections.emptyMap();

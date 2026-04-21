@@ -6,7 +6,6 @@ import java.util.Map;
 
 import de.kherud.llama.args.MiroStat;
 import de.kherud.llama.args.Sampler;
-import de.kherud.llama.json.ParameterJsonSerializer;
 
 /**
  * Parameters used throughout inference of a {@link LlamaModel}, e.g., {@link LlamaModel#generate(InferenceParameters)}
@@ -369,7 +368,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setPenaltyPrompt(int[] tokens) {
 		if (tokens.length > 0) {
-			parameters.put(PARAM_PENALTY_PROMPT, ParameterJsonSerializer.buildIntArray(tokens).toString());
+			parameters.put(PARAM_PENALTY_PROMPT, serializer.buildIntArray(tokens).toString());
 		}
 		return this;
 	}
@@ -400,7 +399,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setTokenIdBias(Map<Integer, Float> logitBias) {
 		if (!logitBias.isEmpty()) {
-			parameters.put(PARAM_LOGIT_BIAS, ParameterJsonSerializer.buildTokenIdBiasArray(logitBias).toString());
+			parameters.put(PARAM_LOGIT_BIAS, serializer.buildTokenIdBiasArray(logitBias).toString());
 		}
 		return this;
 	}
@@ -420,7 +419,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters disableTokenIds(Collection<Integer> tokenIds) {
 		if (!tokenIds.isEmpty()) {
-			parameters.put(PARAM_LOGIT_BIAS, ParameterJsonSerializer.buildDisableTokenIdArray(tokenIds).toString());
+			parameters.put(PARAM_LOGIT_BIAS, serializer.buildDisableTokenIdArray(tokenIds).toString());
 		}
 		return this;
 	}
@@ -440,7 +439,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setTokenBias(Map<String, Float> logitBias) {
 		if (!logitBias.isEmpty()) {
-			parameters.put(PARAM_LOGIT_BIAS, ParameterJsonSerializer.buildTokenStringBiasArray(logitBias).toString());
+			parameters.put(PARAM_LOGIT_BIAS, serializer.buildTokenStringBiasArray(logitBias).toString());
 		}
 		return this;
 	}
@@ -460,7 +459,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters disableTokens(Collection<String> tokens) {
 		if (!tokens.isEmpty()) {
-			parameters.put(PARAM_LOGIT_BIAS, ParameterJsonSerializer.buildDisableTokenStringArray(tokens).toString());
+			parameters.put(PARAM_LOGIT_BIAS, serializer.buildDisableTokenStringArray(tokens).toString());
 		}
 		return this;
 	}
@@ -473,7 +472,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setStopStrings(String... stopStrings) {
 		if (stopStrings.length > 0) {
-			parameters.put(PARAM_STOP, ParameterJsonSerializer.buildStopStrings(stopStrings).toString());
+			parameters.put(PARAM_STOP, serializer.buildStopStrings(stopStrings).toString());
 		}
 		return this;
 	}
@@ -486,7 +485,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setSamplers(Sampler... samplers) {
 		if (samplers.length > 0) {
-			parameters.put(PARAM_SAMPLERS, ParameterJsonSerializer.buildSamplers(samplers).toString());
+			parameters.put(PARAM_SAMPLERS, serializer.buildSamplers(samplers).toString());
 		}
 		return this;
 	}
@@ -528,7 +527,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setChatTemplateKwargs(java.util.Map<String, String> kwargs) {
-		parameters.put(PARAM_CHAT_TEMPLATE_KWARGS, mapToJsonObject(kwargs));
+		parameters.put(PARAM_CHAT_TEMPLATE_KWARGS, serializer.buildRawValueObject(kwargs).toString());
 		return this;
 	}
 
@@ -542,7 +541,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return this builder
      */
     public InferenceParameters setMessages(String systemMessage, List<Pair<String, String>> messages) {
-        parameters.put(PARAM_MESSAGES, ParameterJsonSerializer.buildMessages(systemMessage, messages).toString());
+        parameters.put(PARAM_MESSAGES, serializer.buildMessages(systemMessage, messages).toString());
         return this;
     }
 

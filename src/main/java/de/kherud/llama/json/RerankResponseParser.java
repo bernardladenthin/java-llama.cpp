@@ -24,12 +24,10 @@ import java.util.List;
  * ]
  * }</pre>
  */
-public final class RerankResponseParser {
+public class RerankResponseParser {
 
-    /** Shared Jackson mapper; all methods are stateless and thread-safe. */
+    /** Shared Jackson mapper; thread-safe and reused across all instances. */
     public static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
-    private RerankResponseParser() {}
 
     /**
      * Parse rerank results from a raw JSON array string. Delegates to {@link #parse(JsonNode)}
@@ -38,7 +36,7 @@ public final class RerankResponseParser {
      * @param json raw JSON array string from the native rerank response
      * @return list of document/score pairs; empty list on parse failure or empty array
      */
-    public static List<Pair<String, Float>> parse(String json) {
+    public List<Pair<String, Float>> parse(String json) {
         try {
             return parse(OBJECT_MAPPER.readTree(json));
         } catch (IOException e) {
@@ -54,7 +52,7 @@ public final class RerankResponseParser {
      * @param arr pre-parsed {@link JsonNode} array of rerank result objects
      * @return list of document/score pairs; empty list if the node is not an array or is empty
      */
-    public static List<Pair<String, Float>> parse(JsonNode arr) {
+    public List<Pair<String, Float>> parse(JsonNode arr) {
         if (!arr.isArray() || arr.size() == 0) {
             return Collections.emptyList();
         }

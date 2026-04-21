@@ -1,11 +1,7 @@
 package de.kherud.llama;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import de.kherud.llama.json.CompletionResponseParser;
-import de.kherud.llama.json.RerankResponseParser;
 import org.jetbrains.annotations.NotNull;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -47,29 +43,5 @@ public final class LlamaOutput {
     @Override
     public String toString() {
         return text;
-    }
-
-    /**
-     * Parse a LlamaOutput from a JSON string returned by the native receiveCompletionJson method.
-     * Delegates to {@link CompletionResponseParser#parse(String)}.
-     */
-    static LlamaOutput fromJson(String json) {
-        return CompletionResponseParser.parse(json);
-    }
-
-    /**
-     * Parse a LlamaOutput from a pre-parsed JsonNode.
-     * Delegates to {@link CompletionResponseParser#parse(JsonNode)}.
-     */
-    static LlamaOutput fromJson(JsonNode node) {
-        return CompletionResponseParser.parse(node);
-    }
-
-    /**
-     * Parse rerank results from a JSON array string.
-     * Delegates to {@link RerankResponseParser#parse(String)}.
-     */
-    static List<Pair<String, Float>> parseRerankResults(String json) {
-        return RerankResponseParser.parse(json);
     }
 }

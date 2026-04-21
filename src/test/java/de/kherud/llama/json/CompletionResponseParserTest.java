@@ -19,6 +19,7 @@ import static org.junit.Assert.*;
 public class CompletionResponseParserTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+    private final CompletionResponseParser parser = new CompletionResponseParser();
 
     // ------------------------------------------------------------------
     // parse(String)
@@ -27,14 +28,14 @@ public class CompletionResponseParserTest {
     @Test
     public void testParseString_text() throws Exception {
         String json = "{\"content\":\"Hello world\",\"stop\":false}";
-        LlamaOutput out = CompletionResponseParser.parse(json);
+        LlamaOutput out = parser.parse(json);
         assertEquals("Hello world", out.text);
     }
 
     @Test
     public void testParseString_stopFalse() {
         String json = "{\"content\":\"partial\",\"stop\":false}";
-        LlamaOutput out = CompletionResponseParser.parse(json);
+        LlamaOutput out = parser.parse(json);
         assertFalse(out.stop);
         assertEquals(StopReason.NONE, out.stopReason);
     }
@@ -42,7 +43,7 @@ public class CompletionResponseParserTest {
     @Test
     public void testParseString_stopTrueEos() {
         String json = "{\"content\":\"done\",\"stop\":true,\"stop_type\":\"eos\"}";
-        LlamaOutput out = CompletionResponseParser.parse(json);
+        LlamaOutput out = parser.parse(json);
         assertTrue(out.stop);
         assertEquals(StopReason.EOS, out.stopReason);
     }
@@ -50,7 +51,7 @@ public class CompletionResponseParserTest {
     @Test
     public void testParseString_stopTrueWord() {
         String json = "{\"content\":\"end\",\"stop\":true,\"stop_type\":\"word\",\"stopping_word\":\"END\"}";
-        LlamaOutput out = CompletionResponseParser.parse(json);
+        LlamaOutput out = parser.parse(json);
         assertTrue(out.stop);
         assertEquals(StopReason.STOP_STRING, out.stopReason);
     }
@@ -58,14 +59,14 @@ public class CompletionResponseParserTest {
     @Test
     public void testParseString_stopTrueLimit() {
         String json = "{\"content\":\"truncated\",\"stop\":true,\"stop_type\":\"limit\",\"truncated\":true}";
-        LlamaOutput out = CompletionResponseParser.parse(json);
+        LlamaOutput out = parser.parse(json);
         assertTrue(out.stop);
         assertEquals(StopReason.MAX_TOKENS, out.stopReason);
     }
 
     @Test
     public void testParseString_malformedReturnsEmptyNonStop() {
-        LlamaOutput out = CompletionResponseParser.parse("{not valid json");
+        LlamaOutput out = parser.parse("{not valid json");
         assertEquals("", out.text);
         assertFalse(out.stop);
         assertEquals(StopReason.NONE, out.stopReason);
@@ -75,21 +76,21 @@ public class CompletionResponseParserTest {
     @Test
     public void testParseString_escapedContent() {
         String json = "{\"content\":\"line1\\nline2\\t\\\"quoted\\\"\",\"stop\":false}";
-        LlamaOutput out = CompletionResponseParser.parse(json);
+        LlamaOutput out = parser.parse(json);
         assertEquals("line1\nline2\t\"quoted\"", out.text);
     }
 
     @Test
     public void testParseString_unicodeEscape() {
         String json = "{\"content\":\"caf\\u00e9\",\"stop\":false}";
-        LlamaOutput out = CompletionResponseParser.parse(json);
+        LlamaOutput out = parser.parse(json);
         assertEquals("café", out.text);
     }
 
     @Test
     public void testParseString_emptyContent() {
         String json = "{\"content\":\"\",\"stop\":true,\"stop_type\":\"eos\"}";
-        LlamaOutput out = CompletionResponseParser.parse(json);
+        LlamaOutput out = parser.parse(json);
         assertEquals("", out.text);
         assertTrue(out.stop);
     }
@@ -101,7 +102,7 @@ public class CompletionResponseParserTest {
     @Test
     public void testParseNode_delegatesCorrectly() throws Exception {
         JsonNode node = MAPPER.readTree("{\"content\":\"hi\",\"stop\":true,\"stop_type\":\"eos\"}");
-        LlamaOutput out = CompletionResponseParser.parse(node);
+        LlamaOutput out = parser.parse(node);
         assertEquals("hi", out.text);
         assertTrue(out.stop);
         assertEquals(StopReason.EOS, out.stopReason);
@@ -114,19 +115,19 @@ public class CompletionResponseParserTest {
     @Test
     public void testExtractContent_present() throws Exception {
         JsonNode node = MAPPER.readTree("{\"content\":\"hello\",\"stop\":false}");
-        assertEquals("hello", CompletionResponseParser.extractContent(node));
+        assertEquals("hello", parser.extractContent(node));
     }
 
     @Test
     public void testExtractContent_absent() throws Exception {
         JsonNode node = MAPPER.readTree("{\"stop\":false}");
-        assertEquals("", CompletionResponseParser.extractContent(node));
+        assertEquals("", parser.extractContent(node));
     }
 
     @Test
     public void testExtractContent_empty() throws Exception {
         JsonNode node = MAPPER.readTree("{\"content\":\"\",\"stop\":true}");
-        assertEquals("", CompletionResponseParser.extractContent(node));
+        assertEquals("", parser.extractContent(node));
     }
 
     // ------------------------------------------------------------------
@@ -136,13 +137,13 @@ public class CompletionResponseParserTest {
     @Test
     public void testParseProbabilities_absentKey() throws Exception {
         JsonNode node = MAPPER.readTree("{\"content\":\"hi\",\"stop\":true}");
-        assertTrue(CompletionResponseParser.parseProbabilities(node).isEmpty());
+        assertTrue(parser.parseProbabilities(node).isEmpty());
     }
 
     @Test
     public void testParseProbabilities_emptyArray() throws Exception {
         JsonNode node = MAPPER.readTree("{\"content\":\"hi\",\"stop\":true,\"completion_probabilities\":[]}");
-        assertTrue(CompletionResponseParser.parseProbabilities(node).isEmpty());
+        assertTrue(parser.parseProbabilities(node).isEmpty());
     }
 
     @Test
@@ -155,7 +156,7 @@ public class CompletionResponseParserTest {
                 "\"top_probs\":[]}" +
                 "]}";
         JsonNode node = MAPPER.readTree(json);
-        Map<String, Float> probs = CompletionResponseParser.parseProbabilities(node);
+        Map<String, Float> probs = parser.parseProbabilities(node);
         assertEquals(2, probs.size());
         assertEquals(0.82f, probs.get("Hello"), 0.001f);
         assertEquals(0.65f, probs.get(" world"), 0.001f);
@@ -169,7 +170,7 @@ public class CompletionResponseParserTest {
                 "\"top_logprobs\":[{\"token\":\"Hi\",\"bytes\":[72],\"id\":9932,\"logprob\":-2.3}]}" +
                 "]}";
         JsonNode node = MAPPER.readTree(json);
-        Map<String, Float> probs = CompletionResponseParser.parseProbabilities(node);
+        Map<String, Float> probs = parser.parseProbabilities(node);
         assertEquals(1, probs.size());
         assertEquals(-0.2f, probs.get("Hello"), 0.001f);
     }
@@ -182,7 +183,7 @@ public class CompletionResponseParserTest {
                 "\"top_probs\":[]}" +
                 "]}";
         JsonNode node = MAPPER.readTree(json);
-        Map<String, Float> probs = CompletionResponseParser.parseProbabilities(node);
+        Map<String, Float> probs = parser.parseProbabilities(node);
         assertEquals(1, probs.size());
         assertEquals(0.5f, probs.get("say \"yes\""), 0.001f);
     }
@@ -196,7 +197,7 @@ public class CompletionResponseParserTest {
                 "\"top_probs\":[{\"token\":\"B\",\"bytes\":[],\"id\":2,\"prob\":0.05}]}" +
                 "]}";
         JsonNode node = MAPPER.readTree(json);
-        Map<String, Float> probs = CompletionResponseParser.parseProbabilities(node);
+        Map<String, Float> probs = parser.parseProbabilities(node);
         assertEquals(1, probs.size());
         assertTrue("only outer token 'A' should be present", probs.containsKey("A"));
         assertFalse("inner top_probs token 'B' must not appear", probs.containsKey("B"));

@@ -27,12 +27,10 @@ import java.util.Map;
  * {@code org.json}-derived {@code toJsonString()} escaper previously embedded in
  * {@code JsonParameters}.
  */
-public final class ParameterJsonSerializer {
+public class ParameterJsonSerializer {
 
-    /** Shared Jackson mapper; all methods are stateless and thread-safe. */
+    /** Shared Jackson mapper; thread-safe and reused across all instances. */
     public static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
-    private ParameterJsonSerializer() {}
 
     // ------------------------------------------------------------------
     // String escaping
@@ -48,7 +46,7 @@ public final class ParameterJsonSerializer {
      * @param value the Java string to serialize, or {@code null}
      * @return a JSON string literal, or {@code "null"} if the input is {@code null}
      */
-    public static String toJsonString(String value) {
+    public String toJsonString(String value) {
         if (value == null) return "null";
         try {
             return OBJECT_MAPPER.writeValueAsString(value);
@@ -72,7 +70,7 @@ public final class ParameterJsonSerializer {
      * @return a Jackson {@link ArrayNode} of {@code {"role", "content"}} message objects
      * @throws IllegalArgumentException if any message has an invalid role
      */
-    public static ArrayNode buildMessages(String systemMessage, List<Pair<String, String>> messages) {
+    public ArrayNode buildMessages(String systemMessage, List<Pair<String, String>> messages) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
         if (systemMessage != null && !systemMessage.isEmpty()) {
             ObjectNode sys = OBJECT_MAPPER.createObjectNode();
@@ -106,7 +104,7 @@ public final class ParameterJsonSerializer {
      * @param stops one or more stop strings
      * @return a Jackson {@link ArrayNode} of stop string values
      */
-    public static ArrayNode buildStopStrings(String... stops) {
+    public ArrayNode buildStopStrings(String... stops) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
         for (String stop : stops) arr.add(stop);
         return arr;
@@ -119,7 +117,7 @@ public final class ParameterJsonSerializer {
      * @param samplers one or more samplers in the desired order
      * @return a Jackson {@link ArrayNode} of sampler name strings
      */
-    public static ArrayNode buildSamplers(Sampler... samplers) {
+    public ArrayNode buildSamplers(Sampler... samplers) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
         for (Sampler sampler : samplers) {
             arr.add(sampler.getArgValue());
@@ -134,7 +132,7 @@ public final class ParameterJsonSerializer {
      * @param values the token IDs to include
      * @return a Jackson {@link ArrayNode} of integer values
      */
-    public static ArrayNode buildIntArray(int[] values) {
+    public ArrayNode buildIntArray(int[] values) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
         for (int v : values) arr.add(v);
         return arr;
@@ -151,7 +149,7 @@ public final class ParameterJsonSerializer {
      * @param biases map from token ID to logit bias value
      * @return a Jackson {@link ArrayNode} of {@code [tokenId, biasValue]} pairs
      */
-    public static ArrayNode buildTokenIdBiasArray(Map<Integer, Float> biases) {
+    public ArrayNode buildTokenIdBiasArray(Map<Integer, Float> biases) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
         for (Map.Entry<Integer, Float> entry : biases.entrySet()) {
             ArrayNode pair = OBJECT_MAPPER.createArrayNode();
@@ -169,7 +167,7 @@ public final class ParameterJsonSerializer {
      * @param biases map from token string to logit bias value
      * @return a Jackson {@link ArrayNode} of {@code ["token", biasValue]} pairs
      */
-    public static ArrayNode buildTokenStringBiasArray(Map<String, Float> biases) {
+    public ArrayNode buildTokenStringBiasArray(Map<String, Float> biases) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
         for (Map.Entry<String, Float> entry : biases.entrySet()) {
             ArrayNode pair = OBJECT_MAPPER.createArrayNode();
@@ -187,7 +185,7 @@ public final class ParameterJsonSerializer {
      * @param ids collection of integer token IDs to disable
      * @return a Jackson {@link ArrayNode} of {@code [tokenId, false]} pairs
      */
-    public static ArrayNode buildDisableTokenIdArray(Collection<Integer> ids) {
+    public ArrayNode buildDisableTokenIdArray(Collection<Integer> ids) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
         for (Integer id : ids) {
             ArrayNode pair = OBJECT_MAPPER.createArrayNode();
@@ -205,7 +203,7 @@ public final class ParameterJsonSerializer {
      * @param tokens collection of token strings to disable
      * @return a Jackson {@link ArrayNode} of {@code ["token", false]} pairs
      */
-    public static ArrayNode buildDisableTokenStringArray(Collection<String> tokens) {
+    public ArrayNode buildDisableTokenStringArray(Collection<String> tokens) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
         for (String token : tokens) {
             ArrayNode pair = OBJECT_MAPPER.createArrayNode();
@@ -231,7 +229,7 @@ public final class ParameterJsonSerializer {
      * @param map map of key to pre-serialized JSON value strings
      * @return a Jackson {@link ObjectNode} with each value embedded as a parsed JSON node
      */
-    public static ObjectNode buildRawValueObject(Map<String, String> map) {
+    public ObjectNode buildRawValueObject(Map<String, String> map) {
         ObjectNode node = OBJECT_MAPPER.createObjectNode();
         for (Map.Entry<String, String> entry : map.entrySet()) {
             try {

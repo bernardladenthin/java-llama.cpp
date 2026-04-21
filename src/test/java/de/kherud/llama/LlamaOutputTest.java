@@ -1,5 +1,6 @@
 package de.kherud.llama;
 
+import de.kherud.llama.json.CompletionResponseParser;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -13,6 +14,8 @@ import static org.junit.Assert.*;
                   "and stopReason, and that toString() delegates to the text field."
 )
 public class LlamaOutputTest {
+
+	private final CompletionResponseParser parser = new CompletionResponseParser();
 
 	@Test
 	public void testTextFromString() {
@@ -77,7 +80,7 @@ public class LlamaOutputTest {
 	@Test
 	public void testFromJson() {
 		String json = "{\"content\":\"hello world\",\"stop\":true}";
-		LlamaOutput output = LlamaOutput.fromJson(json);
+		LlamaOutput output = parser.parse(json);
 		assertEquals("hello world", output.text);
 		assertTrue(output.stop);
 	}
@@ -85,7 +88,7 @@ public class LlamaOutputTest {
 	@Test
 	public void testFromJsonWithEscapes() {
 		String json = "{\"content\":\"line1\\nline2\\t\\\"quoted\\\"\",\"stop\":false}";
-		LlamaOutput output = LlamaOutput.fromJson(json);
+		LlamaOutput output = parser.parse(json);
 		assertEquals("line1\nline2\t\"quoted\"", output.text);
 		assertFalse(output.stop);
 	}
@@ -93,14 +96,14 @@ public class LlamaOutputTest {
 	@Test
 	public void testFromJsonWithUnicodeEscape() {
 		String json = "{\"content\":\"caf\\u00e9\",\"stop\":false}";
-		LlamaOutput output = LlamaOutput.fromJson(json);
+		LlamaOutput output = parser.parse(json);
 		assertEquals("café", output.text);
 		assertFalse(output.stop);
 	}
 
 	@Test
 	public void testFromJsonMalformedReturnsEmptyNonStop() {
-		LlamaOutput output = LlamaOutput.fromJson("{not valid json");
+		LlamaOutput output = parser.parse("{not valid json");
 		assertEquals("", output.text);
 		assertFalse(output.stop);
 		assertEquals(StopReason.NONE, output.stopReason);
@@ -110,7 +113,7 @@ public class LlamaOutputTest {
 	@Test
 	public void testGetContentFromJsonEmpty() {
 		String json = "{\"content\":\"\",\"stop\":true}";
-		assertEquals("", LlamaOutput.fromJson(json).text);
+		assertEquals("", parser.parse(json).text);
 	}
 
 	// --- parseProbabilities tests ---
@@ -118,7 +121,7 @@ public class LlamaOutputTest {
 	@Test
 	public void testProbabilitiesAbsentWhenNoProbsKey() {
 		String json = "{\"content\":\"hi\",\"stop\":true,\"stop_type\":\"eos\"}";
-		LlamaOutput output = LlamaOutput.fromJson(json);
+		LlamaOutput output = parser.parse(json);
 		assertTrue("No completion_probabilities key → empty map", output.probabilities.isEmpty());
 	}
 
@@ -132,7 +135,7 @@ public class LlamaOutputTest {
 				"{\"token\":\" world\",\"bytes\":[32,119],\"id\":1917,\"prob\":0.65," +
 				"\"top_probs\":[{\"token\":\" World\",\"bytes\":[32,87],\"id\":2304,\"prob\":0.2}]}" +
 				"]}";
-		LlamaOutput output = LlamaOutput.fromJson(json);
+		LlamaOutput output = parser.parse(json);
 		assertEquals(2, output.probabilities.size());
 		assertEquals(0.82f, output.probabilities.get("Hello"), 0.001f);
 		assertEquals(0.65f, output.probabilities.get(" world"), 0.001f);
@@ -146,7 +149,7 @@ public class LlamaOutputTest {
 				"{\"token\":\"Hello\",\"bytes\":[72],\"id\":15043,\"logprob\":-0.2," +
 				"\"top_logprobs\":[{\"token\":\"Hi\",\"bytes\":[72],\"id\":9932,\"logprob\":-2.3}]}" +
 				"]}";
-		LlamaOutput output = LlamaOutput.fromJson(json);
+		LlamaOutput output = parser.parse(json);
 		assertEquals(1, output.probabilities.size());
 		assertEquals(-0.2f, output.probabilities.get("Hello"), 0.001f);
 	}
@@ -158,7 +161,7 @@ public class LlamaOutputTest {
 				"{\"token\":\"say \\\"yes\\\"\",\"bytes\":[],\"id\":1,\"prob\":0.5," +
 				"\"top_probs\":[]}" +
 				"]}";
-		LlamaOutput output = LlamaOutput.fromJson(json);
+		LlamaOutput output = parser.parse(json);
 		assertEquals(1, output.probabilities.size());
 		assertEquals(0.5f, output.probabilities.get("say \"yes\""), 0.001f);
 	}
@@ -174,7 +177,7 @@ public class LlamaOutputTest {
 	@Test
 	public void testStopReasonFromJsonEos() {
 		String json = "{\"content\":\"done\",\"stop\":true,\"stop_type\":\"eos\"}";
-		LlamaOutput output = LlamaOutput.fromJson(json);
+		LlamaOutput output = parser.parse(json);
 		assertTrue(output.stop);
 		assertEquals(StopReason.EOS, output.stopReason);
 	}
@@ -182,7 +185,7 @@ public class LlamaOutputTest {
 	@Test
 	public void testStopReasonFromJsonWord() {
 		String json = "{\"content\":\"done\",\"stop\":true,\"stop_type\":\"word\",\"stopping_word\":\"END\"}";
-		LlamaOutput output = LlamaOutput.fromJson(json);
+		LlamaOutput output = parser.parse(json);
 		assertTrue(output.stop);
 		assertEquals(StopReason.STOP_STRING, output.stopReason);
 	}
@@ -190,7 +193,7 @@ public class LlamaOutputTest {
 	@Test
 	public void testStopReasonFromJsonLimit() {
 		String json = "{\"content\":\"truncated\",\"stop\":true,\"stop_type\":\"limit\",\"truncated\":true}";
-		LlamaOutput output = LlamaOutput.fromJson(json);
+		LlamaOutput output = parser.parse(json);
 		assertTrue(output.stop);
 		assertEquals(StopReason.MAX_TOKENS, output.stopReason);
 	}
@@ -198,7 +201,7 @@ public class LlamaOutputTest {
 	@Test
 	public void testStopReasonNoneWhenStopFalse() {
 		String json = "{\"content\":\"partial\",\"stop\":false,\"stop_type\":\"eos\"}";
-		LlamaOutput output = LlamaOutput.fromJson(json);
+		LlamaOutput output = parser.parse(json);
 		assertFalse(output.stop);
 		// stopReason is NONE for non-final tokens regardless of stop_type
 		assertEquals(StopReason.NONE, output.stopReason);

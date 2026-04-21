@@ -1,12 +1,15 @@
 package de.kherud.llama;
 
 import de.kherud.llama.args.*;
+import de.kherud.llama.json.ParameterJsonSerializer;
 
 /***
  * Parameters used for initializing a {@link LlamaModel}.
  */
 @SuppressWarnings("unused")
 public final class ModelParameters extends CliParameters {
+
+    private final ParameterJsonSerializer serializer = new ParameterJsonSerializer();
 
     private static final String ARG_FIT = "--fit";
     static final String ARG_POOLING = "--pooling";
@@ -1145,7 +1148,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setChatTemplateKwargs(java.util.Map<String, String> kwargs) {
-        parameters.put("--chat-template-kwargs", JsonParameters.mapToJsonObject(kwargs));
+        parameters.put("--chat-template-kwargs", serializer.buildRawValueObject(kwargs).toString());
         return this;
     }
 

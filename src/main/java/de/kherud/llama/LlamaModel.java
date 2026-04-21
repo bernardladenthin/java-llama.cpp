@@ -33,6 +33,10 @@ public class LlamaModel implements AutoCloseable {
 	@Native
 	private long ctx;
 
+	private final CompletionResponseParser completionParser = new CompletionResponseParser();
+	private final ChatResponseParser chatParser = new ChatResponseParser();
+	private final RerankResponseParser rerankParser = new RerankResponseParser();
+
 	/**
 	 * Load with the given {@link ModelParameters}. Make sure to either set
 	 * <ul>
@@ -59,7 +63,7 @@ public class LlamaModel implements AutoCloseable {
 		parameters.setStream(false);
 		int taskId = requestCompletion(parameters.toString());
 		String json = receiveCompletionJson(taskId);
-		return CompletionResponseParser.parse(json).text;
+		return completionParser.parse(json).text;
 	}
 
 	/**
@@ -160,7 +164,7 @@ public class LlamaModel implements AutoCloseable {
 	 */
 	public List<Pair<String, Float>> rerank(boolean reRank, String query, String... documents) {
 		String json = handleRerank(query, documents);
-		List<Pair<String, Float>> rankedDocuments = RerankResponseParser.parse(json);
+		List<Pair<String, Float>> rankedDocuments = rerankParser.parse(json);
 		if (reRank) {
 			rankedDocuments.sort((a, b) -> Float.compare(b.getValue(), a.getValue()));
 		}
@@ -177,7 +181,7 @@ public class LlamaModel implements AutoCloseable {
 	 */
 	public LlamaOutput rerank(String query, String... documents) {
 		String json = handleRerank(query, documents);
-		List<Pair<String, Float>> results = RerankResponseParser.parse(json);
+		List<Pair<String, Float>> results = rerankParser.parse(json);
 		Map<String, Float> probabilities = new HashMap<>();
 		for (Pair<String, Float> pair : results) {
 			probabilities.put(pair.getKey(), pair.getValue());
@@ -236,7 +240,7 @@ public class LlamaModel implements AutoCloseable {
 	 * @throws LlamaException if the model was loaded in embedding mode or if inference fails
 	 */
 	public String chatCompleteText(InferenceParameters parameters) {
-		return ChatResponseParser.extractChoiceContent(chatComplete(parameters));
+		return chatParser.extractChoiceContent(chatComplete(parameters));
 	}
 
 	/**

@@ -43,6 +43,8 @@ import org.junit.Test;
 public class ChatScenarioTest {
 
     private static final int N_PREDICT = 10;
+    private final CompletionResponseParser completionParser = new CompletionResponseParser();
+    private final ChatResponseParser chatParser = new ChatResponseParser();
 
     private static LlamaModel model;
 
@@ -142,7 +144,7 @@ public class ChatScenarioTest {
         String rawJson = model.chatComplete(params);
         String text = model.chatCompleteText(params);
 
-        String expected = ChatResponseParser.extractChoiceContent(rawJson);
+        String expected = chatParser.extractChoiceContent(rawJson);
         Assert.assertEquals("chatCompleteText must match choices[0].message.content", expected, text);
     }
 
@@ -193,7 +195,7 @@ public class ChatScenarioTest {
         while (!stopped) {
             String json = model.receiveCompletionJson(taskId);
             Assert.assertNotNull("receiveCompletionJson must not return null", json);
-            LlamaOutput output = LlamaOutput.fromJson(json);
+            LlamaOutput output = completionParser.parse(json);
             sb.append(output.text);
             tokens++;
             if (output.stop) {
@@ -272,7 +274,7 @@ public class ChatScenarioTest {
                 .setSeed(42)
                 .setTemperature(0.0f);
         String unJson = model.chatComplete(unconstrained);
-        String unContent = ChatResponseParser.extractChoiceContent(unJson);
+        String unContent = chatParser.extractChoiceContent(unJson);
 
         // Stopped at "3"
         InferenceParameters stopped = new InferenceParameters("")
@@ -282,7 +284,7 @@ public class ChatScenarioTest {
                 .setTemperature(0.0f)
                 .setStopStrings("4");
         String stJson = model.chatComplete(stopped);
-        String stContent = ChatResponseParser.extractChoiceContent(stJson);
+        String stContent = chatParser.extractChoiceContent(stJson);
 
         Assert.assertNotNull("Stop-string response must not be null", stJson);
         // Content with stop should be shorter (or at most equal)
@@ -358,7 +360,7 @@ public class ChatScenarioTest {
                     .setTemperature(0.0f);
 
             String json = model.chatComplete(params);
-            String content = ChatResponseParser.extractChoiceContent(json);
+            String content = chatParser.extractChoiceContent(json);
 
             Assert.assertNotNull("Turn " + turn + ": response must not be null", json);
             Assert.assertFalse("Turn " + turn + ": content must not be empty", content.isEmpty());
@@ -568,7 +570,7 @@ public class ChatScenarioTest {
         Assert.assertTrue("handleDetokenize response must contain 'content'", response.contains("\"content\""));
 
         // Extract the detokenized text (simple search for content field value)
-        String detokenized = LlamaOutput.fromJson(response).text;
+        String detokenized = completionParser.parse(response).text;
         // The tokenizer typically prepends a space; check the meaningful content
         Assert.assertTrue(
                 "Detokenized text should contain original content (got: '" + detokenized + "')",
@@ -636,7 +638,7 @@ public class ChatScenarioTest {
         String response = model.chatComplete(params);
         Assert.assertNotNull(response);
         Assert.assertFalse("nPredict=1 must still return a non-empty response", response.isEmpty());
-        String content = ChatResponseParser.extractChoiceContent(response);
+        String content = chatParser.extractChoiceContent(response);
         // Content should be at most one token long — just verify it doesn't crash
         Assert.assertNotNull("Content must not be null for nPredict=1", content);
     }

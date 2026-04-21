@@ -28,12 +28,10 @@ import java.io.IOException;
  * }
  * }</pre>
  */
-public final class ChatResponseParser {
+public class ChatResponseParser {
 
-    /** Shared Jackson mapper; all methods are stateless and thread-safe. */
+    /** Shared Jackson mapper; thread-safe and reused across all instances. */
     public static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
-    private ChatResponseParser() {}
 
     /**
      * Extract the assistant's reply text from an OAI chat completion JSON string.
@@ -45,7 +43,7 @@ public final class ChatResponseParser {
      * @param json OAI-compatible chat completion JSON string
      * @return the assistant content string, or {@code ""} on any failure
      */
-    public static String extractChoiceContent(String json) {
+    public String extractChoiceContent(String json) {
         try {
             return extractChoiceContent(OBJECT_MAPPER.readTree(json));
         } catch (IOException e) {
@@ -60,7 +58,7 @@ public final class ChatResponseParser {
      * @param node pre-parsed OAI chat completion response node
      * @return the assistant content string, or {@code ""} if absent
      */
-    public static String extractChoiceContent(JsonNode node) {
+    public String extractChoiceContent(JsonNode node) {
         return node.path("choices").path(0).path("message").path("content").asText("");
     }
 
@@ -73,7 +71,7 @@ public final class ChatResponseParser {
      * @param field the field name within {@code "usage"}
      * @return the integer value, or {@code 0} if the field or the {@code "usage"} object is absent
      */
-    public static int extractUsageField(JsonNode node, String field) {
+    public int extractUsageField(JsonNode node, String field) {
         return node.path("usage").path(field).asInt(0);
     }
 
@@ -84,7 +82,7 @@ public final class ChatResponseParser {
      * @param node pre-parsed OAI chat completion response node
      * @return the number of choices, or {@code 0} if absent
      */
-    public static int countChoices(JsonNode node) {
+    public int countChoices(JsonNode node) {
         JsonNode choices = node.path("choices");
         return choices.isArray() ? choices.size() : 0;
     }
