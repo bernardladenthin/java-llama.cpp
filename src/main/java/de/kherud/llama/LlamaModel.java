@@ -1,6 +1,7 @@
 package de.kherud.llama;
 
 import de.kherud.llama.args.LogFormat;
+import de.kherud.llama.json.RerankResponseParser;
 import java.lang.annotation.Native;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -157,7 +158,7 @@ public class LlamaModel implements AutoCloseable {
 	 */
 	public List<Pair<String, Float>> rerank(boolean reRank, String query, String... documents) {
 		String json = handleRerank(query, documents);
-		List<Pair<String, Float>> rankedDocuments = LlamaOutput.parseRerankResults(json);
+		List<Pair<String, Float>> rankedDocuments = RerankResponseParser.parse(json);
 		if (reRank) {
 			rankedDocuments.sort((a, b) -> Float.compare(b.getValue(), a.getValue()));
 		}
@@ -174,7 +175,7 @@ public class LlamaModel implements AutoCloseable {
 	 */
 	public LlamaOutput rerank(String query, String... documents) {
 		String json = handleRerank(query, documents);
-		List<Pair<String, Float>> results = LlamaOutput.parseRerankResults(json);
+		List<Pair<String, Float>> results = RerankResponseParser.parse(json);
 		Map<String, Float> probabilities = new HashMap<>();
 		for (Pair<String, Float> pair : results) {
 			probabilities.put(pair.getKey(), pair.getValue());

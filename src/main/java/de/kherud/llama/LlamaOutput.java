@@ -3,10 +3,10 @@ package de.kherud.llama;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.kherud.llama.json.CompletionResponseParser;
+import de.kherud.llama.json.RerankResponseParser;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -141,22 +141,9 @@ public final class LlamaOutput {
 
     /**
      * Parse rerank results from a JSON array string.
-     * Expected format: [{"document": "...", "index": 0, "score": 0.95}, ...]
-     * Will be moved to RerankResponseParser in a follow-up commit.
+     * Delegates to {@link RerankResponseParser#parse(String)}.
      */
     static List<Pair<String, Float>> parseRerankResults(String json) {
-        try {
-            JsonNode arr = OBJECT_MAPPER.readTree(json);
-            if (!arr.isArray()) return Collections.emptyList();
-            List<Pair<String, Float>> results = new ArrayList<Pair<String, Float>>();
-            for (JsonNode entry : arr) {
-                String doc = entry.path("document").asText("");
-                float score = (float) entry.path("score").asDouble(0.0);
-                results.add(new Pair<String, Float>(doc, score));
-            }
-            return results;
-        } catch (IOException e) {
-            return Collections.emptyList();
-        }
+        return RerankResponseParser.parse(json);
     }
 }
