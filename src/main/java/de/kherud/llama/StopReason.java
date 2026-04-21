@@ -19,7 +19,7 @@ public enum StopReason {
     STOP_STRING,
     MAX_TOKENS;
 
-    static StopReason fromJson(JsonNode node) {
+    public static StopReason fromJson(JsonNode node) {
         switch (node.path("stop_type").asText("")) {
             case "eos":   return EOS;
             case "word":  return STOP_STRING;

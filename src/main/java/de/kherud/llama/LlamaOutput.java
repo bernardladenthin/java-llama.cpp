@@ -2,12 +2,12 @@ package de.kherud.llama;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.kherud.llama.json.CompletionResponseParser;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -42,7 +42,7 @@ public final class LlamaOutput {
     @NotNull
     public final StopReason stopReason;
 
-    LlamaOutput(@NotNull String text, @NotNull Map<String, Float> probabilities, boolean stop, @NotNull StopReason stopReason) {
+    public LlamaOutput(@NotNull String text, @NotNull Map<String, Float> probabilities, boolean stop, @NotNull StopReason stopReason) {
         this.text = text;
         this.probabilities = probabilities;
         this.stop = stop;
@@ -56,43 +56,38 @@ public final class LlamaOutput {
 
     /**
      * Parse a LlamaOutput from a JSON string returned by the native receiveCompletionJson method.
-     * The JSON has the structure: {"content": "...", "stop": true/false, ...}
+     * Delegates to {@link CompletionResponseParser#parse(String)}.
      */
     static LlamaOutput fromJson(String json) {
-        try {
-            return fromJson(OBJECT_MAPPER.readTree(json));
-        } catch (IOException e) {
-            return new LlamaOutput("", Collections.<String, Float>emptyMap(), false, StopReason.NONE);
-        }
+        return CompletionResponseParser.parse(json);
     }
 
     /**
-     * Parse a LlamaOutput from a pre-parsed JsonNode. This is the primary implementation;
-     * {@link #fromJson(String)} is a thin wrapper that parses the string once and delegates here.
+     * Parse a LlamaOutput from a pre-parsed JsonNode.
+     * Delegates to {@link CompletionResponseParser#parse(JsonNode)}.
      */
     static LlamaOutput fromJson(JsonNode node) {
-        String content = node.path("content").asText("");
-        boolean stop = node.path("stop").asBoolean(false);
-        Map<String, Float> probabilities = parseProbabilities(node);
-        StopReason stopReason = stop ? StopReason.fromJson(node) : StopReason.NONE;
-        return new LlamaOutput(content, probabilities, stop, stopReason);
+        return CompletionResponseParser.parse(node);
     }
 
     /**
      * Extract the "content" field value from a JSON string.
      *
-     * <p>For well-formed JSON objects, Jackson is used directly. For substring fragments
-     * (used by {@code chatCompleteText()} and test helpers that pass
+     * <p>For well-formed JSON objects, Jackson is used via {@link CompletionResponseParser}.
+     * For substring fragments (used by {@code chatCompleteText()} and test helpers that pass
      * {@code json.substring(contentIdx)} starting at the {@code "content"} key), the
      * method falls back to a manual character scan so those callers continue to work
      * without modification.
+     *
+     * @deprecated The fallback path for substring fragments will be removed once
+     * {@code chatCompleteText()} is migrated to {@link de.kherud.llama.json.ChatResponseParser}.
      */
     static String getContentFromJson(String json) {
         // Fast path: try Jackson for a complete JSON object.
         try {
             JsonNode root = OBJECT_MAPPER.readTree(json);
             if (root != null && root.isObject()) {
-                return root.path("content").asText("");
+                return CompletionResponseParser.extractContent(root);
             }
         } catch (IOException ignored) {
             // Fall through to the substring scanner below.
@@ -145,40 +140,9 @@ public final class LlamaOutput {
     }
 
     /**
-     * Parse token probabilities from a parsed JSON node. Returns an empty map when
-     * {@code completion_probabilities} is absent or empty.
-     *
-     * <p>Each array entry has the structure:
-     * <pre>{"token":"txt","bytes":[...],"id":N,"prob":F,"top_probs":[...]}</pre>
-     * or with {@code "logprob"} instead of {@code "prob"} when post-sampling mode is off.
-     * Jackson's field access is scoped to the outer object, so the nested
-     * {@code top_probs}/{@code top_logprobs} arrays are invisible at this level.
-     */
-    private static Map<String, Float> parseProbabilities(JsonNode root) {
-        JsonNode array = root.path("completion_probabilities");
-        if (!array.isArray() || array.size() == 0) {
-            return Collections.emptyMap();
-        }
-        Map<String, Float> result = new HashMap<String, Float>();
-        for (JsonNode entry : array) {
-            String token = entry.path("token").asText("");
-            if (token.isEmpty()) continue;
-
-            // "prob" (post-sampling) or "logprob" (pre-sampling)
-            JsonNode probNode = entry.path("prob");
-            if (probNode.isMissingNode() || probNode.isNull()) {
-                probNode = entry.path("logprob");
-            }
-            if (probNode.isMissingNode() || probNode.isNull()) continue;
-
-            result.put(token, (float) probNode.asDouble(0.0));
-        }
-        return result.isEmpty() ? Collections.<String, Float>emptyMap() : result;
-    }
-
-    /**
      * Parse rerank results from a JSON array string.
      * Expected format: [{"document": "...", "index": 0, "score": 0.95}, ...]
+     * Will be moved to RerankResponseParser in a follow-up commit.
      */
     static List<Pair<String, Float>> parseRerankResults(String json) {
         try {
