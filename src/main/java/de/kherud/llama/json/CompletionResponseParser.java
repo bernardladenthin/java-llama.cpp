@@ -64,7 +64,7 @@ public class CompletionResponseParser {
         String content = extractContent(node);
         boolean stop = node.path("stop").asBoolean(false);
         Map<String, Float> probabilities = parseProbabilities(node);
-        StopReason stopReason = stop ? StopReason.fromJson(node) : StopReason.NONE;
+        StopReason stopReason = stop ? StopReason.fromStopType(node.path("stop_type").asText("")) : StopReason.NONE;
         return new LlamaOutput(content, probabilities, stop, stopReason);
     }
 
