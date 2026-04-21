@@ -223,6 +223,29 @@ public class LlamaModel implements AutoCloseable {
 	}
 
 	/**
+	 * Run an OpenAI-compatible chat completion and return only the assistant's text content.
+	 * This is the plain-string equivalent of {@link #chatComplete(InferenceParameters)}, which
+	 * returns the raw OAI JSON. Use this when you want the generated text directly, the same
+	 * way {@link #complete(InferenceParameters)} works for raw completions.
+	 *
+	 * @param parameters the inference parameters including messages
+	 * @return the assistant's reply text (extracted from {@code choices[0].message.content})
+	 * @throws LlamaException if the model was loaded in embedding mode or if inference fails
+	 */
+	public String chatCompleteText(InferenceParameters parameters) {
+		String json = chatComplete(parameters);
+		int choicesIdx = json.indexOf("\"choices\"");
+		if (choicesIdx < 0) {
+			return LlamaOutput.getContentFromJson(json);
+		}
+		int contentIdx = json.indexOf("\"content\"", choicesIdx);
+		if (contentIdx < 0) {
+			return "";
+		}
+		return LlamaOutput.getContentFromJson(json.substring(contentIdx));
+	}
+
+	/**
 	 * Stream an OpenAI-compatible chat completion token by token. The parameters must contain a
 	 * "messages" array in the standard OpenAI chat format. The model's chat template is automatically applied.
 	 * <p>

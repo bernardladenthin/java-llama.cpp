@@ -101,6 +101,50 @@ public class ChatScenarioTest {
     }
 
     /**
+     * chatCompleteText() must return only the assistant's plain text, not the OAI JSON wrapper.
+     * The result should be non-empty and must NOT contain the JSON key "choices".
+     */
+    @Test
+    public void testChatCompleteTextReturnsPlainString() {
+        List<Pair<String, String>> messages = new ArrayList<>();
+        messages.add(new Pair<>("user", "Say the word OK."));
+
+        InferenceParameters params = new InferenceParameters("")
+                .setMessages(null, messages)
+                .setNPredict(N_PREDICT)
+                .setSeed(42)
+                .setTemperature(0.0f);
+
+        String text = model.chatCompleteText(params);
+
+        Assert.assertNotNull(text);
+        Assert.assertFalse("chatCompleteText must not be empty", text.isEmpty());
+        Assert.assertFalse("chatCompleteText must not contain OAI JSON wrapper", text.contains("\"choices\""));
+    }
+
+    /**
+     * chatCompleteText() must return the same content as extracting choices[0].message.content
+     * from the raw chatComplete() JSON.
+     */
+    @Test
+    public void testChatCompleteTextMatchesChatCompleteContent() {
+        List<Pair<String, String>> messages = new ArrayList<>();
+        messages.add(new Pair<>("user", "What is 2 plus 2?"));
+
+        InferenceParameters params = new InferenceParameters("")
+                .setMessages("You are a helpful assistant.", messages)
+                .setNPredict(N_PREDICT)
+                .setSeed(42)
+                .setTemperature(0.0f);
+
+        String rawJson = model.chatComplete(params);
+        String text = model.chatCompleteText(params);
+
+        String expected = extractChoiceContent(rawJson);
+        Assert.assertEquals("chatCompleteText must match choices[0].message.content", expected, text);
+    }
+
+    /**
      * handleChatCompletions can be called directly with a raw JSON string.
      * Verify the response contains valid OAI chat completion fields.
      */
