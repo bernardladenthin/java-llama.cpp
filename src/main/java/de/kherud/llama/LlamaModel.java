@@ -67,7 +67,7 @@ public class LlamaModel implements AutoCloseable {
 	 * @return iterable LLM outputs
 	 */
 	public LlamaIterable generate(InferenceParameters parameters) {
-		return () -> new LlamaIterator(this, parameters);
+		return new LlamaIterable(new LlamaIterator(this, parameters));
 	}
 	
 	
@@ -268,7 +268,7 @@ public class LlamaModel implements AutoCloseable {
 	 * @throws LlamaException if inference fails
 	 */
 	public LlamaIterable generateChat(InferenceParameters parameters) {
-		return () -> new LlamaIterator(this, parameters, true);
+		return new LlamaIterable(new LlamaIterator(this, parameters, true));
 	}
 
 	/**

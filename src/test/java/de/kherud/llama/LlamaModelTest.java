@@ -183,6 +183,30 @@ public class LlamaModelTest {
 		);
 	}
 
+	/**
+	 * LlamaIterable implements AutoCloseable. Breaking out of a for-each loop early inside a
+	 * try-with-resources block must not throw and must not leave the task slot hanging — the
+	 * iterator's close() cancels the native task automatically.
+	 */
+	@Test
+	public void testGenerateAutoCloseOnEarlyBreak() throws Exception {
+		InferenceParameters params = new InferenceParameters(prefix).setNPredict(nPredict);
+
+		int collected = 0;
+		try (LlamaIterable iterable = model.generate(params)) {
+			for (LlamaOutput ignored : iterable) {
+				collected++;
+				break; // exit before stop token
+			}
+		} // close() must cancel without throwing
+
+		Assert.assertTrue("Should have collected at least one token before break", collected >= 1);
+
+		// The model must still be usable after an early-exit close
+		String result = model.complete(new InferenceParameters(prefix).setNPredict(5));
+		Assert.assertNotNull("Model must be functional after autoclosed iterator", result);
+	}
+
 	@Test
 	public void testEmbedding() {
 		float[] embedding = model.embed(prefix);
