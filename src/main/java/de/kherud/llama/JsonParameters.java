@@ -42,6 +42,7 @@ abstract class JsonParameters {
 	}
 
 	String toJsonString(String text) {
+		if (text == null) return null;
 		return ParameterJsonSerializer.toJsonString(text);
 	}
 }
