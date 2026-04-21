@@ -1,15 +1,9 @@
 package de.kherud.llama.args;
 
-import de.kherud.llama.ClaudeGenerated;
 import org.junit.Test;
 
 import static org.junit.Assert.*;
 
-@ClaudeGenerated(
-        purpose = "Verify Sampler enum values, count, and lowercase name convention used by " +
-                  "ModelParameters.setSamplers() semicolon-separated serialization.",
-        model = "claude-opus-4-6"
-)
 public class SamplerTest {
 
     @Test
@@ -19,55 +13,59 @@ public class SamplerTest {
 
     @Test
     public void testDry() {
-        assertEquals("dry", Sampler.DRY.name().toLowerCase());
+        assertEquals("dry", Sampler.DRY.getArgValue());
     }
 
     @Test
     public void testTopK() {
-        assertEquals("top_k", Sampler.TOP_K.name().toLowerCase());
+        assertEquals("top_k", Sampler.TOP_K.getArgValue());
     }
 
     @Test
     public void testTopP() {
-        assertEquals("top_p", Sampler.TOP_P.name().toLowerCase());
+        assertEquals("top_p", Sampler.TOP_P.getArgValue());
     }
 
     @Test
     public void testTypP() {
-        assertEquals("typ_p", Sampler.TYP_P.name().toLowerCase());
+        assertEquals("typ_p", Sampler.TYP_P.getArgValue());
     }
 
     @Test
     public void testMinP() {
-        assertEquals("min_p", Sampler.MIN_P.name().toLowerCase());
+        assertEquals("min_p", Sampler.MIN_P.getArgValue());
     }
 
     @Test
     public void testTemperature() {
-        assertEquals("temperature", Sampler.TEMPERATURE.name().toLowerCase());
+        assertEquals("temperature", Sampler.TEMPERATURE.getArgValue());
     }
 
     @Test
     public void testXtc() {
-        assertEquals("xtc", Sampler.XTC.name().toLowerCase());
+        assertEquals("xtc", Sampler.XTC.getArgValue());
     }
 
     @Test
     public void testInfill() {
-        assertEquals("infill", Sampler.INFILL.name().toLowerCase());
+        assertEquals("infill", Sampler.INFILL.getArgValue());
     }
 
     @Test
     public void testPenalties() {
-        assertEquals("penalties", Sampler.PENALTIES.name().toLowerCase());
+        assertEquals("penalties", Sampler.PENALTIES.getArgValue());
     }
 
     @Test
-    public void testAllValuesHaveNonEmptyLowercaseName() {
+    public void testAllValuesHaveNonEmptyArgValue() {
         for (Sampler s : Sampler.values()) {
-            String lower = s.name().toLowerCase();
-            assertNotNull(lower);
-            assertFalse("Sampler " + s + " has empty lowercase name", lower.isEmpty());
+            assertNotNull(s.getArgValue());
+            assertFalse("Sampler " + s + " has empty argValue", s.getArgValue().isEmpty());
         }
+    }
+
+    @Test
+    public void testImplementsCliArg() {
+        assertTrue(Sampler.TOP_K instanceof CliArg);
     }
 }
