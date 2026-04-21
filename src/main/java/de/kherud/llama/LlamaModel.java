@@ -179,7 +179,7 @@ public class LlamaModel implements AutoCloseable {
 		for (Pair<String, Float> pair : results) {
 			probabilities.put(pair.getKey(), pair.getValue());
 		}
-		return new LlamaOutput(query, probabilities, true);
+		return new LlamaOutput(query, probabilities, true, StopReason.EOS);
 	}
 
 	native String handleRerank(String query, String... documents) throws LlamaException;

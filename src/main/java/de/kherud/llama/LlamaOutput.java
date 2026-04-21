@@ -27,12 +27,21 @@ public final class LlamaOutput {
     @NotNull
     public final Map<String, Float> probabilities;
 
-    final boolean stop;
+    /** Whether this is the final token of the generation. */
+    public final boolean stop;
 
-    LlamaOutput(@NotNull String text, @NotNull Map<String, Float> probabilities, boolean stop) {
+    /**
+     * The reason generation stopped. {@link StopReason#NONE} on intermediate streaming tokens.
+     * Only meaningful when {@link #stop} is {@code true}.
+     */
+    @NotNull
+    public final StopReason stopReason;
+
+    LlamaOutput(@NotNull String text, @NotNull Map<String, Float> probabilities, boolean stop, @NotNull StopReason stopReason) {
         this.text = text;
         this.probabilities = probabilities;
         this.stop = stop;
+        this.stopReason = stopReason;
     }
 
     @Override
@@ -48,7 +57,8 @@ public final class LlamaOutput {
         String content = getContentFromJson(json);
         boolean stop = json.contains("\"stop\":true");
         Map<String, Float> probabilities = parseProbabilities(json);
-        return new LlamaOutput(content, probabilities, stop);
+        StopReason stopReason = stop ? StopReason.fromJson(json) : StopReason.NONE;
+        return new LlamaOutput(content, probabilities, stop, stopReason);
     }
 
     /**
