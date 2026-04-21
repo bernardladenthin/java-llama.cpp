@@ -568,7 +568,7 @@ public class ChatScenarioTest {
         Assert.assertTrue("handleDetokenize response must contain 'content'", response.contains("\"content\""));
 
         // Extract the detokenized text (simple search for content field value)
-        String detokenized = LlamaOutput.getContentFromJson(response);
+        String detokenized = LlamaOutput.fromJson(response).text;
         // The tokenizer typically prepends a space; check the meaningful content
         Assert.assertTrue(
                 "Detokenized text should contain original content (got: '" + detokenized + "')",

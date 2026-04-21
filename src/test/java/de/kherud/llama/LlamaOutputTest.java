@@ -110,7 +110,7 @@ public class LlamaOutputTest {
 	@Test
 	public void testGetContentFromJsonEmpty() {
 		String json = "{\"content\":\"\",\"stop\":true}";
-		assertEquals("", LlamaOutput.getContentFromJson(json));
+		assertEquals("", LlamaOutput.fromJson(json).text);
 	}
 
 	// --- parseProbabilities tests ---
