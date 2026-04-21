@@ -1,5 +1,7 @@
 package de.kherud.llama;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 /**
  * The reason why token generation stopped for a {@link LlamaOutput}.
  *
@@ -17,10 +19,12 @@ public enum StopReason {
     STOP_STRING,
     MAX_TOKENS;
 
-    static StopReason fromJson(String json) {
-        if (json.contains("\"stop_type\":\"eos\"")) return EOS;
-        if (json.contains("\"stop_type\":\"word\"")) return STOP_STRING;
-        if (json.contains("\"stop_type\":\"limit\"")) return MAX_TOKENS;
-        return NONE;
+    static StopReason fromJson(JsonNode node) {
+        switch (node.path("stop_type").asText("")) {
+            case "eos":   return EOS;
+            case "word":  return STOP_STRING;
+            case "limit": return MAX_TOKENS;
+            default:      return NONE;
+        }
     }
 }

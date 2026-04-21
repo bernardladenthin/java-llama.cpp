@@ -91,6 +91,23 @@ public class LlamaOutputTest {
 	}
 
 	@Test
+	public void testFromJsonWithUnicodeEscape() {
+		String json = "{\"content\":\"caf\\u00e9\",\"stop\":false}";
+		LlamaOutput output = LlamaOutput.fromJson(json);
+		assertEquals("café", output.text);
+		assertFalse(output.stop);
+	}
+
+	@Test
+	public void testFromJsonMalformedReturnsEmptyNonStop() {
+		LlamaOutput output = LlamaOutput.fromJson("{not valid json");
+		assertEquals("", output.text);
+		assertFalse(output.stop);
+		assertEquals(StopReason.NONE, output.stopReason);
+		assertTrue(output.probabilities.isEmpty());
+	}
+
+	@Test
 	public void testGetContentFromJsonEmpty() {
 		String json = "{\"content\":\"\",\"stop\":true}";
 		assertEquals("", LlamaOutput.getContentFromJson(json));
