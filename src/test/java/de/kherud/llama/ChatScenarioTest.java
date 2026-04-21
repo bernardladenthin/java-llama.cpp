@@ -7,6 +7,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import de.kherud.llama.args.PoolingType;
+import de.kherud.llama.json.ChatResponseParser;
+import de.kherud.llama.json.CompletionResponseParser;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -140,7 +142,7 @@ public class ChatScenarioTest {
         String rawJson = model.chatComplete(params);
         String text = model.chatCompleteText(params);
 
-        String expected = extractChoiceContent(rawJson);
+        String expected = ChatResponseParser.extractChoiceContent(rawJson);
         Assert.assertEquals("chatCompleteText must match choices[0].message.content", expected, text);
     }
 
@@ -270,7 +272,7 @@ public class ChatScenarioTest {
                 .setSeed(42)
                 .setTemperature(0.0f);
         String unJson = model.chatComplete(unconstrained);
-        String unContent = extractChoiceContent(unJson);
+        String unContent = ChatResponseParser.extractChoiceContent(unJson);
 
         // Stopped at "3"
         InferenceParameters stopped = new InferenceParameters("")
@@ -280,7 +282,7 @@ public class ChatScenarioTest {
                 .setTemperature(0.0f)
                 .setStopStrings("4");
         String stJson = model.chatComplete(stopped);
-        String stContent = extractChoiceContent(stJson);
+        String stContent = ChatResponseParser.extractChoiceContent(stJson);
 
         Assert.assertNotNull("Stop-string response must not be null", stJson);
         // Content with stop should be shorter (or at most equal)
@@ -356,7 +358,7 @@ public class ChatScenarioTest {
                     .setTemperature(0.0f);
 
             String json = model.chatComplete(params);
-            String content = extractChoiceContent(json);
+            String content = ChatResponseParser.extractChoiceContent(json);
 
             Assert.assertNotNull("Turn " + turn + ": response must not be null", json);
             Assert.assertFalse("Turn " + turn + ": content must not be empty", content.isEmpty());
@@ -465,8 +467,8 @@ public class ChatScenarioTest {
         String prefix = "def greet(name):\n    \"\"\" ";
         String suffix = "\n    return greeting\n";
 
-        String json = "{\"input_prefix\": " + toJsonString(prefix) +
-                ", \"input_suffix\": " + toJsonString(suffix) +
+        String json = "{\"input_prefix\": " + jsonStr(prefix) +
+                ", \"input_suffix\": " + jsonStr(suffix) +
                 ", \"n_predict\": " + N_PREDICT +
                 ", \"seed\": 42, \"temperature\": 0.0}";
 
@@ -537,8 +539,8 @@ public class ChatScenarioTest {
         Assert.assertNotNull(withoutSpecial);
         Assert.assertTrue("Both responses must contain 'tokens'", withSpecial.contains("\"tokens\""));
 
-        int countWith    = countTokensInJson(withSpecial);
-        int countWithout = countTokensInJson(withoutSpecial);
+        int countWith    = tokenCount(withSpecial);
+        int countWithout = tokenCount(withoutSpecial);
 
         Assert.assertTrue(
                 "addSpecial=true should produce at least as many tokens as addSpecial=false " +
@@ -634,7 +636,7 @@ public class ChatScenarioTest {
         String response = model.chatComplete(params);
         Assert.assertNotNull(response);
         Assert.assertFalse("nPredict=1 must still return a non-empty response", response.isEmpty());
-        String content = extractChoiceContent(response);
+        String content = ChatResponseParser.extractChoiceContent(response);
         // Content should be at most one token long — just verify it doesn't crash
         Assert.assertNotNull("Content must not be null for nPredict=1", content);
     }
@@ -684,52 +686,24 @@ public class ChatScenarioTest {
     // Helpers
     // ------------------------------------------------------------------
 
-    /**
-     * Extract the assistant's content string from an OAI-compatible chat
-     * completion JSON response.
-     * Expected structure: {"choices":[{"message":{"role":"assistant","content":"..."}}]}
-     */
-    private static String extractChoiceContent(String json) {
-        // Find choices[0].message.content
-        int choicesIdx = json.indexOf("\"choices\"");
-        if (choicesIdx < 0) {
-            // Fallback: try plain "content" field (non-OAI response shape)
-            return LlamaOutput.getContentFromJson(json);
+    /** Serialize a string to a JSON string literal using Jackson. */
+    private static String jsonStr(String s) {
+        try {
+            return CompletionResponseParser.OBJECT_MAPPER.writeValueAsString(s);
+        } catch (Exception e) {
+            return "null";
         }
-        // Find "content" after "choices"
-        int contentIdx = json.indexOf("\"content\"", choicesIdx);
-        if (contentIdx < 0) {
-            return "";
-        }
-        // Reuse LlamaOutput's JSON extractor on a substring starting at "content"
-        return LlamaOutput.getContentFromJson(json.substring(contentIdx));
     }
 
-    /**
-     * Count the number of comma-separated elements in the JSON array value
-     * of the "tokens" field. This is a best-effort heuristic — it works for
-     * the simple integer-array format returned by handleTokenize.
-     */
-    private static int countTokensInJson(String json) {
-        int tokensIdx = json.indexOf("\"tokens\"");
-        if (tokensIdx < 0) return 0;
-        int openBracket = json.indexOf('[', tokensIdx);
-        int closeBracket = json.indexOf(']', openBracket);
-        if (openBracket < 0 || closeBracket < 0) return 0;
-        String array = json.substring(openBracket + 1, closeBracket).trim();
-        if (array.isEmpty()) return 0;
-        return array.split(",").length;
-    }
-
-    /** Minimal JSON string escaping for test helper strings. */
-    private static String toJsonString(String s) {
-        if (s == null) return "null";
-        return "\"" + s
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t")
-                + "\"";
+    /** Count elements in the {@code "tokens"} array of a tokenize response. */
+    private static int tokenCount(String json) {
+        try {
+            com.fasterxml.jackson.databind.JsonNode node =
+                    CompletionResponseParser.OBJECT_MAPPER.readTree(json);
+            com.fasterxml.jackson.databind.JsonNode arr = node.path("tokens");
+            return arr.isArray() ? arr.size() : 0;
+        } catch (Exception e) {
+            return 0;
+        }
     }
 }

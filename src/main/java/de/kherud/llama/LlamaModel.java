@@ -1,6 +1,8 @@
 package de.kherud.llama;
 
 import de.kherud.llama.args.LogFormat;
+import de.kherud.llama.json.ChatResponseParser;
+import de.kherud.llama.json.CompletionResponseParser;
 import de.kherud.llama.json.RerankResponseParser;
 import java.lang.annotation.Native;
 import java.nio.charset.StandardCharsets;
@@ -57,7 +59,7 @@ public class LlamaModel implements AutoCloseable {
 		parameters.setStream(false);
 		int taskId = requestCompletion(parameters.toString());
 		String json = receiveCompletionJson(taskId);
-		return LlamaOutput.getContentFromJson(json);
+		return CompletionResponseParser.parse(json).text;
 	}
 
 	/**
@@ -234,16 +236,7 @@ public class LlamaModel implements AutoCloseable {
 	 * @throws LlamaException if the model was loaded in embedding mode or if inference fails
 	 */
 	public String chatCompleteText(InferenceParameters parameters) {
-		String json = chatComplete(parameters);
-		int choicesIdx = json.indexOf("\"choices\"");
-		if (choicesIdx < 0) {
-			return LlamaOutput.getContentFromJson(json);
-		}
-		int contentIdx = json.indexOf("\"content\"", choicesIdx);
-		if (contentIdx < 0) {
-			return "";
-		}
-		return LlamaOutput.getContentFromJson(json.substring(contentIdx));
+		return ChatResponseParser.extractChoiceContent(chatComplete(parameters));
 	}
 
 	/**
