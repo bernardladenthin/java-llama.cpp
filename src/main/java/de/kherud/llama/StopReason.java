@@ -19,6 +19,12 @@ public enum StopReason {
     STOP_STRING,
     MAX_TOKENS;
 
+    /**
+     * Parse the stop reason from a completion response node using the {@code "stop_type"} field.
+     *
+     * @param node the completion response node
+     * @return the corresponding {@link StopReason}, or {@link #NONE} if the field is absent
+     */
     public static StopReason fromJson(JsonNode node) {
         switch (node.path("stop_type").asText("")) {
             case "eos":   return EOS;

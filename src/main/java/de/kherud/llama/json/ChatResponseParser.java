@@ -30,6 +30,7 @@ import java.io.IOException;
  */
 public final class ChatResponseParser {
 
+    /** Shared Jackson mapper; all methods are stateless and thread-safe. */
     public static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private ChatResponseParser() {}
@@ -40,6 +41,9 @@ public final class ChatResponseParser {
      *
      * <p>Returns an empty string when: the JSON is malformed, {@code choices} is absent
      * or empty, or {@code content} is null/absent.
+     *
+     * @param json OAI-compatible chat completion JSON string
+     * @return the assistant content string, or {@code ""} on any failure
      */
     public static String extractChoiceContent(String json) {
         try {
@@ -52,6 +56,9 @@ public final class ChatResponseParser {
     /**
      * Extract the assistant's reply text from a pre-parsed OAI chat completion node.
      * Navigates {@code choices[0].message.content} via Jackson path API.
+     *
+     * @param node pre-parsed OAI chat completion response node
+     * @return the assistant content string, or {@code ""} if absent
      */
     public static String extractChoiceContent(JsonNode node) {
         return node.path("choices").path(0).path("message").path("content").asText("");
@@ -73,6 +80,9 @@ public final class ChatResponseParser {
     /**
      * Count the number of choices returned in the response.
      * Returns {@code 0} when the {@code "choices"} array is absent or not an array.
+     *
+     * @param node pre-parsed OAI chat completion response node
+     * @return the number of choices, or {@code 0} if absent
      */
     public static int countChoices(JsonNode node) {
         JsonNode choices = node.path("choices");

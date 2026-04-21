@@ -21,7 +21,7 @@ import java.util.Map;
  * {@code ParameterJsonSerializerTest}).
  *
  * <p>Methods return Jackson {@link ArrayNode} or {@link ObjectNode}. Callers that need a JSON
- * string (e.g. {@link de.kherud.llama.JsonParameters}) call {@code node.toString()}.
+ * string (e.g. callers in {@code JsonParameters}) call {@code node.toString()}.
  *
  * <p>This class replaces hand-rolled {@code StringBuilder} loops and the
  * {@code org.json}-derived {@code toJsonString()} escaper previously embedded in
@@ -29,6 +29,7 @@ import java.util.Map;
  */
 public final class ParameterJsonSerializer {
 
+    /** Shared Jackson mapper; all methods are stateless and thread-safe. */
     public static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private ParameterJsonSerializer() {}
@@ -43,6 +44,9 @@ public final class ParameterJsonSerializer {
      * Returns {@code "null"} for a {@code null} input.
      *
      * <p>Replaces the hand-rolled {@code toJsonString()} method in {@code JsonParameters}.
+     *
+     * @param value the Java string to serialize, or {@code null}
+     * @return a JSON string literal, or {@code "null"} if the input is {@code null}
      */
     public static String toJsonString(String value) {
         if (value == null) return "null";
@@ -63,6 +67,9 @@ public final class ParameterJsonSerializer {
      * <p>An optional system message is prepended when non-null and non-empty.
      * Each message in {@code messages} must have role {@code "user"} or {@code "assistant"}.
      *
+     * @param systemMessage optional system prompt; skipped when {@code null} or empty
+     * @param messages list of user/assistant message pairs (role as key, content as value)
+     * @return a Jackson {@link ArrayNode} of {@code {"role", "content"}} message objects
      * @throws IllegalArgumentException if any message has an invalid role
      */
     public static ArrayNode buildMessages(String systemMessage, List<Pair<String, String>> messages) {
@@ -95,6 +102,9 @@ public final class ParameterJsonSerializer {
     /**
      * Build a JSON string array from the given stop strings
      * (e.g. {@code ["<|endoftext|>", "\n"]}).
+     *
+     * @param stops one or more stop strings
+     * @return a Jackson {@link ArrayNode} of stop string values
      */
     public static ArrayNode buildStopStrings(String... stops) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
@@ -105,6 +115,9 @@ public final class ParameterJsonSerializer {
     /**
      * Build a JSON string array from the given sampler sequence
      * (e.g. {@code ["top_k", "top_p", "temperature"]}).
+     *
+     * @param samplers one or more samplers in the desired order
+     * @return a Jackson {@link ArrayNode} of sampler name strings
      */
     public static ArrayNode buildSamplers(Sampler... samplers) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
@@ -122,6 +135,9 @@ public final class ParameterJsonSerializer {
     /**
      * Build a JSON integer array from a primitive {@code int[]}
      * (used for penalty-prompt token sequences).
+     *
+     * @param values the token IDs to include
+     * @return a Jackson {@link ArrayNode} of integer values
      */
     public static ArrayNode buildIntArray(int[] values) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
@@ -136,6 +152,9 @@ public final class ParameterJsonSerializer {
     /**
      * Build a logit-bias array for integer token IDs:
      * {@code [[15043, 1.0], [50256, -0.5]]}.
+     *
+     * @param biases map from token ID to logit bias value
+     * @return a Jackson {@link ArrayNode} of {@code [tokenId, biasValue]} pairs
      */
     public static ArrayNode buildTokenIdBiasArray(Map<Integer, Float> biases) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
@@ -151,6 +170,9 @@ public final class ParameterJsonSerializer {
     /**
      * Build a logit-bias array for string tokens:
      * {@code [["Hello", 1.0], [" world", -0.5]]}.
+     *
+     * @param biases map from token string to logit bias value
+     * @return a Jackson {@link ArrayNode} of {@code ["token", biasValue]} pairs
      */
     public static ArrayNode buildTokenStringBiasArray(Map<String, Float> biases) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
@@ -166,6 +188,9 @@ public final class ParameterJsonSerializer {
     /**
      * Build a disable-token array for integer token IDs:
      * {@code [[15043, false], [50256, false]]}.
+     *
+     * @param ids collection of integer token IDs to disable
+     * @return a Jackson {@link ArrayNode} of {@code [tokenId, false]} pairs
      */
     public static ArrayNode buildDisableTokenIdArray(Collection<Integer> ids) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
@@ -181,6 +206,9 @@ public final class ParameterJsonSerializer {
     /**
      * Build a disable-token array for string tokens:
      * {@code [["Hello", false], [" world", false]]}.
+     *
+     * @param tokens collection of token strings to disable
+     * @return a Jackson {@link ArrayNode} of {@code ["token", false]} pairs
      */
     public static ArrayNode buildDisableTokenStringArray(Collection<String> tokens) {
         ArrayNode arr = OBJECT_MAPPER.createArrayNode();
@@ -204,6 +232,9 @@ public final class ParameterJsonSerializer {
      *
      * <p>Used for {@code chat_template_kwargs} which stores raw JSON values.
      * If a value cannot be parsed as JSON, it is stored as a JSON string literal.
+     *
+     * @param map map of key to pre-serialized JSON value strings
+     * @return a Jackson {@link ObjectNode} with each value embedded as a parsed JSON node
      */
     public static ObjectNode buildRawValueObject(Map<String, String> map) {
         ObjectNode node = OBJECT_MAPPER.createObjectNode();

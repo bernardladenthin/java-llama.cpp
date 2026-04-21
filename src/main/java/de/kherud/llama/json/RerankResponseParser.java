@@ -26,6 +26,7 @@ import java.util.List;
  */
 public final class RerankResponseParser {
 
+    /** Shared Jackson mapper; all methods are stateless and thread-safe. */
     public static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private RerankResponseParser() {}
@@ -33,6 +34,9 @@ public final class RerankResponseParser {
     /**
      * Parse rerank results from a raw JSON array string. Delegates to {@link #parse(JsonNode)}
      * after a single {@code readTree} call.
+     *
+     * @param json raw JSON array string from the native rerank response
+     * @return list of document/score pairs; empty list on parse failure or empty array
      */
     public static List<Pair<String, Float>> parse(String json) {
         try {
@@ -46,6 +50,9 @@ public final class RerankResponseParser {
      * Parse rerank results from a pre-parsed {@link JsonNode} array.
      * Each element must contain {@code "document"} (string) and {@code "score"} (number).
      * Returns an empty list when the node is not an array or is empty.
+     *
+     * @param arr pre-parsed {@link JsonNode} array of rerank result objects
+     * @return list of document/score pairs; empty list if the node is not an array or is empty
      */
     public static List<Pair<String, Float>> parse(JsonNode arr) {
         if (!arr.isArray() || arr.size() == 0) {
