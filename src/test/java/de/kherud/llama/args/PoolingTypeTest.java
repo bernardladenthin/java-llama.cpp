@@ -1,57 +1,59 @@
 package de.kherud.llama.args;
 
-import de.kherud.llama.ClaudeGenerated;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static org.junit.Assert.*;
 
-@ClaudeGenerated(
-        purpose = "Verify that every PoolingType enum constant returns the exact CLI argument " +
-                  "string expected by llama.cpp (e.g. MEAN -> \"mean\", RANK -> \"rank\") via " +
-                  "getArgValue(), and that the enum has the expected number of constants."
-)
+@RunWith(Parameterized.class)
 public class PoolingTypeTest {
 
-	@Test
-	public void testUnspecifiedArgValue() {
-		assertEquals("unspecified", PoolingType.UNSPECIFIED.getArgValue());
-	}
+    @Parameterized.Parameters(name = "{0} -> {1}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+            {PoolingType.UNSPECIFIED, "unspecified"},
+            {PoolingType.NONE,        "none"},
+            {PoolingType.MEAN,        "mean"},
+            {PoolingType.CLS,         "cls"},
+            {PoolingType.LAST,        "last"},
+            {PoolingType.RANK,        "rank"},
+        });
+    }
 
-	@Test
-	public void testNoneArgValue() {
-		assertEquals("none", PoolingType.NONE.getArgValue());
-	}
+    private final PoolingType poolingType;
+    private final String expectedArgValue;
 
-	@Test
-	public void testMeanArgValue() {
-		assertEquals("mean", PoolingType.MEAN.getArgValue());
-	}
+    public PoolingTypeTest(PoolingType poolingType, String expectedArgValue) {
+        this.poolingType = poolingType;
+        this.expectedArgValue = expectedArgValue;
+    }
 
-	@Test
-	public void testClsArgValue() {
-		assertEquals("cls", PoolingType.CLS.getArgValue());
-	}
+    @Test
+    public void testGetArgValue() {
+        assertEquals(expectedArgValue, poolingType.getArgValue());
+    }
 
-	@Test
-	public void testLastArgValue() {
-		assertEquals("last", PoolingType.LAST.getArgValue());
-	}
+    // ------------------------------------------------------------------
+    // Structural invariants
+    // ------------------------------------------------------------------
 
-	@Test
-	public void testRankArgValue() {
-		assertEquals("rank", PoolingType.RANK.getArgValue());
-	}
+    @Test
+    public void testEnumCount() {
+        assertEquals(6, PoolingType.values().length);
+    }
 
-	@Test
-	public void testAllValuesHaveArgValue() {
-		for (PoolingType type : PoolingType.values()) {
-			assertNotNull("getArgValue() should not be null for " + type, type.getArgValue());
-			assertFalse("getArgValue() should not be empty for " + type, type.getArgValue().isEmpty());
-		}
-	}
+    @Test
+    public void testImplementsCliArg() {
+        assertTrue(poolingType instanceof CliArg);
+    }
 
-	@Test
-	public void testEnumCount() {
-		assertEquals(6, PoolingType.values().length);
-	}
+    @Test
+    public void testArgValueNonEmpty() {
+        assertNotNull(poolingType.getArgValue());
+        assertFalse(poolingType.getArgValue().isEmpty());
+    }
 }

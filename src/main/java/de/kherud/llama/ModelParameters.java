@@ -1,12 +1,15 @@
 package de.kherud.llama;
 
 import de.kherud.llama.args.*;
+import de.kherud.llama.json.ParameterJsonSerializer;
 
 /***
  * Parameters used for initializing a {@link LlamaModel}.
  */
 @SuppressWarnings("unused")
 public final class ModelParameters extends CliParameters {
+
+    private final ParameterJsonSerializer serializer = new ParameterJsonSerializer();
 
     private static final String ARG_FIT = "--fit";
     static final String ARG_POOLING = "--pooling";
@@ -233,8 +236,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters disableContextShift() {
-        parameters.put("--no-context-shift", null);
-        return this;
+        return setFlag(ModelFlag.NO_CONTEXT_SHIFT);
     }
 
     /**
@@ -243,8 +245,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters enableFlashAttn() {
-        parameters.put("--flash-attn", null);
-        return this;
+        return setFlag(ModelFlag.FLASH_ATTN);
     }
 
     /**
@@ -253,8 +254,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters disablePerf() {
-        parameters.put("--no-perf", null);
-        return this;
+        return setFlag(ModelFlag.NO_PERF);
     }
 
     /**
@@ -263,8 +263,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters enableEscape() {
-        parameters.put("--escape", null);
-        return this;
+        return setFlag(ModelFlag.ESCAPE);
     }
 
     /**
@@ -273,8 +272,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters disableEscape() {
-        parameters.put("--no-escape", null);
-        return this;
+        return setFlag(ModelFlag.NO_ESCAPE);
     }
 
     /**
@@ -283,8 +281,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters enableSpecial() {
-        parameters.put("--special", null);
-        return this;
+        return setFlag(ModelFlag.SPECIAL);
     }
 
     /**
@@ -293,8 +290,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters skipWarmup() {
-        parameters.put("--no-warmup", null);
-        return this;
+        return setFlag(ModelFlag.NO_WARMUP);
     }
 
     /**
@@ -304,8 +300,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setSpmInfill() {
-        parameters.put("--spm-infill", null);
-        return this;
+        return setFlag(ModelFlag.SPM_INFILL);
     }
 
     /**
@@ -318,8 +313,7 @@ public final class ModelParameters extends CliParameters {
         if (samplers.length > 0) {
             StringBuilder builder = new StringBuilder();
             for (int i = 0; i < samplers.length; i++) {
-                Sampler sampler = samplers[i];
-                builder.append(sampler.name().toLowerCase());
+                builder.append(samplers[i].getArgValue());
                 if (i < samplers.length - 1) {
                     builder.append(";");
                 }
@@ -346,8 +340,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters ignoreEos() {
-        parameters.put("--ignore-eos", null);
-        return this;
+        return setFlag(ModelFlag.IGNORE_EOS);
     }
 
     /**
@@ -561,7 +554,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMirostat(MiroStat mirostat) {
-        parameters.put("--mirostat", String.valueOf(mirostat.ordinal()));
+        parameters.put("--mirostat", mirostat.getArgValue());
         return this;
     }
 
@@ -774,8 +767,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters enableDumpKvCache() {
-        parameters.put("--dump-kv-cache", null);
-        return this;
+        return setFlag(ModelFlag.DUMP_KV_CACHE);
     }
 
     /**
@@ -784,8 +776,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters disableKvOffload() {
-        parameters.put("--no-kv-offload", null);
-        return this;
+        return setFlag(ModelFlag.NO_KV_OFFLOAD);
     }
 
     /**
@@ -795,7 +786,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCacheTypeK(CacheType type) {
-        parameters.put("--cache-type-k", type.name().toLowerCase());
+        parameters.put("--cache-type-k", type.getArgValue());
         return this;
     }
 
@@ -806,7 +797,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCacheTypeV(CacheType type) {
-        parameters.put("--cache-type-v", type.name().toLowerCase());
+        parameters.put("--cache-type-v", type.getArgValue());
         return this;
     }
 
@@ -838,8 +829,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters enableContBatching() {
-        parameters.put("--cont-batching", null);
-        return this;
+        return setFlag(ModelFlag.CONT_BATCHING);
     }
 
     /**
@@ -848,8 +838,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters disableContBatching() {
-        parameters.put("--no-cont-batching", null);
-        return this;
+        return setFlag(ModelFlag.NO_CONT_BATCHING);
     }
 
     /**
@@ -858,8 +847,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters enableMlock() {
-        parameters.put("--mlock", null);
-        return this;
+        return setFlag(ModelFlag.MLOCK);
     }
 
     /**
@@ -868,8 +856,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters disableMmap() {
-        parameters.put("--no-mmap", null);
-        return this;
+        return setFlag(ModelFlag.NO_MMAP);
     }
 
     /**
@@ -879,7 +866,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setNuma(NumaStrategy numaStrategy) {
-        parameters.put("--numa", numaStrategy.name().toLowerCase());
+        parameters.put("--numa", numaStrategy.getArgValue());
         return this;
     }
 
@@ -912,7 +899,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setSplitMode(GpuSplitMode splitMode) {
-        parameters.put("--split-mode", splitMode.name().toLowerCase());
+        parameters.put("--split-mode", splitMode.getArgValue());
         return this;
     }
 
@@ -944,8 +931,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters enableCheckTensors() {
-        parameters.put("--check-tensors", null);
-        return this;
+        return setFlag(ModelFlag.CHECK_TENSORS);
     }
 
     /**
@@ -1100,8 +1086,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters enableEmbedding() {
-        parameters.put("--embedding", null);
-        return this;
+        return setFlag(ModelFlag.EMBEDDING);
     }
 
     /**
@@ -1110,8 +1095,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters enableReranking() {
-        parameters.put("--reranking", null);
-        return this;
+        return setFlag(ModelFlag.RERANKING);
     }
 
     /**
@@ -1164,7 +1148,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setChatTemplateKwargs(java.util.Map<String, String> kwargs) {
-        parameters.put("--chat-template-kwargs", JsonParameters.mapToJsonObject(kwargs));
+        parameters.put("--chat-template-kwargs", serializer.buildRawValueObject(kwargs).toString());
         return this;
     }
 
@@ -1185,8 +1169,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setLoraInitWithoutApply() {
-        parameters.put("--lora-init-without-apply", null);
-        return this;
+        return setFlag(ModelFlag.LORA_INIT_WITHOUT_APPLY);
     }
 
     /**
@@ -1195,8 +1178,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters disableLog() {
-        parameters.put("--log-disable", null);
-        return this;
+        return setFlag(ModelFlag.LOG_DISABLE);
     }
 
     /**
@@ -1216,8 +1198,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setVerbose() {
-        parameters.put("--verbose", null);
-        return this;
+        return setFlag(ModelFlag.VERBOSE);
     }
 
     /**
@@ -1237,8 +1218,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters enableLogPrefix() {
-        parameters.put("--log-prefix", null);
-        return this;
+        return setFlag(ModelFlag.LOG_PREFIX);
     }
 
     /**
@@ -1247,8 +1227,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters enableLogTimestamps() {
-        parameters.put("--log-timestamps", null);
-        return this;
+        return setFlag(ModelFlag.LOG_TIMESTAMPS);
     }
 
     /**
@@ -1334,8 +1313,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters enableJinja() {
-        parameters.put("--jinja", null);
-        return this;
+        return setFlag(ModelFlag.JINJA);
     }
 
     /**
@@ -1346,8 +1324,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setVocabOnly() {
-        parameters.put("--vocab-only", null);
-        return this;
+        return setFlag(ModelFlag.VOCAB_ONLY);
     }
 
     /**
@@ -1361,8 +1338,8 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setKvUnified(boolean kvUnified) {
-        parameters.put(kvUnified ? "--kv-unified" : "--no-kv-unified", null);
-        parameters.remove(kvUnified ? "--no-kv-unified" : "--kv-unified");
+        setFlag(kvUnified ? ModelFlag.KV_UNIFIED : ModelFlag.NO_KV_UNIFIED);
+        clearFlag(kvUnified ? ModelFlag.NO_KV_UNIFIED : ModelFlag.KV_UNIFIED);
         return this;
     }
 
@@ -1399,8 +1376,32 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setClearIdle(boolean clearIdle) {
-        parameters.put(clearIdle ? "--clear-idle" : "--no-clear-idle", null);
-        parameters.remove(clearIdle ? "--no-clear-idle" : "--clear-idle");
+        setFlag(clearIdle ? ModelFlag.CLEAR_IDLE : ModelFlag.NO_CLEAR_IDLE);
+        clearFlag(clearIdle ? ModelFlag.NO_CLEAR_IDLE : ModelFlag.CLEAR_IDLE);
+        return this;
+    }
+
+    /**
+     * Enable the given flag, adding it to the active parameter set.
+     * Equivalent to calling the specific named method (e.g. {@link #enableFlashAttn()}
+     * for {@link ModelFlag#FLASH_ATTN}).
+     *
+     * @param flag the flag to enable
+     * @return this builder
+     */
+    public ModelParameters setFlag(ModelFlag flag) {
+        parameters.put(flag.getCliFlag(), null);
+        return this;
+    }
+
+    /**
+     * Remove the given flag from the active parameter set.
+     *
+     * @param flag the flag to remove
+     * @return this builder
+     */
+    public ModelParameters clearFlag(ModelFlag flag) {
+        parameters.remove(flag.getCliFlag());
         return this;
     }
 

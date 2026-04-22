@@ -1,5 +1,7 @@
 package de.kherud.llama;
 
+import de.kherud.llama.json.ParameterJsonSerializer;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -13,6 +15,8 @@ abstract class JsonParameters {
 	// We save parameters directly as a String map here, to re-use as much as possible of the (json-based) C++ code.
 	// The JNI code for a proper Java-typed data object is comparatively too complex and hard to maintain.
 	final Map<String, String> parameters = new HashMap<>();
+
+	protected final ParameterJsonSerializer serializer = new ParameterJsonSerializer();
 
 	@Override
 	public String toString() {
@@ -35,73 +39,8 @@ abstract class JsonParameters {
 		return builder.toString();
 	}
 
-	static String mapToJsonObject(Map<String, String> map) {
-		StringBuilder sb = new StringBuilder("{");
-		boolean first = true;
-		for (Map.Entry<String, String> entry : map.entrySet()) {
-			if (!first) sb.append(",");
-			sb.append("\"").append(entry.getKey()).append("\":").append(entry.getValue());
-			first = false;
-		}
-		sb.append("}");
-		return sb.toString();
-	}
-
-	// taken from org.json.JSONObject#quote(String, Writer)
 	String toJsonString(String text) {
 		if (text == null) return null;
-		StringBuilder builder = new StringBuilder((text.length()) + 2);
-
-		char b;
-		char c = 0;
-		String hhhh;
-		int i;
-		int len = text.length();
-
-		builder.append('"');
-		for (i = 0; i < len; i += 1) {
-			b = c;
-			c = text.charAt(i);
-			switch (c) {
-				case '\\':
-				case '"':
-					builder.append('\\');
-					builder.append(c);
-					break;
-				case '/':
-					if (b == '<') {
-						builder.append('\\');
-					}
-					builder.append(c);
-					break;
-				case '\b':
-					builder.append("\\b");
-					break;
-				case '\t':
-					builder.append("\\t");
-					break;
-				case '\n':
-					builder.append("\\n");
-					break;
-				case '\f':
-					builder.append("\\f");
-					break;
-				case '\r':
-					builder.append("\\r");
-					break;
-				default:
-					if (c < ' ' || (c >= '\u0080' && c < '\u00a0') || (c >= '\u2000' && c < '\u2100')) {
-						builder.append("\\u");
-						hhhh = Integer.toHexString(c);
-						builder.append("0000", 0, 4 - hhhh.length());
-						builder.append(hhhh);
-					}
-					else {
-						builder.append(c);
-					}
-			}
-		}
-		builder.append('"');
-		return builder.toString();
+		return serializer.toJsonString(text);
 	}
 }

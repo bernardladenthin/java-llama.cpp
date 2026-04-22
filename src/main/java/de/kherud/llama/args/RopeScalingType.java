@@ -1,6 +1,6 @@
 package de.kherud.llama.args;
 
-public enum RopeScalingType {
+public enum RopeScalingType implements CliArg {
 
     UNSPECIFIED("unspecified"),
     NONE("none"),

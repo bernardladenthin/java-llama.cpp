@@ -8,6 +8,7 @@ import java.util.List;
 
 import de.kherud.llama.args.MiroStat;
 import de.kherud.llama.args.Sampler;
+import de.kherud.llama.json.CompletionResponseParser;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -42,6 +43,7 @@ import org.junit.Test;
 public class ChatAdvancedTest {
 
     private static final int N_PREDICT = 10;
+    private final CompletionResponseParser completionParser = new CompletionResponseParser();
     private static final String SIMPLE_PROMPT = "def hello():";
 
     private static LlamaModel model;
@@ -144,7 +146,7 @@ public class ChatAdvancedTest {
         while (!done) {
             String json = model.receiveCompletionJson(taskId);
             Assert.assertNotNull("receiveCompletionJson must not be null", json);
-            LlamaOutput output = LlamaOutput.fromJson(json);
+            LlamaOutput output = completionParser.parse(json);
             if (json.contains("\"completion_probabilities\"")) {
                 foundProbabilities = true;
             }
@@ -338,7 +340,7 @@ public class ChatAdvancedTest {
         while (!stopped) {
             String json = model.receiveCompletionJson(taskId);
             Assert.assertNotNull("receiveCompletionJson must not return null", json);
-            LlamaOutput output = LlamaOutput.fromJson(json);
+            LlamaOutput output = completionParser.parse(json);
             sb.append(output.text);
             tokens++;
             if (output.stop) {

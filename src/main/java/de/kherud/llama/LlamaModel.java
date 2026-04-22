@@ -1,6 +1,9 @@
 package de.kherud.llama;
 
 import de.kherud.llama.args.LogFormat;
+import de.kherud.llama.json.ChatResponseParser;
+import de.kherud.llama.json.CompletionResponseParser;
+import de.kherud.llama.json.RerankResponseParser;
 import java.lang.annotation.Native;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -30,6 +33,10 @@ public class LlamaModel implements AutoCloseable {
 	@Native
 	private long ctx;
 
+	private final CompletionResponseParser completionParser = new CompletionResponseParser();
+	private final ChatResponseParser chatParser = new ChatResponseParser();
+	private final RerankResponseParser rerankParser = new RerankResponseParser();
+
 	/**
 	 * Load with the given {@link ModelParameters}. Make sure to either set
 	 * <ul>
@@ -56,7 +63,7 @@ public class LlamaModel implements AutoCloseable {
 		parameters.setStream(false);
 		int taskId = requestCompletion(parameters.toString());
 		String json = receiveCompletionJson(taskId);
-		return LlamaOutput.getContentFromJson(json);
+		return completionParser.parse(json).text;
 	}
 
 	/**
@@ -67,7 +74,7 @@ public class LlamaModel implements AutoCloseable {
 	 * @return iterable LLM outputs
 	 */
 	public LlamaIterable generate(InferenceParameters parameters) {
-		return () -> new LlamaIterator(this, parameters);
+		return new LlamaIterable(new LlamaIterator(this, parameters));
 	}
 	
 	
@@ -157,7 +164,7 @@ public class LlamaModel implements AutoCloseable {
 	 */
 	public List<Pair<String, Float>> rerank(boolean reRank, String query, String... documents) {
 		String json = handleRerank(query, documents);
-		List<Pair<String, Float>> rankedDocuments = LlamaOutput.parseRerankResults(json);
+		List<Pair<String, Float>> rankedDocuments = rerankParser.parse(json);
 		if (reRank) {
 			rankedDocuments.sort((a, b) -> Float.compare(b.getValue(), a.getValue()));
 		}
@@ -174,12 +181,12 @@ public class LlamaModel implements AutoCloseable {
 	 */
 	public LlamaOutput rerank(String query, String... documents) {
 		String json = handleRerank(query, documents);
-		List<Pair<String, Float>> results = LlamaOutput.parseRerankResults(json);
+		List<Pair<String, Float>> results = rerankParser.parse(json);
 		Map<String, Float> probabilities = new HashMap<>();
 		for (Pair<String, Float> pair : results) {
 			probabilities.put(pair.getKey(), pair.getValue());
 		}
-		return new LlamaOutput(query, probabilities, true);
+		return new LlamaOutput(query, probabilities, true, StopReason.EOS);
 	}
 
 	native String handleRerank(String query, String... documents) throws LlamaException;
@@ -223,6 +230,20 @@ public class LlamaModel implements AutoCloseable {
 	}
 
 	/**
+	 * Run an OpenAI-compatible chat completion and return only the assistant's text content.
+	 * This is the plain-string equivalent of {@link #chatComplete(InferenceParameters)}, which
+	 * returns the raw OAI JSON. Use this when you want the generated text directly, the same
+	 * way {@link #complete(InferenceParameters)} works for raw completions.
+	 *
+	 * @param parameters the inference parameters including messages
+	 * @return the assistant's reply text (extracted from {@code choices[0].message.content})
+	 * @throws LlamaException if the model was loaded in embedding mode or if inference fails
+	 */
+	public String chatCompleteText(InferenceParameters parameters) {
+		return chatParser.extractChoiceContent(chatComplete(parameters));
+	}
+
+	/**
 	 * Stream an OpenAI-compatible chat completion token by token. The parameters must contain a
 	 * "messages" array in the standard OpenAI chat format. The model's chat template is automatically applied.
 	 * <p>
@@ -245,7 +266,7 @@ public class LlamaModel implements AutoCloseable {
 	 * @throws LlamaException if inference fails
 	 */
 	public LlamaIterable generateChat(InferenceParameters parameters) {
-		return () -> new LlamaIterator(this, parameters, true);
+		return new LlamaIterable(new LlamaIterator(this, parameters, true));
 	}
 
 	/**

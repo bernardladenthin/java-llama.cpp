@@ -1,15 +1,42 @@
 package de.kherud.llama.args;
 
-import de.kherud.llama.ClaudeGenerated;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static org.junit.Assert.*;
 
-@ClaudeGenerated(
-        purpose = "Verify GpuSplitMode enum values, count, and lowercase name convention used by ModelParameters.",
-        model = "claude-opus-4-6"
-)
+@RunWith(Parameterized.class)
 public class GpuSplitModeTest {
+
+    @Parameterized.Parameters(name = "{0} -> {1}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+            {GpuSplitMode.NONE,  "none"},
+            {GpuSplitMode.LAYER, "layer"},
+            {GpuSplitMode.ROW,   "row"},
+        });
+    }
+
+    private final GpuSplitMode gpuSplitMode;
+    private final String expectedArgValue;
+
+    public GpuSplitModeTest(GpuSplitMode gpuSplitMode, String expectedArgValue) {
+        this.gpuSplitMode = gpuSplitMode;
+        this.expectedArgValue = expectedArgValue;
+    }
+
+    @Test
+    public void testGetArgValue() {
+        assertEquals(expectedArgValue, gpuSplitMode.getArgValue());
+    }
+
+    // ------------------------------------------------------------------
+    // Structural invariants
+    // ------------------------------------------------------------------
 
     @Test
     public void testEnumCount() {
@@ -17,26 +44,13 @@ public class GpuSplitModeTest {
     }
 
     @Test
-    public void testNone() {
-        assertEquals("none", GpuSplitMode.NONE.name().toLowerCase());
+    public void testImplementsCliArg() {
+        assertTrue(gpuSplitMode instanceof CliArg);
     }
 
     @Test
-    public void testLayer() {
-        assertEquals("layer", GpuSplitMode.LAYER.name().toLowerCase());
-    }
-
-    @Test
-    public void testRow() {
-        assertEquals("row", GpuSplitMode.ROW.name().toLowerCase());
-    }
-
-    @Test
-    public void testAllValuesHaveNonEmptyLowercaseName() {
-        for (GpuSplitMode mode : GpuSplitMode.values()) {
-            String lower = mode.name().toLowerCase();
-            assertNotNull(lower);
-            assertFalse("GpuSplitMode " + mode + " has empty lowercase name", lower.isEmpty());
-        }
+    public void testArgValueNonEmpty() {
+        assertNotNull(gpuSplitMode.getArgValue());
+        assertFalse(gpuSplitMode.getArgValue().isEmpty());
     }
 }

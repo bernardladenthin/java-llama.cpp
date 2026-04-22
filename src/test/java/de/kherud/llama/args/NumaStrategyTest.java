@@ -1,15 +1,42 @@
 package de.kherud.llama.args;
 
-import de.kherud.llama.ClaudeGenerated;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static org.junit.Assert.*;
 
-@ClaudeGenerated(
-        purpose = "Verify NumaStrategy enum values, count, and lowercase name convention used by ModelParameters.",
-        model = "claude-opus-4-6"
-)
+@RunWith(Parameterized.class)
 public class NumaStrategyTest {
+
+    @Parameterized.Parameters(name = "{0} -> {1}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+            {NumaStrategy.DISTRIBUTE, "distribute"},
+            {NumaStrategy.ISOLATE,    "isolate"},
+            {NumaStrategy.NUMACTL,    "numactl"},
+        });
+    }
+
+    private final NumaStrategy numaStrategy;
+    private final String expectedArgValue;
+
+    public NumaStrategyTest(NumaStrategy numaStrategy, String expectedArgValue) {
+        this.numaStrategy = numaStrategy;
+        this.expectedArgValue = expectedArgValue;
+    }
+
+    @Test
+    public void testGetArgValue() {
+        assertEquals(expectedArgValue, numaStrategy.getArgValue());
+    }
+
+    // ------------------------------------------------------------------
+    // Structural invariants
+    // ------------------------------------------------------------------
 
     @Test
     public void testEnumCount() {
@@ -17,26 +44,13 @@ public class NumaStrategyTest {
     }
 
     @Test
-    public void testDistribute() {
-        assertEquals("distribute", NumaStrategy.DISTRIBUTE.name().toLowerCase());
+    public void testImplementsCliArg() {
+        assertTrue(numaStrategy instanceof CliArg);
     }
 
     @Test
-    public void testIsolate() {
-        assertEquals("isolate", NumaStrategy.ISOLATE.name().toLowerCase());
-    }
-
-    @Test
-    public void testNumactl() {
-        assertEquals("numactl", NumaStrategy.NUMACTL.name().toLowerCase());
-    }
-
-    @Test
-    public void testAllValuesHaveNonEmptyLowercaseName() {
-        for (NumaStrategy ns : NumaStrategy.values()) {
-            String lower = ns.name().toLowerCase();
-            assertNotNull(lower);
-            assertFalse("NumaStrategy " + ns + " has empty lowercase name", lower.isEmpty());
-        }
+    public void testArgValueNonEmpty() {
+        assertNotNull(numaStrategy.getArgValue());
+        assertFalse(numaStrategy.getArgValue().isEmpty());
     }
 }

@@ -183,6 +183,30 @@ public class LlamaModelTest {
 		);
 	}
 
+	/**
+	 * LlamaIterable implements AutoCloseable. Breaking out of a for-each loop early inside a
+	 * try-with-resources block must not throw and must not leave the task slot hanging — the
+	 * iterator's close() cancels the native task automatically.
+	 */
+	@Test
+	public void testGenerateAutoCloseOnEarlyBreak() throws Exception {
+		InferenceParameters params = new InferenceParameters(prefix).setNPredict(nPredict);
+
+		int collected = 0;
+		try (LlamaIterable iterable = model.generate(params)) {
+			for (LlamaOutput ignored : iterable) {
+				collected++;
+				break; // exit before stop token
+			}
+		} // close() must cancel without throwing
+
+		Assert.assertTrue("Should have collected at least one token before break", collected >= 1);
+
+		// The model must still be usable after an early-exit close
+		String result = model.complete(new InferenceParameters(prefix).setNPredict(5));
+		Assert.assertNotNull("Model must be functional after autoclosed iterator", result);
+	}
+
 	@Test
 	public void testEmbedding() {
 		float[] embedding = model.embed(prefix);
@@ -946,6 +970,15 @@ public class LlamaModelTest {
 		Assert.assertTrue("modalities field must be present", meta.asJson().has("modalities"));
 		Assert.assertTrue("vocab_type field must be present", meta.asJson().has("vocab_type"));
 
+		// Architecture and name from GGUF general.* metadata
+		String architecture = meta.getArchitecture();
+		Assert.assertNotNull("getArchitecture() must not return null", architecture);
+		Assert.assertFalse("CodeLlama GGUF must have general.architecture set", architecture.isEmpty());
+
+		// general.name may or may not be present in the GGUF; just verify the getter does not throw
+		String modelName = meta.getModelName();
+		Assert.assertNotNull("getModelName() must not return null", modelName);
+
 		// Round-trip: toString() must produce valid compact JSON containing all top-level keys
 		String json = meta.toString();
 		Assert.assertNotNull(json);
@@ -958,10 +991,7 @@ public class LlamaModelTest {
 		Assert.assertTrue(json.contains("\"modalities\""));
 		Assert.assertTrue(json.contains("\"vision\""));
 		Assert.assertTrue(json.contains("\"audio\""));
-
-		// Fill in the expected value from the failure message and re-run to pin exact output:
-		Assert.assertEquals("{\"vocab_type\":1,\"n_vocab\":32016,\"n_ctx_train\":16384,"
-				+ "\"n_embd\":4096,\"n_params\":6738546688,\"size\":2825274880,"
-				+ "\"modalities\":{\"vision\":false,\"audio\":false}}", json);
+		Assert.assertTrue(json.contains("\"architecture\""));
+		Assert.assertTrue(json.contains("\"name\""));
 	}
 }

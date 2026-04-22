@@ -1,8 +1,22 @@
 package de.kherud.llama.args;
 
-public enum GpuSplitMode {
+/**
+ * GPU tensor split mode for {@code --split-mode}.
+ */
+public enum GpuSplitMode implements CliArg {
 
-	NONE,
-	LAYER,
-	ROW
+    NONE("none"),
+    LAYER("layer"),
+    ROW("row");
+
+    private final String argValue;
+
+    GpuSplitMode(String argValue) {
+        this.argValue = argValue;
+    }
+
+    @Override
+    public String getArgValue() {
+        return argValue;
+    }
 }

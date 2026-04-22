@@ -368,16 +368,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setPenaltyPrompt(int[] tokens) {
 		if (tokens.length > 0) {
-			StringBuilder builder = new StringBuilder();
-			builder.append("[");
-			for (int i = 0; i < tokens.length; i++) {
-				builder.append(tokens[i]);
-				if (i < tokens.length - 1) {
-					builder.append(", ");
-				}
-			}
-			builder.append("]");
-			parameters.put(PARAM_PENALTY_PROMPT, builder.toString());
+			parameters.put(PARAM_PENALTY_PROMPT, serializer.buildIntArray(tokens).toString());
 		}
 		return this;
 	}
@@ -408,7 +399,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setTokenIdBias(Map<Integer, Float> logitBias) {
 		if (!logitBias.isEmpty()) {
-			parameters.put(PARAM_LOGIT_BIAS, buildBiasPairArray(logitBias, String::valueOf));
+			parameters.put(PARAM_LOGIT_BIAS, serializer.buildTokenIdBiasArray(logitBias).toString());
 		}
 		return this;
 	}
@@ -428,7 +419,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters disableTokenIds(Collection<Integer> tokenIds) {
 		if (!tokenIds.isEmpty()) {
-			parameters.put(PARAM_LOGIT_BIAS, buildDisablePairArray(tokenIds, String::valueOf));
+			parameters.put(PARAM_LOGIT_BIAS, serializer.buildDisableTokenIdArray(tokenIds).toString());
 		}
 		return this;
 	}
@@ -448,7 +439,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setTokenBias(Map<String, Float> logitBias) {
 		if (!logitBias.isEmpty()) {
-			parameters.put(PARAM_LOGIT_BIAS, buildBiasPairArray(logitBias, this::toJsonString));
+			parameters.put(PARAM_LOGIT_BIAS, serializer.buildTokenStringBiasArray(logitBias).toString());
 		}
 		return this;
 	}
@@ -468,7 +459,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters disableTokens(Collection<String> tokens) {
 		if (!tokens.isEmpty()) {
-			parameters.put(PARAM_LOGIT_BIAS, buildDisablePairArray(tokens, this::toJsonString));
+			parameters.put(PARAM_LOGIT_BIAS, serializer.buildDisableTokenStringArray(tokens).toString());
 		}
 		return this;
 	}
@@ -481,16 +472,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setStopStrings(String... stopStrings) {
 		if (stopStrings.length > 0) {
-			StringBuilder builder = new StringBuilder();
-			builder.append("[");
-			for (int i = 0; i < stopStrings.length; i++) {
-				builder.append(toJsonString(stopStrings[i]));
-				if (i < stopStrings.length - 1) {
-					builder.append(", ");
-				}
-			}
-			builder.append("]");
-			parameters.put(PARAM_STOP, builder.toString());
+			parameters.put(PARAM_STOP, serializer.buildStopStrings(stopStrings).toString());
 		}
 		return this;
 	}
@@ -503,29 +485,7 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setSamplers(Sampler... samplers) {
 		if (samplers.length > 0) {
-			StringBuilder builder = new StringBuilder();
-			builder.append("[");
-			for (int i = 0; i < samplers.length; i++) {
-				switch (samplers[i]) {
-					case TOP_K:
-						builder.append("\"top_k\"");
-						break;
-					case TOP_P:
-						builder.append("\"top_p\"");
-						break;
-					case MIN_P:
-						builder.append("\"min_p\"");
-						break;
-					case TEMPERATURE:
-						builder.append("\"temperature\"");
-						break;
-				}
-				if (i < samplers.length - 1) {
-					builder.append(", ");
-				}
-			}
-			builder.append("]");
-			parameters.put(PARAM_SAMPLERS, builder.toString());
+			parameters.put(PARAM_SAMPLERS, serializer.buildSamplers(samplers).toString());
 		}
 		return this;
 	}
@@ -567,7 +527,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setChatTemplateKwargs(java.util.Map<String, String> kwargs) {
-		parameters.put(PARAM_CHAT_TEMPLATE_KWARGS, mapToJsonObject(kwargs));
+		parameters.put(PARAM_CHAT_TEMPLATE_KWARGS, serializer.buildRawValueObject(kwargs).toString());
 		return this;
 	}
 
@@ -581,44 +541,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return this builder
      */
     public InferenceParameters setMessages(String systemMessage, List<Pair<String, String>> messages) {
-		StringBuilder messagesBuilder = new StringBuilder();
-		messagesBuilder.append("[");
-
-        // Add system message (if provided)
-        if (systemMessage != null && !systemMessage.isEmpty()) {
-			messagesBuilder.append("{\"role\": \"system\", \"content\": ")
-					.append(toJsonString(systemMessage))
-					.append("}");
-			if (!messages.isEmpty()) {
-				messagesBuilder.append(", ");
-			}
-        }
-
-        // Add user/assistant messages
-        for (int i = 0; i < messages.size(); i++) {
-            Pair<String, String> message = messages.get(i);
-            String role = message.getKey();
-            String content = message.getValue();
-
-            if (!role.equals("user") && !role.equals("assistant")) {
-                throw new IllegalArgumentException("Invalid role: " + role + ". Role must be 'user' or 'assistant'.");
-            }
-
-			messagesBuilder.append("{\"role\":")
-					.append(toJsonString(role))
-					.append(", \"content\": ")
-					.append(toJsonString(content))
-					.append("}");
-
-			if (i < messages.size() - 1) {
-				messagesBuilder.append(", ");
-			}
-        }
-
-		messagesBuilder.append("]");
-
-        // Convert ArrayNode to a JSON string and store it in parameters
-        parameters.put(PARAM_MESSAGES, messagesBuilder.toString());
+        parameters.put(PARAM_MESSAGES, serializer.buildMessages(systemMessage, messages).toString());
         return this;
     }
 
@@ -627,38 +550,5 @@ public final class InferenceParameters extends JsonParameters {
 		return this;
 	}
 
-	private static <K, V> String buildBiasPairArray(Map<K, V> map,
-			java.util.function.Function<K, String> keySerializer) {
-		StringBuilder builder = new StringBuilder("[");
-		int i = 0;
-		for (Map.Entry<K, V> entry : map.entrySet()) {
-			builder.append("[")
-					.append(keySerializer.apply(entry.getKey()))
-					.append(", ")
-					.append(entry.getValue())
-					.append("]");
-			if (i++ < map.size() - 1) {
-				builder.append(", ");
-			}
-		}
-		builder.append("]");
-		return builder.toString();
-	}
-
-	private static <T> String buildDisablePairArray(Collection<T> items,
-			java.util.function.Function<T, String> serializer) {
-		StringBuilder builder = new StringBuilder("[");
-		int i = 0;
-		for (T item : items) {
-			builder.append("[")
-					.append(serializer.apply(item))
-					.append(", false]");
-			if (i++ < items.size() - 1) {
-				builder.append(", ");
-			}
-		}
-		builder.append("]");
-		return builder.toString();
-	}
-
 }
+

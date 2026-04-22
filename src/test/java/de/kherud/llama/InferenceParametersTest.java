@@ -276,7 +276,7 @@ public class InferenceParametersTest {
 	@Test
 	public void testSetStopStringsMultiple() {
 		InferenceParameters params = new InferenceParameters("").setStopStrings("stop1", "stop2");
-		assertEquals("[\"stop1\", \"stop2\"]", params.parameters.get("stop"));
+		assertEquals("[\"stop1\",\"stop2\"]", params.parameters.get("stop"));
 	}
 
 	@Test
@@ -299,7 +299,7 @@ public class InferenceParametersTest {
 	@Test
 	public void testSetSamplersMultiple() {
 		InferenceParameters params = new InferenceParameters("").setSamplers(Sampler.TOP_K, Sampler.TOP_P, Sampler.TEMPERATURE);
-		assertEquals("[\"top_k\", \"top_p\", \"temperature\"]", params.parameters.get("samplers"));
+		assertEquals("[\"top_k\",\"top_p\",\"temperature\"]", params.parameters.get("samplers"));
 	}
 
 	@Test
@@ -396,7 +396,7 @@ public class InferenceParametersTest {
 	@Test
 	public void testSetPenaltyPromptTokenIds() {
 		InferenceParameters params = new InferenceParameters("").setPenaltyPrompt(new int[]{1, 2, 3});
-		assertEquals("[1, 2, 3]", params.parameters.get("penalty_prompt"));
+		assertEquals("[1,2,3]", params.parameters.get("penalty_prompt"));
 	}
 
 	@Test
@@ -532,11 +532,12 @@ public class InferenceParametersTest {
 	}
 
 	@Test
-	public void testToJsonStringEscapesSlashAfterLt() {
-		// '</' should become '<\/'
+	public void testToJsonStringSlashNotEscaped() {
+		// Jackson does not escape '/' — forward slashes are passed through verbatim
 		InferenceParameters params = new InferenceParameters("</script>");
 		String value = params.parameters.get("prompt");
-		assertTrue(value.contains("<\\/"));
+		assertTrue(value.contains("</script>"));
+		assertFalse(value.contains("<\\/"));
 	}
 
 	// -------------------------------------------------------------------------

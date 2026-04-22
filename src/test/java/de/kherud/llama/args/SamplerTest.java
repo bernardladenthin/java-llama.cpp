@@ -1,16 +1,48 @@
 package de.kherud.llama.args;
 
-import de.kherud.llama.ClaudeGenerated;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 import static org.junit.Assert.*;
 
-@ClaudeGenerated(
-        purpose = "Verify Sampler enum values, count, and lowercase name convention used by " +
-                  "ModelParameters.setSamplers() semicolon-separated serialization.",
-        model = "claude-opus-4-6"
-)
+@RunWith(Parameterized.class)
 public class SamplerTest {
+
+    @Parameterized.Parameters(name = "{0} -> {1}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+            {Sampler.DRY,         "dry"},
+            {Sampler.TOP_K,       "top_k"},
+            {Sampler.TOP_P,       "top_p"},
+            {Sampler.TYP_P,       "typ_p"},
+            {Sampler.MIN_P,       "min_p"},
+            {Sampler.TEMPERATURE, "temperature"},
+            {Sampler.XTC,         "xtc"},
+            {Sampler.INFILL,      "infill"},
+            {Sampler.PENALTIES,   "penalties"},
+        });
+    }
+
+    private final Sampler sampler;
+    private final String expectedArgValue;
+
+    public SamplerTest(Sampler sampler, String expectedArgValue) {
+        this.sampler = sampler;
+        this.expectedArgValue = expectedArgValue;
+    }
+
+    @Test
+    public void testGetArgValue() {
+        assertEquals(expectedArgValue, sampler.getArgValue());
+    }
+
+    // ------------------------------------------------------------------
+    // Structural invariants
+    // ------------------------------------------------------------------
 
     @Test
     public void testEnumCount() {
@@ -18,56 +50,13 @@ public class SamplerTest {
     }
 
     @Test
-    public void testDry() {
-        assertEquals("dry", Sampler.DRY.name().toLowerCase());
+    public void testImplementsCliArg() {
+        assertTrue(sampler instanceof CliArg);
     }
 
     @Test
-    public void testTopK() {
-        assertEquals("top_k", Sampler.TOP_K.name().toLowerCase());
-    }
-
-    @Test
-    public void testTopP() {
-        assertEquals("top_p", Sampler.TOP_P.name().toLowerCase());
-    }
-
-    @Test
-    public void testTypP() {
-        assertEquals("typ_p", Sampler.TYP_P.name().toLowerCase());
-    }
-
-    @Test
-    public void testMinP() {
-        assertEquals("min_p", Sampler.MIN_P.name().toLowerCase());
-    }
-
-    @Test
-    public void testTemperature() {
-        assertEquals("temperature", Sampler.TEMPERATURE.name().toLowerCase());
-    }
-
-    @Test
-    public void testXtc() {
-        assertEquals("xtc", Sampler.XTC.name().toLowerCase());
-    }
-
-    @Test
-    public void testInfill() {
-        assertEquals("infill", Sampler.INFILL.name().toLowerCase());
-    }
-
-    @Test
-    public void testPenalties() {
-        assertEquals("penalties", Sampler.PENALTIES.name().toLowerCase());
-    }
-
-    @Test
-    public void testAllValuesHaveNonEmptyLowercaseName() {
-        for (Sampler s : Sampler.values()) {
-            String lower = s.name().toLowerCase();
-            assertNotNull(lower);
-            assertFalse("Sampler " + s + " has empty lowercase name", lower.isEmpty());
-        }
+    public void testArgValueNonEmpty() {
+        assertNotNull(sampler.getArgValue());
+        assertFalse(sampler.getArgValue().isEmpty());
     }
 }
