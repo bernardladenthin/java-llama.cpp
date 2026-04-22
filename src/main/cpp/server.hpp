@@ -614,6 +614,37 @@ inline std::string oaicompat_finish_reason(stop_type stop, bool has_tool_calls =
     return "length";
 }
 
+// Adapted from tools/server/server-chat.cpp (moved out of common/chat.h in b8887).
+static json server_chat_msg_diff_to_json_oaicompat(const common_chat_msg_diff & diff) {
+    json delta = json::object();
+    if (!diff.reasoning_content_delta.empty()) {
+        delta["reasoning_content"] = diff.reasoning_content_delta;
+    }
+    if (!diff.content_delta.empty()) {
+        delta["content"] = diff.content_delta;
+    }
+    if (diff.tool_call_index != std::string::npos) {
+        json tool_call;
+        tool_call["index"] = diff.tool_call_index;
+        if (!diff.tool_call_delta.id.empty()) {
+            tool_call["id"]   = diff.tool_call_delta.id;
+            tool_call["type"] = "function";
+        }
+        if (!diff.tool_call_delta.name.empty() || !diff.tool_call_delta.arguments.empty()) {
+            json function = json::object();
+            if (!diff.tool_call_delta.name.empty()) {
+                function["name"] = diff.tool_call_delta.name;
+            }
+            if (!diff.tool_call_delta.arguments.empty()) {
+                function["arguments"] = diff.tool_call_delta.arguments;
+            }
+            tool_call["function"] = function;
+        }
+        delta["tool_calls"] = json::array({ tool_call });
+    }
+    return delta;
+}
+
 struct completion_token_output {
     llama_token tok;
     float prob;
@@ -821,7 +852,7 @@ struct server_task_result_cmpl_final : server_task_result {
                                 json{
                                     {"finish_reason", nullptr},
                                     {"index", index},
-                                    {"delta", common_chat_msg_diff_to_json_oaicompat(diff)},
+                                    {"delta", server_chat_msg_diff_to_json_oaicompat(diff)},
                                 },
                             })},
                 {"created", t},
@@ -989,7 +1020,7 @@ struct server_task_result_cmpl_partial : server_task_result {
         }
 
         for (const auto &diff : oaicompat_msg_diffs) {
-            add_delta(common_chat_msg_diff_to_json_oaicompat(diff));
+            add_delta(server_chat_msg_diff_to_json_oaicompat(diff));
         }
 
         if (!deltas.empty()) {
@@ -2065,7 +2096,7 @@ struct server_context {
             /* common_chat_templates */ chat_templates.get(),
             /* allow_image           */ mctx ? mtmd_support_vision(mctx) : false,
             /* allow_audio           */ mctx ? mtmd_support_audio(mctx) : false,
-            /* enable_thinking       */ params_base.reasoning_budget != 0,
+            /* enable_thinking       */ params_base.sampling.reasoning_budget_tokens != 0,
         };
     }
 
