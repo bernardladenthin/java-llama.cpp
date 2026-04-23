@@ -2014,7 +2014,9 @@ struct server_context {
         oai_parser_opt.reasoning_format  = params_base.reasoning_format;
         oai_parser_opt.allow_image       = mctx ? mtmd_support_vision(mctx) : false;
         oai_parser_opt.allow_audio       = mctx ? mtmd_support_audio(mctx) : false;
-        oai_parser_opt.enable_thinking   = params_base.sampling.reasoning_budget_tokens != 0;
+        oai_parser_opt.enable_thinking   = params_base.enable_reasoning != 0 &&
+            params_base.use_jinja &&
+            common_chat_templates_support_enable_thinking(oai_parser_opt.tmpls.get());
     }
 
     server_slot *get_slot_by_id(int id) {
