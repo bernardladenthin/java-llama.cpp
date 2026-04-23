@@ -25,8 +25,6 @@
 #include <unordered_map>
 #include <unordered_set>
 
-using json = nlohmann::ordered_json;
-
 constexpr int HTTP_POLLING_SECONDS = 1;
 
 enum stop_type {
@@ -72,16 +70,7 @@ enum oaicompat_type {
     OAICOMPAT_TYPE_EMBEDDING,
 };
 
-// https://community.openai.com/t/openai-chat-list-of-error-codes-and-types/357791/11
-enum error_type {
-    ERROR_TYPE_INVALID_REQUEST,
-    ERROR_TYPE_AUTHENTICATION,
-    ERROR_TYPE_SERVER,
-    ERROR_TYPE_NOT_FOUND,
-    ERROR_TYPE_PERMISSION,
-    ERROR_TYPE_UNAVAILABLE,   // custom error
-    ERROR_TYPE_NOT_SUPPORTED, // custom error
-};
+// error_type enum provided by server-common.h (via utils.hpp)
 
 static bool server_task_type_need_embd(server_task_type task_type) {
     switch (task_type) {
@@ -3300,9 +3289,11 @@ struct server_context {
                     // check if we should process the image
                     if (slot.n_past < slot.n_prompt_tokens && slot.prompt_tokens[slot.n_past] == LLAMA_TOKEN_NULL) {
                         // process the image
-                        int32_t new_n_past;
-                        int32_t res = slot.prompt_tokens.process_chunk(ctx, mctx, slot.n_past, slot.id, new_n_past);
-                        int32_t n_pos = new_n_past - slot.n_past;
+                        size_t n_tokens_out;
+                        int32_t res = slot.prompt_tokens.process_chunk(ctx, mctx, static_cast<size_t>(slot.n_past),
+                                                                       static_cast<llama_pos>(slot.n_past),
+                                                                       slot.id, n_tokens_out);
+                        int32_t n_pos = static_cast<int32_t>(n_tokens_out);
 
                         if (res != 0) {
                             SLT_ERR(slot, "failed to process image, res = %d\n", res);
@@ -3313,7 +3304,7 @@ struct server_context {
 
                         // add the image chunk to cache
                         {
-                            const auto &chunk = slot.prompt_tokens.find_chunk(slot.n_past);
+                            const auto &chunk = slot.prompt_tokens.find_chunk(static_cast<size_t>(slot.n_past));
                             slot.cache_tokens.push_back(chunk.get()); // copy
                         }
 
