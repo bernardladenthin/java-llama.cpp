@@ -212,7 +212,8 @@ add_library(jllama SHARED
     src/main/cpp/jllama.cpp
     src/main/cpp/server.hpp
     src/main/cpp/utils.hpp
-    ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp)
+    ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
+    ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp)
 
 set_target_properties(jllama PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(jllama PRIVATE
@@ -266,7 +267,8 @@ if(BUILD_TESTING)
         src/test/cpp/test_server.cpp
         src/test/cpp/test_jni_helpers.cpp
         src/test/cpp/test_json_helpers.cpp
-        ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp)
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp)
 
     target_include_directories(jllama_test PRIVATE
         src/main/cpp

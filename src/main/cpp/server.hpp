@@ -1,4 +1,5 @@
 #include "chat.h"
+#include "server-chat.h"
 #include "utils.hpp"
 
 #include "arg.h"
@@ -603,38 +604,6 @@ inline std::string oaicompat_finish_reason(stop_type stop, bool has_tool_calls =
     return "length";
 }
 
-// Adapted from tools/server/server-chat.cpp (moved out of common/chat.h in b8887).
-// Defined locally to avoid server-common.h conflicts; server-chat.cpp pulls in
-// convert_transcriptions_to_chatcmpl -> get_media_marker -> server-common.cpp.
-static json server_chat_msg_diff_to_json_oaicompat(const common_chat_msg_diff & diff) {
-    json delta = json::object();
-    if (!diff.reasoning_content_delta.empty()) {
-        delta["reasoning_content"] = diff.reasoning_content_delta;
-    }
-    if (!diff.content_delta.empty()) {
-        delta["content"] = diff.content_delta;
-    }
-    if (diff.tool_call_index != std::string::npos) {
-        json tool_call;
-        tool_call["index"] = diff.tool_call_index;
-        if (!diff.tool_call_delta.id.empty()) {
-            tool_call["id"]   = diff.tool_call_delta.id;
-            tool_call["type"] = "function";
-        }
-        if (!diff.tool_call_delta.name.empty() || !diff.tool_call_delta.arguments.empty()) {
-            json function = json::object();
-            if (!diff.tool_call_delta.name.empty()) {
-                function["name"] = diff.tool_call_delta.name;
-            }
-            if (!diff.tool_call_delta.arguments.empty()) {
-                function["arguments"] = diff.tool_call_delta.arguments;
-            }
-            tool_call["function"] = function;
-        }
-        delta["tool_calls"] = json::array({ tool_call });
-    }
-    return delta;
-}
 
 struct completion_token_output {
     llama_token tok;
