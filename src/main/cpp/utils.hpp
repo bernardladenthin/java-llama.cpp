@@ -287,29 +287,6 @@ static std::vector<char *> strip_flag_from_argv(char **argv, int argc, const cha
 }
 
 //
-// other common utils
-//
-
-// Iterator-range overloads of tokens_to_str — upstream server-common.cpp provides
-// const-ref (llama_tokens) versions; these template variants take Iter begin/end
-// and are used by server.hpp completion-output paths.
-template <class Iter> static std::string tokens_to_str(llama_context *ctx, Iter begin, Iter end) {
-    std::string ret;
-    for (; begin != end; ++begin) {
-        ret += common_token_to_piece(ctx, *begin);
-    }
-    return ret;
-}
-
-template <class Iter> static std::string tokens_to_str(const llama_vocab *vocab, Iter begin, Iter end) {
-    std::string ret;
-    for (; begin != end; ++begin) {
-        ret += common_token_to_piece(vocab, *begin);
-    }
-    return ret;
-}
-
-//
 // OAI utils
 //
 

@@ -983,9 +983,9 @@ JNIEXPORT jintArray JNICALL Java_de_kherud_llama_LlamaModel_encode(JNIEnv *env, 
 static std::string detokenize(const server_context *ctx_server,
                                const std::vector<llama_token> &tokens) {
     if (!ctx_server->is_vocab_only()) {
-        return tokens_to_str(ctx_server->ctx, tokens.cbegin(), tokens.cend());
+        return tokens_to_str(ctx_server->ctx, tokens);
     }
-    return tokens_to_str(ctx_server->vocab, tokens.cbegin(), tokens.cend());
+    return tokens_to_str(ctx_server->vocab, tokens);
 }
 
 JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv *env, jobject obj,
