@@ -812,9 +812,11 @@ TEST(OaicompatCompletionParams, StopArray_PassedThrough) {
     EXPECT_EQ(res.at("stop").size(), 2u);
 }
 
-TEST(OaicompatCompletionParams, NNotOne_Throws) {
+TEST(OaicompatCompletionParams, NNotOne_PassedThrough) {
+    // upstream oaicompat_completion_params_parse no longer rejects n > 1;
+    // the value is forwarded to llama_params like any other field
     const json body = {{"prompt", "hi"}, {"n", 3}};
-    EXPECT_THROW(oaicompat_completion_params_parse(body), std::runtime_error);
+    EXPECT_NO_THROW(oaicompat_completion_params_parse(body));
 }
 
 TEST(OaicompatCompletionParams, NEqualsOne_OK) {
