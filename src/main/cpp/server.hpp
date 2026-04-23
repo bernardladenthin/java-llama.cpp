@@ -1800,7 +1800,6 @@ struct server_context {
     // Necessary similarity of prompt for slot selection
     float slot_prompt_similarity = 0.0f;
 
-    common_chat_templates_ptr chat_templates;
     server_chat_params oai_parser_opt;
 
     // Returns true when the model was loaded in vocab-only mode:
@@ -1907,15 +1906,15 @@ struct server_context {
             params_base.speculative.cparams_dft = common_context_params_to_llama(params_dft);
         }
 
-        chat_templates = common_chat_templates_init(model, params_base.chat_template);
+        oai_parser_opt.tmpls = common_chat_templates_init(model, params_base.chat_template);
         try {
-            common_chat_format_example(chat_templates.get(), params.use_jinja, params.default_template_kwargs);
+            common_chat_format_example(oai_parser_opt.tmpls.get(), params.use_jinja, params.default_template_kwargs);
         } catch (const std::exception &e) {
             SRV_WRN("%s: Chat template parsing error: %s\n", __func__, e.what());
             SRV_WRN("%s: The chat template that comes with this model is not yet supported, falling back to chatml. "
                     "This may cause the model to output suboptimal responses\n",
                     __func__);
-            chat_templates = common_chat_templates_init(model, "chatml");
+            oai_parser_opt.tmpls = common_chat_templates_init(model, "chatml");
         }
 
         std::string &mmproj_path = params_base.mmproj.path;
@@ -2013,7 +2012,6 @@ struct server_context {
         oai_parser_opt.use_jinja         = params_base.use_jinja;
         oai_parser_opt.prefill_assistant = params_base.prefill_assistant;
         oai_parser_opt.reasoning_format  = params_base.reasoning_format;
-        oai_parser_opt.tmpls             = chat_templates;
         oai_parser_opt.allow_image       = mctx ? mtmd_support_vision(mctx) : false;
         oai_parser_opt.allow_audio       = mctx ? mtmd_support_audio(mctx) : false;
         oai_parser_opt.enable_thinking   = params_base.sampling.reasoning_budget_tokens != 0;
