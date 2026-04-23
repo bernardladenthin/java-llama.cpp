@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b8854**
+Current llama.cpp pinned version: **b8887**
 
 ## Upgrading CUDA Version
 
@@ -137,7 +137,7 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 `ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
-**Known breaking changes by version range** (b5022 → b8841):
+**Known breaking changes by version range** (b5022 → b8887):
 
 | Version | File | Change |
 |---------|------|--------|
@@ -159,6 +159,9 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b8841–b8854 | `common/common.h` | `common_params::clear_idle` renamed to `cache_idle_slots`; new `common_context_seq_rm_type` enum + `common_context_can_seq_rm()` replacing `common_speculative_is_compat()`; `get_model_endpoint()` → `common_get_model_endpoint()` |
 | ~b8841–b8854 | `tools/mtmd/mtmd.h` + `mtmd-helper.h` | `mtmd_decoder_pos` gains `z` field; `mtmd_image_tokens_get_decoder_pos()` + `mtmd_helper_image_get_decoder_pos()` gain new `pos_0` parameter |
 | ~b8841–b8854 | project `utils.hpp` / `server.hpp` | `server_tokens::get_text_tokens()` split: `get_tokens()` returns raw `const llama_tokens &`; new `get_text_tokens()` returns filtered copy (removes `LLAMA_TOKEN_NULL` mtmd placeholders); save/load and context-shift call sites updated to `get_tokens()` |
+| ~b8854–b8887 | `common/chat.h` | `common_chat_msg_diff_to_json_oaicompat` removed; moved to `tools/server/server-chat.cpp`; project defines it locally in `server.hpp` — importing server-chat.cpp is impractical because it pulls in `convert_transcriptions_to_chatcmpl` → `get_media_marker` → `server-common.cpp` |
+| ~b8854–b8887 | `common/common.h` | `common_params::reasoning_budget` and `reasoning_budget_message` moved into `common_params::sampling` sub-struct as `reasoning_budget_tokens`; update: `params_base.reasoning_budget` → `params_base.sampling.reasoning_budget_tokens` |
+| ~b8854–b8887 | `common/fit.h` (new) | `llama_params_fit` and `llama_memory_breakdown_print` removed from `include/llama.h`; now `common_fit_params` / `common_memory_breakdown_print` in new `common/fit.h`; not used directly by project |
 
 ## Build Commands
 

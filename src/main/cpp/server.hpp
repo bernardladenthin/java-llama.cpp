@@ -1,4 +1,5 @@
 #include "chat.h"
+#include "server-chat.h"
 #include "utils.hpp"
 
 #include "arg.h"
@@ -24,8 +25,6 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
-
-using json = nlohmann::ordered_json;
 
 constexpr int HTTP_POLLING_SECONDS = 1;
 
@@ -72,16 +71,7 @@ enum oaicompat_type {
     OAICOMPAT_TYPE_EMBEDDING,
 };
 
-// https://community.openai.com/t/openai-chat-list-of-error-codes-and-types/357791/11
-enum error_type {
-    ERROR_TYPE_INVALID_REQUEST,
-    ERROR_TYPE_AUTHENTICATION,
-    ERROR_TYPE_SERVER,
-    ERROR_TYPE_NOT_FOUND,
-    ERROR_TYPE_PERMISSION,
-    ERROR_TYPE_UNAVAILABLE,   // custom error
-    ERROR_TYPE_NOT_SUPPORTED, // custom error
-};
+// error_type enum provided by server-common.h (via utils.hpp)
 
 static bool server_task_type_need_embd(server_task_type task_type) {
     switch (task_type) {
@@ -614,6 +604,7 @@ inline std::string oaicompat_finish_reason(stop_type stop, bool has_tool_calls =
     return "length";
 }
 
+
 struct completion_token_output {
     llama_token tok;
     float prob;
@@ -821,7 +812,7 @@ struct server_task_result_cmpl_final : server_task_result {
                                 json{
                                     {"finish_reason", nullptr},
                                     {"index", index},
-                                    {"delta", common_chat_msg_diff_to_json_oaicompat(diff)},
+                                    {"delta", server_chat_msg_diff_to_json_oaicompat(diff)},
                                 },
                             })},
                 {"created", t},
@@ -989,7 +980,7 @@ struct server_task_result_cmpl_partial : server_task_result {
         }
 
         for (const auto &diff : oaicompat_msg_diffs) {
-            add_delta(common_chat_msg_diff_to_json_oaicompat(diff));
+            add_delta(server_chat_msg_diff_to_json_oaicompat(diff));
         }
 
         if (!deltas.empty()) {
@@ -1058,46 +1049,7 @@ struct server_task_result_rerank : server_task_result {
     }
 };
 
-// this function maybe used outside of server_task_result_error
-static json format_error_response(const std::string &message, const enum error_type type) {
-    std::string type_str;
-    int code = 500;
-    switch (type) {
-    case ERROR_TYPE_INVALID_REQUEST:
-        type_str = "invalid_request_error";
-        code = 400;
-        break;
-    case ERROR_TYPE_AUTHENTICATION:
-        type_str = "authentication_error";
-        code = 401;
-        break;
-    case ERROR_TYPE_NOT_FOUND:
-        type_str = "not_found_error";
-        code = 404;
-        break;
-    case ERROR_TYPE_SERVER:
-        type_str = "server_error";
-        code = 500;
-        break;
-    case ERROR_TYPE_PERMISSION:
-        type_str = "permission_error";
-        code = 403;
-        break;
-    case ERROR_TYPE_NOT_SUPPORTED:
-        type_str = "not_supported_error";
-        code = 501;
-        break;
-    case ERROR_TYPE_UNAVAILABLE:
-        type_str = "unavailable_error";
-        code = 503;
-        break;
-    }
-    return json{
-        {"code", code},
-        {"message", message},
-        {"type", type_str},
-    };
-}
+// format_error_response is provided by server-common.h / server-common.cpp
 
 struct server_task_result_error : server_task_result {
     int index = 0;
@@ -1848,8 +1800,7 @@ struct server_context {
     // Necessary similarity of prompt for slot selection
     float slot_prompt_similarity = 0.0f;
 
-    common_chat_templates_ptr chat_templates;
-    oaicompat_parser_options oai_parser_opt;
+    server_chat_params oai_parser_opt;
 
     // Returns true when the model was loaded in vocab-only mode:
     // the vocabulary is available but no inference context was created.
@@ -1955,15 +1906,15 @@ struct server_context {
             params_base.speculative.cparams_dft = common_context_params_to_llama(params_dft);
         }
 
-        chat_templates = common_chat_templates_init(model, params_base.chat_template);
+        oai_parser_opt.tmpls = common_chat_templates_init(model, params_base.chat_template);
         try {
-            common_chat_format_example(chat_templates.get(), params.use_jinja, params.default_template_kwargs);
+            common_chat_format_example(oai_parser_opt.tmpls.get(), params.use_jinja, params.default_template_kwargs);
         } catch (const std::exception &e) {
             SRV_WRN("%s: Chat template parsing error: %s\n", __func__, e.what());
             SRV_WRN("%s: The chat template that comes with this model is not yet supported, falling back to chatml. "
                     "This may cause the model to output suboptimal responses\n",
                     __func__);
-            chat_templates = common_chat_templates_init(model, "chatml");
+            oai_parser_opt.tmpls = common_chat_templates_init(model, "chatml");
         }
 
         std::string &mmproj_path = params_base.mmproj.path;
@@ -2058,15 +2009,14 @@ struct server_context {
 
         metrics.init();
 
-        oai_parser_opt = {
-            /* use_jinja             */ params_base.use_jinja,
-            /* prefill_assistant     */ params_base.prefill_assistant,
-            /* reasoning_format      */ params_base.reasoning_format,
-            /* common_chat_templates */ chat_templates.get(),
-            /* allow_image           */ mctx ? mtmd_support_vision(mctx) : false,
-            /* allow_audio           */ mctx ? mtmd_support_audio(mctx) : false,
-            /* enable_thinking       */ params_base.reasoning_budget != 0,
-        };
+        oai_parser_opt.use_jinja         = params_base.use_jinja;
+        oai_parser_opt.prefill_assistant = params_base.prefill_assistant;
+        oai_parser_opt.reasoning_format  = params_base.reasoning_format;
+        oai_parser_opt.allow_image       = mctx ? mtmd_support_vision(mctx) : false;
+        oai_parser_opt.allow_audio       = mctx ? mtmd_support_audio(mctx) : false;
+        oai_parser_opt.enable_thinking   = params_base.enable_reasoning != 0 &&
+            params_base.use_jinja &&
+            common_chat_templates_support_enable_thinking(oai_parser_opt.tmpls.get());
     }
 
     server_slot *get_slot_by_id(int id) {
@@ -3267,9 +3217,11 @@ struct server_context {
                     // check if we should process the image
                     if (slot.n_past < slot.n_prompt_tokens && slot.prompt_tokens[slot.n_past] == LLAMA_TOKEN_NULL) {
                         // process the image
-                        int32_t new_n_past;
-                        int32_t res = slot.prompt_tokens.process_chunk(ctx, mctx, slot.n_past, slot.id, new_n_past);
-                        int32_t n_pos = new_n_past - slot.n_past;
+                        size_t n_tokens_out;
+                        int32_t res = slot.prompt_tokens.process_chunk(ctx, mctx, static_cast<size_t>(slot.n_past),
+                                                                       static_cast<llama_pos>(slot.n_past),
+                                                                       slot.id, n_tokens_out);
+                        int32_t n_pos = static_cast<int32_t>(n_tokens_out);
 
                         if (res != 0) {
                             SLT_ERR(slot, "failed to process image, res = %d\n", res);
@@ -3280,7 +3232,7 @@ struct server_context {
 
                         // add the image chunk to cache
                         {
-                            const auto &chunk = slot.prompt_tokens.find_chunk(slot.n_past);
+                            const auto &chunk = slot.prompt_tokens.find_chunk(static_cast<size_t>(slot.n_past));
                             slot.cache_tokens.push_back(chunk.get()); // copy
                         }
 

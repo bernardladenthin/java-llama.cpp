@@ -97,7 +97,7 @@ set(GGML_AVX512  OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b8854
+	GIT_TAG        b8887
 )
 FetchContent_MakeAvailable(llama.cpp)
 
@@ -208,10 +208,19 @@ if(NOT JNI_INCLUDE_DIRS)
 endif()
 endif()
 
-add_library(jllama SHARED src/main/cpp/jllama.cpp src/main/cpp/server.hpp src/main/cpp/utils.hpp)
+add_library(jllama SHARED
+    src/main/cpp/jllama.cpp
+    src/main/cpp/server.hpp
+    src/main/cpp/utils.hpp
+    ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
+    ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp)
 
 set_target_properties(jllama PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_include_directories(jllama PRIVATE src/main/cpp ${JNI_INCLUDE_DIRS} ${llama.cpp_SOURCE_DIR}/tools/mtmd)
+target_include_directories(jllama PRIVATE
+    src/main/cpp
+    ${JNI_INCLUDE_DIRS}
+    ${llama.cpp_SOURCE_DIR}/tools/mtmd
+    ${llama.cpp_SOURCE_DIR}/tools/server)
 target_link_libraries(jllama PRIVATE llama-common mtmd llama nlohmann_json)
 target_compile_features(jllama PRIVATE cxx_std_11)
 
@@ -258,7 +267,8 @@ if(BUILD_TESTING)
         src/test/cpp/test_server.cpp
         src/test/cpp/test_jni_helpers.cpp
         src/test/cpp/test_json_helpers.cpp
-    )
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp)
 
     target_include_directories(jllama_test PRIVATE
         src/main/cpp
@@ -266,6 +276,7 @@ if(BUILD_TESTING)
         ${llama.cpp_SOURCE_DIR}/tools/mtmd
         # jni.h / jni_md.h needed by jni_helpers.hpp (mock JNI tests, no JVM required)
         ${JNI_INCLUDE_DIRS}
+        ${llama.cpp_SOURCE_DIR}/tools/server
     )
     target_link_libraries(jllama_test PRIVATE llama-common mtmd llama nlohmann_json GTest::gtest_main)
     target_compile_features(jllama_test PRIVATE cxx_std_17)

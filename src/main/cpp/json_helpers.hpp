@@ -121,7 +121,7 @@
         responses.push_back(result->to_json());
     }
     if (oaicompat == OAICOMPAT_TYPE_EMBEDDING) {
-        return format_embeddings_response_oaicompat(body, responses, use_base64);
+        return format_embeddings_response_oaicompat(body, json_value(body, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), responses, use_base64);
     }
     return responses;
 }

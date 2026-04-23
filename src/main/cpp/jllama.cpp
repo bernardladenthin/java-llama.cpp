@@ -779,8 +779,8 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
 
     // print sample chat example to make it clear which template is used
     LOG_INF("%s: chat template, chat_template: %s, example_format: '%s'\n", __func__,
-            common_chat_templates_source(ctx_server->chat_templates.get()).c_str(),
-            common_chat_format_example(ctx_server->chat_templates.get(), ctx_server->params_base.use_jinja, ctx_server->params_base.default_template_kwargs).c_str());
+            common_chat_templates_source(ctx_server->oai_parser_opt.tmpls.get()).c_str(),
+            common_chat_format_example(ctx_server->oai_parser_opt.tmpls.get(), ctx_server->params_base.use_jinja, ctx_server->params_base.default_template_kwargs).c_str());
 
     ctx_server->queue_tasks.on_new_task(
         std::bind(&server_context::process_single_task, ctx_server, std::placeholders::_1));
@@ -912,12 +912,12 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
     auto document_vector = std::vector<std::string>(document_array, document_array + amount_documents);
     free_string_array(document_array, amount_documents);
 
-    std::vector<llama_tokens> tokenized_docs = tokenize_input_prompts(ctx_server->vocab, document_vector, true, true);
+    std::vector<server_tokens> tokenized_docs = tokenize_input_prompts(ctx_server->vocab, nullptr, document_vector, true, true);
 
     tasks.reserve(tokenized_docs.size());
     for (size_t i = 0; i < tokenized_docs.size(); i++) {
         append_task(ctx_server, tasks, SERVER_TASK_TYPE_RERANK,
-                    format_rerank(ctx_server->vocab, tokenized_query, tokenized_docs[i]), i);
+                    format_rerank(ctx_server->vocab, tokenized_query, tokenized_docs[i].get_tokens()), i);
     }
     std::vector<server_task_result_ptr> results;
     if (!dispatch_and_collect(env, ctx_server, std::move(tasks), results)) return nullptr;
@@ -983,9 +983,9 @@ JNIEXPORT jintArray JNICALL Java_de_kherud_llama_LlamaModel_encode(JNIEnv *env, 
 static std::string detokenize(const server_context *ctx_server,
                                const std::vector<llama_token> &tokens) {
     if (!ctx_server->is_vocab_only()) {
-        return tokens_to_str(ctx_server->ctx, tokens.cbegin(), tokens.cend());
+        return tokens_to_str(ctx_server->ctx, tokens);
     }
-    return tokens_to_str(ctx_server->vocab, tokens.cbegin(), tokens.cend());
+    return tokens_to_str(ctx_server->vocab, tokens);
 }
 
 JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv *env, jobject obj,
@@ -1115,13 +1115,13 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
 
     // Format the infill prompt
     std::string prompt = json_value(data, "prompt", std::string());
-    std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, prompt, false, true);
+    std::vector<server_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, nullptr, prompt, false, true);
 
     data["prompt"] = format_infill(ctx_server->vocab, data.at("input_prefix"), data.at("input_suffix"),
                                    data.at("input_extra"), ctx_server->params_base.n_batch,
                                    ctx_server->params_base.n_predict, ctx_server->slots[0].n_ctx,
                                    ctx_server->params_base.spm_infill,
-                                   tokenized_prompts.empty() ? llama_tokens() : tokenized_prompts[0]);
+                                   tokenized_prompts.empty() ? llama_tokens() : tokenized_prompts[0].get_tokens());
 
     return dispatch_completion_and_serialize(env, ctx_server, data,
                                              SERVER_TASK_TYPE_INFILL, OAICOMPAT_TYPE_NONE);
@@ -1155,10 +1155,10 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
     }
     if (force_no_oaicompat) oaicompat = OAICOMPAT_TYPE_NONE;
 
-    std::vector<llama_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, prompt, true, true);
+    std::vector<server_tokens> tokenized_prompts = tokenize_input_prompts(ctx_server->vocab, nullptr, prompt, true, true);
 
     for (const auto &tokens : tokenized_prompts) {
-        if (tokens.empty()) {
+        if (tokens.get_tokens().empty()) {
             env->ThrowNew(c_llama_error, "Input content cannot be empty");
             return nullptr;
         }
@@ -1168,7 +1168,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
     tasks.reserve(tokenized_prompts.size());
 
     for (size_t i = 0; i < tokenized_prompts.size(); i++) {
-        append_task(ctx_server, tasks, SERVER_TASK_TYPE_EMBEDDING, tokenized_prompts[i], i, oaicompat);
+        append_task(ctx_server, tasks, SERVER_TASK_TYPE_EMBEDDING, tokenized_prompts[i].get_tokens(), i, oaicompat);
     }
 
     std::vector<server_task_result_ptr> results;
