@@ -1801,7 +1801,7 @@ struct server_context {
     float slot_prompt_similarity = 0.0f;
 
     common_chat_templates_ptr chat_templates;
-    oaicompat_parser_options oai_parser_opt;
+    server_chat_params oai_parser_opt;
 
     // Returns true when the model was loaded in vocab-only mode:
     // the vocabulary is available but no inference context was created.
@@ -2010,15 +2010,13 @@ struct server_context {
 
         metrics.init();
 
-        oai_parser_opt = {
-            /* use_jinja             */ params_base.use_jinja,
-            /* prefill_assistant     */ params_base.prefill_assistant,
-            /* reasoning_format      */ params_base.reasoning_format,
-            /* common_chat_templates */ chat_templates.get(),
-            /* allow_image           */ mctx ? mtmd_support_vision(mctx) : false,
-            /* allow_audio           */ mctx ? mtmd_support_audio(mctx) : false,
-            /* enable_thinking       */ params_base.sampling.reasoning_budget_tokens != 0,
-        };
+        oai_parser_opt.use_jinja         = params_base.use_jinja;
+        oai_parser_opt.prefill_assistant = params_base.prefill_assistant;
+        oai_parser_opt.reasoning_format  = params_base.reasoning_format;
+        oai_parser_opt.tmpls             = chat_templates;
+        oai_parser_opt.allow_image       = mctx ? mtmd_support_vision(mctx) : false;
+        oai_parser_opt.allow_audio       = mctx ? mtmd_support_audio(mctx) : false;
+        oai_parser_opt.enable_thinking   = params_base.sampling.reasoning_budget_tokens != 0;
     }
 
     server_slot *get_slot_by_id(int id) {

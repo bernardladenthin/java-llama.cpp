@@ -1002,42 +1002,42 @@ json make_chat_body_with_messages(const json &messages_override = json::array({
     return json{{"messages", messages_override}};
 }
 
-oaicompat_parser_options make_no_jinja_opts() {
-    oaicompat_parser_options opt;
+server_chat_params make_no_jinja_opts() {
+    server_chat_params opt;
     opt.use_jinja = false;
-    opt.tmpls = nullptr;
+    // tmpls: shared_ptr default-constructs to nullptr — no explicit set needed
     return opt;
 }
 } // namespace
 
 TEST(OaicompatChatParams, MissingMessages_Throws) {
     json body = {{"model", "x"}};
-    oaicompat_parser_options opt = make_no_jinja_opts();
+    server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, MessagesNotArray_Throws) {
     json body = {{"messages", "not-an-array"}};
-    oaicompat_parser_options opt = make_no_jinja_opts();
+    server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, NonAssistantMissingContent_Throws) {
     // user message with no "content" field
     json body = {{"messages", json::array({{{"role", "user"}}})}};
-    oaicompat_parser_options opt = make_no_jinja_opts();
+    server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, AssistantMissingBothContentAndToolCalls_Throws) {
     // assistant message must have content OR tool_calls
     json body = {{"messages", json::array({{{"role", "assistant"}}})}};
-    oaicompat_parser_options opt = make_no_jinja_opts();
+    server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, ToolsWithoutJinja_Throws) {
@@ -1045,9 +1045,9 @@ TEST(OaicompatChatParams, ToolsWithoutJinja_Throws) {
         {"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
         {"tools", json::array({{{"type", "function"}}})}
     };
-    oaicompat_parser_options opt = make_no_jinja_opts();
+    server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, NonAutoToolChoiceWithoutJinja_Throws) {
@@ -1055,9 +1055,9 @@ TEST(OaicompatChatParams, NonAutoToolChoiceWithoutJinja_Throws) {
         {"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
         {"tool_choice", "none"}
     };
-    oaicompat_parser_options opt = make_no_jinja_opts();
+    server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, GrammarAndJsonSchema_Throws) {
@@ -1066,9 +1066,9 @@ TEST(OaicompatChatParams, GrammarAndJsonSchema_Throws) {
         {"grammar", "root ::= [a-z]+"},
         {"json_schema", {{"type", "object"}}}
     };
-    oaicompat_parser_options opt = make_no_jinja_opts();
+    server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, InvalidResponseFormatType_Throws) {
@@ -1076,9 +1076,9 @@ TEST(OaicompatChatParams, InvalidResponseFormatType_Throws) {
         {"messages", json::array({{{"role", "user"}, {"content", "hi"}}})},
         {"response_format", {{"type", "invalid_type"}}}
     };
-    oaicompat_parser_options opt = make_no_jinja_opts();
+    server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, ContentPartTypeUnsupported_Throws) {
@@ -1086,9 +1086,9 @@ TEST(OaicompatChatParams, ContentPartTypeUnsupported_Throws) {
         {"role", "user"},
         {"content", json::array({{{"type", "video_url"}, {"url", "x"}}})}
     }})}};
-    oaicompat_parser_options opt = make_no_jinja_opts();
+    server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, ImageUrlWithoutAllowImage_Throws) {
@@ -1099,18 +1099,18 @@ TEST(OaicompatChatParams, ImageUrlWithoutAllowImage_Throws) {
             {"image_url", {{"url", "data:image/png;base64,abc"}}}
         }})}
     }})}};
-    oaicompat_parser_options opt = make_no_jinja_opts();
+    server_chat_params opt = make_no_jinja_opts();
     opt.allow_image = false;
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, ContentNotStringOrArray_Throws) {
     // content is an integer — not allowed
     json body = {{"messages", json::array({{{"role", "user"}, {"content", 42}}})}};
-    oaicompat_parser_options opt = make_no_jinja_opts();
+    server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::runtime_error);
+    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
 }
 
 // ============================================================
