@@ -229,9 +229,15 @@ static llama_tokens format_infill(const llama_vocab *vocab, const json &input_pr
     return embd_inp;
 }
 
-// Strip an exact-match flag (no value) from an argv array.
-// base64_decode is static-internal in server-common.cpp; keep local copies for use in
-// oaicompat_chat_params_parse below and for test_utils.cpp.
+// clang-format off
+// ---- BEGIN COPY FROM llama.cpp tools/server/server-common.cpp ---------------
+// base64_chars / is_base64 / base64_decode are declared `static` in
+// server-common.cpp (internal linkage). Even though server-common.cpp is
+// compiled into the same shared library, C++ static linkage makes the symbols
+// invisible to every other translation unit — there is no declaration in
+// server-common.h to call through. These copies are therefore unavoidable and
+// must be kept in sync manually whenever llama.cpp upgrades server-common.cpp.
+// Removing them is only possible if upstream moves them to a header as `inline`.
 static const std::string base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
                                         "abcdefghijklmnopqrstuvwxyz"
                                         "0123456789+/";
@@ -268,6 +274,8 @@ static inline raw_buffer base64_decode(const std::string &encoded_string) {
     }
     return ret;
 }
+// ---- END COPY FROM llama.cpp tools/server/server-common.cpp -----------------
+// clang-format on
 
 // Strip an exact-match flag (no value) from an argv array.
 // Returns a new vector of pointers (non-owning) with every occurrence removed.
