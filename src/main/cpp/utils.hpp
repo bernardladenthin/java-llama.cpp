@@ -39,58 +39,6 @@
 #define QUE_ERR(fmt, ...) LOG_ERR("que  %12.*s: " fmt, 12, __func__, __VA_ARGS__)
 #define QUE_DBG(fmt, ...) LOG_DBG("que  %12.*s: " fmt, 12, __func__, __VA_ARGS__)
 
-//
-// tokenizer and input processing utils
-//
-
-/**
- * break the input "prompt" object into multiple prompt if needed, then tokenize them
- * this supports these cases:
- * - "prompt": "string"
- * - "prompt": [12, 34, 56]
- * - "prompt": [12, 34, "string", 56, 78]
- * and multiple prompts (multi-tasks):
- * - "prompt": ["string1", "string2"]
- * - "prompt": ["string1", [12, 34, 56]]
- * - "prompt": [[12, 34, 56], [78, 90, 12]]
- * - "prompt": [[12, 34, "string", 56, 78], [12, 34, 56]]
- *
- * Overload without mtmd_context: returns plain llama_tokens instead of server_tokens.
- * Used by jni_helpers.hpp for non-multimodal inference paths.
- */
-static std::vector<llama_tokens> tokenize_input_prompts(const llama_vocab *vocab, const json &json_prompt,
-                                                        bool add_special, bool parse_special) {
-    std::vector<llama_tokens> result;
-    if (json_prompt.is_string() || json_is_array_of_mixed_numbers_strings(json_prompt)) {
-        // string or mixed
-        result.push_back(tokenize_mixed(vocab, json_prompt, add_special, parse_special));
-    } else if (json_is_array_of_numbers(json_prompt)) {
-        // array of tokens
-        result.push_back(json_prompt.get<llama_tokens>());
-    } else if (json_prompt.is_array()) {
-        // array of prompts
-        result.reserve(json_prompt.size());
-        for (const auto &p : json_prompt) {
-            if (p.is_string() || json_is_array_of_mixed_numbers_strings(p)) {
-                result.push_back(tokenize_mixed(vocab, p, add_special, parse_special));
-            } else if (json_is_array_of_numbers(p)) {
-                // array of tokens
-                result.push_back(p.get<llama_tokens>());
-            } else {
-                throw std::runtime_error(
-                    "element of \"prompt\" must be a string, an list of tokens, or a list of mixed strings & tokens");
-            }
-        }
-    } else {
-        throw std::runtime_error(
-            "\"prompt\" must be a string, an list of tokens, a list of mixed strings & tokens, or a list of prompts");
-    }
-    if (result.empty()) {
-        throw std::runtime_error("\"prompt\" must not be empty");
-    }
-    return result;
-}
-
 // ---------------------------------------------------------------------------
 // Token-piece JSON serialisation helpers
 //
@@ -627,74 +575,6 @@ static json oaicompat_chat_params_parse(json &body, /* openai api json semantics
     }
 
     return llama_params;
-}
-
-static json format_embeddings_response_oaicompat(const json &request, const json &embeddings, bool use_base64 = false) {
-    json data = json::array();
-    int32_t n_tokens = 0;
-    int i = 0;
-    for (const auto &elem : embeddings) {
-        json embedding_obj;
-
-        if (use_base64) {
-            const auto &vec = json_value(elem, "embedding", json::array()).get<std::vector<float>>();
-            const char *data_ptr = reinterpret_cast<const char *>(vec.data());
-            size_t data_size = vec.size() * sizeof(float);
-            embedding_obj = {{"embedding", base64::encode(data_ptr, data_size)},
-                             {"index", i++},
-                             {"object", "embedding"},
-                             {"encoding_format", "base64"}};
-        } else {
-            embedding_obj = {
-                {"embedding", json_value(elem, "embedding", json::array())}, {"index", i++}, {"object", "embedding"}};
-        }
-        data.push_back(embedding_obj);
-
-        n_tokens += json_value(elem, "tokens_evaluated", 0);
-    }
-
-    json res = json{{"model", json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL))},
-                    {"object", "list"},
-                    {"usage", json{{"prompt_tokens", n_tokens}, {"total_tokens", n_tokens}}},
-                    {"data", data}};
-
-    return res;
-}
-
-static json format_response_rerank(const json &request, const json &ranks, bool is_tei_format,
-                                   std::vector<std::string> &texts, int top_n) {
-    int32_t n_tokens = 0;
-    bool return_text = is_tei_format && json_value(request, "return_text", false);
-    std::vector<json> elements;
-    std::string score_label = is_tei_format ? "score" : "relevance_score";
-    for (const auto &rank : ranks) {
-        int index = json_value(rank, "index", 0);
-        json elem = json{
-            {"index", index},
-            {score_label, json_value(rank, "score", 0.0)},
-        };
-        n_tokens += json_value(rank, "tokens_evaluated", 0);
-        if (return_text) {
-            elem["text"] = std::move(texts[index]);
-        }
-        elements.push_back(elem);
-    }
-
-    std::sort(elements.begin(), elements.end(), [score_label](const json &a, const json &b) {
-        return json_value(a, score_label, 0.0) > json_value(b, score_label, 0.0);
-    });
-
-    elements.resize(std::min(top_n, (int) elements.size()));
-    json results = elements;
-
-    if (is_tei_format) return results;
-
-    json res = json{{"model", json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL))},
-                   {"object", "list"},
-                   {"usage", json{{"prompt_tokens", n_tokens}, {"total_tokens", n_tokens}}},
-                   {"results", results}};
-
-    return res;
 }
 
 static json format_tokenizer_response(const json &tokens) { return json{{"tokens", tokens}}; }

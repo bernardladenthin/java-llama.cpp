@@ -237,7 +237,7 @@ TEST(FormatResponseRerank, JinaFormat_WrapperStructure) {
     json ranks   = json::array({make_rank(0, 0.5), make_rank(1, 0.9)});
     std::vector<std::string> texts = {"doc0", "doc1"};
 
-    json res = format_response_rerank(request, ranks, /*is_tei=*/false, texts, /*top_n=*/2);
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, /*is_tei=*/false, texts, /*top_n=*/2);
 
     EXPECT_EQ(res.at("model").get<std::string>(),  "my-reranker");
     EXPECT_EQ(res.at("object").get<std::string>(), "list");
@@ -251,7 +251,7 @@ TEST(FormatResponseRerank, JinaFormat_UsesRelevanceScoreLabel) {
     json ranks   = json::array({make_rank(0, 0.7)});
     std::vector<std::string> texts = {"doc"};
 
-    json res = format_response_rerank(request, ranks, false, texts, 1);
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, false, texts, 1);
 
     EXPECT_TRUE(res.at("results")[0].contains("relevance_score"));
     EXPECT_FALSE(res.at("results")[0].contains("score"));
@@ -263,7 +263,7 @@ TEST(FormatResponseRerank, JinaFormat_SortedDescendingByScore) {
     json ranks = json::array({make_rank(0, 0.3), make_rank(1, 0.9), make_rank(2, 0.1)});
     std::vector<std::string> texts = {"a", "b", "c"};
 
-    json res = format_response_rerank(request, ranks, false, texts, 3);
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, false, texts, 3);
 
     auto &results = res.at("results");
     EXPECT_EQ(results[0].at("index").get<int>(), 1); // highest: 0.9
@@ -276,7 +276,7 @@ TEST(FormatResponseRerank, TopN_LimitsResultCount) {
     json ranks   = json::array({make_rank(0, 0.5), make_rank(1, 0.9), make_rank(2, 0.1)});
     std::vector<std::string> texts = {"a", "b", "c"};
 
-    json res = format_response_rerank(request, ranks, false, texts, /*top_n=*/1);
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, false, texts, /*top_n=*/1);
 
     EXPECT_EQ(res.at("results").size(), 1u);
     // The single returned result must be the highest-scoring one
@@ -289,7 +289,7 @@ TEST(FormatResponseRerank, TopN_Two_KeepsTopTwo) {
         make_rank(0, 0.1), make_rank(1, 0.9), make_rank(2, 0.5), make_rank(3, 0.7)});
     std::vector<std::string> texts = {"a", "b", "c", "d"};
 
-    json res = format_response_rerank(request, ranks, false, texts, 2);
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, false, texts, 2);
 
     EXPECT_EQ(res.at("results").size(), 2u);
     EXPECT_EQ(res.at("results")[0].at("index").get<int>(), 1); // 0.9
@@ -301,7 +301,7 @@ TEST(FormatResponseRerank, TopN_LargerThanCount_ReturnsAll) {
     json ranks   = json::array({make_rank(0, 0.8), make_rank(1, 0.2)});
     std::vector<std::string> texts = {"x", "y"};
 
-    json res = format_response_rerank(request, ranks, false, texts, /*top_n=*/100);
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, false, texts, /*top_n=*/100);
 
     EXPECT_EQ(res.at("results").size(), 2u);
 }
@@ -311,7 +311,7 @@ TEST(FormatResponseRerank, TokenCounting_Accumulated) {
     json ranks   = json::array({make_rank(0, 0.5, 15), make_rank(1, 0.9, 25)});
     std::vector<std::string> texts = {"a", "b"};
 
-    json res = format_response_rerank(request, ranks, false, texts, 2);
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, false, texts, 2);
 
     EXPECT_EQ(res.at("usage").at("prompt_tokens").get<int>(), 40); // 15 + 25
     EXPECT_EQ(res.at("usage").at("total_tokens").get<int>(),  40);
@@ -322,7 +322,7 @@ TEST(FormatResponseRerank, TeiFormat_ReturnsArrayDirectly) {
     json ranks   = json::array({make_rank(0, 0.8), make_rank(1, 0.3)});
     std::vector<std::string> texts = {"x", "y"};
 
-    json res = format_response_rerank(request, ranks, /*is_tei=*/true, texts, 2);
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, /*is_tei=*/true, texts, 2);
 
     EXPECT_TRUE(res.is_array()); // no outer wrapper object
     EXPECT_EQ(res.size(), 2u);
@@ -333,7 +333,7 @@ TEST(FormatResponseRerank, TeiFormat_UsesScoreLabel) {
     json ranks   = json::array({make_rank(0, 0.8)});
     std::vector<std::string> texts = {"doc"};
 
-    json res = format_response_rerank(request, ranks, true, texts, 1);
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, true, texts, 1);
 
     ASSERT_TRUE(res.is_array());
     EXPECT_TRUE(res[0].contains("score"));
@@ -345,7 +345,7 @@ TEST(FormatResponseRerank, TeiFormat_ReturnText_IncludesDocumentText) {
     json ranks   = json::array({make_rank(0, 0.9)});
     std::vector<std::string> texts = {"my document content"};
 
-    json res = format_response_rerank(request, ranks, true, texts, 1);
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, true, texts, 1);
 
     ASSERT_TRUE(res.is_array());
     EXPECT_TRUE(res[0].contains("text"));
@@ -357,7 +357,7 @@ TEST(FormatResponseRerank, TeiFormat_NoReturnText_NoTextField) {
     json ranks   = json::array({make_rank(0, 0.9)});
     std::vector<std::string> texts = {"doc"};
 
-    json res = format_response_rerank(request, ranks, true, texts, 1);
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, true, texts, 1);
 
     ASSERT_TRUE(res.is_array());
     EXPECT_FALSE(res[0].contains("text"));
@@ -368,7 +368,7 @@ TEST(FormatResponseRerank, TeiFormat_SortedDescendingByScore) {
     json ranks   = json::array({make_rank(0, 0.1), make_rank(1, 0.9), make_rank(2, 0.5)});
     std::vector<std::string> texts = {"a", "b", "c"};
 
-    json res = format_response_rerank(request, ranks, true, texts, 3);
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, true, texts, 3);
 
     ASSERT_TRUE(res.is_array());
     EXPECT_EQ(res[0].at("index").get<int>(), 1); // 0.9
@@ -869,7 +869,7 @@ json make_embedding_elem(const std::vector<float> &vec, int tokens = 4) {
 TEST(FormatEmbeddingsResponse, SingleEmbedding_Fields) {
     const json request = {{"model", "test-model"}};
     const json embeddings = json::array({make_embedding_elem({0.1f, 0.2f, 0.3f})});
-    const json res = format_embeddings_response_oaicompat(request, embeddings);
+    const json res = format_embeddings_response_oaicompat(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), embeddings);
     EXPECT_EQ(res.at("object").get<std::string>(), "list");
     EXPECT_EQ(res.at("model").get<std::string>(), "test-model");
     EXPECT_EQ(res.at("data").size(), 1u);
@@ -880,7 +880,7 @@ TEST(FormatEmbeddingsResponse, SingleEmbedding_Fields) {
 TEST(FormatEmbeddingsResponse, TokensAccumulated) {
     const json request = {};
     const json embeddings = json::array({make_embedding_elem({1.0f}, 3), make_embedding_elem({2.0f}, 7)});
-    const json res = format_embeddings_response_oaicompat(request, embeddings);
+    const json res = format_embeddings_response_oaicompat(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), embeddings);
     EXPECT_EQ(res.at("usage").at("prompt_tokens").get<int>(), 10);
     EXPECT_EQ(res.at("usage").at("total_tokens").get<int>(), 10);
 }
@@ -892,7 +892,7 @@ TEST(FormatEmbeddingsResponse, MultipleEmbeddings_IndicesIncrement) {
         make_embedding_elem({0.2f}),
         make_embedding_elem({0.3f}),
     });
-    const json res = format_embeddings_response_oaicompat(request, embeddings);
+    const json res = format_embeddings_response_oaicompat(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), embeddings);
     EXPECT_EQ(res.at("data").size(), 3u);
     EXPECT_EQ(res.at("data")[0].at("index").get<int>(), 0);
     EXPECT_EQ(res.at("data")[1].at("index").get<int>(), 1);
@@ -902,7 +902,7 @@ TEST(FormatEmbeddingsResponse, MultipleEmbeddings_IndicesIncrement) {
 TEST(FormatEmbeddingsResponse, Base64Format_EncodingFormatField) {
     const json request = {};
     const json embeddings = json::array({make_embedding_elem({1.0f, 0.0f})});
-    const json res = format_embeddings_response_oaicompat(request, embeddings, /*use_base64=*/true);
+    const json res = format_embeddings_response_oaicompat(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), embeddings, /*use_base64=*/true);
     const json &elem = res.at("data")[0];
     EXPECT_TRUE(elem.contains("encoding_format"));
     EXPECT_EQ(elem.at("encoding_format").get<std::string>(), "base64");

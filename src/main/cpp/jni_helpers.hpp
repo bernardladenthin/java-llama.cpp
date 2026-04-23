@@ -219,8 +219,8 @@ struct jllama_context {
     try {
         const auto &prompt = data.at("prompt"); // throws before ctx_server is touched
 
-        std::vector<llama_tokens> tokenized_prompts =
-            tokenize_input_prompts(ctx_server->vocab, prompt, true, true);
+        std::vector<server_tokens> tokenized_prompts =
+            tokenize_input_prompts(ctx_server->vocab, nullptr, prompt, true, true);
 
         tasks.reserve(tokenized_prompts.size());
         for (size_t i = 0; i < tokenized_prompts.size(); i++) {
@@ -228,7 +228,7 @@ struct jllama_context {
             task.id    = ctx_server->queue_tasks.get_new_id();
             task.index = i;
 
-            task.prompt_tokens    = server_tokens(tokenized_prompts[i], false);
+            task.prompt_tokens    = std::move(tokenized_prompts[i]);
             task.params           = server_task::params_from_json_cmpl(
                                         ctx_server->ctx, ctx_server->params_base, data);
             task.id_selected_slot = json_value(data, "id_slot", -1);
