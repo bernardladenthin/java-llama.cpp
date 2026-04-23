@@ -313,23 +313,10 @@ static json format_logit_bias(const std::vector<llama_logit_bias> &logit_bias) {
 static std::vector<common_adapter_lora_info> parse_lora_request(const std::vector<common_adapter_lora_info> &lora_base,
                                                                 const json &data) {
     std::vector<common_adapter_lora_info> lora(lora_base);
-    int max_idx = lora.size();
-
-    // clear existing value
-    for (auto &entry : lora) {
-        entry.scale = 0.0f;
+    for (auto &e : lora) e.scale = 0.0f;
+    for (const auto &[id, scale] : parse_lora_request(data)) {  // upstream: extracts id->scale map
+        if (id < 0 || id >= (int)lora.size()) throw std::runtime_error("invalid adapter id");
+        lora[id].scale = scale;
     }
-
-    // set value
-    for (const auto &entry : data) {
-        int id = json_value(entry, "id", -1);
-        float scale = json_value(entry, "scale", 0.0f);
-        if (0 <= id && id < max_idx) {
-            lora[id].scale = scale;
-        } else {
-            throw std::runtime_error("invalid adapter id");
-        }
-    }
-
     return lora;
 }
