@@ -262,12 +262,15 @@ if(BUILD_TESTING)
         src/test/cpp/test_server.cpp
         src/test/cpp/test_jni_helpers.cpp
         src/test/cpp/test_json_helpers.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp
     )
 
     target_include_directories(jllama_test PRIVATE
         src/main/cpp
         # mtmd.h is not always propagated transitively — add it explicitly
         ${llama.cpp_SOURCE_DIR}/tools/mtmd
+        # server-chat.cpp needs tools/server headers (server-common.h etc.)
+        ${llama.cpp_SOURCE_DIR}/tools/server
         # jni.h / jni_md.h needed by jni_helpers.hpp (mock JNI tests, no JVM required)
         ${JNI_INCLUDE_DIRS}
     )

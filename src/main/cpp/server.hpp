@@ -1,5 +1,4 @@
 #include "chat.h"
-#include "server-chat.h"
 #include "utils.hpp"
 
 #include "arg.h"
@@ -27,6 +26,10 @@
 #include <unordered_set>
 
 using json = nlohmann::ordered_json;
+
+// Implemented in tools/server/server-chat.cpp (compiled into jllama / jllama_test).
+// Forward-declared here to avoid pulling in server-common.h which conflicts with utils.hpp.
+json server_chat_msg_diff_to_json_oaicompat(const common_chat_msg_diff & diff);
 
 constexpr int HTTP_POLLING_SECONDS = 1;
 
