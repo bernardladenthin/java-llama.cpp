@@ -215,6 +215,20 @@ add_library(jllama SHARED
     ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp)
 
+# Phase 1 refactoring: compile upstream server library units directly into jllama
+# so Phase 2+ can replace server.hpp with thin includes of these headers.
+# server-http.cpp and server.cpp (main) are intentionally excluded.
+# Android uses posix_spawn_* which NDK doesn't implement; exclude server-models
+# (which pulls in subprocess.h via server-tools) on Android.
+if(NOT ANDROID_ABI)
+    target_sources(jllama PRIVATE
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-queue.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-task.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-models.cpp
+    )
+endif()
+
 set_target_properties(jllama PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(jllama PRIVATE
     src/main/cpp
