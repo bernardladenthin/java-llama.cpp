@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b8887**
+Current llama.cpp pinned version: **b8913**
 
 ## Upgrading CUDA Version
 
@@ -137,7 +137,7 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 `ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
-**Known breaking changes by version range** (b5022 → b8887):
+**Known breaking changes by version range** (b5022 → b8913):
 
 | Version | File | Change |
 |---------|------|--------|
@@ -162,6 +162,12 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b8854–b8887 | `common/chat.h` | `common_chat_msg_diff_to_json_oaicompat` removed; moved to `tools/server/server-chat.cpp`; project defines it locally in `server.hpp` — importing server-chat.cpp is impractical because it pulls in `convert_transcriptions_to_chatcmpl` → `get_media_marker` → `server-common.cpp` |
 | ~b8854–b8887 | `common/common.h` | `common_params::reasoning_budget` and `reasoning_budget_message` moved into `common_params::sampling` sub-struct as `reasoning_budget_tokens`; update: `params_base.reasoning_budget` → `params_base.sampling.reasoning_budget_tokens` |
 | ~b8854–b8887 | `common/fit.h` (new) | `llama_params_fit` and `llama_memory_breakdown_print` removed from `include/llama.h`; now `common_fit_params` / `common_memory_breakdown_print` in new `common/fit.h`; not used directly by project |
+| ~b8887–b8913 | `tools/server/server-chat.h` | `convert_transcriptions_to_chatcmpl` gained a new `const common_chat_templates * tmpls` second parameter; not called by project's `server.hpp` — handled automatically by upstream `server-chat.cpp` |
+| ~b8887–b8913 | `tools/server/server-task.cpp` | `n_discard` clamped to non-negative: `params.n_discard = std::max(0, params.n_discard)`; applied in project's `server.hpp` after the `json_value` parse |
+| ~b8887–b8913 | `tools/server/server-common.cpp` | `parallel_tool_calls` now defaults to `caps["supports_parallel_tool_calls"]` instead of hardcoded `false`; handled automatically by upstream file |
+| ~b8887–b8913 | `common/chat.h` | New additive `common_chat_prompt_preset` struct and `common_chat_get_asr_prompt()` function; no project changes required |
+| ~b8887–b8913 | `common/common.h` | New `string_starts_with(std::string_view, char)` overload added; no project changes required |
+| ~b8887–b8913 | `tools/mtmd/mtmd.cpp` | Added `LLAMA_ROPE_TYPE_NONE` case to rope-type switch; internal fix, no project changes required |
 
 ## Build Commands
 
