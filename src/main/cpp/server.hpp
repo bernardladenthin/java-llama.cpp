@@ -238,17 +238,20 @@ struct server_task {
         slot_params defaults;
         defaults.sampling = params_base.sampling;
         defaults.speculative = params_base.speculative;
-        defaults.n_keep = params_base.n_keep;
-        defaults.antiprompt = params_base.antiprompt;
+        defaults.n_keep      = params_base.n_keep;
+        defaults.n_predict   = params_base.n_predict;
+        defaults.cache_prompt = params_base.cache_prompt;
+        defaults.antiprompt  = params_base.antiprompt;
 
         // enabling this will output extra debug information in the HTTP responses from the server
         params.verbose = params_base.verbosity > 9;
         params.timings_per_token = json_value(data, "timings_per_token", false);
 
         params.stream = json_value(data, "stream", false);
-        params.cache_prompt = json_value(data, "cache_prompt", true);
+        params.cache_prompt = json_value(data, "cache_prompt", defaults.cache_prompt);
         params.return_tokens = json_value(data, "return_tokens", false);
-        params.n_predict = json_value(data, "n_predict", json_value(data, "max_tokens", defaults.n_predict));
+        auto max_tokens  = json_value(data, "max_tokens", defaults.n_predict);
+        params.n_predict = json_value(data, "n_predict",  json_value(data, "max_completion_tokens", max_tokens));
         params.n_indent = json_value(data, "n_indent", defaults.n_indent);
         params.n_keep = json_value(data, "n_keep", defaults.n_keep);
         params.n_discard = json_value(data, "n_discard", defaults.n_discard);
@@ -283,8 +286,13 @@ struct server_task {
         params.sampling.mirostat_eta = json_value(data, "mirostat_eta", defaults.sampling.mirostat_eta);
         params.sampling.seed = json_value(data, "seed", defaults.sampling.seed);
         params.sampling.n_probs = json_value(data, "n_probs", defaults.sampling.n_probs);
-        params.sampling.min_keep = json_value(data, "min_keep", defaults.sampling.min_keep);
-        params.post_sampling_probs = json_value(data, "post_sampling_probs", defaults.post_sampling_probs);
+        params.sampling.min_keep         = json_value(data, "min_keep",          defaults.sampling.min_keep);
+        params.sampling.adaptive_target  = json_value(data, "adaptive_target",   defaults.sampling.adaptive_target);
+        params.sampling.adaptive_decay   = json_value(data, "adaptive_decay",    defaults.sampling.adaptive_decay);
+        params.post_sampling_probs       = json_value(data, "post_sampling_probs", defaults.post_sampling_probs);
+        params.sampling.backend_sampling = json_value(data, "backend_sampling",  defaults.sampling.backend_sampling);
+
+        params.speculative = defaults.speculative;
 
         params.speculative.n_min = json_value(data, "speculative.n_min", defaults.speculative.n_min);
         params.speculative.n_max = json_value(data, "speculative.n_max", defaults.speculative.n_max);
@@ -293,6 +301,16 @@ struct server_task {
         params.speculative.n_min = std::min(params.speculative.n_max, params.speculative.n_min);
         params.speculative.n_min = std::max(params.speculative.n_min, 0);
         params.speculative.n_max = std::max(params.speculative.n_max, 0);
+
+        params.speculative.type = common_speculative_type_from_name(json_value(data, "speculative.type", common_speculative_type_to_str(defaults.speculative.type)));
+
+        params.speculative.ngram_size_n   = json_value(data, "speculative.ngram_size_n", defaults.speculative.ngram_size_n);
+        params.speculative.ngram_size_m   = json_value(data, "speculative.ngram_size_m", defaults.speculative.ngram_size_m);
+        params.speculative.ngram_min_hits = json_value(data, "speculative.ngram_m_hits", defaults.speculative.ngram_min_hits);
+
+        params.speculative.ngram_size_n   = std::max(std::min(1, (int) params.speculative.ngram_size_n),   1024);
+        params.speculative.ngram_size_m   = std::max(std::min(1, (int) params.speculative.ngram_size_m),   1024);
+        params.speculative.ngram_min_hits = std::max(std::min(1, (int) params.speculative.ngram_min_hits), 1024);
 
         // Use OpenAI API logprobs only if n_probs wasn't provided
         if (data.contains("logprobs") && params.sampling.n_probs == defaults.sampling.n_probs) {
@@ -358,16 +376,18 @@ struct server_task {
                 throw std::runtime_error(std::string("\"json_schema\": ") + e.what());
             }
         } else {
-            {
-                const std::string grammar_str =
-                    json_value(data, "grammar", common_grammar_value(defaults.sampling.grammar));
-                if (!grammar_str.empty()) {
-                    params.sampling.grammar = {COMMON_GRAMMAR_TYPE_USER, grammar_str};
+            params.sampling.grammar = defaults.sampling.grammar;
+
+            std::string grammar_str = json_value(data, "grammar", std::string());
+            if (!grammar_str.empty()) {
+                std::string grammar_type = json_value(data, "grammar_type", std::string());
+                if (grammar_type == "tool_calls") {
+                    params.sampling.grammar = {COMMON_GRAMMAR_TYPE_TOOL_CALLS, grammar_str};
                 } else {
-                    params.sampling.grammar = {};
+                    params.sampling.grammar = {COMMON_GRAMMAR_TYPE_USER, grammar_str};
                 }
+                SRV_DBG("Grammar (%s): %s\n", grammar_type.c_str(), common_grammar_value(params.sampling.grammar).c_str());
             }
-            SRV_DBG("Grammar: %s\n", common_grammar_value(params.sampling.grammar).c_str());
             params.sampling.grammar_lazy = json_value(data, "grammar_lazy", defaults.sampling.grammar_lazy);
             SRV_DBG("Grammar lazy: %s\n", params.sampling.grammar_lazy ? "true" : "false");
         }
@@ -380,11 +400,20 @@ struct server_task {
             } else {
                 params.oaicompat_chat_syntax.format = defaults.oaicompat_chat_syntax.format;
             }
-            params.oaicompat_chat_syntax.reasoning_format = params_base.reasoning_format;
+            common_reasoning_format reasoning_format = params_base.reasoning_format;
+            if (data.contains("reasoning_format")) {
+                reasoning_format = common_reasoning_format_from_name(data.at("reasoning_format").get<std::string>());
+            }
+            params.oaicompat_chat_syntax.reasoning_format = reasoning_format;
             params.oaicompat_chat_syntax.reasoning_in_content =
-                params.stream && (params_base.reasoning_format == COMMON_REASONING_FORMAT_DEEPSEEK_LEGACY);
+                params.stream && (reasoning_format == COMMON_REASONING_FORMAT_DEEPSEEK_LEGACY);
             params.oaicompat_chat_syntax.generation_prompt = json_value(data, "generation_prompt", std::string());
+            params.sampling.generation_prompt = params.oaicompat_chat_syntax.generation_prompt;
+            SRV_DBG("Generation prompt: '%s'\n", params.oaicompat_chat_syntax.generation_prompt.c_str());
             params.oaicompat_chat_syntax.parse_tool_calls = json_value(data, "parse_tool_calls", false);
+            if (data.contains("chat_parser")) {
+                params.oaicompat_chat_syntax.parser.load(data.at("chat_parser").get<std::string>());
+            }
         }
 
         {
@@ -442,6 +471,29 @@ struct server_task {
             }
             if (params.sampling.grammar_lazy && params.sampling.grammar_triggers.empty()) {
                 throw std::runtime_error("Error: no triggers set for lazy grammar!");
+            }
+        }
+
+        // Parse reasoning budget sampler parameters
+        {
+            const int32_t budget = json_value(data, "reasoning_budget_tokens", (int32_t) -1);
+            const auto start_tag = json_value(data, "reasoning_budget_start_tag", std::string());
+            const auto end_tag   = json_value(data, "reasoning_budget_end_tag",   std::string());
+            const auto message   = json_value(data, "reasoning_budget_message",   std::string());
+            params.sampling.reasoning_budget_tokens = budget;
+
+            if (!start_tag.empty()) {
+                params.sampling.reasoning_budget_start = common_tokenize(vocab, start_tag, false, true);
+            }
+            if (!end_tag.empty()) {
+                params.sampling.reasoning_budget_end    = common_tokenize(vocab, end_tag, false, true);
+                params.sampling.reasoning_budget_forced = common_tokenize(vocab, message + end_tag, false, true);
+
+                SRV_DBG("reasoning budget: tokens=%d, generation_prompt='%s', start=%zu toks, end=%zu toks, forced=%zu toks\n",
+                    budget, params.sampling.generation_prompt.c_str(),
+                    params.sampling.reasoning_budget_start.size(),
+                    params.sampling.reasoning_budget_end.size(),
+                    params.sampling.reasoning_budget_forced.size());
             }
         }
 
