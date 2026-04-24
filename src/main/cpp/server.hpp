@@ -239,6 +239,7 @@ struct server_task {
         defaults.sampling = params_base.sampling;
         defaults.speculative = params_base.speculative;
         defaults.n_keep = params_base.n_keep;
+        defaults.antiprompt = params_base.antiprompt;
 
         // enabling this will output extra debug information in the HTTP responses from the server
         params.verbose = params_base.verbosity > 9;
@@ -446,7 +447,6 @@ struct server_task {
 
         {
             params.sampling.logit_bias.clear();
-            params.ignore_eos = json_value(data, "ignore_eos", false);
 
             const auto &logit_bias = data.find("logit_bias");
             if (logit_bias != data.end() && logit_bias->is_array()) {
@@ -476,6 +476,43 @@ struct server_task {
                         }
                     }
                 }
+            } else if (logit_bias != data.end() && logit_bias->is_object()) {
+                const int n_vocab = llama_vocab_n_tokens(vocab);
+                for (const auto &el : logit_bias->items()) {
+                    float bias;
+                    const auto &key   = el.key();
+                    const auto &value = el.value();
+                    if (value.is_number()) {
+                        bias = value.get<float>();
+                    } else if (value.is_boolean() && !value.get<bool>()) {
+                        bias = -INFINITY;
+                    } else {
+                        continue;
+                    }
+
+                    char *end;
+                    llama_token tok = strtol(key.c_str(), &end, 10);
+                    if (*end == 0) {
+                        if (tok >= 0 && tok < n_vocab) {
+                            params.sampling.logit_bias.push_back({tok, bias});
+                        }
+                    } else {
+                        auto toks = common_tokenize(vocab, key, false);
+                        for (auto tok : toks) {
+                            params.sampling.logit_bias.push_back({tok, bias});
+                        }
+                    }
+                }
+            }
+
+            params.ignore_eos = json_value(data, "ignore_eos", false);
+            if (params.ignore_eos) {
+                const int n_vocab = llama_vocab_n_tokens(vocab);
+                for (llama_token tok = 0; tok < n_vocab; ++tok) {
+                    if (llama_vocab_is_eog(vocab, tok)) {
+                        params.sampling.logit_bias.push_back({tok, -INFINITY});
+                    }
+                }
             }
         }
 
@@ -489,6 +526,9 @@ struct server_task {
                         params.antiprompt.push_back(word);
                     }
                 }
+            }
+            if (params.antiprompt.empty()) {
+                params.antiprompt = defaults.antiprompt;
             }
         }
 
