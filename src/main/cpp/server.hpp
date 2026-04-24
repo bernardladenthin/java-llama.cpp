@@ -765,12 +765,14 @@ struct server_task_result_cmpl_final : server_task_result {
     llama_tokens tokens;
 
     bool stream;
+    bool include_usage;
     result_timings timings;
     std::string prompt;
 
     bool truncated;
     int32_t n_decoded;
     int32_t n_prompt_tokens;
+    int32_t n_prompt_tokens_cache;
     int32_t n_tokens_cached;
     bool has_new_line;
     std::string stopping_word;
@@ -835,6 +837,15 @@ struct server_task_result_cmpl_final : server_task_result {
         return response_fields.empty() ? res : json_get_nested_values(response_fields, res);
     }
 
+    json usage_json_oaicompat() {
+        return json{
+            {"completion_tokens", n_decoded},
+            {"prompt_tokens",     n_prompt_tokens},
+            {"total_tokens",      n_decoded + n_prompt_tokens},
+            {"prompt_tokens_details", json{{"cached_tokens", n_prompt_tokens_cache}}},
+        };
+    }
+
     json to_json_oaicompat() {
         std::time_t t = std::time(0);
         json logprobs = json(nullptr); // OAI default to null
@@ -854,9 +865,7 @@ struct server_task_result_cmpl_final : server_task_result {
             {"model", oaicompat_model},
             {"system_fingerprint", std::string(llama_build_info())},
             {"object", "text_completion"},
-            {"usage", json{{"completion_tokens", n_decoded},
-                           {"prompt_tokens", n_prompt_tokens},
-                           {"total_tokens", n_decoded + n_prompt_tokens}}},
+            {"usage", usage_json_oaicompat()},
             {"id", oaicompat_cmpl_id}};
 
         // extra fields for debugging purposes
@@ -898,9 +907,7 @@ struct server_task_result_cmpl_final : server_task_result {
                         {"model", oaicompat_model},
                         {"system_fingerprint", std::string(llama_build_info())},
                         {"object", "chat.completion"},
-                        {"usage", json{{"completion_tokens", n_decoded},
-                                       {"prompt_tokens", n_prompt_tokens},
-                                       {"total_tokens", n_decoded + n_prompt_tokens}}},
+                        {"usage", usage_json_oaicompat()},
                         {"id", oaicompat_cmpl_id}};
 
         // extra fields for debugging purposes
@@ -949,13 +956,20 @@ struct server_task_result_cmpl_final : server_task_result {
             {"model", oaicompat_model},
             {"system_fingerprint", std::string(llama_build_info())},
             {"object", "chat.completion.chunk"},
-            {"usage",
-             json{
-                 {"completion_tokens", n_decoded},
-                 {"prompt_tokens", n_prompt_tokens},
-                 {"total_tokens", n_decoded + n_prompt_tokens},
-             }},
         });
+
+        if (include_usage) {
+            // OpenAI spec: separate final chunk with empty choices and usage
+            deltas.push_back({
+                {"choices", json::array()},
+                {"created", t},
+                {"id", oaicompat_cmpl_id},
+                {"model", oaicompat_model},
+                {"system_fingerprint", std::string(llama_build_info())},
+                {"object", "chat.completion.chunk"},
+                {"usage", usage_json_oaicompat()},
+            });
+        }
 
         if (timings.prompt_n >= 0) {
             deltas.back().push_back({"timings", timings.to_json()});
@@ -978,6 +992,7 @@ struct server_task_result_cmpl_partial : server_task_result {
 
     int32_t n_decoded;
     int32_t n_prompt_tokens;
+    int32_t n_prompt_tokens_cache;
 
     bool post_sampling_probs;
     completion_token_output prob_output;
@@ -1302,7 +1317,8 @@ struct server_slot {
     int32_t n_predict = -1; // TODO: disambiguate from params.n_predict
 
     // n_prompt_tokens may not be equal to prompt_tokens.size(), because prompt maybe truncated
-    int32_t n_prompt_tokens = 0;
+    int32_t n_prompt_tokens           = 0;
+    int32_t n_prompt_tokens_cache     = 0;
     int32_t n_prompt_tokens_processed = 0;
 
     // input prompt tokens
@@ -1353,7 +1369,8 @@ struct server_slot {
     void reset() {
         SLT_DBG(*this, "%s", "\n");
 
-        n_prompt_tokens = 0;
+        n_prompt_tokens       = 0;
+        n_prompt_tokens_cache = 0;
         last_nl_pos = 0;
         generated_text = "";
         has_new_line = false;
@@ -1431,6 +1448,7 @@ struct server_slot {
 
     result_timings get_timings() const {
         result_timings timings;
+        timings.cache_n  = n_prompt_tokens_cache;
         timings.prompt_n = n_prompt_tokens_processed;
         timings.prompt_ms = t_prompt_processing;
         timings.prompt_per_token_ms = t_prompt_processing / n_prompt_tokens_processed;
@@ -2508,9 +2526,10 @@ struct server_context {
         res->content = tkn.text_to_send;
         res->tokens = {tkn.tok};
 
-        res->n_decoded = slot.n_decoded;
-        res->n_prompt_tokens = slot.n_prompt_tokens;
-        res->post_sampling_probs = slot.params.post_sampling_probs;
+        res->n_decoded             = slot.n_decoded;
+        res->n_prompt_tokens       = slot.n_prompt_tokens;
+        res->n_prompt_tokens_cache = slot.n_prompt_tokens_cache;
+        res->post_sampling_probs   = slot.params.post_sampling_probs;
 
         res->verbose = slot.params.verbose;
         res->oaicompat = slot.params.oaicompat;
@@ -2544,18 +2563,20 @@ struct server_context {
         res->prompt = slot.prompt_tokens.detokenize(ctx, true);
         res->response_fields = std::move(slot.params.response_fields);
 
-        res->truncated = slot.truncated;
-        res->n_decoded = slot.n_decoded;
-        res->n_prompt_tokens = slot.n_prompt_tokens;
-        res->n_tokens_cached = slot.n_past;
+        res->truncated             = slot.truncated;
+        res->n_decoded             = slot.n_decoded;
+        res->n_prompt_tokens       = slot.n_prompt_tokens;
+        res->n_prompt_tokens_cache = slot.n_prompt_tokens_cache;
+        res->n_tokens_cached       = slot.n_past;
         res->has_new_line = slot.has_new_line;
         res->stopping_word = slot.stopping_word;
         res->stop = slot.stop;
         res->post_sampling_probs = slot.params.post_sampling_probs;
 
-        res->verbose = slot.params.verbose;
-        res->stream = slot.params.stream;
-        res->oaicompat = slot.params.oaicompat;
+        res->verbose        = slot.params.verbose;
+        res->stream         = slot.params.stream;
+        res->include_usage  = slot.params.include_usage;
+        res->oaicompat      = slot.params.oaicompat;
         res->oaicompat_model = slot.params.oaicompat_model;
         res->oaicompat_cmpl_id = slot.params.oaicompat_cmpl_id;
         res->oaicompat_msg = slot.update_chat_msg(res->oaicompat_msg_diffs);
@@ -3303,6 +3324,7 @@ struct server_context {
                             slot.n_past--;
                         }
 
+                        slot.n_prompt_tokens_cache     = slot.n_past;
                         slot.n_prompt_tokens_processed = 0;
                     }
 
@@ -3319,7 +3341,8 @@ struct server_context {
                         llama_memory_seq_rm(llama_get_memory(ctx), slot.id, -1, -1);
 
                         // there is no common part left
-                        slot.n_past = 0;
+                        slot.n_past                = 0;
+                        slot.n_prompt_tokens_cache = 0;
                     }
 
                     SLT_INF(slot, "kv cache rm [%d, end)\n", slot.n_past);
