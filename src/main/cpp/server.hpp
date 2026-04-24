@@ -671,6 +671,22 @@ struct result_timings {
     }
 };
 
+struct result_prompt_progress {
+    int32_t total     = 0;
+    int32_t cache     = 0;
+    int32_t processed = 0;
+    int64_t time_ms   = 0;
+
+    json to_json() const {
+        return json{
+            {"total",     total},
+            {"cache",     cache},
+            {"processed", processed},
+            {"time_ms",   time_ms},
+        };
+    }
+};
+
 struct server_task_result {
     int id = -1;
     int id_slot = -1;
@@ -995,8 +1011,10 @@ struct server_task_result_cmpl_partial : server_task_result {
     int32_t n_prompt_tokens_cache;
 
     bool post_sampling_probs;
+    bool is_progress = false;
     completion_token_output prob_output;
     result_timings timings;
+    result_prompt_progress progress;
 
     // OAI-compat fields
     bool verbose = false;
@@ -1039,6 +1057,9 @@ struct server_task_result_cmpl_partial : server_task_result {
         if (timings.prompt_n > 0) {
             res.push_back({"timings", timings.to_json()});
         }
+        if (is_progress) {
+            res.push_back({"prompt_progress", progress.to_json()});
+        }
         if (!prob_output.probs.empty()) {
             res["completion_probabilities"] =
                 completion_token_output::probs_vector_to_json({prob_output}, post_sampling_probs);
@@ -1073,6 +1094,9 @@ struct server_task_result_cmpl_partial : server_task_result {
         if (timings.prompt_n >= 0) {
             res.push_back({"timings", timings.to_json()});
         }
+        if (is_progress) {
+            res.push_back({"prompt_progress", progress.to_json()});
+        }
 
         return res;
     }
@@ -1100,7 +1124,7 @@ struct server_task_result_cmpl_partial : server_task_result {
             });
         };
         // We have to send an initial update to conform to openai behavior
-        if (first) {
+        if (first || is_progress) {
             add_delta({
                 {"role", "assistant"},
                 {"content", nullptr},
@@ -1122,6 +1146,9 @@ struct server_task_result_cmpl_partial : server_task_result {
 
             if (timings.prompt_n >= 0) {
                 deltas[deltas.size() - 1].push_back({"timings", timings.to_json()});
+            }
+            if (is_progress) {
+                deltas[deltas.size() - 1].push_back({"prompt_progress", progress.to_json()});
             }
         }
 
@@ -2518,22 +2545,31 @@ struct server_context {
         return true;
     }
 
-    void send_partial_response(server_slot &slot, const completion_token_output &tkn) {
+    void send_partial_response(server_slot &slot, const completion_token_output &tkn, bool is_progress = false) {
         auto res = std::make_unique<server_task_result_cmpl_partial>();
 
         res->id = slot.id_task;
         res->index = slot.index;
-        res->content = tkn.text_to_send;
-        res->tokens = {tkn.tok};
+
+        if (is_progress) {
+            res->is_progress       = true;
+            res->progress.total     = slot.n_prompt_tokens;
+            res->progress.cache     = slot.n_prompt_tokens_cache;
+            res->progress.processed = slot.n_prompt_tokens_processed;
+            res->progress.time_ms   = (ggml_time_us() - slot.t_start_process_prompt) / 1000;
+        } else {
+            res->content = tkn.text_to_send;
+            res->tokens  = {tkn.tok};
+        }
 
         res->n_decoded             = slot.n_decoded;
         res->n_prompt_tokens       = slot.n_prompt_tokens;
         res->n_prompt_tokens_cache = slot.n_prompt_tokens_cache;
         res->post_sampling_probs   = slot.params.post_sampling_probs;
 
-        res->verbose = slot.params.verbose;
-        res->oaicompat = slot.params.oaicompat;
-        res->oaicompat_model = slot.params.oaicompat_model;
+        res->verbose           = slot.params.verbose;
+        res->oaicompat         = slot.params.oaicompat;
+        res->oaicompat_model   = slot.params.oaicompat_model;
         res->oaicompat_cmpl_id = slot.params.oaicompat_cmpl_id;
 
         slot.update_chat_msg(res->oaicompat_msg_diffs);
@@ -3536,6 +3572,13 @@ struct server_context {
             n_batch = llama_n_batch(ctx);
 
             for (auto &slot : slots) {
+                // optionally send prompt processing progress
+                if (slot.state == SLOT_STATE_PROCESSING_PROMPT || slot.state == SLOT_STATE_DONE_PROMPT) {
+                    if (slot.params.stream && slot.params.return_progress) {
+                        send_partial_response(slot, {}, true);
+                    }
+                }
+
                 if (slot.i_batch < (int)i || slot.i_batch >= (int)(i + n_tokens)) {
                     continue; // continue loop of slots
                 }
