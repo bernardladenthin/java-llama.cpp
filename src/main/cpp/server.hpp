@@ -94,17 +94,20 @@ static bool server_task_type_need_logits(server_task_type task_type) {
 }
 
 struct slot_params {
-    bool stream = true;
-    bool cache_prompt = true; // remember the prompt to avoid reprocessing all prompt
-    bool return_tokens = false;
+    bool stream          = true;
+    bool include_usage   = false;
+    bool cache_prompt    = true; // remember the prompt to avoid reprocessing all prompt
+    bool return_tokens   = false;
+    bool return_progress = false;
 
-    int32_t n_keep = 0; // number of tokens to keep from initial prompt
-    int32_t n_discard =
-        0; // number of tokens after n_keep that may be discarded when shifting context, 0 defaults to half
-    int32_t n_predict = -1; // new tokens to predict
-    int32_t n_indent = 0;   // mininum line indentation for the generated text in number of whitespace characters
+    int32_t n_keep         =  0; // number of tokens to keep from initial prompt
+    int32_t n_discard      =  0; // number of tokens after n_keep that may be discarded when shifting context, 0 defaults to half
+    int32_t n_predict      = -1; // new tokens to predict
+    int32_t n_indent       =  0; // minimum line indentation for the generated text in number of whitespace characters
+    int32_t n_cmpl         =  1; // number of completions to generate from this prompt
+    int32_t n_cache_reuse  =  0; // min chunk size to attempt reusing from the cache via KV shifting (0 = disabled)
 
-    int64_t t_max_prompt_ms = -1;  // TODO: implement
+    int64_t t_max_prompt_ms  = -1; // TODO: implement
     int64_t t_max_predict_ms = -1; // if positive, limit the generation phase to this time limit
 
     std::vector<common_adapter_lora_info> lora;
@@ -139,7 +142,7 @@ struct slot_params {
 
         auto grammar_triggers = json::array();
         for (const auto &trigger : sampling.grammar_triggers) {
-            server_grammar_trigger ct(std::move(trigger));
+            server_grammar_trigger ct(trigger);
             grammar_triggers.push_back(ct.to_json());
         }
 
@@ -186,11 +189,16 @@ struct slot_params {
             {"reasoning_in_content", oaicompat_chat_syntax.reasoning_in_content},
             {"generation_prompt", oaicompat_chat_syntax.generation_prompt},
             {"samplers", samplers},
-            {"speculative.n_max", speculative.n_max},
-            {"speculative.n_min", speculative.n_min},
-            {"speculative.p_min", speculative.p_min},
-            {"timings_per_token", timings_per_token},
-            {"post_sampling_probs", post_sampling_probs},
+            {"speculative.n_max",        speculative.n_max},
+            {"speculative.n_min",        speculative.n_min},
+            {"speculative.p_min",        speculative.p_min},
+            {"speculative.type",         common_speculative_type_to_str(speculative.type)},
+            {"speculative.ngram_size_n", speculative.ngram_size_n},
+            {"speculative.ngram_size_m", speculative.ngram_size_m},
+            {"speculative.ngram_m_hits", speculative.ngram_min_hits},
+            {"timings_per_token",        timings_per_token},
+            {"post_sampling_probs",      post_sampling_probs},
+            {"backend_sampling",         sampling.backend_sampling},
             {"lora", lora},
         };
     }
@@ -238,28 +246,33 @@ struct server_task {
         slot_params defaults;
         defaults.sampling = params_base.sampling;
         defaults.speculative = params_base.speculative;
-        defaults.n_keep      = params_base.n_keep;
-        defaults.n_predict   = params_base.n_predict;
-        defaults.cache_prompt = params_base.cache_prompt;
-        defaults.antiprompt  = params_base.antiprompt;
+        defaults.n_keep        = params_base.n_keep;
+        defaults.n_predict     = params_base.n_predict;
+        defaults.cache_prompt  = params_base.cache_prompt;
+        defaults.antiprompt    = params_base.antiprompt;
+        defaults.n_cache_reuse = params_base.n_cache_reuse;
 
         // enabling this will output extra debug information in the HTTP responses from the server
         params.verbose = params_base.verbosity > 9;
         params.timings_per_token = json_value(data, "timings_per_token", false);
 
-        params.stream = json_value(data, "stream", false);
-        params.cache_prompt = json_value(data, "cache_prompt", defaults.cache_prompt);
-        params.return_tokens = json_value(data, "return_tokens", false);
-        auto max_tokens  = json_value(data, "max_tokens", defaults.n_predict);
-        params.n_predict = json_value(data, "n_predict",  json_value(data, "max_completion_tokens", max_tokens));
-        params.n_indent = json_value(data, "n_indent", defaults.n_indent);
-        params.n_keep = json_value(data, "n_keep", defaults.n_keep);
-        params.n_discard = json_value(data, "n_discard", defaults.n_discard);
-        params.n_discard = std::max(0, params.n_discard);
-        // params.t_max_prompt_ms  = json_value(data, "t_max_prompt_ms",    defaults.t_max_prompt_ms); // TODO:
-        // implement
-        params.t_max_predict_ms = json_value(data, "t_max_predict_ms", defaults.t_max_predict_ms);
-        params.response_fields = json_value(data, "response_fields", std::vector<std::string>());
+        params.stream           = json_value(data,       "stream",             false);
+        auto stream_opt         = json_value(data,       "stream_options",     json::object());
+        params.include_usage    = json_value(stream_opt, "include_usage",      false);
+        params.cache_prompt     = json_value(data,       "cache_prompt",       defaults.cache_prompt);
+        params.return_tokens    = json_value(data,       "return_tokens",      false);
+        params.return_progress  = json_value(data,       "return_progress",    false);
+        auto max_tokens         = json_value(data,       "max_tokens",         defaults.n_predict);
+        params.n_predict        = json_value(data,       "n_predict",          json_value(data, "max_completion_tokens", max_tokens));
+        params.n_indent         = json_value(data,       "n_indent",           defaults.n_indent);
+        params.n_keep           = json_value(data,       "n_keep",             defaults.n_keep);
+        params.n_discard        = json_value(data,       "n_discard",          defaults.n_discard);
+        params.n_discard        = std::max(0, params.n_discard);
+        params.n_cmpl           = json_value(data,       "n_cmpl",             json_value(data, "n", 1));
+        params.n_cache_reuse    = json_value(data,       "n_cache_reuse",      defaults.n_cache_reuse);
+        //params.t_max_prompt_ms = json_value(data,       "t_max_prompt_ms",    defaults.t_max_prompt_ms); // TODO: implement
+        params.t_max_predict_ms = json_value(data,       "t_max_predict_ms",   defaults.t_max_predict_ms);
+        params.response_fields  = json_value(data,       "response_fields",    std::vector<std::string>());
 
         params.sampling.top_k = json_value(data, "top_k", defaults.sampling.top_k);
         params.sampling.top_p = json_value(data, "top_p", defaults.sampling.top_p);
@@ -601,6 +614,10 @@ struct server_task {
             params_base.model_alias.empty() ? DEFAULT_OAICOMPAT_MODEL : *params_base.model_alias.begin();
         params.oaicompat_model = json_value(data, "model", model_name);
 
+        if (params.n_cmpl > params_base.n_parallel) {
+            throw std::runtime_error("n_cmpl cannot be greater than the number of slots, please increase -np");
+        }
+
         return params;
     }
 
@@ -615,6 +632,8 @@ struct server_task {
 };
 
 struct result_timings {
+    int32_t cache_n = -1;
+
     int32_t prompt_n = -1;
     double prompt_ms;
     double prompt_per_token_ms;
@@ -631,8 +650,9 @@ struct result_timings {
 
     json to_json() const {
         json base = {
-            {"prompt_n", prompt_n},
-            {"prompt_ms", prompt_ms},
+            {"cache_n",                cache_n},
+            {"prompt_n",               prompt_n},
+            {"prompt_ms",              prompt_ms},
             {"prompt_per_token_ms", prompt_per_token_ms},
             {"prompt_per_second", prompt_per_second},
 
