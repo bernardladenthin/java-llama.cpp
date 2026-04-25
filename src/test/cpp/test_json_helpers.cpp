@@ -203,6 +203,25 @@ TEST(RerankResultsToJson, IndexLookup_UsesResultIndexNotPosition) {
     EXPECT_EQ(out[0].value("index", -1), 1);
 }
 
+// rerank_results_to_json preserves the order in which results were passed in.
+// Unlike the upstream OAI helper (format_response_rerank) which sorts by score,
+// this function is intentionally order-preserving so the Java caller can decide
+// on sorting.  A score inversion in the output is the regression signal.
+TEST(RerankResultsToJson, PreservesInputOrder) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_rerank(1, 0, 0.3f)); // low score first
+    results.push_back(make_rerank(2, 1, 0.9f)); // high score second
+    results.push_back(make_rerank(3, 2, 0.6f));
+    std::vector<std::string> docs = {"doc 0", "doc 1", "doc 2"};
+
+    json out = rerank_results_to_json(results, docs);
+
+    ASSERT_EQ(out.size(), 3u);
+    EXPECT_FLOAT_EQ(out[0].value("score", 0.0f), 0.3f); // order unchanged
+    EXPECT_FLOAT_EQ(out[1].value("score", 0.0f), 0.9f);
+    EXPECT_FLOAT_EQ(out[2].value("score", 0.0f), 0.6f);
+}
+
 // ============================================================
 // build_embeddings_response_json
 // ============================================================
@@ -297,6 +316,40 @@ TEST(BuildEmbeddingsResponseJson, OaiChat_TreatsAsNonOai) {
 
     EXPECT_TRUE(out.is_array());
     EXPECT_FALSE(out.contains("object"));
+}
+
+// use_base64=true is ignored entirely on the non-OAI path.
+// In jllama.cpp, parse_encoding_format() and the res_type decision are
+// independent: "content" key forces TASK_RESPONSE_TYPE_NONE even when the
+// caller also passed encoding_format=base64.  The response must still be a
+// bare float array in that case, not a base64-encoded string.
+TEST(BuildEmbeddingsResponseJson, NonOai_Base64FlagIgnored_ReturnsFloatArray) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_embedding(1, {0.5f, 0.6f}));
+
+    json out = build_embeddings_response_json(results, json::object(),
+                                               TASK_RESPONSE_TYPE_NONE, /*use_base64=*/true);
+
+    ASSERT_TRUE(out.is_array());
+    // The embedding value must be a JSON number array, not a base64 string.
+    EXPECT_TRUE(out[0]["embedding"].is_array())
+        << "use_base64 must be ignored when res_type is not OAI_EMBD";
+}
+
+// OAI compat wrapper reads "model" from the request body and falls back to
+// DEFAULT_OAICOMPAT_MODEL when the field is absent.  The model field must
+// always be present and non-empty in the response.
+TEST(BuildEmbeddingsResponseJson, OaiFloat_ModelAbsent_UsesDefault) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_embedding(1, {0.1f}));
+
+    json out = build_embeddings_response_json(results, json::object(),
+                                               TASK_RESPONSE_TYPE_OAI_EMBD, false);
+
+    EXPECT_TRUE(out.is_object());
+    ASSERT_TRUE(out.contains("model"));
+    EXPECT_FALSE(out.value("model", "").empty())
+        << "model must fall back to DEFAULT_OAICOMPAT_MODEL when absent from body";
 }
 
 // ============================================================
