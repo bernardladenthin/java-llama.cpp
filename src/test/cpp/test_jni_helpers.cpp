@@ -172,9 +172,10 @@ TEST_F(MockJniFixture, GetJllamaContext_ReturnsWrapperNotInnerServer) {
 
     jllama_context *result = get_jllama_context_impl(env, nullptr, dummy_field);
 
+    // Verify we get back the jllama_context wrapper pointer, not null or something else.
     EXPECT_EQ(result, &fake_ctx);
-    // result is the wrapper; &fake_ctx.server is the embedded value member — different address.
-    EXPECT_NE(static_cast<void *>(result), static_cast<void *>(&fake_ctx.server));
+    // Note: &fake_ctx.server == &fake_ctx because server is the first value member;
+    // the type-level distinction (jllama_context* vs server_context*) is sufficient.
 }
 
 TEST_F(MockJniFixture, GetJllamaContext_NullHandle_WhileGetServerContextThrows) {
