@@ -342,6 +342,21 @@ TEST(SlotParamsToJson, PreservedTokens_Populated) {
     EXPECT_EQ(pt[1].get<llama_token>(), 99);
 }
 
+TEST(SlotParamsToJson, TimingsPerToken_DefaultFalse) {
+    // timings_per_token must be serialised and default to false
+    task_params p;
+    const json j = p.to_json();
+    ASSERT_TRUE(j.contains("timings_per_token"));
+    EXPECT_FALSE(j.at("timings_per_token").get<bool>());
+}
+
+TEST(SlotParamsToJson, TimingsPerToken_SetTrue_Preserved) {
+    task_params p;
+    p.timings_per_token = true;
+    const json j = p.to_json();
+    EXPECT_TRUE(j.at("timings_per_token").get<bool>());
+}
+
 // ============================================================
 // completion_token_output
 //   Model-free struct.  Tests the helpers that are always
@@ -1300,6 +1315,24 @@ TEST(CmplPartialOaicompat, Model_ReflectsOaicompatModel) {
 TEST(CmplPartialOaicompat, Id_ReflectsOaicompatCmplId) {
     const json j = make_partial().to_json_oaicompat();
     EXPECT_EQ(j.at("id").get<std::string>(), "cmpl-part");
+}
+
+TEST(CmplPartialOaicompat, LogProbs_EmptyProbs_IsNull) {
+    // prob_output.probs empty by default → logprobs field is JSON null
+    const json j = make_partial().to_json_oaicompat();
+    EXPECT_TRUE(j.at("choices")[0].at("logprobs").is_null());
+}
+
+TEST(CmplPartialOaicompat, LogProbs_NonEmptyProbs_HasContentArray) {
+    // When probs are set, logprobs becomes {"content": [...]} (not null)
+    auto p = make_partial();
+    completion_token_output::prob_info pi;
+    pi.tok = 5; pi.txt = "hi"; pi.prob = 0.8f;
+    p.prob_output.probs.push_back(pi);
+    const json j = p.to_json_oaicompat();
+    ASSERT_FALSE(j.at("choices")[0].at("logprobs").is_null());
+    EXPECT_TRUE(j.at("choices")[0].at("logprobs").contains("content"));
+    EXPECT_TRUE(j.at("choices")[0].at("logprobs").at("content").is_array());
 }
 
 // ============================================================
