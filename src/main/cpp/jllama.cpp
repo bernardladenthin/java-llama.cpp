@@ -1,6 +1,7 @@
 #include "jllama.h"
 
 #include "arg.h"
+#include "build-info.h"
 #include "json-schema-to-grammar.h"
 #include "llama.h"
 #include "log.h"
@@ -1204,19 +1205,55 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
 
 JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInference(JNIEnv *env, jobject obj,
                                                                                       jstring jconfig) {
-    // Runtime reconfiguration is not supported in the upstream reader-based API
-    // (server_context fields are encapsulated behind the pimpl).  Validate the
-    // input parameters so callers still get exceptions on out-of-range values,
-    // then return true without applying any changes.
+    REQUIRE_SERVER_CONTEXT(JNI_FALSE);
     (void)obj;
+
     json config = parse_json_params(env, jconfig);
+
+    std::optional<float> slot_sim_opt;
+    std::optional<int>   n_threads_opt;
+    std::optional<int>   n_threads_batch_opt;
     try {
-        (void)parse_slot_prompt_similarity(config);
-        (void)parse_positive_int_config(config, "n_threads");
-        (void)parse_positive_int_config(config, "n_threads_batch");
+        slot_sim_opt        = parse_slot_prompt_similarity(config);
+        n_threads_opt       = parse_positive_int_config(config, "n_threads");
+        n_threads_batch_opt = parse_positive_int_config(config, "n_threads_batch");
     } catch (const std::invalid_argument &e) {
         env->ThrowNew(c_llama_error, e.what());
         return JNI_FALSE;
     }
+
+    // Apply n_threads / n_threads_batch via the public llama.h API.  The setter
+    // requires both values; fill any missing one from the cached common_params
+    // captured at load_model time so a single-field update behaves as a no-op
+    // for the unspecified field.
+    if (n_threads_opt.has_value() || n_threads_batch_opt.has_value()) {
+        llama_context *lctx = ctx_server->get_llama_context();
+        if (lctx == nullptr) {
+            env->ThrowNew(c_llama_error,
+                          "configureParallelInference: llama_context not available "
+                          "(model sleeping or not loaded)");
+            return JNI_FALSE;
+        }
+        const int n  = n_threads_opt.value_or(jctx->params.cpuparams.n_threads);
+        const int nb = n_threads_batch_opt.value_or(jctx->params.cpuparams_batch.n_threads);
+        llama_set_n_threads(lctx, n, nb);
+        // Keep the cached params in sync so a follow-up call that supplies only
+        // the other field reads back the value just applied, not the original.
+        jctx->params.cpuparams.n_threads       = n;
+        jctx->params.cpuparams_batch.n_threads = nb;
+    }
+
+    // slot_prompt_similarity: validated above (the [0.0, 1.0] range check still
+    // throws for out-of-range values, preserving the existing exception
+    // contract).  Live mutation requires an upstream setter that does not yet
+    // exist at b8913 — see llama-cpp.patch.md for the proposed PR adding
+    // server_context::set_slot_prompt_similarity().  Once that lands and the
+    // pinned llama.cpp version is bumped, uncomment the block below:
+    //
+    // if (slot_sim_opt.has_value()) {
+    //     ctx_server->set_slot_prompt_similarity(*slot_sim_opt);
+    // }
+    (void)slot_sim_opt;
+
     return JNI_TRUE;
 }
