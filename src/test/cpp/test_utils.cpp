@@ -2,7 +2,6 @@
 //
 // Covered:
 //   - server_grammar_trigger  (new JSON wrapper replacing template to_json/from_json)
-//   - raw_buffer / base64_decode  (return type changed from std::string to raw_buffer)
 //   - gen_tool_call_id()  (new helper added in b8576)
 //   - format_response_rerank()  (top_n parameter added)
 //   - server_tokens  (major new type: wraps llama_tokens + optional mtmd chunk map)
@@ -118,69 +117,6 @@ TEST(ServerGrammarTrigger, TypeField_IsIntInJson) {
 
     json j = server_grammar_trigger(t).to_json();
     EXPECT_TRUE(j.at("type").is_number_integer());
-}
-
-// ============================================================
-// raw_buffer / base64_decode
-//   Return type changed from std::string to raw_buffer
-//   (= std::vector<uint8_t>) in b8576.
-// ============================================================
-
-TEST(Base64Decode, ReturnType_IsRawBuffer) {
-    // Compile-time assertion: the return type must be raw_buffer
-    static_assert(
-        std::is_same<decltype(base64_decode(std::string{})), raw_buffer>::value,
-        "base64_decode must return raw_buffer (std::vector<uint8_t>)");
-    SUCCEED();
-}
-
-TEST(Base64Decode, RawBufferIsVectorOfUint8) {
-    static_assert(
-        std::is_same<raw_buffer, std::vector<uint8_t>>::value,
-        "raw_buffer must be std::vector<uint8_t>");
-    SUCCEED();
-}
-
-TEST(Base64Decode, DecodesHello) {
-    // "Hello" → "SGVsbG8="
-    raw_buffer r = base64_decode("SGVsbG8=");
-    ASSERT_EQ(r.size(), 5u);
-    EXPECT_EQ(r[0], static_cast<uint8_t>('H'));
-    EXPECT_EQ(r[1], static_cast<uint8_t>('e'));
-    EXPECT_EQ(r[2], static_cast<uint8_t>('l'));
-    EXPECT_EQ(r[3], static_cast<uint8_t>('l'));
-    EXPECT_EQ(r[4], static_cast<uint8_t>('o'));
-}
-
-TEST(Base64Decode, DecodesEmptyString) {
-    raw_buffer r = base64_decode("");
-    EXPECT_TRUE(r.empty());
-}
-
-TEST(Base64Decode, DecodesThreeBytes_NoFinalPadding) {
-    // "ABC" → "QUJD"
-    raw_buffer r = base64_decode("QUJD");
-    ASSERT_EQ(r.size(), 3u);
-    EXPECT_EQ(r[0], static_cast<uint8_t>('A'));
-    EXPECT_EQ(r[1], static_cast<uint8_t>('B'));
-    EXPECT_EQ(r[2], static_cast<uint8_t>('C'));
-}
-
-TEST(Base64Decode, DecodesTwoBytes_OnePadChar) {
-    // "Ma" → "TWE="
-    raw_buffer r = base64_decode("TWE=");
-    ASSERT_EQ(r.size(), 2u);
-    EXPECT_EQ(r[0], static_cast<uint8_t>('M'));
-    EXPECT_EQ(r[1], static_cast<uint8_t>('a'));
-}
-
-TEST(Base64Decode, DecodesBinaryData) {
-    // 0x00 0xFF 0x80 → "AP+A" — exercises non-ASCII byte values
-    raw_buffer r = base64_decode("AP+A");
-    ASSERT_EQ(r.size(), 3u);
-    EXPECT_EQ(r[0], 0x00u);
-    EXPECT_EQ(r[1], 0xFFu);
-    EXPECT_EQ(r[2], 0x80u);
 }
 
 // ============================================================

@@ -12,12 +12,11 @@
 // no JVM and no loaded model are required.
 //
 // IMPORTANT — include order:
-//   server.hpp (and transitively utils.hpp) must be included by the including
-//   translation unit BEFORE this header.  That header defines:
-//     server_task_result_ptr, oaicompat_type, OAICOMPAT_TYPE_EMBEDDING,
+//   Upstream server headers (server-context.h, server-queue.h, server-task.h,
+//   server-common.h, server-chat.h) and utils.hpp must be included by the
+//   including translation unit BEFORE this header.  Those headers define:
+//     server_task_result_ptr, task_response_type, TASK_RESPONSE_TYPE_OAI_EMBD,
 //     format_embeddings_response_oaicompat, and the `json` type alias.
-//   server.hpp has no include guard, so pulling it in here would cause
-//   redefinition errors in any TU that already includes it directly.
 //
 // Declaration order:
 //   1.  get_result_error_message        — used by nothing above it
