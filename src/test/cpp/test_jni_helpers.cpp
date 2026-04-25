@@ -423,6 +423,12 @@ TEST_F(MockJniFixture, JsonToJstring_ReturnsSentinel) {
     EXPECT_EQ(js, reinterpret_cast<jstring>(0xBEEF));
 }
 
+TEST_F(MockJniFixture, JsonToJstring_NullJson_SerializesToNullString) {
+    jstring js = json_to_jstring_impl(env, json(nullptr));
+    EXPECT_NE(js, nullptr);
+    EXPECT_EQ(g_new_string_utf_value, "null");
+}
+
 // ============================================================
 // results_to_jstring_impl
 // ============================================================

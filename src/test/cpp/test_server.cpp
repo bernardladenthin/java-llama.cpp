@@ -49,6 +49,7 @@ result_timings make_base_timings() {
 TEST(ResultTimings, BaseFields_AlwaysPresent) {
     const json j = make_base_timings().to_json();
 
+    EXPECT_TRUE(j.contains("cache_n"));
     EXPECT_TRUE(j.contains("prompt_n"));
     EXPECT_TRUE(j.contains("prompt_ms"));
     EXPECT_TRUE(j.contains("prompt_per_token_ms"));
@@ -57,6 +58,13 @@ TEST(ResultTimings, BaseFields_AlwaysPresent) {
     EXPECT_TRUE(j.contains("predicted_ms"));
     EXPECT_TRUE(j.contains("predicted_per_token_ms"));
     EXPECT_TRUE(j.contains("predicted_per_second"));
+}
+
+TEST(ResultTimings, CacheN_ReflectsValue) {
+    result_timings t = make_base_timings();
+    t.cache_n = 7;
+    const json j = t.to_json();
+    EXPECT_EQ(j.at("cache_n").get<int>(), 7);
 }
 
 TEST(ResultTimings, BaseFieldValues_MatchInput) {
@@ -521,6 +529,14 @@ TEST(ServerTaskResultMetrics, ToJson_SlotCountFields) {
     EXPECT_EQ(j.at("idle").get<int>(), 2);
     EXPECT_EQ(j.at("processing").get<int>(), 1);
     EXPECT_EQ(j.at("deferred").get<int>(), 3);
+    EXPECT_EQ(j.at("t_start").get<int64_t>(), 1234567890LL);
+}
+
+TEST(ServerTaskResultMetrics, ToJson_NTokensMax) {
+    server_task_result_metrics m = make_metrics();
+    m.n_tokens_max = 4096;
+    const json j = m.to_json();
+    EXPECT_EQ(j.at("n_tokens_max").get<int>(), 4096);
 }
 
 TEST(ServerTaskResultMetrics, ToJson_TokenCountFields) {
