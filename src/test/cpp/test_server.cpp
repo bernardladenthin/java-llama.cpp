@@ -1,23 +1,17 @@
-// Tests for upstream server APIs — focused on APIs changed in llama.cpp b4916 → b8576
-//
-// utils.hpp is included directly.
+// Tests for upstream server APIs — regression coverage for the contract that
+// jllama.cpp depends on.  These tests catch llama.cpp upgrade breakage before
+// the Java integration tests run.
 //
 // Covered:
-//   - result_timings::to_json()
-//       draft_n / draft_n_accepted fields added (conditional on draft_n > 0)
-//   - slot_params::to_json()
-//       grammar field now uses common_grammar_value()
-//       oaicompat_chat_syntax fields replace oaicompat_chat_format:
-//         chat_format / reasoning_format / reasoning_in_content / generation_prompt
-//   - completion_token_output  (logarithm edge-case, str_to_bytes, to_json, probs_vector_to_json)
-//   - server_task_result_rerank::to_json  (score / index / tokens_evaluated)
-//   - server_task_result_embd::to_json_*  (oaicompat vs non-oaicompat shapes)
-//   - format_error_response  (all 7 error types → correct HTTP code + type string)
-//   - server_task_type_need_embd / need_logits  (routing helpers)
-//   - stop_type_to_str  (enum → string mapping for all stop types)
-//   - oaicompat_finish_reason  (extracted helper: stop_type + tool_calls → OAI finish_reason)
-//
-// collect_task_results_impl() is tested in test_jni_helpers.cpp.
+//   - result_timings::to_json()       — draft_n/draft_n_accepted conditional fields
+//   - task_params::to_json()          — grammar, chat_parser_params, grammar_triggers
+//   - completion_token_output         — logarithm edge-case, str_to_bytes, to_json, probs_vector_to_json
+//   - server_task_result_rerank       — score / index / tokens_evaluated
+//   - server_task_result_embd         — oaicompat vs non-oaicompat shapes
+//   - format_error_response           — all 7 error types → correct HTTP code + type string
+//   - server_task::need_embd/logits   — routing helpers
+//   - server_task_result_metrics      — slot count + token count fields
+//   - server_task_result_slot_*       — save/load/erase JSON shapes
 
 #include <gtest/gtest.h>
 

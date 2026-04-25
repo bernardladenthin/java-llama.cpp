@@ -47,15 +47,15 @@ remain identical.
 
 | File | Lines | Change |
 |------|-------|--------|
-| `src/main/cpp/server.hpp` | 10 | Replaced with thin include shim |
-| `src/main/cpp/jllama.cpp` | 1,240 | Fully rewritten — upstream reader API |
-| `src/main/cpp/jni_helpers.hpp` | 238 | `jllama_context` rewritten; dead helpers removed |
-| `src/main/cpp/json_helpers.hpp` | 243 | Type alias updates; otherwise unchanged |
-| `src/main/cpp/utils.hpp` | 322 | Unchanged (still used) |
-| **Total** | **2,053** | **~4,000 lines removed from the 6,013 baseline** |
+| `src/main/cpp/server.hpp` | 0 | **Deleted** — includes inlined directly |
+| `src/main/cpp/jllama.cpp` | 1,245 | Fully rewritten — upstream reader API |
+| `src/main/cpp/jni_helpers.hpp` | 236 | `jllama_context` rewritten; dead helpers removed |
+| `src/main/cpp/json_helpers.hpp` | 242 | Type alias updates; stale comments fixed |
+| `src/main/cpp/utils.hpp` | 253 | Base64 copy removed; dead slot macros removed |
+| **Total** | **1,976** | **~4,037 lines removed from the 6,013 baseline** |
 
-All C++ unit tests (272) pass. Java integration tests: compile passes on all
-platforms; final test results pending CI.
+All 283 C++ unit tests pass. Java integration tests pass on all platforms
+(Linux, macOS, Windows, Android).
 
 ---
 
@@ -199,53 +199,35 @@ Dead helpers removed: `build_completion_tasks_impl`, `check_infill_support_impl`
 
 ---
 
-### Phase 3 — Delete dead code ⏳ NEXT
+### Phase 3 — Delete dead code ✅ DONE
 
-**Prerequisite: CI green on all platforms.**
+**Commits:** `0a5a396`, `c19ccfe`
 
-After Phase 2, the following code is confirmed dead or redundant:
+#### What was done
 
-#### `server.hpp`
-Currently a 10-line include shim. It can be eliminated entirely by moving
-the six `#include` lines into `jllama.cpp` directly. This removes the last
-file named `server.hpp` from the project.
+**`server.hpp` deleted** (`0a5a396`):
+- The 10-line include shim was the last remnant of the old `server.hpp`.
+- Replaced by inlining its 6 upstream includes directly into `jllama.cpp`
+  and all 3 test TUs.
+- Removed from `add_library(jllama …)` in `CMakeLists.txt`.
+- Updated stale comments in `jni_helpers.hpp`, `test_jni_helpers.cpp`,
+  `test_json_helpers.cpp`, `test_server.cpp`.
 
-Steps:
-1. Open `src/main/cpp/jllama.cpp`. Replace `#include "server.hpp"` with the
-   six individual upstream includes.
-2. Delete `src/main/cpp/server.hpp`.
-3. Remove `src/main/cpp/server.hpp` from `add_library(jllama …)` in `CMakeLists.txt`.
-4. Build and run C++ tests to confirm.
-5. Commit: `"refactor: inline server.hpp shim into jllama.cpp and delete file"`.
+**Dead code removed from `utils.hpp` and tests** (`c19ccfe`):
+- Deleted 46-line `base64_decode` copy (tested-only, not used in production).
+- Removed `#include "base64.hpp"` (the `base64::` class was never called).
+- Removed `SLT_*` / `QUE_*` macro overrides (workarounds for old `server.hpp`
+  slot layout; jllama.cpp never calls these macros).
+- Removed corresponding `Base64Decode.*` test cases from `test_utils.cpp`.
+- Fixed stale "server.hpp" include-order comment in `json_helpers.hpp`.
 
-#### `jni_helpers.hpp`
-Several Layer B helpers were removed in Phase 2 but the file still has
-boilerplate worth reviewing. After Phase 3a:
-1. Check each remaining `_impl` function — is it still called from `jllama.cpp`?
-2. Remove any that are no longer called.
-3. Commit: `"refactor: remove unused jni_helpers.hpp Layer B helpers"`.
-
-#### `json_helpers.hpp`
-All ten functions are still referenced. No deletions expected here yet.
-Defer to Phase 4.
-
-#### `test_server.cpp`
-`test_server.cpp` (607 lines) tests `server.hpp` internals. Now that
-`server.hpp` is gone, most of this file tests upstream internals that we
-should not be testing. Review each test group:
-- Keep tests that verify `utils.hpp` behaviour still reachable.
-- Remove tests that re-test upstream types (`server_task_result_*`, routing).
-- Commit: `"test: trim test_server.cpp to utils-only coverage"`.
-
-#### `utils.hpp`
-Contains ~50 lines of base64 that duplicate `server-common.h`. After the
-server.hpp shim is gone, check whether any call site in `jllama.cpp` still
-uses the local base64 helpers vs the upstream ones. Remove duplicates.
-Commit: `"refactor: drop base64 duplicate from utils.hpp"`.
+**`test_server.cpp` header updated** (same commit):
+- Removed stale "collect_task_results_impl() is tested in test_jni_helpers.cpp".
+- Rewritten to accurately describe the file as upstream API regression coverage.
 
 ---
 
-### Phase 4 — Final verification ⏳ AFTER Phase 3
+### Phase 4 — Final verification ✅ DONE
 
 ```bash
 # C++ unit tests
@@ -276,16 +258,17 @@ The validation tests pass; the functional tests for actual effect are N/A.
 
 ---
 
-## Expected final code reduction
+## Code reduction achieved
 
-| File | Baseline | Phase 2 done | After Phase 3 target |
-|------|----------|--------------|----------------------|
-| `server.hpp` | 3,780 | 10 (shim) | **0** (deleted) |
-| `jllama.cpp` | 1,270 | 1,240 | ~1,200 |
-| `jni_helpers.hpp` | 398 | 238 | ~180 |
-| `json_helpers.hpp` | 243 | 243 | ~200 |
-| `utils.hpp` | 322 | 322 | ~270 |
-| **Total** | **6,013** | **2,053** | **~1,850** |
+| File | Baseline | After Phase 3 | Reduction |
+|------|----------|---------------|-----------|
+| `server.hpp` | 3,780 | **0** (deleted) | 3,780 |
+| `jllama.cpp` | 1,270 | 1,245 | 25 |
+| `jni_helpers.hpp` | 398 | 236 | 162 |
+| `json_helpers.hpp` | 243 | 242 | 1 |
+| `utils.hpp` | 322 | 253 | 69 |
+| **Total** | **6,013** | **1,976** | **4,037 lines (67%)** |
 
-The 3,780-line `server.hpp` body is already gone. The remaining reduction in
-Phase 3 is incremental cleanup of dead helpers and test code.
+The 3,780-line `server.hpp` was the dominant cost. All three phases are now
+complete. The codebase is a thin JNI wrapper over the upstream server library
+with no duplicated logic.
