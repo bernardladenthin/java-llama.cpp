@@ -1140,3 +1140,96 @@ TEST(CmplFinalOaicompatChat, WithExplicitOaicompatMsg_MessageContentUsed) {
     EXPECT_EQ(j.at("choices")[0].at("message").at("content").get<std::string>(), "explicit reply");
 }
 
+// ============================================================
+// server_task_result_cmpl_final::to_json_anthropic
+//   Anthropic Messages API response shape.
+//   stop_reason: "end_turn" for EOS/WORD, "max_tokens" for LIMIT/NONE.
+//   content_blocks: text block when content is non-empty;
+//                   thinking block first when reasoning_content is set;
+//                   tool_use blocks for each tool call.
+// ============================================================
+
+TEST(CmplFinalAnthropic, StopReason_MaxTokensByDefault) {
+    auto f = make_oai_final();
+    f.stop = STOP_TYPE_LIMIT;
+    const json j = f.to_json_anthropic();
+    EXPECT_EQ(j.at("stop_reason").get<std::string>(), "max_tokens");
+}
+
+TEST(CmplFinalAnthropic, StopReason_EndTurnForEos) {
+    auto f = make_oai_final();
+    f.stop = STOP_TYPE_EOS;
+    const json j = f.to_json_anthropic();
+    EXPECT_EQ(j.at("stop_reason").get<std::string>(), "end_turn");
+}
+
+TEST(CmplFinalAnthropic, StopReason_EndTurnForWord) {
+    auto f = make_oai_final();
+    f.stop         = STOP_TYPE_WORD;
+    f.stopping_word = "</s>";
+    const json j   = f.to_json_anthropic();
+    EXPECT_EQ(j.at("stop_reason").get<std::string>(), "end_turn");
+}
+
+TEST(CmplFinalAnthropic, StopSequence_NullWhenEmpty) {
+    auto f = make_oai_final();
+    const json j = f.to_json_anthropic();
+    EXPECT_TRUE(j.at("stop_sequence").is_null());
+}
+
+TEST(CmplFinalAnthropic, StopSequence_ReflectsStoppingWord) {
+    auto f = make_oai_final();
+    f.stop         = STOP_TYPE_WORD;
+    f.stopping_word = "</tool>";
+    f.oaicompat_msg.content = "done";
+    const json j   = f.to_json_anthropic();
+    EXPECT_EQ(j.at("stop_sequence").get<std::string>(), "</tool>");
+}
+
+TEST(CmplFinalAnthropic, ContentBlock_TextBlockForPlainContent) {
+    auto f = make_oai_final("plain text");
+    const json j     = f.to_json_anthropic();
+    const json &blks = j.at("content");
+    ASSERT_FALSE(blks.empty());
+    // last block is the text block when no reasoning
+    bool found_text = false;
+    for (const auto &b : blks) {
+        if (b.at("type").get<std::string>() == "text") { found_text = true; break; }
+    }
+    EXPECT_TRUE(found_text);
+}
+
+TEST(CmplFinalAnthropic, ContentBlock_ThinkingBlockFirst) {
+    auto f = make_oai_final("answer");
+    f.oaicompat_msg.role              = "assistant";
+    f.oaicompat_msg.content           = "answer";
+    f.oaicompat_msg.reasoning_content = "step by step";
+    const json j   = f.to_json_anthropic();
+    const json &blks = j.at("content");
+    ASSERT_GE(blks.size(), 2u);
+    EXPECT_EQ(blks[0].at("type").get<std::string>(), "thinking");
+    EXPECT_EQ(blks[0].at("thinking").get<std::string>(), "step by step");
+}
+
+TEST(CmplFinalAnthropic, ContentBlock_ToolUseBlock) {
+    auto f = make_oai_final("");
+    common_chat_tool_call tc;
+    tc.id        = "call_1";
+    tc.name      = "get_weather";
+    tc.arguments = R"({"city":"Paris"})";
+    f.oaicompat_msg.tool_calls.push_back(tc);
+    f.stop = STOP_TYPE_EOS;
+    const json j   = f.to_json_anthropic();
+    EXPECT_EQ(j.at("stop_reason").get<std::string>(), "tool_use");
+    bool found_tool = false;
+    for (const auto &b : j.at("content")) {
+        if (b.at("type").get<std::string>() == "tool_use") {
+            EXPECT_EQ(b.at("name").get<std::string>(), "get_weather");
+            EXPECT_EQ(b.at("id").get<std::string>(),   "call_1");
+            EXPECT_EQ(b.at("input").at("city").get<std::string>(), "Paris");
+            found_tool = true;
+        }
+    }
+    EXPECT_TRUE(found_tool);
+}
+
