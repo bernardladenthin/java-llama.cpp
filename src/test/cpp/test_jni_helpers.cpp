@@ -312,6 +312,16 @@ TEST_F(MockJniFixture, RequireJsonField_EmptyJson_ReturnsFalseAndThrows) {
     EXPECT_EQ(g_throw_message, "\"input_suffix\" is required");
 }
 
+// nlohmann::json::contains() returns true for keys whose value is null.
+// require_json_field_impl uses contains(), so a null-valued field passes
+// the presence check and returns true without throwing.  Callers that
+// require a non-null value must perform their own type check afterwards.
+TEST_F(MockJniFixture, RequireJsonField_NullValue_ReturnsTrueNoThrow) {
+    nlohmann::json data = {{"input_prefix", nullptr}};
+    EXPECT_TRUE(require_json_field_impl(env, data, "input_prefix", dummy_class));
+    EXPECT_FALSE(g_throw_called);
+}
+
 // ============================================================
 // jint_array_to_tokens_impl
 // ============================================================
