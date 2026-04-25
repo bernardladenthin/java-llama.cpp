@@ -413,19 +413,19 @@ TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_ReturnsSentinel) {
 
 TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_AllocatesCorrectSize) {
     std::vector<float> v = {0.1f, 0.2f};
-    embedding_to_jfloat_array_impl(env, v, dummy_class);
+    (void)embedding_to_jfloat_array_impl(env, v, dummy_class);
     EXPECT_EQ(g_float_alloc_size, 2);
 }
 
 TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_CopiesAllElements) {
     std::vector<float> v(5, 0.5f);
-    embedding_to_jfloat_array_impl(env, v, dummy_class);
+    (void)embedding_to_jfloat_array_impl(env, v, dummy_class);
     EXPECT_EQ(g_float_copied_size, 5);
 }
 
 TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_EmptyVector_AllocatesZeroLen) {
     std::vector<float> v;
-    embedding_to_jfloat_array_impl(env, v, dummy_class);
+    (void)embedding_to_jfloat_array_impl(env, v, dummy_class);
     EXPECT_EQ(g_float_alloc_size, 0);
     EXPECT_FALSE(g_throw_called);
 }
@@ -479,19 +479,19 @@ TEST_F(IntArrayFixture, TokensToJintArray_ReturnsSentinel) {
 
 TEST_F(IntArrayFixture, TokensToJintArray_AllocatesCorrectSize) {
     std::vector<int32_t> v = {10, 20};
-    tokens_to_jint_array_impl(env, v, dummy_class);
+    (void)tokens_to_jint_array_impl(env, v, dummy_class);
     EXPECT_EQ(g_int_alloc_size, 2);
 }
 
 TEST_F(IntArrayFixture, TokensToJintArray_CopiesAllElements) {
     std::vector<int32_t> v(7, 42);
-    tokens_to_jint_array_impl(env, v, dummy_class);
+    (void)tokens_to_jint_array_impl(env, v, dummy_class);
     EXPECT_EQ(g_int_copied_size, 7);
 }
 
 TEST_F(IntArrayFixture, TokensToJintArray_EmptyVector_AllocatesZeroLen) {
     std::vector<int32_t> v;
-    tokens_to_jint_array_impl(env, v, dummy_class);
+    (void)tokens_to_jint_array_impl(env, v, dummy_class);
     EXPECT_EQ(g_int_alloc_size, 0);
     EXPECT_FALSE(g_throw_called);
 }

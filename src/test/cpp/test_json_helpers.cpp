@@ -171,7 +171,7 @@ TEST(BuildEmbeddingsResponseJson, NonOai_SingleResult_ReturnsBareArray) {
     results.push_back(make_embedding(1, {0.1f, 0.2f}));
 
     json out = build_embeddings_response_json(results, json::object(),
-                                               OAICOMPAT_TYPE_NONE, false);
+                                               TASK_RESPONSE_TYPE_NONE, false);
 
     ASSERT_TRUE(out.is_array());
     ASSERT_EQ(out.size(), 1u);
@@ -185,7 +185,7 @@ TEST(BuildEmbeddingsResponseJson, NonOai_MultipleResults_AllInArray) {
     results.push_back(make_embedding(3, {0.3f}));
 
     json out = build_embeddings_response_json(results, json::object(),
-                                               OAICOMPAT_TYPE_NONE, false);
+                                               TASK_RESPONSE_TYPE_NONE, false);
 
     ASSERT_TRUE(out.is_array());
     EXPECT_EQ(out.size(), 3u);
@@ -197,7 +197,7 @@ TEST(BuildEmbeddingsResponseJson, OaiFloat_WrapsWithOaiStructure) {
     json body = {{"model", "text-embedding-ada-002"}};
 
     json out = build_embeddings_response_json(results, body,
-                                               OAICOMPAT_TYPE_EMBEDDING, false);
+                                               TASK_RESPONSE_TYPE_OAI_EMBD, false);
 
     EXPECT_TRUE(out.is_object());
     EXPECT_EQ(out.value("object", ""), "list");
@@ -214,7 +214,7 @@ TEST(BuildEmbeddingsResponseJson, OaiBase64_EmbeddingEncodedAsString) {
     results.push_back(make_embedding(1, {1.0f, 2.0f}));
 
     json out = build_embeddings_response_json(results, json::object(),
-                                               OAICOMPAT_TYPE_EMBEDDING, /*use_base64=*/true);
+                                               TASK_RESPONSE_TYPE_OAI_EMBD, /*use_base64=*/true);
 
     ASSERT_TRUE(out["data"].is_array());
     EXPECT_TRUE(out["data"][0]["embedding"].is_string())
@@ -227,7 +227,7 @@ TEST(BuildEmbeddingsResponseJson, OaiUsage_TokensSummedAcrossResults) {
     results.push_back(std::make_unique<fake_embedding_result>(2, std::vector<float>{0.2f}, 5));
 
     json out = build_embeddings_response_json(results, json::object(),
-                                               OAICOMPAT_TYPE_EMBEDDING, false);
+                                               TASK_RESPONSE_TYPE_OAI_EMBD, false);
 
     EXPECT_EQ(out["usage"].value("prompt_tokens", 0), 8)
         << "usage.prompt_tokens must be sum of tokens_evaluated across all results";
@@ -256,17 +256,17 @@ TEST(ExtractFirstEmbeddingRow, MultipleRows_ReturnsFirstRowOnly) {
 
 TEST(ExtractFirstEmbeddingRow, MissingEmbeddingKey_ThrowsJsonException) {
     json j = {{"other_key", "value"}};
-    EXPECT_THROW(extract_first_embedding_row(j), nlohmann::json::exception);
+    EXPECT_THROW((void)extract_first_embedding_row(j), nlohmann::json::exception);
 }
 
 TEST(ExtractFirstEmbeddingRow, EmptyOuterArray_ThrowsRuntimeError) {
     json j = {{"embedding", json::array()}};
-    EXPECT_THROW(extract_first_embedding_row(j), std::runtime_error);
+    EXPECT_THROW((void)extract_first_embedding_row(j), std::runtime_error);
 }
 
 TEST(ExtractFirstEmbeddingRow, EmptyInnerArray_ThrowsRuntimeError) {
     json j = {{"embedding", {json::array()}}};
-    EXPECT_THROW(extract_first_embedding_row(j), std::runtime_error);
+    EXPECT_THROW((void)extract_first_embedding_row(j), std::runtime_error);
 }
 
 TEST(ExtractFirstEmbeddingRow, LargeRow_AllValuesPreserved) {
@@ -297,12 +297,12 @@ TEST(ParseEncodingFormat, Base64_ReturnsTrue) {
 }
 
 TEST(ParseEncodingFormat, UnknownFormat_ThrowsInvalidArgument) {
-    EXPECT_THROW(parse_encoding_format({{"encoding_format", "binary"}}),
+    EXPECT_THROW((void)parse_encoding_format({{"encoding_format", "binary"}}),
                  std::invalid_argument);
 }
 
 TEST(ParseEncodingFormat, EmptyString_ThrowsInvalidArgument) {
-    EXPECT_THROW(parse_encoding_format({{"encoding_format", ""}}),
+    EXPECT_THROW((void)parse_encoding_format({{"encoding_format", ""}}),
                  std::invalid_argument);
 }
 
@@ -419,13 +419,13 @@ TEST(ParseSlotPromptSimilarity, One_ReturnsOne) {
 
 TEST(ParseSlotPromptSimilarity, TooLow_ThrowsInvalidArgument) {
     EXPECT_THROW(
-        parse_slot_prompt_similarity({{"slot_prompt_similarity", -0.1f}}),
+        (void)parse_slot_prompt_similarity({{"slot_prompt_similarity", -0.1f}}),
         std::invalid_argument);
 }
 
 TEST(ParseSlotPromptSimilarity, TooHigh_ThrowsInvalidArgument) {
     EXPECT_THROW(
-        parse_slot_prompt_similarity({{"slot_prompt_similarity", 1.1f}}),
+        (void)parse_slot_prompt_similarity({{"slot_prompt_similarity", 1.1f}}),
         std::invalid_argument);
 }
 
@@ -450,18 +450,18 @@ TEST(ParsePositiveIntConfig, ValidLarge_ReturnsValue) {
 }
 
 TEST(ParsePositiveIntConfig, Zero_ThrowsInvalidArgument) {
-    EXPECT_THROW(parse_positive_int_config({{"n_threads", 0}}, "n_threads"),
+    EXPECT_THROW((void)parse_positive_int_config({{"n_threads", 0}}, "n_threads"),
                  std::invalid_argument);
 }
 
 TEST(ParsePositiveIntConfig, Negative_ThrowsInvalidArgument) {
-    EXPECT_THROW(parse_positive_int_config({{"n_threads", -4}}, "n_threads"),
+    EXPECT_THROW((void)parse_positive_int_config({{"n_threads", -4}}, "n_threads"),
                  std::invalid_argument);
 }
 
 TEST(ParsePositiveIntConfig, ErrorMessage_ContainsKeyName) {
     try {
-        parse_positive_int_config({{"n_threads_batch", 0}}, "n_threads_batch");
+        (void)parse_positive_int_config({{"n_threads_batch", 0}}, "n_threads_batch");
         FAIL() << "Expected std::invalid_argument";
     } catch (const std::invalid_argument &e) {
         EXPECT_NE(std::string(e.what()).find("n_threads_batch"), std::string::npos);
