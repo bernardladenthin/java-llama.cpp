@@ -243,6 +243,18 @@ TEST(FormatResponseRerank, TopN_LargerThanCount_ReturnsAll) {
     EXPECT_EQ(res.at("results").size(), 2u);
 }
 
+TEST(FormatResponseRerank, TopN_Zero_ReturnsEmptyResults) {
+    // top_n=0 must truncate to zero elements, not crash or return all
+    json request = json::object();
+    json ranks   = json::array({make_rank(0, 0.9), make_rank(1, 0.5)});
+    std::vector<std::string> texts = {"a", "b"};
+
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, false, texts, /*top_n=*/0);
+
+    ASSERT_TRUE(res.at("results").is_array());
+    EXPECT_TRUE(res.at("results").empty());
+}
+
 TEST(FormatResponseRerank, TokenCounting_Accumulated) {
     json request = json::object();
     json ranks   = json::array({make_rank(0, 0.5, 15), make_rank(1, 0.9, 25)});
@@ -645,6 +657,24 @@ TEST(ValidateUtf8, ValidThreeByteSequence_FullLength) {
     EXPECT_EQ(validate_utf8(s), 3u);
 }
 
+TEST(ValidateUtf8, ValidFourByteSequence_FullLength) {
+    // 😀 = 0xF0 0x9F 0x98 0x80
+    const std::string s = "\xF0\x9F\x98\x80";
+    EXPECT_EQ(validate_utf8(s), 4u);
+}
+
+TEST(ValidateUtf8, TruncatedFourByte_ReturnsShorter) {
+    // Lead byte 0xF0 + two continuation bytes — missing the last
+    const std::string s = "\xF0\x9F\x98";
+    EXPECT_LT(validate_utf8(s), s.size());
+}
+
+TEST(ValidateUtf8, MixedAsciiAndMultiByte_ReturnsFullLength) {
+    // "aé" = 0x61 0xC3 0xA9 — all valid
+    const std::string s = "a\xC3\xA9";
+    EXPECT_EQ(validate_utf8(s), 3u);
+}
+
 // ============================================================
 // is_valid_utf8 — pure logic, no llama.cpp deps
 // ============================================================
@@ -680,6 +710,14 @@ TEST(IsValidUtf8, TruncatedTwoByte_Invalid) {
 
 TEST(IsValidUtf8, TruncatedThreeByte_Invalid) {
     EXPECT_FALSE(is_valid_utf8("\xE2\x82")); // missing final byte
+}
+
+TEST(IsValidUtf8, TruncatedFourByte_Invalid) {
+    EXPECT_FALSE(is_valid_utf8("\xF0\x9F\x98")); // missing last continuation
+}
+
+TEST(IsValidUtf8, MixedAsciiAndMultiByte_Valid) {
+    EXPECT_TRUE(is_valid_utf8("Hello \xC3\xA9!")); // "Hello é!"
 }
 
 // ============================================================
