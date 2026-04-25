@@ -1033,10 +1033,12 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *env, jobject obj, jstring jparams) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
-    // Check FIM token support.
-    if (llama_vocab_fim_pre(jctx->vocab) == LLAMA_TOKEN_NULL ||
-        llama_vocab_fim_suf(jctx->vocab) == LLAMA_TOKEN_NULL ||
-        llama_vocab_fim_mid(jctx->vocab) == LLAMA_TOKEN_NULL) {
+    // Check FIM token support via server_context_meta (populated from the
+    // same llama_vocab_fim_* calls inside server-context).
+    auto meta = ctx_server->get_meta();
+    if (meta.fim_pre_token == LLAMA_TOKEN_NULL ||
+        meta.fim_sub_token == LLAMA_TOKEN_NULL ||
+        meta.fim_mid_token == LLAMA_TOKEN_NULL) {
         env->ThrowNew(c_llama_error, "Model does not support fill-in-the-middle infill");
         return nullptr;
     }
@@ -1053,7 +1055,6 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
     std::vector<server_tokens> tokenized_prompts =
             tokenize_input_prompts(jctx->vocab, nullptr, prompt, false, true);
 
-    auto meta = ctx_server->get_meta();
     data["prompt"] = format_prompt_infill(jctx->vocab,
                                    data.at("input_prefix"), data.at("input_suffix"),
                                    data.at("input_extra"),
