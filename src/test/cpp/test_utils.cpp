@@ -560,6 +560,47 @@ TEST(ServerTokens, Str_ContainsTokensLabel) {
     EXPECT_NE(s.find("tokens"), std::string::npos);
 }
 
+// pos_next / size_up_to_pos — text-only path (has_mtmd=false).
+// In the non-multimodal path, positions are 1-to-1 with token indices.
+
+TEST(ServerTokens, PosNext_DefaultAll_ReturnsSize) {
+    llama_tokens toks = {10, 20, 30};
+    server_tokens st(toks, false);
+    // pos_next(-1) == total positions == tokens.size()
+    EXPECT_EQ(st.pos_next(-1), static_cast<llama_pos>(3));
+}
+
+TEST(ServerTokens, PosNext_ExactN_ReturnsN) {
+    llama_tokens toks = {1, 2, 3, 4, 5};
+    server_tokens st(toks, false);
+    EXPECT_EQ(st.pos_next(2), static_cast<llama_pos>(2));
+    EXPECT_EQ(st.pos_next(5), static_cast<llama_pos>(5));
+}
+
+TEST(ServerTokens, PosNext_EmptyTokens_ReturnsZero) {
+    server_tokens st;
+    EXPECT_EQ(st.pos_next(-1), static_cast<llama_pos>(0));
+}
+
+TEST(ServerTokens, SizeUpToPos_LessThanSize_ReturnsPos) {
+    llama_tokens toks = {1, 2, 3, 4};
+    server_tokens st(toks, false);
+    // max_pos < tokens.size() → clamp to max_pos
+    EXPECT_EQ(st.size_up_to_pos(2), 2u);
+}
+
+TEST(ServerTokens, SizeUpToPos_BeyondSize_ReturnsSize) {
+    llama_tokens toks = {1, 2, 3};
+    server_tokens st(toks, false);
+    EXPECT_EQ(st.size_up_to_pos(100), 3u);
+}
+
+TEST(ServerTokens, SizeUpToPos_Zero_ReturnsZero) {
+    llama_tokens toks = {1, 2, 3};
+    server_tokens st(toks, false);
+    EXPECT_EQ(st.size_up_to_pos(0), 0u);
+}
+
 // ============================================================
 // json_value utility
 // ============================================================
