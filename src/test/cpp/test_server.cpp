@@ -1490,3 +1490,82 @@ TEST(CmplFinalChatStream, IncludeUsageTrue_TrailingChunkHasEmptyChoicesAndUsage)
     EXPECT_TRUE(found_usage_chunk);
 }
 
+// ============================================================
+// server_task::params_from_json_cmpl — parsing pipeline
+//   Called with nullptr vocab when the JSON does not exercise
+//   grammar/preserved_tokens tokenisation.  Tests verify:
+//     - simple field round-trip (temperature, seed, n_predict)
+//     - repeat_last_n=-1 is expanded to n_ctx_slot
+//     - dry_penalty_last_n=-1 is expanded to n_ctx_slot
+//     - dry_base < 1.0 is reset to default
+//     - n_discard negative is clamped to 0
+//     - empty dry_sequence_breakers throws std::runtime_error
+//     - lora field not an array throws std::runtime_error
+//     - repeat_last_n < -1 throws std::runtime_error
+// ============================================================
+
+namespace {
+task_params parse_params(const json &data, int n_ctx = 512) {
+    common_params params_base;
+    std::vector<llama_logit_bias> no_bias;
+    return server_task::params_from_json_cmpl(nullptr, params_base, n_ctx, no_bias, data);
+}
+} // namespace
+
+TEST(ParamsFromJsonCmpl, SimpleFields_RoundTrip) {
+    const json data = {{"temperature", 0.7f}, {"seed", 42}, {"n_predict", 128}};
+    const auto p = parse_params(data);
+    EXPECT_FLOAT_EQ(p.sampling.temp, 0.7f);
+    EXPECT_EQ(p.sampling.seed, 42u);
+    EXPECT_EQ(p.n_predict, 128);
+}
+
+TEST(ParamsFromJsonCmpl, RepeatLastN_MinusOne_ExpandsToNCtxSlot) {
+    const auto p = parse_params({{"repeat_last_n", -1}}, /*n_ctx=*/256);
+    EXPECT_EQ(p.sampling.penalty_last_n, 256);
+}
+
+TEST(ParamsFromJsonCmpl, DryPenaltyLastN_MinusOne_ExpandsToNCtxSlot) {
+    const auto p = parse_params({{"dry_penalty_last_n", -1}}, /*n_ctx=*/128);
+    EXPECT_EQ(p.sampling.dry_penalty_last_n, 128);
+}
+
+TEST(ParamsFromJsonCmpl, DryBase_BelowOne_ResetToDefault) {
+    // dry_base must be >= 1.0; if below, it reverts to the default (1.75)
+    const auto p = parse_params({{"dry_base", 0.5f}});
+    common_params defaults;
+    EXPECT_FLOAT_EQ(p.sampling.dry_base, defaults.sampling.dry_base);
+}
+
+TEST(ParamsFromJsonCmpl, NDiscard_Negative_ClampedToZero) {
+    const auto p = parse_params({{"n_discard", -5}});
+    EXPECT_EQ(p.n_discard, 0);
+}
+
+TEST(ParamsFromJsonCmpl, EmptyDrySequenceBreakers_Throws) {
+    EXPECT_THROW(parse_params({{"dry_sequence_breakers", json::array()}}),
+                 std::runtime_error);
+}
+
+TEST(ParamsFromJsonCmpl, LoraNotArray_Throws) {
+    EXPECT_THROW(parse_params({{"lora", "not-an-array"}}), std::runtime_error);
+}
+
+TEST(ParamsFromJsonCmpl, RepeatLastN_BelowMinusOne_Throws) {
+    EXPECT_THROW(parse_params({{"repeat_last_n", -2}}), std::runtime_error);
+}
+
+TEST(ParamsFromJsonCmpl, StreamOptions_IncludeUsage_Parsed) {
+    const json data = {{"stream", true},
+                       {"stream_options", {{"include_usage", true}}}};
+    const auto p = parse_params(data);
+    EXPECT_TRUE(p.include_usage);
+}
+
+TEST(ParamsFromJsonCmpl, NCmpl_AliasedFromN) {
+    // n_cmpl falls back to the "n" key when "n_cmpl" is absent.
+    // n_cmpl is capped at n_parallel (1 by default); use 1 to stay valid.
+    const auto p = parse_params({{"n", 1}});
+    EXPECT_EQ(p.n_cmpl, 1);
+}
+
