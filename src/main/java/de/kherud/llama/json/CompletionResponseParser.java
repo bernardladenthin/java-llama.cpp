@@ -2,6 +2,7 @@ package de.kherud.llama.json;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.kherud.llama.InferenceParameters;
 import de.kherud.llama.LlamaOutput;
 import de.kherud.llama.StopReason;
 
@@ -17,12 +18,22 @@ import java.util.Map;
  * model state — they can be tested with JSON string literals alone (see
  * {@code CompletionResponseParserTest}).
  *
- * <p>The native server produces one JSON object per streamed token:
+ * <p>The native server produces one JSON object per streamed token. By default only the
+ * core fields are present:
  * <pre>{@code
  * {
  *   "content": "Hello",
  *   "stop": false,
- *   "stop_type": "none",
+ *   "stop_type": "none"
+ * }
+ * }</pre>
+ *
+ * <p>When inference is configured with {@link InferenceParameters#setNProbs(int)} &gt; 0,
+ * each chunk additionally carries a {@code completion_probabilities} array:
+ * <pre>{@code
+ * {
+ *   "content": "Hello",
+ *   "stop": false,
  *   "completion_probabilities": [
  *     {"token": "Hello", "bytes": [...], "id": 15043, "prob": 0.82,
  *      "top_probs": [{"token": "Hi", "bytes": [...], "id": 9932, "prob": 0.1}]}
