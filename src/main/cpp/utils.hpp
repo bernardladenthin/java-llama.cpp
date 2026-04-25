@@ -5,13 +5,11 @@
 // and many utility function declarations (implemented in server-common.cpp).
 #include "server-common.h"
 
-#include "download.h" // common_remote_get_content, common_remote_params
 #include "build-info.h"
 #include "mtmd-helper.h"
 
 #include <cinttypes>
 #include <memory>
-#include <random>
 #include <sstream>
 #include <string>
 #include <vector>

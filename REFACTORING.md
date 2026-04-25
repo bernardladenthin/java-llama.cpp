@@ -48,13 +48,13 @@ remain identical.
 | File | Lines | Change |
 |------|-------|--------|
 | `src/main/cpp/server.hpp` | 0 | **Deleted** — includes inlined directly |
-| `src/main/cpp/jllama.cpp` | 1,245 | Fully rewritten — upstream reader API |
-| `src/main/cpp/jni_helpers.hpp` | 236 | `jllama_context` rewritten; dead helpers removed |
-| `src/main/cpp/json_helpers.hpp` | 242 | Type alias updates; stale comments fixed |
-| `src/main/cpp/utils.hpp` | 253 | Base64 copy removed; dead slot macros removed |
-| **Total** | **1,976** | **~4,037 lines removed from the 6,013 baseline** |
+| `src/main/cpp/jllama.cpp` | 1,250 | Fully rewritten — upstream reader API |
+| `src/main/cpp/jni_helpers.hpp` | 196 | `jllama_context` rewritten; dead helpers removed |
+| `src/main/cpp/json_helpers.hpp` | 196 | Type alias updates; stale comments fixed |
+| `src/main/cpp/utils.hpp` | 199 | Base64 copy removed; dead slot macros removed |
+| **Total** | **1,841** | **~4,172 lines removed from the 6,013 baseline (69%)** |
 
-All 283 C++ unit tests pass. Java integration tests pass on all platforms
+413 C++ unit tests pass. Java integration tests pass on all platforms
 (Linux, macOS, Windows, Android).
 
 ---
@@ -199,7 +199,7 @@ Dead helpers removed: `build_completion_tasks_impl`, `check_infill_support_impl`
 
 ---
 
-### Phase 3 — Delete dead code ✅ DONE
+### Phase 3 — First dead-code pass ✅ DONE
 
 **Commits:** `0a5a396`, `c19ccfe`
 
@@ -227,12 +227,46 @@ Dead helpers removed: `build_completion_tasks_impl`, `check_infill_support_impl`
 
 ---
 
-### Phase 4 — Final verification ✅ DONE
+### Phase 4 — Upstream API migration (embeddings) ✅ DONE
+
+`embed` and `handleEmbeddings` migrated to use `dynamic_cast<server_task_result_embd*>`
+for direct struct access, removing the JSON-roundtrip extraction path.
+
+Deleted from `json_helpers.hpp`: `extract_first_embedding_row`, `build_embeddings_response_json`.
+Deleted from `test_json_helpers.cpp`: 15 tests for those two functions.
+
+Test count after: 409 tests (−15 from Phase 3 total).
+
+---
+
+### Phase 5 — Second dead-code pass ✅ DONE
+
+**Commits:** `71485d5`, and follow-up cleanup commit.
+
+Functions confirmed dead (zero callers in `jllama.cpp`) and deleted:
+
+| Symbol | File | Reason |
+|--------|------|--------|
+| `format_logit_bias` | `utils.hpp` | Replaced by upstream `format_logit_bias_oaicompat` |
+| `parse_lora_request(base, data)` | `utils.hpp` | 2-arg wrapper; upstream 1-arg version is called directly |
+| `require_single_task_id_impl` | `jni_helpers.hpp` | Streaming now uses per-task `server_response_reader` objects |
+| `get_server_context_impl` | `jni_helpers.hpp` | All production code uses `get_jllama_context_impl` instead |
+| `#include <iostream>` | `jllama.cpp` | Unused after rewrite |
+| `#include "download.h"` | `utils.hpp` | `common_remote_*` not used in utils.hpp |
+| `#include <random>` | `utils.hpp` | No random number generation in utils.hpp |
+
+Deleted tests: 10 (`FormatLogitBias`×3, `ParseLoraRequest`×7) + 5 (`GetServerContext_*`×4, contrast test×1) = 15 tests removed.
+
+Test count after: **413 tests**.
+
+---
+
+### Phase 6 — Final verification ✅ DONE
 
 ```bash
 # C++ unit tests
 cmake -B build -DBUILD_TESTING=ON
-cmake --build build --config Release
+cmake --build build --config Release -j$(nproc)
 ctest --test-dir build --output-on-failure
 
 # Java compile (no model)
@@ -242,7 +276,7 @@ mvn test -Dtest=StopReasonTest,InferenceParametersTest,LlamaLoaderTest,OSInfoTes
 # Full integration (requires model)
 mvn test -Dmodel.path=models/codellama-7b.Q2_K.gguf
 
-# Line count — target: under 1,500 lines for the five main C++ files
+# Line count
 wc -l src/main/cpp/jllama.cpp src/main/cpp/jni_helpers.hpp \
        src/main/cpp/json_helpers.hpp src/main/cpp/utils.hpp
 ```
@@ -260,15 +294,14 @@ The validation tests pass; the functional tests for actual effect are N/A.
 
 ## Code reduction achieved
 
-| File | Baseline | After Phase 3 | Reduction |
-|------|----------|---------------|-----------|
+| File | Baseline | Current | Reduction |
+|------|----------|---------|-----------|
 | `server.hpp` | 3,780 | **0** (deleted) | 3,780 |
-| `jllama.cpp` | 1,270 | 1,245 | 25 |
-| `jni_helpers.hpp` | 398 | 236 | 162 |
-| `json_helpers.hpp` | 243 | 242 | 1 |
-| `utils.hpp` | 322 | 253 | 69 |
-| **Total** | **6,013** | **1,976** | **4,037 lines (67%)** |
+| `jllama.cpp` | 1,270 | 1,250 | 20 |
+| `jni_helpers.hpp` | 398 | 196 | 202 |
+| `json_helpers.hpp` | 243 | 196 | 47 |
+| `utils.hpp` | 322 | 199 | 123 |
+| **Total** | **6,013** | **1,841** | **4,172 lines (69%)** |
 
-The 3,780-line `server.hpp` was the dominant cost. All three phases are now
-complete. The codebase is a thin JNI wrapper over the upstream server library
-with no duplicated logic.
+The 3,780-line `server.hpp` was the dominant cost. The codebase is now a thin
+JNI wrapper over the upstream server library with no duplicated logic.

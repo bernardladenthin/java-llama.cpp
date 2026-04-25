@@ -5,7 +5,7 @@
 // Two layers live here:
 //
 //   Layer A — JNI handle management:
-//     jllama_context struct, get_server_context_impl, get_jllama_context_impl,
+//     jllama_context struct, get_jllama_context_impl,
 //     require_json_field_impl, jint_array_to_tokens_impl
 //
 //   Layer B — JNI + server orchestration:
@@ -66,27 +66,6 @@ struct jllama_context {
 };
 
 // ---------------------------------------------------------------------------
-// get_server_context_impl
-//
-// Reads the native handle stored in the Java LlamaModel object, validates it,
-// and returns a pointer to the embedded server_context value member.
-//
-// On success: returns a non-null server_context*.
-// On failure: throws "Model is not loaded" via JNI and returns nullptr.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline server_context *get_server_context_impl(JNIEnv   *env,
-                                                              jobject   obj,
-                                                              jfieldID  field_id,
-                                                              jclass    error_class) {
-    const jlong handle = env->GetLongField(obj, field_id);
-    if (handle == 0) {
-        env->ThrowNew(error_class, "Model is not loaded");
-        return nullptr;
-    }
-    return &(reinterpret_cast<jllama_context *>(handle)->server); // NOLINT(*-no-int-to-ptr)
-}
-
-// ---------------------------------------------------------------------------
 // get_jllama_context_impl
 //
 // Like get_server_context_impl but returns the jllama_context wrapper itself.
@@ -141,7 +120,7 @@ struct jllama_context {
 
 // ===========================================================================
 // Layer B — JNI + server orchestration
-// (server.hpp must be included by the TU before this header)
+// (upstream server headers must be included by the TU before this header)
 // ===========================================================================
 
 // json_helpers.hpp provides get_result_error_message, results_to_json, and

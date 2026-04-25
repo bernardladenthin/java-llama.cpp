@@ -217,12 +217,12 @@ clang-format -i src/main/cpp/*.cpp src/main/cpp/*.hpp   # Format C++ code
 - `OSInfo` — Detects OS and architecture for library resolution.
 
 **Native layer** (`src/main/cpp/`):
-- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp.
-- `server.hpp` — Inference server logic (adapted from llama.cpp's server).
-- `utils.hpp` — Helper utilities.
+- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp. ~1,250 lines; 17 native methods.
+- `utils.hpp` — Helper utilities (format helpers, argv stripping, token-piece serialisation).
 - `json_helpers.hpp` — Pure JSON transformation helpers (no JNI, no llama state). Independently unit-testable.
 - `jni_helpers.hpp` — JNI bridge helpers (handle management + server orchestration). Includes `json_helpers.hpp`.
 - Uses `nlohmann/json` for JSON deserialization of parameters.
+- The upstream server library (`server-context.cpp`, `server-queue.cpp`, `server-task.cpp`, `server-models.cpp`) is compiled directly into `jllama` via CMake — there is no hand-ported `server.hpp` fork.
 
 ### Native Helper Architecture
 
@@ -235,22 +235,19 @@ The project C++ helpers follow a strict semantic split:
 - Zero llama state (`llama_context*`, `llama_vocab*`, `server_context*` never appear).
 - Functions are named without `_impl` suffix — they are the canonical implementation.
 - Testable with JSON literals and fake result objects; no JVM and no loaded model required.
-- Requires `server.hpp` to be included by the translation unit first (TU convention — `server.hpp` has no include guard).
+- Upstream server headers must be included by the translation unit first (they define `server_task_result_ptr`, `json`, etc.).
 
 Functions: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`,
-`build_embeddings_response_json`, `extract_first_embedding_row`, `parse_encoding_format`,
-`extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`,
-`parse_positive_int_config`.
+`parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`,
+`parse_slot_prompt_similarity`, `parse_positive_int_config`.
 
 **`jni_helpers.hpp`** — JNI bridge helpers, split into two layers:
 
 *Layer A* (no server headers required): handle management.
 - `jllama_context` struct — owns `server_context` (value member, pimpl inside), background
   worker thread, cached `vocab`, saved `params`, and a `readers` map for streaming tasks.
-- `get_server_context_impl` — reads Java `ctx` handle, returns `&jctx->server`, throws on null.
-- `get_jllama_context_impl` — like above but returns the `jllama_context*` wrapper; used only
-  on the delete path. Does NOT throw on zero handle (valid no-op for destructor-style calls).
-- `require_single_task_id_impl` — validates exactly one task ID was created.
+- `get_jllama_context_impl` — reads Java `ctx` handle, returns the `jllama_context*` wrapper.
+  Does NOT throw on zero handle (valid no-op for destructor-style calls).
 - `require_json_field_impl` — throws `"<field> is required"` if key is absent.
 - `jint_array_to_tokens_impl` — reads a Java `int[]` into `std::vector<int32_t>`.
 
@@ -267,8 +264,12 @@ Functions with `_impl` suffix are called directly from `jllama.cpp`.
 **Include order rule:**
 ```
 // In jllama.cpp and any TU that uses Layer B helpers:
-#include "server.hpp"     // must come first — no include guard
-#include "jni_helpers.hpp"  // includes json_helpers.hpp internally
+#include "server-context.h"   // upstream server headers must come first
+#include "server-queue.h"
+#include "server-task.h"
+#include "server-common.h"
+#include "server-chat.h"
+#include "jni_helpers.hpp"    // includes json_helpers.hpp internally
 ```
 
 **Adding a new pure transform** (e.g. a new JSON field parser):
@@ -277,7 +278,7 @@ Functions with `_impl` suffix are called directly from `jllama.cpp`.
 
 **Adding a new JNI bridge helper:**
 - Add it to `jni_helpers.hpp` in the appropriate layer.
-- If it needs `server.hpp` types, put it in Layer B (after the `json_helpers.hpp` include).
+- If it needs upstream server types, put it in Layer B (after the `json_helpers.hpp` include).
 - Add tests to `src/test/cpp/test_jni_helpers.cpp`.
 
 ### Parameter Flow
@@ -321,7 +322,7 @@ cmake --build build --config Release -j$(nproc)
 ctest --test-dir build --output-on-failure
 
 # Count tests across all files
-grep -rn "^TEST(" src/test/cpp/ | wc -l
+grep -rn "^TEST\b\|^TEST_F\b\|^TEST_P\b" src/test/cpp/ | wc -l
 
 # Run a single named test (GoogleTest filter syntax)
 ctest --test-dir build --output-on-failure -R "ResultsToJson"
@@ -331,12 +332,12 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 | File | Tests | Scope |
 |------|-------|-------|
-| `src/test/cpp/test_utils.cpp` | 165 | Upstream helpers: `server_tokens`, `server_grammar_trigger`, `gen_tool_call_id`, `json_value`, `json_get_nested_values`, UTF-8 helpers, `format_response_rerank`, `format_embeddings_response_oaicompat`, `oaicompat_completion_params_parse`, `oaicompat_chat_params_parse`, LoRA helpers, `strip_flag_from_argv`, `token_piece_value`, `json_is_array_and_contains_numbers`, `format_oai_sse`, `format_oai_resp_sse`, `format_anthropic_sse` |
-| `src/test/cpp/test_server.cpp` | 158 | Upstream result types: `result_timings`, `task_params::to_json()` (incl. `dry_sequence_breakers`, `preserved_tokens`), `completion_token_output`, `server_task_result_cmpl_partial` (non-oaicompat + `to_json_oaicompat` + `to_json_oaicompat_chat` + dispatcher), `server_task_result_cmpl_final` (non-oaicompat + `to_json_oaicompat` + `to_json_oaicompat_chat` + `to_json_oaicompat_chat_stream` + `to_json_anthropic` + `to_json_anthropic_stream` + dispatcher), `server_task_result_embd`, `server_task_result_rerank`, `server_task_result_metrics`, `server_task_result_slot_save_load`, `server_task_result_slot_erase`, `server_task_result_apply_lora`, `server_task_result_error`, `format_error_response`, `server_task::need_sampling()`, `server_task::n_tokens()`, `server_task::params_from_json_cmpl()` (parsing pipeline + error paths), `response_fields` projection |
-| `src/test/cpp/test_json_helpers.cpp` | 57 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`, `build_embeddings_response_json`, `extract_first_embedding_row`, `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config` |
-| `src/test/cpp/test_jni_helpers.cpp` | 44 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock |
+| `src/test/cpp/test_utils.cpp` | 156 | Upstream helpers: `server_tokens`, `server_grammar_trigger`, `gen_tool_call_id`, `json_value`, `json_get_nested_values`, UTF-8 helpers, `format_response_rerank`, `format_embeddings_response_oaicompat`, `oaicompat_completion_params_parse`, `oaicompat_chat_params_parse`, `are_lora_equal`, `strip_flag_from_argv`, `token_piece_value`, `json_is_array_and_contains_numbers`, `format_oai_sse`, `format_oai_resp_sse`, `format_anthropic_sse` |
+| `src/test/cpp/test_server.cpp` | 179 | Upstream result types: `result_timings`, `task_params::to_json()` (incl. `dry_sequence_breakers`, `preserved_tokens`, `timings_per_token`), `completion_token_output`, `server_task_result_cmpl_partial` (non-oaicompat + `to_json_oaicompat` + logprobs + `to_json_oaicompat_chat` + `to_json_anthropic` + dispatcher), `server_task_result_cmpl_final` (non-oaicompat + `to_json_oaicompat` + `to_json_oaicompat_chat` + `to_json_oaicompat_chat_stream` + `to_json_anthropic` + `to_json_anthropic_stream` + tool_calls + dispatcher), `server_task_result_embd`, `server_task_result_rerank`, `server_task_result_metrics`, `server_task_result_slot_save_load`, `server_task_result_slot_erase`, `server_task_result_apply_lora`, `server_task_result_error`, `format_error_response`, `server_task::need_sampling()`, `server_task::n_tokens()`, `server_task::params_from_json_cmpl()` (parsing pipeline + grammar routing + error paths), `response_fields` projection |
+| `src/test/cpp/test_json_helpers.cpp` | 42 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`, `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config` |
+| `src/test/cpp/test_jni_helpers.cpp` | 36 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock |
 
-**Current total: 424 tests (all passing).** Branch: `claude/refactor-java-llama-d3lua`.
+**Current total: 413 tests (all passing).** Branch: `claude/refactor-java-llama-d3lua`.
 
 #### Upstream source location (in CMake build tree)
 

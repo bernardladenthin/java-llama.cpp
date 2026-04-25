@@ -18,7 +18,6 @@
 #include <ctime>
 #include <functional>
 #include <thread>
-#include <iostream>
 #include <stdexcept>
 
 // We store some references to Java classes and their fields/methods here to speed up things for later and to fail

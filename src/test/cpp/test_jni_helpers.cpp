@@ -6,8 +6,7 @@
 // Pure JSON transform tests live in test_json_helpers.cpp.
 //
 // Layer A tests:
-//   get_server_context_impl, get_jllama_context_impl,
-//   require_json_field_impl, jint_array_to_tokens_impl
+//   get_jllama_context_impl, require_json_field_impl, jint_array_to_tokens_impl
 //
 // Layer B tests (need upstream server headers + mock JNIEnv):
 //   json_to_jstring_impl, results_to_jstring_impl,
@@ -183,42 +182,6 @@ TEST(JllamaContextReaders, AbsentKey_CountReturnsZero) {
     EXPECT_EQ(ctx.readers.count(99), 0u);
 }
 
-TEST_F(MockJniFixture, GetServerContext_NullHandle_ThrowsAndReturnsNull) {
-    g_mock_handle = 0;
-
-    server_context *result =
-        get_server_context_impl(env, nullptr, dummy_field, dummy_class);
-
-    EXPECT_EQ(result, nullptr);
-    EXPECT_TRUE(g_throw_called);
-    EXPECT_EQ(g_throw_message, "Model is not loaded");
-}
-
-TEST_F(MockJniFixture, GetServerContext_ValidHandle_ReturnsServerContextNoThrow) {
-    jllama_context fake_ctx;
-    g_mock_handle = reinterpret_cast<jlong>(&fake_ctx);
-
-    server_context *result =
-        get_server_context_impl(env, nullptr, dummy_field, dummy_class);
-
-    EXPECT_EQ(result, &fake_ctx.server);
-    EXPECT_FALSE(g_throw_called);
-}
-
-TEST_F(MockJniFixture, GetServerContext_ErrorMessageIsExact) {
-    g_mock_handle = 0;
-    (void)get_server_context_impl(env, nullptr, dummy_field, dummy_class);
-    ASSERT_TRUE(g_throw_called);
-    EXPECT_EQ(g_throw_message, "Model is not loaded");
-}
-
-TEST_F(MockJniFixture, GetServerContext_ValidHandle_NeverCallsThrowNew) {
-    jllama_context fake_ctx;
-    g_mock_handle = reinterpret_cast<jlong>(&fake_ctx);
-    (void)get_server_context_impl(env, nullptr, dummy_field, dummy_class);
-    EXPECT_FALSE(g_throw_called);
-}
-
 // ============================================================
 // get_jllama_context_impl
 // ============================================================
@@ -252,17 +215,6 @@ TEST_F(MockJniFixture, GetJllamaContext_ReturnsWrapperNotInnerServer) {
     EXPECT_EQ(result, &fake_ctx);
     // Note: &fake_ctx.server == &fake_ctx because server is the first value member;
     // the type-level distinction (jllama_context* vs server_context*) is sufficient.
-}
-
-TEST_F(MockJniFixture, GetJllamaContext_NullHandle_WhileGetServerContextThrows) {
-    g_mock_handle = 0;
-
-    (void)get_server_context_impl(env, nullptr, dummy_field, dummy_class);
-    EXPECT_TRUE(g_throw_called);
-
-    g_throw_called = false;
-    (void)get_jllama_context_impl(env, nullptr, dummy_field);
-    EXPECT_FALSE(g_throw_called);
 }
 
 // ============================================================
