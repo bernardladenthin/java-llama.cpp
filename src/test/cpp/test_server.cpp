@@ -1140,6 +1140,34 @@ TEST(CmplFinalOaicompatChat, WithExplicitOaicompatMsg_MessageContentUsed) {
     EXPECT_EQ(j.at("choices")[0].at("message").at("content").get<std::string>(), "explicit reply");
 }
 
+TEST(CmplFinalOaicompatChat, WithToolCalls_FinishReason_IsToolCalls) {
+    // When oaicompat_msg has tool_calls and stop==EOS, finish_reason must
+    // be "tool_calls" (not "stop").
+    auto f = make_oai_final("");
+    common_chat_tool_call tc;
+    tc.id        = "call_1";
+    tc.name      = "search";
+    tc.arguments = R"({"q":"test"})";
+    f.oaicompat_msg.tool_calls.push_back(tc);
+    f.stop = STOP_TYPE_EOS;
+    const json j = f.to_json_oaicompat_chat();
+    EXPECT_EQ(j.at("choices")[0].at("finish_reason").get<std::string>(), "tool_calls");
+}
+
+TEST(CmplFinalOaicompatChat, WithToolCalls_MessageHasToolCallsArray) {
+    auto f = make_oai_final("");
+    common_chat_tool_call tc;
+    tc.id        = "call_1";
+    tc.name      = "search";
+    tc.arguments = R"({"q":"test"})";
+    f.oaicompat_msg.tool_calls.push_back(tc);
+    const json j = f.to_json_oaicompat_chat();
+    const json &msg = j.at("choices")[0].at("message");
+    ASSERT_TRUE(msg.contains("tool_calls"));
+    ASSERT_EQ(msg.at("tool_calls").size(), 1u);
+    EXPECT_EQ(msg.at("tool_calls")[0].at("function").at("name").get<std::string>(), "search");
+}
+
 // ============================================================
 // server_task_result_cmpl_final::to_json_anthropic
 //   Anthropic Messages API response shape.
@@ -1313,6 +1341,22 @@ TEST(CmplPartialToJsonDispatch, NotUpdated_Asserts) {
     p.is_updated = true;
     p.res_type   = TASK_RESPONSE_TYPE_NONE;
     EXPECT_NO_THROW(p.to_json());
+}
+
+TEST(CmplPartialToJsonDispatch, ResTypeAnthropic_RoutesToAnthropicStream) {
+    // ANTHROPIC arm in the dispatcher calls to_json_anthropic(), which
+    // returns a json::array (not a json::object like the OAI arms).
+    // With n_decoded==1 the first-token message_start event is emitted.
+    server_task_result_cmpl_partial p;
+    p.is_updated        = true;
+    p.res_type          = TASK_RESPONSE_TYPE_ANTHROPIC;
+    p.n_decoded         = 1;
+    p.oaicompat_model   = "m";
+    p.oaicompat_cmpl_id = "id";
+    const json j = p.to_json();
+    EXPECT_TRUE(j.is_array());
+    EXPECT_FALSE(j.empty());
+    EXPECT_EQ(j.front().at("event").get<std::string>(), "message_start");
 }
 
 // ============================================================
