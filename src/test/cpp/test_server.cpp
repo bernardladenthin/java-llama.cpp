@@ -297,6 +297,52 @@ TEST(SlotParamsToJson, GrammarTriggers_SerialiseViaServerGrammarTrigger) {
 }
 
 // ============================================================
+// task_params::to_json — dry_sequence_breakers / preserved_tokens
+//   These two sampling fields are serialised unconditionally but
+//   were never asserted in earlier tests.
+// ============================================================
+
+TEST(SlotParamsToJson, DrySequenceBreakers_DefaultValues) {
+    task_params p;
+    const json j = p.to_json();
+    ASSERT_TRUE(j.contains("dry_sequence_breakers"));
+    EXPECT_TRUE(j.at("dry_sequence_breakers").is_array());
+    // Default is {"\n", ":", "\"", "*"} — must be non-empty
+    EXPECT_FALSE(j.at("dry_sequence_breakers").empty());
+}
+
+TEST(SlotParamsToJson, DrySequenceBreakers_CustomValue) {
+    task_params p;
+    p.sampling.dry_sequence_breakers = {".", "!"};
+    const json j = p.to_json();
+    const auto &br = j.at("dry_sequence_breakers");
+    ASSERT_EQ(br.size(), 2u);
+    EXPECT_EQ(br[0].get<std::string>(), ".");
+    EXPECT_EQ(br[1].get<std::string>(), "!");
+}
+
+TEST(SlotParamsToJson, PreservedTokens_EmptyByDefault) {
+    task_params p;
+    const json j = p.to_json();
+    ASSERT_TRUE(j.contains("preserved_tokens"));
+    // std::set serialises as a JSON array
+    EXPECT_TRUE(j.at("preserved_tokens").is_array());
+    EXPECT_TRUE(j.at("preserved_tokens").empty());
+}
+
+TEST(SlotParamsToJson, PreservedTokens_Populated) {
+    task_params p;
+    p.sampling.preserved_tokens.insert(1);
+    p.sampling.preserved_tokens.insert(99);
+    const json j = p.to_json();
+    const auto &pt = j.at("preserved_tokens");
+    ASSERT_EQ(pt.size(), 2u);
+    // set serialises in ascending order
+    EXPECT_EQ(pt[0].get<llama_token>(), 1);
+    EXPECT_EQ(pt[1].get<llama_token>(), 99);
+}
+
+// ============================================================
 // completion_token_output
 //   Model-free struct.  Tests the helpers that are always
 //   exercised during token streaming.
