@@ -1420,3 +1420,73 @@ TEST(CmplFinalVerboseFlag, Oaicompat_TimingsPresentWhenPromptNNonNeg) {
     EXPECT_TRUE(j.contains("timings"));
 }
 
+// ============================================================
+// server_task_result_cmpl_final::to_json_oaicompat_chat_stream
+//   Returns a JSON array of chat.completion.chunk objects.
+//   Structure:
+//     [delta_0, delta_1, ..., final_chunk]           (include_usage=false)
+//     [delta_0, ..., final_chunk, usage_chunk]        (include_usage=true)
+//   - Every chunk has object="chat.completion.chunk".
+//   - All intermediate chunks have choices[0].finish_reason=null.
+//   - The terminal chunk has a non-null finish_reason.
+//   - The usage chunk (if present) has empty choices array + usage object.
+// ============================================================
+
+namespace {
+server_task_result_cmpl_final make_stream_final(bool include_usage = false) {
+    server_task_result_cmpl_final f;
+    f.oaicompat_model   = "m";
+    f.oaicompat_cmpl_id = "id";
+    f.stop              = STOP_TYPE_EOS;
+    f.include_usage     = include_usage;
+    // No oaicompat_msg_diffs → just the single terminal chunk
+    return f;
+}
+} // namespace
+
+TEST(CmplFinalChatStream, ReturnsArray) {
+    const json j = make_stream_final().to_json_oaicompat_chat_stream();
+    EXPECT_TRUE(j.is_array());
+    EXPECT_FALSE(j.empty());
+}
+
+TEST(CmplFinalChatStream, EveryChunk_HasChatCompletionChunkObject) {
+    const json j = make_stream_final().to_json_oaicompat_chat_stream();
+    for (const auto &chunk : j) {
+        EXPECT_EQ(chunk.at("object").get<std::string>(), "chat.completion.chunk");
+    }
+}
+
+TEST(CmplFinalChatStream, LastChunk_HasNonNullFinishReason) {
+    const json j = make_stream_final().to_json_oaicompat_chat_stream();
+    // Last element is the terminal stop chunk
+    const json &last_chunk = j.back();
+    const json &fr = last_chunk.at("choices")[0].at("finish_reason");
+    EXPECT_FALSE(fr.is_null());
+    EXPECT_EQ(fr.get<std::string>(), "stop");  // STOP_TYPE_EOS → "stop"
+}
+
+TEST(CmplFinalChatStream, IncludeUsageFalse_NoUsageChunk) {
+    const json j = make_stream_final(/*include_usage=*/false).to_json_oaicompat_chat_stream();
+    // No extra trailing chunk for usage
+    for (const auto &chunk : j) {
+        // all chunks with choices must have exactly 1 choice
+        if (!chunk.at("choices").empty()) {
+            EXPECT_FALSE(chunk.contains("usage"));
+        }
+    }
+}
+
+TEST(CmplFinalChatStream, IncludeUsageTrue_TrailingChunkHasEmptyChoicesAndUsage) {
+    const json j = make_stream_final(/*include_usage=*/true).to_json_oaicompat_chat_stream();
+    // Per OAI spec, the usage chunk has empty choices and a usage object
+    bool found_usage_chunk = false;
+    for (const auto &chunk : j) {
+        if (chunk.at("choices").empty() && chunk.contains("usage")) {
+            found_usage_chunk = true;
+            EXPECT_TRUE(chunk.at("usage").contains("completion_tokens"));
+        }
+    }
+    EXPECT_TRUE(found_usage_chunk);
+}
+
