@@ -759,3 +759,61 @@ TEST(ServerTaskResultCmplPartial, NonOaicompat_ProgressPresentWhenIsProgress) {
     EXPECT_EQ(j.at("prompt_progress").at("total").get<int>(), 20);
 }
 
+TEST(ServerTaskResultCmplPartial, IsStop_ReturnsFalse) {
+    server_task_result_cmpl_partial p;
+    EXPECT_FALSE(p.is_stop());
+}
+
+// ============================================================
+// server_task_result_cmpl_final::to_json_non_oaicompat
+//   The terminal (stop=true) chunk shape used by blocking
+//   completions.  Call to_json_non_oaicompat() directly.
+// ============================================================
+
+TEST(ServerTaskResultCmplFinal, IsStop_ReturnsTrue) {
+    server_task_result_cmpl_final f;
+    EXPECT_TRUE(f.is_stop());
+}
+
+TEST(ServerTaskResultCmplFinal, NonOaicompat_StopAlwaysTrue) {
+    server_task_result_cmpl_final f;
+    f.content         = "done";
+    f.n_decoded       = 3;
+    f.n_prompt_tokens = 7;
+    const json j = f.to_json_non_oaicompat();
+    EXPECT_TRUE(j.at("stop").get<bool>());
+    EXPECT_EQ(j.at("content").get<std::string>(), "done");
+    EXPECT_EQ(j.at("tokens_predicted").get<int>(), 3);
+    EXPECT_EQ(j.at("tokens_evaluated").get<int>(), 7);
+}
+
+TEST(ServerTaskResultCmplFinal, NonOaicompat_StopType_None) {
+    server_task_result_cmpl_final f;
+    f.stop = STOP_TYPE_NONE;
+    const json j = f.to_json_non_oaicompat();
+    EXPECT_EQ(j.at("stop_type").get<std::string>(), "none");
+}
+
+TEST(ServerTaskResultCmplFinal, NonOaicompat_StopType_Eos) {
+    server_task_result_cmpl_final f;
+    f.stop = STOP_TYPE_EOS;
+    const json j = f.to_json_non_oaicompat();
+    EXPECT_EQ(j.at("stop_type").get<std::string>(), "eos");
+}
+
+TEST(ServerTaskResultCmplFinal, NonOaicompat_StopType_Word) {
+    server_task_result_cmpl_final f;
+    f.stop         = STOP_TYPE_WORD;
+    f.stopping_word = "</s>";
+    const json j = f.to_json_non_oaicompat();
+    EXPECT_EQ(j.at("stop_type").get<std::string>(), "word");
+    EXPECT_EQ(j.at("stopping_word").get<std::string>(), "</s>");
+}
+
+TEST(ServerTaskResultCmplFinal, NonOaicompat_StopType_Limit) {
+    server_task_result_cmpl_final f;
+    f.stop = STOP_TYPE_LIMIT;
+    const json j = f.to_json_non_oaicompat();
+    EXPECT_EQ(j.at("stop_type").get<std::string>(), "limit");
+}
+
