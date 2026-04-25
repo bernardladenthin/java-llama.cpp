@@ -6,8 +6,7 @@
 //
 //   Layer A — JNI handle management:
 //     jllama_context struct, get_server_context_impl, get_jllama_context_impl,
-//     require_single_task_id_impl, require_json_field_impl,
-//     jint_array_to_tokens_impl
+//     require_json_field_impl, jint_array_to_tokens_impl
 //
 //   Layer B — JNI + server orchestration:
 //     json_to_jstring_impl, results_to_jstring_impl,
@@ -29,7 +28,6 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <unordered_set>
 #include <vector>
 
 // Forward declarations.
@@ -106,23 +104,6 @@ struct jllama_context {
         return nullptr;
     }
     return reinterpret_cast<jllama_context *>(handle); // NOLINT(*-no-int-to-ptr)
-}
-
-// ---------------------------------------------------------------------------
-// require_single_task_id_impl
-//
-// Validates that exactly one task was created after dispatch and returns its
-// ID.  Returns 0 (with a JNI exception pending) when the count is not 1.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline int require_single_task_id_impl(
-        JNIEnv                        *env,
-        const std::unordered_set<int> &task_ids,
-        jclass                         error_class) {
-    if (task_ids.size() != 1) {
-        env->ThrowNew(error_class, "multitasking currently not supported");
-        return 0;
-    }
-    return *task_ids.begin();
 }
 
 // ---------------------------------------------------------------------------

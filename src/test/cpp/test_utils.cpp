@@ -10,7 +10,7 @@
 //   - json_get_nested_values  (path-based JSON extractor)
 //   - oaicompat_completion_params_parse  (OAI /completions param validation)
 //   - format_embeddings_response_oaicompat  (OAI embedding response formatter)
-//   - format_tokenizer_response / format_detokenized_response / format_logit_bias
+//   - format_tokenizer_response / format_detokenized_response
 //   - safe_json_to_str  (lossy JSON→string with bad-char replacement)
 //   - token_piece_value  (native /tokenize wire format)
 
@@ -948,8 +948,7 @@ TEST(FormatEmbeddingsResponse, Base64Format_EncodingFormatField) {
 }
 
 // ============================================================
-// format_tokenizer_response / format_detokenized_response /
-// format_logit_bias
+// format_tokenizer_response / format_detokenized_response
 //   Tiny response formatters — pure data wrappers.
 // ============================================================
 
@@ -969,29 +968,6 @@ TEST(FormatDetokenizedResponse, WrapsInContentKey) {
 TEST(FormatDetokenizedResponse, EmptyString) {
     const json res = format_detokenized_response("");
     EXPECT_EQ(res.at("content").get<std::string>(), "");
-}
-
-TEST(FormatLogitBias, EmptyVector_ReturnsEmptyArray) {
-    const json res = format_logit_bias({});
-    EXPECT_TRUE(res.is_array());
-    EXPECT_TRUE(res.empty());
-}
-
-TEST(FormatLogitBias, SingleEntry_CorrectFields) {
-    llama_logit_bias lb;
-    lb.token = 42;
-    lb.bias  = -1.5f;
-    const json res = format_logit_bias({lb});
-    ASSERT_EQ(res.size(), 1u);
-    EXPECT_EQ(res[0].at("token").get<int>(), 42);
-    EXPECT_FLOAT_EQ(res[0].at("bias").get<float>(), -1.5f);
-}
-
-TEST(FormatLogitBias, MultipleEntries) {
-    llama_logit_bias a; a.token = 1; a.bias = 0.5f;
-    llama_logit_bias b; b.token = 2; b.bias = -2.0f;
-    const json res = format_logit_bias({a, b});
-    EXPECT_EQ(res.size(), 2u);
 }
 
 // ============================================================
@@ -1151,8 +1127,8 @@ TEST(OaicompatChatParams, ContentNotStringOrArray_Throws) {
 }
 
 // ============================================================
-// are_lora_equal / parse_lora_request
-//   Pure data-structure helpers; no model needed.
+// are_lora_equal
+//   Pure data-structure helper; no model needed.
 // ============================================================
 
 namespace {
@@ -1193,54 +1169,6 @@ TEST(AreLoraEqual, PathDifference_Ignored) {
     b.path = "model_b.gguf";
     // path is explicitly not checked in are_lora_equal
     EXPECT_TRUE(are_lora_equal({a}, {b}));
-}
-
-TEST(ParseLoraRequest, EmptyData_ClearsAllScales) {
-    std::vector<common_adapter_lora_info> base = {make_lora(0.8f), make_lora(0.6f)};
-    const auto result = parse_lora_request(base, json::array());
-    ASSERT_EQ(result.size(), 2u);
-    EXPECT_FLOAT_EQ(result[0].scale, 0.0f);
-    EXPECT_FLOAT_EQ(result[1].scale, 0.0f);
-}
-
-TEST(ParseLoraRequest, ValidId_SetsScale) {
-    std::vector<common_adapter_lora_info> base = {make_lora(0.0f), make_lora(0.0f)};
-    const json data = json::array({{{"id", 1}, {"scale", 0.75f}}});
-    const auto result = parse_lora_request(base, data);
-    EXPECT_FLOAT_EQ(result[0].scale, 0.0f); // untouched
-    EXPECT_FLOAT_EQ(result[1].scale, 0.75f);
-}
-
-TEST(ParseLoraRequest, InvalidId_Throws) {
-    std::vector<common_adapter_lora_info> base = {make_lora(0.0f)};
-    const json data = json::array({{{"id", 5}, {"scale", 1.0f}}});
-    EXPECT_THROW(parse_lora_request(base, data), std::runtime_error);
-}
-
-TEST(ParseLoraRequest, NegativeId_Throws) {
-    std::vector<common_adapter_lora_info> base = {make_lora(0.0f)};
-    const json data = json::array({{{"id", -1}, {"scale", 1.0f}}});
-    EXPECT_THROW(parse_lora_request(base, data), std::runtime_error);
-}
-
-TEST(ParseLoraRequest, MultipleIds_AllSet) {
-    std::vector<common_adapter_lora_info> base = {make_lora(0.0f), make_lora(0.0f), make_lora(0.0f)};
-    const json data = json::array({
-        {{"id", 0}, {"scale", 0.3f}},
-        {{"id", 2}, {"scale", 0.9f}}
-    });
-    const auto result = parse_lora_request(base, data);
-    EXPECT_FLOAT_EQ(result[0].scale, 0.3f);
-    EXPECT_FLOAT_EQ(result[1].scale, 0.0f); // not set
-    EXPECT_FLOAT_EQ(result[2].scale, 0.9f);
-}
-
-TEST(ParseLoraRequest, DoesNotModifyOriginalBase) {
-    std::vector<common_adapter_lora_info> base = {make_lora(0.8f)};
-    const json data = json::array({{{"id", 0}, {"scale", 0.2f}}});
-    parse_lora_request(base, data);
-    // original must be unchanged
-    EXPECT_FLOAT_EQ(base[0].scale, 0.8f);
 }
 
 // ============================================================

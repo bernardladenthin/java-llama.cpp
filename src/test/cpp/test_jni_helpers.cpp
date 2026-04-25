@@ -7,8 +7,7 @@
 //
 // Layer A tests:
 //   get_server_context_impl, get_jllama_context_impl,
-//   require_single_task_id_impl, require_json_field_impl,
-//   jint_array_to_tokens_impl
+//   require_json_field_impl, jint_array_to_tokens_impl
 //
 // Layer B tests (need upstream server headers + mock JNIEnv):
 //   json_to_jstring_impl, results_to_jstring_impl,
@@ -23,8 +22,6 @@
 #include <memory>
 #include <string>
 #include <thread>
-#include <unordered_set>
-
 #include "server-context.h"
 #include "server-queue.h"
 #include "server-task.h"
@@ -266,29 +263,6 @@ TEST_F(MockJniFixture, GetJllamaContext_NullHandle_WhileGetServerContextThrows) 
     g_throw_called = false;
     (void)get_jllama_context_impl(env, nullptr, dummy_field);
     EXPECT_FALSE(g_throw_called);
-}
-
-// ============================================================
-// require_single_task_id_impl
-// ============================================================
-
-TEST_F(MockJniFixture, RequireSingleTaskId_ExactlyOne_ReturnsIdNoThrow) {
-    std::unordered_set<int> ids = {42};
-    EXPECT_EQ(require_single_task_id_impl(env, ids, dummy_class), 42);
-    EXPECT_FALSE(g_throw_called);
-}
-
-TEST_F(MockJniFixture, RequireSingleTaskId_Empty_ReturnsZeroAndThrows) {
-    std::unordered_set<int> ids;
-    EXPECT_EQ(require_single_task_id_impl(env, ids, dummy_class), 0);
-    EXPECT_TRUE(g_throw_called);
-    EXPECT_EQ(g_throw_message, "multitasking currently not supported");
-}
-
-TEST_F(MockJniFixture, RequireSingleTaskId_Multiple_ReturnsZeroAndThrows) {
-    std::unordered_set<int> ids = {1, 2, 3};
-    EXPECT_EQ(require_single_task_id_impl(env, ids, dummy_class), 0);
-    EXPECT_TRUE(g_throw_called);
 }
 
 // ============================================================

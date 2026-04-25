@@ -199,26 +199,3 @@ static std::vector<char *> strip_flag_from_argv(char **argv, int argc, const cha
 static json format_tokenizer_response(const json &tokens) { return json{{"tokens", tokens}}; }
 
 static json format_detokenized_response(const std::string &content) { return json{{"content", content}}; }
-
-static json format_logit_bias(const std::vector<llama_logit_bias> &logit_bias) {
-    json data = json::array();
-    for (const auto &lb : logit_bias) {
-        data.push_back(json{
-            {"bias", lb.bias},
-            {"token", lb.token},
-        });
-    }
-    return data;
-}
-
-// parse lora config from JSON request, returned a copy of lora_base with updated scale
-static std::vector<common_adapter_lora_info> parse_lora_request(const std::vector<common_adapter_lora_info> &lora_base,
-                                                                const json &data) {
-    std::vector<common_adapter_lora_info> lora(lora_base);
-    for (auto &e : lora) e.scale = 0.0f;
-    for (const auto &[id, scale] : parse_lora_request(data)) {  // upstream: extracts id->scale map
-        if (id < 0 || id >= (int)lora.size()) throw std::runtime_error("invalid adapter id");
-        lora[id].scale = scale;
-    }
-    return lora;
-}
