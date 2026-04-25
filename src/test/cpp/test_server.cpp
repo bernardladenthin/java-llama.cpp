@@ -1607,3 +1607,63 @@ TEST(CmplFinalResponseFields, ContentValue_PreservedThroughProjection) {
     EXPECT_EQ(j.at("content").get<std::string>(), "keep this");
 }
 
+// ============================================================
+// server_task_result_cmpl_partial::to_json_oaicompat_chat
+//   Streaming OAI chat chunk.  Returns a JSON array of delta
+//   objects (each has object="chat.completion.chunk").
+//   Special rule: when n_decoded==1 (first token), the method
+//   prepends a role-announcement delta with role="assistant"
+//   and content=null before the content deltas.
+// ============================================================
+
+namespace {
+server_task_result_cmpl_partial make_chat_partial(int n_decoded = 1) {
+    server_task_result_cmpl_partial p;
+    p.is_updated        = true;
+    p.res_type          = TASK_RESPONSE_TYPE_OAI_CHAT;
+    p.n_decoded         = n_decoded;
+    p.oaicompat_model   = "m";
+    p.oaicompat_cmpl_id = "id";
+    return p;
+}
+} // namespace
+
+TEST(CmplPartialOaicompatChat, ReturnsArray) {
+    // Even with no diffs the first-token header delta is emitted
+    const json j = make_chat_partial(/*n_decoded=*/1).to_json_oaicompat_chat();
+    EXPECT_TRUE(j.is_array());
+    EXPECT_FALSE(j.empty());
+}
+
+TEST(CmplPartialOaicompatChat, EveryChunk_ObjectIsChatCompletionChunk) {
+    const json j = make_chat_partial(1).to_json_oaicompat_chat();
+    for (const auto &chunk : j) {
+        EXPECT_EQ(chunk.at("object").get<std::string>(), "chat.completion.chunk");
+    }
+}
+
+TEST(CmplPartialOaicompatChat, FirstToken_HasRoleHeaderDelta) {
+    // n_decoded==1 → prepend a delta with role:"assistant", content:null
+    const json j = make_chat_partial(/*n_decoded=*/1).to_json_oaicompat_chat();
+    ASSERT_FALSE(j.empty());
+    const json &delta = j.front().at("choices")[0].at("delta");
+    EXPECT_EQ(delta.at("role").get<std::string>(), "assistant");
+    EXPECT_TRUE(delta.at("content").is_null());
+}
+
+TEST(CmplPartialOaicompatChat, NotFirstToken_NoRoleHeaderDelta) {
+    // n_decoded==2 → no role header; with no diffs the array is empty
+    const json j = make_chat_partial(/*n_decoded=*/2).to_json_oaicompat_chat();
+    // no diffs + not first → nothing emitted
+    EXPECT_TRUE(j.empty());
+}
+
+TEST(CmplPartialOaicompatChat, AllChunks_FinishReasonIsNull) {
+    // Partial chunks must always carry finish_reason=null
+    const json j = make_chat_partial(1).to_json_oaicompat_chat();
+    for (const auto &chunk : j) {
+        ASSERT_FALSE(chunk.at("choices").empty());
+        EXPECT_TRUE(chunk.at("choices")[0].at("finish_reason").is_null());
+    }
+}
+
