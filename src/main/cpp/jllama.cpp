@@ -267,6 +267,21 @@ static json parse_json_params(JNIEnv *env, jstring jparams) {
     return require_json_field_impl(env, data, field, c_llama_error);
 }
 
+// Build a single indexed token task for batch submission (rerank and embedding).
+// Assigns the reader-allocated id; moves tokens into the task.
+[[nodiscard]] static server_task build_indexed_token_task(server_response_reader &rd,
+                                                           server_task_type        type,
+                                                           server_tokens         &&tokens,
+                                                           int                     index,
+                                                           task_response_type      res_type) {
+    server_task task(type);
+    task.id              = rd.get_new_id();
+    task.tokens          = std::move(tokens);
+    task.index           = index;
+    task.params.res_type = res_type;
+    return task;
+}
+
 // Post a single pre-built task, wait for its result, and return JSON as a jstring.
 // The task's id field is assigned here; callers must not set it beforehand.
 [[nodiscard]] static jstring dispatch_one_shot_task(JNIEnv           *env,
@@ -846,11 +861,9 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
     std::vector<server_task> tasks;
     tasks.reserve(document_vector.size());
     for (size_t i = 0; i < document_vector.size(); i++) {
-        server_task task(SERVER_TASK_TYPE_RERANK);
-        task.id     = rd.get_new_id();
-        task.tokens = format_prompt_rerank(model, jctx->vocab, nullptr, prompt, document_vector[i]);
-        task.index  = static_cast<int>(i);
-        tasks.push_back(std::move(task));
+        tasks.push_back(build_indexed_token_task(rd, SERVER_TASK_TYPE_RERANK,
+            format_prompt_rerank(model, jctx->vocab, nullptr, prompt, document_vector[i]),
+            static_cast<int>(i), TASK_RESPONSE_TYPE_NONE));
     }
     rd.post_tasks(std::move(tasks));
 
@@ -1102,12 +1115,9 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
     std::vector<server_task> tasks;
     tasks.reserve(tokenized_prompts.size());
     for (size_t i = 0; i < tokenized_prompts.size(); i++) {
-        server_task task(SERVER_TASK_TYPE_EMBEDDING);
-        task.id              = rd.get_new_id();
-        task.tokens          = server_tokens(tokenized_prompts[i].get_tokens(), false);
-        task.index           = static_cast<int>(i);
-        task.params.res_type = res_type;
-        tasks.push_back(std::move(task));
+        tasks.push_back(build_indexed_token_task(rd, SERVER_TASK_TYPE_EMBEDDING,
+            server_tokens(tokenized_prompts[i].get_tokens(), false),
+            static_cast<int>(i), res_type));
     }
     rd.post_tasks(std::move(tasks));
 
