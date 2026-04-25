@@ -1404,3 +1404,87 @@ TEST(TokenPieceValue, ValidThreeByteChar_ReturnsString) {
     const json j = token_piece_value("\xE2\x82\xAC");
     EXPECT_TRUE(j.is_string());
 }
+
+// ============================================================
+// format_oai_sse
+//   Produces "data: <json>\n\n" RFC 8895 lines.
+//   When given a JSON array, each element becomes a separate event.
+// ============================================================
+
+TEST(FormatOaiSse, SingleObject_ProducesOneLine) {
+    const json j = {{"content", "hello"}};
+    const std::string s = format_oai_sse(j);
+    EXPECT_EQ(s.rfind("data: ", 0), 0u);  // starts with "data: "
+    EXPECT_NE(s.find("\"content\""), std::string::npos);
+    EXPECT_EQ(s.substr(s.size() - 2), "\n\n");
+}
+
+TEST(FormatOaiSse, Array_ProducesMultipleEvents) {
+    const json arr = json::array({{{"a", 1}}, {{"b", 2}}});
+    const std::string s = format_oai_sse(arr);
+    // Each element generates one "data: ... \n\n"
+    size_t count = 0;
+    size_t pos = 0;
+    while ((pos = s.find("data: ", pos)) != std::string::npos) { ++count; ++pos; }
+    EXPECT_EQ(count, 2u);
+}
+
+TEST(FormatOaiSse, StringValue_DoesNotThrow) {
+    EXPECT_NO_THROW(format_oai_sse(json("done")));
+}
+
+// ============================================================
+// format_oai_resp_sse
+//   Each event object must have "event" and "data" fields;
+//   the output is "event: <name>\ndata: <json>\n\n".
+// ============================================================
+
+TEST(FormatOaiRespSse, SingleEvent_HasEventAndDataLines) {
+    const json ev = {{"event", "response.text.delta"}, {"data", {{"text", "hi"}}}};
+    const std::string s = format_oai_resp_sse(ev);
+    EXPECT_NE(s.find("event: response.text.delta\n"), std::string::npos);
+    EXPECT_NE(s.find("data: "), std::string::npos);
+    EXPECT_EQ(s.substr(s.size() - 2), "\n\n");
+}
+
+TEST(FormatOaiRespSse, Array_ProducesMultipleEventBlocks) {
+    const json arr = json::array({
+        {{"event", "e1"}, {"data", json::object()}},
+        {{"event", "e2"}, {"data", json::object()}}
+    });
+    const std::string s = format_oai_resp_sse(arr);
+    EXPECT_NE(s.find("event: e1"), std::string::npos);
+    EXPECT_NE(s.find("event: e2"), std::string::npos);
+}
+
+// ============================================================
+// format_anthropic_sse
+//   Two branches: object with both "event"+"data" → labelled event;
+//   object without those fields → bare "data: <json>\n\n".
+// ============================================================
+
+TEST(FormatAnthropicSse, WithEventAndData_ProducesLabelledEvent) {
+    const json ev = {{"event", "content_block_delta"}, {"data", {{"type", "delta"}}}};
+    const std::string s = format_anthropic_sse(ev);
+    EXPECT_NE(s.find("event: content_block_delta\n"), std::string::npos);
+    EXPECT_NE(s.find("data: "), std::string::npos);
+}
+
+TEST(FormatAnthropicSse, WithoutEventField_BareLine) {
+    const json ev = {{"type", "ping"}};
+    const std::string s = format_anthropic_sse(ev);
+    // No "event:" line — just a bare data line
+    EXPECT_EQ(s.find("event:"), std::string::npos);
+    EXPECT_NE(s.find("data: "), std::string::npos);
+}
+
+TEST(FormatAnthropicSse, Array_EachElementDispatchedCorrectly) {
+    const json arr = json::array({
+        {{"event", "ping"}, {"data", json::object()}},
+        {{"type", "bare"}}
+    });
+    const std::string s = format_anthropic_sse(arr);
+    EXPECT_NE(s.find("event: ping"), std::string::npos);
+    // second element is bare
+    EXPECT_EQ(s.find("event: bare"), std::string::npos);
+}
