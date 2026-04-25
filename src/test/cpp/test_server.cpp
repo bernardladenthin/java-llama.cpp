@@ -1373,3 +1373,50 @@ TEST(CmplFinalDispatch, ResTypeAnthropic_StreamFalse_HasStopReason) {
     EXPECT_TRUE(j.contains("stop_reason"));
 }
 
+// ============================================================
+// verbose flag — cross-cutting concern in OAI formatters
+//   Both to_json_oaicompat() and to_json_oaicompat_chat() inject a
+//   __verbose key containing the non-oaicompat representation when
+//   f.verbose==true.  This is a cross-cutting concern that must be
+//   tested to catch regressions across future formatter refactors.
+// ============================================================
+
+TEST(CmplFinalVerboseFlag, Oaicompat_VerboseFalse_NoDebugKey) {
+    auto f = make_oai_final();
+    f.verbose = false;
+    const json j = f.to_json_oaicompat();
+    EXPECT_FALSE(j.contains("__verbose"));
+}
+
+TEST(CmplFinalVerboseFlag, Oaicompat_VerboseTrue_DebugKeyPresent) {
+    auto f = make_oai_final("debug content");
+    f.verbose = true;
+    const json j = f.to_json_oaicompat();
+    ASSERT_TRUE(j.contains("__verbose"));
+    // __verbose must contain the non-oaicompat representation
+    EXPECT_TRUE(j.at("__verbose").contains("content"));
+    EXPECT_EQ(j.at("__verbose").at("content").get<std::string>(), "debug content");
+}
+
+TEST(CmplFinalVerboseFlag, OaicompatChat_VerboseTrue_DebugKeyPresent) {
+    auto f = make_oai_final("chat debug");
+    f.verbose = true;
+    const json j = f.to_json_oaicompat_chat();
+    ASSERT_TRUE(j.contains("__verbose"));
+    EXPECT_EQ(j.at("__verbose").at("content").get<std::string>(), "chat debug");
+}
+
+TEST(CmplFinalVerboseFlag, Oaicompat_TimingsAbsentByDefault) {
+    auto f = make_oai_final();
+    // timings.prompt_n is default-constructed to a value < 0 — absent
+    const json j = f.to_json_oaicompat();
+    EXPECT_FALSE(j.contains("timings"));
+}
+
+TEST(CmplFinalVerboseFlag, Oaicompat_TimingsPresentWhenPromptNNonNeg) {
+    auto f = make_oai_final();
+    f.timings.prompt_n = 0;  // >= 0 triggers inclusion
+    const json j = f.to_json_oaicompat();
+    EXPECT_TRUE(j.contains("timings"));
+}
+
