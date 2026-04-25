@@ -649,7 +649,6 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
         return;
     }
 
-    jctx->server.init();
     jctx->vocab = llama_model_get_vocab(llama_get_model(jctx->server.get_llama_context()));
 
     LOG_INF("%s: model loaded\n", __func__);
@@ -676,7 +675,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
             attached = true;
         }
         jctx->worker_ready.store(true);
-        jctx->server.start();
+        jctx->server.start_loop();
         if (attached) {
             g_vm->DetachCurrentThread();
         }
@@ -698,7 +697,18 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_getModelMetaJson(JNIEn
         };
         return json_to_jstring(env, meta);
     }
-    return json_to_jstring(env, ctx_server->model_meta());
+    auto m = ctx_server->get_meta();
+    json j = {
+        {"vocab_type",   m.model_vocab_type},
+        {"n_vocab",      m.model_vocab_n_tokens},
+        {"n_ctx_train",  m.model_n_ctx_train},
+        {"n_embd",       m.model_n_embd_inp},
+        {"n_params",     m.model_n_params},
+        {"size",         m.model_size},
+        {"modalities",   {{"vision", m.has_inp_image}, {"audio", m.has_inp_audio}}},
+        {"name",         m.model_name},
+    };
+    return json_to_jstring(env, j);
 }
 
 JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv *env, jobject obj, jstring jparams) {
@@ -914,11 +924,11 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobje
             std::this_thread::yield();
         }
         // Signal the background thread to stop. Call twice with a brief sleep
-        // to close the race where the thread signalled ready but start() hasn't
-        // yet set its internal running flag.
-        jctx->server.stop();
+        // to close the race where the thread signalled ready but start_loop()
+        // hasn't yet set its internal running flag.
+        jctx->server.terminate();
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        jctx->server.stop();
+        jctx->server.terminate();
         if (jctx->worker.joinable()) {
             jctx->worker.join();
         }
