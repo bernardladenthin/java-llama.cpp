@@ -547,6 +547,18 @@ TEST(ServerTaskResultMetrics, ToJson_TokenCountFields) {
     EXPECT_EQ(j.at("n_busy_slots_total").get<uint64_t>(), 4u);
 }
 
+TEST(ServerTaskResultMetrics, ToJson_TimingAndWindowFields) {
+    const json j = make_metrics().to_json();
+    // Timing totals
+    EXPECT_EQ(j.at("t_prompt_processing_total").get<uint64_t>(), 50u);
+    EXPECT_EQ(j.at("t_tokens_generation_total").get<uint64_t>(), 80u);
+    // Current-window counts (not the _total variants)
+    EXPECT_EQ(j.at("n_prompt_tokens_processed").get<uint64_t>(), 10u);
+    EXPECT_EQ(j.at("t_prompt_processing").get<uint64_t>(), 5u);
+    EXPECT_EQ(j.at("n_tokens_predicted").get<uint64_t>(), 20u);
+    EXPECT_EQ(j.at("t_tokens_generation").get<uint64_t>(), 8u);
+}
+
 TEST(ServerTaskResultMetrics, ToJson_SlotDataIsArray) {
     server_task_result_metrics m = make_metrics();
     m.slots_data = json::array({{{"id", 0}}, {{"id", 1}}});
@@ -850,5 +862,31 @@ TEST(ServerTaskResultCmplFinal, NonOaicompat_StreamModeWithProbs_CompletionProba
     f.probs_output.push_back(cto);
     const json j = f.to_json_non_oaicompat();
     EXPECT_FALSE(j.contains("completion_probabilities"));
+}
+
+// ============================================================
+// server_task_result_cmpl_final::usage_json_oaicompat
+//   Called by to_json_oaicompat / to_json_oaicompat_chat.
+//   Directly callable without update().
+// ============================================================
+
+TEST(ServerTaskResultCmplFinal, UsageJsonOaicompat_FieldsCorrect) {
+    server_task_result_cmpl_final f;
+    f.n_decoded              = 17;
+    f.n_prompt_tokens        = 8;
+    f.n_prompt_tokens_cache  = 3;
+    const json j = f.usage_json_oaicompat();
+    EXPECT_EQ(j.at("completion_tokens").get<int>(), 17);
+    EXPECT_EQ(j.at("prompt_tokens").get<int>(), 8);
+    EXPECT_EQ(j.at("total_tokens").get<int>(), 25);  // 17 + 8
+    EXPECT_EQ(j.at("prompt_tokens_details").at("cached_tokens").get<int>(), 3);
+}
+
+TEST(ServerTaskResultCmplFinal, UsageJsonOaicompat_TotalTokensIsSumOfBoth) {
+    server_task_result_cmpl_final f;
+    f.n_decoded       = 5;
+    f.n_prompt_tokens = 10;
+    const json j = f.usage_json_oaicompat();
+    EXPECT_EQ(j.at("total_tokens").get<int>(), f.n_decoded + f.n_prompt_tokens);
 }
 
