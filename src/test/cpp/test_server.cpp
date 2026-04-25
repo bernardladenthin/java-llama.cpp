@@ -520,6 +520,34 @@ TEST(ServerTaskTypeHelpers, NeedLogits_FalseForOtherTypes) {
     { server_task t; t.type = SERVER_TASK_TYPE_METRICS;   EXPECT_FALSE(t.need_logits()); }
 }
 
+TEST(ServerTaskTypeHelpers, NeedSampling_TrueForCompletionAndInfill) {
+    { server_task t; t.type = SERVER_TASK_TYPE_COMPLETION; EXPECT_TRUE(t.need_sampling()); }
+    { server_task t; t.type = SERVER_TASK_TYPE_INFILL;     EXPECT_TRUE(t.need_sampling()); }
+}
+
+TEST(ServerTaskTypeHelpers, NeedSampling_FalseForNonGenerativeTasks) {
+    { server_task t; t.type = SERVER_TASK_TYPE_EMBEDDING; EXPECT_FALSE(t.need_sampling()); }
+    { server_task t; t.type = SERVER_TASK_TYPE_RERANK;    EXPECT_FALSE(t.need_sampling()); }
+    { server_task t; t.type = SERVER_TASK_TYPE_METRICS;   EXPECT_FALSE(t.need_sampling()); }
+}
+
+// ============================================================
+// server_task::n_tokens
+//   Returns the number of pre-tokenised tokens stored in the task.
+//   Used by the slot scheduler to decide if a task can be batched.
+// ============================================================
+
+TEST(ServerTaskNTokens, EmptyTokens_ReturnsZero) {
+    server_task t;
+    EXPECT_EQ(t.n_tokens(), 0);
+}
+
+TEST(ServerTaskNTokens, PopulatedTokens_ReturnsCount) {
+    server_task t;
+    t.tokens = server_tokens(llama_tokens{1, 2, 3, 4, 5}, /*has_mtmd=*/false);
+    EXPECT_EQ(t.n_tokens(), 5);
+}
+
 // ============================================================
 // server_task_result_metrics::to_json
 //   Pure struct → JSON; no model needed.
