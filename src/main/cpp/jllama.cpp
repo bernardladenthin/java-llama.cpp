@@ -830,14 +830,17 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
             tokenize_input_prompts(jctx->vocab, nullptr, document_vector, true, true);
 
     auto rd = ctx_server->get_response_reader();
+    std::vector<server_task> tasks;
+    tasks.reserve(tokenized_docs.size());
     for (size_t i = 0; i < tokenized_docs.size(); i++) {
         server_task task(SERVER_TASK_TYPE_RERANK);
         task.id     = rd.get_new_id();
         task.tokens = server_tokens(
                 format_rerank(jctx->vocab, tokenized_query, tokenized_docs[i].get_tokens()), false);
         task.index  = static_cast<int>(i);
-        rd.post_task(std::move(task));
+        tasks.push_back(std::move(task));
     }
+    rd.post_tasks(std::move(tasks));
 
     auto br = rd.wait_for_all([] { return false; });
     if (br.error) {
