@@ -1222,9 +1222,19 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
 
 JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInference(JNIEnv *env, jobject obj,
                                                                                       jstring jconfig) {
-    // Runtime reconfiguration of slot_prompt_similarity and n_threads is not
-    // supported in the upstream reader-based API where server_context fields
-    // are encapsulated.  Accepted silently for source compatibility.
-    (void)env; (void)obj; (void)jconfig;
+    // Runtime reconfiguration is not supported in the upstream reader-based API
+    // (server_context fields are encapsulated behind the pimpl).  Validate the
+    // input parameters so callers still get exceptions on out-of-range values,
+    // then return true without applying any changes.
+    (void)obj;
+    json config = parse_json_params(env, jconfig);
+    try {
+        (void)parse_slot_prompt_similarity(config);
+        (void)parse_positive_int_config(config, "n_threads");
+        (void)parse_positive_int_config(config, "n_threads_batch");
+    } catch (const std::invalid_argument &e) {
+        env->ThrowNew(c_llama_error, e.what());
+        return JNI_FALSE;
+    }
     return JNI_TRUE;
 }
