@@ -1091,3 +1091,52 @@ TEST(CmplFinalOaicompat, Id_ReflectsOaicompatCmplId) {
     EXPECT_EQ(j.at("id").get<std::string>(), "cmpl-test");
 }
 
+// ============================================================
+// server_task_result_cmpl_final::to_json_oaicompat_chat
+//   OAI /chat/completions response shape.
+//   When oaicompat_msg is empty the method synthesises a plain
+//   assistant message from `content`.  finish_reason follows
+//   the same stop logic as to_json_oaicompat.
+// ============================================================
+
+TEST(CmplFinalOaicompatChat, Object_IsChatCompletion) {
+    const json j = make_oai_final().to_json_oaicompat_chat();
+    EXPECT_EQ(j.at("object").get<std::string>(), "chat.completion");
+}
+
+TEST(CmplFinalOaicompatChat, Choices_ContainsMessageWithRoleAndContent) {
+    auto f = make_oai_final("think deeply");
+    const json j = f.to_json_oaicompat_chat();
+    ASSERT_TRUE(j.at("choices").is_array());
+    const json &msg = j.at("choices")[0].at("message");
+    EXPECT_EQ(msg.at("role").get<std::string>(), "assistant");
+    EXPECT_EQ(msg.at("content").get<std::string>(), "think deeply");
+}
+
+TEST(CmplFinalOaicompatChat, FinishReason_StopForEos) {
+    auto f = make_oai_final();
+    f.stop = STOP_TYPE_EOS;
+    const json j = f.to_json_oaicompat_chat();
+    EXPECT_EQ(j.at("choices")[0].at("finish_reason").get<std::string>(), "stop");
+}
+
+TEST(CmplFinalOaicompatChat, FinishReason_LengthForLimit) {
+    auto f = make_oai_final();
+    f.stop = STOP_TYPE_LIMIT;
+    const json j = f.to_json_oaicompat_chat();
+    EXPECT_EQ(j.at("choices")[0].at("finish_reason").get<std::string>(), "length");
+}
+
+TEST(CmplFinalOaicompatChat, Usage_Present) {
+    const json j = make_oai_final().to_json_oaicompat_chat();
+    EXPECT_TRUE(j.contains("usage"));
+}
+
+TEST(CmplFinalOaicompatChat, WithExplicitOaicompatMsg_MessageContentUsed) {
+    auto f = make_oai_final("ignored");
+    f.oaicompat_msg.role    = "assistant";
+    f.oaicompat_msg.content = "explicit reply";
+    const json j = f.to_json_oaicompat_chat();
+    EXPECT_EQ(j.at("choices")[0].at("message").at("content").get<std::string>(), "explicit reply");
+}
+
