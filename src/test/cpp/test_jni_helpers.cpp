@@ -104,8 +104,41 @@ struct MockJniFixture : ::testing::Test {
 } // namespace
 
 // ============================================================
-// get_server_context_impl
+// jllama_context default member values
+//
+// These verify that every field added during the Phase 2 refactor
+// (value-member server, vocab/vocab_only_model caches, readers map)
+// has the correct zero/null/false default so loadModel can rely on
+// them without extra initialisation.
 // ============================================================
+
+TEST(JllamaContextDefaults, VocabOnly_FalseByDefault) {
+    jllama_context ctx;
+    EXPECT_FALSE(ctx.vocab_only);
+}
+
+TEST(JllamaContextDefaults, WorkerReady_FalseByDefault) {
+    jllama_context ctx;
+    EXPECT_FALSE(ctx.worker_ready.load());
+}
+
+TEST(JllamaContextDefaults, Vocab_NullByDefault) {
+    jllama_context ctx;
+    EXPECT_EQ(ctx.vocab, nullptr);
+}
+
+TEST(JllamaContextDefaults, VocabOnlyModel_NullByDefault) {
+    jllama_context ctx;
+    EXPECT_EQ(ctx.vocab_only_model, nullptr);
+}
+
+TEST(JllamaContextDefaults, Readers_EmptyByDefault) {
+    jllama_context ctx;
+    std::lock_guard<std::mutex> lk(ctx.readers_mutex);
+    EXPECT_TRUE(ctx.readers.empty());
+}
+
+
 
 TEST_F(MockJniFixture, GetServerContext_NullHandle_ThrowsAndReturnsNull) {
     g_mock_handle = 0;
