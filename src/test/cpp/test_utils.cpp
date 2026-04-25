@@ -667,6 +667,27 @@ TEST(JsonArrayChecks, EmptyArray_NotMixed) {
     EXPECT_FALSE(json_is_array_of_mixed_numbers_strings(json::array()));
 }
 
+// json_is_array_and_contains_numbers
+//   Returns true when the input is an array that has at least one integer
+//   element; returns false for a string-only array, an empty array, or a
+//   non-array value.
+
+TEST(JsonArrayChecks, ArrayWithNumber_ContainsNumbers) {
+    EXPECT_TRUE(json_is_array_and_contains_numbers(json{1, "hello"}));
+}
+
+TEST(JsonArrayChecks, ArrayOnlyStrings_NotContainsNumbers) {
+    EXPECT_FALSE(json_is_array_and_contains_numbers(json{"a", "b"}));
+}
+
+TEST(JsonArrayChecks, EmptyArray_NotContainsNumbers) {
+    EXPECT_FALSE(json_is_array_and_contains_numbers(json::array()));
+}
+
+TEST(JsonArrayChecks, NonArray_NotContainsNumbers) {
+    EXPECT_FALSE(json_is_array_and_contains_numbers(json(42)));
+}
+
 // ============================================================
 // validate_utf8 — pure logic, no llama.cpp deps
 // ============================================================
