@@ -817,3 +817,38 @@ TEST(ServerTaskResultCmplFinal, NonOaicompat_StopType_Limit) {
     EXPECT_EQ(j.at("stop_type").get<std::string>(), "limit");
 }
 
+TEST(ServerTaskResultCmplFinal, NonOaicompat_NoProbsOutput_CompletionProbabilitiesAbsent) {
+    // completion_probabilities must be absent when probs_output is empty;
+    // Java's CompletionResponseParser skips this field when absent.
+    server_task_result_cmpl_final f;
+    f.stream = false;
+    // probs_output stays empty (default)
+    const json j = f.to_json_non_oaicompat();
+    EXPECT_FALSE(j.contains("completion_probabilities"));
+}
+
+TEST(ServerTaskResultCmplFinal, NonOaicompat_WithProbsOutput_CompletionProbabilitiesPresent) {
+    // When probs_output is non-empty and stream==false, the key must appear.
+    server_task_result_cmpl_final f;
+    f.stream              = false;
+    f.post_sampling_probs = true;
+    completion_token_output cto;
+    cto.tok = 42; cto.prob = 0.9f; cto.text_to_send = "hi";
+    f.probs_output.push_back(cto);
+    const json j = f.to_json_non_oaicompat();
+    ASSERT_TRUE(j.contains("completion_probabilities"));
+    EXPECT_TRUE(j.at("completion_probabilities").is_array());
+}
+
+TEST(ServerTaskResultCmplFinal, NonOaicompat_StreamModeWithProbs_CompletionProbabilitiesAbsent) {
+    // stream==true suppresses completion_probabilities even if probs_output is set.
+    server_task_result_cmpl_final f;
+    f.stream              = true;
+    f.post_sampling_probs = true;
+    completion_token_output cto;
+    cto.tok = 1; cto.prob = 0.5f; cto.text_to_send = "x";
+    f.probs_output.push_back(cto);
+    const json j = f.to_json_non_oaicompat();
+    EXPECT_FALSE(j.contains("completion_probabilities"));
+}
+
