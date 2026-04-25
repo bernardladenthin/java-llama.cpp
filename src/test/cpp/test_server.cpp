@@ -1017,3 +1017,77 @@ TEST(ServerTaskResultCmplFinal, UsageJsonOaicompat_TotalTokensIsSumOfBoth) {
     EXPECT_EQ(j.at("total_tokens").get<int>(), f.n_decoded + f.n_prompt_tokens);
 }
 
+// ============================================================
+// server_task_result_cmpl_final::to_json_oaicompat
+//   OAI /completions (non-chat) response shape.
+//   finish_reason is "stop" when stop==EOS or WORD; "length" otherwise.
+//   object field must always be "text_completion".
+// ============================================================
+
+namespace {
+server_task_result_cmpl_final make_oai_final(const std::string &content = "hello") {
+    server_task_result_cmpl_final f;
+    f.content         = content;
+    f.oaicompat_model = "test-model";
+    f.oaicompat_cmpl_id = "cmpl-test";
+    f.n_decoded       = 3;
+    f.n_prompt_tokens = 5;
+    return f;
+}
+} // namespace
+
+TEST(CmplFinalOaicompat, Object_IsTextCompletion) {
+    const json j = make_oai_final().to_json_oaicompat();
+    EXPECT_EQ(j.at("object").get<std::string>(), "text_completion");
+}
+
+TEST(CmplFinalOaicompat, Choices_ContainsContentAndIndex) {
+    const json j = make_oai_final("world").to_json_oaicompat();
+    ASSERT_TRUE(j.at("choices").is_array());
+    ASSERT_EQ(j.at("choices").size(), 1u);
+    EXPECT_EQ(j.at("choices")[0].at("text").get<std::string>(), "world");
+    EXPECT_EQ(j.at("choices")[0].at("index").get<int>(), 0);
+}
+
+TEST(CmplFinalOaicompat, FinishReason_StopForEos) {
+    auto f = make_oai_final();
+    f.stop = STOP_TYPE_EOS;
+    const json j = f.to_json_oaicompat();
+    EXPECT_EQ(j.at("choices")[0].at("finish_reason").get<std::string>(), "stop");
+}
+
+TEST(CmplFinalOaicompat, FinishReason_LengthForLimit) {
+    auto f = make_oai_final();
+    f.stop = STOP_TYPE_LIMIT;
+    const json j = f.to_json_oaicompat();
+    EXPECT_EQ(j.at("choices")[0].at("finish_reason").get<std::string>(), "length");
+}
+
+TEST(CmplFinalOaicompat, FinishReason_StopForWord) {
+    auto f = make_oai_final();
+    f.stop = STOP_TYPE_WORD;
+    const json j = f.to_json_oaicompat();
+    EXPECT_EQ(j.at("choices")[0].at("finish_reason").get<std::string>(), "stop");
+}
+
+TEST(CmplFinalOaicompat, Usage_FieldsPresent) {
+    auto f = make_oai_final();
+    const json j = f.to_json_oaicompat();
+    ASSERT_TRUE(j.contains("usage"));
+    EXPECT_TRUE(j.at("usage").contains("completion_tokens"));
+    EXPECT_TRUE(j.at("usage").contains("prompt_tokens"));
+    EXPECT_TRUE(j.at("usage").contains("total_tokens"));
+}
+
+TEST(CmplFinalOaicompat, Model_ReflectsOaicompatModel) {
+    auto f = make_oai_final();
+    const json j = f.to_json_oaicompat();
+    EXPECT_EQ(j.at("model").get<std::string>(), "test-model");
+}
+
+TEST(CmplFinalOaicompat, Id_ReflectsOaicompatCmplId) {
+    auto f = make_oai_final();
+    const json j = f.to_json_oaicompat();
+    EXPECT_EQ(j.at("id").get<std::string>(), "cmpl-test");
+}
+
