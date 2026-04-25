@@ -500,6 +500,37 @@ TEST(ServerTaskResultEmbd, Oaicompat_UsesFirstRow) {
     EXPECT_EQ(j.at("tokens_evaluated").get<int>(), 8);
 }
 
+TEST(ServerTaskResultEmbd, NonOaicompat_NTokensAbsent) {
+    // tokens_evaluated must not appear in the non-OAI shape
+    server_task_result_embd e;
+    e.embedding = {{0.5f}};
+    e.n_tokens  = 3;
+    e.res_type  = TASK_RESPONSE_TYPE_NONE;
+    const json j = e.to_json();
+    EXPECT_FALSE(j.contains("tokens_evaluated"));
+}
+
+TEST(ServerTaskResultEmbd, NonOaicompat_SingleRowValues) {
+    // Verify the float values survive the JSON round-trip
+    server_task_result_embd e;
+    e.embedding = {{0.1f, 0.2f, 0.3f}};
+    e.res_type  = TASK_RESPONSE_TYPE_NONE;
+    const json j = e.to_json();
+    ASSERT_EQ(j.at("embedding").size(), 1u);   // one row
+    ASSERT_EQ(j.at("embedding")[0].size(), 3u); // three elements
+    EXPECT_FLOAT_EQ(j.at("embedding")[0][1].get<float>(), 0.2f);
+}
+
+TEST(ServerTaskResultEmbd, Dispatcher_NoneRoutes_ToNonOaicompat) {
+    // to_json() dispatches on res_type; NONE → non-oaicompat (full matrix)
+    server_task_result_embd e;
+    e.embedding = {{1.0f, 2.0f}, {3.0f, 4.0f}};
+    e.res_type  = TASK_RESPONSE_TYPE_NONE;
+    const json j = e.to_json();
+    EXPECT_EQ(j.at("embedding").size(), 2u); // full 2D matrix
+    EXPECT_FALSE(j.contains("tokens_evaluated"));
+}
+
 // ============================================================
 // format_error_response
 //   Covers all 7 error_type variants and their HTTP codes.
