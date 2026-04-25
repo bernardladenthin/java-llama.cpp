@@ -124,6 +124,21 @@ TEST(ResultsToJson, EmptyVector_ReturnsEmptyArray) {
     EXPECT_TRUE(out.empty());
 }
 
+// results_to_json has no special error-result handling: a single error result
+// is returned as an object directly (not wrapped in an array), exactly like a
+// success result. This matters because jllama.cpp callers must inspect the
+// object for "error" / "message" without expecting an array wrapper.
+TEST(ResultsToJson, SingleErrorResult_ReturnsObjectDirectly) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_error(1, "task failed"));
+
+    json out = results_to_json(results);
+
+    EXPECT_TRUE(out.is_object());
+    EXPECT_TRUE(out.contains("message"));
+    EXPECT_EQ(out.value("message", ""), "task failed");
+}
+
 // ============================================================
 // rerank_results_to_json
 // ============================================================
@@ -160,6 +175,32 @@ TEST(RerankResultsToJson, EmptyResults_ReturnsEmptyArray) {
     json out = rerank_results_to_json(results, {});
     EXPECT_TRUE(out.is_array());
     EXPECT_TRUE(out.empty());
+}
+
+TEST(RerankResultsToJson, SingleResult_CorrectShape) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_rerank(1, 0, 0.75f));
+    std::vector<std::string> docs = {"only doc"};
+
+    json out = rerank_results_to_json(results, docs);
+
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].value("document", ""), "only doc");
+    EXPECT_EQ(out[0].value("index", -1), 0);
+    EXPECT_FLOAT_EQ(out[0].value("score", 0.0f), 0.75f);
+}
+
+TEST(RerankResultsToJson, IndexLookup_UsesResultIndexNotPosition) {
+    // Result at position 0 has index=1 — must look up documents[1], not documents[0].
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_rerank(1, 1, 0.5f));
+    std::vector<std::string> docs = {"doc zero", "doc one"};
+
+    json out = rerank_results_to_json(results, docs);
+
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].value("document", ""), "doc one");
+    EXPECT_EQ(out[0].value("index", -1), 1);
 }
 
 // ============================================================
@@ -231,6 +272,31 @@ TEST(BuildEmbeddingsResponseJson, OaiUsage_TokensSummedAcrossResults) {
 
     EXPECT_EQ(out["usage"].value("prompt_tokens", 0), 8)
         << "usage.prompt_tokens must be sum of tokens_evaluated across all results";
+}
+
+// Only TASK_RESPONSE_TYPE_OAI_EMBD wraps in OAI compat structure.
+// Other OAI types (OAI_CMPL, OAI_CHAT) must return the bare array —
+// the function must branch exclusively on OAI_EMBD, not "any OAI type".
+TEST(BuildEmbeddingsResponseJson, OaiCmpl_TreatsAsNonOai) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_embedding(1, {0.1f}));
+
+    json out = build_embeddings_response_json(results, json::object(),
+                                               TASK_RESPONSE_TYPE_OAI_CMPL, false);
+
+    EXPECT_TRUE(out.is_array());
+    EXPECT_FALSE(out.contains("object")); // OAI wrapper has "object":"list"
+}
+
+TEST(BuildEmbeddingsResponseJson, OaiChat_TreatsAsNonOai) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_embedding(1, {0.1f}));
+
+    json out = build_embeddings_response_json(results, json::object(),
+                                               TASK_RESPONSE_TYPE_OAI_CHAT, false);
+
+    EXPECT_TRUE(out.is_array());
+    EXPECT_FALSE(out.contains("object"));
 }
 
 // ============================================================
