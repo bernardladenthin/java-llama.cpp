@@ -168,7 +168,7 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
         auto tokenized_prompts = tokenize_input_prompts(
                 jctx->vocab, nullptr, data.at("prompt"), true, true);
         if (!tokenized_prompts.empty()) {
-            task.tokens = tokenized_prompts[0];
+            task.tokens = std::move(tokenized_prompts[0]);
         }
         task.params = server_task::params_from_json_cmpl(
                 jctx->vocab, jctx->params, meta.slot_n_ctx, meta.logit_bias_eog, data);
@@ -208,7 +208,7 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
         auto tokenized_prompts = tokenize_input_prompts(
                 jctx->vocab, nullptr, data.at("prompt"), true, true);
         if (!tokenized_prompts.empty()) {
-            task.tokens = tokenized_prompts[0];
+            task.tokens = std::move(tokenized_prompts[0]);
         }
         task.params = server_task::params_from_json_cmpl(
                 jctx->vocab, jctx->params, meta.slot_n_ctx, meta.logit_bias_eog, data);
