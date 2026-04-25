@@ -256,6 +256,28 @@ TEST(SlotParamsToJson, GrammarTriggers_IsArrayByDefault) {
     EXPECT_TRUE(j.at("grammar_triggers").empty());
 }
 
+TEST(SlotParamsToJson, Lora_EmptyArrayByDefault) {
+    task_params p;
+    const json j = p.to_json();
+    ASSERT_TRUE(j.at("lora").is_array());
+    EXPECT_TRUE(j.at("lora").empty());
+}
+
+TEST(SlotParamsToJson, Lora_PopulatedEntries) {
+    task_params p;
+    p.lora[0] = 0.5f;
+    p.lora[2] = 1.0f;
+    const json j = p.to_json();
+    // Each entry is {id, scale}; order not guaranteed — build a map to verify
+    ASSERT_EQ(j.at("lora").size(), 2u);
+    std::map<int,float> got;
+    for (const auto &entry : j.at("lora")) {
+        got[entry.at("id").get<int>()] = entry.at("scale").get<float>();
+    }
+    EXPECT_FLOAT_EQ(got.at(0), 0.5f);
+    EXPECT_FLOAT_EQ(got.at(2), 1.0f);
+}
+
 TEST(SlotParamsToJson, GrammarTriggers_SerialiseViaServerGrammarTrigger) {
     task_params p;
     // Add a WORD trigger — must be serialised through server_grammar_trigger
