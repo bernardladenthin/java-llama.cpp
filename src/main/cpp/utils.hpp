@@ -1,43 +1,20 @@
 #pragma once
 
 // server-common.h provides: JSON_ASSERT, json, raw_buffer, json_value<T>,
-// server_grammar_trigger, server_tokens, error_type, SRV_*/SLT_* macros,
+// server_grammar_trigger, server_tokens, error_type, SRV_* macros,
 // and many utility function declarations (implemented in server-common.cpp).
 #include "server-common.h"
 
-#include "download.h" // common_remote_get_content, common_remote_params
-#include "base64.hpp"
 #include "build-info.h"
 #include "mtmd-helper.h"
 
 #include <cinttypes>
 #include <memory>
-#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
 
 #define DEFAULT_OAICOMPAT_MODEL "gpt-3.5-turbo"
-
-// server-common.h uses slot.task->id; redefine with our simpler slot.id_task
-#undef SLT_INF
-#undef SLT_CNT
-#undef SLT_WRN
-#undef SLT_ERR
-#undef SLT_DBG
-#define SLT_INF(slot, fmt, ...)                                                                                        \
-    LOG_INF("slot %12.*s: id %2d | task %d | " fmt, 12, __func__, (slot).id, (slot).id_task, __VA_ARGS__)
-#define SLT_WRN(slot, fmt, ...)                                                                                        \
-    LOG_WRN("slot %12.*s: id %2d | task %d | " fmt, 12, __func__, (slot).id, (slot).id_task, __VA_ARGS__)
-#define SLT_ERR(slot, fmt, ...)                                                                                        \
-    LOG_ERR("slot %12.*s: id %2d | task %d | " fmt, 12, __func__, (slot).id, (slot).id_task, __VA_ARGS__)
-#define SLT_DBG(slot, fmt, ...)                                                                                        \
-    LOG_DBG("slot %12.*s: id %2d | task %d | " fmt, 12, __func__, (slot).id, (slot).id_task, __VA_ARGS__)
-
-#define QUE_INF(fmt, ...) LOG_INF("que  %12.*s: " fmt, 12, __func__, __VA_ARGS__)
-#define QUE_WRN(fmt, ...) LOG_WRN("que  %12.*s: " fmt, 12, __func__, __VA_ARGS__)
-#define QUE_ERR(fmt, ...) LOG_ERR("que  %12.*s: " fmt, 12, __func__, __VA_ARGS__)
-#define QUE_DBG(fmt, ...) LOG_DBG("que  %12.*s: " fmt, 12, __func__, __VA_ARGS__)
 
 // ---------------------------------------------------------------------------
 // Token-piece JSON serialisation helpers
@@ -47,25 +24,13 @@
 // implement each format exactly once and are documented so the two are never
 // accidentally conflated.
 //
-// 1. token_piece_value()   — llama.cpp /tokenize endpoint (native format)
-//    Schema  : a single JSON value that is EITHER a string OR a byte array.
-//    Use for : handleTokenize, and any endpoint that follows the llama.cpp
-//              /tokenize wire format.
-//    Example : {"id": 123, "piece": "hello"}
-//              {"id": 456, "piece": [195, 169]}
+// 1. token_piece_value()  — llama.cpp /tokenize endpoint (native format)
+//    Schema: a single JSON value that is EITHER a string (valid UTF-8) OR a
+//    byte-integer array (invalid UTF-8).
+//    Used by: handleTokenize at jllama.cpp:1165.
 //
-// 2. token_piece_oai_fields() — OpenAI completion probabilities format
-//    Schema  : a partial JSON object with BOTH "token" (truncated UTF-8
-//              string) AND "bytes" (full raw-byte array) always present.
-//    Use for : completion_token_output::to_json / probs_vector_to_json, and
-//              any endpoint that follows the OpenAI logprobs wire format.
-//    Example : {"token": "hell", "bytes": [104,101,108,108,111], ...}
-//
-// Shared building block used by both:
-//
-// 3. str_to_bytes() — converts every byte of a string to an int in a JSON
-//    array.  Used directly by token_piece_value (invalid-UTF-8 branch) and
-//    token_piece_oai_fields ("bytes" field).
+// 2. str_to_bytes() — converts every byte of a string to an int in a JSON
+//    array; used by token_piece_value for the invalid-UTF-8 branch.
 // ---------------------------------------------------------------------------
 
 // Converts every byte of `str` to its integer value and returns them as a
@@ -82,28 +47,11 @@ static json str_to_bytes(const std::string &str) {
 // Returns the JSON value for the "piece" key in a llama.cpp /tokenize
 // response.  Valid UTF-8 pieces become a JSON string; invalid ones become a
 // JSON array of byte values (via str_to_bytes).
-//
-// NEVER use this for completion probability responses — use
-// token_piece_oai_fields() instead, which always emits both "token" and
-// "bytes" per the OpenAI spec.
 static json token_piece_value(const std::string &piece) {
     if (is_valid_utf8(piece)) {
         return piece;
     }
     return str_to_bytes(piece);
-}
-
-// Returns a partial JSON object {"token": <truncated-utf8>, "bytes": <raw>}
-// for use in OpenAI-compatible completion probability responses.
-// "token" is always a string (piece truncated at the last valid UTF-8
-// boundary).  "bytes" is always the full raw-byte array via str_to_bytes.
-//
-// NEVER use this for /tokenize responses — use token_piece_value() instead,
-// which follows the llama.cpp native "piece" field schema.
-static json token_piece_oai_fields(const std::string &piece) {
-    std::string txt = piece;
-    txt.resize(validate_utf8(txt));
-    return json{{"token", txt}, {"bytes", str_to_bytes(piece)}};
 }
 
 //
@@ -229,54 +177,6 @@ static llama_tokens format_infill(const llama_vocab *vocab, const json &input_pr
     return embd_inp;
 }
 
-// clang-format off
-// ---- BEGIN COPY FROM llama.cpp tools/server/server-common.cpp ---------------
-// base64_chars / is_base64 / base64_decode are declared `static` in
-// server-common.cpp (internal linkage). Even though server-common.cpp is
-// compiled into the same shared library, C++ static linkage makes the symbols
-// invisible to every other translation unit — there is no declaration in
-// server-common.h to call through. These copies are therefore unavoidable and
-// must be kept in sync manually whenever llama.cpp upgrades server-common.cpp.
-// Removing them is only possible if upstream moves them to a header as `inline`.
-static const std::string base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-                                        "abcdefghijklmnopqrstuvwxyz"
-                                        "0123456789+/";
-
-static inline bool is_base64(uint8_t c) { return (isalnum(c) || (c == '+') || (c == '/')); }
-
-static inline raw_buffer base64_decode(const std::string &encoded_string) {
-    int i = 0;
-    int j = 0;
-    int in_ = 0;
-    int in_len = encoded_string.size();
-    uint8_t char_array_4[4];
-    uint8_t char_array_3[3];
-    raw_buffer ret;
-
-    while (in_len-- && (encoded_string[in_] != '=') && is_base64(encoded_string[in_])) {
-        char_array_4[i++] = encoded_string[in_++];
-        if (i == 4) {
-            for (i = 0; i < 4; i++) char_array_4[i] = base64_chars.find(char_array_4[i]);
-            char_array_3[0] = ((char_array_4[0]) << 2) + ((char_array_4[1] & 0x30) >> 4);
-            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-            for (i = 0; i < 3; i++) ret.push_back(char_array_3[i]);
-            i = 0;
-        }
-    }
-    if (i) {
-        for (j = i; j < 4; j++) char_array_4[j] = 0;
-        for (j = 0; j < 4; j++) char_array_4[j] = base64_chars.find(char_array_4[j]);
-        char_array_3[0] = ((char_array_4[0]) << 2) + ((char_array_4[1] & 0x30) >> 4);
-        char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-        char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-        for (j = 0; j < i - 1; j++) ret.push_back(char_array_3[j]);
-    }
-    return ret;
-}
-// ---- END COPY FROM llama.cpp tools/server/server-common.cpp -----------------
-// clang-format on
-
 // Strip an exact-match flag (no value) from an argv array.
 // Returns a new vector of pointers (non-owning) with every occurrence removed.
 // Sets *found = true if the flag was present at least once.
@@ -297,26 +197,3 @@ static std::vector<char *> strip_flag_from_argv(char **argv, int argc, const cha
 static json format_tokenizer_response(const json &tokens) { return json{{"tokens", tokens}}; }
 
 static json format_detokenized_response(const std::string &content) { return json{{"content", content}}; }
-
-static json format_logit_bias(const std::vector<llama_logit_bias> &logit_bias) {
-    json data = json::array();
-    for (const auto &lb : logit_bias) {
-        data.push_back(json{
-            {"bias", lb.bias},
-            {"token", lb.token},
-        });
-    }
-    return data;
-}
-
-// parse lora config from JSON request, returned a copy of lora_base with updated scale
-static std::vector<common_adapter_lora_info> parse_lora_request(const std::vector<common_adapter_lora_info> &lora_base,
-                                                                const json &data) {
-    std::vector<common_adapter_lora_info> lora(lora_base);
-    for (auto &e : lora) e.scale = 0.0f;
-    for (const auto &[id, scale] : parse_lora_request(data)) {  // upstream: extracts id->scale map
-        if (id < 0 || id >= (int)lora.size()) throw std::runtime_error("invalid adapter id");
-        lora[id].scale = scale;
-    }
-    return lora;
-}

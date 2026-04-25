@@ -12,24 +12,21 @@
 // no JVM and no loaded model are required.
 //
 // IMPORTANT — include order:
-//   server.hpp (and transitively utils.hpp) must be included by the including
-//   translation unit BEFORE this header.  That header defines:
-//     server_task_result_ptr, oaicompat_type, OAICOMPAT_TYPE_EMBEDDING,
+//   Upstream server headers (server-context.h, server-queue.h, server-task.h,
+//   server-common.h, server-chat.h) and utils.hpp must be included by the
+//   including translation unit BEFORE this header.  Those headers define:
+//     server_task_result_ptr, task_response_type, TASK_RESPONSE_TYPE_OAI_EMBD,
 //     format_embeddings_response_oaicompat, and the `json` type alias.
-//   server.hpp has no include guard, so pulling it in here would cause
-//   redefinition errors in any TU that already includes it directly.
 //
 // Declaration order:
 //   1.  get_result_error_message        — used by nothing above it
 //   2.  results_to_json                 — used by nothing above it
 //   3.  rerank_results_to_json          — used by nothing above it
-//   4.  build_embeddings_response_json  — used by nothing above it
-//   5.  extract_first_embedding_row     — used by nothing above it
-//   6.  parse_encoding_format           — used by nothing above it
-//   7.  extract_embedding_prompt        — used by nothing above it
-//   8.  is_infill_request               — used by nothing above it
-//   9.  parse_slot_prompt_similarity    — used by nothing above it
-//  10.  parse_positive_int_config       — used by nothing above it
+//   4.  parse_encoding_format           — used by nothing above it
+//   5.  extract_embedding_prompt        — used by nothing above it
+//   6.  is_infill_request               — used by nothing above it
+//   7.  parse_slot_prompt_similarity    — used by nothing above it
+//   8.  parse_positive_int_config       — used by nothing above it
 
 #include "nlohmann/json.hpp"
 
@@ -99,50 +96,6 @@
         });
     }
     return arr;
-}
-
-// ---------------------------------------------------------------------------
-// build_embeddings_response_json
-//
-// Collects task results into a JSON array, then formats the final response:
-//   - OAICOMPAT_TYPE_EMBEDDING → wraps via format_embeddings_response_oaicompat
-//     (adds "object":"list", "usage", and per-embedding "object":"embedding")
-//   - any other oaicompat      → returns the bare JSON array
-//
-// Symmetric counterpart to rerank_results_to_json.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline json build_embeddings_response_json(
-        const std::vector<server_task_result_ptr> &results,
-        const json                                &body,
-        oaicompat_type                             oaicompat,
-        bool                                       use_base64) {
-    json responses = json::array();
-    for (const auto &result : results) {
-        responses.push_back(result->to_json());
-    }
-    if (oaicompat == OAICOMPAT_TYPE_EMBEDDING) {
-        return format_embeddings_response_oaicompat(body, json_value(body, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), responses, use_base64);
-    }
-    return responses;
-}
-
-// ---------------------------------------------------------------------------
-// extract_first_embedding_row
-//
-// Parses out_res["embedding"] as a 2D float array and returns the first row.
-//
-// Throws std::runtime_error       if the outer or inner array is empty.
-// Throws nlohmann::json::exception if the "embedding" key is absent or the
-//   value cannot be coerced to vector<vector<float>>.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline std::vector<float>
-extract_first_embedding_row(const json &out_res) {
-    // .at() throws json::out_of_range if "embedding" is absent.
-    const auto embedding = out_res.at("embedding").get<std::vector<std::vector<float>>>();
-    if (embedding.empty() || embedding[0].empty()) {
-        throw std::runtime_error("embedding array is empty");
-    }
-    return embedding[0];
 }
 
 // ---------------------------------------------------------------------------

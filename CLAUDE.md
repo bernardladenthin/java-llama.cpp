@@ -38,6 +38,52 @@ git add .github/build_cuda_linux.sh pom.xml CLAUDE.md
 git commit -m "Upgrade CUDA from 13.2 to 13.3"
 ```
 
+## Optional CUDA build flag (CI feedback-loop workaround)
+
+**Status: temporary — revert when the feedback loop is no longer the bottleneck.**
+
+The `crosscompile-linux-x86_64-cuda` job in `.github/workflows/release.yaml` is the
+slowest job in the pipeline (CUDA toolkit install inside dockcross + nvcc compile).
+It used to run on every PR, which dominated CI wall time even for changes that had
+nothing to do with CUDA.
+
+To shorten the PR feedback loop, the job is now gated behind a `workflow_dispatch`
+boolean input named **`enable_cuda_build`** (default `false`):
+
+```yaml
+crosscompile-linux-x86_64-cuda:
+  if: github.event_name == 'release' || github.event.inputs.enable_cuda_build == 'true'
+```
+
+| Trigger | CUDA job runs? |
+|---|---|
+| `pull_request` | no (skipped — fast feedback) |
+| `workflow_dispatch` (defaults) | no |
+| `workflow_dispatch` with `enable_cuda_build=true` | yes |
+| `release` event | yes (always) |
+
+Two downstream jobs were adjusted to tolerate skipped CUDA:
+
+1. **`package`** — gained `if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')` so it still runs when CUDA is skipped, and its CUDA-artifact download step is now conditional on `needs.crosscompile-linux-x86_64-cuda.result == 'success'`.
+
+2. **`publish`** — its trigger now also requires `enable_cuda_build=true` for manual dispatches: `github.event_name == 'release' || (release_to_maven_central == 'true' && enable_cuda_build == 'true')`. Otherwise a manual publish would fail mid-step trying to download a non-existent CUDA artifact.
+
+### How to revert
+
+When CI capacity allows running CUDA on every PR again:
+
+1. Delete the `enable_cuda_build` input from the `workflow_dispatch.inputs` block.
+2. Remove the `if:` line from the `crosscompile-linux-x86_64-cuda` job (and its
+   surrounding 3-line comment).
+3. Restore `package` to its original form: drop the `if:` block, drop the
+   `if: needs.crosscompile-linux-x86_64-cuda.result == 'success'` line on the
+   CUDA-artifact download step.
+4. Restore `publish`'s `if:` to the original `github.event_name == 'release' || github.event.inputs.release_to_maven_central == 'true'`.
+5. Delete this section from `CLAUDE.md`.
+
+Reference commit that introduced the flag: search the git log for
+`enable_cuda_build` on branch `claude/refactor-java-llama-d3lua`.
+
 ## Upgrading/Downgrading llama.cpp Version
 
 To change the llama.cpp version, update the following **three** files:
@@ -217,12 +263,12 @@ clang-format -i src/main/cpp/*.cpp src/main/cpp/*.hpp   # Format C++ code
 - `OSInfo` — Detects OS and architecture for library resolution.
 
 **Native layer** (`src/main/cpp/`):
-- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp.
-- `server.hpp` — Inference server logic (adapted from llama.cpp's server).
-- `utils.hpp` — Helper utilities.
+- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp. ~1,215 lines; 17 native methods.
+- `utils.hpp` — Helper utilities (format helpers, argv stripping, token-piece serialisation).
 - `json_helpers.hpp` — Pure JSON transformation helpers (no JNI, no llama state). Independently unit-testable.
 - `jni_helpers.hpp` — JNI bridge helpers (handle management + server orchestration). Includes `json_helpers.hpp`.
 - Uses `nlohmann/json` for JSON deserialization of parameters.
+- The upstream server library (`server-context.cpp`, `server-queue.cpp`, `server-task.cpp`, `server-models.cpp`) is compiled directly into `jllama` via CMake — there is no hand-ported `server.hpp` fork.
 
 ### Native Helper Architecture
 
@@ -235,43 +281,41 @@ The project C++ helpers follow a strict semantic split:
 - Zero llama state (`llama_context*`, `llama_vocab*`, `server_context*` never appear).
 - Functions are named without `_impl` suffix — they are the canonical implementation.
 - Testable with JSON literals and fake result objects; no JVM and no loaded model required.
-- Requires `server.hpp` to be included by the translation unit first (TU convention — `server.hpp` has no include guard).
+- Upstream server headers must be included by the translation unit first (they define `server_task_result_ptr`, `json`, etc.).
 
 Functions: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`,
-`build_embeddings_response_json`, `extract_first_embedding_row`, `parse_encoding_format`,
-`extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`,
-`parse_positive_int_config`.
+`parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`,
+`parse_slot_prompt_similarity`, `parse_positive_int_config`.
 
 **`jni_helpers.hpp`** — JNI bridge helpers, split into two layers:
 
-*Layer A* (no `server.hpp` required): handle management.
-- `jllama_context` struct — owns `server_context*` and background worker thread.
-- `get_server_context_impl` — reads Java `ctx` handle, throws on null.
-- `get_jllama_context_impl` — like above but returns the wrapper (delete path only).
-- `require_single_task_id_impl` — validates exactly one task ID was created.
+*Layer A* (no server headers required): handle management.
+- `jllama_context` struct — owns `server_context` (value member, pimpl inside), background
+  worker thread, cached `vocab`, saved `params`, and a `readers` map for streaming tasks.
+- `get_jllama_context_impl` — reads Java `ctx` handle, returns the `jllama_context*` wrapper.
+  Does NOT throw on zero handle (valid no-op for destructor-style calls).
 - `require_json_field_impl` — throws `"<field> is required"` if key is absent.
 - `jint_array_to_tokens_impl` — reads a Java `int[]` into `std::vector<int32_t>`.
 
-*Layer B* (requires `server.hpp` in the TU before `jni_helpers.hpp`): server orchestration.
+*Layer B* (requires upstream server headers in the TU before `jni_helpers.hpp`): orchestration.
 Includes `json_helpers.hpp` so all bridge helpers can call transforms directly.
-- `json_to_jstring_impl` — serialises any `json` value to a JNI string.
-- `build_completion_tasks_impl` — tokenises prompt and populates `server_task` vector.
-- `recv_slot_task_result_impl` — receives one slot result, throws on error.
-- `collect_task_results_impl` — receives all results for a task-id set, throws on error.
+- `json_to_jstring_impl` — serialises any `json` value to a JNI string via `dump()`.
 - `results_to_jstring_impl` — delegates to `results_to_json` then `json_to_jstring_impl`.
-- `check_infill_support_impl` — validates FIM prefix/suffix/middle tokens present.
-- `append_task` — constructs and appends a `server_task` of a given type.
-- `embedding_to_jfloat_array_impl` — converts `std::vector<float>` to a Java `jfloatArray`; throws OOM on allocation failure.
-- `tokens_to_jint_array_impl` — converts `std::vector<int32_t>` to a Java `jintArray`; throws OOM on allocation failure.
+- `vec_to_jarray_impl<JArray,JElem,CppElem>` — generic C++ vector → JNI primitive array.
+- `embedding_to_jfloat_array_impl` — converts `std::vector<float>` to `jfloatArray`.
+- `tokens_to_jint_array_impl` — converts `std::vector<int32_t>` to `jintArray`.
 
-Functions with `_impl` suffix have a thin module-level wrapper in `jllama.cpp`; functions
-without the suffix (in `json_helpers.hpp`) are called directly.
+Functions with `_impl` suffix are called directly from `jllama.cpp`.
 
 **Include order rule:**
 ```
 // In jllama.cpp and any TU that uses Layer B helpers:
-#include "server.hpp"     // must come first — no include guard
-#include "jni_helpers.hpp"  // includes json_helpers.hpp internally
+#include "server-context.h"   // upstream server headers must come first
+#include "server-queue.h"
+#include "server-task.h"
+#include "server-common.h"
+#include "server-chat.h"
+#include "jni_helpers.hpp"    // includes json_helpers.hpp internally
 ```
 
 **Adding a new pure transform** (e.g. a new JSON field parser):
@@ -280,7 +324,7 @@ without the suffix (in `json_helpers.hpp`) are called directly.
 
 **Adding a new JNI bridge helper:**
 - Add it to `jni_helpers.hpp` in the appropriate layer.
-- If it needs `server.hpp` types, put it in Layer B (after the `json_helpers.hpp` include).
+- If it needs upstream server types, put it in Layer B (after the `json_helpers.hpp` include).
 - Add tests to `src/test/cpp/test_jni_helpers.cpp`.
 
 ### Parameter Flow
@@ -307,20 +351,185 @@ Set the model path via system property or environment variable (see test files f
 Test files are in `src/test/java/de/kherud/llama/` and `src/test/java/examples/`.
 
 ### C++ unit tests
-No JVM or model file required. Built as `jllama_test` via CMake when `BUILD_TESTING=ON`.
 
-| File | What it tests |
-|------|---------------|
-| `test_json_helpers.cpp` | All functions in `json_helpers.hpp` — pure JSON transforms, using fake result objects |
-| `test_jni_helpers.cpp` | All functions in `jni_helpers.hpp` — mock `JNIEnv`, pre-seeded `server_response` queue |
-| `test_server.cpp` | Selected `server.hpp` internals (result types, error formatting, routing helpers) |
-| `test_utils.cpp` | Utilities from `utils.hpp` |
+**No JVM and no model file required.** All tests run on pure data structures using mock
+objects. The binary is named `jllama_test` and is built by CMake when `BUILD_TESTING=ON`.
 
-Run C++ tests:
+#### Commands
+
 ```bash
+# 1. Configure (once per fresh clone or after CMakeLists.txt changes)
 cmake -B build -DBUILD_TESTING=ON
-cmake --build build --config Release
+
+# 2. Build (incremental; -j$(nproc) uses all CPU cores)
+cmake --build build --config Release -j$(nproc)
+
+# 3. Run all tests
 ctest --test-dir build --output-on-failure
+
+# Count tests across all files
+grep -rn "^TEST\b\|^TEST_F\b\|^TEST_P\b" src/test/cpp/ | wc -l
+
+# Run a single named test (GoogleTest filter syntax)
+ctest --test-dir build --output-on-failure -R "ResultsToJson"
+```
+
+#### Test files
+
+| File | Tests | Scope |
+|------|-------|-------|
+| `src/test/cpp/test_utils.cpp` | 156 | Upstream helpers: `server_tokens`, `server_grammar_trigger`, `gen_tool_call_id`, `json_value`, `json_get_nested_values`, UTF-8 helpers, `format_response_rerank`, `format_embeddings_response_oaicompat`, `oaicompat_completion_params_parse`, `oaicompat_chat_params_parse`, `are_lora_equal`, `strip_flag_from_argv`, `token_piece_value`, `json_is_array_and_contains_numbers`, `format_oai_sse`, `format_oai_resp_sse`, `format_anthropic_sse` |
+| `src/test/cpp/test_server.cpp` | 179 | Upstream result types: `result_timings`, `task_params::to_json()` (incl. `dry_sequence_breakers`, `preserved_tokens`, `timings_per_token`), `completion_token_output`, `server_task_result_cmpl_partial` (non-oaicompat + `to_json_oaicompat` + logprobs + `to_json_oaicompat_chat` + `to_json_anthropic` + dispatcher), `server_task_result_cmpl_final` (non-oaicompat + `to_json_oaicompat` + `to_json_oaicompat_chat` + `to_json_oaicompat_chat_stream` + `to_json_anthropic` + `to_json_anthropic_stream` + tool_calls + dispatcher), `server_task_result_embd`, `server_task_result_rerank`, `server_task_result_metrics`, `server_task_result_slot_save_load`, `server_task_result_slot_erase`, `server_task_result_apply_lora`, `server_task_result_error`, `format_error_response`, `server_task::need_sampling()`, `server_task::n_tokens()`, `server_task::params_from_json_cmpl()` (parsing pipeline + grammar routing + error paths), `response_fields` projection |
+| `src/test/cpp/test_json_helpers.cpp` | 42 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`, `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config` |
+| `src/test/cpp/test_jni_helpers.cpp` | 36 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock |
+
+**Current total: 413 tests (all passing).** Branch: `claude/refactor-java-llama-d3lua`.
+
+#### Upstream source location (in CMake build tree)
+
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b8913`.
+
+```
+build/_deps/llama.cpp-src/tools/server/   ← server-task.h, server-common.h, etc.
+build/_deps/llama.cpp-src/include/        ← llama.h, llama-cpp.h
+build/_deps/llama.cpp-src/common/         ← common.h, chat.h, arg.h, etc.
+```
+
+When reading a `to_json()` implementation to write tests against it, read from:
+`build/_deps/llama.cpp-src/tools/server/server-task.cpp`
+
+#### Mock JNI pattern used in test_jni_helpers.cpp
+
+```cpp
+// Zero-fill the interface so all unpatched fn pointers are nullptr
+JNINativeInterface_ iface = {};
+// Patch only the stubs this test needs, e.g.:
+iface.GetLongField  = [](JNIEnv*, jobject, jfieldID) -> jlong { return some_handle; };
+iface.ThrowNew      = [](JNIEnv*, jclass, const char*) -> jint { return 0; };
+// Wire up the env
+JNIEnv_ fake_env = {};
+fake_env.functions = &iface;
+JNIEnv *env = &fake_env;
+```
+
+Any stub that is called but not patched will crash (null function pointer) — deliberately,
+so missing stubs are caught immediately rather than silently.
+
+#### How to add a new C++ test
+
+1. Open the appropriate `src/test/cpp/test_*.cpp`:
+   - Pure JSON transform → `test_json_helpers.cpp`
+   - JNI helper → `test_jni_helpers.cpp`
+   - Upstream result type `to_json()` → `test_server.cpp`
+   - `utils.hpp` function or upstream utility → `test_utils.cpp`
+2. Add a `TEST(SuiteName, TestName) { ... }` block using GoogleTest macros.
+3. Rebuild: `cmake --build build --config Release -j$(nproc)`
+4. Run: `ctest --test-dir build --output-on-failure`
+5. Commit with message summarising coverage added and new test total.
+
+#### Finding untested code paths
+
+```bash
+# List all functions defined in a header
+grep -n "^inline\|^static\|^\[\[nodiscard\]\]" src/main/cpp/utils.hpp
+
+# Check which functions already have tests
+grep -n "function_name" src/test/cpp/*.cpp
+
+# Find all fields in an upstream to_json() method
+grep -n "\"field_name\"" build/_deps/llama.cpp-src/tools/server/server-task.cpp
+
+# Check which JSON fields Java actually reads (important: must test these)
+grep -rn "field_name" src/main/java/de/kherud/llama/
+```
+
+#### Testing complex scenarios — methodology
+
+Simple tests verify individual field values on a default-constructed struct.
+Complex tests verify **control flow**: switch dispatchers, cross-cutting flags, and
+multi-step parameter pipelines.  The same build/run/commit loop applies.
+
+**1. Dispatcher (switch) coverage**
+
+Every `to_json()` that is a switch on `res_type` has one test per arm:
+
+```cpp
+// Pattern: set is_updated=true, set res_type, call to_json(), check the
+// distinguishing field that differs between arms.
+server_task_result_cmpl_final f;
+f.is_updated = true;
+f.stream     = false;
+f.res_type   = TASK_RESPONSE_TYPE_OAI_CMPL;
+// ... set required fields ...
+const json j = f.to_json();
+EXPECT_EQ(j.at("object").get<std::string>(), "text_completion");
+```
+
+The same pattern handles the `stream` flag fork inside `OAI_CHAT`:
+`stream=false` → single object with `"object":"chat.completion"`;
+`stream=true`  → JSON array of chunks with `"object":"chat.completion.chunk"`.
+
+**2. Cross-cutting flag interaction**
+
+Some flags (verbose, include_usage, timings.prompt_n) cut across multiple formatters.
+Test each flag in one formatter only — they share the same code path:
+
+```cpp
+// verbose=true must add __verbose to the first chunk/top-level object
+f.verbose = true;
+EXPECT_TRUE(j.contains("__verbose"));
+
+// timings absent when prompt_n < 0 (default), present when >= 0
+f.timings.prompt_n = 5;
+EXPECT_TRUE(j.contains("timings"));
+```
+
+**3. Parameter parsing (`params_from_json_cmpl`) without a model**
+
+`server_task::params_from_json_cmpl(vocab, params_base, n_ctx_slot, logit_bias_eog, data)`
+can be called with `nullptr` vocab **if the JSON does not trigger grammar/preserved_tokens
+tokenisation** (those are the only vocab-dependent paths).  This lets us test the full
+parsing pipeline including error throws:
+
+```cpp
+common_params          params_base;
+std::vector<llama_logit_bias> no_bias;
+const int n_ctx = 512;
+
+// test: repeat_last_n=-1 is expanded to n_ctx_slot
+json data = {{"repeat_last_n", -1}};
+auto p = server_task::params_from_json_cmpl(nullptr, params_base, n_ctx, no_bias, data);
+EXPECT_EQ(p.sampling.penalty_last_n, n_ctx);
+
+// test: invalid value throws std::runtime_error
+json bad = {{"dry_sequence_breakers", json::array()}};  // empty → error
+EXPECT_THROW(server_task::params_from_json_cmpl(nullptr, params_base, n_ctx, no_bias, bad),
+             std::runtime_error);
+```
+
+**4. Array-returning formatters**
+
+Some methods (e.g. `to_json_oaicompat_chat_stream()`) return a JSON array of event objects,
+not a single object.  Check with `is_array()` first, then iterate or index:
+
+```cpp
+const json j = f.to_json_oaicompat_chat_stream();
+ASSERT_TRUE(j.is_array());
+ASSERT_GE(j.size(), 1u);
+// Last chunk always has a non-null finish_reason
+EXPECT_FALSE(j.back().at("choices")[0].at("finish_reason").is_null());
+```
+
+**5. `response_fields` projection**
+
+`to_json_non_oaicompat()` supports a projection list via `response_fields`.
+When non-empty, only those dot-separated paths survive:
+
+```cpp
+f.response_fields = {"content", "tokens_predicted"};
+const json j = f.to_json_non_oaicompat();
+EXPECT_TRUE(j.contains("content"));
+EXPECT_FALSE(j.contains("stop_type"));  // filtered out
 ```
 
 ## Key Constraints

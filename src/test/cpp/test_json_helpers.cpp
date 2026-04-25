@@ -4,14 +4,12 @@
 // and no llama state.  Tests for functions that only take nlohmann::json
 // arguments need zero setup.  Tests for functions that take
 // server_task_result_ptr use lightweight fake result objects defined below;
-// they need server.hpp for the type definitions but never load a model.
+// they need upstream server headers for the type definitions but never load a model.
 //
 // Covered functions:
 //   get_result_error_message
 //   results_to_json
 //   rerank_results_to_json
-//   build_embeddings_response_json
-//   extract_first_embedding_row
 //   parse_encoding_format
 //   extract_embedding_prompt
 //   is_infill_request
@@ -24,9 +22,12 @@
 #include <string>
 #include <vector>
 
-// server.hpp must precede json_helpers.hpp (defines server_task_result_ptr,
-// oaicompat_type, format_embeddings_response_oaicompat, and the json alias).
-#include "server.hpp"
+#include "server-context.h"
+#include "server-queue.h"
+#include "server-task.h"
+#include "server-common.h"
+#include "server-chat.h"
+#include "utils.hpp"
 #include "json_helpers.hpp"
 
 // ============================================================
@@ -90,6 +91,18 @@ TEST(GetResultErrorMessage, DifferentMessage_ReturnsCorrectString) {
     EXPECT_EQ(get_result_error_message(r), "out of memory");
 }
 
+// make_error uses the real server_task_result_error; verify is_error() is true.
+TEST(GetResultErrorMessage, RealErrorType_IsErrorTrue) {
+    auto r = make_error(3, "x");
+    EXPECT_TRUE(r->is_error());
+}
+
+// Success results must NOT be flagged as errors.
+TEST(GetResultErrorMessage, SuccessResult_IsErrorFalse) {
+    auto r = make_ok(4);
+    EXPECT_FALSE(r->is_error());
+}
+
 // ============================================================
 // results_to_json
 // ============================================================
@@ -122,6 +135,21 @@ TEST(ResultsToJson, EmptyVector_ReturnsEmptyArray) {
     json out = results_to_json(results);
     EXPECT_TRUE(out.is_array());
     EXPECT_TRUE(out.empty());
+}
+
+// results_to_json has no special error-result handling: a single error result
+// is returned as an object directly (not wrapped in an array), exactly like a
+// success result. This matters because jllama.cpp callers must inspect the
+// object for "error" / "message" without expecting an array wrapper.
+TEST(ResultsToJson, SingleErrorResult_ReturnsObjectDirectly) {
+    std::vector<server_task_result_ptr> results;
+    results.push_back(make_error(1, "task failed"));
+
+    json out = results_to_json(results);
+
+    EXPECT_TRUE(out.is_object());
+    EXPECT_TRUE(out.contains("message"));
+    EXPECT_EQ(out.value("message", ""), "task failed");
 }
 
 // ============================================================
@@ -162,122 +190,49 @@ TEST(RerankResultsToJson, EmptyResults_ReturnsEmptyArray) {
     EXPECT_TRUE(out.empty());
 }
 
-// ============================================================
-// build_embeddings_response_json
-// ============================================================
-
-TEST(BuildEmbeddingsResponseJson, NonOai_SingleResult_ReturnsBareArray) {
+TEST(RerankResultsToJson, SingleResult_CorrectShape) {
     std::vector<server_task_result_ptr> results;
-    results.push_back(make_embedding(1, {0.1f, 0.2f}));
+    results.push_back(make_rerank(1, 0, 0.75f));
+    std::vector<std::string> docs = {"only doc"};
 
-    json out = build_embeddings_response_json(results, json::object(),
-                                               OAICOMPAT_TYPE_NONE, false);
+    json out = rerank_results_to_json(results, docs);
 
-    ASSERT_TRUE(out.is_array());
     ASSERT_EQ(out.size(), 1u);
-    EXPECT_TRUE(out[0].contains("embedding"));
+    EXPECT_EQ(out[0].value("document", ""), "only doc");
+    EXPECT_EQ(out[0].value("index", -1), 0);
+    EXPECT_FLOAT_EQ(out[0].value("score", 0.0f), 0.75f);
 }
 
-TEST(BuildEmbeddingsResponseJson, NonOai_MultipleResults_AllInArray) {
+TEST(RerankResultsToJson, IndexLookup_UsesResultIndexNotPosition) {
+    // Result at position 0 has index=1 — must look up documents[1], not documents[0].
     std::vector<server_task_result_ptr> results;
-    results.push_back(make_embedding(1, {0.1f}));
-    results.push_back(make_embedding(2, {0.2f}));
-    results.push_back(make_embedding(3, {0.3f}));
+    results.push_back(make_rerank(1, 1, 0.5f));
+    std::vector<std::string> docs = {"doc zero", "doc one"};
 
-    json out = build_embeddings_response_json(results, json::object(),
-                                               OAICOMPAT_TYPE_NONE, false);
+    json out = rerank_results_to_json(results, docs);
 
-    ASSERT_TRUE(out.is_array());
-    EXPECT_EQ(out.size(), 3u);
+    ASSERT_EQ(out.size(), 1u);
+    EXPECT_EQ(out[0].value("document", ""), "doc one");
+    EXPECT_EQ(out[0].value("index", -1), 1);
 }
 
-TEST(BuildEmbeddingsResponseJson, OaiFloat_WrapsWithOaiStructure) {
+// rerank_results_to_json preserves the order in which results were passed in.
+// Unlike the upstream OAI helper (format_response_rerank) which sorts by score,
+// this function is intentionally order-preserving so the Java caller can decide
+// on sorting.  A score inversion in the output is the regression signal.
+TEST(RerankResultsToJson, PreservesInputOrder) {
     std::vector<server_task_result_ptr> results;
-    results.push_back(make_embedding(1, {0.5f, 0.6f, 0.7f}));
-    json body = {{"model", "text-embedding-ada-002"}};
+    results.push_back(make_rerank(1, 0, 0.3f)); // low score first
+    results.push_back(make_rerank(2, 1, 0.9f)); // high score second
+    results.push_back(make_rerank(3, 2, 0.6f));
+    std::vector<std::string> docs = {"doc 0", "doc 1", "doc 2"};
 
-    json out = build_embeddings_response_json(results, body,
-                                               OAICOMPAT_TYPE_EMBEDDING, false);
+    json out = rerank_results_to_json(results, docs);
 
-    EXPECT_TRUE(out.is_object());
-    EXPECT_EQ(out.value("object", ""), "list");
-    EXPECT_TRUE(out.contains("data"));
-    EXPECT_TRUE(out.contains("usage"));
-    EXPECT_EQ(out.value("model", ""), "text-embedding-ada-002");
-    ASSERT_TRUE(out["data"].is_array());
-    ASSERT_EQ(out["data"].size(), 1u);
-    EXPECT_EQ(out["data"][0].value("object", ""), "embedding");
-}
-
-TEST(BuildEmbeddingsResponseJson, OaiBase64_EmbeddingEncodedAsString) {
-    std::vector<server_task_result_ptr> results;
-    results.push_back(make_embedding(1, {1.0f, 2.0f}));
-
-    json out = build_embeddings_response_json(results, json::object(),
-                                               OAICOMPAT_TYPE_EMBEDDING, /*use_base64=*/true);
-
-    ASSERT_TRUE(out["data"].is_array());
-    EXPECT_TRUE(out["data"][0]["embedding"].is_string())
-        << "base64 embedding must be serialised as a string";
-}
-
-TEST(BuildEmbeddingsResponseJson, OaiUsage_TokensSummedAcrossResults) {
-    std::vector<server_task_result_ptr> results;
-    results.push_back(std::make_unique<fake_embedding_result>(1, std::vector<float>{0.1f}, 3));
-    results.push_back(std::make_unique<fake_embedding_result>(2, std::vector<float>{0.2f}, 5));
-
-    json out = build_embeddings_response_json(results, json::object(),
-                                               OAICOMPAT_TYPE_EMBEDDING, false);
-
-    EXPECT_EQ(out["usage"].value("prompt_tokens", 0), 8)
-        << "usage.prompt_tokens must be sum of tokens_evaluated across all results";
-}
-
-// ============================================================
-// extract_first_embedding_row
-// ============================================================
-
-TEST(ExtractFirstEmbeddingRow, SingleRow_ReturnsRow) {
-    json j = {{"embedding", {{0.1f, 0.2f, 0.3f}}}};
-    auto row = extract_first_embedding_row(j);
-    ASSERT_EQ(row.size(), 3u);
-    EXPECT_FLOAT_EQ(row[0], 0.1f);
-    EXPECT_FLOAT_EQ(row[1], 0.2f);
-    EXPECT_FLOAT_EQ(row[2], 0.3f);
-}
-
-TEST(ExtractFirstEmbeddingRow, MultipleRows_ReturnsFirstRowOnly) {
-    json j = {{"embedding", {{1.0f, 2.0f}, {3.0f, 4.0f}, {5.0f, 6.0f}}}};
-    auto row = extract_first_embedding_row(j);
-    ASSERT_EQ(row.size(), 2u);
-    EXPECT_FLOAT_EQ(row[0], 1.0f);
-    EXPECT_FLOAT_EQ(row[1], 2.0f);
-}
-
-TEST(ExtractFirstEmbeddingRow, MissingEmbeddingKey_ThrowsJsonException) {
-    json j = {{"other_key", "value"}};
-    EXPECT_THROW(extract_first_embedding_row(j), nlohmann::json::exception);
-}
-
-TEST(ExtractFirstEmbeddingRow, EmptyOuterArray_ThrowsRuntimeError) {
-    json j = {{"embedding", json::array()}};
-    EXPECT_THROW(extract_first_embedding_row(j), std::runtime_error);
-}
-
-TEST(ExtractFirstEmbeddingRow, EmptyInnerArray_ThrowsRuntimeError) {
-    json j = {{"embedding", {json::array()}}};
-    EXPECT_THROW(extract_first_embedding_row(j), std::runtime_error);
-}
-
-TEST(ExtractFirstEmbeddingRow, LargeRow_AllValuesPreserved) {
-    std::vector<float> vals(128);
-    for (int i = 0; i < 128; ++i) vals[i] = static_cast<float>(i) * 0.01f;
-    json j = {{"embedding", {vals}}};
-    auto row = extract_first_embedding_row(j);
-    ASSERT_EQ(row.size(), 128u);
-    for (int i = 0; i < 128; ++i) {
-        EXPECT_FLOAT_EQ(row[i], static_cast<float>(i) * 0.01f);
-    }
+    ASSERT_EQ(out.size(), 3u);
+    EXPECT_FLOAT_EQ(out[0].value("score", 0.0f), 0.3f); // order unchanged
+    EXPECT_FLOAT_EQ(out[1].value("score", 0.0f), 0.9f);
+    EXPECT_FLOAT_EQ(out[2].value("score", 0.0f), 0.6f);
 }
 
 // ============================================================
@@ -297,18 +252,18 @@ TEST(ParseEncodingFormat, Base64_ReturnsTrue) {
 }
 
 TEST(ParseEncodingFormat, UnknownFormat_ThrowsInvalidArgument) {
-    EXPECT_THROW(parse_encoding_format({{"encoding_format", "binary"}}),
+    EXPECT_THROW((void)parse_encoding_format({{"encoding_format", "binary"}}),
                  std::invalid_argument);
 }
 
 TEST(ParseEncodingFormat, EmptyString_ThrowsInvalidArgument) {
-    EXPECT_THROW(parse_encoding_format({{"encoding_format", ""}}),
+    EXPECT_THROW((void)parse_encoding_format({{"encoding_format", ""}}),
                  std::invalid_argument);
 }
 
 TEST(ParseEncodingFormat, ErrorMessage_MentionsBothValidOptions) {
     try {
-        parse_encoding_format({{"encoding_format", "hex"}});
+        (void)parse_encoding_format({{"encoding_format", "hex"}});
         FAIL() << "Expected std::invalid_argument";
     } catch (const std::invalid_argument &e) {
         const std::string msg(e.what());
@@ -345,13 +300,13 @@ TEST(ExtractEmbeddingPrompt, InputTakesPriorityOverContent) {
 
 TEST(ExtractEmbeddingPrompt, NeitherKey_ThrowsInvalidArgument) {
     bool flag = false;
-    EXPECT_THROW(extract_embedding_prompt({{"model", "x"}}, flag),
+    EXPECT_THROW((void)extract_embedding_prompt({{"model", "x"}}, flag),
                  std::invalid_argument);
 }
 
 TEST(ExtractEmbeddingPrompt, EmptyBody_ThrowsInvalidArgument) {
     bool flag = false;
-    EXPECT_THROW(extract_embedding_prompt(json::object(), flag),
+    EXPECT_THROW((void)extract_embedding_prompt(json::object(), flag),
                  std::invalid_argument);
 }
 
@@ -419,13 +374,13 @@ TEST(ParseSlotPromptSimilarity, One_ReturnsOne) {
 
 TEST(ParseSlotPromptSimilarity, TooLow_ThrowsInvalidArgument) {
     EXPECT_THROW(
-        parse_slot_prompt_similarity({{"slot_prompt_similarity", -0.1f}}),
+        (void)parse_slot_prompt_similarity({{"slot_prompt_similarity", -0.1f}}),
         std::invalid_argument);
 }
 
 TEST(ParseSlotPromptSimilarity, TooHigh_ThrowsInvalidArgument) {
     EXPECT_THROW(
-        parse_slot_prompt_similarity({{"slot_prompt_similarity", 1.1f}}),
+        (void)parse_slot_prompt_similarity({{"slot_prompt_similarity", 1.1f}}),
         std::invalid_argument);
 }
 
@@ -450,18 +405,18 @@ TEST(ParsePositiveIntConfig, ValidLarge_ReturnsValue) {
 }
 
 TEST(ParsePositiveIntConfig, Zero_ThrowsInvalidArgument) {
-    EXPECT_THROW(parse_positive_int_config({{"n_threads", 0}}, "n_threads"),
+    EXPECT_THROW((void)parse_positive_int_config({{"n_threads", 0}}, "n_threads"),
                  std::invalid_argument);
 }
 
 TEST(ParsePositiveIntConfig, Negative_ThrowsInvalidArgument) {
-    EXPECT_THROW(parse_positive_int_config({{"n_threads", -4}}, "n_threads"),
+    EXPECT_THROW((void)parse_positive_int_config({{"n_threads", -4}}, "n_threads"),
                  std::invalid_argument);
 }
 
 TEST(ParsePositiveIntConfig, ErrorMessage_ContainsKeyName) {
     try {
-        parse_positive_int_config({{"n_threads_batch", 0}}, "n_threads_batch");
+        (void)parse_positive_int_config({{"n_threads_batch", 0}}, "n_threads_batch");
         FAIL() << "Expected std::invalid_argument";
     } catch (const std::invalid_argument &e) {
         EXPECT_NE(std::string(e.what()).find("n_threads_batch"), std::string::npos);

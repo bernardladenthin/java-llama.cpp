@@ -2,7 +2,6 @@
 //
 // Covered:
 //   - server_grammar_trigger  (new JSON wrapper replacing template to_json/from_json)
-//   - raw_buffer / base64_decode  (return type changed from std::string to raw_buffer)
 //   - gen_tool_call_id()  (new helper added in b8576)
 //   - format_response_rerank()  (top_n parameter added)
 //   - server_tokens  (major new type: wraps llama_tokens + optional mtmd chunk map)
@@ -11,8 +10,9 @@
 //   - json_get_nested_values  (path-based JSON extractor)
 //   - oaicompat_completion_params_parse  (OAI /completions param validation)
 //   - format_embeddings_response_oaicompat  (OAI embedding response formatter)
-//   - format_tokenizer_response / format_detokenized_response / format_logit_bias
+//   - format_tokenizer_response / format_detokenized_response
 //   - safe_json_to_str  (lossy JSON→string with bad-char replacement)
+//   - token_piece_value  (native /tokenize wire format)
 
 #include <gtest/gtest.h>
 
@@ -118,69 +118,6 @@ TEST(ServerGrammarTrigger, TypeField_IsIntInJson) {
 
     json j = server_grammar_trigger(t).to_json();
     EXPECT_TRUE(j.at("type").is_number_integer());
-}
-
-// ============================================================
-// raw_buffer / base64_decode
-//   Return type changed from std::string to raw_buffer
-//   (= std::vector<uint8_t>) in b8576.
-// ============================================================
-
-TEST(Base64Decode, ReturnType_IsRawBuffer) {
-    // Compile-time assertion: the return type must be raw_buffer
-    static_assert(
-        std::is_same<decltype(base64_decode(std::string{})), raw_buffer>::value,
-        "base64_decode must return raw_buffer (std::vector<uint8_t>)");
-    SUCCEED();
-}
-
-TEST(Base64Decode, RawBufferIsVectorOfUint8) {
-    static_assert(
-        std::is_same<raw_buffer, std::vector<uint8_t>>::value,
-        "raw_buffer must be std::vector<uint8_t>");
-    SUCCEED();
-}
-
-TEST(Base64Decode, DecodesHello) {
-    // "Hello" → "SGVsbG8="
-    raw_buffer r = base64_decode("SGVsbG8=");
-    ASSERT_EQ(r.size(), 5u);
-    EXPECT_EQ(r[0], static_cast<uint8_t>('H'));
-    EXPECT_EQ(r[1], static_cast<uint8_t>('e'));
-    EXPECT_EQ(r[2], static_cast<uint8_t>('l'));
-    EXPECT_EQ(r[3], static_cast<uint8_t>('l'));
-    EXPECT_EQ(r[4], static_cast<uint8_t>('o'));
-}
-
-TEST(Base64Decode, DecodesEmptyString) {
-    raw_buffer r = base64_decode("");
-    EXPECT_TRUE(r.empty());
-}
-
-TEST(Base64Decode, DecodesThreeBytes_NoFinalPadding) {
-    // "ABC" → "QUJD"
-    raw_buffer r = base64_decode("QUJD");
-    ASSERT_EQ(r.size(), 3u);
-    EXPECT_EQ(r[0], static_cast<uint8_t>('A'));
-    EXPECT_EQ(r[1], static_cast<uint8_t>('B'));
-    EXPECT_EQ(r[2], static_cast<uint8_t>('C'));
-}
-
-TEST(Base64Decode, DecodesTwoBytes_OnePadChar) {
-    // "Ma" → "TWE="
-    raw_buffer r = base64_decode("TWE=");
-    ASSERT_EQ(r.size(), 2u);
-    EXPECT_EQ(r[0], static_cast<uint8_t>('M'));
-    EXPECT_EQ(r[1], static_cast<uint8_t>('a'));
-}
-
-TEST(Base64Decode, DecodesBinaryData) {
-    // 0x00 0xFF 0x80 → "AP+A" — exercises non-ASCII byte values
-    raw_buffer r = base64_decode("AP+A");
-    ASSERT_EQ(r.size(), 3u);
-    EXPECT_EQ(r[0], 0x00u);
-    EXPECT_EQ(r[1], 0xFFu);
-    EXPECT_EQ(r[2], 0x80u);
 }
 
 // ============================================================
@@ -304,6 +241,18 @@ TEST(FormatResponseRerank, TopN_LargerThanCount_ReturnsAll) {
     json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, false, texts, /*top_n=*/100);
 
     EXPECT_EQ(res.at("results").size(), 2u);
+}
+
+TEST(FormatResponseRerank, TopN_Zero_ReturnsEmptyResults) {
+    // top_n=0 must truncate to zero elements, not crash or return all
+    json request = json::object();
+    json ranks   = json::array({make_rank(0, 0.9), make_rank(1, 0.5)});
+    std::vector<std::string> texts = {"a", "b"};
+
+    json res = format_response_rerank(request, json_value(request, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), ranks, false, texts, /*top_n=*/0);
+
+    ASSERT_TRUE(res.at("results").is_array());
+    EXPECT_TRUE(res.at("results").empty());
 }
 
 TEST(FormatResponseRerank, TokenCounting_Accumulated) {
@@ -611,6 +560,47 @@ TEST(ServerTokens, Str_ContainsTokensLabel) {
     EXPECT_NE(s.find("tokens"), std::string::npos);
 }
 
+// pos_next / size_up_to_pos — text-only path (has_mtmd=false).
+// In the non-multimodal path, positions are 1-to-1 with token indices.
+
+TEST(ServerTokens, PosNext_DefaultAll_ReturnsSize) {
+    llama_tokens toks = {10, 20, 30};
+    server_tokens st(toks, false);
+    // pos_next(-1) == total positions == tokens.size()
+    EXPECT_EQ(st.pos_next(-1), static_cast<llama_pos>(3));
+}
+
+TEST(ServerTokens, PosNext_ExactN_ReturnsN) {
+    llama_tokens toks = {1, 2, 3, 4, 5};
+    server_tokens st(toks, false);
+    EXPECT_EQ(st.pos_next(2), static_cast<llama_pos>(2));
+    EXPECT_EQ(st.pos_next(5), static_cast<llama_pos>(5));
+}
+
+TEST(ServerTokens, PosNext_EmptyTokens_ReturnsZero) {
+    server_tokens st;
+    EXPECT_EQ(st.pos_next(-1), static_cast<llama_pos>(0));
+}
+
+TEST(ServerTokens, SizeUpToPos_LessThanSize_ReturnsPos) {
+    llama_tokens toks = {1, 2, 3, 4};
+    server_tokens st(toks, false);
+    // max_pos < tokens.size() → clamp to max_pos
+    EXPECT_EQ(st.size_up_to_pos(2), 2u);
+}
+
+TEST(ServerTokens, SizeUpToPos_BeyondSize_ReturnsSize) {
+    llama_tokens toks = {1, 2, 3};
+    server_tokens st(toks, false);
+    EXPECT_EQ(st.size_up_to_pos(100), 3u);
+}
+
+TEST(ServerTokens, SizeUpToPos_Zero_ReturnsZero) {
+    llama_tokens toks = {1, 2, 3};
+    server_tokens st(toks, false);
+    EXPECT_EQ(st.size_up_to_pos(0), 0u);
+}
+
 // ============================================================
 // json_value utility
 // ============================================================
@@ -677,6 +667,27 @@ TEST(JsonArrayChecks, EmptyArray_NotMixed) {
     EXPECT_FALSE(json_is_array_of_mixed_numbers_strings(json::array()));
 }
 
+// json_is_array_and_contains_numbers
+//   Returns true when the input is an array that has at least one integer
+//   element; returns false for a string-only array, an empty array, or a
+//   non-array value.
+
+TEST(JsonArrayChecks, ArrayWithNumber_ContainsNumbers) {
+    EXPECT_TRUE(json_is_array_and_contains_numbers(json{1, "hello"}));
+}
+
+TEST(JsonArrayChecks, ArrayOnlyStrings_NotContainsNumbers) {
+    EXPECT_FALSE(json_is_array_and_contains_numbers(json{"a", "b"}));
+}
+
+TEST(JsonArrayChecks, EmptyArray_NotContainsNumbers) {
+    EXPECT_FALSE(json_is_array_and_contains_numbers(json::array()));
+}
+
+TEST(JsonArrayChecks, NonArray_NotContainsNumbers) {
+    EXPECT_FALSE(json_is_array_and_contains_numbers(json(42)));
+}
+
 // ============================================================
 // validate_utf8 — pure logic, no llama.cpp deps
 // ============================================================
@@ -705,6 +716,24 @@ TEST(ValidateUtf8, TruncatedTwoByte_ReturnsShorter) {
 TEST(ValidateUtf8, ValidThreeByteSequence_FullLength) {
     // "€" = 0xE2 0x82 0xAC
     const std::string s = "\xE2\x82\xAC";
+    EXPECT_EQ(validate_utf8(s), 3u);
+}
+
+TEST(ValidateUtf8, ValidFourByteSequence_FullLength) {
+    // 😀 = 0xF0 0x9F 0x98 0x80
+    const std::string s = "\xF0\x9F\x98\x80";
+    EXPECT_EQ(validate_utf8(s), 4u);
+}
+
+TEST(ValidateUtf8, TruncatedFourByte_ReturnsShorter) {
+    // Lead byte 0xF0 + two continuation bytes — missing the last
+    const std::string s = "\xF0\x9F\x98";
+    EXPECT_LT(validate_utf8(s), s.size());
+}
+
+TEST(ValidateUtf8, MixedAsciiAndMultiByte_ReturnsFullLength) {
+    // "aé" = 0x61 0xC3 0xA9 — all valid
+    const std::string s = "a\xC3\xA9";
     EXPECT_EQ(validate_utf8(s), 3u);
 }
 
@@ -743,6 +772,14 @@ TEST(IsValidUtf8, TruncatedTwoByte_Invalid) {
 
 TEST(IsValidUtf8, TruncatedThreeByte_Invalid) {
     EXPECT_FALSE(is_valid_utf8("\xE2\x82")); // missing final byte
+}
+
+TEST(IsValidUtf8, TruncatedFourByte_Invalid) {
+    EXPECT_FALSE(is_valid_utf8("\xF0\x9F\x98")); // missing last continuation
+}
+
+TEST(IsValidUtf8, MixedAsciiAndMultiByte_Valid) {
+    EXPECT_TRUE(is_valid_utf8("Hello \xC3\xA9!")); // "Hello é!"
 }
 
 // ============================================================
@@ -911,8 +948,7 @@ TEST(FormatEmbeddingsResponse, Base64Format_EncodingFormatField) {
 }
 
 // ============================================================
-// format_tokenizer_response / format_detokenized_response /
-// format_logit_bias
+// format_tokenizer_response / format_detokenized_response
 //   Tiny response formatters — pure data wrappers.
 // ============================================================
 
@@ -932,29 +968,6 @@ TEST(FormatDetokenizedResponse, WrapsInContentKey) {
 TEST(FormatDetokenizedResponse, EmptyString) {
     const json res = format_detokenized_response("");
     EXPECT_EQ(res.at("content").get<std::string>(), "");
-}
-
-TEST(FormatLogitBias, EmptyVector_ReturnsEmptyArray) {
-    const json res = format_logit_bias({});
-    EXPECT_TRUE(res.is_array());
-    EXPECT_TRUE(res.empty());
-}
-
-TEST(FormatLogitBias, SingleEntry_CorrectFields) {
-    llama_logit_bias lb;
-    lb.token = 42;
-    lb.bias  = -1.5f;
-    const json res = format_logit_bias({lb});
-    ASSERT_EQ(res.size(), 1u);
-    EXPECT_EQ(res[0].at("token").get<int>(), 42);
-    EXPECT_FLOAT_EQ(res[0].at("bias").get<float>(), -1.5f);
-}
-
-TEST(FormatLogitBias, MultipleEntries) {
-    llama_logit_bias a; a.token = 1; a.bias = 0.5f;
-    llama_logit_bias b; b.token = 2; b.bias = -2.0f;
-    const json res = format_logit_bias({a, b});
-    EXPECT_EQ(res.size(), 2u);
 }
 
 // ============================================================
@@ -1114,8 +1127,8 @@ TEST(OaicompatChatParams, ContentNotStringOrArray_Throws) {
 }
 
 // ============================================================
-// are_lora_equal / parse_lora_request
-//   Pure data-structure helpers; no model needed.
+// are_lora_equal
+//   Pure data-structure helper; no model needed.
 // ============================================================
 
 namespace {
@@ -1156,54 +1169,6 @@ TEST(AreLoraEqual, PathDifference_Ignored) {
     b.path = "model_b.gguf";
     // path is explicitly not checked in are_lora_equal
     EXPECT_TRUE(are_lora_equal({a}, {b}));
-}
-
-TEST(ParseLoraRequest, EmptyData_ClearsAllScales) {
-    std::vector<common_adapter_lora_info> base = {make_lora(0.8f), make_lora(0.6f)};
-    const auto result = parse_lora_request(base, json::array());
-    ASSERT_EQ(result.size(), 2u);
-    EXPECT_FLOAT_EQ(result[0].scale, 0.0f);
-    EXPECT_FLOAT_EQ(result[1].scale, 0.0f);
-}
-
-TEST(ParseLoraRequest, ValidId_SetsScale) {
-    std::vector<common_adapter_lora_info> base = {make_lora(0.0f), make_lora(0.0f)};
-    const json data = json::array({{{"id", 1}, {"scale", 0.75f}}});
-    const auto result = parse_lora_request(base, data);
-    EXPECT_FLOAT_EQ(result[0].scale, 0.0f); // untouched
-    EXPECT_FLOAT_EQ(result[1].scale, 0.75f);
-}
-
-TEST(ParseLoraRequest, InvalidId_Throws) {
-    std::vector<common_adapter_lora_info> base = {make_lora(0.0f)};
-    const json data = json::array({{{"id", 5}, {"scale", 1.0f}}});
-    EXPECT_THROW(parse_lora_request(base, data), std::runtime_error);
-}
-
-TEST(ParseLoraRequest, NegativeId_Throws) {
-    std::vector<common_adapter_lora_info> base = {make_lora(0.0f)};
-    const json data = json::array({{{"id", -1}, {"scale", 1.0f}}});
-    EXPECT_THROW(parse_lora_request(base, data), std::runtime_error);
-}
-
-TEST(ParseLoraRequest, MultipleIds_AllSet) {
-    std::vector<common_adapter_lora_info> base = {make_lora(0.0f), make_lora(0.0f), make_lora(0.0f)};
-    const json data = json::array({
-        {{"id", 0}, {"scale", 0.3f}},
-        {{"id", 2}, {"scale", 0.9f}}
-    });
-    const auto result = parse_lora_request(base, data);
-    EXPECT_FLOAT_EQ(result[0].scale, 0.3f);
-    EXPECT_FLOAT_EQ(result[1].scale, 0.0f); // not set
-    EXPECT_FLOAT_EQ(result[2].scale, 0.9f);
-}
-
-TEST(ParseLoraRequest, DoesNotModifyOriginalBase) {
-    std::vector<common_adapter_lora_info> base = {make_lora(0.8f)};
-    const json data = json::array({{{"id", 0}, {"scale", 0.2f}}});
-    parse_lora_request(base, data);
-    // original must be unchanged
-    EXPECT_FLOAT_EQ(base[0].scale, 0.8f);
 }
 
 // ============================================================
@@ -1319,4 +1284,135 @@ TEST(StripFlagFromArgv, OtherFlagsUnchanged) {
     EXPECT_STREQ(out[0], "prog");
     EXPECT_STREQ(out[1], "--embedding");
     EXPECT_STREQ(out[2], "--jinja");
+}
+
+// ============================================================
+// token_piece_value
+//   Used in handleTokenize to build the "piece" field.
+//   Valid UTF-8 → JSON string; invalid UTF-8 → JSON byte array.
+// ============================================================
+
+TEST(TokenPieceValue, ValidAscii_ReturnsString) {
+    const json j = token_piece_value("hello");
+    EXPECT_TRUE(j.is_string());
+    EXPECT_EQ(j.get<std::string>(), "hello");
+}
+
+TEST(TokenPieceValue, ValidMultiByte_ReturnsString) {
+    // "é" = 0xC3 0xA9 — valid two-byte UTF-8
+    const json j = token_piece_value("\xC3\xA9");
+    EXPECT_TRUE(j.is_string());
+    EXPECT_EQ(j.get<std::string>(), "\xC3\xA9");
+}
+
+TEST(TokenPieceValue, InvalidUtf8_ReturnsByteArray) {
+    // 0xFF is never valid in UTF-8
+    const json j = token_piece_value("\xFF");
+    EXPECT_TRUE(j.is_array());
+    ASSERT_EQ(j.size(), 1u);
+    EXPECT_EQ(j[0].get<int>(), 0xFF);
+}
+
+TEST(TokenPieceValue, TruncatedMultiByte_ReturnsByteArray) {
+    // Lead byte 0xC3 without continuation — invalid
+    const json j = token_piece_value("\xC3");
+    EXPECT_TRUE(j.is_array());
+    ASSERT_EQ(j.size(), 1u);
+    EXPECT_EQ(j[0].get<int>(), 0xC3);
+}
+
+TEST(TokenPieceValue, EmptyString_ReturnsEmptyString) {
+    const json j = token_piece_value("");
+    EXPECT_TRUE(j.is_string());
+    EXPECT_EQ(j.get<std::string>(), "");
+}
+
+TEST(TokenPieceValue, ValidThreeByteChar_ReturnsString) {
+    // "€" = 0xE2 0x82 0xAC
+    const json j = token_piece_value("\xE2\x82\xAC");
+    EXPECT_TRUE(j.is_string());
+}
+
+// ============================================================
+// format_oai_sse
+//   Produces "data: <json>\n\n" RFC 8895 lines.
+//   When given a JSON array, each element becomes a separate event.
+// ============================================================
+
+TEST(FormatOaiSse, SingleObject_ProducesOneLine) {
+    const json j = {{"content", "hello"}};
+    const std::string s = format_oai_sse(j);
+    EXPECT_EQ(s.rfind("data: ", 0), 0u);  // starts with "data: "
+    EXPECT_NE(s.find("\"content\""), std::string::npos);
+    EXPECT_EQ(s.substr(s.size() - 2), "\n\n");
+}
+
+TEST(FormatOaiSse, Array_ProducesMultipleEvents) {
+    const json arr = json::array({{{"a", 1}}, {{"b", 2}}});
+    const std::string s = format_oai_sse(arr);
+    // Each element generates one "data: ... \n\n"
+    size_t count = 0;
+    size_t pos = 0;
+    while ((pos = s.find("data: ", pos)) != std::string::npos) { ++count; ++pos; }
+    EXPECT_EQ(count, 2u);
+}
+
+TEST(FormatOaiSse, StringValue_DoesNotThrow) {
+    EXPECT_NO_THROW(format_oai_sse(json("done")));
+}
+
+// ============================================================
+// format_oai_resp_sse
+//   Each event object must have "event" and "data" fields;
+//   the output is "event: <name>\ndata: <json>\n\n".
+// ============================================================
+
+TEST(FormatOaiRespSse, SingleEvent_HasEventAndDataLines) {
+    const json ev = {{"event", "response.text.delta"}, {"data", {{"text", "hi"}}}};
+    const std::string s = format_oai_resp_sse(ev);
+    EXPECT_NE(s.find("event: response.text.delta\n"), std::string::npos);
+    EXPECT_NE(s.find("data: "), std::string::npos);
+    EXPECT_EQ(s.substr(s.size() - 2), "\n\n");
+}
+
+TEST(FormatOaiRespSse, Array_ProducesMultipleEventBlocks) {
+    const json arr = json::array({
+        {{"event", "e1"}, {"data", json::object()}},
+        {{"event", "e2"}, {"data", json::object()}}
+    });
+    const std::string s = format_oai_resp_sse(arr);
+    EXPECT_NE(s.find("event: e1"), std::string::npos);
+    EXPECT_NE(s.find("event: e2"), std::string::npos);
+}
+
+// ============================================================
+// format_anthropic_sse
+//   Two branches: object with both "event"+"data" → labelled event;
+//   object without those fields → bare "data: <json>\n\n".
+// ============================================================
+
+TEST(FormatAnthropicSse, WithEventAndData_ProducesLabelledEvent) {
+    const json ev = {{"event", "content_block_delta"}, {"data", {{"type", "delta"}}}};
+    const std::string s = format_anthropic_sse(ev);
+    EXPECT_NE(s.find("event: content_block_delta\n"), std::string::npos);
+    EXPECT_NE(s.find("data: "), std::string::npos);
+}
+
+TEST(FormatAnthropicSse, WithoutEventField_BareLine) {
+    const json ev = {{"type", "ping"}};
+    const std::string s = format_anthropic_sse(ev);
+    // No "event:" line — just a bare data line
+    EXPECT_EQ(s.find("event:"), std::string::npos);
+    EXPECT_NE(s.find("data: "), std::string::npos);
+}
+
+TEST(FormatAnthropicSse, Array_EachElementDispatchedCorrectly) {
+    const json arr = json::array({
+        {{"event", "ping"}, {"data", json::object()}},
+        {{"type", "bare"}}
+    });
+    const std::string s = format_anthropic_sse(arr);
+    EXPECT_NE(s.find("event: ping"), std::string::npos);
+    // second element is bare
+    EXPECT_EQ(s.find("event: bare"), std::string::npos);
 }

@@ -210,10 +210,28 @@ endif()
 
 add_library(jllama SHARED
     src/main/cpp/jllama.cpp
-    src/main/cpp/server.hpp
     src/main/cpp/utils.hpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp)
+
+# Phase 1 refactoring: compile upstream server library units directly into jllama
+# server.hpp has been replaced by direct upstream includes in jllama.cpp.
+# server-http.cpp and server.cpp (main) are intentionally excluded.
+# server-context.cpp, server-queue.cpp, server-task.cpp compile on all platforms
+# including Android.  server-models.cpp is excluded on Android because it pulls
+# in subprocess.h which calls posix_spawn_*, declared but not implemented by the
+# Android NDK.  Guard with both ANDROID_ABI (NDK toolchain convention) and
+# OS_NAME (always set to "Linux-Android" by the CI cmake invocation).
+target_sources(jllama PRIVATE
+    ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
+    ${llama.cpp_SOURCE_DIR}/tools/server/server-queue.cpp
+    ${llama.cpp_SOURCE_DIR}/tools/server/server-task.cpp
+)
+if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
+    target_sources(jllama PRIVATE
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-models.cpp
+    )
+endif()
 
 set_target_properties(jllama PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_include_directories(jllama PRIVATE
@@ -247,7 +265,7 @@ endif()
 
 #################### C++ unit tests ####################
 
-option(BUILD_TESTING "Build C++ unit tests for server.hpp / utils.hpp" OFF)
+option(BUILD_TESTING "Build C++ unit tests for jni_helpers / json_helpers / utils" OFF)
 
 if(BUILD_TESTING)
     FetchContent_Declare(
@@ -268,7 +286,12 @@ if(BUILD_TESTING)
         src/test/cpp/test_jni_helpers.cpp
         src/test/cpp/test_json_helpers.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
-        ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp)
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-queue.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-task.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-models.cpp
+    )
 
     target_include_directories(jllama_test PRIVATE
         src/main/cpp

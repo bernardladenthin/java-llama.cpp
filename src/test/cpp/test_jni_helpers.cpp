@@ -5,22 +5,15 @@
 //
 // Pure JSON transform tests live in test_json_helpers.cpp.
 //
-// Layer A tests (no server.hpp needed for the functions under test, but
-// server.hpp is included here for Layer B and to satisfy the TU convention):
-//   get_server_context_impl, get_jllama_context_impl,
-//   require_single_task_id_impl, require_json_field_impl,
-//   jint_array_to_tokens_impl
+// Layer A tests:
+//   get_jllama_context_impl, require_json_field_impl, jint_array_to_tokens_impl
 //
-// Layer B tests (need server.hpp + mock JNIEnv + pre-seeded server_response):
+// Layer B tests (need upstream server headers + mock JNIEnv):
 //   json_to_jstring_impl, results_to_jstring_impl,
-//   build_completion_tasks_impl, recv_slot_task_result_impl,
-//   collect_task_results_impl, embedding_to_jfloat_array_impl,
-//   tokens_to_jint_array_impl
+//   embedding_to_jfloat_array_impl, tokens_to_jint_array_impl
 //
 // JNIEnv is mocked via a zero-filled JNINativeInterface_ table with only the
-// slots exercised by each test patched.  server_response is used directly:
-// results are pre-seeded via send() before recv() is called, so the condvar
-// is satisfied immediately without blocking.
+// slots exercised by each test patched.
 
 #include <gtest/gtest.h>
 
@@ -28,13 +21,16 @@
 #include <memory>
 #include <string>
 #include <thread>
-#include <unordered_set>
-
-// server.hpp must precede jni_helpers.hpp (no include guard in server.hpp).
-#include "server.hpp"
+#include "server-context.h"
+#include "server-queue.h"
+#include "server-task.h"
+#include "server-common.h"
+#include "server-chat.h"
+#include "utils.hpp"
 #include "jni_helpers.hpp"
 
-// embedding_to_jfloat_array_impl is also tested in this file (see bottom).
+// embedding_to_jfloat_array_impl and tokens_to_jint_array_impl are also tested
+// in this file (see bottom).
 
 // ============================================================
 // Shared fake result types
@@ -47,14 +43,6 @@ struct fake_ok_result : server_task_result {
     explicit fake_ok_result(int id_, std::string m) : msg(std::move(m)) { id = id_; }
     json to_json() override { return {{"content", msg}}; }
 };
-
-static server_task_result_ptr make_error(int id_, const std::string &msg) {
-    auto r      = std::make_unique<server_task_result_error>();
-    r->id       = id_;
-    r->err_msg  = msg;
-    r->err_type = ERROR_TYPE_SERVER;
-    return r;
-}
 
 static server_task_result_ptr make_ok(int id_, const std::string &msg = "ok") {
     return std::make_unique<fake_ok_result>(id_, msg);
@@ -112,55 +100,86 @@ struct MockJniFixture : ::testing::Test {
     }
 };
 
-// Extends MockJniFixture with a fresh server_response queue.
-struct ServerFixture : MockJniFixture {
-    server_response queue;
-};
-
 } // namespace
 
 // ============================================================
-// get_server_context_impl
+// jllama_context default member values
+//
+// These verify that every field added during the Phase 2 refactor
+// (value-member server, vocab/vocab_only_model caches, readers map)
+// has the correct zero/null/false default so loadModel can rely on
+// them without extra initialisation.
 // ============================================================
 
-TEST_F(MockJniFixture, GetServerContext_NullHandle_ThrowsAndReturnsNull) {
-    g_mock_handle = 0;
-
-    server_context *result =
-        get_server_context_impl(env, nullptr, dummy_field, dummy_class);
-
-    EXPECT_EQ(result, nullptr);
-    EXPECT_TRUE(g_throw_called);
-    EXPECT_EQ(g_throw_message, "Model is not loaded");
+TEST(JllamaContextDefaults, VocabOnly_FalseByDefault) {
+    jllama_context ctx;
+    EXPECT_FALSE(ctx.vocab_only);
 }
 
-TEST_F(MockJniFixture, GetServerContext_ValidHandle_ReturnsServerContextNoThrow) {
-    server_context *sentinel = reinterpret_cast<server_context *>(0xDEADBEEF);
-    jllama_context  fake_ctx;
-    fake_ctx.server = sentinel;
-    g_mock_handle   = reinterpret_cast<jlong>(&fake_ctx);
-
-    server_context *result =
-        get_server_context_impl(env, nullptr, dummy_field, dummy_class);
-
-    EXPECT_EQ(result, sentinel);
-    EXPECT_FALSE(g_throw_called);
+TEST(JllamaContextDefaults, WorkerReady_FalseByDefault) {
+    jllama_context ctx;
+    EXPECT_FALSE(ctx.worker_ready.load());
 }
 
-TEST_F(MockJniFixture, GetServerContext_ErrorMessageIsExact) {
-    g_mock_handle = 0;
-    (void)get_server_context_impl(env, nullptr, dummy_field, dummy_class);
-    ASSERT_TRUE(g_throw_called);
-    EXPECT_EQ(g_throw_message, "Model is not loaded");
+TEST(JllamaContextDefaults, Vocab_NullByDefault) {
+    jllama_context ctx;
+    EXPECT_EQ(ctx.vocab, nullptr);
 }
 
-TEST_F(MockJniFixture, GetServerContext_ValidHandle_NeverCallsThrowNew) {
-    server_context *sentinel = reinterpret_cast<server_context *>(0xCAFEBABE);
-    jllama_context  fake_ctx;
-    fake_ctx.server = sentinel;
-    g_mock_handle   = reinterpret_cast<jlong>(&fake_ctx);
-    (void)get_server_context_impl(env, nullptr, dummy_field, dummy_class);
-    EXPECT_FALSE(g_throw_called);
+TEST(JllamaContextDefaults, VocabOnlyModel_NullByDefault) {
+    jllama_context ctx;
+    EXPECT_EQ(ctx.vocab_only_model, nullptr);
+}
+
+TEST(JllamaContextDefaults, Readers_EmptyByDefault) {
+    jllama_context ctx;
+    std::lock_guard<std::mutex> lk(ctx.readers_mutex);
+    EXPECT_TRUE(ctx.readers.empty());
+}
+
+// ============================================================
+// jllama_context::readers map lifecycle
+//
+// The readers map drives streaming: requestCompletion inserts a reader,
+// receiveCompletionJson looks it up, releaseTask/cancelCompletion erases it.
+// Tests use nullptr unique_ptr — no real server_response_reader needed.
+// ============================================================
+
+TEST(JllamaContextReaders, Insert_MapHasOneEntry) {
+    jllama_context ctx;
+    std::lock_guard<std::mutex> lk(ctx.readers_mutex);
+    ctx.readers.emplace(42, nullptr);
+    EXPECT_EQ(ctx.readers.size(), 1u);
+    EXPECT_TRUE(ctx.readers.count(42));
+}
+
+TEST(JllamaContextReaders, Erase_MapBecomesEmpty) {
+    jllama_context ctx;
+    std::lock_guard<std::mutex> lk(ctx.readers_mutex);
+    ctx.readers.emplace(7, nullptr);
+    ctx.readers.erase(7);
+    EXPECT_TRUE(ctx.readers.empty());
+}
+
+TEST(JllamaContextReaders, MultipleTaskIds_IndependentSlots) {
+    // Erase one task id while others remain — models cancelCompletion
+    // mid-stream without disturbing other active streaming tasks.
+    jllama_context ctx;
+    std::lock_guard<std::mutex> lk(ctx.readers_mutex);
+    ctx.readers.emplace(1, nullptr);
+    ctx.readers.emplace(2, nullptr);
+    ctx.readers.emplace(3, nullptr);
+    ctx.readers.erase(2);
+    EXPECT_EQ(ctx.readers.size(), 2u);
+    EXPECT_TRUE(ctx.readers.count(1));
+    EXPECT_FALSE(ctx.readers.count(2));
+    EXPECT_TRUE(ctx.readers.count(3));
+}
+
+TEST(JllamaContextReaders, AbsentKey_CountReturnsZero) {
+    jllama_context ctx;
+    std::lock_guard<std::mutex> lk(ctx.readers_mutex);
+    EXPECT_EQ(ctx.readers.count(99), 0u);
 }
 
 // ============================================================
@@ -178,8 +197,7 @@ TEST_F(MockJniFixture, GetJllamaContext_NullHandle_ReturnsNullWithoutThrow) {
 
 TEST_F(MockJniFixture, GetJllamaContext_ValidHandle_ReturnsWrapper) {
     jllama_context fake_ctx;
-    fake_ctx.server = nullptr;
-    g_mock_handle   = reinterpret_cast<jlong>(&fake_ctx);
+    g_mock_handle = reinterpret_cast<jlong>(&fake_ctx);
 
     jllama_context *result = get_jllama_context_impl(env, nullptr, dummy_field);
 
@@ -188,49 +206,15 @@ TEST_F(MockJniFixture, GetJllamaContext_ValidHandle_ReturnsWrapper) {
 }
 
 TEST_F(MockJniFixture, GetJllamaContext_ReturnsWrapperNotInnerServer) {
-    server_context *sentinel = reinterpret_cast<server_context *>(0xDEADBEEF);
-    jllama_context  fake_ctx;
-    fake_ctx.server = sentinel;
-    g_mock_handle   = reinterpret_cast<jlong>(&fake_ctx);
+    jllama_context fake_ctx;
+    g_mock_handle = reinterpret_cast<jlong>(&fake_ctx);
 
     jllama_context *result = get_jllama_context_impl(env, nullptr, dummy_field);
 
+    // Verify we get back the jllama_context wrapper pointer, not null or something else.
     EXPECT_EQ(result, &fake_ctx);
-    EXPECT_NE(static_cast<void *>(result), static_cast<void *>(sentinel));
-}
-
-TEST_F(MockJniFixture, GetJllamaContext_NullHandle_WhileGetServerContextThrows) {
-    g_mock_handle = 0;
-
-    (void)get_server_context_impl(env, nullptr, dummy_field, dummy_class);
-    EXPECT_TRUE(g_throw_called);
-
-    g_throw_called = false;
-    (void)get_jllama_context_impl(env, nullptr, dummy_field);
-    EXPECT_FALSE(g_throw_called);
-}
-
-// ============================================================
-// require_single_task_id_impl
-// ============================================================
-
-TEST_F(MockJniFixture, RequireSingleTaskId_ExactlyOne_ReturnsIdNoThrow) {
-    std::unordered_set<int> ids = {42};
-    EXPECT_EQ(require_single_task_id_impl(env, ids, dummy_class), 42);
-    EXPECT_FALSE(g_throw_called);
-}
-
-TEST_F(MockJniFixture, RequireSingleTaskId_Empty_ReturnsZeroAndThrows) {
-    std::unordered_set<int> ids;
-    EXPECT_EQ(require_single_task_id_impl(env, ids, dummy_class), 0);
-    EXPECT_TRUE(g_throw_called);
-    EXPECT_EQ(g_throw_message, "multitasking currently not supported");
-}
-
-TEST_F(MockJniFixture, RequireSingleTaskId_Multiple_ReturnsZeroAndThrows) {
-    std::unordered_set<int> ids = {1, 2, 3};
-    EXPECT_EQ(require_single_task_id_impl(env, ids, dummy_class), 0);
-    EXPECT_TRUE(g_throw_called);
+    // Note: &fake_ctx.server == &fake_ctx because server is the first value member;
+    // the type-level distinction (jllama_context* vs server_context*) is sufficient.
 }
 
 // ============================================================
@@ -255,6 +239,16 @@ TEST_F(MockJniFixture, RequireJsonField_EmptyJson_ReturnsFalseAndThrows) {
         env, nlohmann::json::object(), "input_suffix", dummy_class));
     EXPECT_TRUE(g_throw_called);
     EXPECT_EQ(g_throw_message, "\"input_suffix\" is required");
+}
+
+// nlohmann::json::contains() returns true for keys whose value is null.
+// require_json_field_impl uses contains(), so a null-valued field passes
+// the presence check and returns true without throwing.  Callers that
+// require a non-null value must perform their own type check afterwards.
+TEST_F(MockJniFixture, RequireJsonField_NullValue_ReturnsTrueNoThrow) {
+    nlohmann::json data = {{"input_prefix", nullptr}};
+    EXPECT_TRUE(require_json_field_impl(env, data, "input_prefix", dummy_class));
+    EXPECT_FALSE(g_throw_called);
 }
 
 // ============================================================
@@ -355,6 +349,12 @@ TEST_F(MockJniFixture, JsonToJstring_ReturnsSentinel) {
     EXPECT_EQ(js, reinterpret_cast<jstring>(0xBEEF));
 }
 
+TEST_F(MockJniFixture, JsonToJstring_NullJson_SerializesToNullString) {
+    jstring js = json_to_jstring_impl(env, json(nullptr));
+    EXPECT_NE(js, nullptr);
+    EXPECT_EQ(g_new_string_utf_value, "null");
+}
+
 // ============================================================
 // results_to_jstring_impl
 // ============================================================
@@ -393,145 +393,6 @@ TEST_F(MockJniFixture, ResultsToJstring_EmptyVector_ReturnsEmptyArray) {
     json parsed = json::parse(g_new_string_utf_value);
     EXPECT_TRUE(parsed.is_array());
     EXPECT_TRUE(parsed.empty());
-}
-
-// ============================================================
-// collect_task_results_impl
-// ============================================================
-
-TEST_F(ServerFixture, CollectResults_SingleOk_ReturnsTrueAndFillsOut) {
-    queue.add_waiting_task_id(1);
-    queue.send(make_ok(1, "hello"));
-
-    std::unordered_set<int> ids = {1};
-    std::vector<server_task_result_ptr> out;
-
-    EXPECT_TRUE(collect_task_results_impl(env, queue, ids, out, dummy_class));
-    ASSERT_EQ(out.size(), 1u);
-    EXPECT_EQ(out[0]->to_json()["content"], "hello");
-    EXPECT_FALSE(g_throw_called);
-}
-
-TEST_F(ServerFixture, CollectResults_SingleError_ReturnsFalseAndThrows) {
-    queue.add_waiting_task_id(2);
-    queue.send(make_error(2, "something went wrong"));
-
-    std::unordered_set<int> ids = {2};
-    std::vector<server_task_result_ptr> out;
-
-    EXPECT_FALSE(collect_task_results_impl(env, queue, ids, out, dummy_class));
-    EXPECT_TRUE(out.empty());
-    EXPECT_TRUE(g_throw_called);
-    EXPECT_EQ(g_throw_message, "something went wrong");
-}
-
-TEST_F(ServerFixture, CollectResults_MultipleOk_AllCollected) {
-    for (int i = 10; i < 13; ++i) { queue.add_waiting_task_id(i); queue.send(make_ok(i)); }
-
-    std::unordered_set<int> ids = {10, 11, 12};
-    std::vector<server_task_result_ptr> out;
-
-    EXPECT_TRUE(collect_task_results_impl(env, queue, ids, out, dummy_class));
-    EXPECT_EQ(out.size(), 3u);
-    EXPECT_FALSE(g_throw_called);
-}
-
-TEST_F(ServerFixture, CollectResults_SecondError_StopsAndThrows) {
-    queue.add_waiting_task_id(20); queue.send(make_ok(20));
-    queue.add_waiting_task_id(21); queue.send(make_error(21, "task 21 failed"));
-
-    std::unordered_set<int> ids = {20, 21};
-    std::vector<server_task_result_ptr> out;
-
-    EXPECT_FALSE(collect_task_results_impl(env, queue, ids, out, dummy_class));
-    EXPECT_TRUE(g_throw_called);
-    EXPECT_EQ(g_throw_message, "task 21 failed");
-}
-
-TEST_F(ServerFixture, CollectResults_SuccessPath_WaitingIdsRemoved) {
-    queue.add_waiting_task_id(30); queue.send(make_ok(30));
-    std::unordered_set<int> ids = {30};
-    std::vector<server_task_result_ptr> out;
-    (void)collect_task_results_impl(env, queue, ids, out, dummy_class);
-    EXPECT_FALSE(queue.waiting_task_ids.count(30));
-}
-
-TEST_F(ServerFixture, CollectResults_ErrorPath_WaitingIdsRemoved) {
-    queue.add_waiting_task_id(40); queue.send(make_error(40, "err"));
-    std::unordered_set<int> ids = {40};
-    std::vector<server_task_result_ptr> out;
-    (void)collect_task_results_impl(env, queue, ids, out, dummy_class);
-    EXPECT_FALSE(queue.waiting_task_ids.count(40));
-}
-
-// ============================================================
-// recv_slot_task_result_impl
-// ============================================================
-
-TEST_F(ServerFixture, RecvSlotResult_Success_ReturnsNonNullNoThrow) {
-    queue.add_waiting_task_id(50); queue.send(make_ok(50, "slot-ok"));
-
-    jstring result = recv_slot_task_result_impl(env, queue, 50, dummy_class);
-
-    EXPECT_NE(result, nullptr);
-    EXPECT_FALSE(g_throw_called);
-    EXPECT_NE(g_new_string_utf_value.find("slot-ok"), std::string::npos);
-}
-
-TEST_F(ServerFixture, RecvSlotResult_Error_ReturnsNullAndThrows) {
-    queue.add_waiting_task_id(51); queue.send(make_error(51, "slot operation failed"));
-
-    jstring result = recv_slot_task_result_impl(env, queue, 51, dummy_class);
-
-    EXPECT_EQ(result, nullptr);
-    EXPECT_TRUE(g_throw_called);
-    EXPECT_EQ(g_throw_message, "slot operation failed");
-}
-
-TEST_F(ServerFixture, RecvSlotResult_Success_WaitingIdRemoved) {
-    queue.add_waiting_task_id(52); queue.send(make_ok(52));
-    (void)recv_slot_task_result_impl(env, queue, 52, dummy_class);
-    EXPECT_FALSE(queue.waiting_task_ids.count(52));
-}
-
-TEST_F(ServerFixture, RecvSlotResult_Error_WaitingIdRemoved) {
-    queue.add_waiting_task_id(53); queue.send(make_error(53, "err"));
-    (void)recv_slot_task_result_impl(env, queue, 53, dummy_class);
-    EXPECT_FALSE(queue.waiting_task_ids.count(53));
-}
-
-// ============================================================
-// build_completion_tasks_impl — error path only
-// (success path requires a live server_context with vocab/ctx)
-// ============================================================
-
-TEST_F(MockJniFixture, BuildTasks_MissingPrompt_ReturnsFalseAndThrows) {
-    json data = {{"n_predict", 1}};
-    std::vector<server_task> tasks;
-
-    bool ok = build_completion_tasks_impl(env, /*ctx_server=*/nullptr, data,
-                                          "test-cmpl-id",
-                                          SERVER_TASK_TYPE_COMPLETION,
-                                          OAICOMPAT_TYPE_NONE,
-                                          tasks, dummy_class);
-
-    EXPECT_FALSE(ok);
-    EXPECT_TRUE(g_throw_called);
-    EXPECT_TRUE(tasks.empty());
-}
-
-TEST_F(MockJniFixture, BuildTasks_MissingPrompt_InfillTypeHasSameBehaviour) {
-    json data = {{"input_prefix", "def f():"}, {"input_suffix", "return 1"}};
-    std::vector<server_task> tasks;
-
-    bool ok = build_completion_tasks_impl(env, nullptr, data, "infill-id",
-                                          SERVER_TASK_TYPE_INFILL,
-                                          OAICOMPAT_TYPE_NONE,
-                                          tasks, dummy_class);
-
-    EXPECT_FALSE(ok);
-    EXPECT_TRUE(g_throw_called);
-    EXPECT_TRUE(tasks.empty());
 }
 
 // ============================================================
@@ -574,19 +435,19 @@ TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_ReturnsSentinel) {
 
 TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_AllocatesCorrectSize) {
     std::vector<float> v = {0.1f, 0.2f};
-    embedding_to_jfloat_array_impl(env, v, dummy_class);
+    (void)embedding_to_jfloat_array_impl(env, v, dummy_class);
     EXPECT_EQ(g_float_alloc_size, 2);
 }
 
 TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_CopiesAllElements) {
     std::vector<float> v(5, 0.5f);
-    embedding_to_jfloat_array_impl(env, v, dummy_class);
+    (void)embedding_to_jfloat_array_impl(env, v, dummy_class);
     EXPECT_EQ(g_float_copied_size, 5);
 }
 
 TEST_F(FloatArrayFixture, EmbeddingToJfloatArray_EmptyVector_AllocatesZeroLen) {
     std::vector<float> v;
-    embedding_to_jfloat_array_impl(env, v, dummy_class);
+    (void)embedding_to_jfloat_array_impl(env, v, dummy_class);
     EXPECT_EQ(g_float_alloc_size, 0);
     EXPECT_FALSE(g_throw_called);
 }
@@ -640,19 +501,19 @@ TEST_F(IntArrayFixture, TokensToJintArray_ReturnsSentinel) {
 
 TEST_F(IntArrayFixture, TokensToJintArray_AllocatesCorrectSize) {
     std::vector<int32_t> v = {10, 20};
-    tokens_to_jint_array_impl(env, v, dummy_class);
+    (void)tokens_to_jint_array_impl(env, v, dummy_class);
     EXPECT_EQ(g_int_alloc_size, 2);
 }
 
 TEST_F(IntArrayFixture, TokensToJintArray_CopiesAllElements) {
     std::vector<int32_t> v(7, 42);
-    tokens_to_jint_array_impl(env, v, dummy_class);
+    (void)tokens_to_jint_array_impl(env, v, dummy_class);
     EXPECT_EQ(g_int_copied_size, 7);
 }
 
 TEST_F(IntArrayFixture, TokensToJintArray_EmptyVector_AllocatesZeroLen) {
     std::vector<int32_t> v;
-    tokens_to_jint_array_impl(env, v, dummy_class);
+    (void)tokens_to_jint_array_impl(env, v, dummy_class);
     EXPECT_EQ(g_int_alloc_size, 0);
     EXPECT_FALSE(g_throw_called);
 }
