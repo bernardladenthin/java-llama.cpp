@@ -2,10 +2,6 @@
 
 // jni_helpers.hpp — JNI bridge helpers for jllama.cpp.
 //
-// This file is the single project-side helper header for all JNI bridge code.
-// It was formed by merging the former jni_helpers.hpp (handle management) and
-// the former jni_server_helpers.hpp (server orchestration) into one coherent file.
-//
 // Two layers live here:
 //
 //   Layer A — JNI handle management (no server.hpp required):
@@ -15,53 +11,32 @@
 //
 //   Layer B — JNI + server orchestration (server.hpp must precede this header):
 //     json_to_jstring_impl, results_to_jstring_impl,
-//     build_completion_tasks_impl, recv_slot_task_result_impl,
-//     collect_task_results_impl, check_infill_support_impl, append_task
+//     recv_slot_task_result_impl, collect_task_results_impl,
+//     embedding_to_jfloat_array_impl, tokens_to_jint_array_impl
 //
 // Pure JSON transforms (no JNI, no llama state) live in json_helpers.hpp,
-// which is included at the bottom of this file so all bridge helpers can
-// call them directly.
+// which is included at the bottom of this file.
 //
 // IMPORTANT — include order for Layer B:
 //   server.hpp must be included by the including translation unit BEFORE this
-//   header.  server.hpp has no include guard, so including it here would cause
-//   redefinition errors in any TU that already includes server.hpp directly.
-//
-// All parameters are passed explicitly (no module-level globals) so every
-// function can be exercised in unit tests using a mock JNIEnv.
-//
-// Declaration order (each function must be defined before its first caller):
-//   Layer A:
-//     1.  jllama_context struct
-//     2.  get_server_context_impl
-//     3.  get_jllama_context_impl
-//     4.  require_single_task_id_impl
-//     5.  require_json_field_impl
-//     6.  jint_array_to_tokens_impl
-//   Layer B (needs server.hpp in TU):
-//     7.  json_to_jstring_impl
-//     8.  build_completion_tasks_impl
-//     9.  recv_slot_task_result_impl     — uses get_result_error_message (json_helpers), json_to_jstring_impl
-//    10.  collect_task_results_impl      — uses get_result_error_message (json_helpers)
-//    11.  results_to_jstring_impl        — uses results_to_json (json_helpers), json_to_jstring_impl
-//    12.  check_infill_support_impl
-//    13.  append_task
-//    14.  embedding_to_jfloat_array_impl
-//    15.  tokens_to_jint_array_impl
+//   header.
 
 #include "jni.h"
 #include "nlohmann/json.hpp"
 
 #include <atomic>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_set>
 #include <vector>
 
-// Forward declaration — Layer A helpers only hold/cast pointers to
-// server_context; they never dereference it, so a full definition is not
-// needed here.  TUs that call Layer B functions must include server.hpp first.
+// Forward declarations — Layer A helpers only hold/cast pointers.
+// TUs that call Layer B functions must include server.hpp first.
 struct server_context;
+struct server_response_reader;
 
 // ===========================================================================
 // Layer A — JNI handle management
@@ -70,25 +45,35 @@ struct server_context;
 // ---------------------------------------------------------------------------
 // jllama_context
 //
-// Owns a server_context and the background worker thread.  Stored as the
-// Java-side `ctx` (jlong) pointer.  Using a wrapper allows us to join the
-// thread on close() instead of detaching it, which eliminates the race
-// between thread teardown and JVM shutdown.
+// Owns a server_context (value member, pimpl inside) and the background
+// worker thread.  Stored as the Java-side `ctx` (jlong) pointer.
 // ---------------------------------------------------------------------------
 struct jllama_context {
-    server_context *server     = nullptr;
-    std::thread     worker;
-    bool            vocab_only = false;
-    // Signals that the worker thread has entered start_loop() and is ready.
-    // Without this, terminate() can race with start_loop() setting running=true.
+    server_context    server;                 // value member (pimpl inside)
+    std::thread       worker;
+    bool              vocab_only        = false;
     std::atomic<bool> worker_ready{false};
+
+    // Cached after load_model() — valid for the lifetime of this context.
+    const llama_vocab *vocab             = nullptr;
+    // Non-null only in vocab-only mode (bypasses server_context entirely).
+    llama_model       *vocab_only_model  = nullptr;
+
+    // Saved copy of common_params used to load the model.
+    // Required by server_task::params_from_json_cmpl which takes common_params&.
+    common_params      params;
+
+    // Per-streaming-task response readers, keyed by task id.
+    // Guarded by readers_mutex.
+    std::mutex         readers_mutex;
+    std::map<int, std::unique_ptr<server_response_reader>> readers;
 };
 
 // ---------------------------------------------------------------------------
 // get_server_context_impl
 //
 // Reads the native handle stored in the Java LlamaModel object, validates it,
-// and returns the embedded server_context pointer.
+// and returns a pointer to the embedded server_context value member.
 //
 // On success: returns a non-null server_context*.
 // On failure: throws "Model is not loaded" via JNI and returns nullptr.
@@ -102,14 +87,14 @@ struct jllama_context {
         env->ThrowNew(error_class, "Model is not loaded");
         return nullptr;
     }
-    return reinterpret_cast<jllama_context *>(handle)->server; // NOLINT(*-no-int-to-ptr)
+    return &(reinterpret_cast<jllama_context *>(handle)->server); // NOLINT(*-no-int-to-ptr)
 }
 
 // ---------------------------------------------------------------------------
 // get_jllama_context_impl
 //
 // Like get_server_context_impl but returns the jllama_context wrapper itself.
-// Used ONLY by the delete path, which must call `delete jctx`.
+// Used ONLY by the delete path and methods that need jctx directly.
 //
 // Intentionally does NOT throw on null: a zero handle means the model was
 // already deleted (or never fully initialised), which is a valid no-op for
@@ -195,109 +180,6 @@ struct jllama_context {
 }
 
 // ---------------------------------------------------------------------------
-// build_completion_tasks_impl
-//
-// Reads data["prompt"], tokenises it, and appends one server_task per prompt
-// token sequence to `tasks`.  task_type and oaicompat are caller-specified.
-//
-// IMPORTANT: data["prompt"] is read before any ctx_server member is accessed,
-// so passing ctx_server=nullptr is safe in tests that exercise the error path
-// (missing "prompt" key).
-//
-// On success: `tasks` is populated, returns true.
-// On error:   throws via JNI using error_class, returns false.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline bool build_completion_tasks_impl(
-        JNIEnv                   *env,
-        server_context           *ctx_server,
-        const json               &data,
-        const std::string        &completion_id,
-        server_task_type          task_type,
-        oaicompat_type            oaicompat,
-        std::vector<server_task> &tasks,
-        jclass                    error_class) {
-    try {
-        const auto &prompt = data.at("prompt"); // throws before ctx_server is touched
-
-        std::vector<server_tokens> tokenized_prompts =
-            tokenize_input_prompts(ctx_server->vocab, nullptr, prompt, true, true);
-
-        tasks.reserve(tokenized_prompts.size());
-        for (size_t i = 0; i < tokenized_prompts.size(); i++) {
-            server_task task = server_task(task_type);
-            task.id    = ctx_server->queue_tasks.get_new_id();
-            task.index = i;
-
-            task.prompt_tokens    = std::move(tokenized_prompts[i]);
-            task.params           = server_task::params_from_json_cmpl(
-                                        ctx_server->ctx, ctx_server->params_base, data);
-            task.id_selected_slot = json_value(data, "id_slot", -1);
-
-            task.params.oaicompat         = oaicompat;
-            task.params.oaicompat_cmpl_id = completion_id;
-
-            tasks.push_back(std::move(task));
-        }
-    } catch (const std::exception &e) {
-        const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
-        env->ThrowNew(error_class, err.dump().c_str());
-        return false;
-    }
-    return true;
-}
-
-// ---------------------------------------------------------------------------
-// recv_slot_task_result_impl
-//
-// Receives a single slot-action result from the response queue, checks for
-// an error, and returns the result JSON as a JNI string.
-//
-// On success: returns a new jstring containing result->to_json().dump().
-// On error:   removes the waiting task id, throws via JNI, returns nullptr.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline jstring recv_slot_task_result_impl(JNIEnv          *env,
-                                                         server_response &queue,
-                                                         int              task_id,
-                                                         jclass           error_class) {
-    server_task_result_ptr result = queue.recv(task_id);
-    queue.remove_waiting_task_id(task_id);
-    if (result->is_error()) {
-        env->ThrowNew(error_class, get_result_error_message(result).c_str());
-        return nullptr;
-    }
-    return json_to_jstring_impl(env, result->to_json());
-}
-
-// ---------------------------------------------------------------------------
-// collect_task_results_impl
-//
-// Precondition: each ID in task_ids has already been registered with
-//   queue.add_waiting_task_id() (or add_waiting_tasks()).
-//
-// On success: appends all results to `out`, removes waiting ids, returns true.
-// On error:   removes waiting ids, throws via JNI, returns false.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline bool collect_task_results_impl(
-        JNIEnv                               *env,
-        server_response                      &queue,
-        const std::unordered_set<int>        &task_ids,
-        std::vector<server_task_result_ptr>  &out,
-        jclass                                error_class) {
-    out.reserve(task_ids.size());
-    for (size_t i = 0; i < task_ids.size(); i++) {
-        server_task_result_ptr result = queue.recv(task_ids);
-        if (result->is_error()) {
-            queue.remove_waiting_task_ids(task_ids);
-            env->ThrowNew(error_class, get_result_error_message(result).c_str());
-            return false;
-        }
-        out.push_back(std::move(result));
-    }
-    queue.remove_waiting_task_ids(task_ids);
-    return true;
-}
-
-// ---------------------------------------------------------------------------
 // results_to_jstring_impl
 //
 // Serialises a vector of task results to a jstring by delegating JSON
@@ -308,48 +190,6 @@ struct jllama_context {
         JNIEnv                                    *env,
         const std::vector<server_task_result_ptr> &results) {
     return json_to_jstring_impl(env, results_to_json(results));
-}
-
-// ---------------------------------------------------------------------------
-// check_infill_support_impl
-//
-// Checks that the model vocabulary has all three fill-in-the-middle (FIM)
-// tokens (prefix, suffix, middle).  Returns true if infill is supported.
-// On failure: throws via JNI and returns false.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline bool check_infill_support_impl(JNIEnv            *env,
-                                                     const llama_vocab *vocab,
-                                                     jclass             error_class) {
-    std::string err;
-    if (llama_vocab_fim_pre(vocab) == LLAMA_TOKEN_NULL) { err += "prefix token is missing. "; }
-    if (llama_vocab_fim_suf(vocab) == LLAMA_TOKEN_NULL) { err += "suffix token is missing. "; }
-    if (llama_vocab_fim_mid(vocab) == LLAMA_TOKEN_NULL) { err += "middle token is missing. "; }
-    if (!err.empty()) {
-        env->ThrowNew(error_class, ("Infill is not supported by this model: " + err).c_str());
-        return false;
-    }
-    return true;
-}
-
-// ---------------------------------------------------------------------------
-// append_task
-//
-// Constructs a server_task of the given type and appends it to `tasks`.
-// The caller is responsible for pre-computing `prompt_tokens`.
-// `oaicompat` defaults to NONE so rerank call sites need no explicit argument.
-// ---------------------------------------------------------------------------
-inline void append_task(server_context           *ctx_server,
-                        std::vector<server_task> &tasks,
-                        server_task_type          type,
-                        llama_tokens              prompt_tokens,
-                        size_t                    index,
-                        oaicompat_type            oaicompat = OAICOMPAT_TYPE_NONE) {
-    server_task task(type);
-    task.id               = ctx_server->queue_tasks.get_new_id();
-    task.index            = index;
-    task.prompt_tokens    = server_tokens(prompt_tokens, false);
-    task.params.oaicompat = oaicompat;
-    tasks.push_back(std::move(task));
 }
 
 // ---------------------------------------------------------------------------
