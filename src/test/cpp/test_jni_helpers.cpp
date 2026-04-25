@@ -138,7 +138,50 @@ TEST(JllamaContextDefaults, Readers_EmptyByDefault) {
     EXPECT_TRUE(ctx.readers.empty());
 }
 
+// ============================================================
+// jllama_context::readers map lifecycle
+//
+// The readers map drives streaming: requestCompletion inserts a reader,
+// receiveCompletionJson looks it up, releaseTask/cancelCompletion erases it.
+// Tests use nullptr unique_ptr — no real server_response_reader needed.
+// ============================================================
 
+TEST(JllamaContextReaders, Insert_MapHasOneEntry) {
+    jllama_context ctx;
+    std::lock_guard<std::mutex> lk(ctx.readers_mutex);
+    ctx.readers.emplace(42, nullptr);
+    EXPECT_EQ(ctx.readers.size(), 1u);
+    EXPECT_TRUE(ctx.readers.count(42));
+}
+
+TEST(JllamaContextReaders, Erase_MapBecomesEmpty) {
+    jllama_context ctx;
+    std::lock_guard<std::mutex> lk(ctx.readers_mutex);
+    ctx.readers.emplace(7, nullptr);
+    ctx.readers.erase(7);
+    EXPECT_TRUE(ctx.readers.empty());
+}
+
+TEST(JllamaContextReaders, MultipleTaskIds_IndependentSlots) {
+    // Erase one task id while others remain — models cancelCompletion
+    // mid-stream without disturbing other active streaming tasks.
+    jllama_context ctx;
+    std::lock_guard<std::mutex> lk(ctx.readers_mutex);
+    ctx.readers.emplace(1, nullptr);
+    ctx.readers.emplace(2, nullptr);
+    ctx.readers.emplace(3, nullptr);
+    ctx.readers.erase(2);
+    EXPECT_EQ(ctx.readers.size(), 2u);
+    EXPECT_TRUE(ctx.readers.count(1));
+    EXPECT_FALSE(ctx.readers.count(2));
+    EXPECT_TRUE(ctx.readers.count(3));
+}
+
+TEST(JllamaContextReaders, AbsentKey_CountReturnsZero) {
+    jllama_context ctx;
+    std::lock_guard<std::mutex> lk(ctx.readers_mutex);
+    EXPECT_EQ(ctx.readers.count(99), 0u);
+}
 
 TEST_F(MockJniFixture, GetServerContext_NullHandle_ThrowsAndReturnsNull) {
     g_mock_handle = 0;
