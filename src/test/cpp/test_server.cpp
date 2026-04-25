@@ -1,6 +1,6 @@
-// Tests for server.hpp — focused on APIs changed in llama.cpp b4916 → b8576
+// Tests for upstream server APIs — focused on APIs changed in llama.cpp b4916 → b8576
 //
-// server.hpp includes utils.hpp transitively, so all utils types are available.
+// utils.hpp is included directly.
 //
 // Covered:
 //   - result_timings::to_json()
@@ -21,8 +21,12 @@
 
 #include <gtest/gtest.h>
 
-// server.hpp includes utils.hpp; no JNI headers required.
-#include "server.hpp"
+#include "server-context.h"
+#include "server-queue.h"
+#include "server-task.h"
+#include "server-common.h"
+#include "server-chat.h"
+#include "utils.hpp"
 
 // ============================================================
 // result_timings::to_json

@@ -210,13 +210,12 @@ endif()
 
 add_library(jllama SHARED
     src/main/cpp/jllama.cpp
-    src/main/cpp/server.hpp
     src/main/cpp/utils.hpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp)
 
 # Phase 1 refactoring: compile upstream server library units directly into jllama
-# so Phase 2+ can replace server.hpp with thin includes of these headers.
+# server.hpp has been replaced by direct upstream includes in jllama.cpp.
 # server-http.cpp and server.cpp (main) are intentionally excluded.
 # Android NDK declares posix_spawn_file_actions_t as a type alias but does not
 # implement the posix_spawn_* functions used by subprocess.h (pulled in via
@@ -263,7 +262,7 @@ endif()
 
 #################### C++ unit tests ####################
 
-option(BUILD_TESTING "Build C++ unit tests for server.hpp / utils.hpp" OFF)
+option(BUILD_TESTING "Build C++ unit tests for jni_helpers / json_helpers / utils" OFF)
 
 if(BUILD_TESTING)
     FetchContent_Declare(

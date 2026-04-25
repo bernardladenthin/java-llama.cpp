@@ -5,7 +5,12 @@
 #include "llama.h"
 #include "log.h"
 #include "nlohmann/json.hpp"
-#include "server.hpp"
+#include "server-context.h"
+#include "server-queue.h"
+#include "server-task.h"
+#include "server-common.h"
+#include "server-chat.h"
+#include "utils.hpp"
 #include "jni_helpers.hpp"
 
 #include <atomic>

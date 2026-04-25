@@ -5,13 +5,12 @@
 //
 // Pure JSON transform tests live in test_json_helpers.cpp.
 //
-// Layer A tests (no server.hpp needed for the functions under test, but
-// server.hpp is included here for Layer B and to satisfy the TU convention):
+// Layer A tests:
 //   get_server_context_impl, get_jllama_context_impl,
 //   require_single_task_id_impl, require_json_field_impl,
 //   jint_array_to_tokens_impl
 //
-// Layer B tests (need server.hpp + mock JNIEnv):
+// Layer B tests (need upstream server headers + mock JNIEnv):
 //   json_to_jstring_impl, results_to_jstring_impl,
 //   embedding_to_jfloat_array_impl, tokens_to_jint_array_impl
 //
@@ -26,8 +25,12 @@
 #include <thread>
 #include <unordered_set>
 
-// server.hpp must precede jni_helpers.hpp (no include guard in server.hpp).
-#include "server.hpp"
+#include "server-context.h"
+#include "server-queue.h"
+#include "server-task.h"
+#include "server-common.h"
+#include "server-chat.h"
+#include "utils.hpp"
 #include "jni_helpers.hpp"
 
 // embedding_to_jfloat_array_impl and tokens_to_jint_array_impl are also tested

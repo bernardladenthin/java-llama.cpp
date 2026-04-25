@@ -4,22 +4,21 @@
 //
 // Two layers live here:
 //
-//   Layer A — JNI handle management (no server.hpp required):
+//   Layer A — JNI handle management:
 //     jllama_context struct, get_server_context_impl, get_jllama_context_impl,
 //     require_single_task_id_impl, require_json_field_impl,
 //     jint_array_to_tokens_impl
 //
-//   Layer B — JNI + server orchestration (server.hpp must precede this header):
+//   Layer B — JNI + server orchestration:
 //     json_to_jstring_impl, results_to_jstring_impl,
-//     recv_slot_task_result_impl, collect_task_results_impl,
 //     embedding_to_jfloat_array_impl, tokens_to_jint_array_impl
 //
 // Pure JSON transforms (no JNI, no llama state) live in json_helpers.hpp,
 // which is included at the bottom of this file.
 //
-// IMPORTANT — include order for Layer B:
-//   server.hpp must be included by the including translation unit BEFORE this
-//   header.
+// Include order: upstream server headers (server-context.h, server-queue.h,
+// server-task.h, server-common.h, server-chat.h) must be included by the
+// including translation unit BEFORE this header.
 
 #include "jni.h"
 #include "nlohmann/json.hpp"
@@ -33,8 +32,7 @@
 #include <unordered_set>
 #include <vector>
 
-// Forward declarations — Layer A helpers only hold/cast pointers.
-// TUs that call Layer B functions must include server.hpp first.
+// Forward declarations.
 struct server_context;
 struct server_response_reader;
 

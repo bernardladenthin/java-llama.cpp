@@ -4,7 +4,7 @@
 // and no llama state.  Tests for functions that only take nlohmann::json
 // arguments need zero setup.  Tests for functions that take
 // server_task_result_ptr use lightweight fake result objects defined below;
-// they need server.hpp for the type definitions but never load a model.
+// they need upstream server headers for the type definitions but never load a model.
 //
 // Covered functions:
 //   get_result_error_message
@@ -24,9 +24,12 @@
 #include <string>
 #include <vector>
 
-// server.hpp must precede json_helpers.hpp (defines server_task_result_ptr,
-// oaicompat_type, format_embeddings_response_oaicompat, and the json alias).
-#include "server.hpp"
+#include "server-context.h"
+#include "server-queue.h"
+#include "server-task.h"
+#include "server-common.h"
+#include "server-chat.h"
+#include "utils.hpp"
 #include "json_helpers.hpp"
 
 // ============================================================
