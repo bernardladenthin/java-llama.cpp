@@ -713,6 +713,12 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_getModelMetaJson(JNIEn
         return json_to_jstring(env, meta);
     }
     auto m = ctx_server->get_meta();
+    // Read general.architecture from GGUF metadata via the llama C API.
+    char arch_buf[128] = {};
+    const llama_model *mdl = llama_get_model(ctx_server->get_llama_context());
+    if (mdl) {
+        llama_model_meta_val_str(mdl, "general.architecture", arch_buf, sizeof(arch_buf));
+    }
     json j = {
         {"vocab_type",   m.model_vocab_type},
         {"n_vocab",      m.model_vocab_n_tokens},
@@ -722,6 +728,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_getModelMetaJson(JNIEn
         {"size",         m.model_size},
         {"modalities",   {{"vision", m.has_inp_image}, {"audio", m.has_inp_audio}}},
         {"name",         m.model_name},
+        {"architecture", std::string(arch_buf)},
     };
     return json_to_jstring(env, j);
 }
