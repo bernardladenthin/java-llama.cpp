@@ -38,6 +38,52 @@ git add .github/build_cuda_linux.sh pom.xml CLAUDE.md
 git commit -m "Upgrade CUDA from 13.2 to 13.3"
 ```
 
+## Optional CUDA build flag (CI feedback-loop workaround)
+
+**Status: temporary — revert when the feedback loop is no longer the bottleneck.**
+
+The `crosscompile-linux-x86_64-cuda` job in `.github/workflows/release.yaml` is the
+slowest job in the pipeline (CUDA toolkit install inside dockcross + nvcc compile).
+It used to run on every PR, which dominated CI wall time even for changes that had
+nothing to do with CUDA.
+
+To shorten the PR feedback loop, the job is now gated behind a `workflow_dispatch`
+boolean input named **`enable_cuda_build`** (default `false`):
+
+```yaml
+crosscompile-linux-x86_64-cuda:
+  if: github.event_name == 'release' || github.event.inputs.enable_cuda_build == 'true'
+```
+
+| Trigger | CUDA job runs? |
+|---|---|
+| `pull_request` | no (skipped — fast feedback) |
+| `workflow_dispatch` (defaults) | no |
+| `workflow_dispatch` with `enable_cuda_build=true` | yes |
+| `release` event | yes (always) |
+
+Two downstream jobs were adjusted to tolerate skipped CUDA:
+
+1. **`package`** — gained `if: always() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')` so it still runs when CUDA is skipped, and its CUDA-artifact download step is now conditional on `needs.crosscompile-linux-x86_64-cuda.result == 'success'`.
+
+2. **`publish`** — its trigger now also requires `enable_cuda_build=true` for manual dispatches: `github.event_name == 'release' || (release_to_maven_central == 'true' && enable_cuda_build == 'true')`. Otherwise a manual publish would fail mid-step trying to download a non-existent CUDA artifact.
+
+### How to revert
+
+When CI capacity allows running CUDA on every PR again:
+
+1. Delete the `enable_cuda_build` input from the `workflow_dispatch.inputs` block.
+2. Remove the `if:` line from the `crosscompile-linux-x86_64-cuda` job (and its
+   surrounding 3-line comment).
+3. Restore `package` to its original form: drop the `if:` block, drop the
+   `if: needs.crosscompile-linux-x86_64-cuda.result == 'success'` line on the
+   CUDA-artifact download step.
+4. Restore `publish`'s `if:` to the original `github.event_name == 'release' || github.event.inputs.release_to_maven_central == 'true'`.
+5. Delete this section from `CLAUDE.md`.
+
+Reference commit that introduced the flag: search the git log for
+`enable_cuda_build` on branch `claude/refactor-java-llama-d3lua`.
+
 ## Upgrading/Downgrading llama.cpp Version
 
 To change the llama.cpp version, update the following **three** files:

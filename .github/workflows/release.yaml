@@ -7,6 +7,10 @@ on:
         description: 'Release to Maven Central (true/false)'
         required: false
         default: 'false'
+      enable_cuda_build:
+        description: 'Build CUDA artifacts — slow, auto-enabled on release events. See CLAUDE.md "Optional CUDA build flag".'
+        required: false
+        default: 'false'
   release:
     types: [ created ]
 env:
@@ -24,6 +28,10 @@ jobs:
 
   crosscompile-linux-x86_64-cuda:
     name: Cross-Compile manylinux_2_28 x86_64 (CUDA)
+    # Slow job (CUDA toolkit install + nvcc).  Skipped on PRs to keep the feedback
+    # loop fast.  See CLAUDE.md "Optional CUDA build flag" for the rationale and
+    # the revert path once the feedback loop is no longer the bottleneck.
+    if: github.event_name == 'release' || github.event.inputs.enable_cuda_build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -544,6 +552,13 @@ jobs:
       - test-java-macos-arm64-metal
       - test-java-macos-arm64-no-metal
       - test-java-windows-x86_64
+    # Run even when the CUDA job was skipped (PR / non-release dispatch without
+    # enable_cuda_build), but still fail the package step if any required job
+    # actually failed or was cancelled.
+    if: |
+      always() &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -552,7 +567,8 @@ jobs:
           pattern: "*-libraries"
           merge-multiple: true
           path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
-      - uses: actions/download-artifact@v6
+      - if: needs.crosscompile-linux-x86_64-cuda.result == 'success'
+        uses: actions/download-artifact@v6
         with:
           name: linux-libraries-cuda
           path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
@@ -569,7 +585,11 @@ jobs:
           path: target/*.jar
 
   publish:
-    if: ${{ github.event_name == 'release' || github.event.inputs.release_to_maven_central == 'true' }}
+    # Manual dispatch must set BOTH release_to_maven_central=true AND
+    # enable_cuda_build=true, otherwise the linux-libraries-cuda artifact
+    # download below would fail.  Release events always satisfy this since
+    # the CUDA job runs unconditionally on `release`.
+    if: ${{ github.event_name == 'release' || (github.event.inputs.release_to_maven_central == 'true' && github.event.inputs.enable_cuda_build == 'true') }}
     needs: [ package ]
     runs-on: ubuntu-latest
     steps:
