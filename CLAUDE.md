@@ -244,28 +244,25 @@ Functions: `get_result_error_message`, `results_to_json`, `rerank_results_to_jso
 
 **`jni_helpers.hpp`** — JNI bridge helpers, split into two layers:
 
-*Layer A* (no `server.hpp` required): handle management.
-- `jllama_context` struct — owns `server_context*` and background worker thread.
-- `get_server_context_impl` — reads Java `ctx` handle, throws on null.
-- `get_jllama_context_impl` — like above but returns the wrapper (delete path only).
+*Layer A* (no server headers required): handle management.
+- `jllama_context` struct — owns `server_context` (value member, pimpl inside), background
+  worker thread, cached `vocab`, saved `params`, and a `readers` map for streaming tasks.
+- `get_server_context_impl` — reads Java `ctx` handle, returns `&jctx->server`, throws on null.
+- `get_jllama_context_impl` — like above but returns the `jllama_context*` wrapper; used only
+  on the delete path. Does NOT throw on zero handle (valid no-op for destructor-style calls).
 - `require_single_task_id_impl` — validates exactly one task ID was created.
 - `require_json_field_impl` — throws `"<field> is required"` if key is absent.
 - `jint_array_to_tokens_impl` — reads a Java `int[]` into `std::vector<int32_t>`.
 
-*Layer B* (requires `server.hpp` in the TU before `jni_helpers.hpp`): server orchestration.
+*Layer B* (requires upstream server headers in the TU before `jni_helpers.hpp`): orchestration.
 Includes `json_helpers.hpp` so all bridge helpers can call transforms directly.
-- `json_to_jstring_impl` — serialises any `json` value to a JNI string.
-- `build_completion_tasks_impl` — tokenises prompt and populates `server_task` vector.
-- `recv_slot_task_result_impl` — receives one slot result, throws on error.
-- `collect_task_results_impl` — receives all results for a task-id set, throws on error.
+- `json_to_jstring_impl` — serialises any `json` value to a JNI string via `dump()`.
 - `results_to_jstring_impl` — delegates to `results_to_json` then `json_to_jstring_impl`.
-- `check_infill_support_impl` — validates FIM prefix/suffix/middle tokens present.
-- `append_task` — constructs and appends a `server_task` of a given type.
-- `embedding_to_jfloat_array_impl` — converts `std::vector<float>` to a Java `jfloatArray`; throws OOM on allocation failure.
-- `tokens_to_jint_array_impl` — converts `std::vector<int32_t>` to a Java `jintArray`; throws OOM on allocation failure.
+- `vec_to_jarray_impl<JArray,JElem,CppElem>` — generic C++ vector → JNI primitive array.
+- `embedding_to_jfloat_array_impl` — converts `std::vector<float>` to `jfloatArray`.
+- `tokens_to_jint_array_impl` — converts `std::vector<int32_t>` to `jintArray`.
 
-Functions with `_impl` suffix have a thin module-level wrapper in `jllama.cpp`; functions
-without the suffix (in `json_helpers.hpp`) are called directly.
+Functions with `_impl` suffix are called directly from `jllama.cpp`.
 
 **Include order rule:**
 ```
@@ -307,20 +304,96 @@ Set the model path via system property or environment variable (see test files f
 Test files are in `src/test/java/de/kherud/llama/` and `src/test/java/examples/`.
 
 ### C++ unit tests
-No JVM or model file required. Built as `jllama_test` via CMake when `BUILD_TESTING=ON`.
 
-| File | What it tests |
-|------|---------------|
-| `test_json_helpers.cpp` | All functions in `json_helpers.hpp` — pure JSON transforms, using fake result objects |
-| `test_jni_helpers.cpp` | All functions in `jni_helpers.hpp` — mock `JNIEnv`, pre-seeded `server_response` queue |
-| `test_server.cpp` | Selected `server.hpp` internals (result types, error formatting, routing helpers) |
-| `test_utils.cpp` | Utilities from `utils.hpp` |
+**No JVM and no model file required.** All tests run on pure data structures using mock
+objects. The binary is named `jllama_test` and is built by CMake when `BUILD_TESTING=ON`.
 
-Run C++ tests:
+#### Commands
+
 ```bash
+# 1. Configure (once per fresh clone or after CMakeLists.txt changes)
 cmake -B build -DBUILD_TESTING=ON
-cmake --build build --config Release
+
+# 2. Build (incremental; -j$(nproc) uses all CPU cores)
+cmake --build build --config Release -j$(nproc)
+
+# 3. Run all tests
 ctest --test-dir build --output-on-failure
+
+# Count tests across all files
+grep -rn "^TEST(" src/test/cpp/ | wc -l
+
+# Run a single named test (GoogleTest filter syntax)
+ctest --test-dir build --output-on-failure -R "ResultsToJson"
+```
+
+#### Test files
+
+| File | Tests | Scope |
+|------|-------|-------|
+| `src/test/cpp/test_utils.cpp` | 153 | Upstream helpers: `server_tokens`, `server_grammar_trigger`, `gen_tool_call_id`, `json_value`, `json_get_nested_values`, UTF-8 helpers, `format_response_rerank`, `format_embeddings_response_oaicompat`, `oaicompat_completion_params_parse`, `oaicompat_chat_params_parse`, LoRA helpers, `strip_flag_from_argv`, `token_piece_value` |
+| `src/test/cpp/test_server.cpp` | 74 | Upstream result types: `result_timings`, `task_params::to_json()`, `completion_token_output`, `server_task_result_cmpl_partial`, `server_task_result_cmpl_final`, `server_task_result_embd`, `server_task_result_rerank`, `server_task_result_metrics`, `server_task_result_slot_save_load`, `server_task_result_slot_erase`, `server_task_result_apply_lora`, `server_task_result_error`, `format_error_response` |
+| `src/test/cpp/test_json_helpers.cpp` | 57 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`, `build_embeddings_response_json`, `extract_first_embedding_row`, `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config` |
+| `src/test/cpp/test_jni_helpers.cpp` | 44 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock |
+
+**Current total: 328 tests (all passing).** Branch: `claude/refactor-java-llama-d3lua`.
+
+#### Upstream source location (in CMake build tree)
+
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b8913`.
+
+```
+build/_deps/llama.cpp-src/tools/server/   ← server-task.h, server-common.h, etc.
+build/_deps/llama.cpp-src/include/        ← llama.h, llama-cpp.h
+build/_deps/llama.cpp-src/common/         ← common.h, chat.h, arg.h, etc.
+```
+
+When reading a `to_json()` implementation to write tests against it, read from:
+`build/_deps/llama.cpp-src/tools/server/server-task.cpp`
+
+#### Mock JNI pattern used in test_jni_helpers.cpp
+
+```cpp
+// Zero-fill the interface so all unpatched fn pointers are nullptr
+JNINativeInterface_ iface = {};
+// Patch only the stubs this test needs, e.g.:
+iface.GetLongField  = [](JNIEnv*, jobject, jfieldID) -> jlong { return some_handle; };
+iface.ThrowNew      = [](JNIEnv*, jclass, const char*) -> jint { return 0; };
+// Wire up the env
+JNIEnv_ fake_env = {};
+fake_env.functions = &iface;
+JNIEnv *env = &fake_env;
+```
+
+Any stub that is called but not patched will crash (null function pointer) — deliberately,
+so missing stubs are caught immediately rather than silently.
+
+#### How to add a new C++ test
+
+1. Open the appropriate `src/test/cpp/test_*.cpp`:
+   - Pure JSON transform → `test_json_helpers.cpp`
+   - JNI helper → `test_jni_helpers.cpp`
+   - Upstream result type `to_json()` → `test_server.cpp`
+   - `utils.hpp` function or upstream utility → `test_utils.cpp`
+2. Add a `TEST(SuiteName, TestName) { ... }` block using GoogleTest macros.
+3. Rebuild: `cmake --build build --config Release -j$(nproc)`
+4. Run: `ctest --test-dir build --output-on-failure`
+5. Commit with message summarising coverage added and new test total.
+
+#### Finding untested code paths
+
+```bash
+# List all functions defined in a header
+grep -n "^inline\|^static\|^\[\[nodiscard\]\]" src/main/cpp/utils.hpp
+
+# Check which functions already have tests
+grep -n "function_name" src/test/cpp/*.cpp
+
+# Find all fields in an upstream to_json() method
+grep -n "\"field_name\"" build/_deps/llama.cpp-src/tools/server/server-task.cpp
+
+# Check which JSON fields Java actually reads (important: must test these)
+grep -rn "field_name" src/main/java/de/kherud/llama/
 ```
 
 ## Key Constraints
