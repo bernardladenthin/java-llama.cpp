@@ -1105,14 +1105,17 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
     }
 
     auto rd = ctx_server->get_response_reader();
+    std::vector<server_task> tasks;
+    tasks.reserve(tokenized_prompts.size());
     for (size_t i = 0; i < tokenized_prompts.size(); i++) {
         server_task task(SERVER_TASK_TYPE_EMBEDDING);
         task.id              = rd.get_new_id();
         task.tokens          = server_tokens(tokenized_prompts[i].get_tokens(), false);
         task.index           = static_cast<int>(i);
         task.params.res_type = res_type;
-        rd.post_task(std::move(task));
+        tasks.push_back(std::move(task));
     }
+    rd.post_tasks(std::move(tasks));
 
     auto br = rd.wait_for_all([] { return false; });
     if (br.error) {
