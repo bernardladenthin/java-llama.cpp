@@ -12,6 +12,7 @@
 //   - format_embeddings_response_oaicompat  (OAI embedding response formatter)
 //   - format_tokenizer_response / format_detokenized_response / format_logit_bias
 //   - safe_json_to_str  (lossy JSON→string with bad-char replacement)
+//   - token_piece_value  (native /tokenize wire format)
 
 #include <gtest/gtest.h>
 
@@ -1255,4 +1256,51 @@ TEST(StripFlagFromArgv, OtherFlagsUnchanged) {
     EXPECT_STREQ(out[0], "prog");
     EXPECT_STREQ(out[1], "--embedding");
     EXPECT_STREQ(out[2], "--jinja");
+}
+
+// ============================================================
+// token_piece_value
+//   Used in handleTokenize to build the "piece" field.
+//   Valid UTF-8 → JSON string; invalid UTF-8 → JSON byte array.
+// ============================================================
+
+TEST(TokenPieceValue, ValidAscii_ReturnsString) {
+    const json j = token_piece_value("hello");
+    EXPECT_TRUE(j.is_string());
+    EXPECT_EQ(j.get<std::string>(), "hello");
+}
+
+TEST(TokenPieceValue, ValidMultiByte_ReturnsString) {
+    // "é" = 0xC3 0xA9 — valid two-byte UTF-8
+    const json j = token_piece_value("\xC3\xA9");
+    EXPECT_TRUE(j.is_string());
+    EXPECT_EQ(j.get<std::string>(), "\xC3\xA9");
+}
+
+TEST(TokenPieceValue, InvalidUtf8_ReturnsByteArray) {
+    // 0xFF is never valid in UTF-8
+    const json j = token_piece_value("\xFF");
+    EXPECT_TRUE(j.is_array());
+    ASSERT_EQ(j.size(), 1u);
+    EXPECT_EQ(j[0].get<int>(), 0xFF);
+}
+
+TEST(TokenPieceValue, TruncatedMultiByte_ReturnsByteArray) {
+    // Lead byte 0xC3 without continuation — invalid
+    const json j = token_piece_value("\xC3");
+    EXPECT_TRUE(j.is_array());
+    ASSERT_EQ(j.size(), 1u);
+    EXPECT_EQ(j[0].get<int>(), 0xC3);
+}
+
+TEST(TokenPieceValue, EmptyString_ReturnsEmptyString) {
+    const json j = token_piece_value("");
+    EXPECT_TRUE(j.is_string());
+    EXPECT_EQ(j.get<std::string>(), "");
+}
+
+TEST(TokenPieceValue, ValidThreeByteChar_ReturnsString) {
+    // "€" = 0xE2 0x82 0xAC
+    const json j = token_piece_value("\xE2\x82\xAC");
+    EXPECT_TRUE(j.is_string());
 }

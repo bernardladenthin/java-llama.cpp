@@ -603,3 +603,143 @@ TEST(ServerTaskResultApplyLora, ToJson_SuccessTrue) {
     EXPECT_TRUE(j.at("success").get<bool>());
 }
 
+// ============================================================
+// server_task_result_error::to_json
+//   jllama.cpp calls is_error() then get_result_error_message()
+//   (which calls to_json()["message"]) on every error result.
+//   The shape must survive changes in format_error_response.
+// ============================================================
+
+TEST(ServerTaskResultError, StandardError_HasMessageField) {
+    server_task_result_error e;
+    e.err_type = ERROR_TYPE_SERVER;
+    e.err_msg  = "something went wrong";
+    const json j = e.to_json();
+    EXPECT_EQ(j.at("message").get<std::string>(), "something went wrong");
+}
+
+TEST(ServerTaskResultError, StandardError_HasCodeAndType) {
+    server_task_result_error e;
+    e.err_type = ERROR_TYPE_INVALID_REQUEST;
+    e.err_msg  = "bad param";
+    const json j = e.to_json();
+    EXPECT_EQ(j.at("code").get<int>(), 400);
+    EXPECT_EQ(j.at("type").get<std::string>(), "invalid_request_error");
+}
+
+TEST(ServerTaskResultError, IsError_ReturnsTrue) {
+    server_task_result_error e;
+    EXPECT_TRUE(e.is_error());
+}
+
+TEST(ServerTaskResultError, ExceedContextSize_AddsExtraFields) {
+    server_task_result_error e;
+    e.err_type        = ERROR_TYPE_EXCEED_CONTEXT_SIZE;
+    e.err_msg         = "context full";
+    e.n_prompt_tokens = 512;
+    e.n_ctx           = 256;
+    const json j = e.to_json();
+    EXPECT_EQ(j.at("n_prompt_tokens").get<int>(), 512);
+    EXPECT_EQ(j.at("n_ctx").get<int>(), 256);
+}
+
+TEST(ServerTaskResultError, DefaultError_NoExtraContextFields) {
+    server_task_result_error e;
+    e.err_type = ERROR_TYPE_SERVER;
+    e.err_msg  = "fail";
+    const json j = e.to_json();
+    EXPECT_FALSE(j.contains("n_prompt_tokens"));
+    EXPECT_FALSE(j.contains("n_ctx"));
+}
+
+// ============================================================
+// result_prompt_progress::to_json
+//   Emitted inside server_task_result_cmpl_partial when is_progress
+//   is true.  Verifies the four required fields.
+// ============================================================
+
+TEST(ResultPromptProgress, ToJson_AllFourFields) {
+    result_prompt_progress p;
+    p.total     = 100;
+    p.cache     = 40;
+    p.processed = 60;
+    p.time_ms   = 1234;
+    const json j = p.to_json();
+    EXPECT_EQ(j.at("total").get<int>(),     100);
+    EXPECT_EQ(j.at("cache").get<int>(),     40);
+    EXPECT_EQ(j.at("processed").get<int>(), 60);
+    EXPECT_EQ(j.at("time_ms").get<int64_t>(), 1234);
+}
+
+TEST(ResultPromptProgress, ToJson_DefaultZeros) {
+    result_prompt_progress p;
+    const json j = p.to_json();
+    EXPECT_EQ(j.at("total").get<int>(),     0);
+    EXPECT_EQ(j.at("cache").get<int>(),     0);
+    EXPECT_EQ(j.at("processed").get<int>(), 0);
+    EXPECT_EQ(j.at("time_ms").get<int64_t>(), 0);
+}
+
+// ============================================================
+// server_task_result_cmpl_partial::to_json_non_oaicompat
+//   The non-OAI streaming chunk shape used by requestCompletion
+//   when the caller has not set an OAI-compat response type.
+//   Call to_json_non_oaicompat() directly to bypass the
+//   is_updated assertion in to_json().
+// ============================================================
+
+TEST(ServerTaskResultCmplPartial, NonOaicompat_CoreFields) {
+    server_task_result_cmpl_partial p;
+    p.is_updated      = true;
+    p.res_type        = TASK_RESPONSE_TYPE_NONE;
+    p.content         = "hello";
+    p.n_decoded       = 3;
+    p.n_prompt_tokens = 10;
+
+    const json j = p.to_json_non_oaicompat();
+
+    EXPECT_EQ(j.at("content").get<std::string>(), "hello");
+    EXPECT_EQ(j.at("tokens_predicted").get<int>(), 3);
+    EXPECT_EQ(j.at("tokens_evaluated").get<int>(), 10);
+    EXPECT_FALSE(j.at("stop").get<bool>());
+}
+
+TEST(ServerTaskResultCmplPartial, NonOaicompat_TimingsAbsentByDefault) {
+    server_task_result_cmpl_partial p;
+    p.is_updated = true;
+    p.res_type   = TASK_RESPONSE_TYPE_NONE;
+    // timings.prompt_n == 0 by default → timings should be absent
+    const json j = p.to_json_non_oaicompat();
+    EXPECT_FALSE(j.contains("timings"));
+}
+
+TEST(ServerTaskResultCmplPartial, NonOaicompat_TimingsPresentWhenPromptNNonzero) {
+    server_task_result_cmpl_partial p;
+    p.is_updated      = true;
+    p.res_type        = TASK_RESPONSE_TYPE_NONE;
+    p.timings.prompt_n = 5;
+    const json j = p.to_json_non_oaicompat();
+    EXPECT_TRUE(j.contains("timings"));
+}
+
+TEST(ServerTaskResultCmplPartial, NonOaicompat_ProgressAbsentWhenNotProgress) {
+    server_task_result_cmpl_partial p;
+    p.is_updated  = true;
+    p.res_type    = TASK_RESPONSE_TYPE_NONE;
+    p.is_progress = false;
+    const json j  = p.to_json_non_oaicompat();
+    EXPECT_FALSE(j.contains("prompt_progress"));
+}
+
+TEST(ServerTaskResultCmplPartial, NonOaicompat_ProgressPresentWhenIsProgress) {
+    server_task_result_cmpl_partial p;
+    p.is_updated         = true;
+    p.res_type           = TASK_RESPONSE_TYPE_NONE;
+    p.is_progress        = true;
+    p.progress.total     = 20;
+    p.progress.processed = 10;
+    const json j = p.to_json_non_oaicompat();
+    ASSERT_TRUE(j.contains("prompt_progress"));
+    EXPECT_EQ(j.at("prompt_progress").at("total").get<int>(), 20);
+}
+

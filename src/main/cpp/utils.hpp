@@ -26,25 +26,13 @@
 // implement each format exactly once and are documented so the two are never
 // accidentally conflated.
 //
-// 1. token_piece_value()   — llama.cpp /tokenize endpoint (native format)
-//    Schema  : a single JSON value that is EITHER a string OR a byte array.
-//    Use for : handleTokenize, and any endpoint that follows the llama.cpp
-//              /tokenize wire format.
-//    Example : {"id": 123, "piece": "hello"}
-//              {"id": 456, "piece": [195, 169]}
+// 1. token_piece_value()  — llama.cpp /tokenize endpoint (native format)
+//    Schema: a single JSON value that is EITHER a string (valid UTF-8) OR a
+//    byte-integer array (invalid UTF-8).
+//    Used by: handleTokenize at jllama.cpp:1165.
 //
-// 2. token_piece_oai_fields() — OpenAI completion probabilities format
-//    Schema  : a partial JSON object with BOTH "token" (truncated UTF-8
-//              string) AND "bytes" (full raw-byte array) always present.
-//    Use for : completion_token_output::to_json / probs_vector_to_json, and
-//              any endpoint that follows the OpenAI logprobs wire format.
-//    Example : {"token": "hell", "bytes": [104,101,108,108,111], ...}
-//
-// Shared building block used by both:
-//
-// 3. str_to_bytes() — converts every byte of a string to an int in a JSON
-//    array.  Used directly by token_piece_value (invalid-UTF-8 branch) and
-//    token_piece_oai_fields ("bytes" field).
+// 2. str_to_bytes() — converts every byte of a string to an int in a JSON
+//    array; used by token_piece_value for the invalid-UTF-8 branch.
 // ---------------------------------------------------------------------------
 
 // Converts every byte of `str` to its integer value and returns them as a
@@ -61,28 +49,11 @@ static json str_to_bytes(const std::string &str) {
 // Returns the JSON value for the "piece" key in a llama.cpp /tokenize
 // response.  Valid UTF-8 pieces become a JSON string; invalid ones become a
 // JSON array of byte values (via str_to_bytes).
-//
-// NEVER use this for completion probability responses — use
-// token_piece_oai_fields() instead, which always emits both "token" and
-// "bytes" per the OpenAI spec.
 static json token_piece_value(const std::string &piece) {
     if (is_valid_utf8(piece)) {
         return piece;
     }
     return str_to_bytes(piece);
-}
-
-// Returns a partial JSON object {"token": <truncated-utf8>, "bytes": <raw>}
-// for use in OpenAI-compatible completion probability responses.
-// "token" is always a string (piece truncated at the last valid UTF-8
-// boundary).  "bytes" is always the full raw-byte array via str_to_bytes.
-//
-// NEVER use this for /tokenize responses — use token_piece_value() instead,
-// which follows the llama.cpp native "piece" field schema.
-static json token_piece_oai_fields(const std::string &piece) {
-    std::string txt = piece;
-    txt.resize(validate_utf8(txt));
-    return json{{"token", txt}, {"bytes", str_to_bytes(piece)}};
 }
 
 //

@@ -93,6 +93,18 @@ TEST(GetResultErrorMessage, DifferentMessage_ReturnsCorrectString) {
     EXPECT_EQ(get_result_error_message(r), "out of memory");
 }
 
+// make_error uses the real server_task_result_error; verify is_error() is true.
+TEST(GetResultErrorMessage, RealErrorType_IsErrorTrue) {
+    auto r = make_error(3, "x");
+    EXPECT_TRUE(r->is_error());
+}
+
+// Success results must NOT be flagged as errors.
+TEST(GetResultErrorMessage, SuccessResult_IsErrorFalse) {
+    auto r = make_ok(4);
+    EXPECT_FALSE(r->is_error());
+}
+
 // ============================================================
 // results_to_json
 // ============================================================
