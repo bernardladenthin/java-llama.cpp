@@ -22,12 +22,11 @@
 //   1.  get_result_error_message        — used by nothing above it
 //   2.  results_to_json                 — used by nothing above it
 //   3.  rerank_results_to_json          — used by nothing above it
-//   4.  build_embeddings_response_json  — used by nothing above it
-//   5.  parse_encoding_format           — used by nothing above it
-//   6.  extract_embedding_prompt        — used by nothing above it
-//   7.  is_infill_request               — used by nothing above it
-//   8.  parse_slot_prompt_similarity    — used by nothing above it
-//   9.  parse_positive_int_config       — used by nothing above it
+//   4.  parse_encoding_format           — used by nothing above it
+//   5.  extract_embedding_prompt        — used by nothing above it
+//   6.  is_infill_request               — used by nothing above it
+//   7.  parse_slot_prompt_similarity    — used by nothing above it
+//   8.  parse_positive_int_config       — used by nothing above it
 
 #include "nlohmann/json.hpp"
 
@@ -97,31 +96,6 @@
         });
     }
     return arr;
-}
-
-// ---------------------------------------------------------------------------
-// build_embeddings_response_json
-//
-// Collects task results into a JSON array, then formats the final response:
-//   - TASK_RESPONSE_TYPE_OAI_EMBD → wraps via format_embeddings_response_oaicompat
-//     (adds "object":"list", "usage", and per-embedding "object":"embedding")
-//   - any other res_type          → returns the bare JSON array
-//
-// Symmetric counterpart to rerank_results_to_json.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline json build_embeddings_response_json(
-        const std::vector<server_task_result_ptr> &results,
-        const json                                &body,
-        task_response_type                         res_type,
-        bool                                       use_base64) {
-    json responses = json::array();
-    for (const auto &result : results) {
-        responses.push_back(result->to_json());
-    }
-    if (res_type == TASK_RESPONSE_TYPE_OAI_EMBD) {
-        return format_embeddings_response_oaicompat(body, json_value(body, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), responses, use_base64);
-    }
-    return responses;
 }
 
 // ---------------------------------------------------------------------------
