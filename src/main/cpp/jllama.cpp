@@ -834,25 +834,21 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
         }
     }
 
-    const std::string prompt        = parse_jstring(env, jprompt);
-    const auto        tokenized_query = tokenize_mixed(jctx->vocab, prompt, true, true);
+    const std::string prompt = parse_jstring(env, jprompt);
 
     const jsize amount_documents = env->GetArrayLength(documents);
     auto *document_array = parse_string_array(env, documents, amount_documents);
     auto  document_vector = std::vector<std::string>(document_array, document_array + amount_documents);
     free_string_array(document_array, amount_documents);
 
-    std::vector<server_tokens> tokenized_docs =
-            tokenize_input_prompts(jctx->vocab, nullptr, document_vector, true, true);
-
+    const llama_model *model = llama_get_model(ctx_server->get_llama_context());
     auto rd = ctx_server->get_response_reader();
     std::vector<server_task> tasks;
-    tasks.reserve(tokenized_docs.size());
-    for (size_t i = 0; i < tokenized_docs.size(); i++) {
+    tasks.reserve(document_vector.size());
+    for (size_t i = 0; i < document_vector.size(); i++) {
         server_task task(SERVER_TASK_TYPE_RERANK);
         task.id     = rd.get_new_id();
-        task.tokens = server_tokens(
-                format_rerank(jctx->vocab, tokenized_query, tokenized_docs[i].get_tokens()), false);
+        task.tokens = format_prompt_rerank(model, jctx->vocab, nullptr, prompt, document_vector[i]);
         task.index  = static_cast<int>(i);
         tasks.push_back(std::move(task));
     }

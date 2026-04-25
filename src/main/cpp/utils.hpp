@@ -5,12 +5,6 @@
 // and many utility function declarations (implemented in server-common.cpp).
 #include "server-common.h"
 
-#include "build-info.h"
-#include "mtmd-helper.h"
-
-#include <cinttypes>
-#include <memory>
-#include <sstream>
 #include <string>
 #include <vector>
 
