@@ -1614,6 +1614,40 @@ TEST(ParamsFromJsonCmpl, NCmpl_AliasedFromN) {
 }
 
 // ============================================================
+// params_from_json_cmpl — grammar type routing
+//   Three distinct paths set grammar.type:
+//     "json_schema" key (no "grammar") → COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT
+//     "grammar" + "grammar_type"="tool_calls" → COMMON_GRAMMAR_TYPE_TOOL_CALLS
+//     "grammar" (no grammar_type, or other value) → COMMON_GRAMMAR_TYPE_USER
+// ============================================================
+
+TEST(ParamsFromJsonCmpl, JsonSchema_SetsOutputFormatGrammarType) {
+    // json_schema without "grammar" → grammar type OUTPUT_FORMAT
+    const json data = {
+        {"json_schema", {{"type", "object"}, {"properties", json::object()}}}
+    };
+    const auto p = parse_params(data);
+    EXPECT_EQ(p.sampling.grammar.type, COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT);
+}
+
+TEST(ParamsFromJsonCmpl, GrammarTypeToolCalls_SetsToolCallsType) {
+    // grammar_type="tool_calls" routes to COMMON_GRAMMAR_TYPE_TOOL_CALLS
+    const json data = {
+        {"grammar",      "root ::= object"},
+        {"grammar_type", "tool_calls"}
+    };
+    const auto p = parse_params(data);
+    EXPECT_EQ(p.sampling.grammar.type, COMMON_GRAMMAR_TYPE_TOOL_CALLS);
+}
+
+TEST(ParamsFromJsonCmpl, PlainGrammar_NoGrammarType_SetsUserType) {
+    // grammar without grammar_type key → COMMON_GRAMMAR_TYPE_USER
+    const json data = {{"grammar", "root ::= [a-z]+"}};
+    const auto p = parse_params(data);
+    EXPECT_EQ(p.sampling.grammar.type, COMMON_GRAMMAR_TYPE_USER);
+}
+
+// ============================================================
 // response_fields projection in cmpl_final::to_json_non_oaicompat
 //   When generation_params.response_fields is non-empty, only those
 //   slash-delimited paths survive in the returned JSON.  This is a
