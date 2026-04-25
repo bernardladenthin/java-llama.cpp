@@ -23,12 +23,11 @@
 //   2.  results_to_json                 — used by nothing above it
 //   3.  rerank_results_to_json          — used by nothing above it
 //   4.  build_embeddings_response_json  — used by nothing above it
-//   5.  extract_first_embedding_row     — used by nothing above it
-//   6.  parse_encoding_format           — used by nothing above it
-//   7.  extract_embedding_prompt        — used by nothing above it
-//   8.  is_infill_request               — used by nothing above it
-//   9.  parse_slot_prompt_similarity    — used by nothing above it
-//  10.  parse_positive_int_config       — used by nothing above it
+//   5.  parse_encoding_format           — used by nothing above it
+//   6.  extract_embedding_prompt        — used by nothing above it
+//   7.  is_infill_request               — used by nothing above it
+//   8.  parse_slot_prompt_similarity    — used by nothing above it
+//   9.  parse_positive_int_config       — used by nothing above it
 
 #include "nlohmann/json.hpp"
 
@@ -123,25 +122,6 @@
         return format_embeddings_response_oaicompat(body, json_value(body, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), responses, use_base64);
     }
     return responses;
-}
-
-// ---------------------------------------------------------------------------
-// extract_first_embedding_row
-//
-// Parses out_res["embedding"] as a 2D float array and returns the first row.
-//
-// Throws std::runtime_error       if the outer or inner array is empty.
-// Throws nlohmann::json::exception if the "embedding" key is absent or the
-//   value cannot be coerced to vector<vector<float>>.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline std::vector<float>
-extract_first_embedding_row(const json &out_res) {
-    // .at() throws json::out_of_range if "embedding" is absent.
-    const auto embedding = out_res.at("embedding").get<std::vector<std::vector<float>>>();
-    if (embedding.empty() || embedding[0].empty()) {
-        throw std::runtime_error("embedding array is empty");
-    }
-    return embedding[0];
 }
 
 // ---------------------------------------------------------------------------

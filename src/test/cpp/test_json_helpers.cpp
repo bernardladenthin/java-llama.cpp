@@ -11,7 +11,6 @@
 //   results_to_json
 //   rerank_results_to_json
 //   build_embeddings_response_json
-//   extract_first_embedding_row
 //   parse_encoding_format
 //   extract_embedding_prompt
 //   is_infill_request
@@ -365,53 +364,6 @@ TEST(BuildEmbeddingsResponseJson, OaiFloat_ModelAbsent_UsesDefault) {
     ASSERT_TRUE(out.contains("model"));
     EXPECT_FALSE(out.value("model", "").empty())
         << "model must fall back to DEFAULT_OAICOMPAT_MODEL when absent from body";
-}
-
-// ============================================================
-// extract_first_embedding_row
-// ============================================================
-
-TEST(ExtractFirstEmbeddingRow, SingleRow_ReturnsRow) {
-    json j = {{"embedding", {{0.1f, 0.2f, 0.3f}}}};
-    auto row = extract_first_embedding_row(j);
-    ASSERT_EQ(row.size(), 3u);
-    EXPECT_FLOAT_EQ(row[0], 0.1f);
-    EXPECT_FLOAT_EQ(row[1], 0.2f);
-    EXPECT_FLOAT_EQ(row[2], 0.3f);
-}
-
-TEST(ExtractFirstEmbeddingRow, MultipleRows_ReturnsFirstRowOnly) {
-    json j = {{"embedding", {{1.0f, 2.0f}, {3.0f, 4.0f}, {5.0f, 6.0f}}}};
-    auto row = extract_first_embedding_row(j);
-    ASSERT_EQ(row.size(), 2u);
-    EXPECT_FLOAT_EQ(row[0], 1.0f);
-    EXPECT_FLOAT_EQ(row[1], 2.0f);
-}
-
-TEST(ExtractFirstEmbeddingRow, MissingEmbeddingKey_ThrowsJsonException) {
-    json j = {{"other_key", "value"}};
-    EXPECT_THROW((void)extract_first_embedding_row(j), nlohmann::json::exception);
-}
-
-TEST(ExtractFirstEmbeddingRow, EmptyOuterArray_ThrowsRuntimeError) {
-    json j = {{"embedding", json::array()}};
-    EXPECT_THROW((void)extract_first_embedding_row(j), std::runtime_error);
-}
-
-TEST(ExtractFirstEmbeddingRow, EmptyInnerArray_ThrowsRuntimeError) {
-    json j = {{"embedding", {json::array()}}};
-    EXPECT_THROW((void)extract_first_embedding_row(j), std::runtime_error);
-}
-
-TEST(ExtractFirstEmbeddingRow, LargeRow_AllValuesPreserved) {
-    std::vector<float> vals(128);
-    for (int i = 0; i < 128; ++i) vals[i] = static_cast<float>(i) * 0.01f;
-    json j = {{"embedding", {vals}}};
-    auto row = extract_first_embedding_row(j);
-    ASSERT_EQ(row.size(), 128u);
-    for (int i = 0; i < 128; ++i) {
-        EXPECT_FLOAT_EQ(row[i], static_cast<float>(i) * 0.01f);
-    }
 }
 
 // ============================================================

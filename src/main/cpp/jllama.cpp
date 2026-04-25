@@ -820,13 +820,12 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
         return nullptr;
     }
 
-    std::vector<float> first_row;
-    try {
-        first_row = extract_first_embedding_row(br.results[0]->to_json());
-    } catch (const std::exception &e) {
-        env->ThrowNew(c_llama_error, e.what());
+    auto *embd_result = dynamic_cast<server_task_result_embd *>(br.results[0].get());
+    if (!embd_result || embd_result->embedding.empty() || embd_result->embedding[0].empty()) {
+        env->ThrowNew(c_llama_error, "embedding result is empty");
         return nullptr;
     }
+    const std::vector<float> &first_row = embd_result->embedding[0];
 
     SRV_INF("Embedding has %d columns\n", static_cast<jsize>(first_row.size()));
     return embedding_to_jfloat_array_impl(env, first_row, c_error_oom);
