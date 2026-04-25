@@ -163,6 +163,13 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
     try {
         server_task task(task_type);
         task.id     = tid;
+        // params_from_json_cmpl only parses sampling parameters — it does not
+        // tokenize the prompt.  Set task.tokens explicitly.
+        auto tokenized_prompts = tokenize_input_prompts(
+                jctx->vocab, nullptr, data.at("prompt"), true, true);
+        if (!tokenized_prompts.empty()) {
+            task.tokens = tokenized_prompts[0];
+        }
         task.params = server_task::params_from_json_cmpl(
                 jctx->vocab, jctx->params, meta.slot_n_ctx, meta.logit_bias_eog, data);
         task.params.res_type = res_type;
@@ -195,6 +202,14 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
     server_task task(task_type);
     task.id = rd.get_new_id();
     try {
+        // params_from_json_cmpl only parses sampling parameters — it does not
+        // tokenize the prompt.  Set task.tokens explicitly so the server slot
+        // receives a non-empty token sequence.
+        auto tokenized_prompts = tokenize_input_prompts(
+                jctx->vocab, nullptr, data.at("prompt"), true, true);
+        if (!tokenized_prompts.empty()) {
+            task.tokens = tokenized_prompts[0];
+        }
         task.params = server_task::params_from_json_cmpl(
                 jctx->vocab, jctx->params, meta.slot_n_ctx, meta.logit_bias_eog, data);
     } catch (const std::exception &e) {
