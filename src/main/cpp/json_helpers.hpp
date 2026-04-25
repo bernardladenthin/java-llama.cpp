@@ -105,22 +105,22 @@
 // build_embeddings_response_json
 //
 // Collects task results into a JSON array, then formats the final response:
-//   - OAICOMPAT_TYPE_EMBEDDING → wraps via format_embeddings_response_oaicompat
+//   - TASK_RESPONSE_TYPE_OAI_EMBD → wraps via format_embeddings_response_oaicompat
 //     (adds "object":"list", "usage", and per-embedding "object":"embedding")
-//   - any other oaicompat      → returns the bare JSON array
+//   - any other res_type          → returns the bare JSON array
 //
 // Symmetric counterpart to rerank_results_to_json.
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline json build_embeddings_response_json(
         const std::vector<server_task_result_ptr> &results,
         const json                                &body,
-        oaicompat_type                             oaicompat,
+        task_response_type                         res_type,
         bool                                       use_base64) {
     json responses = json::array();
     for (const auto &result : results) {
         responses.push_back(result->to_json());
     }
-    if (oaicompat == OAICOMPAT_TYPE_EMBEDDING) {
+    if (res_type == TASK_RESPONSE_TYPE_OAI_EMBD) {
         return format_embeddings_response_oaicompat(body, json_value(body, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), responses, use_base64);
     }
     return responses;
