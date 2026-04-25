@@ -1757,3 +1757,147 @@ TEST(CmplFinalAnthropicStream, WithThinkingDiff_EmitsThinkingBlockEvents) {
     EXPECT_TRUE(found_thinking_start);
 }
 
+// ============================================================
+// server_task_result_cmpl_partial::to_json_anthropic
+//   Anthropic partial streaming formatter.
+//   n_decoded==1 (first token) → first event is "message_start"
+//     containing id, model, role, and token usage counts.
+//   n_decoded > 1 with no diffs → empty array.
+//   reasoning_content_delta → content_block_start(thinking) + content_block_delta(thinking_delta).
+//   content_delta → content_block_start(text) + content_block_delta(text_delta).
+//   tool_call_index != npos → content_block_start(tool_use) with name/id.
+//   anthropic_has_reasoning=true → text block index is 1 (shifted past thinking block).
+// ============================================================
+
+namespace {
+server_task_result_cmpl_partial make_anthropic_partial(int n_decoded = 1) {
+    server_task_result_cmpl_partial p;
+    p.is_updated        = true;
+    p.res_type          = TASK_RESPONSE_TYPE_ANTHROPIC;
+    p.n_decoded         = n_decoded;
+    p.n_prompt_tokens   = 10;
+    p.oaicompat_model   = "test-model";
+    p.oaicompat_cmpl_id = "msg-id";
+    return p;
+}
+} // namespace
+
+TEST(CmplPartialAnthropicStream, FirstToken_EmitsMessageStart) {
+    const json j = make_anthropic_partial(/*n_decoded=*/1).to_json_anthropic();
+    ASSERT_FALSE(j.empty());
+    EXPECT_EQ(j.front().at("event").get<std::string>(), "message_start");
+}
+
+TEST(CmplPartialAnthropicStream, FirstToken_MessageStart_HasIdModelRole) {
+    const json j   = make_anthropic_partial(1).to_json_anthropic();
+    const json &msg = j.front().at("data").at("message");
+    EXPECT_EQ(msg.at("id").get<std::string>(), "msg-id");
+    EXPECT_EQ(msg.at("model").get<std::string>(), "test-model");
+    EXPECT_EQ(msg.at("role").get<std::string>(), "assistant");
+    EXPECT_TRUE(msg.at("content").is_array());
+    EXPECT_TRUE(msg.at("content").empty());
+}
+
+TEST(CmplPartialAnthropicStream, FirstToken_MessageStart_HasUsageCounts) {
+    auto p = make_anthropic_partial(1);
+    p.n_prompt_tokens       = 12;
+    p.n_prompt_tokens_cache = 4;
+    const json j     = p.to_json_anthropic();
+    const json &usage = j.front().at("data").at("message").at("usage");
+    EXPECT_EQ(usage.at("input_tokens").get<int>(), 8);            // 12 - 4
+    EXPECT_EQ(usage.at("cache_read_input_tokens").get<int>(), 4);
+    EXPECT_EQ(usage.at("output_tokens").get<int>(), 0);
+}
+
+TEST(CmplPartialAnthropicStream, NotFirstToken_NoDiffs_EmptyArray) {
+    // n_decoded > 1 with no diffs → nothing emitted
+    const json j = make_anthropic_partial(/*n_decoded=*/2).to_json_anthropic();
+    EXPECT_TRUE(j.empty());
+}
+
+TEST(CmplPartialAnthropicStream, WithTextDiff_EmitsBlockStartAndDelta) {
+    auto p = make_anthropic_partial(/*n_decoded=*/2);
+    common_chat_msg_diff diff;
+    diff.content_delta = "hello";
+    p.oaicompat_msg_diffs.push_back(diff);
+    const json j = p.to_json_anthropic();
+    bool found_start = false, found_delta = false;
+    for (const auto &ev : j) {
+        const std::string e = ev.at("event").get<std::string>();
+        if (e == "content_block_start") {
+            EXPECT_EQ(ev.at("data").at("content_block").at("type").get<std::string>(), "text");
+            found_start = true;
+        }
+        if (e == "content_block_delta") {
+            EXPECT_EQ(ev.at("data").at("delta").at("type").get<std::string>(), "text_delta");
+            EXPECT_EQ(ev.at("data").at("delta").at("text").get<std::string>(), "hello");
+            found_delta = true;
+        }
+    }
+    EXPECT_TRUE(found_start);
+    EXPECT_TRUE(found_delta);
+}
+
+TEST(CmplPartialAnthropicStream, WithReasoningDiff_EmitsThinkingBlockStartAndDelta) {
+    auto p = make_anthropic_partial(/*n_decoded=*/2);
+    common_chat_msg_diff diff;
+    diff.reasoning_content_delta = "step1";
+    p.oaicompat_msg_diffs.push_back(diff);
+    const json j = p.to_json_anthropic();
+    bool found_start = false, found_delta = false;
+    for (const auto &ev : j) {
+        const std::string e = ev.at("event").get<std::string>();
+        if (e == "content_block_start") {
+            if (ev.at("data").at("content_block").at("type").get<std::string>() == "thinking") {
+                found_start = true;
+            }
+        }
+        if (e == "content_block_delta") {
+            if (ev.at("data").at("delta").at("type").get<std::string>() == "thinking_delta") {
+                EXPECT_EQ(ev.at("data").at("delta").at("thinking").get<std::string>(), "step1");
+                found_delta = true;
+            }
+        }
+    }
+    EXPECT_TRUE(found_start);
+    EXPECT_TRUE(found_delta);
+}
+
+TEST(CmplPartialAnthropicStream, WithReasoningFlag_TextBlockIndex_IsOne) {
+    // anthropic_has_reasoning=true shifts text_block_index to 1
+    auto p = make_anthropic_partial(/*n_decoded=*/2);
+    p.anthropic_has_reasoning = true;
+    common_chat_msg_diff diff;
+    diff.content_delta = "text";
+    p.oaicompat_msg_diffs.push_back(diff);
+    const json j = p.to_json_anthropic();
+    for (const auto &ev : j) {
+        const std::string e = ev.at("event").get<std::string>();
+        if (e == "content_block_start" || e == "content_block_delta") {
+            EXPECT_EQ(ev.at("data").at("index").get<size_t>(), 1u);
+        }
+    }
+}
+
+TEST(CmplPartialAnthropicStream, WithToolCallDiff_EmitsToolUseBlockStart) {
+    auto p = make_anthropic_partial(/*n_decoded=*/2);
+    common_chat_msg_diff diff;
+    diff.tool_call_index      = 0;
+    diff.tool_call_delta.name = "get_weather";
+    diff.tool_call_delta.id   = "call_abc";
+    p.oaicompat_msg_diffs.push_back(diff);
+    const json j = p.to_json_anthropic();
+    bool found_tool_start = false;
+    for (const auto &ev : j) {
+        if (ev.at("event").get<std::string>() == "content_block_start") {
+            const json &cb = ev.at("data").at("content_block");
+            if (cb.at("type").get<std::string>() == "tool_use") {
+                EXPECT_EQ(cb.at("name").get<std::string>(), "get_weather");
+                EXPECT_EQ(cb.at("id").get<std::string>(),   "call_abc");
+                found_tool_start = true;
+            }
+        }
+    }
+    EXPECT_TRUE(found_tool_start);
+}
+
