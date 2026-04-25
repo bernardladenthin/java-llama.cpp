@@ -798,6 +798,37 @@ TEST(ServerTaskResultCmplPartial, IsStop_ReturnsFalse) {
     EXPECT_FALSE(p.is_stop());
 }
 
+TEST(ServerTaskResultCmplPartial, NonOaicompat_IdSlotField) {
+    server_task_result_cmpl_partial p;
+    p.is_updated = true;
+    p.res_type   = TASK_RESPONSE_TYPE_NONE;
+    p.id_slot    = 3;
+    const json j = p.to_json_non_oaicompat();
+    EXPECT_EQ(j.at("id_slot").get<int>(), 3);
+}
+
+TEST(ServerTaskResultCmplPartial, NonOaicompat_CompletionProbabilitiesAbsentWhenProbsEmpty) {
+    server_task_result_cmpl_partial p;
+    p.is_updated = true;
+    p.res_type   = TASK_RESPONSE_TYPE_NONE;
+    // prob_output.probs is empty by default
+    const json j = p.to_json_non_oaicompat();
+    EXPECT_FALSE(j.contains("completion_probabilities"));
+}
+
+TEST(ServerTaskResultCmplPartial, NonOaicompat_CompletionProbabilitiesPresentWhenProbsSet) {
+    server_task_result_cmpl_partial p;
+    p.is_updated          = true;
+    p.res_type            = TASK_RESPONSE_TYPE_NONE;
+    p.post_sampling_probs = true;
+    completion_token_output::prob_info pi;
+    pi.tok = 5; pi.txt = "hi"; pi.prob = 0.8f;
+    p.prob_output.probs.push_back(pi);
+    const json j = p.to_json_non_oaicompat();
+    ASSERT_TRUE(j.contains("completion_probabilities"));
+    EXPECT_TRUE(j.at("completion_probabilities").is_array());
+}
+
 // ============================================================
 // server_task_result_cmpl_final::to_json_non_oaicompat
 //   The terminal (stop=true) chunk shape used by blocking
