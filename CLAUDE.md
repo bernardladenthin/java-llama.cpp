@@ -331,12 +331,12 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 | File | Tests | Scope |
 |------|-------|-------|
-| `src/test/cpp/test_utils.cpp` | 153 | Upstream helpers: `server_tokens`, `server_grammar_trigger`, `gen_tool_call_id`, `json_value`, `json_get_nested_values`, UTF-8 helpers, `format_response_rerank`, `format_embeddings_response_oaicompat`, `oaicompat_completion_params_parse`, `oaicompat_chat_params_parse`, LoRA helpers, `strip_flag_from_argv`, `token_piece_value` |
-| `src/test/cpp/test_server.cpp` | 74 | Upstream result types: `result_timings`, `task_params::to_json()`, `completion_token_output`, `server_task_result_cmpl_partial`, `server_task_result_cmpl_final`, `server_task_result_embd`, `server_task_result_rerank`, `server_task_result_metrics`, `server_task_result_slot_save_load`, `server_task_result_slot_erase`, `server_task_result_apply_lora`, `server_task_result_error`, `format_error_response` |
+| `src/test/cpp/test_utils.cpp` | 165 | Upstream helpers: `server_tokens`, `server_grammar_trigger`, `gen_tool_call_id`, `json_value`, `json_get_nested_values`, UTF-8 helpers, `format_response_rerank`, `format_embeddings_response_oaicompat`, `oaicompat_completion_params_parse`, `oaicompat_chat_params_parse`, LoRA helpers, `strip_flag_from_argv`, `token_piece_value`, `json_is_array_and_contains_numbers`, `format_oai_sse`, `format_oai_resp_sse`, `format_anthropic_sse` |
+| `src/test/cpp/test_server.cpp` | 119 | Upstream result types: `result_timings`, `task_params::to_json()` (incl. `dry_sequence_breakers`, `preserved_tokens`), `completion_token_output`, `server_task_result_cmpl_partial` (non-oaicompat + `to_json_oaicompat` + dispatcher), `server_task_result_cmpl_final` (non-oaicompat + `to_json_oaicompat` + `to_json_oaicompat_chat` + `to_json_anthropic`), `server_task_result_embd`, `server_task_result_rerank`, `server_task_result_metrics`, `server_task_result_slot_save_load`, `server_task_result_slot_erase`, `server_task_result_apply_lora`, `server_task_result_error`, `format_error_response`, `server_task::need_sampling()`, `server_task::n_tokens()` |
 | `src/test/cpp/test_json_helpers.cpp` | 57 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`, `build_embeddings_response_json`, `extract_first_embedding_row`, `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config` |
 | `src/test/cpp/test_jni_helpers.cpp` | 44 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock |
 
-**Current total: 328 tests (all passing).** Branch: `claude/refactor-java-llama-d3lua`.
+**Current total: 385 tests (all passing).** Branch: `claude/refactor-java-llama-d3lua`.
 
 #### Upstream source location (in CMake build tree)
 
