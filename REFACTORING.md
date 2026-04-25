@@ -48,11 +48,11 @@ remain identical.
 | File | Lines | Change |
 |------|-------|--------|
 | `src/main/cpp/server.hpp` | 0 | **Deleted** — includes inlined directly |
-| `src/main/cpp/jllama.cpp` | 1,250 | Fully rewritten — upstream reader API |
+| `src/main/cpp/jllama.cpp` | 1,215 | Fully rewritten — upstream reader API; duplication eliminated |
 | `src/main/cpp/jni_helpers.hpp` | 196 | `jllama_context` rewritten; dead helpers removed |
 | `src/main/cpp/json_helpers.hpp` | 196 | Type alias updates; stale comments fixed |
 | `src/main/cpp/utils.hpp` | 199 | Base64 copy removed; dead slot macros removed |
-| **Total** | **1,841** | **~4,172 lines removed from the 6,013 baseline (69%)** |
+| **Total** | **1,806** | **~4,207 lines removed from the 6,013 baseline (70%)** |
 
 413 C++ unit tests pass. Java integration tests pass on all platforms
 (Linux, macOS, Windows, Android).
@@ -261,7 +261,26 @@ Test count after: **413 tests**.
 
 ---
 
-### Phase 6 — Final verification ✅ DONE
+### Phase 6 — Duplication elimination ✅ DONE
+
+**Commit:** `95cbe55`
+
+A `find-cpp-duplication` audit identified five recurring patterns across
+`jllama.cpp`. All extracted into named helpers:
+
+| Helper | Pattern absorbed | Sites |
+|--------|------------------|-------|
+| `result_ok_or_throw(env, result)` | 4-line single-result null/error guard | 4 |
+| `batch_ok_or_throw(env, br)` | 3-line batch-error guard | 4 |
+| `dispatch_one_shot_task(env, ctx, task)` | reader → post → wait → check → return-json pipeline; absorbed `exec_slot_file_task`'s body and both inline switch arms in `handleSlotAction` | 3 |
+| `populate_completion_task(task, jctx, ...)` | identical tokenize+`params_from_json_cmpl` block in streaming and blocking dispatch | 2 |
+| Wrapper removal | thin `results_to_jstring` / `json_to_jstring` / `jint_array_to_tokens` forwarders deleted; all 12 call sites now invoke the `_impl` versions directly (matching the architecture rule already documented in CLAUDE.md) | 12 |
+
+Net change: **−35 lines** in `jllama.cpp` (1,250 → 1,215). Tests: 413 still passing.
+
+---
+
+### Phase 7 — Final verification ✅ DONE
 
 ```bash
 # C++ unit tests
@@ -297,11 +316,11 @@ The validation tests pass; the functional tests for actual effect are N/A.
 | File | Baseline | Current | Reduction |
 |------|----------|---------|-----------|
 | `server.hpp` | 3,780 | **0** (deleted) | 3,780 |
-| `jllama.cpp` | 1,270 | 1,250 | 20 |
+| `jllama.cpp` | 1,270 | 1,215 | 55 |
 | `jni_helpers.hpp` | 398 | 196 | 202 |
 | `json_helpers.hpp` | 243 | 196 | 47 |
 | `utils.hpp` | 322 | 199 | 123 |
-| **Total** | **6,013** | **1,841** | **4,172 lines (69%)** |
+| **Total** | **6,013** | **1,806** | **4,207 lines (70%)** |
 
 The 3,780-line `server.hpp` was the dominant cost. The codebase is now a thin
 JNI wrapper over the upstream server library with no duplicated logic.
