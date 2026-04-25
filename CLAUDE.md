@@ -396,6 +396,95 @@ grep -n "\"field_name\"" build/_deps/llama.cpp-src/tools/server/server-task.cpp
 grep -rn "field_name" src/main/java/de/kherud/llama/
 ```
 
+#### Testing complex scenarios — methodology
+
+Simple tests verify individual field values on a default-constructed struct.
+Complex tests verify **control flow**: switch dispatchers, cross-cutting flags, and
+multi-step parameter pipelines.  The same build/run/commit loop applies.
+
+**1. Dispatcher (switch) coverage**
+
+Every `to_json()` that is a switch on `res_type` has one test per arm:
+
+```cpp
+// Pattern: set is_updated=true, set res_type, call to_json(), check the
+// distinguishing field that differs between arms.
+server_task_result_cmpl_final f;
+f.is_updated = true;
+f.stream     = false;
+f.res_type   = TASK_RESPONSE_TYPE_OAI_CMPL;
+// ... set required fields ...
+const json j = f.to_json();
+EXPECT_EQ(j.at("object").get<std::string>(), "text_completion");
+```
+
+The same pattern handles the `stream` flag fork inside `OAI_CHAT`:
+`stream=false` → single object with `"object":"chat.completion"`;
+`stream=true`  → JSON array of chunks with `"object":"chat.completion.chunk"`.
+
+**2. Cross-cutting flag interaction**
+
+Some flags (verbose, include_usage, timings.prompt_n) cut across multiple formatters.
+Test each flag in one formatter only — they share the same code path:
+
+```cpp
+// verbose=true must add __verbose to the first chunk/top-level object
+f.verbose = true;
+EXPECT_TRUE(j.contains("__verbose"));
+
+// timings absent when prompt_n < 0 (default), present when >= 0
+f.timings.prompt_n = 5;
+EXPECT_TRUE(j.contains("timings"));
+```
+
+**3. Parameter parsing (`params_from_json_cmpl`) without a model**
+
+`server_task::params_from_json_cmpl(vocab, params_base, n_ctx_slot, logit_bias_eog, data)`
+can be called with `nullptr` vocab **if the JSON does not trigger grammar/preserved_tokens
+tokenisation** (those are the only vocab-dependent paths).  This lets us test the full
+parsing pipeline including error throws:
+
+```cpp
+common_params          params_base;
+std::vector<llama_logit_bias> no_bias;
+const int n_ctx = 512;
+
+// test: repeat_last_n=-1 is expanded to n_ctx_slot
+json data = {{"repeat_last_n", -1}};
+auto p = server_task::params_from_json_cmpl(nullptr, params_base, n_ctx, no_bias, data);
+EXPECT_EQ(p.sampling.penalty_last_n, n_ctx);
+
+// test: invalid value throws std::runtime_error
+json bad = {{"dry_sequence_breakers", json::array()}};  // empty → error
+EXPECT_THROW(server_task::params_from_json_cmpl(nullptr, params_base, n_ctx, no_bias, bad),
+             std::runtime_error);
+```
+
+**4. Array-returning formatters**
+
+Some methods (e.g. `to_json_oaicompat_chat_stream()`) return a JSON array of event objects,
+not a single object.  Check with `is_array()` first, then iterate or index:
+
+```cpp
+const json j = f.to_json_oaicompat_chat_stream();
+ASSERT_TRUE(j.is_array());
+ASSERT_GE(j.size(), 1u);
+// Last chunk always has a non-null finish_reason
+EXPECT_FALSE(j.back().at("choices")[0].at("finish_reason").is_null());
+```
+
+**5. `response_fields` projection**
+
+`to_json_non_oaicompat()` supports a projection list via `response_fields`.
+When non-empty, only those dot-separated paths survive:
+
+```cpp
+f.response_fields = {"content", "tokens_predicted"};
+const json j = f.to_json_non_oaicompat();
+EXPECT_TRUE(j.contains("content"));
+EXPECT_FALSE(j.contains("stop_type"));  // filtered out
+```
+
 ## Key Constraints
 
 - **Java 11+** required.
