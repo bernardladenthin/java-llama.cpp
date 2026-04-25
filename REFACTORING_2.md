@@ -70,11 +70,23 @@ Deleted the 19-line local `format_rerank` from `utils.hpp`. Rewrote
 - Pass raw query/document strings directly. `task.tokens` now receives
   `server_tokens` from upstream.
 
-Behavioural delta: models shipping a `rerank` chat template (some Jina
-v3 variants) now use it via `llama_model_chat_template(model, "rerank")`
-instead of always producing `[BOS]q[EOS][SEP]doc[EOS]`. Models without
-a rerank template (including the CI Jina-Reranker) produce bit-identical
-output.
+Behavioural delta: models without a rerank chat template (including the
+CI Jina-Reranker) now receive the canonical `[BOS?] q [EOS?] [SEP?] doc
+[EOS?]` token sequence — each token gated by the corresponding
+`llama_vocab_get_add_*` flag — instead of the doubled-BOS/EOS sequence
+produced by the previous `tokenize_input_prompts(..., add_special=true)
++ format_rerank` chain. The new sequence matches what upstream's HTTP
+`/rerank` endpoint emits. Logit magnitudes can dip slightly negative
+for poorly-matched (query, document) pairs (the doubled-token format
+previously kept them just inside `[0, 1]` for the CI test data).
+`RerankingModelTest.testRerankScoreRange` was updated in Commit 6 to
+verify finiteness and plausible magnitude rather than a probability
+range, since rerank scores are raw logits, not probabilities; a new
+sentinel `testRerankSpreadAndSign_canonicalFormatSentinel` asserts the
+spread/sign properties that the doubled-token format would violate.
+
+Models shipping a dedicated rerank chat template (some Jina v3 variants)
+additionally pick it up via `llama_model_chat_template(model, "rerank")`.
 
 Also pruned two now-unused includes from `utils.hpp`
 (`build-info.h` and `mtmd-helper.h` — only needed by the deleted
@@ -126,6 +138,31 @@ This commit also fixes a build regression: commit 2 dropped the
 `build-info.h` include from `utils.hpp`, but `jllama.cpp` still calls
 `llama_build_info()` at line 668. The include is now added explicitly
 to `jllama.cpp` (it was previously transitive through `utils.hpp`).
+
+### Commit 6 — fix `RerankingModelTest.testRerankScoreRange` for canonical-format scores
+
+Java-side test fix.  The previous assertion required `score >= 0.0f &&
+score <= 1.0f` based on a wrong mental model — that rerank scores are
+probabilities.  They are not: upstream returns the raw classification-head
+logit `embd[0]` (`server-context.cpp` `send_rerank()`) with no sigmoid
+applied.  The CI failure on Ubuntu and macOS reported
+`-0.0013` for a weakly-matched (query, document) pair, which is correct
+behaviour with the canonical token sequence introduced by Commit 2.
+
+Two changes to `src/test/java/de/kherud/llama/RerankingModelTest.java`:
+
+1. **Loosen `testRerankScoreRange`** — drop the `[0, 1]` bound; keep the
+   NaN/Inf checks; add a magnitude sanity check (`|score| < 10`) that
+   catches token corruption (NaN/Inf or wildly large logits) without
+   making any claim about probability ranges.
+2. **Add `testRerankSpreadAndSign_canonicalFormatSentinel`** — a
+   regression sentinel that asserts the canonical format produces a wide
+   logit spread (max − min > 0.3) and that document sign tracks
+   relevance (ML doc > 0; Paris doc < machine doc).  The historical
+   doubled-BOS/EOS bug compressed scores into a narrow positive band
+   that this new test would trip.
+
+No production code changed.
 
 ---
 

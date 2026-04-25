@@ -110,11 +110,14 @@ public class RerankingModelTest {
 	}
 
 	/**
-	 * Verify that all reranking scores are in [0, 1].
-	 * The Jina reranker uses RANK pooling with sigmoid activation, so every
-	 * score must be a valid probability.  A broken format_rerank (wrong
-	 * EOS/SEP tokens) would produce garbage logits and likely scores outside
-	 * this range or NaN values.
+	 * Verify that rerank scores are finite real numbers with plausible magnitude.
+	 *
+	 * Note: rerank scores are RAW LOGITS from the model's classification head,
+	 * not probabilities — upstream returns embd[0] directly (server-context.cpp
+	 * send_rerank()) with no sigmoid applied.  Negative scores are valid for
+	 * poorly-matched (query, document) pairs.  A broken format_prompt_rerank
+	 * (wrong EOS/SEP tokens) would produce NaN/Inf or implausibly large
+	 * magnitudes, which this test catches via the |score| < 10 sanity bound.
 	 */
 	@Test
 	public void testRerankScoreRange() {
@@ -126,9 +129,48 @@ public class RerankingModelTest {
 			float score = entry.getValue();
 			Assert.assertFalse("Score must not be NaN: " + entry.getKey(), Float.isNaN(score));
 			Assert.assertFalse("Score must not be Inf: " + entry.getKey(), Float.isInfinite(score));
-			Assert.assertTrue("Score must be >= 0: " + score, score >= 0.0f);
-			Assert.assertTrue("Score must be <= 1: " + score, score <= 1.0f);
+			Assert.assertTrue("Score magnitude implausible: " + score, Math.abs(score) < 10.0f);
 		}
+	}
+
+	/**
+	 * Sentinel for the historical doubled-BOS/EOS bug fixed in commit e2c6d04.
+	 *
+	 * Old format_rerank (utils.hpp@0f56eb0:114-132, deleted) produced
+	 *   [BOS] [BOS] q [EOS] [EOS] [SEP] [BOS] doc [EOS] [EOS]
+	 * because the call site pre-tokenized with add_special=true and then
+	 * format_rerank wrapped another outer BOS/EOS/SEP/EOS pair.  The doubled
+	 * tokens compressed model logits into a narrow positive band that
+	 * accidentally satisfied the previous testRerankScoreRange's [0, 1]
+	 * assertion.
+	 *
+	 * The canonical [BOS?] q [EOS?] [SEP?] doc [EOS?] format produced by
+	 * upstream format_prompt_rerank (server-common.cpp:1542) yields a much
+	 * wider logit spread, with sign tracking relevance.  Both properties
+	 * checked here.  A regression to the doubled-token format would shrink
+	 * the spread and re-cluster all four scores into a tight positive band,
+	 * tripping this test.
+	 */
+	@Test
+	public void testRerankSpreadAndSign_canonicalFormatSentinel() {
+		LlamaOutput output = model.rerank(query, TEST_DOCUMENTS);
+
+		float machineScore  = output.probabilities.get(TEST_DOCUMENTS[0]);
+		float learningScore = output.probabilities.get(TEST_DOCUMENTS[1]);
+		float mlScore       = output.probabilities.get(TEST_DOCUMENTS[2]);
+		float parisScore    = output.probabilities.get(TEST_DOCUMENTS[3]);
+
+		Assert.assertTrue("ML doc must score > 0 with canonical format: " + mlScore,
+				mlScore > 0.0f);
+		Assert.assertTrue("Paris doc must score below machine doc: paris=" + parisScore
+						+ ", machine=" + machineScore,
+				parisScore < machineScore);
+
+		float max = Math.max(Math.max(mlScore, parisScore), Math.max(machineScore, learningScore));
+		float min = Math.min(Math.min(mlScore, parisScore), Math.min(machineScore, learningScore));
+		Assert.assertTrue("Score spread implausibly small (" + (max - min)
+						+ ") — possible regression to doubled-token format",
+				(max - min) > 0.3f);
 	}
 
 	/**
