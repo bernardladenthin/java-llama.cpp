@@ -168,9 +168,14 @@ public class RerankingModelTest {
 
 		float max = Math.max(Math.max(mlScore, parisScore), Math.max(machineScore, learningScore));
 		float min = Math.min(Math.min(mlScore, parisScore), Math.min(machineScore, learningScore));
+		// Empirically the Jina-Reranker-v1-tiny-Q4_0 model produces a canonical-format
+		// spread of ~0.20 across the four test documents (measured 0.19975 on Ubuntu,
+		// 0.19972 on macOS).  A regression to the doubled-BOS/EOS format would
+		// re-cluster scores into a tight band; the 0.1 threshold catches that without
+		// being sensitive to per-platform quantisation rounding.
 		Assert.assertTrue("Score spread implausibly small (" + (max - min)
 						+ ") — possible regression to doubled-token format",
-				(max - min) > 0.3f);
+				(max - min) > 0.1f);
 	}
 
 	/**
