@@ -1045,7 +1045,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
             tokenize_input_prompts(jctx->vocab, nullptr, prompt, false, true);
 
     auto meta = ctx_server->get_meta();
-    data["prompt"] = format_infill(jctx->vocab,
+    data["prompt"] = format_prompt_infill(jctx->vocab,
                                    data.at("input_prefix"), data.at("input_suffix"),
                                    data.at("input_extra"),
                                    jctx->params.n_batch, jctx->params.n_predict,
