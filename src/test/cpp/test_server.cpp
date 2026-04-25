@@ -1667,3 +1667,93 @@ TEST(CmplPartialOaicompatChat, AllChunks_FinishReasonIsNull) {
     }
 }
 
+// ============================================================
+// server_task_result_cmpl_final::to_json_anthropic_stream
+//   Returns a JSON array of Anthropic SSE event objects.
+//   Every event has "event" + "data" fields (for format_anthropic_sse).
+//   Regardless of diffs, the array always ends with:
+//     - A "message_delta" event carrying stop_reason and stop_sequence
+//     - A "message_stop" event
+//   When oaicompat_msg_diffs contains text deltas, the method emits
+//   content_block_start → content_block_delta → content_block_stop
+//   event triples.
+// ============================================================
+
+namespace {
+server_task_result_cmpl_final make_anthropic_stream_final(stop_type st = STOP_TYPE_EOS) {
+    server_task_result_cmpl_final f;
+    f.stop              = st;
+    f.oaicompat_model   = "m";
+    f.oaicompat_cmpl_id = "id";
+    return f;
+}
+} // namespace
+
+TEST(CmplFinalAnthropicStream, ReturnsArray) {
+    const json j = make_anthropic_stream_final().to_json_anthropic_stream();
+    EXPECT_TRUE(j.is_array());
+    EXPECT_FALSE(j.empty());
+}
+
+TEST(CmplFinalAnthropicStream, LastEvent_IsMessageStop) {
+    const json j = make_anthropic_stream_final().to_json_anthropic_stream();
+    EXPECT_EQ(j.back().at("event").get<std::string>(), "message_stop");
+}
+
+TEST(CmplFinalAnthropicStream, SecondToLast_IsMessageDelta_WithStopReason) {
+    const json j     = make_anthropic_stream_final(STOP_TYPE_EOS).to_json_anthropic_stream();
+    // message_delta is always the penultimate event
+    ASSERT_GE(j.size(), 2u);
+    const json &md = j[j.size() - 2];
+    EXPECT_EQ(md.at("event").get<std::string>(), "message_delta");
+    EXPECT_EQ(md.at("data").at("delta").at("stop_reason").get<std::string>(), "end_turn");
+}
+
+TEST(CmplFinalAnthropicStream, MessageDelta_MaxTokensForLimit) {
+    const json j = make_anthropic_stream_final(STOP_TYPE_LIMIT).to_json_anthropic_stream();
+    ASSERT_GE(j.size(), 2u);
+    const json &md = j[j.size() - 2];
+    EXPECT_EQ(md.at("data").at("delta").at("stop_reason").get<std::string>(), "max_tokens");
+}
+
+TEST(CmplFinalAnthropicStream, WithTextDiff_EmitsContentBlockEvents) {
+    auto f = make_anthropic_stream_final();
+    // Inject a text content delta.
+    // content_block_stop requires oaicompat_msg.content non-empty
+    // (the accumulated final message, separate from diffs).
+    f.oaicompat_msg.content = "hello";
+    common_chat_msg_diff diff;
+    diff.content_delta = "hello";
+    f.oaicompat_msg_diffs.push_back(diff);
+    const json j = f.to_json_anthropic_stream();
+    // Must contain at least: content_block_start, content_block_delta,
+    //                        content_block_stop, message_delta, message_stop
+    ASSERT_GE(j.size(), 5u);
+    bool found_start = false, found_delta = false;
+    for (const auto &ev : j) {
+        const std::string e = ev.at("event").get<std::string>();
+        if (e == "content_block_start") found_start = true;
+        if (e == "content_block_delta") found_delta = true;
+    }
+    EXPECT_TRUE(found_start);
+    EXPECT_TRUE(found_delta);
+}
+
+TEST(CmplFinalAnthropicStream, WithThinkingDiff_EmitsThinkingBlockEvents) {
+    auto f = make_anthropic_stream_final();
+    common_chat_msg_diff diff;
+    diff.reasoning_content_delta = "step1";
+    f.oaicompat_msg_diffs.push_back(diff);
+    const json j = f.to_json_anthropic_stream();
+    // Find content_block_start with type="thinking"
+    bool found_thinking_start = false;
+    for (const auto &ev : j) {
+        if (ev.at("event").get<std::string>() == "content_block_start") {
+            if (ev.at("data").at("content_block").at("type").get<std::string>() == "thinking") {
+                found_thinking_start = true;
+            }
+        }
+    }
+    EXPECT_TRUE(found_thinking_start);
+}
+
