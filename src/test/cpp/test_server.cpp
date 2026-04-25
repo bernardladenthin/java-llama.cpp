@@ -1569,3 +1569,41 @@ TEST(ParamsFromJsonCmpl, NCmpl_AliasedFromN) {
     EXPECT_EQ(p.n_cmpl, 1);
 }
 
+// ============================================================
+// response_fields projection in cmpl_final::to_json_non_oaicompat
+//   When generation_params.response_fields is non-empty, only those
+//   slash-delimited paths survive in the returned JSON.  This is a
+//   server-side field filtering mechanism used to trim large responses.
+// ============================================================
+
+TEST(CmplFinalResponseFields, EmptyList_AllFieldsPresent) {
+    server_task_result_cmpl_final f;
+    f.content    = "hi";
+    f.stop       = STOP_TYPE_EOS;
+    // response_fields is empty by default → full object returned
+    const json j = f.to_json_non_oaicompat();
+    EXPECT_TRUE(j.contains("content"));
+    EXPECT_TRUE(j.contains("stop_type"));
+    EXPECT_TRUE(j.contains("timings"));
+}
+
+TEST(CmplFinalResponseFields, NonEmptyList_OnlyRequestedFieldsPresent) {
+    server_task_result_cmpl_final f;
+    f.content         = "projected";
+    f.response_fields = {"content", "tokens_predicted"};
+    const json j      = f.to_json_non_oaicompat();
+    EXPECT_TRUE(j.contains("content"));
+    EXPECT_TRUE(j.contains("tokens_predicted"));
+    EXPECT_FALSE(j.contains("stop_type"));    // filtered out
+    EXPECT_FALSE(j.contains("timings"));      // filtered out
+    EXPECT_FALSE(j.contains("prompt"));       // filtered out
+}
+
+TEST(CmplFinalResponseFields, ContentValue_PreservedThroughProjection) {
+    server_task_result_cmpl_final f;
+    f.content         = "keep this";
+    f.response_fields = {"content"};
+    const json j      = f.to_json_non_oaicompat();
+    EXPECT_EQ(j.at("content").get<std::string>(), "keep this");
+}
+
