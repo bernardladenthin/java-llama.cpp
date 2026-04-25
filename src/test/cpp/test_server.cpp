@@ -1315,3 +1315,61 @@ TEST(CmplPartialToJsonDispatch, NotUpdated_Asserts) {
     EXPECT_NO_THROW(p.to_json());
 }
 
+// ============================================================
+// server_task_result_cmpl_final::to_json  — dispatcher
+//   The switch covers NONE / OAI_CMPL / OAI_CHAT / ANTHROPIC
+//   (OAI_RESP and OAI_ASR are structurally similar but not tested here).
+//   OAI_CHAT forks further on stream: false→object, true→array.
+// ============================================================
+
+namespace {
+// Minimal final result ready for to_json(); no vocab-dependent fields.
+server_task_result_cmpl_final make_dispatched_final(task_response_type rt,
+                                                     bool stream = false) {
+    server_task_result_cmpl_final f;
+    f.is_updated        = true;
+    f.res_type          = rt;
+    f.stream            = stream;
+    f.content           = "hi";
+    f.oaicompat_model   = "m";
+    f.oaicompat_cmpl_id = "id";
+    return f;
+}
+} // namespace
+
+TEST(CmplFinalDispatch, ResTypeNone_ToJsonNonOaicompat) {
+    auto f = make_dispatched_final(TASK_RESPONSE_TYPE_NONE);
+    const json j = f.to_json();
+    // non-oaicompat shape has "content" at top level, no "object" key
+    EXPECT_EQ(j.at("content").get<std::string>(), "hi");
+    EXPECT_FALSE(j.contains("object"));
+}
+
+TEST(CmplFinalDispatch, ResTypeOaiCmpl_ToJsonOaicompat) {
+    auto f = make_dispatched_final(TASK_RESPONSE_TYPE_OAI_CMPL);
+    const json j = f.to_json();
+    EXPECT_EQ(j.at("object").get<std::string>(), "text_completion");
+}
+
+TEST(CmplFinalDispatch, ResTypeOaiChat_StreamFalse_ReturnsObject) {
+    auto f = make_dispatched_final(TASK_RESPONSE_TYPE_OAI_CHAT, /*stream=*/false);
+    const json j = f.to_json();
+    // non-streaming chat → single JSON object
+    EXPECT_TRUE(j.is_object());
+    EXPECT_EQ(j.at("object").get<std::string>(), "chat.completion");
+}
+
+TEST(CmplFinalDispatch, ResTypeOaiChat_StreamTrue_ReturnsArray) {
+    auto f = make_dispatched_final(TASK_RESPONSE_TYPE_OAI_CHAT, /*stream=*/true);
+    const json j = f.to_json();
+    // streaming chat → JSON array of chunks
+    EXPECT_TRUE(j.is_array());
+    EXPECT_FALSE(j.empty());
+}
+
+TEST(CmplFinalDispatch, ResTypeAnthropic_StreamFalse_HasStopReason) {
+    auto f = make_dispatched_final(TASK_RESPONSE_TYPE_ANTHROPIC, /*stream=*/false);
+    const json j = f.to_json();
+    EXPECT_TRUE(j.contains("stop_reason"));
+}
+
