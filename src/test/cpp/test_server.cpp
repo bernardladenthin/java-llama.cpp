@@ -138,7 +138,7 @@ TEST(ResultTimings, DraftFieldsAbsent_WhenExplicitlyZero) {
 // ============================================================
 
 TEST(SlotParamsToJson, CoreFields_Present) {
-    slot_params p;
+    task_params p;
     const json j = p.to_json();
 
     // Fields that must always be present regardless of configuration
@@ -156,7 +156,7 @@ TEST(SlotParamsToJson, CoreFields_Present) {
 
 TEST(SlotParamsToJson, NewChatSyntaxFields_Present) {
     // These fields replace the old single oaicompat_chat_format enum field
-    slot_params p;
+    task_params p;
     const json j = p.to_json();
 
     EXPECT_TRUE(j.contains("chat_format"))
@@ -171,7 +171,7 @@ TEST(SlotParamsToJson, NewChatSyntaxFields_Present) {
 
 TEST(SlotParamsToJson, OldChatFormatEnum_NotPresent) {
     // The raw integer oaicompat_chat_format field must be gone
-    slot_params p;
+    task_params p;
     const json j = p.to_json();
 
     EXPECT_FALSE(j.contains("oaicompat_chat_format"))
@@ -179,7 +179,7 @@ TEST(SlotParamsToJson, OldChatFormatEnum_NotPresent) {
 }
 
 TEST(SlotParamsToJson, GrammarValue_EmptyByDefault) {
-    slot_params p;
+    task_params p;
     // sampling.grammar is default-constructed (empty)
     const json j = p.to_json();
 
@@ -188,7 +188,7 @@ TEST(SlotParamsToJson, GrammarValue_EmptyByDefault) {
 }
 
 TEST(SlotParamsToJson, GrammarValue_UserGrammarExtracted) {
-    slot_params p;
+    task_params p;
     // Mirrors the assignment in params_from_json_cmpl for user-provided grammar
     p.sampling.grammar = {COMMON_GRAMMAR_TYPE_USER, "root ::= [a-z]+"};
 
@@ -199,7 +199,7 @@ TEST(SlotParamsToJson, GrammarValue_UserGrammarExtracted) {
 }
 
 TEST(SlotParamsToJson, GrammarValue_OutputFormatGrammarExtracted) {
-    slot_params p;
+    task_params p;
     // Mirrors the assignment in params_from_json_cmpl for JSON schema grammars
     p.sampling.grammar = {COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT, "root ::= object"};
 
@@ -209,8 +209,8 @@ TEST(SlotParamsToJson, GrammarValue_OutputFormatGrammarExtracted) {
 }
 
 TEST(SlotParamsToJson, GenerationPrompt_ReflectsSyntaxField) {
-    slot_params p;
-    p.oaicompat_chat_syntax.generation_prompt = "Think step by step:";
+    task_params p;
+    p.chat_parser_params.generation_prompt = "Think step by step:";
 
     const json j = p.to_json();
 
@@ -218,8 +218,8 @@ TEST(SlotParamsToJson, GenerationPrompt_ReflectsSyntaxField) {
 }
 
 TEST(SlotParamsToJson, ReasoningInContent_ReflectsSyntaxField) {
-    slot_params p;
-    p.oaicompat_chat_syntax.reasoning_in_content = true;
+    task_params p;
+    p.chat_parser_params.reasoning_in_content = true;
 
     const json j = p.to_json();
 
@@ -227,14 +227,14 @@ TEST(SlotParamsToJson, ReasoningInContent_ReflectsSyntaxField) {
 }
 
 TEST(SlotParamsToJson, ReasoningInContent_FalseByDefault) {
-    slot_params p;
+    task_params p;
     const json j = p.to_json();
 
     EXPECT_FALSE(j.at("reasoning_in_content").get<bool>());
 }
 
 TEST(SlotParamsToJson, SpeculativeFields_Present) {
-    slot_params p;
+    task_params p;
     const json j = p.to_json();
 
     EXPECT_TRUE(j.contains("speculative.n_max"));
@@ -243,7 +243,7 @@ TEST(SlotParamsToJson, SpeculativeFields_Present) {
 }
 
 TEST(SlotParamsToJson, GrammarTriggers_IsArrayByDefault) {
-    slot_params p;
+    task_params p;
     const json j = p.to_json();
 
     EXPECT_TRUE(j.at("grammar_triggers").is_array());
@@ -251,7 +251,7 @@ TEST(SlotParamsToJson, GrammarTriggers_IsArrayByDefault) {
 }
 
 TEST(SlotParamsToJson, GrammarTriggers_SerialiseViaServerGrammarTrigger) {
-    slot_params p;
+    task_params p;
     // Add a WORD trigger — must be serialised through server_grammar_trigger
     common_grammar_trigger trigger;
     trigger.type  = COMMON_GRAMMAR_TRIGGER_TYPE_WORD;
@@ -387,7 +387,7 @@ TEST(ServerTaskResultEmbd, NonOaicompat_ShapeCorrect) {
     e.index    = 1;
     e.embedding = {{0.1f, 0.2f}, {0.3f, 0.4f}};
     e.n_tokens = 5;
-    e.oaicompat = OAICOMPAT_TYPE_NONE;
+    e.res_type = TASK_RESPONSE_TYPE_NONE;
 
     const json j = e.to_json();
     EXPECT_EQ(j.at("index").get<int>(), 1);
@@ -401,7 +401,7 @@ TEST(ServerTaskResultEmbd, Oaicompat_UsesFirstRow) {
     e.index    = 0;
     e.embedding = {{1.0f, 2.0f}, {3.0f, 4.0f}};
     e.n_tokens = 8;
-    e.oaicompat = OAICOMPAT_TYPE_EMBEDDING;
+    e.res_type = TASK_RESPONSE_TYPE_OAI_EMBD;
 
     const json j = e.to_json();
     // OAI compat exposes only embedding[0]
@@ -470,26 +470,26 @@ TEST(FormatErrorResponse, NotSupported_501) {
 // ============================================================
 
 TEST(ServerTaskTypeHelpers, NeedEmbd_TrueForEmbeddingAndRerank) {
-    EXPECT_TRUE(server_task_type_need_embd(SERVER_TASK_TYPE_EMBEDDING));
-    EXPECT_TRUE(server_task_type_need_embd(SERVER_TASK_TYPE_RERANK));
+    { server_task t; t.type = SERVER_TASK_TYPE_EMBEDDING; EXPECT_TRUE(t.need_embd()); }
+    { server_task t; t.type = SERVER_TASK_TYPE_RERANK;    EXPECT_TRUE(t.need_embd()); }
 }
 
 TEST(ServerTaskTypeHelpers, NeedEmbd_FalseForOtherTypes) {
-    EXPECT_FALSE(server_task_type_need_embd(SERVER_TASK_TYPE_COMPLETION));
-    EXPECT_FALSE(server_task_type_need_embd(SERVER_TASK_TYPE_INFILL));
-    EXPECT_FALSE(server_task_type_need_embd(SERVER_TASK_TYPE_METRICS));
-    EXPECT_FALSE(server_task_type_need_embd(SERVER_TASK_TYPE_CANCEL));
+    { server_task t; t.type = SERVER_TASK_TYPE_COMPLETION; EXPECT_FALSE(t.need_embd()); }
+    { server_task t; t.type = SERVER_TASK_TYPE_INFILL;     EXPECT_FALSE(t.need_embd()); }
+    { server_task t; t.type = SERVER_TASK_TYPE_METRICS;    EXPECT_FALSE(t.need_embd()); }
+    { server_task t; t.type = SERVER_TASK_TYPE_CANCEL;     EXPECT_FALSE(t.need_embd()); }
 }
 
 TEST(ServerTaskTypeHelpers, NeedLogits_TrueForCompletionAndInfill) {
-    EXPECT_TRUE(server_task_type_need_logits(SERVER_TASK_TYPE_COMPLETION));
-    EXPECT_TRUE(server_task_type_need_logits(SERVER_TASK_TYPE_INFILL));
+    { server_task t; t.type = SERVER_TASK_TYPE_COMPLETION; EXPECT_TRUE(t.need_logits()); }
+    { server_task t; t.type = SERVER_TASK_TYPE_INFILL;     EXPECT_TRUE(t.need_logits()); }
 }
 
 TEST(ServerTaskTypeHelpers, NeedLogits_FalseForOtherTypes) {
-    EXPECT_FALSE(server_task_type_need_logits(SERVER_TASK_TYPE_EMBEDDING));
-    EXPECT_FALSE(server_task_type_need_logits(SERVER_TASK_TYPE_RERANK));
-    EXPECT_FALSE(server_task_type_need_logits(SERVER_TASK_TYPE_METRICS));
+    { server_task t; t.type = SERVER_TASK_TYPE_EMBEDDING; EXPECT_FALSE(t.need_logits()); }
+    { server_task t; t.type = SERVER_TASK_TYPE_RERANK;    EXPECT_FALSE(t.need_logits()); }
+    { server_task t; t.type = SERVER_TASK_TYPE_METRICS;   EXPECT_FALSE(t.need_logits()); }
 }
 
 // ============================================================
@@ -603,54 +603,6 @@ TEST(ServerTaskResultApplyLora, ToJson_SuccessTrue) {
     const json j = r.to_json();
     ASSERT_TRUE(j.contains("success"));
     EXPECT_TRUE(j.at("success").get<bool>());
-}
-
-// ============================================================
-// server_context::is_vocab_only
-//   Pure predicate on two pointer fields — testable without a
-//   model by directly manipulating the struct members.
-//
-//   Semantics:
-//     false  — default-constructed (both null): no model at all
-//     true   — model set, ctx null: vocab-only load via load_tokenizer
-//     false  — model and ctx both set: full model loaded via load_model
-// ============================================================
-
-TEST(IsVocabOnly, DefaultConstructed_False) {
-    // Neither model nor ctx is set; we have no model at all.
-    server_context sc;
-    EXPECT_FALSE(sc.is_vocab_only());
-}
-
-TEST(IsVocabOnly, ModelSetCtxNull_True) {
-    // Simulate the state after load_tokenizer():
-    // model_vocab_only owns the real pointer; model is a raw alias.
-    // Use a non-null sentinel without calling llama.cpp.
-    server_context sc;
-    sc.model = reinterpret_cast<llama_model *>(static_cast<uintptr_t>(1));
-    sc.ctx   = nullptr;
-    EXPECT_TRUE(sc.is_vocab_only());
-    sc.model = nullptr; // prevent destructor confusion
-}
-
-TEST(IsVocabOnly, ModelAndCtxSet_False) {
-    // Simulate the state after load_model():
-    // both model and ctx are live pointers.
-    server_context sc;
-    sc.model = reinterpret_cast<llama_model   *>(static_cast<uintptr_t>(1));
-    sc.ctx   = reinterpret_cast<llama_context *>(static_cast<uintptr_t>(2));
-    EXPECT_FALSE(sc.is_vocab_only());
-    sc.model = nullptr; // prevent destructor confusion
-    sc.ctx   = nullptr;
-}
-
-TEST(IsVocabOnly, OnlyCtxSet_False) {
-    // Degenerate: ctx set but model null — not vocab-only either
-    // (model == nullptr fails the first condition).
-    server_context sc;
-    sc.ctx = reinterpret_cast<llama_context *>(static_cast<uintptr_t>(1));
-    EXPECT_FALSE(sc.is_vocab_only());
-    sc.ctx = nullptr;
 }
 
 // ============================================================
