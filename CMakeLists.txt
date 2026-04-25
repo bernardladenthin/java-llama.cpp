@@ -218,9 +218,11 @@ add_library(jllama SHARED
 # Phase 1 refactoring: compile upstream server library units directly into jllama
 # so Phase 2+ can replace server.hpp with thin includes of these headers.
 # server-http.cpp and server.cpp (main) are intentionally excluded.
-# Android uses posix_spawn_* which NDK doesn't implement; exclude server-models
-# (which pulls in subprocess.h via server-tools) on Android.
-if(NOT ANDROID_ABI)
+# Android NDK declares posix_spawn_file_actions_t as a type alias but does not
+# implement the posix_spawn_* functions used by subprocess.h (pulled in via
+# server-models.cpp).  Guard with both ANDROID_ABI (NDK toolchain convention)
+# and OS_NAME (always set to "Linux-Android" by the CI cmake invocation).
+if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
     target_sources(jllama PRIVATE
         ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-queue.cpp
