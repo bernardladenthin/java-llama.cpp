@@ -282,7 +282,11 @@ if(BUILD_TESTING)
         src/test/cpp/test_jni_helpers.cpp
         src/test/cpp/test_json_helpers.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
-        ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp)
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-queue.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-task.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-models.cpp)
 
     target_include_directories(jllama_test PRIVATE
         src/main/cpp

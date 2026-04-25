@@ -308,7 +308,7 @@ TEST(ParseEncodingFormat, EmptyString_ThrowsInvalidArgument) {
 
 TEST(ParseEncodingFormat, ErrorMessage_MentionsBothValidOptions) {
     try {
-        parse_encoding_format({{"encoding_format", "hex"}});
+        (void)parse_encoding_format({{"encoding_format", "hex"}});
         FAIL() << "Expected std::invalid_argument";
     } catch (const std::invalid_argument &e) {
         const std::string msg(e.what());
@@ -345,13 +345,13 @@ TEST(ExtractEmbeddingPrompt, InputTakesPriorityOverContent) {
 
 TEST(ExtractEmbeddingPrompt, NeitherKey_ThrowsInvalidArgument) {
     bool flag = false;
-    EXPECT_THROW(extract_embedding_prompt({{"model", "x"}}, flag),
+    EXPECT_THROW((void)extract_embedding_prompt({{"model", "x"}}, flag),
                  std::invalid_argument);
 }
 
 TEST(ExtractEmbeddingPrompt, EmptyBody_ThrowsInvalidArgument) {
     bool flag = false;
-    EXPECT_THROW(extract_embedding_prompt(json::object(), flag),
+    EXPECT_THROW((void)extract_embedding_prompt(json::object(), flag),
                  std::invalid_argument);
 }
 
