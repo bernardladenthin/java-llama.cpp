@@ -1,6 +1,7 @@
 #include "jllama.h"
 
 #include "arg.h"
+#include "build-info.h"
 #include "json-schema-to-grammar.h"
 #include "llama.h"
 #include "log.h"
@@ -265,6 +266,21 @@ static json parse_json_params(JNIEnv *env, jstring jparams) {
 [[nodiscard]] static bool require_json_field(JNIEnv *env, const json &data,
                                               const char *field) {
     return require_json_field_impl(env, data, field, c_llama_error);
+}
+
+// Build a single indexed token task for batch submission (rerank and embedding).
+// Assigns the reader-allocated id; moves tokens into the task.
+[[nodiscard]] static server_task build_indexed_token_task(server_response_reader &rd,
+                                                           server_task_type        type,
+                                                           server_tokens         &&tokens,
+                                                           int                     index,
+                                                           task_response_type      res_type) {
+    server_task task(type);
+    task.id              = rd.get_new_id();
+    task.tokens          = std::move(tokens);
+    task.index           = index;
+    task.params.res_type = res_type;
+    return task;
 }
 
 // Post a single pre-built task, wait for its result, and return JSON as a jstring.
@@ -834,27 +850,21 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
         }
     }
 
-    const std::string prompt        = parse_jstring(env, jprompt);
-    const auto        tokenized_query = tokenize_mixed(jctx->vocab, prompt, true, true);
+    const std::string prompt = parse_jstring(env, jprompt);
 
     const jsize amount_documents = env->GetArrayLength(documents);
     auto *document_array = parse_string_array(env, documents, amount_documents);
     auto  document_vector = std::vector<std::string>(document_array, document_array + amount_documents);
     free_string_array(document_array, amount_documents);
 
-    std::vector<server_tokens> tokenized_docs =
-            tokenize_input_prompts(jctx->vocab, nullptr, document_vector, true, true);
-
+    const llama_model *model = llama_get_model(ctx_server->get_llama_context());
     auto rd = ctx_server->get_response_reader();
     std::vector<server_task> tasks;
-    tasks.reserve(tokenized_docs.size());
-    for (size_t i = 0; i < tokenized_docs.size(); i++) {
-        server_task task(SERVER_TASK_TYPE_RERANK);
-        task.id     = rd.get_new_id();
-        task.tokens = server_tokens(
-                format_rerank(jctx->vocab, tokenized_query, tokenized_docs[i].get_tokens()), false);
-        task.index  = static_cast<int>(i);
-        tasks.push_back(std::move(task));
+    tasks.reserve(document_vector.size());
+    for (size_t i = 0; i < document_vector.size(); i++) {
+        tasks.push_back(build_indexed_token_task(rd, SERVER_TASK_TYPE_RERANK,
+            format_prompt_rerank(model, jctx->vocab, nullptr, prompt, document_vector[i]),
+            static_cast<int>(i), TASK_RESPONSE_TYPE_NONE));
     }
     rd.post_tasks(std::move(tasks));
 
@@ -1024,10 +1034,12 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
 JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *env, jobject obj, jstring jparams) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
-    // Check FIM token support.
-    if (llama_vocab_fim_pre(jctx->vocab) == LLAMA_TOKEN_NULL ||
-        llama_vocab_fim_suf(jctx->vocab) == LLAMA_TOKEN_NULL ||
-        llama_vocab_fim_mid(jctx->vocab) == LLAMA_TOKEN_NULL) {
+    // Check FIM token support via server_context_meta (populated from the
+    // same llama_vocab_fim_* calls inside server-context).
+    auto meta = ctx_server->get_meta();
+    if (meta.fim_pre_token == LLAMA_TOKEN_NULL ||
+        meta.fim_sub_token == LLAMA_TOKEN_NULL ||
+        meta.fim_mid_token == LLAMA_TOKEN_NULL) {
         env->ThrowNew(c_llama_error, "Model does not support fill-in-the-middle infill");
         return nullptr;
     }
@@ -1044,8 +1056,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
     std::vector<server_tokens> tokenized_prompts =
             tokenize_input_prompts(jctx->vocab, nullptr, prompt, false, true);
 
-    auto meta = ctx_server->get_meta();
-    data["prompt"] = format_infill(jctx->vocab,
+    data["prompt"] = format_prompt_infill(jctx->vocab,
                                    data.at("input_prefix"), data.at("input_suffix"),
                                    data.at("input_extra"),
                                    jctx->params.n_batch, jctx->params.n_predict,
@@ -1106,12 +1117,9 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
     std::vector<server_task> tasks;
     tasks.reserve(tokenized_prompts.size());
     for (size_t i = 0; i < tokenized_prompts.size(); i++) {
-        server_task task(SERVER_TASK_TYPE_EMBEDDING);
-        task.id              = rd.get_new_id();
-        task.tokens          = server_tokens(tokenized_prompts[i].get_tokens(), false);
-        task.index           = static_cast<int>(i);
-        task.params.res_type = res_type;
-        tasks.push_back(std::move(task));
+        tasks.push_back(build_indexed_token_task(rd, SERVER_TASK_TYPE_EMBEDDING,
+            server_tokens(tokenized_prompts[i].get_tokens(), false),
+            static_cast<int>(i), res_type));
     }
     rd.post_tasks(std::move(tasks));
 
@@ -1197,19 +1205,55 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
 
 JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInference(JNIEnv *env, jobject obj,
                                                                                       jstring jconfig) {
-    // Runtime reconfiguration is not supported in the upstream reader-based API
-    // (server_context fields are encapsulated behind the pimpl).  Validate the
-    // input parameters so callers still get exceptions on out-of-range values,
-    // then return true without applying any changes.
+    REQUIRE_SERVER_CONTEXT(JNI_FALSE);
     (void)obj;
+
     json config = parse_json_params(env, jconfig);
+
+    std::optional<float> slot_sim_opt;
+    std::optional<int>   n_threads_opt;
+    std::optional<int>   n_threads_batch_opt;
     try {
-        (void)parse_slot_prompt_similarity(config);
-        (void)parse_positive_int_config(config, "n_threads");
-        (void)parse_positive_int_config(config, "n_threads_batch");
+        slot_sim_opt        = parse_slot_prompt_similarity(config);
+        n_threads_opt       = parse_positive_int_config(config, "n_threads");
+        n_threads_batch_opt = parse_positive_int_config(config, "n_threads_batch");
     } catch (const std::invalid_argument &e) {
         env->ThrowNew(c_llama_error, e.what());
         return JNI_FALSE;
     }
+
+    // Apply n_threads / n_threads_batch via the public llama.h API.  The setter
+    // requires both values; fill any missing one from the cached common_params
+    // captured at load_model time so a single-field update behaves as a no-op
+    // for the unspecified field.
+    if (n_threads_opt.has_value() || n_threads_batch_opt.has_value()) {
+        llama_context *lctx = ctx_server->get_llama_context();
+        if (lctx == nullptr) {
+            env->ThrowNew(c_llama_error,
+                          "configureParallelInference: llama_context not available "
+                          "(model sleeping or not loaded)");
+            return JNI_FALSE;
+        }
+        const int n  = n_threads_opt.value_or(jctx->params.cpuparams.n_threads);
+        const int nb = n_threads_batch_opt.value_or(jctx->params.cpuparams_batch.n_threads);
+        llama_set_n_threads(lctx, n, nb);
+        // Keep the cached params in sync so a follow-up call that supplies only
+        // the other field reads back the value just applied, not the original.
+        jctx->params.cpuparams.n_threads       = n;
+        jctx->params.cpuparams_batch.n_threads = nb;
+    }
+
+    // slot_prompt_similarity: validated above (the [0.0, 1.0] range check still
+    // throws for out-of-range values, preserving the existing exception
+    // contract).  Live mutation requires an upstream setter that does not yet
+    // exist at b8913 — see llama-cpp.patch.md for the proposed PR adding
+    // server_context::set_slot_prompt_similarity().  Once that lands and the
+    // pinned llama.cpp version is bumped, uncomment the block below:
+    //
+    // if (slot_sim_opt.has_value()) {
+    //     ctx_server->set_slot_prompt_similarity(*slot_sim_opt);
+    // }
+    (void)slot_sim_opt;
+
     return JNI_TRUE;
 }
