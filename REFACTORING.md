@@ -43,16 +43,16 @@ remain identical.
 
 ---
 
-## Current state (branch `claude/refactor-java-llama-d3lua`)
+## Current state (after Pass 1 and Pass 2)
 
 | File | Lines | Change |
-|------|-------|--------|
-| `src/main/cpp/server.hpp` | 0 | **Deleted** — includes inlined directly |
-| `src/main/cpp/jllama.cpp` | 1,215 | Fully rewritten — upstream reader API; duplication eliminated |
-| `src/main/cpp/jni_helpers.hpp` | 196 | `jllama_context` rewritten; dead helpers removed |
-| `src/main/cpp/json_helpers.hpp` | 196 | Type alias updates; stale comments fixed |
-| `src/main/cpp/utils.hpp` | 199 | Base64 copy removed; dead slot macros removed |
-| **Total** | **1,806** | **~4,207 lines removed from the 6,013 baseline (70%)** |
+|------|------:|--------|
+| `src/main/cpp/server.hpp` | 0 | **Deleted** — includes inlined directly (Pass 1) |
+| `src/main/cpp/jllama.cpp` | 1,259 | Fully rewritten (Pass 1) + runtime n_threads applied (Pass 2) |
+| `src/main/cpp/jni_helpers.hpp` | 196 | `jllama_context` rewritten; dead helpers removed (Pass 1) |
+| `src/main/cpp/json_helpers.hpp` | 196 | Type alias updates; stale comments fixed (Pass 1) |
+| `src/main/cpp/utils.hpp` | 74 | Base64 copy + dead slot macros removed (Pass 1); `format_infill` + `format_rerank` replaced by upstream (Pass 2) |
+| **Total** | **1,725** | **~4,288 lines removed from the 6,013 baseline (71%)** |
 
 413 C++ unit tests pass. Java integration tests pass on all platforms
 (Linux, macOS, Windows, Android).
@@ -91,7 +91,7 @@ remain identical.
 
 ---
 
-## Phase log
+## Pass 1 — `server.hpp` removal (branch `claude/refactor-java-llama-d3lua`)
 
 ### Phase 0 — Safety net ✅ DONE
 
@@ -304,23 +304,120 @@ wc -l src/main/cpp/jllama.cpp src/main/cpp/jni_helpers.hpp \
 `InferenceParametersTest`, `LlamaOutputTest`, `ResponseJsonStructureTest`,
 `MemoryManagementTest`, `RerankingModelTest`, `ErrorHandlingTest`.
 
-**Known acceptable gap:** `configureParallelInference` returns true for valid
-inputs but does not actually apply n_threads or slot_prompt_similarity at
-runtime (post-load reconfiguration is not exposed by the upstream pimpl API).
-The validation tests pass; the functional tests for actual effect are N/A.
+**Known acceptable gap (after Pass 1, partially closed in Pass 2):**
+`configureParallelInference` originally returned true for valid inputs but did
+not actually apply any of `n_threads`, `n_threads_batch`, or
+`slot_prompt_similarity` at runtime. Pass 2 wired `n_threads` and
+`n_threads_batch` through the public `llama_set_n_threads` API.
+`slot_prompt_similarity` remains validated-only — the field is private inside
+`server_context_impl` (pimpl) and upstream b8913 exposes no setter. See
+`llama-cpp.patch.md` for the proposed upstream patch and the Pass 2 section
+below.
 
 ---
 
-## Code reduction achieved
+---
 
-| File | Baseline | Current | Reduction |
-|------|----------|---------|-----------|
-| `server.hpp` | 3,780 | **0** (deleted) | 3,780 |
-| `jllama.cpp` | 1,270 | 1,215 | 55 |
-| `jni_helpers.hpp` | 398 | 196 | 202 |
-| `json_helpers.hpp` | 243 | 196 | 47 |
-| `utils.hpp` | 322 | 199 | 123 |
-| **Total** | **6,013** | **1,806** | **4,207 lines (70%)** |
+## Pass 2 — Second-pass deduplication at b8913 (branch `claude/analyze-refactoring-changes-ovOFq`)
+
+After Pass 1 landed, four observations remained:
+
+1. `handleInfill` checked FIM-token availability through three direct
+   `llama_vocab_fim_*` calls, even though the very next read of model state in
+   the same function went through `server_context::get_meta()`. Inconsistent
+   style — both paths return the same data because upstream populates
+   `server_context_meta::fim_*_token` from those exact `llama_vocab_fim_*`
+   calls.
+2. `format_infill` and `format_rerank` in `utils.hpp` were hand-ported copies
+   of upstream `format_prompt_infill` / `format_prompt_rerank`. Duplicated
+   logic with no semantic divergence.
+3. The two index/tokens loop bodies in `handleRerank` and `handleEmbeddings`
+   were copy-paste twins.
+4. **`configureParallelInference` was a documented no-op.** The JNI handler
+   validated the JSON shape and threw on out-of-range values, but applied
+   nothing because the affected fields lived inside `server_context_impl`
+   (pimpl) and there was no public setter. Three configurable fields —
+   `n_threads`, `n_threads_batch`, `slot_prompt_similarity` — all silently
+   ignored after the model was loaded.
+
+(1)–(3) are pure cleanup. (4) is a behaviour change that closes a real gap.
+
+### Pass-2 commits
+
+| # | Commit | Summary |
+|--:|--------|---------|
+| 1 | `0fe1620` | Replace `format_infill` with upstream `format_prompt_infill`. Deleted 96 lines from `utils.hpp`. Byte-for-byte identical signature/implementation to upstream `server-common.h:356` / `server-common.cpp:1440`. |
+| 2 | `e2c6d04` | Replace `format_rerank` with upstream `format_prompt_rerank`. Deleted 19 lines from `utils.hpp`; rewrote `handleRerank` to pass raw query/document strings (upstream's `tokenize_input_subprompt` is called internally). Pruned now-unused `build-info.h` and `mtmd-helper.h` includes. **Behavioural delta:** models without a rerank chat template (incl. CI Jina-Reranker) now receive the canonical `[BOS?] q [EOS?] [SEP?] doc [EOS?]` token sequence (each token gated by `llama_vocab_get_add_*`) instead of the doubled-BOS/EOS sequence produced by the previous `tokenize_input_prompts(..., add_special=true) + format_rerank` chain. The new sequence matches what upstream's HTTP `/rerank` endpoint emits. Logit magnitudes can dip slightly negative for poorly-matched (query, document) pairs (the doubled-token format previously kept them just inside `[0, 1]`). Test contracts updated in commits 6/7 below. Models shipping a dedicated rerank chat template (some Jina v3 variants) additionally pick it up via `llama_model_chat_template(model, "rerank")`. |
+| 3 | `a9d42f4` | Extract `build_indexed_token_task` helper. Both `handleRerank` and `handleEmbeddings` built the same `id`/`tokens`/`index`/`res_type` task pattern; collapsed to one named helper. Pattern is now testable in isolation. |
+| 4 | `100b419` | Route `handleInfill` FIM-token check through `server_context_meta`. Replaced three `llama_vocab_fim_pre/suf/mid` calls with `meta.fim_pre_token` / `meta.fim_sub_token` / `meta.fim_mid_token`. Upstream populates these from the identical `llama_vocab_fim_*` calls (`server-context.cpp:3120`). Same data path; brings the FIM check into the same `get_meta()` idiom the function already used for `meta.slot_n_ctx`. |
+| 5 | `d051b1c` | Apply runtime `n_threads` / `n_threads_batch` in `configureParallelInference`. Rewrote the JNI handler from validate-and-no-op stub to active reconfigurer of the live `llama_context` via the public C API `llama_set_n_threads(ctx, n, nb)` (`include/llama.h:946`). The setter requires both values, so a single-field update fills the missing one from the cached `common_params` captured at load time; the cache is written back so a follow-up partial update reads the just-applied value. `slot_prompt_similarity` remains validated but **not yet applied** — the field is private inside `server_context_impl`, upstream b8913 exposes no setter. The future call site is reserved as a commented block in the handler, ready to uncomment once the upstream patch in `llama-cpp.patch.md` lands and the pin advances past b8913. This commit also fixes a build regression: commit 2 dropped the `build-info.h` include from `utils.hpp`, but `jllama.cpp:668` still calls `llama_build_info()`; include is now added explicitly to `jllama.cpp`. |
+| 6 | `718fbd1` | Fix `RerankingModelTest.testRerankScoreRange` for canonical-format scores. Previous assertion required `score >= 0.0f && score <= 1.0f` based on a wrong mental model — that rerank scores are probabilities. They are not: upstream returns the raw classification-head logit `embd[0]` (`server-context.cpp` `send_rerank()`) with no sigmoid applied. The CI failure on Ubuntu/macOS reported `-0.0013` for a weakly-matched (query, document) pair, which is correct behaviour with the canonical token sequence. Two changes: (a) loosen `testRerankScoreRange` — drop the `[0, 1]` bound, keep NaN/Inf, add `|score| < 10` magnitude bound; (b) add `testRerankSpreadAndSign_canonicalFormatSentinel` — sentinel that asserts the canonical format produces a plausible logit spread and that document sign tracks relevance (ML doc > 0; Paris doc < machine doc). Initial spread bound was `> 0.3` (calibrated in commit 7). |
+| 7 | `3b6c47b` | Calibrate sentinel spread threshold from empirical CI run. The first version of the sentinel in commit 6 used `> 0.3` based on a guess. CI on Ubuntu and macOS reported the actual spread on `jina-reranker-v1-tiny-en-Q4_0`: `0.19975` (Ubuntu) / `0.19972` (macOS) — bit-identical modulo quantisation rounding, well below the guessed 0.3. Lowered to `> 0.1`. Comfortably below the observed ~0.20, well above any plausible noise-floor cluster. The other two sentinel assertions (`mlScore > 0`, `parisScore < machineScore`) already passed unchanged. |
+
+### Pass-2 reduction
+
+| File | After Pass 1 | After Pass 2 | Δ |
+|------|-------------:|-------------:|---:|
+| `src/main/cpp/jllama.cpp`       | 1,215 | 1,259 | +44 |
+| `src/main/cpp/utils.hpp`        |   199 |    74 | −125 |
+| `src/main/cpp/jni_helpers.hpp`  |   196 |   196 | 0 |
+| `src/main/cpp/json_helpers.hpp` |   196 |   196 | 0 |
+| **Total**                       | **1,806** | **1,725** | **−81** |
+
+`jllama.cpp` grows by 44 lines because commit 5 *adds function* (real thread
+setter + cache write-back + nullptr guard + reserved comment for the future
+similarity setter) where there used to be a documented no-op. Pass 2 is
+not solely a size win; it closes a known gap.
+
+### Investigated and kept (with reasoning)
+
+The Pass 2 audit also reviewed every other helper in `utils.hpp`,
+`json_helpers.hpp`, `jni_helpers.hpp`, and `jllama.cpp`. The following
+helpers stay:
+
+| Symbol | Why we keep it |
+|--------|----------------|
+| `str_to_bytes`, `token_piece_value` (`utils.hpp`) | Upstream's `completion_token_output::str_to_bytes` returns `vector<unsigned char>` for binary serialisation; ours returns a `json::array` of integers for the `/tokenize` wire format. Different contracts. |
+| `format_tokenizer_response`, `format_detokenized_response` (`utils.hpp`) | Trivial 1-line wrappers, but extracted named helpers are preferred over inlined literals. No upstream equivalent. |
+| `strip_flag_from_argv` (`utils.hpp`) | No upstream equivalent; well-isolated; well-tested. |
+| `parse_encoding_format`, `extract_embedding_prompt` (`json_helpers.hpp`) | Upstream has the same logic but inline at `server-context.cpp:4263-4272` / `4249-4261`. Not exposed as free functions. |
+| `is_infill_request` (`json_helpers.hpp`) | No upstream equivalent — upstream uses HTTP route splitting (`post_infill` vs `post_completion`) instead of body-content sniffing. |
+| `parse_slot_prompt_similarity`, `parse_positive_int_config` (`json_helpers.hpp`) | Config validators specific to `configureParallelInference`. |
+| `results_to_json`, `rerank_results_to_json` (`json_helpers.hpp`) | Project-specific output shapes that the Java client depends on. |
+| All JNI plumbing (`jllama.cpp` cache, attach/detach, log forwarding, dispatch helpers) | JNI-specific; no upstream equivalent possible. |
+| Vocab-only mode | Project feature; not in upstream. |
+
+`getModelMetaJson` still calls `llama_model_meta_val_str(mdl,
+"general.architecture", ...)` manually because `server_context_meta` does not
+include an architecture field at b8913. An upstream feature request to add
+`architecture` to the meta struct would let us delete this 5-line dance, but
+is deferred — low value, requires upstream coordination.
+
+### Forward references
+
+- `llama-cpp.patch.md` — proposed upstream PR adding
+  `server_context::get_slot_prompt_similarity()` /
+  `set_slot_prompt_similarity()`. When that lands and the pin moves past
+  b8913, a tiny follow-up commit on this repo uncomments the reserved block
+  in `configureParallelInference` and removes the gap note above.
+- Future llama.cpp upgrades may surface new helpers worth re-auditing on
+  each `b<NEW>` bump. The CLAUDE.md upgrade procedure is unchanged.
+
+---
+
+## Code reduction achieved (combined Pass 1 + Pass 2)
+
+| File | Baseline | After Pass 1 | After Pass 2 | Total reduction |
+|------|---------:|-------------:|-------------:|----------------:|
+| `server.hpp`        | 3,780 | **0** (deleted)  | **0**  | 3,780 |
+| `jllama.cpp`        | 1,270 | 1,215 | 1,259 (+44 for real `llama_set_n_threads` apply) | 11 |
+| `jni_helpers.hpp`   |   398 |   196 |   196 | 202 |
+| `json_helpers.hpp`  |   243 |   196 |   196 | 47 |
+| `utils.hpp`         |   322 |   199 |    74 | 248 |
+| **Total**           | **6,013** | **1,806** | **1,725** | **4,288 lines (71%)** |
 
 The 3,780-line `server.hpp` was the dominant cost. The codebase is now a thin
 JNI wrapper over the upstream server library with no duplicated logic.
+Pass 2 (`utils.hpp` 199 → 74) finished the deduplication of formatters and
+closed two of three `configureParallelInference` fields; the third is
+parked behind the upstream patch tracked in `llama-cpp.patch.md`.
