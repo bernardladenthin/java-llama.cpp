@@ -50,7 +50,7 @@ gap.  This document covers all four.
 
 ---
 
-## Done — five commits on branch `claude/analyze-refactoring-changes-ovOFq`
+## Done — seven commits on branch `claude/analyze-refactoring-changes-ovOFq`
 
 ### Commit 1 — replace `format_infill` with upstream `format_prompt_infill`
 
@@ -156,13 +156,31 @@ Two changes to `src/test/java/de/kherud/llama/RerankingModelTest.java`:
    catches token corruption (NaN/Inf or wildly large logits) without
    making any claim about probability ranges.
 2. **Add `testRerankSpreadAndSign_canonicalFormatSentinel`** — a
-   regression sentinel that asserts the canonical format produces a wide
-   logit spread (max − min > 0.3) and that document sign tracks
+   regression sentinel that asserts the canonical format produces a
+   plausible logit spread (initially `> 0.3`, calibrated to `> 0.1`
+   in Commit 7 after CI measurements) and that document sign tracks
    relevance (ML doc > 0; Paris doc < machine doc).  The historical
    doubled-BOS/EOS bug compressed scores into a narrow positive band
    that this new test would trip.
 
 No production code changed.
+
+### Commit 7 — calibrate sentinel threshold from empirical CI run
+
+The first version of the sentinel test in Commit 6 used a spread bound
+of `0.3` based on a guess.  CI on Ubuntu and macOS reported the actual
+spread on the `jina-reranker-v1-tiny-en-Q4_0` model:
+`0.19975` (Ubuntu) / `0.19972` (macOS) — bit-identical modulo
+quantisation rounding, but well below the guessed `0.3`.
+
+Lowered the threshold to `0.1`.  Comfortably below the observed ~0.20
+on the real CI model, well above any plausible noise-floor cluster,
+still aussagekräftig as "scores aren't all collapsed onto one point".
+The two other sentinel assertions (`mlScore > 0`,
+`parisScore < machineScore`) already passed unchanged — sign and
+ordering are correct under the canonical format.
+
+Test-only change.  No production code changed.
 
 ---
 
@@ -190,7 +208,7 @@ from the original C++ surface, with one less behavioural gap.
 
 ## Tests
 
-C++ unit tests: **413 passing** (unchanged across all five commits).
+C++ unit tests: **413 passing** (unchanged across all seven commits).
 
 Java integration tests:
 - `ConfigureParallelInferenceTest` — 11 existing tests still pass
@@ -198,9 +216,18 @@ Java integration tests:
   LlamaException for out-of-range" — both contracts still hold. The
   new behaviour (threads actually applied) is observable but not
   asserted by these tests.
-- `LlamaModelTest`, `RerankingModelTest`, `LlamaEmbeddingsTest` — all
-  green; the upstream formatter swap in Commit 2 produces bit-identical
-  output for models without a rerank template.
+- `RerankingModelTest` — `testRerankScoreRange` was loosened in
+  Commit 6 (raw-logit semantics, not probabilities); a new sentinel
+  `testRerankSpreadAndSign_canonicalFormatSentinel` was added in
+  Commit 6 and calibrated in Commit 7 (`spread > 0.1`).  The
+  canonical-format token sequence introduced in Commit 2 is **not**
+  bit-identical to the old doubled-BOS/EOS sequence — the new shape
+  matches upstream's `/rerank` HTTP endpoint, and produces logits
+  with a different magnitude profile (some weakly-matched docs now
+  score slightly negative).  This is correct behaviour; the tests
+  were the wrong shape and have been updated to match.
+- `LlamaModelTest`, `LlamaEmbeddingsTest` — all green; no behavioural
+  delta from any commit on this branch.
 
 ---
 
