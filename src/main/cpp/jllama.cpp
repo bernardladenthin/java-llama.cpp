@@ -1246,9 +1246,9 @@ JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInfe
     // slot_prompt_similarity: validated above (the [0.0, 1.0] range check still
     // throws for out-of-range values, preserving the existing exception
     // contract).  Live mutation requires an upstream setter that does not yet
-    // exist at b8913 — see llama-cpp.patch.md for the proposed PR adding
-    // server_context::set_slot_prompt_similarity().  Once that lands and the
-    // pinned llama.cpp version is bumped, uncomment the block below:
+    // exist at b8913 — upstream PR: https://github.com/ggml-org/llama.cpp/pull/22393
+    // adds server_context::set_slot_prompt_similarity().  Once that lands and
+    // the pinned llama.cpp version is bumped, uncomment the block below:
     //
     // if (slot_sim_opt.has_value()) {
     //     ctx_server->set_slot_prompt_similarity(*slot_sim_opt);

@@ -395,8 +395,8 @@ is deferred — low value, requires upstream coordination.
 
 ### Forward references
 
-- `llama-cpp.patch.md` — proposed upstream PR adding
-  `server_context::get_slot_prompt_similarity()` /
+- Upstream PR [ggml-org/llama.cpp#22393](https://github.com/ggml-org/llama.cpp/pull/22393)
+  adds `server_context::get_slot_prompt_similarity()` /
   `set_slot_prompt_similarity()`. When that lands and the pin moves past
   b8913, a tiny follow-up commit on this repo uncomments the reserved block
   in `configureParallelInference` and removes the gap note above.
