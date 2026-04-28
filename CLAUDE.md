@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b8913**
+Current llama.cpp pinned version: **b8953**
 
 ## Upgrading CUDA Version
 
@@ -183,7 +183,7 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 `ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
-**Known breaking changes by version range** (b5022 → b8913):
+**Known breaking changes by version range** (b5022 → b8953):
 
 | Version | File | Change |
 |---------|------|--------|
@@ -214,6 +214,10 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b8887–b8913 | `common/chat.h` | New additive `common_chat_prompt_preset` struct and `common_chat_get_asr_prompt()` function; no project changes required |
 | ~b8887–b8913 | `common/common.h` | New `string_starts_with(std::string_view, char)` overload added; no project changes required |
 | ~b8887–b8913 | `tools/mtmd/mtmd.cpp` | Added `LLAMA_ROPE_TYPE_NONE` case to rope-type switch; internal fix, no project changes required |
+| ~b8913–b8953 | `common/debug.h` | `base_callback_data` renamed to `common_debug_cb_user_data`; template `common_debug_cb_eval<false/true>` replaced by plain `common_debug_cb_eval`; not used by this project |
+| ~b8913–b8953 | `tools/server/server-http.h` | New `uploaded_file` struct; `files` map type changed from `map<string, raw_buffer>` to `map<string, uploaded_file>`; upstream server sources compiled directly — no project impact |
+| ~b8913–b8953 | `src/llama-quant.cpp` | Default quantization ftype changed from `LLAMA_FTYPE_MOSTLY_Q5_1` to `LLAMA_FTYPE_MOSTLY_Q8_0`; upstream only |
+| ~b8913–b8953 | `src/models/llama.cpp`, `qwen3.cpp`, `qwen3moe.cpp` | Removed duplicate `ggml_mul` for `wo_s` scale (now handled exclusively by `build_attn`); upstream only |
 
 ## Build Commands
 
@@ -387,7 +391,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b8913`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b8953`.
 
 ```
 build/_deps/llama.cpp-src/tools/server/   ← server-task.h, server-common.h, etc.
