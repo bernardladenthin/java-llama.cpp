@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b9004**
+Current llama.cpp pinned version: **b9016**
 
 ## Upgrading CUDA Version
 
@@ -183,7 +183,7 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 `ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
-**Known breaking changes by version range** (b5022 → b9004):
+**Known breaking changes by version range** (b5022 → b9016):
 
 | Version | File | Change |
 |---------|------|--------|
@@ -239,6 +239,15 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b8994–b9004 | `ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp` | `get_mul_mat_fast_pipeline` vectorized-path condition fixed: `dst->ne[1] % 4 == 0` check removed (was preventing vectorization for non-multiple-of-4 batch sizes); internal WebGPU backend, no project changes required |
 | ~b8994–b9004 | `ggml/src/ggml-hexagon/` | Hexagon HTP backend: FA `exp2` half-precision option, unary-op non-contiguous tensor fix; internal DSP backend, no project changes required |
 | ~b8994–b9004 | `tools/server/webui/` | Major frontend component reorganization (Svelte/TypeScript); purely UI, no C++ or JNI impact |
+| ~b9004–b9016 | `src/llama-io.h` | `llama_io_read_i` interface changed: `read(size_t)→read(void*,size_t)`, `read_to(void*,size_t)` removed, new `read_tensor(tensor,offset,size)` added; `llama_io_write_buffer`/`llama_io_read_buffer` now batch backend tensor ops in destructors for performance; internal state-save/load path, not called by project |
+| ~b9004–b9016 | `tools/server/server-context.cpp` | Static `server_get_checkpoint()` (returns by value) renamed to `server_prompt_checkpoint_update()` (takes `server_prompt_checkpoint &` by reference, in-place update); compiled directly into jllama, no call site in project code |
+| ~b9004–b9016 | `common/arg.cpp` + docs | Speculative decoding CLI args renamed: `--draft`/`--draft-n`/`--draft-max` → deprecated (use `--spec-draft-n-max`); `-md`/`--model-draft` → `--spec-draft-model`; `-hfd`/`--hf-repo-draft` → `--spec-draft-hf`; `--spec-ngram-size-n/m/min-hits` → type-specific `--spec-ngram-simple-*`/`--spec-ngram-map-k-*`/`--spec-ngram-map-k4v-*`; env vars similarly renamed (`LLAMA_ARG_DRAFT_MAX`→`LLAMA_ARG_SPEC_DRAFT_N_MAX`, etc.); CLI-level only, Java layer passes params via JSON struct fields, no JNI impact |
+| ~b9004–b9016 | `ggml/src/ggml-cuda/ggml-cuda.cu` | PCI bus ID detection replaced `snprintf` with `cudaDeviceGetPCIBusId` (buffer 16→32 bytes); HIP/MUSA compat headers gain `cudaDeviceGetPCIBusId` alias; internal CUDA backend |
+| ~b9004–b9016 | `ggml/src/ggml-opencl/` | Adreno MoE MXFP4: new `kernel_convert_block_mxfp4_trans4_ns`/`restore` kernels in `cvt.cl`; new `gemm_moe_mxfp4_f32_ns`, `gemv_moe_mxfp4_f32_ns`, `moe_reorder_b`, `moe_sort_by_expert` kernel files; GPU-side router reorder replaces CPU-side preprocessing; `q_img` created for GEMM path; internal OpenCL backend |
+| ~b9004–b9016 | `ggml/src/ggml-vulkan/ggml-vulkan.cpp` | `GGML_VK_MAX_NODES 8192` macro removed (node limit now determined differently); internal Vulkan backend |
+| ~b9004–b9016 | `ggml/src/ggml-webgpu/` | `ggml_webgpu_row_norm_pipeline_key` gains `src_type`/`dst_type` fields; `GGML_OP_NORM` now supported alongside `GGML_OP_RMS_NORM`/`GGML_OP_L2_NORM`; `row_norm.wgsl` gains SRC_TYPE/DST_TYPE parameterization and NORM two-pass algorithm; internal WebGPU backend |
+| ~b9004–b9016 | `src/llama-model.cpp` | `rope_yarn_log_mul` `get_key` call changed from `required=0.0f` to `required=false`; fixes Mistral YaRN log_mul loading; internal model loading, no project impact |
+| ~b9004–b9016 | `common/chat.cpp` | `common_chat_templates_generation_prompt()` extracted from `common_chat_templates_apply_jinja()`; internal refactor, no API change |
 
 ## Build Commands
 
