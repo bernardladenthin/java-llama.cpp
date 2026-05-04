@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b8994**
+Current llama.cpp pinned version: **b9004**
 
 ## Upgrading CUDA Version
 
@@ -183,7 +183,7 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 `ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
-**Known breaking changes by version range** (b5022 → b8982):
+**Known breaking changes by version range** (b5022 → b9004):
 
 | Version | File | Change |
 |---------|------|--------|
@@ -235,6 +235,10 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b8982–b8994 | `src/llama-mmap.cpp` | Windows large-file (>2 GB) fix: `ftell`/`fseek` replaced with `_ftelli64`/`_fseeki64`; upstream only |
 | ~b8982–b8994 | `tools/server/httplib.h` | cpp-httplib bumped to v0.43.2: Windows `FILE_SHARE_WRITE` fix, Linux DNS cancel race fix, mbedTLS `close_notify` fix; upstream server header, no project changes required |
 | ~b8982–b8994 | `tools/server/server-context.cpp` | New `LLAMA_TRACE` env variable enables slot acceptance tracing; upstream only |
+| ~b8994–b9004 | `ggml/src/ggml-vulkan/ggml-vulkan.cpp` | `vk_fa_pipeline_state` gains `k_type`/`v_type` fields; `get_fa_tuning_params_coopmat2` now takes separate `k_type`/`v_type` params; mixed K/V type FA pipeline creation refactored to `CREATE_FA_CM2_MIXED()` macro; `flash_attn_cm2.comp` shader uses runtime `FaTypeK`/`FaTypeV` spec constants (spec constants 12–15 added); `DECODEFUNC`/`NEEDS_INIT_IQ_SHMEM` macros removed; internal Vulkan backend, no project changes required |
+| ~b8994–b9004 | `ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp` | `get_mul_mat_fast_pipeline` vectorized-path condition fixed: `dst->ne[1] % 4 == 0` check removed (was preventing vectorization for non-multiple-of-4 batch sizes); internal WebGPU backend, no project changes required |
+| ~b8994–b9004 | `ggml/src/ggml-hexagon/` | Hexagon HTP backend: FA `exp2` half-precision option, unary-op non-contiguous tensor fix; internal DSP backend, no project changes required |
+| ~b8994–b9004 | `tools/server/webui/` | Major frontend component reorganization (Svelte/TypeScript); purely UI, no C++ or JNI impact |
 
 ## Build Commands
 
