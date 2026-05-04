@@ -426,7 +426,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 | `src/test/cpp/test_json_helpers.cpp` | 42 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`, `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config` |
 | `src/test/cpp/test_jni_helpers.cpp` | 36 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock |
 
-**Current total: 413 tests (all passing).** Branch: `claude/refactor-java-llama-d3lua`.
+**Current total: 417 tests (all passing).** Branch: `claude/determined-volta-T8AoQ`.
 
 #### Upstream source location (in CMake build tree)
 

@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 import de.kherud.llama.args.MiroStat;
+import de.kherud.llama.args.ReasoningFormat;
 import de.kherud.llama.args.Sampler;
 
 /**
@@ -52,6 +53,8 @@ public final class InferenceParameters extends JsonParameters {
 	private static final String PARAM_USE_JINJA = "use_jinja";
 	private static final String PARAM_CHAT_TEMPLATE_KWARGS = "chat_template_kwargs";
 	private static final String PARAM_MESSAGES = "messages";
+	private static final String PARAM_REASONING_FORMAT = "reasoning_format";
+	private static final String PARAM_REASONING_BUDGET_TOKENS = "reasoning_budget_tokens";
 
 	public InferenceParameters(String prompt) {
 		// we always need a prompt
@@ -544,6 +547,32 @@ public final class InferenceParameters extends JsonParameters {
         parameters.put(PARAM_MESSAGES, serializer.buildMessages(systemMessage, messages).toString());
         return this;
     }
+
+	/**
+	 * Set how reasoning/thinking tokens emitted by models like DeepSeek-R1 and QwQ are
+	 * extracted and returned. Only effective when chat-template rendering is active
+	 * ({@link #setUseChatTemplate(boolean)}).
+	 *
+	 * @param reasoningFormat the format used to handle thinking tokens
+	 * @return this builder
+	 */
+	public InferenceParameters setReasoningFormat(ReasoningFormat reasoningFormat) {
+		parameters.put(PARAM_REASONING_FORMAT, toJsonString(reasoningFormat.getArgValue()));
+		return this;
+	}
+
+	/**
+	 * Limit the number of reasoning tokens a thinking model (e.g. DeepSeek-R1, QwQ) may
+	 * emit before it is forced to stop reasoning and begin its response.
+	 * A value of {@code -1} (the default) disables the budget.
+	 *
+	 * @param budgetTokens maximum reasoning tokens (-1 = unlimited)
+	 * @return this builder
+	 */
+	public InferenceParameters setReasoningBudgetTokens(int budgetTokens) {
+		parameters.put(PARAM_REASONING_BUDGET_TOKENS, String.valueOf(budgetTokens));
+		return this;
+	}
 
 	InferenceParameters setStream(boolean stream) {
 		parameters.put(PARAM_STREAM, String.valueOf(stream));

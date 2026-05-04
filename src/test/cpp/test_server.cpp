@@ -1678,6 +1678,34 @@ TEST(ParamsFromJsonCmpl, NCmpl_AliasedFromN) {
 }
 
 // ============================================================
+// params_from_json_cmpl — reasoning_budget_tokens
+//   reasoning_budget_tokens defaults to -1 (disabled).
+//   Any explicit value is stored directly in sampling.reasoning_budget_tokens.
+//   The tag-tokenisation paths (start/end/message) are skipped when tags are empty,
+//   so these tests do not require a vocab pointer.
+// ============================================================
+
+TEST(ParamsFromJsonCmpl, ReasoningBudgetTokens_Default_IsMinusOne) {
+    const auto p = parse_params({});
+    EXPECT_EQ(p.sampling.reasoning_budget_tokens, -1);
+}
+
+TEST(ParamsFromJsonCmpl, ReasoningBudgetTokens_SetPositive) {
+    const auto p = parse_params({{"reasoning_budget_tokens", 512}});
+    EXPECT_EQ(p.sampling.reasoning_budget_tokens, 512);
+}
+
+TEST(ParamsFromJsonCmpl, ReasoningBudgetTokens_Zero) {
+    const auto p = parse_params({{"reasoning_budget_tokens", 0}});
+    EXPECT_EQ(p.sampling.reasoning_budget_tokens, 0);
+}
+
+TEST(ParamsFromJsonCmpl, ReasoningBudgetTokens_ExplicitMinusOne_Disabled) {
+    const auto p = parse_params({{"reasoning_budget_tokens", -1}});
+    EXPECT_EQ(p.sampling.reasoning_budget_tokens, -1);
+}
+
+// ============================================================
 // params_from_json_cmpl — grammar type routing
 //   Three distinct paths set grammar.type:
 //     "json_schema" key (no "grammar") → COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT
