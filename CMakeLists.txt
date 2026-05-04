@@ -97,7 +97,7 @@ set(GGML_AVX512  OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b9016
+	GIT_TAG        b9022
 )
 FetchContent_MakeAvailable(llama.cpp)
 

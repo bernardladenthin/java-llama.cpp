@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b9016**
+Current llama.cpp pinned version: **b9022**
 
 ## Upgrading CUDA Version
 
@@ -183,7 +183,7 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 `ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
-**Known breaking changes by version range** (b5022 → b9016):
+**Known breaking changes by version range** (b5022 → b9022):
 
 | Version | File | Change |
 |---------|------|--------|
@@ -248,6 +248,15 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b9004–b9016 | `ggml/src/ggml-webgpu/` | `ggml_webgpu_row_norm_pipeline_key` gains `src_type`/`dst_type` fields; `GGML_OP_NORM` now supported alongside `GGML_OP_RMS_NORM`/`GGML_OP_L2_NORM`; `row_norm.wgsl` gains SRC_TYPE/DST_TYPE parameterization and NORM two-pass algorithm; internal WebGPU backend |
 | ~b9004–b9016 | `src/llama-model.cpp` | `rope_yarn_log_mul` `get_key` call changed from `required=0.0f` to `required=false`; fixes Mistral YaRN log_mul loading; internal model loading, no project impact |
 | ~b9004–b9016 | `common/chat.cpp` | `common_chat_templates_generation_prompt()` extracted from `common_chat_templates_apply_jinja()`; internal refactor, no API change |
+| ~b9016–b9022 | `src/llama-model.h` + `src/llama-model.cpp` + `src/models/` | `llama_model` becomes abstract base with pure virtual methods (`load_stats`, `load_hparams`, `load_vocab`, `load_tensors`, `load_arch_hparams`, `load_arch_tensors`, `build_arch_graph`); `load_arch()` removed; new intermediate `llama_model_base` class provides concrete implementations; per-arch subclasses (e.g. `llama_model_llama`, `llama_model_gemma2`) in `src/models/`; factory `llama_model_create(llm_arch, params)` and `llama_model_create(ml, params)` replace direct instantiation; `LLAMA_LOAD_LOCALS` convenience macro added; public C API (`llama_model_load_from_file` etc.) unchanged — no project impact |
+| ~b9016–b9022 | `src/models/` | Many model files renamed: `cohere2-iswa.cpp`→`cohere2.cpp`, `gemma2-iswa.cpp`→`gemma2.cpp`, `gemma3n-iswa.cpp`→`gemma3n.cpp`, `gemma4-iswa.cpp`→`gemma4.cpp`, `mimo2-iswa.cpp`→`mimo2.cpp`, `openai-moe-iswa.cpp`→`openai-moe.cpp`, `pangu-embedded.cpp`→`pangu-embed.cpp`, `qwen3vl-moe.cpp`→`qwen3vlmoe.cpp`, `step35-iswa.cpp`→`step35.cpp`; new model files added (`deepseek2ocr.cpp`, `glm-dsa.cpp`, `granite-moe.cpp`, `hunyuan-vl.cpp`, `jina-bert-v2/v3.cpp`, `lfm2moe.cpp`, `llama-embed.cpp`, `mamba2.cpp`, `minicpm.cpp`, `mistral4.cpp`, `nemotron-h-moe.cpp`, `nomic-bert.cpp`, `nomic-bert-moe.cpp`, `phimoe.cpp`); upstream only, no project changes required |
+| ~b9016–b9022 | `tools/server/server-context.cpp` | `server_prompt_checkpoint_update` (the renamed function from b9016) static function signature changed from returning by value to taking `server_prompt_checkpoint &` by reference; compiled directly into jllama, no project call site |
+| ~b9016–b9022 | `tools/server/server-tools.cpp` | New built-in `get_datetime` tool added via new `server_tool_get_datetime` struct in `build_tools()`; no project changes required (handled automatically by compiled upstream source) |
+| ~b9016–b9022 | `common/chat-auto-parser-generator.cpp` | `force_tools` variable removed from `build_tool_parser_json_native`, `build_tool_parser_tag_json`, `build_tool_parser_tag_tagged`; content before tool calls is now always `p.optional(p.content(...))` regardless of `tool_choice=required`; upstream only, no project changes required |
+| ~b9016–b9022 | `common/chat-peg-parser.h/cpp` | New `optspace(const std::string & tag)` method added to `common_chat_peg_builder`; makes leading/trailing spaces in reasoning tags optional; upstream only, no project changes required |
+| ~b9016–b9022 | `common/reasoning-budget.cpp` | Forced token logit now set to `+INFINITY` (previously left at whatever the model computed); reasoning budget enforcement is now absolute; upstream only, no project changes required |
+| ~b9016–b9022 | `common/chat.cpp` | `thinking_start_tag` and `thinking_end_tag` now trimmed via `trim_whitespace()`; upstream only, no project changes required |
+| ~b9016–b9022 | `examples/diffusion/` | `diffusion_generate` extracted from `diffusion-cli.cpp` to new `diffusion.h`/`diffusion.cpp` static library; enum names prefixed: `ORIGIN`→`DIFFUSION_ALGORITHM_ORIGIN`, `TIMESTEP_BASED`→`DIFFUSION_TRANSFER_SCHEDULE_TIMESTEP_BASED` etc.; examples only, no project changes required |
 
 ## Build Commands
 
