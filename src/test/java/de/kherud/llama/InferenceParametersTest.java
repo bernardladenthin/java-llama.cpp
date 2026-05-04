@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 import de.kherud.llama.args.MiroStat;
+import de.kherud.llama.args.ReasoningFormat;
 import de.kherud.llama.args.Sampler;
 import org.junit.Test;
 
@@ -227,6 +228,52 @@ public class InferenceParametersTest {
 		java.util.Map<String, String> kwargs = new java.util.LinkedHashMap<>();
 		InferenceParameters params = new InferenceParameters("").setChatTemplateKwargs(kwargs);
 		assertEquals("{}", params.parameters.get("chat_template_kwargs"));
+	}
+
+	// -------------------------------------------------------------------------
+	// ReasoningFormat / ReasoningBudgetTokens
+	// -------------------------------------------------------------------------
+
+	@Test
+	public void testSetReasoningFormatNone() {
+		InferenceParameters params = new InferenceParameters("").setReasoningFormat(ReasoningFormat.NONE);
+		assertEquals("\"none\"", params.parameters.get("reasoning_format"));
+	}
+
+	@Test
+	public void testSetReasoningFormatAuto() {
+		InferenceParameters params = new InferenceParameters("").setReasoningFormat(ReasoningFormat.AUTO);
+		assertEquals("\"auto\"", params.parameters.get("reasoning_format"));
+	}
+
+	@Test
+	public void testSetReasoningFormatDeepseek() {
+		InferenceParameters params = new InferenceParameters("").setReasoningFormat(ReasoningFormat.DEEPSEEK);
+		assertEquals("\"deepseek\"", params.parameters.get("reasoning_format"));
+	}
+
+	@Test
+	public void testSetReasoningFormatDeepseekLegacy() {
+		InferenceParameters params = new InferenceParameters("").setReasoningFormat(ReasoningFormat.DEEPSEEK_LEGACY);
+		assertEquals("\"deepseek-legacy\"", params.parameters.get("reasoning_format"));
+	}
+
+	@Test
+	public void testSetReasoningBudgetTokensPositive() {
+		InferenceParameters params = new InferenceParameters("").setReasoningBudgetTokens(512);
+		assertEquals("512", params.parameters.get("reasoning_budget_tokens"));
+	}
+
+	@Test
+	public void testSetReasoningBudgetTokensZero() {
+		InferenceParameters params = new InferenceParameters("").setReasoningBudgetTokens(0);
+		assertEquals("0", params.parameters.get("reasoning_budget_tokens"));
+	}
+
+	@Test
+	public void testSetReasoningBudgetTokensDisabled() {
+		InferenceParameters params = new InferenceParameters("").setReasoningBudgetTokens(-1);
+		assertEquals("-1", params.parameters.get("reasoning_budget_tokens"));
 	}
 
 	// -------------------------------------------------------------------------
