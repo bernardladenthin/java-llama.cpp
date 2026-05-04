@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b8953**
+Current llama.cpp pinned version: **b8962**
 
 ## Upgrading CUDA Version
 
@@ -183,7 +183,7 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 `ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
-**Known breaking changes by version range** (b5022 → b8953):
+**Known breaking changes by version range** (b5022 → b8962):
 
 | Version | File | Change |
 |---------|------|--------|
@@ -218,6 +218,11 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b8913–b8953 | `tools/server/server-http.h` | New `uploaded_file` struct; `files` map type changed from `map<string, raw_buffer>` to `map<string, uploaded_file>`; upstream server sources compiled directly — no project impact |
 | ~b8913–b8953 | `src/llama-quant.cpp` | Default quantization ftype changed from `LLAMA_FTYPE_MOSTLY_Q5_1` to `LLAMA_FTYPE_MOSTLY_Q8_0`; upstream only |
 | ~b8913–b8953 | `src/models/llama.cpp`, `qwen3.cpp`, `qwen3moe.cpp` | Removed duplicate `ggml_mul` for `wo_s` scale (now handled exclusively by `build_attn`); upstream only |
+| ~b8953–b8962 | `common/common.h` | `struct cpu_params` → `struct common_cpu_params`; `cpu_get_num_physical_cores()` → `common_cpu_get_num_physical_cores()`; `cpu_get_num_math()` → `common_cpu_get_num_math()`; not used directly by project |
+| ~b8953–b8962 | `common/common.h` | `common_params_speculative` fully restructured with nested sub-structs: `.mparams_dft`/`.model_dft`/`.cparams_dft`/`.n_max`/`.n_min`/`.p_split`/`.p_min` → `.draft.mparams`/`.draft.model`/`.draft.cparams`/`.draft.n_max`/`.draft.n_min`/`.draft.p_split`/`.draft.p_min`; ngram fields moved to `.ngram_cache`/`.ngram_mod`/`.ngram_simple`/etc sub-structs; not referenced by project directly |
+| ~b8953–b8962 | `common/arg.h` | `is_sparam` bool split into `is_sampling` + `is_spec`; `set_sparam()` split into `set_sampling()` + `set_spec()`; not used by project |
+| ~b8953–b8962 | `tools/server/server-task.cpp` | `task_params::to_json()` drops `"speculative.n_max"`, `"speculative.n_min"`, `"speculative.p_min"` from output; only `"speculative.type"` remains; test `SlotParamsToJson.SpeculativeFields_Present` updated accordingly |
+| ~b8953–b8962 | `common/speculative.h` | New public API: `common_speculative_n_max()` and `common_speculative_n_min()` added; server-context.cpp uses these instead of direct field access; no project changes required |
 
 ## Build Commands
 

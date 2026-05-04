@@ -243,9 +243,9 @@ TEST(SlotParamsToJson, SpeculativeFields_Present) {
     task_params p;
     const json j = p.to_json();
 
-    EXPECT_TRUE(j.contains("speculative.n_max"));
-    EXPECT_TRUE(j.contains("speculative.n_min"));
-    EXPECT_TRUE(j.contains("speculative.p_min"));
+    // b8962: only speculative.type is serialised; n_max/n_min/p_min are
+    // input-only (consumed by params_from_json_cmpl, not emitted by to_json)
+    EXPECT_TRUE(j.contains("speculative.type"));
 }
 
 TEST(SlotParamsToJson, GrammarTriggers_IsArrayByDefault) {
