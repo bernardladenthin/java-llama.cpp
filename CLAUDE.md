@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b8982**
+Current llama.cpp pinned version: **b8994**
 
 ## Upgrading CUDA Version
 
@@ -228,6 +228,13 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b8962–b8982 | `ggml/src/ggml-cuda/ssm-conv.cuh` | `ggml_cuda_op_ssm_conv` gained optional `bias_add_node` param; `SSM_CONV + ADD + SILU` fusion now supported; internal CUDA code, no project changes required |
 | ~b8962–b8982 | `common/speculative.cpp` | Draft token confidence check (`p_min`) moved before push to result: low-confidence tokens are now discarded entirely rather than included then ignored; behavior fix, no project changes required |
 | ~b8962–b8982 | `tools/server/server-context.cpp` | `n_draft_total` accounting moved to draft generation site instead of acceptance site (bug fix); upstream only |
+| ~b8982–b8994 | `ggml/src/ggml-cuda.cu` | `ggml_backend_cuda_i` struct: `.get_tensor_2d_async` and `.set_tensor_2d_async` function pointers were swapped (get pointed to set impl and vice versa); corrected; internal CUDA backend, no project changes required |
+| ~b8982–b8994 | `ggml/src/ggml-vulkan.cpp` | `ggml_vk_buffer_write_2d_async` and `ggml_vk_buffer_write_2d` gained a `dpitch` parameter; Vulkan now implements `set_tensor_2d`/`get_tensor_2d` in buffer interface; internal backend code, no project changes required |
+| ~b8982–b8994 | `common/speculative.cpp` | Checkpoint helpers renamed: `draft_create_checkpoint` → `create_checkpoint`, `draft_restore_checkpoint` → `restore_checkpoint`; `ckpt_size` field removed (size computed from context directly); internal speculative module, not called by project |
+| ~b8982–b8994 | `common/arg.cpp` | CLI option typo fixed: `--spec--draft-p-split` → `--spec-draft-p-split` (extra dash removed); CLI-only, no project changes required |
+| ~b8982–b8994 | `src/llama-mmap.cpp` | Windows large-file (>2 GB) fix: `ftell`/`fseek` replaced with `_ftelli64`/`_fseeki64`; upstream only |
+| ~b8982–b8994 | `tools/server/httplib.h` | cpp-httplib bumped to v0.43.2: Windows `FILE_SHARE_WRITE` fix, Linux DNS cancel race fix, mbedTLS `close_notify` fix; upstream server header, no project changes required |
+| ~b8982–b8994 | `tools/server/server-context.cpp` | New `LLAMA_TRACE` env variable enables slot acceptance tracing; upstream only |
 
 ## Build Commands
 
