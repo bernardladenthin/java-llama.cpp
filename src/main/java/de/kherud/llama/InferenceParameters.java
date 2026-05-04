@@ -53,6 +53,7 @@ public final class InferenceParameters extends JsonParameters {
 	private static final String PARAM_USE_JINJA = "use_jinja";
 	private static final String PARAM_CHAT_TEMPLATE_KWARGS = "chat_template_kwargs";
 	private static final String PARAM_MESSAGES = "messages";
+	private static final String PARAM_TOP_N_SIGMA = "top_n_sigma";
 	private static final String PARAM_REASONING_FORMAT = "reasoning_format";
 	private static final String PARAM_REASONING_BUDGET_TOKENS = "reasoning_budget_tokens";
 
@@ -547,6 +548,19 @@ public final class InferenceParameters extends JsonParameters {
         parameters.put(PARAM_MESSAGES, serializer.buildMessages(systemMessage, messages).toString());
         return this;
     }
+
+	/**
+	 * Set top-n-sigma sampling threshold (default: -1.0, disabled).
+	 * Only tokens whose logit is within {@code n} standard deviations of the maximum logit
+	 * are kept for sampling. Effective values are typically in the range 1.0–3.0.
+	 *
+	 * @param topNSigma the sigma threshold (-1.0 = disabled)
+	 * @return this builder
+	 */
+	public InferenceParameters setTopNSigma(float topNSigma) {
+		parameters.put(PARAM_TOP_N_SIGMA, String.valueOf(topNSigma));
+		return this;
+	}
 
 	/**
 	 * Set how reasoning/thinking tokens emitted by models like DeepSeek-R1 and QwQ are

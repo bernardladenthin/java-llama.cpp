@@ -231,6 +231,22 @@ public class InferenceParametersTest {
 	}
 
 	// -------------------------------------------------------------------------
+	// setTopNSigma
+	// -------------------------------------------------------------------------
+
+	@Test
+	public void testSetTopNSigmaEnabled() {
+		InferenceParameters params = new InferenceParameters("").setTopNSigma(2.0f);
+		assertEquals("2.0", params.parameters.get("top_n_sigma"));
+	}
+
+	@Test
+	public void testSetTopNSigmaDisabled() {
+		InferenceParameters params = new InferenceParameters("").setTopNSigma(-1.0f);
+		assertEquals("-1.0", params.parameters.get("top_n_sigma"));
+	}
+
+	// -------------------------------------------------------------------------
 	// ReasoningFormat / ReasoningBudgetTokens
 	// -------------------------------------------------------------------------
 

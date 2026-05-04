@@ -399,4 +399,106 @@ public class ModelParametersTest {
 		assertSame(p, p.setGpuLayers(10));
 		assertSame(p, p.enableEmbedding());
 	}
+
+	// -------------------------------------------------------------------------
+	// mmproj — vision model projection file/url
+	// -------------------------------------------------------------------------
+
+	@Test
+	public void testSetMmproj() {
+		ModelParameters p = new ModelParameters().setMmproj("/models/mmproj.gguf");
+		assertEquals("/models/mmproj.gguf", p.parameters.get("--mmproj"));
+	}
+
+	@Test
+	public void testSetMmprojUrl() {
+		ModelParameters p = new ModelParameters().setMmprojUrl("https://example.com/mmproj.gguf");
+		assertEquals("https://example.com/mmproj.gguf", p.parameters.get("--mmproj-url"));
+	}
+
+	@Test
+	public void testEnableMmprojAuto() {
+		ModelParameters p = new ModelParameters().enableMmprojAuto();
+		assertTrue(p.parameters.containsKey("--mmproj-auto"));
+	}
+
+	@Test
+	public void testEnableMmprojOffload() {
+		ModelParameters p = new ModelParameters().enableMmprojOffload();
+		assertTrue(p.parameters.containsKey("--mmproj-offload"));
+	}
+
+	// -------------------------------------------------------------------------
+	// Reasoning format / budget — model-level defaults for thinking models
+	// -------------------------------------------------------------------------
+
+	@Test
+	public void testSetReasoningFormatNone() {
+		ModelParameters p = new ModelParameters().setReasoningFormat(de.kherud.llama.args.ReasoningFormat.NONE);
+		assertEquals("none", p.parameters.get("--reasoning-format"));
+	}
+
+	@Test
+	public void testSetReasoningFormatAuto() {
+		ModelParameters p = new ModelParameters().setReasoningFormat(de.kherud.llama.args.ReasoningFormat.AUTO);
+		assertEquals("auto", p.parameters.get("--reasoning-format"));
+	}
+
+	@Test
+	public void testSetReasoningFormatDeepseek() {
+		ModelParameters p = new ModelParameters().setReasoningFormat(de.kherud.llama.args.ReasoningFormat.DEEPSEEK);
+		assertEquals("deepseek", p.parameters.get("--reasoning-format"));
+	}
+
+	@Test
+	public void testSetReasoningFormatDeepseekLegacy() {
+		ModelParameters p = new ModelParameters().setReasoningFormat(de.kherud.llama.args.ReasoningFormat.DEEPSEEK_LEGACY);
+		assertEquals("deepseek-legacy", p.parameters.get("--reasoning-format"));
+	}
+
+	@Test
+	public void testSetReasoningBudgetPositive() {
+		ModelParameters p = new ModelParameters().setReasoningBudget(1024);
+		assertEquals("1024", p.parameters.get("--reasoning-budget"));
+	}
+
+	@Test
+	public void testSetReasoningBudgetDisabled() {
+		ModelParameters p = new ModelParameters().setReasoningBudget(-1);
+		assertEquals("-1", p.parameters.get("--reasoning-budget"));
+	}
+
+	// -------------------------------------------------------------------------
+	// setSleepIdleSeconds
+	// -------------------------------------------------------------------------
+
+	@Test
+	public void testSetSleepIdleSeconds() {
+		ModelParameters p = new ModelParameters().setSleepIdleSeconds(60);
+		assertEquals("60", p.parameters.get("--sleep-idle-seconds"));
+	}
+
+	@Test
+	public void testSetSleepIdleSecondsZero() {
+		ModelParameters p = new ModelParameters().setSleepIdleSeconds(0);
+		assertEquals("0", p.parameters.get("--sleep-idle-seconds"));
+	}
+
+	// -------------------------------------------------------------------------
+	// setClearIdle / setKvUnified — correct flag names (regression)
+	// -------------------------------------------------------------------------
+
+	@Test
+	public void testSetClearIdleTrue_usesCacheIdleSlotsFlag() {
+		ModelParameters p = new ModelParameters().setClearIdle(true);
+		assertTrue(p.parameters.containsKey("--cache-idle-slots"));
+		assertFalse(p.parameters.containsKey("--no-cache-idle-slots"));
+	}
+
+	@Test
+	public void testSetClearIdleFalse_usesNoCacheIdleSlotsFlag() {
+		ModelParameters p = new ModelParameters().setClearIdle(false);
+		assertTrue(p.parameters.containsKey("--no-cache-idle-slots"));
+		assertFalse(p.parameters.containsKey("--cache-idle-slots"));
+	}
 }

@@ -34,6 +34,36 @@ public class ChatResponseParser {
     public static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     /**
+     * Extract the reasoning/thinking content from an OAI chat completion JSON string.
+     * Navigates {@code choices[0].message.reasoning_content}.
+     *
+     * <p>Thinking models (DeepSeek-R1, QwQ, Qwen3) populate this field when
+     * {@code reasoning_format} is {@code "deepseek"} or {@code "auto"}. Returns an
+     * empty string when no reasoning content is present or when the JSON is malformed.
+     *
+     * @param json OAI-compatible chat completion JSON string
+     * @return the reasoning content string, or {@code ""} on any failure
+     */
+    public String extractChoiceReasoningContent(String json) {
+        try {
+            return extractChoiceReasoningContent(OBJECT_MAPPER.readTree(json));
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    /**
+     * Extract the reasoning/thinking content from a pre-parsed OAI chat completion node.
+     * Navigates {@code choices[0].message.reasoning_content} via Jackson path API.
+     *
+     * @param node pre-parsed OAI chat completion response node
+     * @return the reasoning content string, or {@code ""} if absent
+     */
+    public String extractChoiceReasoningContent(JsonNode node) {
+        return node.path("choices").path(0).path("message").path("reasoning_content").asText("");
+    }
+
+    /**
      * Extract the assistant's reply text from an OAI chat completion JSON string.
      * Navigates {@code choices[0].message.content} via Jackson.
      *

@@ -97,6 +97,57 @@ public class ChatResponseParserTest {
     }
 
     // ------------------------------------------------------------------
+    // extractChoiceReasoningContent
+    // ------------------------------------------------------------------
+
+    @Test
+    public void testExtractChoiceReasoningContent_present() {
+        String json = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"The answer is 42.\"," +
+                "\"reasoning_content\":\"Let me think step by step...\"}}]}";
+        assertEquals("Let me think step by step...", parser.extractChoiceReasoningContent(json));
+    }
+
+    @Test
+    public void testExtractChoiceReasoningContent_absent_returnsEmpty() {
+        String json = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Hello\"}}]}";
+        assertEquals("", parser.extractChoiceReasoningContent(json));
+    }
+
+    @Test
+    public void testExtractChoiceReasoningContent_emptyString() {
+        String json = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Hi\"," +
+                "\"reasoning_content\":\"\"}}]}";
+        assertEquals("", parser.extractChoiceReasoningContent(json));
+    }
+
+    @Test
+    public void testExtractChoiceReasoningContent_missingChoices_returnsEmpty() {
+        String json = "{\"id\":\"x\",\"object\":\"chat.completion\"}";
+        assertEquals("", parser.extractChoiceReasoningContent(json));
+    }
+
+    @Test
+    public void testExtractChoiceReasoningContent_malformedJson_returnsEmpty() {
+        assertEquals("", parser.extractChoiceReasoningContent("{not json"));
+    }
+
+    @Test
+    public void testExtractChoiceReasoningContent_multiline() {
+        String json = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"42\"," +
+                "\"reasoning_content\":\"Step 1: identify the question.\\nStep 2: answer it.\"}}]}";
+        assertEquals("Step 1: identify the question.\nStep 2: answer it.",
+                parser.extractChoiceReasoningContent(json));
+    }
+
+    @Test
+    public void testExtractChoiceReasoningContent_node() throws Exception {
+        JsonNode node = MAPPER.readTree(
+                "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"," +
+                "\"reasoning_content\":\"thinking...\"}}]}");
+        assertEquals("thinking...", parser.extractChoiceReasoningContent(node));
+    }
+
+    // ------------------------------------------------------------------
     // extractUsageField
     // ------------------------------------------------------------------
 

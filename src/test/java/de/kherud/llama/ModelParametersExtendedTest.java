@@ -460,31 +460,31 @@ public class ModelParametersExtendedTest {
     @Test
     public void testSetClearIdleTrue() {
         ModelParameters p = new ModelParameters().setClearIdle(true);
-        assertTrue(p.parameters.containsKey("--clear-idle"));
-        assertNull(p.parameters.get("--clear-idle"));
-        assertFalse(p.parameters.containsKey("--no-clear-idle"));
+        assertTrue(p.parameters.containsKey("--cache-idle-slots"));
+        assertNull(p.parameters.get("--cache-idle-slots"));
+        assertFalse(p.parameters.containsKey("--no-cache-idle-slots"));
     }
 
     @Test
     public void testSetClearIdleFalse() {
         ModelParameters p = new ModelParameters().setClearIdle(false);
-        assertTrue(p.parameters.containsKey("--no-clear-idle"));
-        assertNull(p.parameters.get("--no-clear-idle"));
-        assertFalse(p.parameters.containsKey("--clear-idle"));
+        assertTrue(p.parameters.containsKey("--no-cache-idle-slots"));
+        assertNull(p.parameters.get("--no-cache-idle-slots"));
+        assertFalse(p.parameters.containsKey("--cache-idle-slots"));
     }
 
     @Test
     public void testSetClearIdleFlipFromTrueToFalse() {
         ModelParameters p = new ModelParameters().setClearIdle(true).setClearIdle(false);
-        assertTrue(p.parameters.containsKey("--no-clear-idle"));
-        assertFalse(p.parameters.containsKey("--clear-idle"));
+        assertTrue(p.parameters.containsKey("--no-cache-idle-slots"));
+        assertFalse(p.parameters.containsKey("--cache-idle-slots"));
     }
 
     @Test
     public void testSetClearIdleFlipFromFalseToTrue() {
         ModelParameters p = new ModelParameters().setClearIdle(false).setClearIdle(true);
-        assertTrue(p.parameters.containsKey("--clear-idle"));
-        assertFalse(p.parameters.containsKey("--no-clear-idle"));
+        assertTrue(p.parameters.containsKey("--cache-idle-slots"));
+        assertFalse(p.parameters.containsKey("--no-cache-idle-slots"));
     }
 
     @Test
@@ -496,10 +496,10 @@ public class ModelParametersExtendedTest {
                 .setClearIdle(true);
         assertTrue(p.parameters.containsKey("--kv-unified"));
         assertEquals("8192", p.parameters.get("--cache-ram"));
-        assertTrue(p.parameters.containsKey("--clear-idle"));
+        assertTrue(p.parameters.containsKey("--cache-idle-slots"));
         // Opposite flags must be absent
         assertFalse(p.parameters.containsKey("--no-kv-unified"));
-        assertFalse(p.parameters.containsKey("--no-clear-idle"));
+        assertFalse(p.parameters.containsKey("--no-cache-idle-slots"));
     }
 
     @Test
