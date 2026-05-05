@@ -1231,13 +1231,13 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set the number of tokens to draft for speculative decoding.
+     * Set the maximum number of tokens to draft for speculative decoding.
      *
      * @param draftMax the number of tokens to draft for speculative decoding
      * @return this builder
      */
     public ModelParameters setDraftMax(int draftMax) {
-        parameters.put("--draft-max", String.valueOf(draftMax));
+        parameters.put("--spec-draft-n-max", String.valueOf(draftMax));
         return this;
     }
 
@@ -1248,7 +1248,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDraftMin(int draftMin) {
-        parameters.put("--draft-min", String.valueOf(draftMin));
+        parameters.put("--spec-draft-n-min", String.valueOf(draftMin));
         return this;
     }
 
@@ -1259,7 +1259,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDraftPMin(float draftPMin) {
-        parameters.put("--draft-p-min", String.valueOf(draftPMin));
+        parameters.put("--spec-draft-p-min", String.valueOf(draftPMin));
         return this;
     }
 
@@ -1270,7 +1270,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCtxSizeDraft(int ctxSizeDraft) {
-        parameters.put("--ctx-size-draft", String.valueOf(ctxSizeDraft));
+        parameters.put("--spec-draft-ctx-size", String.valueOf(ctxSizeDraft));
         return this;
     }
 
@@ -1281,7 +1281,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDeviceDraft(String deviceDraft) {
-        parameters.put("--device-draft", deviceDraft);
+        parameters.put("--spec-draft-device", deviceDraft);
         return this;
     }
 
@@ -1292,7 +1292,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setGpuLayersDraft(int gpuLayersDraft) {
-        parameters.put("--gpu-layers-draft", String.valueOf(gpuLayersDraft));
+        parameters.put("--spec-draft-ngl", String.valueOf(gpuLayersDraft));
         return this;
     }
 
@@ -1303,7 +1303,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setModelDraft(String modelDraft) {
-        parameters.put("--model-draft", modelDraft);
+        parameters.put("--spec-draft-model", modelDraft);
         return this;
     }
 
