@@ -93,10 +93,16 @@ public enum ModelFlag {
     NO_KV_UNIFIED("--no-kv-unified"),
 
     /** Enable saving and clearing idle slots when a new task starts. */
-    CLEAR_IDLE("--clear-idle"),
+    CLEAR_IDLE("--cache-idle-slots"),
 
     /** Disable saving and clearing idle slots. */
-    NO_CLEAR_IDLE("--no-clear-idle");
+    NO_CLEAR_IDLE("--no-cache-idle-slots"),
+
+    /** Automatically detect and load the mmproj vision projection model. */
+    MMPROJ_AUTO("--mmproj-auto"),
+
+    /** Offload the mmproj vision projection model to the GPU. */
+    MMPROJ_OFFLOAD("--mmproj-offload");
 
     private final String cliFlag;
 

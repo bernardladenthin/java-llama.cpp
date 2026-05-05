@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b8953**
+Current llama.cpp pinned version: **b9022**
 
 ## Upgrading CUDA Version
 
@@ -183,7 +183,7 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 `ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
-**Known breaking changes by version range** (b5022 → b8953):
+**Known breaking changes by version range** (b5022 → b9022):
 
 | Version | File | Change |
 |---------|------|--------|
@@ -218,6 +218,45 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b8913–b8953 | `tools/server/server-http.h` | New `uploaded_file` struct; `files` map type changed from `map<string, raw_buffer>` to `map<string, uploaded_file>`; upstream server sources compiled directly — no project impact |
 | ~b8913–b8953 | `src/llama-quant.cpp` | Default quantization ftype changed from `LLAMA_FTYPE_MOSTLY_Q5_1` to `LLAMA_FTYPE_MOSTLY_Q8_0`; upstream only |
 | ~b8913–b8953 | `src/models/llama.cpp`, `qwen3.cpp`, `qwen3moe.cpp` | Removed duplicate `ggml_mul` for `wo_s` scale (now handled exclusively by `build_attn`); upstream only |
+| ~b8953–b8962 | `common/common.h` | `struct cpu_params` → `struct common_cpu_params`; `cpu_get_num_physical_cores()` → `common_cpu_get_num_physical_cores()`; `cpu_get_num_math()` → `common_cpu_get_num_math()`; not used directly by project |
+| ~b8953–b8962 | `common/common.h` | `common_params_speculative` fully restructured with nested sub-structs: `.mparams_dft`/`.model_dft`/`.cparams_dft`/`.n_max`/`.n_min`/`.p_split`/`.p_min` → `.draft.mparams`/`.draft.model`/`.draft.cparams`/`.draft.n_max`/`.draft.n_min`/`.draft.p_split`/`.draft.p_min`; ngram fields moved to `.ngram_cache`/`.ngram_mod`/`.ngram_simple`/etc sub-structs; not referenced by project directly |
+| ~b8953–b8962 | `common/arg.h` | `is_sparam` bool split into `is_sampling` + `is_spec`; `set_sparam()` split into `set_sampling()` + `set_spec()`; not used by project |
+| ~b8953–b8962 | `tools/server/server-task.cpp` | `task_params::to_json()` drops `"speculative.n_max"`, `"speculative.n_min"`, `"speculative.p_min"` from output; only `"speculative.type"` remains; test `SlotParamsToJson.SpeculativeFields_Present` updated accordingly |
+| ~b8953–b8962 | `common/speculative.h` | New public API: `common_speculative_n_max()` and `common_speculative_n_min()` added; server-context.cpp uses these instead of direct field access; no project changes required |
+| ~b8962–b8982 | `common/sampling.h` | `common_sampler_accept` 3rd param renamed `accept_grammar` → `is_generated`; semantics broadened: `false` now also skips reasoning budget update (not just grammar); no project call sites affected |
+| ~b8962–b8982 | `common/reasoning-budget.h` | Two overloads merged: `prefill_tokens` variant removed; new single overload takes `initial_state = REASONING_BUDGET_IDLE`; prefill now fed via `llama_sampler_accept()` loop after init; not called directly by project |
+| ~b8962–b8982 | `ggml/src/ggml-cuda/ssm-conv.cuh` | `ggml_cuda_op_ssm_conv` gained optional `bias_add_node` param; `SSM_CONV + ADD + SILU` fusion now supported; internal CUDA code, no project changes required |
+| ~b8962–b8982 | `common/speculative.cpp` | Draft token confidence check (`p_min`) moved before push to result: low-confidence tokens are now discarded entirely rather than included then ignored; behavior fix, no project changes required |
+| ~b8962–b8982 | `tools/server/server-context.cpp` | `n_draft_total` accounting moved to draft generation site instead of acceptance site (bug fix); upstream only |
+| ~b8982–b8994 | `ggml/src/ggml-cuda.cu` | `ggml_backend_cuda_i` struct: `.get_tensor_2d_async` and `.set_tensor_2d_async` function pointers were swapped (get pointed to set impl and vice versa); corrected; internal CUDA backend, no project changes required |
+| ~b8982–b8994 | `ggml/src/ggml-vulkan.cpp` | `ggml_vk_buffer_write_2d_async` and `ggml_vk_buffer_write_2d` gained a `dpitch` parameter; Vulkan now implements `set_tensor_2d`/`get_tensor_2d` in buffer interface; internal backend code, no project changes required |
+| ~b8982–b8994 | `common/speculative.cpp` | Checkpoint helpers renamed: `draft_create_checkpoint` → `create_checkpoint`, `draft_restore_checkpoint` → `restore_checkpoint`; `ckpt_size` field removed (size computed from context directly); internal speculative module, not called by project |
+| ~b8982–b8994 | `common/arg.cpp` | CLI option typo fixed: `--spec--draft-p-split` → `--spec-draft-p-split` (extra dash removed); CLI-only, no project changes required |
+| ~b8982–b8994 | `src/llama-mmap.cpp` | Windows large-file (>2 GB) fix: `ftell`/`fseek` replaced with `_ftelli64`/`_fseeki64`; upstream only |
+| ~b8982–b8994 | `tools/server/httplib.h` | cpp-httplib bumped to v0.43.2: Windows `FILE_SHARE_WRITE` fix, Linux DNS cancel race fix, mbedTLS `close_notify` fix; upstream server header, no project changes required |
+| ~b8982–b8994 | `tools/server/server-context.cpp` | New `LLAMA_TRACE` env variable enables slot acceptance tracing; upstream only |
+| ~b8994–b9004 | `ggml/src/ggml-vulkan/ggml-vulkan.cpp` | `vk_fa_pipeline_state` gains `k_type`/`v_type` fields; `get_fa_tuning_params_coopmat2` now takes separate `k_type`/`v_type` params; mixed K/V type FA pipeline creation refactored to `CREATE_FA_CM2_MIXED()` macro; `flash_attn_cm2.comp` shader uses runtime `FaTypeK`/`FaTypeV` spec constants (spec constants 12–15 added); `DECODEFUNC`/`NEEDS_INIT_IQ_SHMEM` macros removed; internal Vulkan backend, no project changes required |
+| ~b8994–b9004 | `ggml/src/ggml-webgpu/ggml-webgpu-shader-lib.hpp` | `get_mul_mat_fast_pipeline` vectorized-path condition fixed: `dst->ne[1] % 4 == 0` check removed (was preventing vectorization for non-multiple-of-4 batch sizes); internal WebGPU backend, no project changes required |
+| ~b8994–b9004 | `ggml/src/ggml-hexagon/` | Hexagon HTP backend: FA `exp2` half-precision option, unary-op non-contiguous tensor fix; internal DSP backend, no project changes required |
+| ~b8994–b9004 | `tools/server/webui/` | Major frontend component reorganization (Svelte/TypeScript); purely UI, no C++ or JNI impact |
+| ~b9004–b9016 | `src/llama-io.h` | `llama_io_read_i` interface changed: `read(size_t)→read(void*,size_t)`, `read_to(void*,size_t)` removed, new `read_tensor(tensor,offset,size)` added; `llama_io_write_buffer`/`llama_io_read_buffer` now batch backend tensor ops in destructors for performance; internal state-save/load path, not called by project |
+| ~b9004–b9016 | `tools/server/server-context.cpp` | Static `server_get_checkpoint()` (returns by value) renamed to `server_prompt_checkpoint_update()` (takes `server_prompt_checkpoint &` by reference, in-place update); compiled directly into jllama, no call site in project code |
+| ~b9004–b9016 | `common/arg.cpp` + docs | Speculative decoding CLI args renamed: `--draft`/`--draft-n`/`--draft-max` and `--draft-min`/`--draft-n-min` were **REMOVED** (handler `throw`s `std::invalid_argument` at parse time, not just deprecated); other draft flags (`--draft-p-min`, `--ctx-size-draft`, `--device-draft`, `--gpu-layers-draft`, `--model-draft`) kept as aliases for new canonical `--spec-draft-*` names. **Java impact**: `ModelParameters.setDraftMax`/`setDraftMin` produced removed flags → threw at model load; fixed to canonical `--spec-draft-n-max`/`--spec-draft-n-min`. Other `set*Draft` methods updated to canonical names for forward compatibility. Env vars also renamed (`LLAMA_ARG_DRAFT_MAX`→`LLAMA_ARG_SPEC_DRAFT_N_MAX`, etc.) |
+| ~b9004–b9016 | `ggml/src/ggml-cuda/ggml-cuda.cu` | PCI bus ID detection replaced `snprintf` with `cudaDeviceGetPCIBusId` (buffer 16→32 bytes); HIP/MUSA compat headers gain `cudaDeviceGetPCIBusId` alias; internal CUDA backend |
+| ~b9004–b9016 | `ggml/src/ggml-opencl/` | Adreno MoE MXFP4: new `kernel_convert_block_mxfp4_trans4_ns`/`restore` kernels in `cvt.cl`; new `gemm_moe_mxfp4_f32_ns`, `gemv_moe_mxfp4_f32_ns`, `moe_reorder_b`, `moe_sort_by_expert` kernel files; GPU-side router reorder replaces CPU-side preprocessing; `q_img` created for GEMM path; internal OpenCL backend |
+| ~b9004–b9016 | `ggml/src/ggml-vulkan/ggml-vulkan.cpp` | `GGML_VK_MAX_NODES 8192` macro removed (node limit now determined differently); internal Vulkan backend |
+| ~b9004–b9016 | `ggml/src/ggml-webgpu/` | `ggml_webgpu_row_norm_pipeline_key` gains `src_type`/`dst_type` fields; `GGML_OP_NORM` now supported alongside `GGML_OP_RMS_NORM`/`GGML_OP_L2_NORM`; `row_norm.wgsl` gains SRC_TYPE/DST_TYPE parameterization and NORM two-pass algorithm; internal WebGPU backend |
+| ~b9004–b9016 | `src/llama-model.cpp` | `rope_yarn_log_mul` `get_key` call changed from `required=0.0f` to `required=false`; fixes Mistral YaRN log_mul loading; internal model loading, no project impact |
+| ~b9004–b9016 | `common/chat.cpp` | `common_chat_templates_generation_prompt()` extracted from `common_chat_templates_apply_jinja()`; internal refactor, no API change |
+| ~b9016–b9022 | `src/llama-model.h` + `src/llama-model.cpp` + `src/models/` | `llama_model` becomes abstract base with pure virtual methods (`load_stats`, `load_hparams`, `load_vocab`, `load_tensors`, `load_arch_hparams`, `load_arch_tensors`, `build_arch_graph`); `load_arch()` removed; new intermediate `llama_model_base` class provides concrete implementations; per-arch subclasses (e.g. `llama_model_llama`, `llama_model_gemma2`) in `src/models/`; factory `llama_model_create(llm_arch, params)` and `llama_model_create(ml, params)` replace direct instantiation; `LLAMA_LOAD_LOCALS` convenience macro added; public C API (`llama_model_load_from_file` etc.) unchanged — no project impact |
+| ~b9016–b9022 | `src/models/` | Many model files renamed: `cohere2-iswa.cpp`→`cohere2.cpp`, `gemma2-iswa.cpp`→`gemma2.cpp`, `gemma3n-iswa.cpp`→`gemma3n.cpp`, `gemma4-iswa.cpp`→`gemma4.cpp`, `mimo2-iswa.cpp`→`mimo2.cpp`, `openai-moe-iswa.cpp`→`openai-moe.cpp`, `pangu-embedded.cpp`→`pangu-embed.cpp`, `qwen3vl-moe.cpp`→`qwen3vlmoe.cpp`, `step35-iswa.cpp`→`step35.cpp`; new model files added (`deepseek2ocr.cpp`, `glm-dsa.cpp`, `granite-moe.cpp`, `hunyuan-vl.cpp`, `jina-bert-v2/v3.cpp`, `lfm2moe.cpp`, `llama-embed.cpp`, `mamba2.cpp`, `minicpm.cpp`, `mistral4.cpp`, `nemotron-h-moe.cpp`, `nomic-bert.cpp`, `nomic-bert-moe.cpp`, `phimoe.cpp`); upstream only, no project changes required |
+| ~b9016–b9022 | `tools/server/server-context.cpp` | `server_prompt_checkpoint_update` (the renamed function from b9016) static function signature changed from returning by value to taking `server_prompt_checkpoint &` by reference; compiled directly into jllama, no project call site |
+| ~b9016–b9022 | `tools/server/server-tools.cpp` | New built-in `get_datetime` tool added via new `server_tool_get_datetime` struct in `build_tools()`; no project changes required (handled automatically by compiled upstream source) |
+| ~b9016–b9022 | `common/chat-auto-parser-generator.cpp` | `force_tools` variable removed from `build_tool_parser_json_native`, `build_tool_parser_tag_json`, `build_tool_parser_tag_tagged`; content before tool calls is now always `p.optional(p.content(...))` regardless of `tool_choice=required`; upstream only, no project changes required |
+| ~b9016–b9022 | `common/chat-peg-parser.h/cpp` | New `optspace(const std::string & tag)` method added to `common_chat_peg_builder`; makes leading/trailing spaces in reasoning tags optional; upstream only, no project changes required |
+| ~b9016–b9022 | `common/reasoning-budget.cpp` | Forced token logit now set to `+INFINITY` (previously left at whatever the model computed); reasoning budget enforcement is now absolute; upstream only, no project changes required |
+| ~b9016–b9022 | `common/chat.cpp` | `thinking_start_tag` and `thinking_end_tag` now trimmed via `trim_whitespace()`; upstream only, no project changes required |
+| ~b9016–b9022 | `examples/diffusion/` | `diffusion_generate` extracted from `diffusion-cli.cpp` to new `diffusion.h`/`diffusion.cpp` static library; enum names prefixed: `ORIGIN`→`DIFFUSION_ALGORITHM_ORIGIN`, `TIMESTEP_BASED`→`DIFFUSION_TRANSFER_SCHEDULE_TIMESTEP_BASED` etc.; examples only, no project changes required |
 
 ## Build Commands
 
@@ -387,7 +426,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 | `src/test/cpp/test_json_helpers.cpp` | 42 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`, `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config` |
 | `src/test/cpp/test_jni_helpers.cpp` | 36 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock |
 
-**Current total: 413 tests (all passing).** Branch: `claude/refactor-java-llama-d3lua`.
+**Current total: 417 tests (all passing).** Branch: `claude/determined-volta-T8AoQ`.
 
 #### Upstream source location (in CMake build tree)
 

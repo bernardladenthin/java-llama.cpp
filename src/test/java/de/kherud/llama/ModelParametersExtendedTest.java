@@ -460,31 +460,31 @@ public class ModelParametersExtendedTest {
     @Test
     public void testSetClearIdleTrue() {
         ModelParameters p = new ModelParameters().setClearIdle(true);
-        assertTrue(p.parameters.containsKey("--clear-idle"));
-        assertNull(p.parameters.get("--clear-idle"));
-        assertFalse(p.parameters.containsKey("--no-clear-idle"));
+        assertTrue(p.parameters.containsKey("--cache-idle-slots"));
+        assertNull(p.parameters.get("--cache-idle-slots"));
+        assertFalse(p.parameters.containsKey("--no-cache-idle-slots"));
     }
 
     @Test
     public void testSetClearIdleFalse() {
         ModelParameters p = new ModelParameters().setClearIdle(false);
-        assertTrue(p.parameters.containsKey("--no-clear-idle"));
-        assertNull(p.parameters.get("--no-clear-idle"));
-        assertFalse(p.parameters.containsKey("--clear-idle"));
+        assertTrue(p.parameters.containsKey("--no-cache-idle-slots"));
+        assertNull(p.parameters.get("--no-cache-idle-slots"));
+        assertFalse(p.parameters.containsKey("--cache-idle-slots"));
     }
 
     @Test
     public void testSetClearIdleFlipFromTrueToFalse() {
         ModelParameters p = new ModelParameters().setClearIdle(true).setClearIdle(false);
-        assertTrue(p.parameters.containsKey("--no-clear-idle"));
-        assertFalse(p.parameters.containsKey("--clear-idle"));
+        assertTrue(p.parameters.containsKey("--no-cache-idle-slots"));
+        assertFalse(p.parameters.containsKey("--cache-idle-slots"));
     }
 
     @Test
     public void testSetClearIdleFlipFromFalseToTrue() {
         ModelParameters p = new ModelParameters().setClearIdle(false).setClearIdle(true);
-        assertTrue(p.parameters.containsKey("--clear-idle"));
-        assertFalse(p.parameters.containsKey("--no-clear-idle"));
+        assertTrue(p.parameters.containsKey("--cache-idle-slots"));
+        assertFalse(p.parameters.containsKey("--no-cache-idle-slots"));
     }
 
     @Test
@@ -496,10 +496,10 @@ public class ModelParametersExtendedTest {
                 .setClearIdle(true);
         assertTrue(p.parameters.containsKey("--kv-unified"));
         assertEquals("8192", p.parameters.get("--cache-ram"));
-        assertTrue(p.parameters.containsKey("--clear-idle"));
+        assertTrue(p.parameters.containsKey("--cache-idle-slots"));
         // Opposite flags must be absent
         assertFalse(p.parameters.containsKey("--no-kv-unified"));
-        assertFalse(p.parameters.containsKey("--no-clear-idle"));
+        assertFalse(p.parameters.containsKey("--no-cache-idle-slots"));
     }
 
     @Test
@@ -894,43 +894,51 @@ public class ModelParametersExtendedTest {
     @Test
     public void testSetModelDraft() {
         ModelParameters p = new ModelParameters().setModelDraft("/path/to/draft.gguf");
-        assertEquals("/path/to/draft.gguf", p.parameters.get("--model-draft"));
+        assertEquals("/path/to/draft.gguf", p.parameters.get("--spec-draft-model"));
     }
 
     @Test
     public void testSetCtxSizeDraft() {
         ModelParameters p = new ModelParameters().setCtxSizeDraft(512);
-        assertEquals("512", p.parameters.get("--ctx-size-draft"));
+        assertEquals("512", p.parameters.get("--spec-draft-ctx-size"));
     }
 
     @Test
     public void testSetDeviceDraft() {
         ModelParameters p = new ModelParameters().setDeviceDraft("cuda0");
-        assertEquals("cuda0", p.parameters.get("--device-draft"));
+        assertEquals("cuda0", p.parameters.get("--spec-draft-device"));
     }
 
     @Test
     public void testSetGpuLayersDraft() {
         ModelParameters p = new ModelParameters().setGpuLayersDraft(16);
-        assertEquals("16", p.parameters.get("--gpu-layers-draft"));
+        assertEquals("16", p.parameters.get("--spec-draft-ngl"));
     }
 
     @Test
     public void testSetDraftMax() {
+        // Regression: --draft-max was REMOVED in b9016 and now throws std::invalid_argument
+        // at model load. Must use --spec-draft-n-max.
         ModelParameters p = new ModelParameters().setDraftMax(8);
-        assertEquals("8", p.parameters.get("--draft-max"));
+        assertEquals("8", p.parameters.get("--spec-draft-n-max"));
+        assertFalse("--draft-max throws on b9016+; must not appear in args",
+                p.parameters.containsKey("--draft-max"));
     }
 
     @Test
     public void testSetDraftMin() {
+        // Regression: --draft-min was REMOVED in b9016 and now throws std::invalid_argument
+        // at model load. Must use --spec-draft-n-min.
         ModelParameters p = new ModelParameters().setDraftMin(2);
-        assertEquals("2", p.parameters.get("--draft-min"));
+        assertEquals("2", p.parameters.get("--spec-draft-n-min"));
+        assertFalse("--draft-min throws on b9016+; must not appear in args",
+                p.parameters.containsKey("--draft-min"));
     }
 
     @Test
     public void testSetDraftPMin() {
         ModelParameters p = new ModelParameters().setDraftPMin(0.5f);
-        assertEquals("0.5", p.parameters.get("--draft-p-min"));
+        assertEquals("0.5", p.parameters.get("--spec-draft-p-min"));
     }
 
     // -------------------------------------------------------------------------

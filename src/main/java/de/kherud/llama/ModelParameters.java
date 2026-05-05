@@ -1231,13 +1231,13 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set the number of tokens to draft for speculative decoding.
+     * Set the maximum number of tokens to draft for speculative decoding.
      *
      * @param draftMax the number of tokens to draft for speculative decoding
      * @return this builder
      */
     public ModelParameters setDraftMax(int draftMax) {
-        parameters.put("--draft-max", String.valueOf(draftMax));
+        parameters.put("--spec-draft-n-max", String.valueOf(draftMax));
         return this;
     }
 
@@ -1248,7 +1248,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDraftMin(int draftMin) {
-        parameters.put("--draft-min", String.valueOf(draftMin));
+        parameters.put("--spec-draft-n-min", String.valueOf(draftMin));
         return this;
     }
 
@@ -1259,7 +1259,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDraftPMin(float draftPMin) {
-        parameters.put("--draft-p-min", String.valueOf(draftPMin));
+        parameters.put("--spec-draft-p-min", String.valueOf(draftPMin));
         return this;
     }
 
@@ -1270,7 +1270,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCtxSizeDraft(int ctxSizeDraft) {
-        parameters.put("--ctx-size-draft", String.valueOf(ctxSizeDraft));
+        parameters.put("--spec-draft-ctx-size", String.valueOf(ctxSizeDraft));
         return this;
     }
 
@@ -1281,7 +1281,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDeviceDraft(String deviceDraft) {
-        parameters.put("--device-draft", deviceDraft);
+        parameters.put("--spec-draft-device", deviceDraft);
         return this;
     }
 
@@ -1292,7 +1292,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setGpuLayersDraft(int gpuLayersDraft) {
-        parameters.put("--gpu-layers-draft", String.valueOf(gpuLayersDraft));
+        parameters.put("--spec-draft-ngl", String.valueOf(gpuLayersDraft));
         return this;
     }
 
@@ -1303,7 +1303,86 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setModelDraft(String modelDraft) {
-        parameters.put("--model-draft", modelDraft);
+        parameters.put("--spec-draft-model", modelDraft);
+        return this;
+    }
+
+    /**
+     * Set the multimodal projection model file for vision-capable models (LLaVA, Gemma3, Qwen2-VL, etc.).
+     *
+     * @param mmproj path to the mmproj model file
+     * @return this builder
+     */
+    public ModelParameters setMmproj(String mmproj) {
+        parameters.put("--mmproj", mmproj);
+        return this;
+    }
+
+    /**
+     * Set a URL to download the multimodal projection model file.
+     *
+     * @param url URL of the mmproj model file
+     * @return this builder
+     */
+    public ModelParameters setMmprojUrl(String url) {
+        parameters.put("--mmproj-url", url);
+        return this;
+    }
+
+    /**
+     * Enable automatic detection and loading of the mmproj model (e.g. when loading from Hugging Face).
+     *
+     * @return this builder
+     */
+    public ModelParameters enableMmprojAuto() {
+        return setFlag(ModelFlag.MMPROJ_AUTO);
+    }
+
+    /**
+     * Enable offloading of the mmproj model to the GPU.
+     *
+     * @return this builder
+     */
+    public ModelParameters enableMmprojOffload() {
+        return setFlag(ModelFlag.MMPROJ_OFFLOAD);
+    }
+
+    /**
+     * Set the default reasoning format for all requests handled by this model instance.
+     * Individual requests can override this via
+     * {@link InferenceParameters#setReasoningFormat(de.kherud.llama.args.ReasoningFormat)}.
+     *
+     * @param format the reasoning format for thinking-model output
+     * @return this builder
+     */
+    public ModelParameters setReasoningFormat(de.kherud.llama.args.ReasoningFormat format) {
+        parameters.put("--reasoning-format", format.getArgValue());
+        return this;
+    }
+
+    /**
+     * Set the default reasoning token budget for all requests.
+     * Use {@code -1} to disable the budget (unlimited reasoning tokens).
+     * Individual requests can override this via
+     * {@link InferenceParameters#setReasoningBudgetTokens(int)}.
+     *
+     * @param budget maximum reasoning tokens per request (-1 = unlimited)
+     * @return this builder
+     */
+    public ModelParameters setReasoningBudget(int budget) {
+        parameters.put("--reasoning-budget", String.valueOf(budget));
+        return this;
+    }
+
+    /**
+     * Set the number of seconds of idle time after which the server shuts down automatically.
+     * Useful for resource management in on-demand deployments.
+     *
+     * @param seconds idle timeout in seconds before auto-shutdown
+     * @return this builder
+     */
+    public ModelParameters setSleepIdleSeconds(int seconds) {
+        parameters.put("--sleep-idle-seconds", String.valueOf(seconds));
         return this;
     }
 

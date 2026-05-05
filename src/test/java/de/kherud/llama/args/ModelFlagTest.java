@@ -42,8 +42,10 @@ public class ModelFlagTest {
             {ModelFlag.VOCAB_ONLY,             "--vocab-only"},
             {ModelFlag.KV_UNIFIED,             "--kv-unified"},
             {ModelFlag.NO_KV_UNIFIED,          "--no-kv-unified"},
-            {ModelFlag.CLEAR_IDLE,             "--clear-idle"},
-            {ModelFlag.NO_CLEAR_IDLE,          "--no-clear-idle"},
+            {ModelFlag.CLEAR_IDLE,             "--cache-idle-slots"},
+            {ModelFlag.NO_CLEAR_IDLE,          "--no-cache-idle-slots"},
+            {ModelFlag.MMPROJ_AUTO,            "--mmproj-auto"},
+            {ModelFlag.MMPROJ_OFFLOAD,         "--mmproj-offload"},
         });
     }
 
@@ -66,7 +68,7 @@ public class ModelFlagTest {
 
     @Test
     public void testEnumCount() {
-        assertEquals(29, ModelFlag.values().length);
+        assertEquals(31, ModelFlag.values().length);
     }
 
     @Test
