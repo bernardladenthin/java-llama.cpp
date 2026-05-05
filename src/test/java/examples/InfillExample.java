@@ -1,9 +1,9 @@
 package examples;
 
-import de.kherud.llama.InferenceParameters;
-import de.kherud.llama.LlamaModel;
-import de.kherud.llama.LlamaOutput;
-import de.kherud.llama.ModelParameters;
+import net.ladenthin.llama.InferenceParameters;
+import net.ladenthin.llama.LlamaModel;
+import net.ladenthin.llama.LlamaOutput;
+import net.ladenthin.llama.ModelParameters;
 
 public class InfillExample {
 
