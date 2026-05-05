@@ -30,7 +30,7 @@ Access this library via Maven:
 ```xml
 <dependency>
     <groupId>net.ladenthin</groupId>
-    <artifactId>java-llama.cpp</artifactId>
+    <artifactId>llama</artifactId>
     <version>4.2.0</version>
 </dependency>
 ```
