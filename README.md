@@ -7,21 +7,29 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 
 **You are welcome to contribute**
 
-1. [Quick Start](#quick-start)  
-    1.1 [No Setup required](#no-setup-required)   
-    1.2 [Setup required](#setup-required)
-2. [Documentation](#documentation)  
-    2.1 [Example](#example)  
-    2.2 [Inference](#inference)  
-    2.3 [Infilling](#infilling)  
-3. [Android](#importing-in-android)
+1. [Features](#features)
+2. [Quick Start](#quick-start)  
+    2.1 [No Setup required](#no-setup-required)   
+    2.2 [Setup required](#setup-required)
+3. [Documentation](#documentation)  
+    3.1 [Example](#example)  
+    3.2 [Inference](#inference)  
+    3.3 [Chat Completion](#chat-completion)  
+    3.4 [Infilling](#infilling)  
+    3.5 [Embeddings & Reranking](#embeddings--reranking)  
+    3.6 [Raw JSON Endpoints](#raw-json-endpoints)
+4. [Android](#importing-in-android)
 
-> [!NOTE]
-> Now with support for Gemma 3 and Gemma 4
+## Features
 
-## Download
-
-[![](https://img.shields.io/badge/download-class.jar-blue)](dist/llama-4.2.0.jar)
+- Text completion (blocking and streaming) with full control over sampling parameters.
+- OpenAI-compatible **chat completion** with automatic chat-template application, including streaming and tool/function calling support via the upstream server.
+- **Embeddings** and **reranking** for retrieval pipelines.
+- **Infilling** (fill-in-the-middle) for code models.
+- **Tokenize / detokenize** and **JSON-schema → grammar** conversion.
+- **Raw JSON endpoint handlers** mirroring the upstream llama.cpp HTTP server (`/completions`, `/v1/completions`, `/embeddings`, `/infill`, `/tokenize`, `/detokenize`).
+- **Model metadata** access (`getModelMeta()`) and **server management** (metrics, slot save/restore, runtime thread reconfiguration).
+- Pre-built native binaries for Linux (x86-64, aarch64), macOS (x86-64, arm64), and Windows (x86-64, x86); CUDA, Metal, and Vulkan supported via local build.
 
 ## Quick Start
 
@@ -31,7 +39,7 @@ Access this library via Maven:
 <dependency>
     <groupId>net.ladenthin</groupId>
     <artifactId>llama</artifactId>
-    <version>4.2.0</version>
+    <version>5.0.0-SNAPSHOT</version>
 </dependency>
 ```
 
@@ -162,9 +170,63 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
 > freed when the model is no longer needed. This isn't strictly required, but avoids memory leaks if you use different
 > models throughout the lifecycle of your application.
 
+### Chat Completion
+
+For chat models, build a list of role/content pairs and let the library apply the model's chat template.
+`chatComplete()` returns the full response, `generateChat()` streams tokens, and `chatCompleteText()` returns
+just the text content of the assistant message.
+
+```java
+List<Pair<String, String>> messages = new ArrayList<>();
+messages.add(new Pair<>("user", "Write a haiku about Java."));
+
+InferenceParameters inferParams = new InferenceParameters("")
+        .setMessages("You are a helpful assistant.", messages)
+        .setUseChatTemplate(true);
+
+try (LlamaModel model = new LlamaModel(modelParams)) {
+    // Streaming
+    for (LlamaOutput output : model.generateChat(inferParams)) {
+        System.out.print(output);
+    }
+    // Or blocking, returns the OpenAI-compatible JSON envelope
+    String json = model.chatComplete(inferParams);
+    // Or just the assistant text
+    String text = model.chatCompleteText(inferParams);
+}
+```
+
+Reasoning/thinking models can receive custom Jinja template variables via
+`ModelParameters#setChatTemplateKwargs(Map)`.
+
 ### Infilling
 
 You can simply set `InferenceParameters#setInputPrefix(String)` and `InferenceParameters#setInputSuffix(String)`.
+
+### Embeddings & Reranking
+
+Load the model with `enableEmbedding()` (or `enableReranking()`) and call `embed(String)` to get a sentence
+embedding, or `rerank(query, documents...)` to get relevance scores.
+
+```java
+ModelParameters modelParams = new ModelParameters()
+        .setModel("/path/to/embedding-model.gguf")
+        .enableEmbedding();
+try (LlamaModel model = new LlamaModel(modelParams)) {
+    float[] embedding = model.embed("Embed this sentence");
+}
+```
+
+### Raw JSON Endpoints
+
+For direct access to the upstream llama.cpp server API, the following methods take a JSON request and return
+a JSON response, matching the HTTP server's contract:
+
+`handleCompletions`, `handleCompletionsOai`, `handleChatCompletions`, `handleInfill`,
+`handleEmbeddings`, `handleTokenize`, `handleDetokenize`.
+
+Server state is exposed via `getMetrics()`, `eraseSlot(int)`, `saveSlot(int, String)`,
+`restoreSlot(int, String)`, and `getModelMeta()`.
 
 ### Model/Inference Configuration
 
