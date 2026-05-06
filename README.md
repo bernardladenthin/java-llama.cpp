@@ -39,7 +39,7 @@ Access this library via Maven:
 <dependency>
     <groupId>net.ladenthin</groupId>
     <artifactId>llama</artifactId>
-    <version>4.2.0</version>
+    <version>5.0.0-SNAPSHOT</version>
 </dependency>
 ```
 
