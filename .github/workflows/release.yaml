@@ -51,7 +51,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: linux-libraries-cuda
-          path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources_linux_cuda/net/ladenthin/llama/
 
   crosscompile-linux-x86_64:
     name: Cross-Compile manylinux2014 x86_64
@@ -74,7 +74,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Linux-x86_64-libraries
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
 
   crosscompile-linux-aarch64:
     name: Cross-Compile Linux aarch64 (LTS)
@@ -97,7 +97,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Linux-aarch64-libraries
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
 
   crosscompile-android-aarch64:
     name: Cross-Compile Android aarch64
@@ -120,7 +120,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Linux-Android-aarch64-libraries
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
 
   # ---------------------------------------------------------------------------
   # Native build jobs — produce release artifacts + run C++ unit tests
@@ -154,7 +154,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: macos-15-libraries
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
 
   build-macos-arm64-metal:
     name: Build and Test macOS 14 arm64 (Metal)
@@ -184,7 +184,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: macos-14-libraries
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
 
   build-windows-x86_64:
     name: Build and Test Windows 2022 x86_64
@@ -212,7 +212,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Windows-x86_64-libraries
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
 
   build-windows-x86:
     name: Build and Test Windows 2022 x86
@@ -240,7 +240,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: Windows-x86-libraries
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
 
   # ---------------------------------------------------------------------------
   # CI-only jobs — no release artifact, purely for test coverage
@@ -341,7 +341,7 @@ jobs:
       - uses: actions/download-artifact@v6
         with:
           name: Linux-x86_64-libraries
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
       - name: Download text generation model
         run: curl -L --fail ${MODEL_URL} --create-dirs -o models/${MODEL_NAME}
       - name: Download reranking model
@@ -395,7 +395,7 @@ jobs:
       - uses: actions/download-artifact@v6
         with:
           name: macos-14-libraries
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
       - name: Download text generation model
         run: curl -L --fail ${MODEL_URL} --create-dirs -o models/${MODEL_NAME}
       - name: Download reranking model
@@ -415,7 +415,7 @@ jobs:
       - name: Enable core dumps
         run: ulimit -c unlimited
       - name: Run tests
-        run: mvn --no-transfer-progress -Dde.kherud.llama.test.ngl=0 test
+        run: mvn --no-transfer-progress -Dnet.ladenthin.llama.test.ngl=0 test
       - name: Memory after tests
         if: always()
         run: vm_stat && sysctl hw.memsize hw.physmem
@@ -446,7 +446,7 @@ jobs:
       - uses: actions/download-artifact@v6
         with:
           name: macos-15-libraries
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
       - name: Download text generation model
         run: curl -L --fail ${MODEL_URL} --create-dirs -o models/${MODEL_NAME}
       - name: Download reranking model
@@ -500,7 +500,7 @@ jobs:
       - uses: actions/download-artifact@v6
         with:
           name: Windows-x86_64-libraries
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
       - name: Download text generation model
         run: curl -L --fail $env:MODEL_URL --create-dirs -o models/$env:MODEL_NAME
       - name: Download reranking model
@@ -532,7 +532,7 @@ jobs:
             ${{ github.workspace }}\hs_err_pid*.log
             ${{ github.workspace }}\target\surefire-reports\*.dump
             ${{ github.workspace }}\target\surefire-reports\*.dumpstream
-            ${{ github.workspace }}/src/main/resources/de/kherud/llama/**/*
+            ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/**/*
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -566,12 +566,12 @@ jobs:
         with:
           pattern: "*-libraries"
           merge-multiple: true
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
       - if: needs.crosscompile-linux-x86_64-cuda.result == 'success'
         uses: actions/download-artifact@v6
         with:
           name: linux-libraries-cuda
-          path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources_linux_cuda/net/ladenthin/llama/
       - uses: actions/setup-java@v5
         with:
           distribution: 'zulu'
@@ -598,11 +598,11 @@ jobs:
         with:
           pattern: "*-libraries"
           merge-multiple: true
-          path: ${{ github.workspace }}/src/main/resources/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
       - uses: actions/download-artifact@v6
         with:
           name: linux-libraries-cuda
-          path: ${{ github.workspace }}/src/main/resources_linux_cuda/de/kherud/llama/
+          path: ${{ github.workspace }}/src/main/resources_linux_cuda/net/ladenthin/llama/
       - name: Set up Maven Central Repository
         uses: actions/setup-java@v5
         with:

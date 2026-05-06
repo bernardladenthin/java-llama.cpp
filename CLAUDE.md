@@ -287,7 +287,7 @@ cmake --build build --config Release
 cmake -B build -DLLAMA_CURL=ON
 ```
 
-Built libraries are placed in `src/main/resources/de/kherud/llama/{OS}/{ARCH}/`.
+Built libraries are placed in `src/main/resources/net/ladenthin/llama/{OS}/{ARCH}/`.
 
 ### Code Formatting
 ```bash
@@ -298,7 +298,7 @@ clang-format -i src/main/cpp/*.cpp src/main/cpp/*.hpp   # Format C++ code
 
 ### Two-Layer Design
 
-**Java layer** (`src/main/java/de/kherud/llama/`):
+**Java layer** (`src/main/java/net/ladenthin/llama/`):
 - `LlamaModel` — Main API class (AutoCloseable). Wraps native context for inference, embeddings, re-ranking, and tokenization.
 - `ModelParameters` / `InferenceParameters` — Builder-pattern parameter classes that serialize to JSON (extend `JsonParameters`) for passing to native code.
 - `LlamaIterator` / `LlamaIterable` — Streaming generation via Java `Iterator`/`Iterable`.
@@ -375,9 +375,9 @@ Java parameters are serialized to JSON strings and passed to native code, which 
 
 ### Native Library Resolution
 `LlamaLoader` tries in order:
-1. System property `de.kherud.llama.lib.path`
+1. System property `net.ladenthin.llama.lib.path`
 2. `java.library.path`
-3. Extracts from JAR resources at `de/kherud/llama/{os}/{arch}/`
+3. Extracts from JAR resources at `net/ladenthin/llama/{os}/{arch}/`
 
 ### Cross-compilation
 Docker-based cross-compilation scripts are in `.github/dockcross/` for ARM/Android targets. CI workflows use these for non-x86 Linux builds.
@@ -391,7 +391,7 @@ Require a model file. The CI downloads models from HuggingFace:
 
 Set the model path via system property or environment variable (see test files for exact property names).
 
-Test files are in `src/test/java/de/kherud/llama/` and `src/test/java/examples/`.
+Test files are in `src/test/java/net/ladenthin/llama/` and `src/test/java/examples/`.
 
 ### C++ unit tests
 
@@ -483,7 +483,7 @@ grep -n "function_name" src/test/cpp/*.cpp
 grep -n "\"field_name\"" build/_deps/llama.cpp-src/tools/server/server-task.cpp
 
 # Check which JSON fields Java actually reads (important: must test these)
-grep -rn "field_name" src/main/java/de/kherud/llama/
+grep -rn "field_name" src/main/java/net/ladenthin/llama/
 ```
 
 #### Testing complex scenarios — methodology

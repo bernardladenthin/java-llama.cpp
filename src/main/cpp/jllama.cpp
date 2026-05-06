@@ -450,7 +450,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     }
 
     // find classes
-    c_llama_model = env->FindClass("de/kherud/llama/LlamaModel");
+    c_llama_model = env->FindClass("net/ladenthin/llama/LlamaModel");
     c_standard_charsets = env->FindClass("java/nio/charset/StandardCharsets");
     c_string = env->FindClass("java/lang/String");
     c_hash_map = env->FindClass("java/util/HashMap");
@@ -461,9 +461,9 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     c_integer = env->FindClass("java/lang/Integer");
     c_float = env->FindClass("java/lang/Float");
     c_biconsumer = env->FindClass("java/util/function/BiConsumer");
-    c_llama_error = env->FindClass("de/kherud/llama/LlamaException");
-    c_log_level = env->FindClass("de/kherud/llama/LogLevel");
-    c_log_format = env->FindClass("de/kherud/llama/args/LogFormat");
+    c_llama_error = env->FindClass("net/ladenthin/llama/LlamaException");
+    c_log_level = env->FindClass("net/ladenthin/llama/LogLevel");
+    c_log_format = env->FindClass("net/ladenthin/llama/args/LogFormat");
     c_error_oom = env->FindClass("java/lang/OutOfMemoryError");
 
     if (!(c_llama_model && c_standard_charsets && c_string && c_hash_map && c_map &&
@@ -518,12 +518,12 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     // find fields
     f_model_pointer = env->GetFieldID(c_llama_model, "ctx", "J");
     f_utf_8 = env->GetStaticFieldID(c_standard_charsets, "UTF_8", "Ljava/nio/charset/Charset;");
-    f_log_level_debug = env->GetStaticFieldID(c_log_level, "DEBUG", "Lde/kherud/llama/LogLevel;");
-    f_log_level_info = env->GetStaticFieldID(c_log_level, "INFO", "Lde/kherud/llama/LogLevel;");
-    f_log_level_warn = env->GetStaticFieldID(c_log_level, "WARN", "Lde/kherud/llama/LogLevel;");
-    f_log_level_error = env->GetStaticFieldID(c_log_level, "ERROR", "Lde/kherud/llama/LogLevel;");
-    f_log_format_json = env->GetStaticFieldID(c_log_format, "JSON", "Lde/kherud/llama/args/LogFormat;");
-    f_log_format_text = env->GetStaticFieldID(c_log_format, "TEXT", "Lde/kherud/llama/args/LogFormat;");
+    f_log_level_debug = env->GetStaticFieldID(c_log_level, "DEBUG", "Lnet/ladenthin/llama/LogLevel;");
+    f_log_level_info = env->GetStaticFieldID(c_log_level, "INFO", "Lnet/ladenthin/llama/LogLevel;");
+    f_log_level_warn = env->GetStaticFieldID(c_log_level, "WARN", "Lnet/ladenthin/llama/LogLevel;");
+    f_log_level_error = env->GetStaticFieldID(c_log_level, "ERROR", "Lnet/ladenthin/llama/LogLevel;");
+    f_log_format_json = env->GetStaticFieldID(c_log_format, "JSON", "Lnet/ladenthin/llama/args/LogFormat;");
+    f_log_format_text = env->GetStaticFieldID(c_log_format, "TEXT", "Lnet/ladenthin/llama/args/LogFormat;");
 
     if (!(f_model_pointer && f_utf_8 && f_log_level_debug && f_log_level_info &&
           f_log_level_warn && f_log_level_error && f_log_format_json && f_log_format_text)) {
@@ -612,7 +612,7 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     llama_backend_free();
 }
 
-JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jobject obj, jobjectArray jparams) {
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_loadModel(JNIEnv *env, jobject obj, jobjectArray jparams) {
     common_params params;
 
     const jsize argc = env->GetArrayLength(jparams);
@@ -721,7 +721,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_loadModel(JNIEnv *env, jo
     env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(jctx));
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_getModelMetaJson(JNIEnv *env, jobject obj) {
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_getModelMetaJson(JNIEnv *env, jobject obj) {
     REQUIRE_SERVER_CONTEXT(nullptr);
     if (jctx->vocab_only) {
         json meta = {
@@ -751,7 +751,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_getModelMetaJson(JNIEn
     return json_to_jstring_impl(env, j);
 }
 
-JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv *env, jobject obj, jstring jparams) {
+JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestCompletion(JNIEnv *env, jobject obj, jstring jparams) {
     REQUIRE_SERVER_CONTEXT(0);
 
     json data = parse_json_params(env, jparams);
@@ -763,13 +763,13 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestCompletion(JNIEnv 
     return dispatch_streaming_completion(env, jctx, data, type, TASK_RESPONSE_TYPE_NONE);
 }
 
-JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_releaseTask(JNIEnv *env, jobject obj, jint id_task) {
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_releaseTask(JNIEnv *env, jobject obj, jint id_task) {
     REQUIRE_SERVER_CONTEXT();
     std::lock_guard<std::mutex> lk(jctx->readers_mutex);
     jctx->readers.erase(id_task);
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(JNIEnv *env, jobject obj,
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_receiveCompletionJson(JNIEnv *env, jobject obj,
                                                                                jint id_task) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
@@ -803,7 +803,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_receiveCompletionJson(
     return json_to_jstring_impl(env, response);
 }
 
-JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env, jobject obj, jstring jprompt) {
+JNIEXPORT jfloatArray JNICALL Java_net_ladenthin_llama_LlamaModel_embed(JNIEnv *env, jobject obj, jstring jprompt) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
     if (!jctx->params.embedding) {
@@ -837,7 +837,7 @@ JNIEXPORT jfloatArray JNICALL Java_de_kherud_llama_LlamaModel_embed(JNIEnv *env,
     return embedding_to_jfloat_array_impl(env, first_row, c_error_oom);
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *env, jobject obj, jstring jprompt,
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleRerank(JNIEnv *env, jobject obj, jstring jprompt,
                                                                       jobjectArray documents) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
@@ -873,7 +873,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleRerank(JNIEnv *e
     return json_to_jstring_impl(env, rerank_results_to_json(br.results, document_vector));
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *env, jobject obj, jstring jparams) {
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_applyTemplate(JNIEnv *env, jobject obj, jstring jparams) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
     json data = parse_json_params(env, jparams);
@@ -885,7 +885,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_applyTemplate(JNIEnv *
     return env->NewStringUTF(tok_str.c_str());
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(JNIEnv *env, jobject obj,
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleChatCompletions(JNIEnv *env, jobject obj,
                                                                                 jstring jparams) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
@@ -897,7 +897,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleChatCompletions(
                                         SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CHAT);
 }
 
-JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNIEnv *env, jobject obj,
+JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestChatCompletion(JNIEnv *env, jobject obj,
                                                                              jstring jparams) {
     REQUIRE_SERVER_CONTEXT(0);
 
@@ -910,7 +910,7 @@ JNIEXPORT jint JNICALL Java_de_kherud_llama_LlamaModel_requestChatCompletion(JNI
                                          SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_NONE);
 }
 
-JNIEXPORT jintArray JNICALL Java_de_kherud_llama_LlamaModel_encode(JNIEnv *env, jobject obj, jstring jprompt) {
+JNIEXPORT jintArray JNICALL Java_net_ladenthin_llama_LlamaModel_encode(JNIEnv *env, jobject obj, jstring jprompt) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
     const std::string c_prompt = parse_jstring(env, jprompt);
@@ -926,7 +926,7 @@ static std::string detokenize(jllama_context *jctx, const std::vector<llama_toke
     return tokens_to_str(jctx->server.get_llama_context(), tokens);
 }
 
-JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv *env, jobject obj,
+JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_LlamaModel_decodeBytes(JNIEnv *env, jobject obj,
                                                                          jintArray java_tokens) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
@@ -934,7 +934,7 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_decodeBytes(JNIEnv 
     return parse_jbytes(env, detokenize(jctx, tokens));
 }
 
-JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobject obj) {
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_delete(JNIEnv *env, jobject obj) {
     auto *jctx = get_jllama_context(env, obj);
     if (!jctx) return;
 
@@ -966,13 +966,13 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_delete(JNIEnv *env, jobje
     delete jctx;
 }
 
-JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_cancelCompletion(JNIEnv *env, jobject obj, jint id_task) {
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_cancelCompletion(JNIEnv *env, jobject obj, jint id_task) {
     REQUIRE_SERVER_CONTEXT();
     std::lock_guard<std::mutex> lk(jctx->readers_mutex);
     jctx->readers.erase(id_task);
 }
 
-JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_setLogger(JNIEnv *env, jclass clazz, jobject log_format,
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_setLogger(JNIEnv *env, jclass clazz, jobject log_format,
                                                                  jobject jcallback) {
     if (o_log_callback != nullptr) {
         env->DeleteGlobalRef(o_log_callback);
@@ -997,7 +997,7 @@ JNIEXPORT void JNICALL Java_de_kherud_llama_LlamaModel_setLogger(JNIEnv *env, jc
     }
 }
 
-JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_jsonSchemaToGrammarBytes(JNIEnv *env, jclass clazz,
+JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_LlamaModel_jsonSchemaToGrammarBytes(JNIEnv *env, jclass clazz,
                                                                                       jstring j_schema) {
     const std::string c_schema = parse_jstring(env, j_schema);
     nlohmann::ordered_json c_schema_json = nlohmann::ordered_json::parse(c_schema);
@@ -1005,7 +1005,7 @@ JNIEXPORT jbyteArray JNICALL Java_de_kherud_llama_LlamaModel_jsonSchemaToGrammar
     return parse_jbytes(env, c_grammar);
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIEnv *env, jobject obj,
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleCompletions(JNIEnv *env, jobject obj,
                                                                             jstring jparams) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
@@ -1014,7 +1014,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletions(JNIE
                                         SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_NONE);
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(JNIEnv *env, jobject obj,
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleCompletionsOai(JNIEnv *env, jobject obj,
                                                                                jstring jparams) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
@@ -1031,7 +1031,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleCompletionsOai(J
                                         SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CMPL);
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *env, jobject obj, jstring jparams) {
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleInfill(JNIEnv *env, jobject obj, jstring jparams) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
     // Check FIM token support via server_context_meta (populated from the
@@ -1068,7 +1068,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleInfill(JNIEnv *e
                                         SERVER_TASK_TYPE_INFILL, TASK_RESPONSE_TYPE_NONE);
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEnv *env, jobject obj,
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleEmbeddings(JNIEnv *env, jobject obj,
                                                                            jstring jparams, jboolean joaiCompat) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
@@ -1136,7 +1136,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleEmbeddings(JNIEn
     return json_to_jstring_impl(env, out);
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleTokenize(JNIEnv *env, jobject obj, jstring jcontent,
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleTokenize(JNIEnv *env, jobject obj, jstring jcontent,
                                                                          jboolean jaddSpecial,
                                                                          jboolean jwithPieces) {
     REQUIRE_SERVER_CONTEXT(nullptr);
@@ -1169,7 +1169,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleTokenize(JNIEnv 
     return json_to_jstring_impl(env, format_tokenizer_response(tokens_response));
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleDetokenize(JNIEnv *env, jobject obj,
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleDetokenize(JNIEnv *env, jobject obj,
                                                                            jintArray jtokens) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
@@ -1177,7 +1177,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleDetokenize(JNIEn
     return json_to_jstring_impl(env, format_detokenized_response(detokenize(jctx, tokens)));
 }
 
-JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEnv *env, jobject obj, jint action,
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleSlotAction(JNIEnv *env, jobject obj, jint action,
                                                                            jint slotId, jstring jfilename) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
@@ -1203,7 +1203,7 @@ JNIEXPORT jstring JNICALL Java_de_kherud_llama_LlamaModel_handleSlotAction(JNIEn
     }
 }
 
-JNIEXPORT jboolean JNICALL Java_de_kherud_llama_LlamaModel_configureParallelInference(JNIEnv *env, jobject obj,
+JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_LlamaModel_configureParallelInference(JNIEnv *env, jobject obj,
                                                                                       jstring jconfig) {
     REQUIRE_SERVER_CONTEXT(JNI_FALSE);
     (void)obj;

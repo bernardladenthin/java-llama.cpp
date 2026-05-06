@@ -29,9 +29,9 @@ Access this library via Maven:
 
 ```xml
 <dependency>
-    <groupId>de.kherud</groupId>
+    <groupId>net.ladenthin</groupId>
     <artifactId>llama</artifactId>
-    <version>4.1.0</version>
+    <version>4.2.0</version>
 </dependency>
 ```
 
@@ -72,7 +72,7 @@ cmake --build build --config Release
 All compiled libraries will be put in a resources directory matching your platform, which will appear in the cmake output. For example something like:
 
 ```shell
---  Installing files to /java-llama.cpp/src/main/resources/de/kherud/llama/Linux/x86_64
+--  Installing files to /java-llama.cpp/src/main/resources/net/ladenthin/llama/Linux/x86_64
 ```
 
 #### Library Location
@@ -83,7 +83,7 @@ Note, that the file name varies between operating systems, e.g., `jllama.dll` on
 
 The application will search in the following order in the following locations:
 
-- In **de.kherud.llama.lib.path**: Use this option if you want a custom location for your shared libraries, i.e., set VM option `-Dde.kherud.llama.lib.path=/path/to/directory`.
+- In **net.ladenthin.llama.lib.path**: Use this option if you want a custom location for your shared libraries, i.e., set VM option `-Dnet.ladenthin.llama.lib.path=/path/to/directory`.
 - In **java.library.path**: These are predefined locations for each OS, e.g., `/usr/java/packages/lib:/usr/lib64:/lib64:/lib:/usr/lib` on Linux.
   You can find out the locations using `System.out.println(System.getProperty("java.library.path"))`.
   Use this option if you want to install the shared libraries as system libraries.
@@ -212,7 +212,7 @@ LlamaModel.setLogger(null, (level, message) -> {});
 You can use this library in Android project.
 1. Add java-llama.cpp as a submodule in your an droid `app` project directory
 ```shell
-git submodule add https://github.com/kherud/java-llama.cpp 
+git submodule add https://github.com/bernardladenthin/java-llama.cpp 
 ```
 2. Declare the library as a source in your build.gradle
 ```gradle
@@ -256,9 +256,9 @@ android {
     }
 }
 ```
-3. Exclude `de.kherud.llama` in proguard-rules.pro
+3. Exclude `net.ladenthin.llama` in proguard-rules.pro
 ```proguard
-keep class de.kherud.llama.** { *; }
+keep class net.ladenthin.llama.** { *; }
 ```
 
 ## Troubleshooting

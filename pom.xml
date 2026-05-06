@@ -3,7 +3,7 @@
 	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 
-	<groupId>de.kherud</groupId>
+	<groupId>net.ladenthin</groupId>
 	<artifactId>llama</artifactId>
 	<version>4.2.0</version>
 	<packaging>jar</packaging>
@@ -11,7 +11,7 @@
 	<name>${project.groupId}:${project.artifactId}</name>
 	<description>Java Bindings for llama.cpp - A Port of Facebook's LLaMA model
 		in C/C++.</description>
-	<url>https://github.com/kherud/java-llama.cpp</url>
+	<url>https://github.com/bernardladenthin/java-llama.cpp</url>
 
 	<licenses>
 		<license>
@@ -22,16 +22,16 @@
 
 	<developers>
 		<developer>
-			<name>Konstantin Herud</name>
-			<email>konstantin.herud@gmail.com</email>
-			<organizationUrl>https://github.com/kherud</organizationUrl>
+			<name>Bernard Ladenthin</name>
+			
+			<organizationUrl>https://github.com/bernardladenthin</organizationUrl>
 		</developer>
 	</developers>
 
 	<scm>
 		<connection>scm:git:git://github.com/kherud/java-llama.cpp.git</connection>
-		<developerConnection>scm:git:ssh://github.com:kherud/java-llama.cpp.git</developerConnection>
-		<url>https://github.com/kherud/java-llama.cpp/tree/master</url>
+		<developerConnection>scm:git:ssh://github.com:bernardladenthin/java-llama.cpp.git</developerConnection>
+		<url>https://github.com/bernardladenthin/java-llama.cpp/tree/master</url>
 	</scm>
 
 	<distributionManagement>
