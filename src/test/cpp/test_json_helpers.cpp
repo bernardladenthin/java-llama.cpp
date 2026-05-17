@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: 2023-2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+// SPDX-FileCopyrightText: 2023-2026 Konstantin Heurer
+//
+// SPDX-License-Identifier: MIT
+
 // Tests for json_helpers.hpp.
 //
 // Every function in json_helpers.hpp is pure JSON transformation with no JNI

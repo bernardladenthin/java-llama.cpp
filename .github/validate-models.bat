@@ -1,3 +1,8 @@
+REM SPDX-FileCopyrightText: 2023-2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+REM SPDX-FileCopyrightText: 2023-2026 Konstantin Heurer
+REM
+REM SPDX-License-Identifier: MIT
+
 @echo off
 REM Validate that all required model files exist and are valid GGUF files
 REM GGUF files start with magic bytes: 0x47 0x47 0x55 0x46 ("GGUF")

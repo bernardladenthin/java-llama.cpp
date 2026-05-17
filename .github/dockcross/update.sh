@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# SPDX-FileCopyrightText: 2023-2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+# SPDX-FileCopyrightText: 2023-2026 Konstantin Heurer
+#
+# SPDX-License-Identifier: MIT
+
 # This script prints the commands to upgrade the docker cross compilation scripts
 docker run --rm dockcross/manylinux2014-x64  > ./dockcross-manylinux2014-x64
 docker run --rm dockcross/manylinux_2_28-x64  > ./dockcross-manylinux_2_28-x64

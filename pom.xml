@@ -1,3 +1,10 @@
+<!--
+SPDX-FileCopyrightText: 2023-2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+SPDX-FileCopyrightText: 2023-2026 Konstantin Heurer
+
+SPDX-License-Identifier: MIT
+-->
+
 <project xmlns="http://maven.apache.org/POM/4.0.0"
 	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
 	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">

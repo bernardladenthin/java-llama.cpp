@@ -1,0 +1,83 @@
+version = 1
+
+# Markdown files (cannot have inline SPDX headers)
+[[annotations]]
+path = [
+    "README.md",
+    "CHANGELOG.md",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "SUPPORT.md",
+    "CLAUDE.md",
+    "CLAUDE_TEST_GENERATION_PROMPT.md",
+    "models/README.md",
+    "docs/RELEASE.md",
+    "docs/history/49be664_24918e4.md",
+    "docs/history/CHAT_INTEGRATION_SUMMARY.md",
+    "docs/history/REFACTORING.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    ".github/ISSUE_TEMPLATE/bug_report.md",
+    ".github/ISSUE_TEMPLATE/feature_request.md",
+    ".claude/commands/find-cpp-duplication.md",
+]
+SPDX-FileCopyrightText = [
+    "2023-2025 Konstantin Heurer",
+    "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
+]
+SPDX-License-Identifier = "MIT"
+
+# CITATION.cff (not recognized by reuse annotate)
+[[annotations]]
+path = "CITATION.cff"
+SPDX-FileCopyrightText = [
+    "2023-2025 Konstantin Heurer",
+    "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
+]
+SPDX-License-Identifier = "MIT"
+
+# CMakeLists.txt (CMake format not recognized by reuse annotate)
+[[annotations]]
+path = "CMakeLists.txt"
+SPDX-FileCopyrightText = [
+    "2023-2025 Konstantin Heurer",
+    "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
+]
+SPDX-License-Identifier = "MIT"
+
+# Dockcross scripts (no file extension, may not be recognized)
+[[annotations]]
+path = [
+    ".github/dockcross/dockcross-android-arm",
+    ".github/dockcross/dockcross-android-arm64",
+    ".github/dockcross/dockcross-linux-arm64-lts",
+    ".github/dockcross/dockcross-manylinux2014-x64",
+    ".github/dockcross/dockcross-manylinux_2_28-x64",
+]
+SPDX-FileCopyrightText = [
+    "2023-2025 Konstantin Heurer",
+    "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
+]
+SPDX-License-Identifier = "MIT"
+
+# GITHUB/ISSUE_TEMPLATE/config.yml handled by reuse annotate below
+# CODEOWNERS (# comments supported but file has no extension)
+[[annotations]]
+path = ".github/CODEOWNERS"
+SPDX-FileCopyrightText = [
+    "2023-2025 Konstantin Heurer",
+    "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
+]
+SPDX-License-Identifier = "MIT"
+
+# JNI header files from Oracle (GPL-2.0-only WITH Classpath-exception-2.0)
+[[annotations]]
+path = [
+    ".github/include/unix/jni.h",
+    ".github/include/unix/jni_md.h",
+    ".github/include/windows/jni.h",
+    ".github/include/windows/jni_md.h",
+]
+SPDX-FileCopyrightText = "1996-2023 Oracle and/or its affiliates"
+SPDX-License-Identifier = "GPL-2.0-only WITH Classpath-exception-2.0"
+

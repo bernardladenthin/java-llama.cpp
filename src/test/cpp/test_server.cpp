@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: 2023-2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+// SPDX-FileCopyrightText: 2023-2026 Konstantin Heurer
+//
+// SPDX-License-Identifier: MIT
+
 // Tests for upstream server APIs — regression coverage for the contract that
 // jllama.cpp depends on.  These tests catch llama.cpp upgrade breakage before
 // the Java integration tests run.

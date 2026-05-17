@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: 2023-2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+// SPDX-FileCopyrightText: 2023-2026 Konstantin Heurer
+//
+// SPDX-License-Identifier: MIT
+
 #pragma once
 
 // server-common.h provides: JSON_ASSERT, json, raw_buffer, json_value<T>,

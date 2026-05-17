@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: 2023-2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+// SPDX-FileCopyrightText: 2023-2026 Konstantin Heurer
+//
+// SPDX-License-Identifier: MIT
+
 // Tests for utils.hpp — focused on APIs changed in llama.cpp b4916 → b8576
 //
 // Covered:

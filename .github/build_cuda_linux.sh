@@ -1,5 +1,10 @@
 #!/bin/sh
 
+# SPDX-FileCopyrightText: 2023-2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+# SPDX-FileCopyrightText: 2023-2026 Konstantin Heurer
+#
+# SPDX-License-Identifier: MIT
+
 # A Cuda 13.2 install script for RHEL8/Rocky8/Manylinux_2.28
 # Available versions can be found at:
 # https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/

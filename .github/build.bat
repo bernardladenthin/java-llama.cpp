@@ -1,3 +1,8 @@
+REM SPDX-FileCopyrightText: 2023-2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+REM SPDX-FileCopyrightText: 2023-2026 Konstantin Heurer
+REM
+REM SPDX-License-Identifier: MIT
+
 @echo off
 
 mkdir build
