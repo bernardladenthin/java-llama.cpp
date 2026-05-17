@@ -1,6 +1,6 @@
 // Copyright 2007 Taro L. Saito
-// SPDX-FileCopyrightText: 2023-2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-// SPDX-FileCopyrightText: 2023-2026 Konstantin Heurer
+// SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+// SPDX-FileCopyrightText: 2023-2025 Konstantin Heurer
 //
 // SPDX-License-Identifier: MIT
 
