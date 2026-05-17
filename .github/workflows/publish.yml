@@ -740,9 +740,9 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
 
   github-release:
-    name: Attach Binaries to GitHub Release
+    name: Attach Binaries to GitHub Release (Unsigned)
     needs: [check-tag]
-    if: needs.check-tag.result == 'success'
+    if: needs.check-tag.result == 'success' && github.event.inputs.release_to_maven_central != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -759,9 +759,11 @@ jobs:
   publish-release:
     name: Publish Release to Central
     if: needs.check-tag.result == 'success' && github.event.inputs.release_to_maven_central == 'true'
-    needs: [github-release, check-tag, crosscompile-linux-x86_64-cuda]
+    needs: [check-tag, crosscompile-linux-x86_64-cuda]
     runs-on: ubuntu-latest
     environment: maven-central
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v8
@@ -790,3 +792,29 @@ jobs:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Collect signed artifacts
+        run: |
+          mkdir -p signed-release-assets
+          cp target/*.jar signed-release-assets/ 2>/dev/null || true
+          cp target/*.jar.asc signed-release-assets/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signed-release-assets
+          path: signed-release-assets/
+
+  github-release-signed:
+    name: Attach Signed Binaries to GitHub Release
+    needs: [publish-release]
+    if: needs.publish-release.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: signed-release-assets
+          path: release-assets/
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v3
+        with:
+          files: release-assets/*
