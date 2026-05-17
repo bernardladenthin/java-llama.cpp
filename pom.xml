@@ -102,8 +102,8 @@ SPDX-License-Identifier: MIT
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>3.15.0</version>
 				<configuration>
-					<source>11</source>
-					<target>11</target>
+					<source>1.8</source>
+					<target>1.8</target>
 				</configuration>
 				<executions>
 					<!-- We have to perform a separate build pass for cuda
@@ -170,7 +170,7 @@ SPDX-License-Identifier: MIT
 				<artifactId>maven-javadoc-plugin</artifactId>
 				<version>3.12.0</version>
 				<configuration>
-					<source>11</source>
+					<source>1.8</source>
 				</configuration>
 				<executions>
 					<execution>
