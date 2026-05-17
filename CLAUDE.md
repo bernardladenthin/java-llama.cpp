@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b9172**
+Current llama.cpp pinned version: **b9198**
 
 ## Upgrading CUDA Version
 
@@ -281,6 +281,18 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b9151–b9172 | `common/reasoning-budget.cpp` | `common_reasoning_budget_clone` rewritten to use `llama_sampler_init` properly; pure bug fix, no API change, no project changes required |
 | ~b9151–b9172 | `ggml/src/ggml-cuda/fattn-mma-f16.cuh` + `mma.cuh` | AMD RDNA3 WMMA flash attention support; new `DATA_LAYOUT_I_MAJOR_SCRAMBLED`, `tile<16,16,half2,I_MAJOR_SCRAMBLED>`, extended config tables; internal CUDA backend, no project changes required |
 | ~b9151–b9172 | `tools/server/server-chat.cpp` | Non-function Responses API tools now silently skipped (`continue`) instead of throwing; server behavior fix, no Java API change required |
+| ~b9172–b9198 | project `CMakeLists.txt` | Option `LLAMA_BUILD_WEBUI` renamed to `LLAMA_BUILD_UI` (and `LLAMA_USE_PREBUILT_WEBUI` → `LLAMA_USE_PREBUILT_UI`); upstream keeps a backward-compat shim that forwards the old cache variable with a `DEPRECATION` message, so this project's `set(LLAMA_BUILD_WEBUI OFF CACHE BOOL "" FORCE)` still works unchanged |
+| ~b9172–b9198 | `common/common.h` | `common_params::webui` / `webui_mcp_proxy` / `webui_config_json` deprecated in favour of `ui` / `ui_mcp_proxy` / `ui_config_json`; both pairs of fields are kept and synced by `common/arg.cpp`, compiled upstream sources unaffected; new `common_params::ctx_type` and `cparams.n_rs_seq` fields added (default `LLAMA_CONTEXT_TYPE_DEFAULT` / `0`), additive |
+| ~b9172–b9198 | `common/common.cpp` + `common.h` | `common_params_print_info` gained optional `print_devices` parameter (default `true`); upstream `tools/server/server.cpp` passes `!is_router_server` to skip GPU enumeration on the router process; this project does not compile `server.cpp`, no impact |
+| ~b9172–b9198 | `common/speculative.h` + `speculative.cpp` | New enum value `COMMON_SPECULATIVE_TYPE_DRAFT_MTP` (count is now 9); new `common_speculative_need_embd()` API; MTP draft implementation added (`common_speculative_state_draft_mtp`); `--spec-type draft-mtp` CLI flag added in `common/arg.cpp`; additive, no project changes (could be exposed later as a `ModelParameters` enhancement) |
+| ~b9172–b9198 | `include/llama.h` | New `enum llama_context_type { LLAMA_CONTEXT_TYPE_DEFAULT, LLAMA_CONTEXT_TYPE_MTP }`; new `llama_context_params::n_rs_seq` (recurrent-state snapshots per seq for rollback) and `ctx_type` fields; new `llama_n_rs_seq()` accessor; all additive, default-zero, no project impact |
+| ~b9172–b9198 | `src/llama-ext.h` (new) + `src/llama-context.cpp` | New pre-norm embedding extraction path: `llama_set_embeddings_pre_norm` / `llama_get_embeddings_pre_norm[_ith]` APIs and an `embd_pre_norm` output buffer in `llama_context`; used by the MTP draft loop only, additive |
+| ~b9172–b9198 | `src/llama-memory-recurrent.cpp` | Recurrent-state rollback support: per-seq `rs_idx` snapshot index and `set_rs_idx()` helper; tensors widened to `(1 + n_rs_seq)` groups; `seq_rm` now rolls back via snapshot when within `n_rs_seq` bounds. Backwards-compatible when `n_rs_seq == 0` (this project's default), no project changes |
+| ~b9172–b9198 | `tools/server/server-context.cpp` | Embedding endpoint default now reads `params.embd_normalize` (was hard-coded `2`); compiled upstream, no project changes |
+| ~b9172–b9198 | `tools/server/CMakeLists.txt` + new `tools/ui/CMakeLists.txt` | WebUI asset wiring moved into a new `llama-ui` static library; `tools/server` now links `llama-ui`; project does not build the `llama-server` binary (only compiles `server-context.cpp` / `server-queue.cpp` / `server-task.cpp` / `server-models.cpp` directly into `jllama`), so no impact. HF bucket name renamed `LLAMA_WEBUI_HF_BUCKET` → `LLAMA_UI_HF_BUCKET` (old name still honoured) |
+| ~b9172–b9198 | `vendor/cpp-httplib/httplib.{h,cpp}` | Bumped to v0.45.0: RFC 9112 §6 message-body framing — requests without `Content-Length` / `Transfer-Encoding` no longer scan for stray body bytes on persistent connections (fixes #2450 keep-alive misframing); X-Forwarded-For parser falls back to the connection remote address when the header is empty/malformed; compiled automatically, no project changes |
+| ~b9172–b9198 | `ggml/CMakeLists.txt` | GGML version bumped 0.11.1 → 0.12.0; no project changes |
+| ~b9172–b9198 | `ggml/src/ggml.c` + `ggml-cuda/gated_delta_net.cu` + `ggml-metal/ggml-metal.metal` + `ggml-vulkan/vulkan-shaders/gated_delta_net.comp` | `ggml_gated_delta_net` state tensor reshaped from 2D `(S_v*S_v*H, n_seqs)` to 3D `(S_v*S_v*H, K, n_seqs)` where `K` is the snapshot slot count (`K=1` is final-state-only, `K>1` keeps last `min(n_tokens, K)` per-token snapshots); internal Qwen3.5 / Qwen3-Next recurrent-attention kernel, no project changes |
 
 ## Build Commands
 
