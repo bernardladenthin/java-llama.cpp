@@ -739,23 +739,6 @@ jobs:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
 
-  github-release:
-    name: Attach Binaries to GitHub Release (Unsigned)
-    needs: [check-tag]
-    if: needs.check-tag.result == 'success' && github.event.inputs.release_to_maven_central != 'true'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: llama-jars
-          path: release-assets/
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v3
-        with:
-          files: release-assets/*
-
   publish-release:
     name: Publish Release to Central
     if: needs.check-tag.result == 'success' && github.event.inputs.release_to_maven_central == 'true'
