@@ -56,10 +56,14 @@ import org.junit.Test;
 public class ReasoningBudgetTest {
 
     /**
-     * Generous token budget: Qwen3-0.6B spends up to ~200 tokens thinking before answering.
-     * 500 is enough for thinking + a short answer on all tested platforms.
+     * Generous token budget: Qwen3-0.6B typically spends ~200 tokens thinking before
+     * answering, but on slow/contended CI runners (e.g. 2-thread GitHub-hosted x86_64)
+     * the model occasionally rambles past 500 tokens while still inside the
+     * {@code <think>} block, leaving {@code content} empty and failing
+     * {@link #testThinkingDefault_reasoningContentAndAnswerPresent}. 1500 leaves
+     * comfortable headroom for thinking + a short answer across all tested platforms.
      */
-    private static final int N_PREDICT = 500;
+    private static final int N_PREDICT = 1500;
 
     private static LlamaModel model;
     private final ChatResponseParser parser = new ChatResponseParser();
