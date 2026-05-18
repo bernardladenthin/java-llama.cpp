@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-// SPDX-FileCopyrightText: 2023-2025 Konstantin Heurer
+// SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 //
 // SPDX-License-Identifier: MIT
 
