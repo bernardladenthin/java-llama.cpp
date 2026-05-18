@@ -626,7 +626,7 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
       - name: Build JARs
-        run: mvn --batch-mode --no-transfer-progress -P release -Dmaven.test.skip=true -Dgpg.skip=true package
+        run: mvn --batch-mode --no-transfer-progress -P release,cuda -Dmaven.test.skip=true -Dgpg.skip=true package
       - name: Upload JARs
         uses: actions/upload-artifact@v7
         with:
@@ -681,17 +681,58 @@ jobs:
       - name: Confirm tag ref
         run: echo "Confirmed on tag ${{ github.ref }}"
 
-  github-snapshot:
-    name: Update Snapshot Pre-release on GitHub
+  publish-snapshot:
+    name: Publish Snapshot to Central
     needs: [check-snapshot]
     if: needs.check-snapshot.result == 'success'
+    runs-on: ubuntu-latest
+    environment: maven-central
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "*-libraries"
+          merge-multiple: true
+          path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
+      - name: Set up Maven Central Repository
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
+          server-id: central
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+      - name: Publish snapshot
+        run: mvn --batch-mode -P release -Dmaven.test.skip=true deploy
+        env:
+          MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      - name: Collect signed artifacts
+        run: |
+          mkdir -p signed-snapshot-assets
+          cp target/*.jar signed-snapshot-assets/ 2>/dev/null || true
+          cp target/*.jar.asc signed-snapshot-assets/ 2>/dev/null || true
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signed-snapshot-assets
+          path: signed-snapshot-assets/
+
+  github-snapshot:
+    name: Update Snapshot Pre-release on GitHub
+    needs: [publish-snapshot]
+    if: needs.publish-snapshot.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v8
         with:
-          name: llama-jars
+          name: signed-snapshot-assets
           path: snapshot-assets/
       - name: Update snapshot pre-release
         env:
@@ -706,39 +747,6 @@ jobs:
           gh release upload snapshot snapshot-assets/* \
             --repo ${{ github.repository }} \
             --clobber
-
-  publish-snapshot:
-    name: Publish Snapshot to Central
-    needs: [github-snapshot, check-snapshot]
-    if: needs.check-snapshot.result == 'success'
-    runs-on: ubuntu-latest
-    environment: maven-central
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v8
-        with:
-          name: llama-jars
-          path: snapshot-jars/
-      - uses: actions/setup-java@v5
-        with:
-          java-version: ${{ env.JAVA_VERSION }}
-          distribution: temurin
-          server-id: central
-          server-username: MAVEN_USERNAME
-          server-password: MAVEN_PASSWORD
-      - name: Deploy snapshot
-        run: |
-          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
-          mvn --batch-mode deploy:deploy-file \
-            -Durl=https://central.sonatype.com/repository/maven-snapshots \
-            -DrepositoryId=central \
-            -Dfile=snapshot-jars/llama-${VERSION}.jar \
-            -DpomFile=pom.xml \
-            -Dsources=snapshot-jars/llama-${VERSION}-sources.jar \
-            -Djavadoc=snapshot-jars/llama-${VERSION}-javadoc.jar
-        env:
-          MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
-          MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
 
   publish-release:
     name: Publish Release to Central
@@ -771,7 +779,7 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
       - name: Publish release
-        run: mvn --batch-mode -P release -Dmaven.test.skip=true deploy
+        run: mvn --batch-mode -P release,cuda -Dmaven.test.skip=true deploy
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
