@@ -9,6 +9,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
+import net.ladenthin.llama.args.ContinuationMode;
 import net.ladenthin.llama.args.MiroStat;
 import net.ladenthin.llama.args.ReasoningFormat;
 import net.ladenthin.llama.args.Sampler;
@@ -610,6 +611,21 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setContinueFinalMessage(boolean continueFinalMessage) {
 		parameters.put(PARAM_CONTINUE_FINAL_MESSAGE, String.valueOf(continueFinalMessage));
+		return this;
+	}
+
+	/**
+	 * Continue the final assistant message and pin the continuation to a specific channel.
+	 * Selects the reasoning or content portion of the last assistant message to extend from,
+	 * matching llama.cpp's string-valued {@code continue_final_message}
+	 * ({@code "reasoning_content"} or {@code "content"}). Mutually exclusive with
+	 * {@code add_generation_prompt=true}.
+	 *
+	 * @param mode the channel to continue from
+	 * @return this builder
+	 */
+	public InferenceParameters setContinueFinalMessage(ContinuationMode mode) {
+		parameters.put(PARAM_CONTINUE_FINAL_MESSAGE, toJsonString(mode.getValue()));
 		return this;
 	}
 

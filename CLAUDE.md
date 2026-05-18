@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b9198**
+Current llama.cpp pinned version: **b9219**
 
 ## Upgrading CUDA Version
 
@@ -293,6 +293,14 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b9172–b9198 | `vendor/cpp-httplib/httplib.{h,cpp}` | Bumped to v0.45.0: RFC 9112 §6 message-body framing — requests without `Content-Length` / `Transfer-Encoding` no longer scan for stray body bytes on persistent connections (fixes #2450 keep-alive misframing); X-Forwarded-For parser falls back to the connection remote address when the header is empty/malformed; compiled automatically, no project changes |
 | ~b9172–b9198 | `ggml/CMakeLists.txt` | GGML version bumped 0.11.1 → 0.12.0; no project changes |
 | ~b9172–b9198 | `ggml/src/ggml.c` + `ggml-cuda/gated_delta_net.cu` + `ggml-metal/ggml-metal.metal` + `ggml-vulkan/vulkan-shaders/gated_delta_net.comp` | `ggml_gated_delta_net` state tensor reshaped from 2D `(S_v*S_v*H, n_seqs)` to 3D `(S_v*S_v*H, K, n_seqs)` where `K` is the snapshot slot count (`K=1` is final-state-only, `K>1` keeps last `min(n_tokens, K)` per-token snapshots); internal Qwen3.5 / Qwen3-Next recurrent-attention kernel, no project changes |
+| ~b9198–b9219 | `common/chat.{h,cpp}` | New `common_chat_continuation` enum (`NONE`/`AUTO`/`REASONING`/`CONTENT`); new `common_chat_msg::render_content(delimiter)` method; new `continue_final_message` field on `common_chat_templates_inputs`; new `common_chat_continuation_parse()` accepts both `bool` and `"reasoning_content"`/`"content"` strings; `common_chat_template_generation_prompt()` extracted; `oaicompat_chat_params_parse` refactored to route the prefill-assistant heuristic through the new continuation enum. Existing `bool` wire-format unchanged; the new string variants are exposed via `InferenceParameters.setContinueFinalMessage(ContinuationMode)` |
+| ~b9198–b9219 | `common/hf-cache.{h,cpp}` + `common/arg.cpp` | `hf_cache::migrate_old_cache_to_hf_cache()` and `hf_file::size` field removed; the migration call in `common_params_parse_ex` was dropped. Internal to `arg.cpp`, no project impact |
+| ~b9198–b9219 | `common/speculative.{h,cpp}` + `src/llama-ext.h` + `src/llama-context.{h,cpp}` + `src/llama-cparams.h` | `llama_set_embeddings_pre_norm(ctx, value)` → `llama_set_embeddings_pre_norm(ctx, value, masked)` (3rd `bool` arg distinguishes "embeddings for outputs only" from "embeddings for every token"); new `cparams.embeddings_pre_norm_masked`; new `common_speculative_need_embd_pre_norm()` API; MTP draft path now uses pre-norm extraction. Project does not call any of these APIs (speculative decoding is configured via `ModelParameters` only), no source changes required |
+| ~b9198–b9219 | `tools/server/server-task.{h,cpp}` | `task_result_state` ctor moved from header into `.cpp` — now seeds `chat_msg` via `common_chat_parse("", true, …)` when `!echo` so the assistant prefill is not echoed back as a delta; new `bool echo` field on `chat_parser_params` (default `false`, populated from request body via `json_value(data, "echo", false)`). Project compiles `server-task.cpp` from upstream and does not instantiate `task_result_state` directly, no source changes required |
+| ~b9198–b9219 | `tools/server/server-context.cpp` + `server-models.cpp` | New `cors_proxy_enabled` boolean field added to `/props` and `/v1/models` JSON responses (set from `params.ui_mcp_proxy \|\| params.webui_mcp_proxy`). Additive, no Java consumer in this project |
+| ~b9198–b9219 | upstream `CMakeLists.txt` | Backward-compat shim widened: `if(DEFINED LLAMA_BUILD_WEBUI AND NOT DEFINED LLAMA_BUILD_UI)` → `if(DEFINED LLAMA_BUILD_WEBUI)` — setting the old name now always forwards to the new one (and emits the existing `DEPRECATION` message). Project sets only `LLAMA_BUILD_WEBUI OFF CACHE BOOL "" FORCE` (`CMakeLists.txt:107`), behaviour unchanged |
+| ~b9198–b9219 | `ggml/src/ggml-cuda/ssm-conv.cu` + `top-k.cu` | Added kernel size 15 to SSM-conv launcher (now supports 3/4/5/9/15); `top-k.cu` includes `<cuda/iterator>` for CCCL ≥ 3.1; internal CUDA backend, no project changes |
+| ~b9198–b9219 | `ggml/src/ggml-sycl/ggml-sycl.cpp` + `vecdotq.hpp` | SYCL GEMM now falls back to direct MKL for small problems (gemm_flops < 256³); Q6_K dot product refactored to a single scalar fast-path helper `vec_dot_q6_K_q8_1_impl_mmvq_scalar`; internal SYCL backend, no project changes |
 
 ## Build Commands
 

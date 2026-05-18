@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import net.ladenthin.llama.args.ContinuationMode;
 import net.ladenthin.llama.args.MiroStat;
 import net.ladenthin.llama.args.ReasoningFormat;
 import net.ladenthin.llama.args.Sampler;
@@ -307,6 +308,20 @@ public class InferenceParametersTest {
 	public void testSetContinueFinalMessageFalse() {
 		InferenceParameters params = new InferenceParameters("").setContinueFinalMessage(false);
 		assertEquals("false", params.parameters.get("continue_final_message"));
+	}
+
+	@Test
+	public void testSetContinueFinalMessageReasoningContent() {
+		InferenceParameters params = new InferenceParameters("")
+				.setContinueFinalMessage(ContinuationMode.REASONING_CONTENT);
+		assertEquals("\"reasoning_content\"", params.parameters.get("continue_final_message"));
+	}
+
+	@Test
+	public void testSetContinueFinalMessageContent() {
+		InferenceParameters params = new InferenceParameters("")
+				.setContinueFinalMessage(ContinuationMode.CONTENT);
+		assertEquals("\"content\"", params.parameters.get("continue_final_message"));
 	}
 
 	// -------------------------------------------------------------------------
