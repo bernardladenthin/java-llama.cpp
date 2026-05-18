@@ -20,6 +20,7 @@ on:
         required: false
         default: 'false'
 env:
+  JAVA_VERSION: '21'
   MODEL_URL: "https://huggingface.co/TheBloke/CodeLlama-7B-GGUF/resolve/main/codellama-7b.Q2_K.gguf"
   MODEL_NAME: "codellama-7b.Q2_K.gguf"
   RERANKING_MODEL_URL: "https://huggingface.co/gpustack/jina-reranker-v1-tiny-en-GGUF/resolve/main/jina-reranker-v1-tiny-en-Q4_0.gguf"
@@ -167,8 +168,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
-          java-version: '8'
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
       - name: Display CPU Info
         shell: bash
         run: |
@@ -198,8 +199,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
-          java-version: '8'
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
       - name: Display CPU Info
         shell: bash
         run: |
@@ -291,8 +292,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
-          java-version: '8'
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
       - name: Display CPU Info
         run: |
           echo "=== CPU Information ==="
@@ -315,8 +316,8 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
-          java-version: '8'
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
       - name: Display CPU Info
         shell: bash
         run: |
@@ -397,8 +398,8 @@ jobs:
         run: bash .github/validate-models.sh
       - uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
-          java-version: '8'
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
       - name: Memory before tests
         run: free -h
       - name: Enable core dumps
@@ -459,8 +460,8 @@ jobs:
         run: bash .github/validate-models.sh
       - uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
-          java-version: '8'
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
       - name: Memory before tests
         run: vm_stat && sysctl hw.memsize hw.physmem
       - name: Enable core dumps
@@ -512,8 +513,8 @@ jobs:
         run: bash .github/validate-models.sh
       - uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
-          java-version: '8'
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
       - name: Memory before tests
         run: vm_stat && sysctl hw.memsize hw.physmem
       - name: Enable core dumps
@@ -568,8 +569,8 @@ jobs:
         run: .github\validate-models.bat
       - uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
-          java-version: '8'
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
       - name: Memory before tests
         run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
         shell: pwsh
@@ -622,8 +623,8 @@ jobs:
           path: ${{ github.workspace }}/src/main/resources_linux_cuda/net/ladenthin/llama/
       - uses: actions/setup-java@v5
         with:
-          distribution: 'zulu'
-          java-version: '8'
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
       - name: Build JARs
         run: mvn --batch-mode --no-transfer-progress -P release -Dmaven.test.skip=true -Dgpg.skip=true package
       - name: Upload JARs
@@ -641,7 +642,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
-        with: { java-version: '8', distribution: zulu }
+        with: { java-version: '${{ env.JAVA_VERSION }}', distribution: temurin }
       - uses: actions/download-artifact@v8
         with: { name: jacoco-report, path: target/site/jacoco/ }
         continue-on-error: true
@@ -720,8 +721,8 @@ jobs:
           path: snapshot-jars/
       - uses: actions/setup-java@v5
         with:
-          java-version: '8'
-          distribution: zulu
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: temurin
           server-id: central
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
@@ -762,8 +763,8 @@ jobs:
       - name: Set up Maven Central Repository
         uses: actions/setup-java@v5
         with:
-          java-version: '17'
-          distribution: 'zulu'
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'temurin'
           server-id: central
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD

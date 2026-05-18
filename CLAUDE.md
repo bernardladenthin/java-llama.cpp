@@ -613,7 +613,7 @@ EXPECT_FALSE(j.contains("stop_type"));  // filtered out
 
 ## Key Constraints
 
-- **Java 11+** required.
+- **Java 8+** runtime required. Built with JDK 21 targeting bytecode 1.8 for broad compatibility.
 - Native memory allocated by llama.cpp is not GC-managed — always use `LlamaModel` in try-with-resources or call `close()` explicitly.
 - The `server.hpp` file is adapted from llama.cpp upstream — minimize modifications to ease future upgrades.
 - Platform-specific native libraries must be pre-built and placed under `src/main/resources/` before packaging for distribution.
