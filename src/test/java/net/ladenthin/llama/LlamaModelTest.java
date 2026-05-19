@@ -201,7 +201,9 @@ public class LlamaModelTest {
 		try (LlamaIterable iterable = model.generate(params)) {
 			for (LlamaOutput ignored : iterable) {
 				collected++;
-				break; // exit before stop token
+				if (collected >= 1) {
+					break; // exit before stop token
+				}
 			}
 		} // close() must cancel without throwing
 

@@ -9,6 +9,7 @@ import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -191,9 +192,7 @@ class LlamaLoader {
 			}
 
 			// Set executable (x) flag to enable Java to load the native library
-			extractedFilePath.toFile().setReadable(true);
-			extractedFilePath.toFile().setWritable(true, true);
-			extractedFilePath.toFile().setExecutable(true);
+			setNativeLibraryPermissions(extractedFilePath.toFile(), System.err);
 
 			// Check whether the contents are properly copied from the resource folder
 			try (InputStream nativeIn = LlamaLoader.class.getResourceAsStream(nativeLibraryFilePath);
@@ -210,6 +209,32 @@ class LlamaLoader {
 			System.err.println(e.getMessage());
 			return null;
 		}
+	}
+
+	/**
+	 * Sets read, write (owner-only), and execute permissions on the given file so the JVM
+	 * can load it as a native library. Returns {@code false} and writes a warning to
+	 * {@code err} if any of the permission changes were rejected by the platform.
+	 *
+	 * <p>Package-private and parameterised on {@code File}/{@code PrintStream} to keep the
+	 * branch unit-testable.
+	 *
+	 * @param file the extracted native library file
+	 * @param err  stream to receive a warning when a permission change fails
+	 * @return {@code true} if all three permission changes succeeded
+	 */
+	static boolean setNativeLibraryPermissions(File file, PrintStream err) {
+		boolean readable = file.setReadable(true);
+		boolean writable = file.setWritable(true, true);
+		boolean executable = file.setExecutable(true);
+		if (!readable || !writable || !executable) {
+			err.println("Warning: could not set permissions on " + file
+					+ " (readable=" + readable
+					+ ", writable=" + writable
+					+ ", executable=" + executable + ")");
+			return false;
+		}
+		return true;
 	}
 
 	/**

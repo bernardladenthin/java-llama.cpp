@@ -109,6 +109,10 @@ class OSInfo {
 		try {
 			return processRunner.runAndWaitFor("uname -o").toLowerCase().contains("android");
 		}
+		catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			return false;
+		}
 		catch (Exception ignored) {
 			return false;
 		}
@@ -149,7 +153,12 @@ class OSInfo {
 		try {
 			return processRunner.runAndWaitFor("uname -m");
 		}
-		catch (Throwable e) {
+		catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			System.err.println("Error while running uname -m: " + e.getMessage());
+			return "unknown";
+		}
+		catch (IOException e) {
 			System.err.println("Error while running uname -m: " + e.getMessage());
 			return "unknown";
 		}
@@ -221,6 +230,9 @@ class OSInfo {
 				}
 			}
 			catch (IOException | InterruptedException e) {
+				if (e instanceof InterruptedException) {
+					Thread.currentThread().interrupt();
+				}
 				// ignored: fall back to "arm" arch (soft-float ABI)
 			}
 		}
