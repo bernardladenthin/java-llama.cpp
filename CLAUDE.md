@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b9219**
+Current llama.cpp pinned version: **b9222**
 
 ## Upgrading CUDA Version
 
@@ -301,6 +301,8 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b9198–b9219 | upstream `CMakeLists.txt` | Backward-compat shim widened: `if(DEFINED LLAMA_BUILD_WEBUI AND NOT DEFINED LLAMA_BUILD_UI)` → `if(DEFINED LLAMA_BUILD_WEBUI)` — setting the old name now always forwards to the new one (and emits the existing `DEPRECATION` message). Project sets only `LLAMA_BUILD_WEBUI OFF CACHE BOOL "" FORCE` (`CMakeLists.txt:107`), behaviour unchanged |
 | ~b9198–b9219 | `ggml/src/ggml-cuda/ssm-conv.cu` + `top-k.cu` | Added kernel size 15 to SSM-conv launcher (now supports 3/4/5/9/15); `top-k.cu` includes `<cuda/iterator>` for CCCL ≥ 3.1; internal CUDA backend, no project changes |
 | ~b9198–b9219 | `ggml/src/ggml-sycl/ggml-sycl.cpp` + `vecdotq.hpp` | SYCL GEMM now falls back to direct MKL for small problems (gemm_flops < 256³); Q6_K dot product refactored to a single scalar fast-path helper `vec_dot_q6_K_q8_1_impl_mmvq_scalar`; internal SYCL backend, no project changes |
+| ~b9219–b9222 | `ggml/src/ggml-hexagon/` + `htp/pad-ops.c` (new) + `htp/unary-ops.c` | Hexagon HTP backend gains `GGML_OP_PAD` (HVX + optional VTCM/DMA double-buffered, both zero-pad and circular-pad variants) and `GGML_OP_TRI` (HVX-vectorised triangular masking) support; new `HTP_OP_PAD` / `HTP_OP_TRI` opcodes; internal Qualcomm DSP backend, no project changes |
+| ~b9219–b9222 | `.devops/*.Dockerfile` + `.github/workflows/docker.yml` | OCI image labels (`org.opencontainers.image.*`) added via `BUILD_DATE`/`APP_VERSION`/`APP_REVISION` build args; new `skip_s390x` workflow_dispatch input; manifest annotations on `docker buildx imagetools create`; upstream packaging/CI only, no project changes |
 
 ## Build Commands
 
