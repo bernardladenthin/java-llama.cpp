@@ -27,6 +27,10 @@
 //   1. package org.sqlite.util  ->  package net.ladenthin.llama
 //   2. system property "org.sqlite.osinfo.architecture"
 //      ->  "net.ladenthin.llama.osinfo.architecture"
+//   3. internal Logger / LoggerFactory (sqlite-jdbc's same-package
+//      wrapper)  ->  org.slf4j.Logger / org.slf4j.LoggerFactory
+//      and drop the Supplier<String> lazy form (the two messages
+//      are constant strings, so eager construction is free).
 // The original Apache-2.0 copyright header from the upstream file is
 // preserved verbatim below.
 
@@ -64,6 +68,9 @@ import java.nio.file.Paths;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.stream.Stream;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Provides OS name and architecture name.
@@ -212,7 +219,7 @@ public class OSInfo {
         try {
             return processRunner.runAndWaitFor("uname -m");
         } catch (Throwable e) {
-            LogHolder.logger.error(() -> "Error while running uname -m", e);
+            LogHolder.logger.error("Error while running uname -m", e);
             return "unknown";
         }
     }
@@ -280,8 +287,7 @@ public class OSInfo {
                     }
                 } else {
                     LogHolder.logger.warn(
-                            () ->
-                                    "readelf not found. Cannot check if running on an armhf system, armel architecture will be presumed");
+                            "readelf not found. Cannot check if running on an armhf system, armel architecture will be presumed");
                 }
             } catch (IOException | InterruptedException e) {
                 // ignored: fall back to "arm" arch (soft-float ABI)
