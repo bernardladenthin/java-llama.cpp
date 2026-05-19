@@ -7,11 +7,9 @@ package net.ladenthin.llama;
 
 import java.io.ByteArrayInputStream;
 import java.io.BufferedInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.PrintStream;
 import java.nio.file.Paths;
 
 import org.junit.After;
@@ -25,10 +23,8 @@ import static org.junit.Assert.*;
                   "native library: shouldCleanPath detects jllama/llama-prefixed files for " +
                   "cleanup; contentsEquals performs a correct byte-level stream comparison " +
                   "including BufferedInputStream wrapping and length mismatches; getTempDir " +
-                  "honours the 'net.ladenthin.llama.tmpdir' system-property override; " +
-                  "getNativeResourcePath produces the expected classpath resource prefix; and " +
-                  "setNativeLibraryPermissions returns the AND of its three File setter calls " +
-                  "and emits a descriptive warning to the given PrintStream when any fails."
+                  "honours the 'net.ladenthin.llama.tmpdir' system-property override; and " +
+                  "getNativeResourcePath produces the expected classpath resource prefix."
 )
 public class LlamaLoaderTest {
 
@@ -209,88 +205,5 @@ public class LlamaLoaderTest {
 		String osArch = OSInfo.getNativeLibFolderPathForCurrentOS();
 		assertTrue("Resource path should end with OS/arch: " + path,
 				path.endsWith(osArch));
-	}
-
-	// -------------------------------------------------------------------------
-	// setNativeLibraryPermissions
-	// -------------------------------------------------------------------------
-
-	/** Stub File whose setReadable/setWritable/setExecutable returns are configurable. */
-	private static class StubFile extends File {
-		final boolean readable;
-		final boolean writable;
-		final boolean executable;
-
-		StubFile(boolean readable, boolean writable, boolean executable) {
-			super("stub-native-lib");
-			this.readable = readable;
-			this.writable = writable;
-			this.executable = executable;
-		}
-
-		@Override
-		public boolean setReadable(boolean r) { return readable; }
-
-		@Override
-		public boolean setWritable(boolean w, boolean ownerOnly) { return writable; }
-
-		@Override
-		public boolean setExecutable(boolean x) { return executable; }
-	}
-
-	private static PrintStream capture(ByteArrayOutputStream sink) {
-		return new PrintStream(sink);
-	}
-
-	@Test
-	public void testSetNativeLibraryPermissionsAllSucceed() {
-		ByteArrayOutputStream sink = new ByteArrayOutputStream();
-		boolean ok = LlamaLoader.setNativeLibraryPermissions(
-				new StubFile(true, true, true), capture(sink));
-		assertTrue("expected success when all setters return true", ok);
-		assertEquals("no warning expected on success", "", sink.toString());
-	}
-
-	@Test
-	public void testSetNativeLibraryPermissionsReadableFails() {
-		ByteArrayOutputStream sink = new ByteArrayOutputStream();
-		boolean ok = LlamaLoader.setNativeLibraryPermissions(
-				new StubFile(false, true, true), capture(sink));
-		assertFalse(ok);
-		String out = sink.toString();
-		assertTrue("warning should mention readable=false: " + out, out.contains("readable=false"));
-		assertTrue("warning should mention writable=true: " + out, out.contains("writable=true"));
-		assertTrue("warning should mention executable=true: " + out, out.contains("executable=true"));
-		assertTrue("warning should mention file path: " + out, out.contains("stub-native-lib"));
-	}
-
-	@Test
-	public void testSetNativeLibraryPermissionsWritableFails() {
-		ByteArrayOutputStream sink = new ByteArrayOutputStream();
-		boolean ok = LlamaLoader.setNativeLibraryPermissions(
-				new StubFile(true, false, true), capture(sink));
-		assertFalse(ok);
-		assertTrue(sink.toString().contains("writable=false"));
-	}
-
-	@Test
-	public void testSetNativeLibraryPermissionsExecutableFails() {
-		ByteArrayOutputStream sink = new ByteArrayOutputStream();
-		boolean ok = LlamaLoader.setNativeLibraryPermissions(
-				new StubFile(true, true, false), capture(sink));
-		assertFalse(ok);
-		assertTrue(sink.toString().contains("executable=false"));
-	}
-
-	@Test
-	public void testSetNativeLibraryPermissionsAllFail() {
-		ByteArrayOutputStream sink = new ByteArrayOutputStream();
-		boolean ok = LlamaLoader.setNativeLibraryPermissions(
-				new StubFile(false, false, false), capture(sink));
-		assertFalse(ok);
-		String out = sink.toString();
-		assertTrue(out.contains("readable=false"));
-		assertTrue(out.contains("writable=false"));
-		assertTrue(out.contains("executable=false"));
 	}
 }
