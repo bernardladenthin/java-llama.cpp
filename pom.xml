@@ -73,6 +73,14 @@ SPDX-License-Identifier: MIT
 			<artifactId>jackson-databind</artifactId>
 			<version>2.21.3</version>
 		</dependency>
+		<!-- Required by the vendored OSInfo/LoggerFactory (from xerial/sqlite-jdbc).
+		     Optional: LoggerFactory falls back to java.util.logging when SLF4J is absent at runtime. -->
+		<dependency>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-api</artifactId>
+			<version>2.0.18</version>
+			<optional>true</optional>
+		</dependency>
 	</dependencies>
 
 	<build>
