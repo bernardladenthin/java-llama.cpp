@@ -108,7 +108,7 @@ set(LLAMA_BUILD_WEBUI OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b9222
+	GIT_TAG        b9245
 )
 FetchContent_MakeAvailable(llama.cpp)
 
