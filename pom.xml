@@ -87,6 +87,15 @@ SPDX-License-Identifier: MIT
 			<version>1.5.32</version>
 			<scope>runtime</scope>
 		</dependency>
+		<!-- @IgnoreJRERequirement marker used by OSInfo (vendored from xerial/sqlite-jdbc)
+		     on a few methods that touch APIs unavailable on Android. Retention=CLASS, so
+		     the dep is compile-only (provided scope). -->
+		<dependency>
+			<groupId>org.codehaus.mojo</groupId>
+			<artifactId>animal-sniffer-annotations</artifactId>
+			<version>1.27</version>
+			<scope>provided</scope>
+		</dependency>
 	</dependencies>
 
 	<build>

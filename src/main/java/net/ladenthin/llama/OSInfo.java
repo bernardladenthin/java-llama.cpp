@@ -31,6 +31,12 @@
 //      wrapper)  ->  org.slf4j.Logger / org.slf4j.LoggerFactory
 //      and drop the Supplier<String> lazy form (the two messages
 //      are constant strings, so eager construction is free).
+//   4. @AndroidSignatureIgnore(explanation = "...") (sqlite-jdbc's
+//      custom marker for animal-sniffer-maven-plugin)
+//      ->  @IgnoreJRERequirement from
+//      org.codehaus.mojo:animal-sniffer-annotations. The standard
+//      marker has no explanation field; the original strings are
+//      preserved as adjacent // comments.
 // The original Apache-2.0 copyright header from the upstream file is
 // preserved verbatim below.
 
@@ -69,6 +75,7 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.stream.Stream;
 
+import org.codehaus.mojo.animal_sniffer.IgnoreJRERequirement;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -183,7 +190,8 @@ public class OSInfo {
         }
     }
 
-    @AndroidSignatureIgnore(explanation = "Should not reach this code path")
+    // Should not reach this code path on Android.
+    @IgnoreJRERequirement
     public static boolean isMusl() {
         Path mapFilesDir = Paths.get("/proc/self/map_files");
         try (Stream<Path> dirStream = Files.list(mapFilesDir)) {
@@ -197,7 +205,8 @@ public class OSInfo {
         }
     }
 
-    @AndroidSignatureIgnore(explanation = "Should not reach this code path")
+    // Should not reach this code path on Android.
+    @IgnoreJRERequirement
     private static String toRealPathOrEmpty(Path path) {
         try {
             return path.toRealPath().toString();
@@ -206,7 +215,8 @@ public class OSInfo {
         }
     }
 
-    @AndroidSignatureIgnore(explanation = "Should not reach this code path")
+    // Should not reach this code path on Android.
+    @IgnoreJRERequirement
     private static boolean isAlpineLinux() {
         try (Stream<String> osLines = Files.lines(Paths.get("/etc/os-release"))) {
             return osLines.anyMatch(l -> l.startsWith("ID") && l.contains("alpine"));
