@@ -37,6 +37,12 @@
 //      org.codehaus.mojo:animal-sniffer-annotations. The standard
 //      marker has no explanation field; the original strings are
 //      preserved as adjacent // comments.
+//   5. Three catch clauses that swallow InterruptedException
+//      (isAndroidTermux, getHardwareName, and resolveArmArchType)
+//      re-interrupt the current thread via
+//      Thread.currentThread().interrupt() before returning, restoring
+//      the thread's interrupt flag (SonarQube java:S2142). Upstream
+//      silently swallows the interrupt.
 // The original Apache-2.0 copyright header from the upstream file is
 // preserved verbatim below.
 
@@ -185,6 +191,9 @@ public class OSInfo {
     public static boolean isAndroidTermux() {
         try {
             return processRunner.runAndWaitFor("uname -o").toLowerCase().contains("android");
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         } catch (Exception ignored) {
             return false;
         }
@@ -229,6 +238,9 @@ public class OSInfo {
         try {
             return processRunner.runAndWaitFor("uname -m");
         } catch (Throwable e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             LogHolder.logger.error("Error while running uname -m", e);
             return "unknown";
         }
@@ -301,6 +313,9 @@ public class OSInfo {
                 }
             } catch (IOException | InterruptedException e) {
                 // ignored: fall back to "arm" arch (soft-float ABI)
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
         // Use armv5, soft-float ABI
