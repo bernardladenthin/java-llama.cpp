@@ -146,7 +146,7 @@ jobs:
       - name: Build libraries
         shell: bash
         run: |
-          .github/dockcross/dockcross-android-arm64 .github/build.sh "-DANDROID_PLATFORM=android-24 -DOS_NAME=Linux-Android -DOS_ARCH=aarch64 -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON"
+          .github/dockcross/dockcross-android-arm64 .github/build_opencl_android.sh "-DANDROID_PLATFORM=android-24 -DOS_NAME=Linux-Android -DOS_ARCH=aarch64 -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:

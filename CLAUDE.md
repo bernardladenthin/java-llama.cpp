@@ -61,16 +61,20 @@ Three places wire it together (mirrors the CUDA classifier pattern):
 
 Local sanity build:
 ```bash
-.github/dockcross/dockcross-android-arm64 .github/build.sh \
+.github/dockcross/dockcross-android-arm64 .github/build_opencl_android.sh \
   "-DANDROID_PLATFORM=android-24 -DOS_NAME=Linux-Android -DOS_ARCH=aarch64 \
    -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON \
    -DGGML_OPENCL_USE_ADRENO_KERNELS=ON"
 ```
 Artifacts land in `src/main/resources_android_opencl/net/ladenthin/llama/Linux-Android/aarch64/`.
 
-At runtime the device must provide an OpenCL ICD (`libOpenCL.so`); Qualcomm
-Adreno drivers do. Devices without an ICD should use the default CPU-only
-Android JAR.
+The dockcross image does not ship OpenCL headers or a stub `libOpenCL.so`, so
+`build_opencl_android.sh` first stages Khronos `OpenCL-Headers` and
+cross-builds `OpenCL-ICD-Loader` into `/tmp/opencl-stage/` before invoking the
+main project cmake with `-DOpenCL_INCLUDE_DIR=...` and `-DOpenCL_LIBRARY=...`.
+At runtime the device must provide its own OpenCL ICD (`libOpenCL.so`);
+Qualcomm Adreno drivers do. Devices without an ICD should use the default
+CPU-only Android JAR.
 
 ## Upgrading/Downgrading llama.cpp Version
 
