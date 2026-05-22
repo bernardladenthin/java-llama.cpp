@@ -314,6 +314,34 @@ public class LlamaModelTest {
 		Assert.assertNotNull(model.complete(new InferenceParameters(prefix).setNPredict(3)));
 	}
 
+	/**
+	 * Regression: {@link Session} must accumulate user/assistant turns across
+	 * multiple {@link Session#send(String)} calls and expose them via
+	 * {@link Session#getMessages()}. Save/restore round-trip is exercised
+	 * separately in slot save/restore tests.
+	 */
+	@Test
+	public void testSessionMultiTurn() {
+		try (Session session = new Session(model, 0, "You are a terse assistant.",
+				params -> params.setNPredict(8).setSeed(1))) {
+			String r1 = session.send("Say hi.");
+			Assert.assertNotNull(r1);
+			String r2 = session.send("Say bye.");
+			Assert.assertNotNull(r2);
+
+			java.util.List<ChatMessage> msgs = session.getMessages();
+			// system + user + assistant + user + assistant
+			Assert.assertEquals(5, msgs.size());
+			Assert.assertEquals("system", msgs.get(0).getRole());
+			Assert.assertEquals("user", msgs.get(1).getRole());
+			Assert.assertEquals("Say hi.", msgs.get(1).getContent());
+			Assert.assertEquals("assistant", msgs.get(2).getRole());
+			Assert.assertEquals("user", msgs.get(3).getRole());
+			Assert.assertEquals("Say bye.", msgs.get(3).getContent());
+			Assert.assertEquals("assistant", msgs.get(4).getRole());
+		}
+	}
+
 	@Test
 	public void testEmbedding() {
 		float[] embedding = model.embed(prefix);
