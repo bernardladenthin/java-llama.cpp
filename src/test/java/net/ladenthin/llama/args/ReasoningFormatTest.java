@@ -12,24 +12,19 @@ import java.util.Arrays;
 import java.util.Collection;
 
 @RunWith(Parameterized.class)
-public class CacheTypeTest extends AbstractCliArgEnumTest<CacheType> {
+public class ReasoningFormatTest extends AbstractCliArgEnumTest<ReasoningFormat> {
 
     @Parameterized.Parameters(name = "{0} -> {1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
-            {CacheType.F32,    "f32",    9},
-            {CacheType.F16,    "f16",    9},
-            {CacheType.BF16,   "bf16",   9},
-            {CacheType.Q8_0,   "q8_0",   9},
-            {CacheType.Q4_0,   "q4_0",   9},
-            {CacheType.Q4_1,   "q4_1",   9},
-            {CacheType.IQ4_NL, "iq4_nl", 9},
-            {CacheType.Q5_0,   "q5_0",   9},
-            {CacheType.Q5_1,   "q5_1",   9},
+            {ReasoningFormat.NONE,            "none",            4},
+            {ReasoningFormat.AUTO,            "auto",            4},
+            {ReasoningFormat.DEEPSEEK,        "deepseek",        4},
+            {ReasoningFormat.DEEPSEEK_LEGACY, "deepseek-legacy", 4},
         });
     }
 
-    public CacheTypeTest(CacheType value, String expectedArgValue, int expectedEnumCount) {
+    public ReasoningFormatTest(ReasoningFormat value, String expectedArgValue, int expectedEnumCount) {
         super(value, expectedArgValue, expectedEnumCount);
     }
 }
