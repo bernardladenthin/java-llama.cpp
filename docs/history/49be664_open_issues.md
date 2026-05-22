@@ -696,3 +696,163 @@ Feature request: add multimodal input support (referencing
 | 70  | FIXED | `setVocabOnly()` + native branch | `ModelParameters.java:1336`, `jllama.cpp:710-718` |
 | 50  | PARTIALLY FIXED | CMake handles ANDROID_ABI; needs e2e test | `CMakeLists.txt:151-153,243` |
 | 34  | PARTIALLY FIXED | mtmd linked, no typed image API | `CMakeLists.txt:255` |
+
+---
+
+## Verification plan (from original-issue research)
+
+After fetching the verbatim text of each `LIKELY FIXED` / `PARTIALLY FIXED` issue
+on github.com/kherud/java-llama.cpp, the reproduction details are clearer than
+the summary lines above suggest. None of the original issues carry attached
+files; all relevant context is in the issue body itself, and several refine
+or change the verdict.
+
+### What the original issues actually contain
+
+| # | New info from issue body | Test feasibility |
+|---|---|---|
+| 102 | Exact repro: 10-iteration `new LlamaModel(...).close()` loop with `setThreads(4).setKeep(-1).setCtxSize(1024).setGpuLayers(0)`. Failure mode: GPU OOM exception, CPU swap thrash. No stack trace attached. | **Unit-testable.** Direct port of the reporter's loop to `MemoryManagementTest` with an assertion on `Runtime.getRuntime().totalMemory()` and `/proc/self/status:VmRSS`. |
+| 98 | Reporter's config was *literally* `new ModelParameters().setModel(...).setBatchSize(8192).setUbatchSize(8192)` — **no `enableEmbedding()` call**. The original "bug" was that the bindings did not forward `--embedding` at all; the upstream `result_output` assertion fired because the embedding pipeline was never initialised. | **Already proven fixed by code.** `ModelParameters.enableEmbedding()` (line 1040) now sets `--embedding`. Optional confirmation test: same config + `enableEmbedding()` against `nomic-embed-text-v1.5.f16.gguf`. |
+| 95 | Reporter pastes the `next()` method and argues the design is wrong: when `output.stop=true`, the method returns that output and ends. No model, prompt or reproduction provided. | **Not a real bug** — the cited behaviour is correct iterator semantics. Optional defensive test asserting termination on a repetitive prompt remains useful. |
+| 80 | Exact repro: Kotlin-style 3 lines (`val params...`, `val model = new LlamaModel(params)`, `model.close()`) with `qwen2-0_5b-instruct-q4_0.gguf`. JDK 17.0.12+7, java-llama.cpp 3.4.1. SIGSEGV in `std::_Rb_tree` during `delete`. Reporter said they intended to follow up with a `-DLLAMA_DEBUG` build but never did. | **Unit-testable.** Three-line repro maps directly to a `@Test` method. No generation step. |
+| 103 | Specifically asks about **Qwen2.5-VL on Android**. No code attempted. | Not unit-testable until a typed image API + an Android sample exist. Tracked as feature work. |
+| 86 | Just a question: "does the CUDA jar handle CPU fallback?". No code. | Not unit-testable. Documentation task. |
+| 34 | One-line feature request linking upstream PR #3436 (LLaVA). No specifics. | Subsumed by #103. |
+| 121 | (Not refetched — Android `aarch64` vs `arm64-v8a` mismatch; already analysed in deep-dive.) | Verified by code; needs an Android boot test, not a unit test. |
+| 50 | (Not refetched — Android cross-build on macOS-M2 host; already analysed in deep-dive.) | Verified by CMake logic; needs a cross-compile smoke test, not a unit test. |
+
+### Concrete test plan
+
+Four small JUnit tests close out four `LIKELY FIXED` items. All four belong in
+`src/test/java/net/ladenthin/llama/MemoryManagementTest.java` or
+`src/test/java/net/ladenthin/llama/LlamaModelTest.java`, reusing the existing
+`TestConstants` model path so no new model download is needed except for #98.
+
+#### 1. `MemoryManagementTest.testOpenCloseLoopDoesNotLeak()` — for #102
+
+Direct port of the reporter's repro:
+
+```java
+@Test
+public void testOpenCloseLoopDoesNotLeak() {
+    ModelParameters params = new ModelParameters()
+        .setModel(TestConstants.MODEL_PATH)
+        .setThreads(4).setKeep(-1).setCtxSize(1024).setGpuLayers(0);
+    long baseline = currentVmRss();
+    for (int i = 0; i < 20; i++) {
+        try (LlamaModel m = new LlamaModel(params)) {
+            // no-op: open + close
+        }
+    }
+    System.gc();
+    long after = currentVmRss();
+    // Allow some slop for JIT/heap growth, but rule out monotonic leak
+    Assert.assertTrue("VmRSS grew by " + (after - baseline) + " kB over 20 iters",
+                      after - baseline < 200_000); // 200 MB tolerance
+}
+
+private static long currentVmRss() {
+    try {
+        for (String line : Files.readAllLines(Path.of("/proc/self/status"))) {
+            if (line.startsWith("VmRSS:")) {
+                return Long.parseLong(line.replaceAll("\\D+", ""));
+            }
+        }
+    } catch (IOException e) { /* non-Linux */ }
+    return 0;
+}
+```
+
+`currentVmRss()` is a no-op on macOS/Windows; the test then degenerates to a
+"does not throw / does not crash" smoke test, which is still useful. For
+CUDA, add an `nvidia-smi` poll in a sibling `@Test` gated on
+`Assume.assumeTrue(hasCuda())`.
+
+#### 2. `MemoryManagementTest.testOpenCloseWithoutGeneration()` — for #80
+
+```java
+@Test
+public void testOpenCloseWithoutGeneration() {
+    ModelParameters params = new ModelParameters()
+        .setModel(TestConstants.MODEL_PATH)
+        .setCtxSize(512).setGpuLayers(0);
+    // The original 3.4.1 crash was a one-shot SIGSEGV.  Repeat to harden.
+    for (int i = 0; i < 20; i++) {
+        try (LlamaModel m = new LlamaModel(params)) {
+            // No generation between construction and close.
+        }
+    }
+}
+```
+
+A JVM crash exits the JUnit runner with non-zero; if all 20 iterations complete,
+the verdict moves to FIXED.
+
+#### 3. `LlamaModelTest.testIteratorTerminatesOnRepetitivePrompt()` — for #95
+
+```java
+@Test
+public void testIteratorTerminatesOnRepetitivePrompt() {
+    InferenceParameters infer = new InferenceParameters("Repeat AAA forever: AAA AAA")
+        .setNPredict(30)
+        .setTemperature(0.0f);
+    int count = 0;
+    try (LlamaIterable it = model.generate(infer)) {
+        for (LlamaOutput out : it) {
+            count++;
+            Assert.assertTrue("iterator overran nPredict", count <= 31);
+        }
+    }
+    Assert.assertTrue("iterator must produce at least 1 token", count >= 1);
+}
+```
+
+The original "bug" is a design objection, not a defect. Test confirms iteration
+terminates deterministically.
+
+#### 4. `LlamaEmbeddingsTest.testNomicEmbedLoads()` — for #98
+
+```java
+@Test
+public void testNomicEmbedLoads() {
+    String path = System.getProperty("net.ladenthin.llama.nomic.path");
+    Assume.assumeNotNull("nomic model path not set", path);
+    ModelParameters params = new ModelParameters()
+        .setModel(path).setBatchSize(8192).setUbatchSize(8192)
+        .enableEmbedding();                                  // <-- the fix
+    try (LlamaModel m = new LlamaModel(params)) {
+        float[] embedding = m.embed("search_query: What is TSNE?");
+        Assert.assertEquals(768, embedding.length);
+    }
+}
+```
+
+Gated on a system property so CI without the 120 MB model file simply skips it.
+Optional CI step: download `nomic-embed-text-v1.5.f16.gguf` from HuggingFace in
+the same pattern as the existing CodeLlama / Jina-Reranker model downloads.
+
+### Issues that cannot be closed by unit tests alone
+
+| # | Why not unit-testable | Action |
+|---|---|---|
+| 103, 34 | No image API yet — would require building the feature first. | Roadmap item: add `InferenceParameters.addImage(byte[]|Path)` that constructs the OAI-style multipart `content` array; then add `MultimodalTest` against `Qwen2.5-VL-Q4_K_M.gguf` + matching mmproj. |
+| 86 | Question about jar packaging behaviour, not code defect. | Documentation: add a README section "Choosing the right classifier" stating that the CUDA jar requires the CUDA runtime libraries at load time and does not auto-fall-back. |
+| 121, 50 | Android runtime / cross-host build path — needs an emulator boot or a macOS-M2 cross-compile, not a JVM test. | CI matrix expansion: add an Android emulator job that boots a stock `arm64-v8a` AVD and runs the existing `LlamaModelTest` against the dockcross-built `libjllama.so`. |
+
+### Recommended sequencing
+
+1. **First PR (small, high-value):** add the four JUnit tests above. Run CI. If
+   green, update this document to upgrade #80, #95, #102 to **FIXED** and
+   #98 to **FIXED** (subject to nomic model download in CI).
+2. **Second PR (docs):** add the README "Choosing the right classifier" section
+   to close out #86, and document the 32-bit Android limitation to close out
+   the residual gap on #121.
+3. **Third PR (feature):** add typed `InferenceParameters.addImage(...)` to
+   close out #103 and #34.
+4. **Fourth PR (CI):** add an Android emulator job to formally close #121 and
+   #50.
+
+Steps 1 and 2 are mechanical and require no design decisions. Step 3 requires
+choosing an image-input encoding (`data:` URL vs raw bytes) and is the natural
+follow-up. Step 4 is the largest investment but closes the remaining `STILL
+POSSIBLE` Android cluster (#79, #81, #82, #91, #117, #121) all at once.
