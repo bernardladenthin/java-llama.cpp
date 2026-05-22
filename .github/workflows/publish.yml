@@ -137,6 +137,22 @@ jobs:
           name: Linux-Android-aarch64-libraries
           path: ${{ github.workspace }}/src/main/resources/net/ladenthin/llama/
 
+  crosscompile-android-aarch64-opencl:
+    name: Cross-Compile Android aarch64 (OpenCL/Adreno)
+    needs: startgate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build libraries
+        shell: bash
+        run: |
+          .github/dockcross/dockcross-android-arm64 .github/build.sh "-DANDROID_PLATFORM=android-24 -DOS_NAME=Linux-Android -DOS_ARCH=aarch64 -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON"
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-libraries-opencl
+          path: ${{ github.workspace }}/src/main/resources_android_opencl/net/ladenthin/llama/
+
   # ---------------------------------------------------------------------------
   # Native build jobs — produce release artifacts + run C++ unit tests
   # ---------------------------------------------------------------------------
@@ -582,6 +598,7 @@ jobs:
       - crosscompile-linux-x86_64-cuda
       - crosscompile-linux-aarch64
       - crosscompile-android-aarch64
+      - crosscompile-android-aarch64-opencl
       - build-windows-x86
       - test-cpp-linux-x86_64
       - test-macos-arm64-metal-15
@@ -601,12 +618,16 @@ jobs:
         with:
           name: linux-libraries-cuda
           path: ${{ github.workspace }}/src/main/resources_linux_cuda/net/ladenthin/llama/
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-libraries-opencl
+          path: ${{ github.workspace }}/src/main/resources_android_opencl/net/ladenthin/llama/
       - uses: actions/setup-java@v5
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
       - name: Build JARs
-        run: mvn --batch-mode --no-transfer-progress -P release,cuda -Dmaven.test.skip=true -Dgpg.skip=true package
+        run: mvn --batch-mode --no-transfer-progress -P release,cuda,opencl-android -Dmaven.test.skip=true -Dgpg.skip=true package
       - name: Upload JARs
         uses: actions/upload-artifact@v7
         with:
@@ -663,7 +684,7 @@ jobs:
 
   publish-snapshot:
     name: Publish Snapshot to Central
-    needs: [check-snapshot, crosscompile-linux-x86_64-cuda]
+    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl]
     if: needs.check-snapshot.result == 'success'
     runs-on: ubuntu-latest
     environment: maven-central
@@ -680,6 +701,10 @@ jobs:
         with:
           name: linux-libraries-cuda
           path: ${{ github.workspace }}/src/main/resources_linux_cuda/net/ladenthin/llama/
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-libraries-opencl
+          path: ${{ github.workspace }}/src/main/resources_android_opencl/net/ladenthin/llama/
       - name: Set up Maven Central Repository
         uses: actions/setup-java@v5
         with:
@@ -691,7 +716,7 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
       - name: Publish snapshot
-        run: mvn --batch-mode -P release,cuda -Dmaven.test.skip=true deploy
+        run: mvn --batch-mode -P release,cuda,opencl-android -Dmaven.test.skip=true deploy
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
@@ -735,7 +760,7 @@ jobs:
   publish-release:
     name: Publish Release to Central
     if: needs.check-tag.result == 'success'
-    needs: [check-tag, crosscompile-linux-x86_64-cuda]
+    needs: [check-tag, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl]
     runs-on: ubuntu-latest
     environment: maven-central
     permissions:
@@ -751,6 +776,10 @@ jobs:
         with:
           name: linux-libraries-cuda
           path: ${{ github.workspace }}/src/main/resources_linux_cuda/net/ladenthin/llama/
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-libraries-opencl
+          path: ${{ github.workspace }}/src/main/resources_android_opencl/net/ladenthin/llama/
       - name: Set up Maven Central Repository
         uses: actions/setup-java@v5
         with:
@@ -762,7 +791,7 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
       - name: Publish release
-        run: mvn --batch-mode -P release,cuda -Dmaven.test.skip=true deploy
+        run: mvn --batch-mode -P release,cuda,opencl-android -Dmaven.test.skip=true deploy
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}

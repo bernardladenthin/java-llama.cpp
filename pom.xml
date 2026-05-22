@@ -146,6 +146,22 @@ SPDX-License-Identifier: MIT
 								${project.build.outputDirectory}_cuda</outputDirectory>
 						</configuration>
 					</execution>
+					<!-- Separate build pass for opencl-android classifier -->
+					<execution>
+						<id>opencl-android</id>
+						<phase>compile</phase>
+						<goals>
+							<goal>compile</goal>
+						</goals>
+						<configuration>
+							<compilerArgs>
+								<arg>-h</arg>
+								<arg>src/main/cpp</arg>
+							</compilerArgs>
+							<outputDirectory>
+								${project.build.outputDirectory}_opencl_android</outputDirectory>
+						</configuration>
+					</execution>
 				</executions>
 			</plugin>
 			<plugin>
@@ -166,6 +182,27 @@ SPDX-License-Identifier: MIT
 								<resource>
 									<directory>
 										${basedir}/src/main/resources_linux_cuda/</directory>
+									<includes>
+										<include>**/*.*</include>
+									</includes>
+								</resource>
+							</resources>
+						</configuration>
+					</execution>
+					<!-- Copy custom opencl-android libs to the output directory -->
+					<execution>
+						<id>copy-resources-opencl-android</id>
+						<phase>process-classes</phase>
+						<goals>
+							<goal>copy-resources</goal>
+						</goals>
+						<configuration>
+							<outputDirectory>
+								${project.build.outputDirectory}_opencl_android</outputDirectory>
+							<resources>
+								<resource>
+									<directory>
+										${basedir}/src/main/resources_android_opencl/</directory>
 									<includes>
 										<include>**/*.*</include>
 									</includes>
@@ -288,6 +325,35 @@ SPDX-License-Identifier: MIT
 									<classifier>cuda13-linux-x86-64</classifier>
 									<classesDirectory>
 										${project.build.outputDirectory}_cuda</classesDirectory>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+
+		<profile>
+			<id>opencl-android</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-jar-plugin</artifactId>
+						<version>3.5.0</version>
+						<executions>
+							<!-- Pick class files AND libs from custom output
+							directory -->
+							<execution>
+								<id>opencl-android</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>opencl-android-aarch64</classifier>
+									<classesDirectory>
+										${project.build.outputDirectory}_opencl_android</classesDirectory>
 								</configuration>
 							</execution>
 						</executions>

@@ -38,6 +38,40 @@ git add .github/build_cuda_linux.sh pom.xml CLAUDE.md
 git commit -m "Upgrade CUDA from 13.2 to 13.3"
 ```
 
+## OpenCL / Adreno backend on Android
+
+A second Android arm64 artifact is built with the OpenCL backend enabled and
+Adreno-tuned kernels embedded. It ships under the Maven classifier
+`opencl-android-aarch64` and is consumed only when callers explicitly request it.
+The default Android arm64 JAR remains CPU-only.
+
+Three places wire it together (mirrors the CUDA classifier pattern):
+
+1. **`CMakeLists.txt`** — `elseif(GGML_OPENCL)` branch routes artifacts to
+   `src/main/resources_android_opencl/net/ladenthin/llama/${OS_NAME}/${OS_ARCH}/`.
+2. **`.github/workflows/publish.yml`** — `crosscompile-android-aarch64-opencl`
+   job runs the dockcross-android-arm64 build with
+   `-DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON`
+   and uploads as artifact `android-libraries-opencl`. The `package`,
+   `publish-snapshot`, and `publish-release` jobs download it into
+   `resources_android_opencl/` and activate the `opencl-android` Maven profile.
+3. **`pom.xml`** — the `opencl-android` profile produces a second JAR with
+   `<classifier>opencl-android-aarch64</classifier>` from the
+   `${project.build.outputDirectory}_opencl_android` tree.
+
+Local sanity build:
+```bash
+.github/dockcross/dockcross-android-arm64 .github/build.sh \
+  "-DANDROID_PLATFORM=android-24 -DOS_NAME=Linux-Android -DOS_ARCH=aarch64 \
+   -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON \
+   -DGGML_OPENCL_USE_ADRENO_KERNELS=ON"
+```
+Artifacts land in `src/main/resources_android_opencl/net/ladenthin/llama/Linux-Android/aarch64/`.
+
+At runtime the device must provide an OpenCL ICD (`libOpenCL.so`); Qualcomm
+Adreno drivers do. Devices without an ICD should use the default CPU-only
+Android JAR.
+
 ## Upgrading/Downgrading llama.cpp Version
 
 To change the llama.cpp version, update the following **three** files:
