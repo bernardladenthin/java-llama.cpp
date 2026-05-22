@@ -33,20 +33,29 @@ After a second-pass analysis of every `LIKELY FIXED` and `PARTIALLY FIXED` issue
     PARTIALLY FIXED (documentation gap).
 
 - **Confirmable with one targeted JUnit test (no model retraining, no platform
-  reproduction):**
-  - #102 — memory leak on `close()`: add an open/close-in-a-loop stress test;
-    if Java heap and `VmRSS` stay flat, verdict moves to FIXED. Code path is
-    already correct by inspection.
-  - #98 — `nomic-embed-text` loading: add an integration test with the
-    `nomic-embed-text-v1.5.f16.gguf` model file; verdict moves to FIXED on first
-    pass. b9284 has long since fixed the original `result_output` upstream bug.
-  - #95 — iterator repetition: add a regression test driving the iterator with
-    a deliberately repetitive prompt + `nPredict=50`; verdict moves to FIXED.
+  reproduction):** all four JUnit tests below were added on branch
+  `claude/sweet-fermi-1yrRK` (commit `713d426`); each compiles and self-skips
+  cleanly when its model is absent. Verdicts move to FIXED once CI runs them
+  green.
+  - #102 — memory leak on `close()`: covered by
+    `MemoryManagementTest#testOpenCloseLoopDoesNotLeak` (20-iteration loop,
+    Linux asserts `VmRSS` delta `< 200 MB`; non-Linux degenerates to a
+    no-crash smoke test). Code path is already correct by inspection.
+  - #98 — `nomic-embed-text` loading: covered by
+    `LlamaEmbeddingsTest#testNomicEmbedLoads`, gated on system property
+    `net.ladenthin.llama.nomic.path` and wired in `publish.yml`
+    (`NOMIC_EMBED_MODEL_URL` + `-Dnet.ladenthin.llama.nomic.path=…` on the
+    linux-x86_64 Java test job). b9284 has long since fixed the original
+    `result_output` upstream bug.
+  - #95 — iterator repetition: covered by
+    `LlamaModelTest#testIteratorTerminatesOnRepetitivePrompt` (deliberately
+    repetitive prompt + `nPredict=30`, asserts ≤ `nPredict+1` outputs).
     Iterator `hasNext`/`stop` handshake is correct by inspection.
-  - #80 — segfault on immediate open+close: add a JUnit test that opens and
-    immediately closes without generating, repeated 20× in a loop; verdict
-    moves to FIXED. The half-initialised-race fix in `jllama.cpp:929-940` is
-    strictly stronger than the original bug surface.
+  - #80 — segfault on immediate open+close: covered by
+    `MemoryManagementTest#testOpenCloseWithoutGeneration` (20 open +
+    immediate-close cycles, no generation). The half-initialised-race fix
+    in `jllama.cpp:929-940` is strictly stronger than the original bug
+    surface.
 
 - **Genuinely needs platform-specific runtime reproduction (cannot be confirmed
   by code reading or any JUnit test in this repository):**
@@ -59,10 +68,11 @@ After a second-pass analysis of every `LIKELY FIXED` and `PARTIALLY FIXED` issue
   All five depend on architecture/runtime emulation defects or platform-specific
   CRT behaviour that no amount of source-tree inspection can resolve.
 
-Bottom line: out of 9 `LIKELY/PARTIALLY FIXED` issues, **5 can be upgraded to
-FIXED by adding 4 small JUnit tests + verifying one CI build path**, **3 stay
-PARTIALLY FIXED pending Java-side enhancements** (typed image API, 32-bit
-Android, CUDA-jar documentation), and **0 require platform reproduction**.
+Bottom line: out of 9 `LIKELY/PARTIALLY FIXED` issues, **4 are now covered by
+JUnit tests on branch `claude/sweet-fermi-1yrRK`** (#80, #95, #98, #102 — pending
+the first green CI run before formal FIXED), **3 stay PARTIALLY FIXED pending
+Java-side enhancements** (typed image API #103/#34, 32-bit Android tail of #121,
+CUDA-jar documentation #86), and **0 require platform reproduction**.
 
 ---
 
@@ -280,7 +290,20 @@ release native memory. Reproduced with a 10-iteration loop: GPU eventually
 OOMs; CPU eventually thrashes swap. Suggests a leak in the JNI/native
 destructor path.
 
-**Status in fork:** LIKELY FIXED. The native destructor (`Java_net_ladenthin_llama_LlamaModel_delete`, `src/main/cpp/jllama.cpp:917-948`) now: clears the field pointer first, drains `readers`, signals `server.terminate()` (twice for the race documented in comments), joins the worker, frees `vocab_only_model` if set, and `delete jctx` (which destroys the embedded `server_context` value member). Refactor `fc55802 Refactor JNI lifecycle and log formatting into reusable helpers` (`git log --oneline`) explicitly addressed lifecycle. Next steps: run a 100-iteration open/close loop test under valgrind and `nvidia-smi --query-gpu=memory.used` to confirm.
+**Status in fork:** LIKELY FIXED (regression test added in commit `713d426`,
+awaits first CI green run for FIXED). The native destructor
+(`Java_net_ladenthin_llama_LlamaModel_delete`, `src/main/cpp/jllama.cpp:917-948`)
+now: clears the field pointer first, drains `readers`, signals `server.terminate()`
+(twice for the race documented in comments), joins the worker, frees
+`vocab_only_model` if set, and `delete jctx` (which destroys the embedded
+`server_context` value member). Refactor `fc55802 Refactor JNI lifecycle and log
+formatting into reusable helpers` (`git log --oneline`) explicitly addressed
+lifecycle. `MemoryManagementTest#testOpenCloseLoopDoesNotLeak` runs the original
+reporter's 10-iteration loop expanded to 20 iterations and asserts (on Linux)
+`/proc/self/status:VmRSS` grows by less than 200 MB; on macOS/Windows the test
+degenerates to a no-crash smoke test (still useful as a destructor-safety
+regression). Optional follow-up: pair with a sibling test gated on
+`hasCuda()` that polls `nvidia-smi --query-gpu=memory.used` during the loop.
 
 **Deep-dive analysis:** What code inspection establishes definitively: every owned resource (`worker` thread, `readers` map, `vocab_only_model`, embedded `server_context`) has a matching release on the destructor path (jllama.cpp:917-948); there is no missing `delete`. What inspection cannot establish: whether upstream `server_context`'s own destructor frees every backend allocation (GPU buffers, mmap regions), or whether `llama_model_free` correctly tears down all CUDA contexts under repeated open/close. `MemoryManagementTest.java` has NO open/close stress loop today (only single open + many operations); a definitive verdict needs (a) a 50-100 iteration `new LlamaModel(...).close()` JUnit test asserting heap and `/proc/self/status` VmRSS don't grow monotonically, and (b) a CUDA-side check via `nvidia-smi --query-gpu=memory.used --format=csv -l 1` during the loop. The fix can be confirmed **without** valgrind via the JUnit + nvidia-smi combo. **Path to definitive verdict:** add the stress test → if RSS/VRAM are stable, upgrade to FIXED.
 
@@ -312,7 +335,19 @@ The same file works with upstream `llama-embedding` CLI, so the issue is in
 how the bindings configure the embedding context (e.g. missing `embedding=true`
 or pooling parameter).
 
-**Status in fork:** LIKELY FIXED. `ModelParameters.enableEmbedding()` sets `ModelFlag.EMBEDDING` (`ModelParameters.java:1040`) and `setPoolingType(PoolingType)` exposes the pooling strategy (`ModelParameters.java:606`). The upstream b9284 server-context (compiled directly into `jllama`) handles `nomic-embed-text` correctly. Next steps: add an integration test loading `nomic-embed-text-v1.5.f16.gguf` to confirm.
+**Status in fork:** LIKELY FIXED (regression test + CI download added in commit
+`713d426`, awaits first green CI run for FIXED). `ModelParameters.enableEmbedding()`
+sets `ModelFlag.EMBEDDING` (`ModelParameters.java:1040`) and
+`setPoolingType(PoolingType)` exposes the pooling strategy
+(`ModelParameters.java:606`). The upstream b9284 server-context (compiled directly
+into `jllama`) handles `nomic-embed-text` correctly.
+`LlamaEmbeddingsTest#testNomicEmbedLoads` reproduces the reporter's
+`setBatchSize(8192).setUbatchSize(8192)` config and adds the missing
+`enableEmbedding()`; asserts the returned vector length is 768
+(`TestConstants.NOMIC_EMBED_DIM`). Gated on `net.ladenthin.llama.nomic.path`; CI's
+linux-x86_64 Java job downloads the model via the new `NOMIC_EMBED_MODEL_URL`
+env var in `.github/workflows/publish.yml` and passes the property on
+`mvn test`.
 
 **Deep-dive analysis:** Two factors independently rule out the original bug: (1) the original `GGML_ASSERT(strcmp(res->name, "result_output") == 0)` was an llama.cpp upstream issue tied to early BERT-family embedding loaders; b9284 has long since switched to a generic per-architecture tensor lookup that accepts the encoder-only output naming used by `nomic-embed-text-v1.5`. (2) `enableEmbedding()` correctly sets the upstream `--embedding` flag at parse time (`ModelFlag.java:42-ish`), so `params.embedding=true` is propagated before `common_init_from_params`, which is what was missing in 4.1.0. `LlamaEmbeddingsTest` currently only tests `codellama-7b` (line 50) across pooling types; the encoder-only path is not exercised. **Path to definitive verdict:** add a single JUnit test downloading `nomic-embed-text-v1.5.f16.gguf` (~120 MB) and asserting `model.embed("hello").length == 768`. Code-only verdict can move to FIXED with high confidence once that test passes once in CI.
 
@@ -329,7 +364,18 @@ Reporter takes issue with `LlamaIterator.next()`: when the receive call returns
 inference output that loops and cannot be terminated. Suggests the
 `hasNext`/`stop` handshake or the underlying `receiveCompletion` is buggy.
 
-**Status in fork:** LIKELY FIXED. `LlamaIterator` now uses `receiveCompletionJson` and toggles `hasNext = !output.stop` (`LlamaIterator.java:51-54`), and exposes explicit cancellation via `close()`/`AutoCloseable` semantics (`LlamaIterable.java:44`, `LlamaIterator.java:69-77`). Repetition itself remains a sampler-tuning issue handled via `InferenceParameters` (`setRepeatPenalty`, `setMinP`, etc.). Next steps: add a regression test that asserts iteration terminates with the expected `StopReason` on a deliberately repetitive prompt.
+**Status in fork:** LIKELY FIXED (regression test added in commit `713d426`,
+awaits first green CI run for FIXED). `LlamaIterator` now uses
+`receiveCompletionJson` and toggles `hasNext = !output.stop`
+(`LlamaIterator.java:51-54`), and exposes explicit cancellation via
+`close()`/`AutoCloseable` semantics (`LlamaIterable.java:44`,
+`LlamaIterator.java:69-77`). Repetition itself remains a sampler-tuning issue
+handled via `InferenceParameters` (`setRepeatPenalty`, `setMinP`, etc.).
+`LlamaModelTest#testIteratorTerminatesOnRepetitivePrompt` drives the iterator
+with the repetitive prompt `"Repeat AAA forever: AAA AAA"` at
+`setNPredict(30).setTemperature(0.0f)` inside a try-with-resources
+`LlamaIterable`, asserting iteration ends within `nPredict + 1` outputs and
+produces at least one token.
 
 **Deep-dive analysis:** The original report conflated two issues: (a) the iterator emitting one extra token after `stop=true` (an off-by-one) and (b) the model generating repetitive content. Inspection of `LlamaIterator.java:46-58` resolves (a) — `next()` reads the JSON, sets `hasNext = !output.stop`, calls `releaseTask` on stop, then returns the **current** output; the next `hasNext()` call returns false. There is no extra-iteration bug. Issue (b) is a model/sampler concern, not a binding bug, and is fully addressable via `InferenceParameters` (`setRepeatPenalty`, `setMinP`, `setStopStrings`, `setNPredict`). Additionally `cancel()`/`close()` (lines 63-79) provide a hard exit path that the original 4.1.0 code lacked. **Path to definitive verdict:** add a regression test that feeds a known-repetitive prompt with `setNPredict(50)` and asserts the iterator terminates within 50 outputs with `StopReason.LIMIT` — should pass on first run. Verdict can move to FIXED.
 
@@ -500,7 +546,17 @@ generating) segfaults inside libc, with a stack pointing into
 `std::_Rb_tree::_M_erase`. If generation happens first, `close()` succeeds.
 Likely an uninitialized/half-initialized native field being destroyed.
 
-**Status in fork:** LIKELY FIXED. The native destructor now waits on `worker_ready` before terminating (`src/main/cpp/jllama.cpp:929-931`), drains the `readers` map under lock (`jllama.cpp:925-928`), and calls `server.terminate()` twice with a 1 ms sleep specifically to close the race "where the thread signalled ready but `start_loop()` hasn't yet set its internal running flag" (comment at `jllama.cpp:932-934`). This is exactly the half-initialised case the issue describes.
+**Status in fork:** LIKELY FIXED (regression test added in commit `713d426`,
+awaits first green CI run for FIXED). The native destructor now waits on
+`worker_ready` before terminating (`src/main/cpp/jllama.cpp:929-931`), drains the
+`readers` map under lock (`jllama.cpp:925-928`), and calls `server.terminate()`
+twice with a 1 ms sleep specifically to close the race "where the thread
+signalled ready but `start_loop()` hasn't yet set its internal running flag"
+(comment at `jllama.cpp:932-934`). This is exactly the half-initialised case the
+issue describes. `MemoryManagementTest#testOpenCloseWithoutGeneration` runs the
+3-line repro from the original issue (open + immediate close, no generation)
+inside a try-with-resources block, repeated 20 times — a JVM crash exits the
+JUnit runner with a non-zero status, so a clean run is the green signal.
 
 **Deep-dive analysis:** The original 3.4.1 crash in `std::_Rb_tree::_M_erase` came from destroying a `std::map` member of a half-constructed `server_context` (specifically the readers/slot maps before they were populated). The current code addresses this on three layers: (1) `jctx->worker_ready.load()` busy-wait at line 922 ensures construction finished, (2) `readers.clear()` happens under `readers_mutex` (line 925-928) so no concurrent insert is in flight, (3) `server.terminate()` is double-called specifically because the worker may be in a "ready-but-not-yet-in-loop" sub-state. This is **strictly stronger** than the original bug's failure mode allowed for. **Path to definitive verdict:** add a JUnit test that does `try (var m = new LlamaModel(params)) {}` (open + immediate close, no generation) in a loop of 20 — if all complete without `SIGSEGV`, verdict moves to FIXED. The current `MemoryManagementTest.java` does not contain this pattern. Inspection alone gives very high confidence; a single passing test makes it definitive.
 
@@ -673,10 +729,10 @@ Feature request: add multimodal input support (referencing
 | 107 | FIXED | CMake matches both Mac and Darwin | `CMakeLists.txt:196` |
 | 104 | FIXED | `NO_KV_OFFLOAD` flag exposed | `args/ModelFlag.java:50` |
 | 103 | PARTIALLY FIXED | mtmd linked, no typed image API | `ModelParameters.java:1250-1281` |
-| 102 | LIKELY FIXED | Destructor drains workers and frees ctx | `jllama.cpp:917-948` |
+| 102 | LIKELY FIXED → FIXED on CI green | Destructor drains workers and frees ctx; covered by `MemoryManagementTest#testOpenCloseLoopDoesNotLeak` (commit `713d426`) | `jllama.cpp:917-948` |
 | 101 | FIXED | Trampoline calls BiConsumer | `jllama.cpp:954-977` |
-| 98  | LIKELY FIXED | enableEmbedding + setPoolingType | `ModelParameters.java:1040,606` |
-| 95  | LIKELY FIXED | Iterator close/AutoCloseable wired | `LlamaIterator.java:51-77` |
+| 98  | LIKELY FIXED → FIXED on CI green | `enableEmbedding` + `setPoolingType`; covered by `LlamaEmbeddingsTest#testNomicEmbedLoads` (commit `713d426`, CI downloads `nomic-embed-text-v1.5.f16.gguf`) | `ModelParameters.java:1040,606` |
+| 95  | LIKELY FIXED → FIXED on CI green | Iterator close/AutoCloseable wired; covered by `LlamaModelTest#testIteratorTerminatesOnRepetitivePrompt` (commit `713d426`) | `LlamaIterator.java:51-77` |
 | 91  | STILL POSSIBLE | No Android sample shipped | No `examples/android/` |
 | 90  | FIXED | mvn compile vs cmake split documented | `CLAUDE.md` Build Commands |
 | 89  | NOT APPLICABLE | Hand-port `server.hpp` removed | upstream server compiled directly |
@@ -688,7 +744,7 @@ Feature request: add multimodal input support (referencing
 | 83  | NEEDS INVESTIGATION | Fresh Windows artifact; reproduce | `compat/ggml_x86_compat.c` |
 | 82  | STILL POSSIBLE | No Android Gradle sample | See #91 |
 | 81  | STILL POSSIBLE | No Android demo repo | See #91 |
-| 80  | LIKELY FIXED | Half-init race closed by double-terminate | `jllama.cpp:932-940` |
+| 80  | LIKELY FIXED → FIXED on CI green | Half-init race closed by double-terminate; covered by `MemoryManagementTest#testOpenCloseWithoutGeneration` (commit `713d426`) | `jllama.cpp:932-940` |
 | 79  | NEEDS INVESTIGATION | Threading rewritten; needs Android repro | `jllama.cpp:683,938` |
 | 78  | FIXED | `addLoraAdapter`/`addLoraScaledAdapter` | `ModelParameters.java:906,918` |
 | 77  | NEEDS INVESTIGATION | Fresh Windows build at b9284 | `compat/ggml_x86_compat.c` |
@@ -711,10 +767,10 @@ or change the verdict.
 
 | # | New info from issue body | Test feasibility |
 |---|---|---|
-| 102 | Exact repro: 10-iteration `new LlamaModel(...).close()` loop with `setThreads(4).setKeep(-1).setCtxSize(1024).setGpuLayers(0)`. Failure mode: GPU OOM exception, CPU swap thrash. No stack trace attached. | **Unit-testable.** Direct port of the reporter's loop to `MemoryManagementTest` with an assertion on `Runtime.getRuntime().totalMemory()` and `/proc/self/status:VmRSS`. |
-| 98 | Reporter's config was *literally* `new ModelParameters().setModel(...).setBatchSize(8192).setUbatchSize(8192)` — **no `enableEmbedding()` call**. The original "bug" was that the bindings did not forward `--embedding` at all; the upstream `result_output` assertion fired because the embedding pipeline was never initialised. | **Already proven fixed by code.** `ModelParameters.enableEmbedding()` (line 1040) now sets `--embedding`. Optional confirmation test: same config + `enableEmbedding()` against `nomic-embed-text-v1.5.f16.gguf`. |
-| 95 | Reporter pastes the `next()` method and argues the design is wrong: when `output.stop=true`, the method returns that output and ends. No model, prompt or reproduction provided. | **Not a real bug** — the cited behaviour is correct iterator semantics. Optional defensive test asserting termination on a repetitive prompt remains useful. |
-| 80 | Exact repro: Kotlin-style 3 lines (`val params...`, `val model = new LlamaModel(params)`, `model.close()`) with `qwen2-0_5b-instruct-q4_0.gguf`. JDK 17.0.12+7, java-llama.cpp 3.4.1. SIGSEGV in `std::_Rb_tree` during `delete`. Reporter said they intended to follow up with a `-DLLAMA_DEBUG` build but never did. | **Unit-testable.** Three-line repro maps directly to a `@Test` method. No generation step. |
+| 102 | Exact repro: 10-iteration `new LlamaModel(...).close()` loop with `setThreads(4).setKeep(-1).setCtxSize(1024).setGpuLayers(0)`. Failure mode: GPU OOM exception, CPU swap thrash. No stack trace attached. | **DONE** — `MemoryManagementTest#testOpenCloseLoopDoesNotLeak` (commit `713d426`) ports the reporter's loop to 20 iterations with a `/proc/self/status:VmRSS` delta assertion on Linux. |
+| 98 | Reporter's config was *literally* `new ModelParameters().setModel(...).setBatchSize(8192).setUbatchSize(8192)` — **no `enableEmbedding()` call**. The original "bug" was that the bindings did not forward `--embedding` at all; the upstream `result_output` assertion fired because the embedding pipeline was never initialised. | **DONE** — `LlamaEmbeddingsTest#testNomicEmbedLoads` (commit `713d426`) runs the reporter's exact config plus `enableEmbedding()`; gated on `net.ladenthin.llama.nomic.path`; CI downloads the model via `NOMIC_EMBED_MODEL_URL` in `publish.yml`. |
+| 95 | Reporter pastes the `next()` method and argues the design is wrong: when `output.stop=true`, the method returns that output and ends. No model, prompt or reproduction provided. | **DONE** — `LlamaModelTest#testIteratorTerminatesOnRepetitivePrompt` (commit `713d426`) drives the iterator with a repetitive prompt at `nPredict=30`, `temperature=0.0f` and asserts termination within `nPredict+1` outputs. |
+| 80 | Exact repro: Kotlin-style 3 lines (`val params...`, `val model = new LlamaModel(params)`, `model.close()`) with `qwen2-0_5b-instruct-q4_0.gguf`. JDK 17.0.12+7, java-llama.cpp 3.4.1. SIGSEGV in `std::_Rb_tree` during `delete`. Reporter said they intended to follow up with a `-DLLAMA_DEBUG` build but never did. | **DONE** — `MemoryManagementTest#testOpenCloseWithoutGeneration` (commit `713d426`) maps the 3-line repro to 20 iterations of try-with-resources open + immediate close; a JVM crash exits the runner non-zero. |
 | 103 | Specifically asks about **Qwen2.5-VL on Android**. No code attempted. | Not unit-testable until a typed image API + an Android sample exist. Tracked as feature work. |
 | 86 | Just a question: "does the CUDA jar handle CPU fallback?". No code. | Not unit-testable. Documentation task. |
 | 34 | One-line feature request linking upstream PR #3436 (LLaVA). No specifics. | Subsumed by #103. |
@@ -727,6 +783,13 @@ Four small JUnit tests close out four `LIKELY FIXED` items. All four belong in
 `src/test/java/net/ladenthin/llama/MemoryManagementTest.java` or
 `src/test/java/net/ladenthin/llama/LlamaModelTest.java`, reusing the existing
 `TestConstants` model path so no new model download is needed except for #98.
+
+> **Status:** all four tests below were implemented on branch
+> `claude/sweet-fermi-1yrRK` in commit `713d426`. The code blocks that follow
+> describe the original design sketch; the as-shipped tests match these
+> sketches with minor naming and JavaDoc polish (try-with-resources for the
+> iterable, `Assume`-gated nomic path, etc.). Verdicts upgrade to **FIXED**
+> on the first green CI run.
 
 #### 1. `MemoryManagementTest.testOpenCloseLoopDoesNotLeak()` — for #102
 
@@ -841,9 +904,20 @@ the same pattern as the existing CodeLlama / Jina-Reranker model downloads.
 
 ### Recommended sequencing
 
-1. **First PR (small, high-value):** add the four JUnit tests above. Run CI. If
-   green, update this document to upgrade #80, #95, #102 to **FIXED** and
-   #98 to **FIXED** (subject to nomic model download in CI).
+1. **First PR (small, high-value): DONE on branch `claude/sweet-fermi-1yrRK`,
+   commit `713d426`.** Adds the four JUnit tests
+   (`MemoryManagementTest#testOpenCloseLoopDoesNotLeak`,
+   `MemoryManagementTest#testOpenCloseWithoutGeneration`,
+   `LlamaModelTest#testIteratorTerminatesOnRepetitivePrompt`,
+   `LlamaEmbeddingsTest#testNomicEmbedLoads`), `TestConstants.PROP_NOMIC_MODEL_PATH`
+   + `NOMIC_EMBED_DIM`, the `NOMIC_EMBED_MODEL_URL/_NAME` env vars and matching
+   curl + `-Dnet.ladenthin.llama.nomic.path=…` wiring in the linux-x86_64 Java
+   test job of `.github/workflows/publish.yml`, and the local-build
+   documentation in `CLAUDE.md` ("Building the native library for local Java
+   tests"). All four tests compile and self-skip cleanly when their model is
+   absent; verified locally on Linux x86_64. Once CI runs them green, upgrade
+   #80, #95, #98, #102 to **FIXED** in the per-issue blocks and the Status
+   overview table above (remove the "→ FIXED on CI green" annotation).
 2. **Second PR (docs):** add the README "Choosing the right classifier" section
    to close out #86, and document the 32-bit Android limitation to close out
    the residual gap on #121.
@@ -852,7 +926,9 @@ the same pattern as the existing CodeLlama / Jina-Reranker model downloads.
 4. **Fourth PR (CI):** add an Android emulator job to formally close #121 and
    #50.
 
-Steps 1 and 2 are mechanical and require no design decisions. Step 3 requires
-choosing an image-input encoding (`data:` URL vs raw bytes) and is the natural
-follow-up. Step 4 is the largest investment but closes the remaining `STILL
-POSSIBLE` Android cluster (#79, #81, #82, #91, #117, #121) all at once.
+Step 1 ships as one commit and unblocks the four FIXED upgrades pending the
+first green CI run. Step 2 is mechanical and requires no design decisions.
+Step 3 requires choosing an image-input encoding (`data:` URL vs raw bytes)
+and is the natural follow-up. Step 4 is the largest investment but closes the
+remaining `STILL POSSIBLE` Android cluster (#79, #81, #82, #91, #117, #121)
+all at once.
