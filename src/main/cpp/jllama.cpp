@@ -18,6 +18,7 @@
 #include "server-chat.h"
 #include "utils.hpp"
 #include "jni_helpers.hpp"
+#include "log_helpers.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -391,37 +392,13 @@ bool log_json;
 std::function<void(ggml_log_level, const char *, void *)> log_callback;
 
 /**
- * Format a log message as JSON.
- */
-std::string format_log_as_json(ggml_log_level level, const char *text) {
-    std::string level_str;
-    switch (level) {
-    case GGML_LOG_LEVEL_ERROR:
-        level_str = "ERROR";
-        break;
-    case GGML_LOG_LEVEL_WARN:
-        level_str = "WARN";
-        break;
-    case GGML_LOG_LEVEL_INFO:
-        level_str = "INFO";
-        break;
-    default:
-    case GGML_LOG_LEVEL_DEBUG:
-        level_str = "DEBUG";
-        break;
-    }
-    nlohmann::json log_obj = {{"timestamp", std::time(nullptr)}, {"level", level_str}, {"message", text}};
-    return log_obj.dump();
-}
-
-/**
  * Invoke the log callback if there is any. When JSON mode is enabled,
  * the message is formatted as a JSON object before forwarding.
  */
 void log_callback_trampoline(ggml_log_level level, const char *text, void *user_data) {
     if (log_callback != nullptr) {
         if (log_json) {
-            std::string json_text = format_log_as_json(level, text);
+            std::string json_text = format_log_as_json(level, text, std::time(nullptr));
             log_callback(level, json_text.c_str(), user_data);
         } else {
             log_callback(level, text, user_data);
