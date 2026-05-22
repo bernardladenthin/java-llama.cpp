@@ -103,6 +103,42 @@ jobject o_log_format_json = nullptr;
 jobject o_log_format_text = nullptr;
 jobject o_log_callback = nullptr;
 
+// ---------------------------------------------------------------------------
+// JNI global-ref lifecycle tables
+//
+// Every entry here is promoted to a JNI global ref in JNI_OnLoad and released
+// in JNI_OnUnload. Keep these in sync with the declarations above; ordering
+// within each table only matters for the human reader.
+// ---------------------------------------------------------------------------
+static jclass *const g_global_class_refs[] = {
+    &c_llama_model, &c_string,   &c_hash_map, &c_map,       &c_set,
+    &c_entry,       &c_iterator, &c_integer,  &c_float,     &c_biconsumer,
+    &c_llama_error, &c_log_level, &c_log_format, &c_error_oom,
+};
+
+static jobject *const g_global_object_refs[] = {
+    &o_utf_8,
+    &o_log_level_debug, &o_log_level_info, &o_log_level_warn, &o_log_level_error,
+    &o_log_format_json, &o_log_format_text,
+};
+
+// Maps every object that is fetched from a Java static field on load to the
+// (class, field) pair it should be looked up from.
+struct static_object_binding {
+    jobject  *target;
+    jclass   *cls;
+    jfieldID *field;
+};
+
+static const static_object_binding g_static_object_bindings[] = {
+    {&o_log_level_debug, &c_log_level,  &f_log_level_debug},
+    {&o_log_level_info,  &c_log_level,  &f_log_level_info},
+    {&o_log_level_warn,  &c_log_level,  &f_log_level_warn},
+    {&o_log_level_error, &c_log_level,  &f_log_level_error},
+    {&o_log_format_json, &c_log_format, &f_log_format_json},
+    {&o_log_format_text, &c_log_format, &f_log_format_text},
+};
+
 /**
  * Returns the jllama_context wrapper for the Java LlamaModel object.
  * Used by the delete path and any method that needs jctx directly.
@@ -454,21 +490,12 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
         goto error;
     }
 
-    // create references
-    c_llama_model = (jclass)env->NewGlobalRef(c_llama_model);
-    c_string = (jclass)env->NewGlobalRef(c_string);
-    c_hash_map = (jclass)env->NewGlobalRef(c_hash_map);
-    c_map = (jclass)env->NewGlobalRef(c_map);
-    c_set = (jclass)env->NewGlobalRef(c_set);
-    c_entry = (jclass)env->NewGlobalRef(c_entry);
-    c_iterator = (jclass)env->NewGlobalRef(c_iterator);
-    c_integer = (jclass)env->NewGlobalRef(c_integer);
-    c_float = (jclass)env->NewGlobalRef(c_float);
-    c_biconsumer = (jclass)env->NewGlobalRef(c_biconsumer);
-    c_llama_error = (jclass)env->NewGlobalRef(c_llama_error);
-    c_log_level = (jclass)env->NewGlobalRef(c_log_level);
-    c_log_format = (jclass)env->NewGlobalRef(c_log_format);
-    c_error_oom = (jclass)env->NewGlobalRef(c_error_oom);
+    // Promote local class refs (from FindClass) to global refs in one pass.
+    // c_standard_charsets is intentionally omitted: only used to look up
+    // f_utf_8 in this function and never referenced again.
+    for (jclass *p : g_global_class_refs) {
+        *p = (jclass)env->NewGlobalRef(*p);
+    }
 
     // find constructors
     cc_hash_map = env->GetMethodID(c_hash_map, "<init>", "()V");
@@ -513,25 +540,18 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     }
 
     o_utf_8 = env->NewStringUTF("UTF-8");
-    o_log_level_debug = env->GetStaticObjectField(c_log_level, f_log_level_debug);
-    o_log_level_info = env->GetStaticObjectField(c_log_level, f_log_level_info);
-    o_log_level_warn = env->GetStaticObjectField(c_log_level, f_log_level_warn);
-    o_log_level_error = env->GetStaticObjectField(c_log_level, f_log_level_error);
-    o_log_format_json = env->GetStaticObjectField(c_log_format, f_log_format_json);
-    o_log_format_text = env->GetStaticObjectField(c_log_format, f_log_format_text);
+    for (const auto &b : g_static_object_bindings) {
+        *b.target = env->GetStaticObjectField(*b.cls, *b.field);
+    }
 
     if (!(o_utf_8 && o_log_level_debug && o_log_level_info && o_log_level_warn && o_log_level_error &&
           o_log_format_json && o_log_format_text)) {
         goto error;
     }
 
-    o_utf_8 = env->NewGlobalRef(o_utf_8);
-    o_log_level_debug = env->NewGlobalRef(o_log_level_debug);
-    o_log_level_info = env->NewGlobalRef(o_log_level_info);
-    o_log_level_warn = env->NewGlobalRef(o_log_level_warn);
-    o_log_level_error = env->NewGlobalRef(o_log_level_error);
-    o_log_format_json = env->NewGlobalRef(o_log_format_json);
-    o_log_format_text = env->NewGlobalRef(o_log_format_text);
+    for (jobject *p : g_global_object_refs) {
+        *p = env->NewGlobalRef(*p);
+    }
 
     if (env->ExceptionCheck()) {
         env->ExceptionDescribe();
@@ -564,28 +584,12 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
         return;
     }
 
-    env->DeleteGlobalRef(c_llama_model);
-    env->DeleteGlobalRef(c_string);
-    env->DeleteGlobalRef(c_hash_map);
-    env->DeleteGlobalRef(c_map);
-    env->DeleteGlobalRef(c_set);
-    env->DeleteGlobalRef(c_entry);
-    env->DeleteGlobalRef(c_iterator);
-    env->DeleteGlobalRef(c_integer);
-    env->DeleteGlobalRef(c_float);
-    env->DeleteGlobalRef(c_biconsumer);
-    env->DeleteGlobalRef(c_llama_error);
-    env->DeleteGlobalRef(c_log_level);
-    env->DeleteGlobalRef(c_log_format);
-    env->DeleteGlobalRef(c_error_oom);
-
-    env->DeleteGlobalRef(o_utf_8);
-    env->DeleteGlobalRef(o_log_level_debug);
-    env->DeleteGlobalRef(o_log_level_info);
-    env->DeleteGlobalRef(o_log_level_warn);
-    env->DeleteGlobalRef(o_log_level_error);
-    env->DeleteGlobalRef(o_log_format_json);
-    env->DeleteGlobalRef(o_log_format_text);
+    for (jclass *p : g_global_class_refs) {
+        env->DeleteGlobalRef(*p);
+    }
+    for (jobject *p : g_global_object_refs) {
+        env->DeleteGlobalRef(*p);
+    }
 
     if (o_log_callback != nullptr) {
         env->DeleteGlobalRef(o_log_callback);
