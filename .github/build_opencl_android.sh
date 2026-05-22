@@ -15,9 +15,6 @@
 
 set -eu
 
-# Forward args to the inner cmake invocation.
-EXTRA_ARGS=("$@")
-
 OPENCL_STAGE=/tmp/opencl-stage
 HEADERS_DIR="$OPENCL_STAGE/OpenCL-Headers"
 LOADER_DIR="$OPENCL_STAGE/OpenCL-ICD-Loader"
@@ -46,8 +43,10 @@ if [ ! -f "$LOADER_BUILD/libOpenCL.so" ]; then
 fi
 
 mkdir -p build
+# Match .github/build.sh: pass $@ unquoted so the CI's single-string
+# argument is word-split into individual -D flags for cmake.
 cmake -Bbuild \
     -DOpenCL_INCLUDE_DIR="$HEADERS_DIR" \
     -DOpenCL_LIBRARY="$LOADER_BUILD/libOpenCL.so" \
-    "${EXTRA_ARGS[@]}"
-cmake --build build --config Release -j"$(nproc)"
+    $@ || exit 1
+cmake --build build --config Release -j"$(nproc)" || exit 1
