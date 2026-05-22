@@ -136,6 +136,60 @@ We support CPU inference for the following platforms out of the box:
 
 If any of these match your platform, you can include the Maven dependency and get started.
 
+### Choosing the right classifier
+
+The Maven coordinate `net.ladenthin:llama` publishes one default JAR (CPU-only)
+plus two optional GPU/accelerator JARs selected via a Maven `<classifier>`.
+Pick at most one — they are mutually exclusive.
+
+| Classifier | Backend | Target platform | Runtime requirement |
+|---|---|---|---|
+| _(none)_ | CPU | Linux x86-64 / aarch64, macOS x86-64 / aarch64, Windows x86-64, Android aarch64 (CPU) | None beyond a JDK 8+ JVM |
+| `cuda13-linux-x86-64` | CUDA 13 | Linux x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 runtime libraries (`libcudart.so.13`, `libcublas.so.13`) installed on the host. The shared library is dynamically linked against them and will fail to `dlopen` if they are absent — there is no automatic fallback to CPU. |
+| `opencl-android-aarch64` | OpenCL (Adreno) | Android aarch64 with Qualcomm Adreno GPU | A device-supplied OpenCL ICD (`libOpenCL.so`). Devices without an ICD (e.g. most non-Snapdragon Android hardware) must use the default CPU JAR. |
+
+```xml
+<!-- CPU (default) -->
+<dependency>
+    <groupId>net.ladenthin</groupId>
+    <artifactId>llama</artifactId>
+    <version>5.0.1</version>
+</dependency>
+
+<!-- CUDA on Linux x86-64 (requires CUDA 13 runtime on the host) -->
+<dependency>
+    <groupId>net.ladenthin</groupId>
+    <artifactId>llama</artifactId>
+    <version>5.0.1</version>
+    <classifier>cuda13-linux-x86-64</classifier>
+</dependency>
+
+<!-- OpenCL/Adreno on Android (requires device-provided OpenCL ICD) -->
+<dependency>
+    <groupId>net.ladenthin</groupId>
+    <artifactId>llama</artifactId>
+    <version>5.0.1</version>
+    <classifier>opencl-android-aarch64</classifier>
+</dependency>
+```
+
+> [!IMPORTANT]
+> The CUDA JAR is **CUDA-only at runtime**. On a CPU-only host (no NVIDIA
+> driver or no CUDA 13 runtime libraries installed) the JVM will fail at
+> native-library load time with `UnsatisfiedLinkError` caused by an
+> underlying `dlopen` failure on `libcudart.so.13`. If you want to ship a
+> single artifact that works on both CPU and CUDA hosts, depend on the
+> default (CPU) JAR; users who want GPU acceleration must compile locally
+> with `-DGGML_CUDA=ON` (see [Setup required](#setup-required)).
+
+> [!NOTE]
+> Android `armeabi-v7a` (32-bit ARM) is **not** published. Only 64-bit
+> `aarch64` Android binaries are shipped, both as the CPU-only default JAR
+> and as `opencl-android-aarch64`. 32-bit Android devices are unsupported
+> by the released artifacts; building from source via the
+> `.github/dockcross/dockcross-android-arm` toolchain is possible but not
+> wired into CI.
+
 ### Setup required
 
 If none of the above listed platforms matches yours, currently you have to compile the library yourself (also if you 

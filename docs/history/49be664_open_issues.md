@@ -29,8 +29,9 @@ After a second-pass analysis of every `LIKELY FIXED` and `PARTIALLY FIXED` issue
     CI; manual macOS-host builds use the same Android-aware CMake logic.
   - #86 — CUDA jar / CPU fallback: the CUDA jar **requires** `libcudart.so.13` at
     runtime; there is no automatic dynamic fallback to CPU within one jar. Users
-    must pick the `cpu` vs `cuda13-linux-x86-64` classifier. Verdict stays
-    PARTIALLY FIXED (documentation gap).
+    must pick the `cpu` vs `cuda13-linux-x86-64` classifier. Now documented in
+    the README "Choosing the right classifier" section &#x2192; verdict
+    FIXED-AS-DOCUMENTED.
 
 - **Confirmable with one targeted JUnit test (no model retraining, no platform
   reproduction):** all four JUnit tests below landed on `master` via PR #185
@@ -67,11 +68,12 @@ After a second-pass analysis of every `LIKELY FIXED` and `PARTIALLY FIXED` issue
   All five depend on architecture/runtime emulation defects or platform-specific
   CRT behaviour that no amount of source-tree inspection can resolve.
 
-Bottom line: out of 9 `LIKELY/PARTIALLY FIXED` issues, **4 are now FIXED via
-JUnit regression tests merged in PR #185** (#80, #95, #98, #102), **3 stay
-PARTIALLY FIXED pending Java-side enhancements** (typed image API #103/#34,
-32-bit Android tail of #121, CUDA-jar documentation #86), and **0 require
-platform reproduction**.
+Bottom line: out of 9 `LIKELY/PARTIALLY FIXED` issues, **4 are FIXED via JUnit
+regression tests merged in PR #185** (#80, #95, #98, #102), **#86 and the
+32-bit Android tail of #121 are FIXED-AS-DOCUMENTED via the README "Choosing
+the right classifier" section**, **2 stay PARTIALLY FIXED pending Java-side
+enhancements** (typed image API #103/#34), and **0 require platform
+reproduction**.
 
 ---
 
@@ -455,7 +457,7 @@ cache / context between iterations.
 Asks whether the CUDA-classified JAR supports CPU fallback when no GPU is
 present, and requests example code / dependencies for an auto-fallback setup.
 
-**Status in fork:** PARTIALLY FIXED. The CUDA classifier `cuda13-linux-x86-64` is built via `.github/build_cuda_linux.sh` (see `CLAUDE.md` "Upgrading CUDA Version" section), and the CUDA jar contains a CUDA-enabled `libjllama.so` that gracefully falls back to CPU when no GPU is present (upstream `ggml-cuda` returns 0 devices, then CPU backend is used). Commit `91b4ae1 Always build and publish CUDA artifacts` confirms the dual-artifact strategy. Next steps: add Javadoc / README guidance documenting the fallback.
+**Status in fork:** FIXED-AS-DOCUMENTED. The CUDA classifier `cuda13-linux-x86-64` is built via `.github/build_cuda_linux.sh` (see `CLAUDE.md` "Upgrading CUDA Version" section), and the dual-artifact strategy is documented in the README "Choosing the right classifier" section, which explicitly states that the CUDA JAR is CUDA-only at runtime (requires `libcudart.so.13` / `libcublas.so.13` on the host) and does not auto-fall back to CPU. CPU users must pick the default classifier.
 
 **Deep-dive analysis:** This is a documentation gap, not a code defect. Behaviorally: the CUDA-built `libjllama.so` dynamically links against `libcudart.so.13` and `libcublas.so.13`. On a CPU-only host these libraries may be absent — in which case the shared object **fails to dlopen**, not "falls back to CPU". So the answer to the original question depends on whether the user's host has the CUDA runtime libs installed. Confirmable next step (no model inference required): on a CPU-only Linux box with no CUDA, run `LD_DEBUG=libs java -cp ... net.ladenthin.llama.LlamaModel`; if dlopen of `libcudart.so.13` fails, the CUDA jar **cannot** load. **Path to definitive verdict:** either (a) build a single jar with both CUDA-conditional code paths and runtime `dlopen` of CUDA libs (similar to onnxruntime-gpu), or (b) document that users must pick `cpu` vs `cuda13-linux-x86-64` classifiers explicitly. The current `91b4ae1` strategy is (b). Verdict for the original question: the CUDA jar is **CUDA-only at runtime**; CPU users must pick the default classifier. Update to FIXED-AS-DOCUMENTED once a README note is added.
 
@@ -713,7 +715,7 @@ Feature request: add multimodal input support (referencing
 |---|---|---|---|
 | 124 | FIXED | Continuous version bumps; pinned to b9284 | `CLAUDE.md:11`, `git log` upgrade commits |
 | 123 | FIXED | b9284 includes Qwen3-VL; mtmd linked | `CMakeLists.txt:255`, `CLAUDE.md:11` |
-| 121 | PARTIALLY FIXED → FIXED (64-bit) | aarch64 path consistent between CI build and loader; no 32-bit publish | `publish.yml:133`, `OSInfo.java:256-259,350` |
+| 121 | FIXED (64-bit) | aarch64 path consistent between CI build and loader; 32-bit `armeabi-v7a` limitation documented in README "Choosing the right classifier" | `publish.yml:133`, `OSInfo.java:256-259,350`, `README.md` |
 | 120 | FIXED | Architecture support comes from b9284 | `CLAUDE.md:11` |
 | 119 | FIXED | Per-release bump cadence to b9284 | `git log --oneline` Upgrade commits |
 | 117 | NEEDS INVESTIGATION | Upstream backend-device crash; reproduce | `b9284` is current; reproduce on emulator |
@@ -734,7 +736,7 @@ Feature request: add multimodal input support (referencing
 | 89  | NOT APPLICABLE | Hand-port `server.hpp` removed | upstream server compiled directly |
 | 88  | FIXED | `chatComplete` accepts OAI messages JSON | `LlamaModel.java:215-238` |
 | 87  | FIXED | `setCachePrompt` + per-slot KV semantics | `InferenceParameters.java:116` |
-| 86  | PARTIALLY FIXED | CUDA jar is CUDA-runtime-required; user must pick classifier | `.github/build_cuda_linux.sh`, commit `91b4ae1` |
+| 86  | FIXED-AS-DOCUMENTED | CUDA jar is CUDA-runtime-required; user must pick classifier. README "Choosing the right classifier" documents this. | `.github/build_cuda_linux.sh`, commit `91b4ae1`, `README.md` |
 | 85  | NEEDS INVESTIGATION | Rosetta-2 emulation defect; arm64 builds ship | `Mac/aarch64/` artifact |
 | 84  | FIXED | `rerank()` API + RerankingModelTest | `LlamaModel.java:170,187` |
 | 83  | NEEDS INVESTIGATION | Fresh Windows artifact; reproduce | `compat/ggml_x86_compat.c` |
