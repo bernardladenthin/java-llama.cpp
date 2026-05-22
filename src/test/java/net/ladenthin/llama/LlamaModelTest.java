@@ -243,6 +243,41 @@ public class LlamaModelTest {
 		Assert.assertNotNull(model.complete(new InferenceParameters(prefix).setNPredict(3)));
 	}
 
+	/**
+	 * Regression: {@link LlamaModel#complete(InferenceParameters, CancellationToken)}
+	 * must return promptly when {@link CancellationToken#cancel()} is invoked from
+	 * another thread, returning whatever text was generated up to that point without
+	 * throwing. The model must remain usable for subsequent calls.
+	 */
+	@Test
+	public void testCompleteWithCancellationToken() throws Exception {
+		InferenceParameters params = new InferenceParameters(prefix).setNPredict(512);
+		CancellationToken token = new CancellationToken();
+
+		Thread canceller = new Thread(() -> {
+			try {
+				Thread.sleep(200);
+			} catch (InterruptedException ignored) {
+			}
+			token.cancel();
+		});
+
+		long start = System.currentTimeMillis();
+		canceller.start();
+		String partial = model.complete(params, token);
+		long elapsed = System.currentTimeMillis() - start;
+		canceller.join();
+
+		Assert.assertTrue("complete should return within 5s of cancel, took " + elapsed + "ms",
+				elapsed < 5000);
+		Assert.assertNotNull(partial);
+		// Token must be reset on return so it can be reused.
+		Assert.assertFalse("token should be reset after call returns", token.isCancelled());
+
+		// Model is still usable
+		Assert.assertNotNull(model.complete(new InferenceParameters(prefix).setNPredict(3)));
+	}
+
 	@Test
 	public void testEmbedding() {
 		float[] embedding = model.embed(prefix);

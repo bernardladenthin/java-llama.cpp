@@ -72,6 +72,50 @@ public class LlamaModel implements AutoCloseable {
 	}
 
 	/**
+	 * Cancellable variant of {@link #complete(InferenceParameters)}. Runs in streaming mode
+	 * internally so the inference loop can observe a {@link CancellationToken#cancel()} call
+	 * from another thread and return early with whatever text was accumulated so far.
+	 * <p>
+	 * The token is rebound to this call (any prior {@code cancel} state is cleared on entry).
+	 * On return &mdash; whether by natural stop or cancellation &mdash; the token is unbound.
+	 * </p>
+	 *
+	 * @param parameters the inference configuration (its {@code stream} flag will be set to true)
+	 * @param token cancellation handle; {@link CancellationToken#cancel()} aborts the loop
+	 * @return the text generated up to the point of stop or cancellation
+	 */
+	public String complete(InferenceParameters parameters, CancellationToken token) {
+		token.reset();
+		parameters.setStream(true);
+		int taskId = requestCompletion(parameters.toString());
+		token.bind(this, taskId);
+		StringBuilder sb = new StringBuilder();
+		try {
+			while (true) {
+				if (token.isCancelled()) {
+					break;
+				}
+				String json;
+				try {
+					json = receiveCompletionJson(taskId);
+				} catch (LlamaException e) {
+					// Reader was erased by a concurrent cancel — treat as graceful stop.
+					if (token.isCancelled()) break;
+					throw e;
+				}
+				LlamaOutput out = completionParser.parse(json);
+				sb.append(out.text);
+				if (out.stop) {
+					break;
+				}
+			}
+		} finally {
+			token.reset();
+		}
+		return sb.toString();
+	}
+
+	/**
 	 * Generate and stream outputs with custom inference parameters. Note, that the prompt isn't preprocessed in any
 	 * way, nothing like "User: ", "###Instruction", etc. is added.
 	 *
