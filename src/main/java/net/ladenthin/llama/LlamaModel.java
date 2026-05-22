@@ -75,6 +75,17 @@ public class LlamaModel implements AutoCloseable {
 	 * Generate and stream outputs with custom inference parameters. Note, that the prompt isn't preprocessed in any
 	 * way, nothing like "User: ", "###Instruction", etc. is added.
 	 *
+	 * <p>The returned {@link LlamaIterable} implements {@link AutoCloseable}. Wrap it in a
+	 * try-with-resources block to guarantee the native task slot is released even when the
+	 * consumer exits the loop early:
+	 * <pre>{@code
+	 * try (LlamaIterable it = model.generate(params)) {
+	 *     for (LlamaOutput out : it) {
+	 *         if (shouldStop(out)) break;   // close() cancels the native task automatically
+	 *     }
+	 * }
+	 * }</pre>
+	 *
 	 * @param parameters the inference configuration
 	 * @return iterable LLM outputs
 	 */

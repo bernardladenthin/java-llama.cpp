@@ -58,7 +58,12 @@ public final class LlamaIterator implements Iterator<LlamaOutput>, AutoCloseable
     }
 
     /**
-     * Cancel the ongoing generation process.
+     * Cancel the ongoing generation process. Releases the native JNI reader for this task
+     * so subsequent calls to {@link #next()} no longer return values.
+     * <p>
+     * Note: the underlying llama.cpp slot may continue running until its natural stop
+     * condition, but the iterator stops yielding tokens immediately and the reader is
+     * cleaned up. Safe to call multiple times.
      */
     public void cancel() {
         model.cancelCompletion(taskId);
@@ -67,10 +72,18 @@ public final class LlamaIterator implements Iterator<LlamaOutput>, AutoCloseable
 
     /**
      * Cancels any in-progress generation if the iterator has not yet reached a stop token.
-     * Safe to call multiple times — subsequent calls are no-ops.
+     * Idempotent: subsequent calls are no-ops, and calling {@code close()} after natural
+     * completion (the last {@link #next()} call returned a stop token) is also a no-op
+     * because {@code releaseTask} was already invoked in {@link #next()}.
      *
-     * <p>Prefer using the enclosing {@link LlamaIterable} in a try-with-resources block rather
-     * than calling this directly.
+     * <p>Prefer using the enclosing {@link LlamaIterable} in a try-with-resources block:
+     * <pre>{@code
+     * try (LlamaIterable it = model.generate(params)) {
+     *     for (LlamaOutput out : it) {
+     *         if (shouldStop(out)) break;
+     *     }
+     * }
+     * }</pre>
      */
     @Override
     public void close() {

@@ -214,6 +214,35 @@ public class LlamaModelTest {
 		Assert.assertNotNull("Model must be functional after autoclosed iterator", result);
 	}
 
+	/**
+	 * Regression: {@link LlamaIterator#close()} must be idempotent. Calling it
+	 * after natural completion (the iterator already drained to its stop token)
+	 * and calling it twice on an already-cancelled iterator must not throw and
+	 * must not affect subsequent inference.
+	 */
+	@Test
+	public void testIteratorCloseIdempotent() {
+		InferenceParameters params = new InferenceParameters(prefix).setNPredict(3);
+
+		// Case A: drain to natural stop, then close()
+		LlamaIterable a = model.generate(params);
+		for (LlamaOutput ignored : a) {
+			// drain
+		}
+		a.close();
+		a.close(); // second close still a no-op
+
+		// Case B: cancel mid-stream, then close()
+		LlamaIterator b = model.generate(params).iterator();
+		if (b.hasNext()) b.next();
+		b.cancel();
+		b.close();
+		b.close();
+
+		// Model must still be usable
+		Assert.assertNotNull(model.complete(new InferenceParameters(prefix).setNPredict(3)));
+	}
+
 	@Test
 	public void testEmbedding() {
 		float[] embedding = model.embed(prefix);
