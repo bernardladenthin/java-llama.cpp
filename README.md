@@ -450,3 +450,8 @@ rm /usr/lib/jvm/java-21/bin/msvcp140.dll
 ```
 
 The system's updated C++ runtime will be used instead, resolving the crash.
+
+## Similar Projects / Usage
+
+- [LLaMAndroid](https://github.com/Rattlyy/LLaMAndroid/tree/main/app) — Android app demonstrating usage of llama.cpp bindings.
+- [llama-stack-client-kotlin](https://github.com/ogx-ai/llama-stack-client-kotlin) — Kotlin client for the Llama Stack API.
