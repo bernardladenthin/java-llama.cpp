@@ -70,6 +70,14 @@ struct jllama_context {
     std::map<int, std::unique_ptr<server_response_reader>> readers;
 };
 
+// Removes the streaming reader entry for `id_task` under the readers_mutex.
+// No-op if the id is not in the map. Used to release the JNI side of a
+// completed, cancelled, or failed streaming task.
+inline void erase_reader(jllama_context *jctx, int id_task) {
+    std::lock_guard<std::mutex> lk(jctx->readers_mutex);
+    jctx->readers.erase(id_task);
+}
+
 // ---------------------------------------------------------------------------
 // get_jllama_context_impl
 //

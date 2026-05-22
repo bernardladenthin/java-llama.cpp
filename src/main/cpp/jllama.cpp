@@ -746,8 +746,7 @@ JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestCompletion(JNI
 
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_releaseTask(JNIEnv *env, jobject obj, jint id_task) {
     REQUIRE_SERVER_CONTEXT();
-    std::lock_guard<std::mutex> lk(jctx->readers_mutex);
-    jctx->readers.erase(id_task);
+    erase_reader(jctx, id_task);
 }
 
 JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_receiveCompletionJson(JNIEnv *env, jobject obj,
@@ -768,8 +767,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_receiveCompletionJ
     server_task_result_ptr result = rd->next([] { return false; });
 
     if (!result_ok_or_throw(env, result)) {
-        std::lock_guard<std::mutex> lk(jctx->readers_mutex);
-        jctx->readers.erase(id_task);
+        erase_reader(jctx, id_task);
         return nullptr;
     }
 
@@ -777,8 +775,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_receiveCompletionJ
     response["stop"]   = result->is_stop();
 
     if (result->is_stop()) {
-        std::lock_guard<std::mutex> lk(jctx->readers_mutex);
-        jctx->readers.erase(id_task);
+        erase_reader(jctx, id_task);
     }
 
     return json_to_jstring_impl(env, response);
@@ -949,8 +946,7 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_delete(JNIEnv *env, j
 
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_cancelCompletion(JNIEnv *env, jobject obj, jint id_task) {
     REQUIRE_SERVER_CONTEXT();
-    std::lock_guard<std::mutex> lk(jctx->readers_mutex);
-    jctx->readers.erase(id_task);
+    erase_reader(jctx, id_task);
 }
 
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_setLogger(JNIEnv *env, jclass clazz, jobject log_format,
