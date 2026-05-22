@@ -114,8 +114,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setCachePrompt(boolean cachePrompt) {
-		parameters.put(PARAM_CACHE_PROMPT, String.valueOf(cachePrompt));
-		return this;
+		return putScalar(PARAM_CACHE_PROMPT, cachePrompt);
 	}
 
 	/**
@@ -125,8 +124,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setNPredict(int nPredict) {
-		parameters.put(PARAM_N_PREDICT, String.valueOf(nPredict));
-		return this;
+		return putScalar(PARAM_N_PREDICT, nPredict);
 	}
 
 	/**
@@ -136,8 +134,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setTopK(int topK) {
-		parameters.put(PARAM_TOP_K, String.valueOf(topK));
-		return this;
+		return putScalar(PARAM_TOP_K, topK);
 	}
 
 	/**
@@ -147,8 +144,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setTopP(float topP) {
-		parameters.put(PARAM_TOP_P, String.valueOf(topP));
-		return this;
+		return putScalar(PARAM_TOP_P, topP);
 	}
 
 	/**
@@ -158,8 +154,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setMinP(float minP) {
-		parameters.put(PARAM_MIN_P, String.valueOf(minP));
-		return this;
+		return putScalar(PARAM_MIN_P, minP);
 	}
 
 	/**
@@ -169,8 +164,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setTfsZ(float tfsZ) {
-		parameters.put(PARAM_TFS_Z, String.valueOf(tfsZ));
-		return this;
+		return putScalar(PARAM_TFS_Z, tfsZ);
 	}
 
 	/**
@@ -180,8 +174,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setTypicalP(float typicalP) {
-		parameters.put(PARAM_TYPICAL_P, String.valueOf(typicalP));
-		return this;
+		return putScalar(PARAM_TYPICAL_P, typicalP);
 	}
 
 	/**
@@ -191,8 +184,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setTemperature(float temperature) {
-		parameters.put(PARAM_TEMPERATURE, String.valueOf(temperature));
-		return this;
+		return putScalar(PARAM_TEMPERATURE, temperature);
 	}
 
 	/**
@@ -202,8 +194,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setDynamicTemperatureRange(float dynatempRange) {
-		parameters.put(PARAM_DYNATEMP_RANGE, String.valueOf(dynatempRange));
-		return this;
+		return putScalar(PARAM_DYNATEMP_RANGE, dynatempRange);
 	}
 
 	/**
@@ -213,8 +204,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setDynamicTemperatureExponent(float dynatempExponent) {
-		parameters.put(PARAM_DYNATEMP_EXPONENT, String.valueOf(dynatempExponent));
-		return this;
+		return putScalar(PARAM_DYNATEMP_EXPONENT, dynatempExponent);
 	}
 
 	/**
@@ -224,8 +214,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setRepeatLastN(int repeatLastN) {
-		parameters.put(PARAM_REPEAT_LAST_N, String.valueOf(repeatLastN));
-		return this;
+		return putScalar(PARAM_REPEAT_LAST_N, repeatLastN);
 	}
 
 	/**
@@ -235,8 +224,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setRepeatPenalty(float repeatPenalty) {
-		parameters.put(PARAM_REPEAT_PENALTY, String.valueOf(repeatPenalty));
-		return this;
+		return putScalar(PARAM_REPEAT_PENALTY, repeatPenalty);
 	}
 
 	/**
@@ -246,8 +234,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setFrequencyPenalty(float frequencyPenalty) {
-		parameters.put(PARAM_FREQUENCY_PENALTY, String.valueOf(frequencyPenalty));
-		return this;
+		return putScalar(PARAM_FREQUENCY_PENALTY, frequencyPenalty);
 	}
 
 	/**
@@ -257,8 +244,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setPresencePenalty(float presencePenalty) {
-		parameters.put(PARAM_PRESENCE_PENALTY, String.valueOf(presencePenalty));
-		return this;
+		return putScalar(PARAM_PRESENCE_PENALTY, presencePenalty);
 	}
 
 	/**
@@ -268,8 +254,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setMiroStat(MiroStat mirostat) {
-		parameters.put(PARAM_MIROSTAT, String.valueOf(mirostat.ordinal()));
-		return this;
+		return putScalar(PARAM_MIROSTAT, mirostat.ordinal());
 	}
 
 	/**
@@ -279,8 +264,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setMiroStatTau(float mirostatTau) {
-		parameters.put(PARAM_MIROSTAT_TAU, String.valueOf(mirostatTau));
-		return this;
+		return putScalar(PARAM_MIROSTAT_TAU, mirostatTau);
 	}
 
 	/**
@@ -290,8 +274,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setMiroStatEta(float mirostatEta) {
-		parameters.put(PARAM_MIROSTAT_ETA, String.valueOf(mirostatEta));
-		return this;
+		return putScalar(PARAM_MIROSTAT_ETA, mirostatEta);
 	}
 
 	/**
@@ -301,8 +284,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setPenalizeNl(boolean penalizeNl) {
-		parameters.put(PARAM_PENALIZE_NL, String.valueOf(penalizeNl));
-		return this;
+		return putScalar(PARAM_PENALIZE_NL, penalizeNl);
 	}
 
 	/**
@@ -312,8 +294,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setNKeep(int nKeep) {
-		parameters.put(PARAM_N_KEEP, String.valueOf(nKeep));
-		return this;
+		return putScalar(PARAM_N_KEEP, nKeep);
 	}
 
 	/**
@@ -323,8 +304,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setSeed(int seed) {
-		parameters.put(PARAM_SEED, String.valueOf(seed));
-		return this;
+		return putScalar(PARAM_SEED, seed);
 	}
 
 	/**
@@ -334,8 +314,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setNProbs(int nProbs) {
-		parameters.put(PARAM_N_PROBS, String.valueOf(nProbs));
-		return this;
+		return putScalar(PARAM_N_PROBS, nProbs);
 	}
 
 	/**
@@ -345,8 +324,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setMinKeep(int minKeep) {
-		parameters.put(PARAM_MIN_KEEP, String.valueOf(minKeep));
-		return this;
+		return putScalar(PARAM_MIN_KEEP, minKeep);
 	}
 
 	/**
@@ -396,8 +374,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setIgnoreEos(boolean ignoreEos) {
-		parameters.put(PARAM_IGNORE_EOS, String.valueOf(ignoreEos));
-		return this;
+		return putScalar(PARAM_IGNORE_EOS, ignoreEos);
 	}
 
 	/**
@@ -513,8 +490,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setUseChatTemplate(boolean useChatTemplate) {
-		parameters.put(PARAM_USE_JINJA, String.valueOf(useChatTemplate));
-		return this;
+		return putScalar(PARAM_USE_JINJA, useChatTemplate);
 	}
 
 	/**
@@ -570,8 +546,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setTopNSigma(float topNSigma) {
-		parameters.put(PARAM_TOP_N_SIGMA, String.valueOf(topNSigma));
-		return this;
+		return putScalar(PARAM_TOP_N_SIGMA, topNSigma);
 	}
 
 	/**
@@ -596,8 +571,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setReasoningBudgetTokens(int budgetTokens) {
-		parameters.put(PARAM_REASONING_BUDGET_TOKENS, String.valueOf(budgetTokens));
-		return this;
+		return putScalar(PARAM_REASONING_BUDGET_TOKENS, budgetTokens);
 	}
 
 	/**
@@ -610,8 +584,7 @@ public final class InferenceParameters extends JsonParameters {
 	 * @return this builder
 	 */
 	public InferenceParameters setContinueFinalMessage(boolean continueFinalMessage) {
-		parameters.put(PARAM_CONTINUE_FINAL_MESSAGE, String.valueOf(continueFinalMessage));
-		return this;
+		return putScalar(PARAM_CONTINUE_FINAL_MESSAGE, continueFinalMessage);
 	}
 
 	/**
@@ -630,8 +603,7 @@ public final class InferenceParameters extends JsonParameters {
 	}
 
 	InferenceParameters setStream(boolean stream) {
-		parameters.put(PARAM_STREAM, String.valueOf(stream));
-		return this;
+		return putScalar(PARAM_STREAM, stream);
 	}
 
 }

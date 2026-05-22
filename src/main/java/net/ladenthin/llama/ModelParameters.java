@@ -49,8 +49,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setThreads(int nThreads) {
-        parameters.put("--threads", String.valueOf(nThreads));
-        return this;
+        return putScalar("--threads", nThreads);
     }
 
     /**
@@ -60,8 +59,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setThreadsBatch(int nThreads) {
-        parameters.put("--threads-batch", String.valueOf(nThreads));
-        return this;
+        return putScalar("--threads-batch", nThreads);
     }
 
     /**
@@ -93,8 +91,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCpuStrict(int strictCpu) {
-        parameters.put("--cpu-strict", String.valueOf(strictCpu));
-        return this;
+        return putScalar("--cpu-strict", strictCpu);
     }
 
     /**
@@ -107,8 +104,7 @@ public final class ModelParameters extends CliParameters {
         if (priority < 0 || priority > 3) {
             throw new IllegalArgumentException("Invalid value for priority");
         }
-        parameters.put("--prio", String.valueOf(priority));
-        return this;
+        return putScalar("--prio", priority);
     }
 
     /**
@@ -118,8 +114,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setPoll(int poll) {
-        parameters.put("--poll", String.valueOf(poll));
-        return this;
+        return putScalar("--poll", poll);
     }
 
     /**
@@ -151,8 +146,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCpuStrictBatch(int strictCpuBatch) {
-        parameters.put("--cpu-strict-batch", String.valueOf(strictCpuBatch));
-        return this;
+        return putScalar("--cpu-strict-batch", strictCpuBatch);
     }
 
     /**
@@ -165,8 +159,7 @@ public final class ModelParameters extends CliParameters {
         if (priorityBatch < 0 || priorityBatch > 3) {
             throw new IllegalArgumentException("Invalid value for priority batch");
         }
-        parameters.put("--prio-batch", String.valueOf(priorityBatch));
-        return this;
+        return putScalar("--prio-batch", priorityBatch);
     }
 
     /**
@@ -176,8 +169,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setPollBatch(int pollBatch) {
-        parameters.put("--poll-batch", String.valueOf(pollBatch));
-        return this;
+        return putScalar("--poll-batch", pollBatch);
     }
 
     /**
@@ -187,8 +179,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCtxSize(int ctxSize) {
-        parameters.put("--ctx-size", String.valueOf(ctxSize));
-        return this;
+        return putScalar("--ctx-size", ctxSize);
     }
 
     /**
@@ -198,8 +189,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setPredict(int nPredict) {
-        parameters.put("--predict", String.valueOf(nPredict));
-        return this;
+        return putScalar("--predict", nPredict);
     }
 
     /**
@@ -209,8 +199,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setBatchSize(int batchSize) {
-        parameters.put("--batch-size", String.valueOf(batchSize));
-        return this;
+        return putScalar("--batch-size", batchSize);
     }
 
     /**
@@ -220,8 +209,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setUbatchSize(int ubatchSize) {
-        parameters.put("--ubatch-size", String.valueOf(ubatchSize));
-        return this;
+        return putScalar("--ubatch-size", ubatchSize);
     }
 
     /**
@@ -231,8 +219,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setKeep(int keep) {
-        parameters.put("--keep", String.valueOf(keep));
-        return this;
+        return putScalar("--keep", keep);
     }
 
     /**
@@ -335,8 +322,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setSeed(long seed) {
-        parameters.put("--seed", String.valueOf(seed));
-        return this;
+        return putScalar("--seed", seed);
     }
 
     /**
@@ -355,8 +341,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setTemp(float temp) {
-        parameters.put("--temp", String.valueOf(temp));
-        return this;
+        return putScalar("--temp", temp);
     }
 
     /**
@@ -366,8 +351,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setTopK(int topK) {
-        parameters.put("--top-k", String.valueOf(topK));
-        return this;
+        return putScalar("--top-k", topK);
     }
 
     /**
@@ -377,8 +361,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setTopP(float topP) {
-        parameters.put("--top-p", String.valueOf(topP));
-        return this;
+        return putScalar("--top-p", topP);
     }
 
     /**
@@ -388,8 +371,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMinP(float minP) {
-        parameters.put("--min-p", String.valueOf(minP));
-        return this;
+        return putScalar("--min-p", minP);
     }
 
     /**
@@ -399,8 +381,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setXtcProbability(float xtcProbability) {
-        parameters.put("--xtc-probability", String.valueOf(xtcProbability));
-        return this;
+        return putScalar("--xtc-probability", xtcProbability);
     }
 
     /**
@@ -410,8 +391,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setXtcThreshold(float xtcThreshold) {
-        parameters.put("--xtc-threshold", String.valueOf(xtcThreshold));
-        return this;
+        return putScalar("--xtc-threshold", xtcThreshold);
     }
 
     /**
@@ -421,8 +401,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setTypical(float typP) {
-        parameters.put("--typical", String.valueOf(typP));
-        return this;
+        return putScalar("--typical", typP);
     }
 
     /**
@@ -435,8 +414,7 @@ public final class ModelParameters extends CliParameters {
         if (repeatLastN < -1) {
             throw new RuntimeException("Invalid repeat-last-n value");
         }
-        parameters.put("--repeat-last-n", String.valueOf(repeatLastN));
-        return this;
+        return putScalar("--repeat-last-n", repeatLastN);
     }
 
     /**
@@ -446,8 +424,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setRepeatPenalty(float repeatPenalty) {
-        parameters.put("--repeat-penalty", String.valueOf(repeatPenalty));
-        return this;
+        return putScalar("--repeat-penalty", repeatPenalty);
     }
 
     /**
@@ -457,8 +434,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setPresencePenalty(float presencePenalty) {
-        parameters.put("--presence-penalty", String.valueOf(presencePenalty));
-        return this;
+        return putScalar("--presence-penalty", presencePenalty);
     }
 
     /**
@@ -468,8 +444,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setFrequencyPenalty(float frequencyPenalty) {
-        parameters.put("--frequency-penalty", String.valueOf(frequencyPenalty));
-        return this;
+        return putScalar("--frequency-penalty", frequencyPenalty);
     }
 
     /**
@@ -479,8 +454,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDryMultiplier(float dryMultiplier) {
-        parameters.put("--dry-multiplier", String.valueOf(dryMultiplier));
-        return this;
+        return putScalar("--dry-multiplier", dryMultiplier);
     }
 
     /**
@@ -490,8 +464,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDryBase(float dryBase) {
-        parameters.put("--dry-base", String.valueOf(dryBase));
-        return this;
+        return putScalar("--dry-base", dryBase);
     }
 
     /**
@@ -501,8 +474,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDryAllowedLength(int dryAllowedLength) {
-        parameters.put("--dry-allowed-length", String.valueOf(dryAllowedLength));
-        return this;
+        return putScalar("--dry-allowed-length", dryAllowedLength);
     }
 
     /**
@@ -515,8 +487,7 @@ public final class ModelParameters extends CliParameters {
         if (dryPenaltyLastN < -1) {
             throw new RuntimeException("Invalid dry-penalty-last-n value");
         }
-        parameters.put("--dry-penalty-last-n", String.valueOf(dryPenaltyLastN));
-        return this;
+        return putScalar("--dry-penalty-last-n", dryPenaltyLastN);
     }
 
     /**
@@ -537,8 +508,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDynatempRange(float dynatempRange) {
-        parameters.put("--dynatemp-range", String.valueOf(dynatempRange));
-        return this;
+        return putScalar("--dynatemp-range", dynatempRange);
     }
 
     /**
@@ -548,8 +518,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDynatempExponent(float dynatempExponent) {
-        parameters.put("--dynatemp-exp", String.valueOf(dynatempExponent));
-        return this;
+        return putScalar("--dynatemp-exp", dynatempExponent);
     }
 
     /**
@@ -559,8 +528,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMirostat(MiroStat mirostat) {
-        parameters.put("--mirostat", mirostat.getArgValue());
-        return this;
+        return putEnum("--mirostat", mirostat);
     }
 
     /**
@@ -570,8 +538,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMirostatLR(float mirostatLR) {
-        parameters.put("--mirostat-lr", String.valueOf(mirostatLR));
-        return this;
+        return putScalar("--mirostat-lr", mirostatLR);
     }
 
     /**
@@ -581,8 +548,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMirostatEnt(float mirostatEnt) {
-        parameters.put("--mirostat-ent", String.valueOf(mirostatEnt));
-        return this;
+        return putScalar("--mirostat-ent", mirostatEnt);
     }
 
     /**
@@ -652,8 +618,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setRopeScaling(RopeScalingType type) {
-        parameters.put("--rope-scaling", type.getArgValue());
-        return this;
+        return putEnum("--rope-scaling", type);
     }
 
     /**
@@ -663,8 +628,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setRopeScale(float ropeScale) {
-        parameters.put("--rope-scale", String.valueOf(ropeScale));
-        return this;
+        return putScalar("--rope-scale", ropeScale);
     }
 
     /**
@@ -674,8 +638,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setRopeFreqBase(float ropeFreqBase) {
-        parameters.put("--rope-freq-base", String.valueOf(ropeFreqBase));
-        return this;
+        return putScalar("--rope-freq-base", ropeFreqBase);
     }
 
     /**
@@ -685,8 +648,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setRopeFreqScale(float ropeFreqScale) {
-        parameters.put("--rope-freq-scale", String.valueOf(ropeFreqScale));
-        return this;
+        return putScalar("--rope-freq-scale", ropeFreqScale);
     }
 
     /**
@@ -696,8 +658,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setYarnOrigCtx(int yarnOrigCtx) {
-        parameters.put("--yarn-orig-ctx", String.valueOf(yarnOrigCtx));
-        return this;
+        return putScalar("--yarn-orig-ctx", yarnOrigCtx);
     }
 
     /**
@@ -707,8 +668,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setYarnExtFactor(float yarnExtFactor) {
-        parameters.put("--yarn-ext-factor", String.valueOf(yarnExtFactor));
-        return this;
+        return putScalar("--yarn-ext-factor", yarnExtFactor);
     }
 
     /**
@@ -718,8 +678,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setYarnAttnFactor(float yarnAttnFactor) {
-        parameters.put("--yarn-attn-factor", String.valueOf(yarnAttnFactor));
-        return this;
+        return putScalar("--yarn-attn-factor", yarnAttnFactor);
     }
 
     /**
@@ -729,8 +688,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setYarnBetaSlow(float yarnBetaSlow) {
-        parameters.put("--yarn-beta-slow", String.valueOf(yarnBetaSlow));
-        return this;
+        return putScalar("--yarn-beta-slow", yarnBetaSlow);
     }
 
     /**
@@ -740,8 +698,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setYarnBetaFast(float yarnBetaFast) {
-        parameters.put("--yarn-beta-fast", String.valueOf(yarnBetaFast));
-        return this;
+        return putScalar("--yarn-beta-fast", yarnBetaFast);
     }
 
     /**
@@ -751,8 +708,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setGrpAttnN(int grpAttnN) {
-        parameters.put("--grp-attn-n", String.valueOf(grpAttnN));
-        return this;
+        return putScalar("--grp-attn-n", grpAttnN);
     }
 
     /**
@@ -762,8 +718,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setGrpAttnW(int grpAttnW) {
-        parameters.put("--grp-attn-w", String.valueOf(grpAttnW));
-        return this;
+        return putScalar("--grp-attn-w", grpAttnW);
     }
 
     /**
@@ -791,8 +746,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCacheTypeK(CacheType type) {
-        parameters.put("--cache-type-k", type.getArgValue());
-        return this;
+        return putEnum("--cache-type-k", type);
     }
 
     /**
@@ -802,8 +756,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCacheTypeV(CacheType type) {
-        parameters.put("--cache-type-v", type.getArgValue());
-        return this;
+        return putEnum("--cache-type-v", type);
     }
 
     /**
@@ -813,8 +766,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDefragThold(float defragThold) {
-        parameters.put("--defrag-thold", String.valueOf(defragThold));
-        return this;
+        return putScalar("--defrag-thold", defragThold);
     }
 
     /**
@@ -824,8 +776,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setParallel(int nParallel) {
-        parameters.put("--parallel", String.valueOf(nParallel));
-        return this;
+        return putScalar("--parallel", nParallel);
     }
 
     /**
@@ -871,8 +822,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setNuma(NumaStrategy numaStrategy) {
-        parameters.put("--numa", numaStrategy.getArgValue());
-        return this;
+        return putEnum("--numa", numaStrategy);
     }
 
     /**
@@ -893,8 +843,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setGpuLayers(int gpuLayers) {
-        parameters.put("--gpu-layers", String.valueOf(gpuLayers));
-        return this;
+        return putScalar("--gpu-layers", gpuLayers);
     }
 
     /**
@@ -904,8 +853,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setSplitMode(GpuSplitMode splitMode) {
-        parameters.put("--split-mode", splitMode.getArgValue());
-        return this;
+        return putEnum("--split-mode", splitMode);
     }
 
     /**
@@ -926,8 +874,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMainGpu(int mainGpu) {
-        parameters.put("--main-gpu", String.valueOf(mainGpu));
-        return this;
+        return putScalar("--main-gpu", mainGpu);
     }
 
     /**
@@ -1110,8 +1057,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCacheReuse(int cacheReuse) {
-        parameters.put("--cache-reuse", String.valueOf(cacheReuse));
-        return this;
+        return putScalar("--cache-reuse", cacheReuse);
     }
 
     /**
@@ -1164,8 +1110,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setSlotPromptSimilarity(float similarity) {
-        parameters.put("--slot-prompt-similarity", String.valueOf(similarity));
-        return this;
+        return putScalar("--slot-prompt-similarity", similarity);
     }
 
     /**
@@ -1213,8 +1158,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setLogVerbosity(int verbosity) {
-        parameters.put("--log-verbosity", String.valueOf(verbosity));
-        return this;
+        return putScalar("--log-verbosity", verbosity);
     }
 
     /**
@@ -1242,8 +1186,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDraftMax(int draftMax) {
-        parameters.put("--spec-draft-n-max", String.valueOf(draftMax));
-        return this;
+        return putScalar("--spec-draft-n-max", draftMax);
     }
 
     /**
@@ -1253,8 +1196,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDraftMin(int draftMin) {
-        parameters.put("--spec-draft-n-min", String.valueOf(draftMin));
-        return this;
+        return putScalar("--spec-draft-n-min", draftMin);
     }
 
     /**
@@ -1264,8 +1206,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDraftPMin(float draftPMin) {
-        parameters.put("--spec-draft-p-min", String.valueOf(draftPMin));
-        return this;
+        return putScalar("--spec-draft-p-min", draftPMin);
     }
 
     /**
@@ -1286,8 +1227,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setGpuLayersDraft(int gpuLayersDraft) {
-        parameters.put("--spec-draft-ngl", String.valueOf(gpuLayersDraft));
-        return this;
+        return putScalar("--spec-draft-ngl", gpuLayersDraft);
     }
 
     /**
@@ -1350,8 +1290,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setReasoningFormat(net.ladenthin.llama.args.ReasoningFormat format) {
-        parameters.put("--reasoning-format", format.getArgValue());
-        return this;
+        return putEnum("--reasoning-format", format);
     }
 
     /**
@@ -1364,8 +1303,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setReasoningBudget(int budget) {
-        parameters.put("--reasoning-budget", String.valueOf(budget));
-        return this;
+        return putScalar("--reasoning-budget", budget);
     }
 
     /**
@@ -1376,8 +1314,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setSleepIdleSeconds(int seconds) {
-        parameters.put("--sleep-idle-seconds", String.valueOf(seconds));
-        return this;
+        return putScalar("--sleep-idle-seconds", seconds);
     }
 
     /**
@@ -1428,8 +1365,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCacheRamMib(int cacheRamMib) {
-        parameters.put("--cache-ram", String.valueOf(cacheRamMib));
-        return this;
+        return putScalar("--cache-ram", cacheRamMib);
     }
 
     /**
