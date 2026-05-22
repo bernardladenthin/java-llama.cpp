@@ -10,10 +10,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import net.ladenthin.llama.InferenceParameters;
 import net.ladenthin.llama.LlamaOutput;
 import net.ladenthin.llama.StopReason;
+import net.ladenthin.llama.TokenLogprob;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -65,7 +68,8 @@ public class CompletionResponseParser {
         try {
             return parse(OBJECT_MAPPER.readTree(json));
         } catch (IOException e) {
-            return new LlamaOutput("", Collections.<String, Float>emptyMap(), false, StopReason.NONE);
+            return new LlamaOutput("", Collections.<String, Float>emptyMap(),
+                    Collections.<TokenLogprob>emptyList(), false, StopReason.NONE);
         }
     }
 
@@ -80,8 +84,9 @@ public class CompletionResponseParser {
         String content = extractContent(node);
         boolean stop = node.path("stop").asBoolean(false);
         Map<String, Float> probabilities = parseProbabilities(node);
+        List<TokenLogprob> logprobs = parseLogprobs(node);
         StopReason stopReason = stop ? StopReason.fromStopType(node.path("stop_type").asText("")) : StopReason.NONE;
-        return new LlamaOutput(content, probabilities, stop, stopReason);
+        return new LlamaOutput(content, probabilities, logprobs, stop, stopReason);
     }
 
     /**
@@ -129,5 +134,53 @@ public class CompletionResponseParser {
             result.put(token, (float) probNode.asDouble(0.0));
         }
         return result.isEmpty() ? Collections.<String, Float>emptyMap() : result;
+    }
+
+    /**
+     * Parse the {@code completion_probabilities} array into a list of typed {@link TokenLogprob}
+     * entries, preserving order, token ids, and the nested alternatives array
+     * ({@code top_probs} for post-sampling mode or {@code top_logprobs} for pre-sampling).
+     *
+     * <p>Returns an empty list when the field is absent or empty. Requires
+     * {@link InferenceParameters#setNProbs(int)} to be configured.
+     *
+     * @param root the top-level completion response node
+     * @return list of {@link TokenLogprob}; empty when no probability data is present
+     */
+    public List<TokenLogprob> parseLogprobs(JsonNode root) {
+        JsonNode array = root.path("completion_probabilities");
+        if (!array.isArray() || array.size() == 0) {
+            return Collections.emptyList();
+        }
+        List<TokenLogprob> result = new ArrayList<TokenLogprob>(array.size());
+        for (JsonNode entry : array) {
+            result.add(parseLogprobEntry(entry));
+        }
+        return result;
+    }
+
+    private TokenLogprob parseLogprobEntry(JsonNode entry) {
+        String token = entry.path("token").asText("");
+        int tokenId = entry.path("id").asInt(-1);
+        JsonNode probNode = entry.path("prob");
+        if (probNode.isMissingNode() || probNode.isNull()) {
+            probNode = entry.path("logprob");
+        }
+        float logprob = (float) probNode.asDouble(0.0);
+
+        JsonNode top = entry.path("top_probs");
+        if (!top.isArray()) {
+            top = entry.path("top_logprobs");
+        }
+        List<TokenLogprob> topLogprobs;
+        if (top.isArray() && top.size() > 0) {
+            topLogprobs = new ArrayList<TokenLogprob>(top.size());
+            for (JsonNode t : top) {
+                topLogprobs.add(parseLogprobEntry(t));
+            }
+        } else {
+            topLogprobs = Collections.emptyList();
+        }
+        return new TokenLogprob(token, tokenId, logprob, topLogprobs);
     }
 }
