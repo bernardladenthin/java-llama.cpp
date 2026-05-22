@@ -200,6 +200,14 @@ public class InferenceParametersTest {
 	}
 
 	@Test
+	public void testSetJsonSchemaStoresVerbatim() {
+		String schema = "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}";
+		InferenceParameters params = new InferenceParameters("").setJsonSchema(schema);
+		assertEquals(schema, params.parameters.get("json_schema"));
+		assertTrue(params.toString().contains("\"json_schema\": " + schema));
+	}
+
+	@Test
 	public void testSetPenaltyPromptString() {
 		InferenceParameters params = new InferenceParameters("").setPenaltyPrompt("Hello!");
 		assertEquals("\"Hello!\"", params.parameters.get("penalty_prompt"));

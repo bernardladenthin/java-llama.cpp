@@ -48,6 +48,7 @@ public final class InferenceParameters extends JsonParameters {
 	private static final String PARAM_N_PROBS = "n_probs";
 	private static final String PARAM_MIN_KEEP = "min_keep";
 	private static final String PARAM_GRAMMAR = "grammar";
+	private static final String PARAM_JSON_SCHEMA = "json_schema";
 	private static final String PARAM_PENALTY_PROMPT = "penalty_prompt";
 	private static final String PARAM_IGNORE_EOS = "ignore_eos";
 	private static final String PARAM_LOGIT_BIAS = "logit_bias";
@@ -335,6 +336,22 @@ public final class InferenceParameters extends JsonParameters {
 	 */
 	public InferenceParameters setGrammar(String grammar) {
 		parameters.put(PARAM_GRAMMAR, toJsonString(grammar));
+		return this;
+	}
+
+	/**
+	 * Constrain generation to a JSON Schema for the duration of this request. The native
+	 * server converts the schema to a GBNF grammar internally; the schema string is passed
+	 * verbatim and must be valid JSON Schema.
+	 * <p>
+	 * Per-request equivalent of {@link ModelParameters#setJsonSchema(String)}, which is
+	 * applied once at model load time.
+	 *
+	 * @param schema JSON Schema as a JSON-encoded string (e.g. {@code "{\"type\":\"object\"...}"})
+	 * @return this builder
+	 */
+	public InferenceParameters setJsonSchema(String schema) {
+		parameters.put(PARAM_JSON_SCHEMA, schema);
 		return this;
 	}
 

@@ -357,6 +357,51 @@ public class LlamaModel implements AutoCloseable {
 	 * @return parsed {@link ServerMetrics}
 	 * @throws LlamaException if the native call fails or the response cannot be parsed
 	 */
+	/**
+	 * Run {@link #complete(InferenceParameters)} constrained to the supplied JSON Schema
+	 * and deserialize the result into an instance of {@code type}. The schema is applied
+	 * via {@link InferenceParameters#setJsonSchema(String)} for the duration of this call;
+	 * the supplied {@code parameters} object is mutated.
+	 * <p>
+	 * Callers are responsible for producing a JSON Schema that matches the target type;
+	 * this project intentionally does not pull in a schema-from-POJO generator. Use the
+	 * single-argument overload {@link #completeAsJson(Class, InferenceParameters)} when
+	 * the schema has already been set on {@code parameters}.
+	 *
+	 * @param type       the target POJO class for Jackson deserialization
+	 * @param schema     JSON Schema string applied via {@code setJsonSchema}
+	 * @param parameters inference parameters (will be mutated to include the schema)
+	 * @param <T>        target type
+	 * @return parsed POJO of type {@code T}
+	 * @throws LlamaException when the response is not valid JSON for the target type
+	 */
+	public <T> T completeAsJson(Class<T> type, String schema, InferenceParameters parameters) throws LlamaException {
+		parameters.setJsonSchema(schema);
+		return completeAsJson(type, parameters);
+	}
+
+	/**
+	 * Run {@link #complete(InferenceParameters)} and deserialize the result as JSON into
+	 * {@code type}. The {@code parameters} object should already have a JSON Schema set
+	 * via {@link InferenceParameters#setJsonSchema(String)} or a grammar via
+	 * {@link InferenceParameters#setGrammar(String)} — otherwise the model output is
+	 * unlikely to parse.
+	 *
+	 * @param type       the target POJO class for Jackson deserialization
+	 * @param parameters inference parameters (schema/grammar already set by the caller)
+	 * @param <T>        target type
+	 * @return parsed POJO of type {@code T}
+	 * @throws LlamaException when the response is not valid JSON for the target type
+	 */
+	public <T> T completeAsJson(Class<T> type, InferenceParameters parameters) throws LlamaException {
+		String raw = complete(parameters);
+		try {
+			return OBJECT_MAPPER.readValue(raw, type);
+		} catch (java.io.IOException e) {
+			throw new LlamaException("Failed to parse completion as " + type.getSimpleName() + ": " + e.getMessage());
+		}
+	}
+
 	public ServerMetrics getMetricsTyped() throws LlamaException {
 		try {
 			return new ServerMetrics(OBJECT_MAPPER.readTree(getMetrics()));
