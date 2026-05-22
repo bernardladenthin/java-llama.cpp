@@ -141,21 +141,17 @@ public class LlamaModel implements AutoCloseable {
 		token.reset();
 		parameters.setStream(true);
 		int taskId = requestCompletion(parameters.toString());
-		token.bind(this, taskId);
 		StringBuilder sb = new StringBuilder();
 		try {
 			while (true) {
 				if (token.isCancelled()) {
+					// Best-effort native release. Safe to call here because we are not
+					// concurrently inside receiveCompletionJson — the cooperative cancel
+					// flag stopped the loop at a token boundary.
+					cancelCompletion(taskId);
 					break;
 				}
-				String json;
-				try {
-					json = receiveCompletionJson(taskId);
-				} catch (LlamaException e) {
-					// Reader was erased by a concurrent cancel — treat as graceful stop.
-					if (token.isCancelled()) break;
-					throw e;
-				}
+				String json = receiveCompletionJson(taskId);
 				LlamaOutput out = completionParser.parse(json);
 				sb.append(out.text);
 				if (out.stop) {

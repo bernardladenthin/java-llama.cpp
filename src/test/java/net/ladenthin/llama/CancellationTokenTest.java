@@ -11,8 +11,8 @@ import static org.junit.Assert.assertTrue;
 
 @ClaudeGenerated(
         purpose = "Verify CancellationToken state transitions (initial, cancel, reset) "
-                + "and idempotency of cancel(). The bind-during-running path is exercised "
-                + "via the cross-thread test in LlamaModelTest."
+                + "and idempotency of cancel(). Cooperative cancellation behaviour during "
+                + "a live inference loop is exercised in LlamaModelTest."
 )
 public class CancellationTokenTest {
 
@@ -47,9 +47,8 @@ public class CancellationTokenTest {
     }
 
     @Test
-    public void cancelBeforeBindIsRememberedUntilReset() {
-        // Without binding, cancel() must still flip the flag — bind() is the path that
-        // forwards the cancel to the native task; the flag itself is independent.
+    public void cancelBeforeUseIsObserved() {
+        // cancel() before any inference loop sees the token should still flip the flag.
         CancellationToken t = new CancellationToken();
         t.cancel();
         assertTrue(t.isCancelled());
