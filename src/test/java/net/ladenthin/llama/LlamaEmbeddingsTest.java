@@ -167,4 +167,54 @@ public class LlamaEmbeddingsTest {
         }
         Assert.assertTrue(type + " embedding must not be all-zeros", hasNonZero);
     }
+
+    // -------------------------------------------------------------------------
+    // Issue #98 — nomic-embed-text loads with enableEmbedding()
+    // -------------------------------------------------------------------------
+
+    /**
+     * Upstream issue <a href="https://github.com/kherud/llama.cpp/issues/98">#98</a>:
+     * loading {@code nomic-embed-text-v1.5.f16.gguf} aborted with
+     * {@code GGML_ASSERT(strcmp(res->name, "result_output") == 0)} because the reporter's
+     * config did not call {@code enableEmbedding()}, so the upstream {@code --embedding}
+     * flag was never set and the embedding pipeline was not initialised.
+     *
+     * <p>This test reproduces the reporter's batch/ubatch sizing <em>plus</em> the fix
+     * ({@code enableEmbedding()}) and asserts the model loads and produces a 768-dimensional
+     * vector. Gated on the {@link TestConstants#PROP_NOMIC_MODEL_PATH} system property so
+     * CI hosts without the ~120 MB GGUF file self-skip cleanly.
+     *
+     * <p>Run with:
+     * <pre>
+     *   mvn test -Dtest=LlamaEmbeddingsTest#testNomicEmbedLoads \
+     *            -Dnet.ladenthin.llama.nomic.path=models/nomic-embed-text-v1.5.f16.gguf
+     * </pre>
+     */
+    @Test
+    public void testNomicEmbedLoads() {
+        String nomicPath = System.getProperty(TestConstants.PROP_NOMIC_MODEL_PATH);
+        Assume.assumeNotNull(
+                "Set -D" + TestConstants.PROP_NOMIC_MODEL_PATH + " to a nomic-embed-text GGUF to run this test",
+                nomicPath);
+        Assume.assumeTrue(
+                "Nomic model file not found at " + nomicPath,
+                new File(nomicPath).exists());
+
+        int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+        model = new LlamaModel(
+                new ModelParameters()
+                        .setModel(nomicPath)
+                        .setBatchSize(8192)
+                        .setUbatchSize(8192)
+                        .setGpuLayers(gpuLayers)
+                        .setFit(false)
+                        .enableEmbedding()
+        );
+
+        float[] embedding = model.embed("search_query: What is TSNE?");
+        Assert.assertEquals(
+                "nomic-embed-text-v1.5 must return a " + TestConstants.NOMIC_EMBED_DIM + "-dim vector",
+                TestConstants.NOMIC_EMBED_DIM, embedding.length);
+        assertEmbeddingValid(embedding, PoolingType.MEAN);
+    }
 }

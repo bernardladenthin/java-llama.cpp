@@ -21,4 +21,16 @@ class TestConstants {
 	/** Path to the Qwen3 thinking model used for reasoning budget tests. */
 	static final String REASONING_MODEL_PATH = "models/Qwen3-0.6B-Q4_K_M.gguf";
 
+	/**
+	 * System property holding a path to a Nomic embedding model
+	 * ({@code nomic-embed-text-v1.5.f16.gguf} or a compatible BERT-family encoder).
+	 * Used by {@link LlamaEmbeddingsTest#testNomicEmbedLoads} to confirm upstream
+	 * issue #98 (BERT-encoder result_output assertion) stays resolved.
+	 * When the property is unset the test self-skips.
+	 */
+	static final String PROP_NOMIC_MODEL_PATH = LlamaSystemProperties.PREFIX + ".nomic.path";
+
+	/** Expected embedding dimension of nomic-embed-text-v1.5 (hidden size = 768). */
+	static final int NOMIC_EMBED_DIM = 768;
+
 }

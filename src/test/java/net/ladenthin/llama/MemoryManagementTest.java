@@ -6,6 +6,10 @@
 package net.ladenthin.llama;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -383,5 +387,100 @@ public class MemoryManagementTest {
                     "A cache-miss call must produce the same output as a cold-start call on the same prompt",
                     fresh, afterMiss);
         }
+    }
+
+    // ------------------------------------------------------------------
+    // Open/close lifecycle regression tests
+    // ------------------------------------------------------------------
+
+    /**
+     * Upstream issue <a href="https://github.com/kherud/llama.cpp/issues/102">#102</a>:
+     * repeatedly constructing and {@code close()}-ing {@link LlamaModel} eventually OOMs
+     * because the native destructor leaked. The fix is in
+     * {@code Java_net_ladenthin_llama_LlamaModel_delete} (jllama.cpp): it now drains
+     * {@code readers}, signals {@code server.terminate()} twice, joins the worker, and
+     * deletes the context — releasing every owned resource.
+     *
+     * <p>This test runs the original reporter's loop with a higher iteration count and
+     * asserts {@code VmRSS} growth stays within a generous tolerance. On non-Linux hosts
+     * the {@code VmRSS} reader returns 0, in which case the test degenerates to a
+     * "loop completes without crash" smoke check, which is still a valuable regression
+     * guard against use-after-free in the destructor path.
+     */
+    @Test
+    public void testOpenCloseLoopDoesNotLeak() {
+        ModelParameters params = new ModelParameters()
+                .setModel(TestConstants.MODEL_PATH)
+                .setCtxSize(1024)
+                .setThreads(4)
+                .setKeep(-1)
+                .setGpuLayers(0)
+                .setFit(false);
+
+        long baseline = currentVmRssKb();
+        for (int i = 0; i < 20; i++) {
+            try (LlamaModel m = new LlamaModel(params)) {
+                // intentionally no work: we only exercise construct + destruct
+            }
+        }
+        System.gc();
+        long after = currentVmRssKb();
+
+        if (baseline > 0 && after > 0) {
+            long deltaKb = after - baseline;
+            Assert.assertTrue(
+                    "VmRSS grew by " + deltaKb + " kB across 20 open/close iterations "
+                            + "(baseline=" + baseline + " kB, after=" + after + " kB); "
+                            + "indicates a native-side leak in LlamaModel.close()",
+                    deltaKb < 200_000L);
+        }
+    }
+
+    /**
+     * Upstream issue <a href="https://github.com/kherud/llama.cpp/issues/80">#80</a>:
+     * on 3.4.1, opening a model and immediately calling {@code close()} (without any
+     * generation) segfaulted in {@code std::_Rb_tree::_M_erase} during destruction of a
+     * half-initialised {@code server_context}. The fix waits on {@code worker_ready},
+     * drains {@code readers} under lock, and double-calls {@code server.terminate()} —
+     * see {@code jllama.cpp:929-940}.
+     *
+     * <p>If the regression returns the JVM exits with a non-zero status mid-test and JUnit
+     * reports a crash; a successful run of all 20 iterations is the green signal.
+     */
+    @Test
+    public void testOpenCloseWithoutGeneration() {
+        ModelParameters params = new ModelParameters()
+                .setModel(TestConstants.MODEL_PATH)
+                .setCtxSize(512)
+                .setGpuLayers(0)
+                .setFit(false);
+
+        for (int i = 0; i < 20; i++) {
+            try (LlamaModel m = new LlamaModel(params)) {
+                // no generation, no embedding — only construct + immediate destruct
+            }
+        }
+    }
+
+    /**
+     * Reads {@code VmRSS} from {@code /proc/self/status} in kilobytes. Returns 0 on
+     * non-Linux hosts (file absent) or on any read error — callers must treat 0 as
+     * "not available" rather than "no memory used".
+     */
+    private static long currentVmRssKb() {
+        Path status = Paths.get("/proc/self/status");
+        if (!Files.exists(status)) {
+            return 0L;
+        }
+        try {
+            for (String line : Files.readAllLines(status)) {
+                if (line.startsWith("VmRSS:")) {
+                    return Long.parseLong(line.replaceAll("\\D+", ""));
+                }
+            }
+        } catch (IOException | NumberFormatException ignored) {
+            // fall through
+        }
+        return 0L;
     }
 }

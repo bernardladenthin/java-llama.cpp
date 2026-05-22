@@ -1000,4 +1000,35 @@ public class LlamaModelTest {
 		Assert.assertTrue(json.contains("\"architecture\""));
 		Assert.assertTrue(json.contains("\"name\""));
 	}
+
+	/**
+	 * Upstream issue <a href="https://github.com/kherud/llama.cpp/issues/95">#95</a>:
+	 * reporter argued the iterator could continue emitting tokens after {@code stop=true}.
+	 * Current {@link LlamaIterator#next()} reads the JSON output, sets
+	 * {@code hasNext = !output.stop}, releases the task on stop, and returns the current
+	 * output. The next {@code hasNext()} call then returns false.
+	 *
+	 * <p>This regression test drives the iterator with a deliberately repetitive prompt
+	 * (a sampler-tuning corner case) and asserts iteration terminates deterministically
+	 * within {@code nPredict + 1} steps. {@code nPredict + 1} accounts for the one trailing
+	 * empty output noted in {@link #testGenerateAnswer()}.
+	 */
+	@Test
+	public void testIteratorTerminatesOnRepetitivePrompt() {
+		final int iterNPredict = 30;
+		InferenceParameters infer = new InferenceParameters("Repeat AAA forever: AAA AAA")
+				.setNPredict(iterNPredict)
+				.setTemperature(0.0f);
+
+		int count = 0;
+		try (LlamaIterable iterable = model.generate(infer)) {
+			for (LlamaOutput ignored : iterable) {
+				count++;
+				Assert.assertTrue(
+						"iterator overran nPredict=" + iterNPredict + " (count=" + count + ")",
+						count <= iterNPredict + 1);
+			}
+		}
+		Assert.assertTrue("iterator must produce at least one token", count >= 1);
+	}
 }

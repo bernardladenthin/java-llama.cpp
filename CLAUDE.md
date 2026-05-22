@@ -431,6 +431,84 @@ cmake -B build -DLLAMA_CURL=ON
 
 Built libraries are placed in `src/main/resources/net/ladenthin/llama/{OS}/{ARCH}/`.
 
+### Building the native library for local Java tests
+
+`mvn test` does **not** build the native library — Maven only compiles Java
+and runs surefire. The shared library must already exist on disk under the
+platform-specific resource path that `LlamaLoader` resolves at runtime.
+Without it the JVM throws `UnsatisfiedLinkError` and every Java test fails
+immediately (it does not auto-skip).
+
+The output path is derived by `CMakeLists.txt` from `OS_NAME` and `OS_ARCH`
+detected by the helper script `.github/dockcross/dockcross-resolve-host`
+(falls back to `uname` on hosts where the script is absent). The mapping
+mirrors `OSInfo.translateOSNameToFolderName` on the Java side, so the same
+folder name is produced on both ends.
+
+| Host | Library file | Resource path produced by `cmake --build` |
+|------|--------------|-------------------------------------------|
+| Linux x86_64 | `libjllama.so` | `src/main/resources/net/ladenthin/llama/Linux/x86_64/` |
+| Linux aarch64 | `libjllama.so` | `src/main/resources/net/ladenthin/llama/Linux/aarch64/` |
+| macOS Apple Silicon | `libjllama.dylib` | `src/main/resources/net/ladenthin/llama/Mac/aarch64/` |
+| macOS Intel | `libjllama.dylib` | `src/main/resources/net/ladenthin/llama/Mac/x86_64/` |
+| Windows x86_64 | `jllama.dll` (+ `llama.dll`, `ggml.dll`) | `src/main/resources/net/ladenthin/llama/Windows/x86_64/` |
+
+The Windows `RUNTIME_OUTPUT_DIRECTORY_*` properties (`CMakeLists.txt:266-269`)
+deposit `jllama.dll` alongside the upstream `llama.dll` / `ggml.dll`; all
+three must remain co-located so the loader can resolve transitive imports.
+
+End-to-end local workflow for running Java tests:
+
+```bash
+# 1. Generate JNI headers (one-time per Java API change)
+mvn -q compile
+
+# 2. Configure + build the native library for the current host
+cmake -B build
+cmake --build build --config Release -j$(nproc)
+# The shared lib lands directly in src/main/resources/.../{OS}/{ARCH}/ —
+# no separate install step is needed.
+
+# 3. Ensure model files referenced by tests are present under models/.
+#    The default test models (downloaded by CI in publish.yml) are:
+curl -L --fail "$MODEL_URL"          --create-dirs -o models/codellama-7b.Q2_K.gguf
+curl -L --fail "$RERANKING_MODEL_URL" --create-dirs -o models/jina-reranker-v1-tiny-en-Q4_0.gguf
+curl -L --fail "$DRAFT_MODEL_URL"     --create-dirs -o models/AMD-Llama-135m-code.Q2_K.gguf
+curl -L --fail "$REASONING_MODEL_URL" --create-dirs -o models/Qwen3-0.6B-Q4_K_M.gguf
+
+# 4. Run tests. Tests that need a model file self-skip via Assume.assumeTrue()
+#    when their GGUF is absent, so partial model availability is OK.
+mvn test
+# CPU-only host (no GPU): pin GPU layers to 0
+mvn test -Dnet.ladenthin.llama.test.ngl=0
+# Run a single test class or method
+mvn test -Dtest=MemoryManagementTest
+mvn test -Dtest=LlamaModelTest#testGenerateAnswer
+```
+
+**Optional models** referenced by individual tests are gated on a system
+property so CI can skip them cleanly when the GGUF is not downloaded:
+
+| Property | Default test that uses it | Model |
+|----------|---------------------------|-------|
+| `net.ladenthin.llama.nomic.path` | `LlamaEmbeddingsTest#testNomicEmbedLoads` | `nomic-embed-text-v1.5.f16.gguf` (issue #98 regression) |
+
+Run those tests by setting the property:
+```bash
+mvn test -Dtest=LlamaEmbeddingsTest#testNomicEmbedLoads \
+         -Dnet.ladenthin.llama.nomic.path=models/nomic-embed-text-v1.5.f16.gguf
+```
+
+**Restricted-network environments.** Some hosts (e.g. ephemeral remote
+execution sandboxes) block outbound traffic to `huggingface.co`. In that
+case downloading models for the Java tests is not possible from the host
+itself; the native library can still be built and the C++ test suite
+(`ctest --test-dir build`) still runs because it depends only on the
+upstream sources fetched at CMake configure time. Java tests should then
+be exercised either in CI (via `.github/workflows/publish.yml`) or on a
+developer machine with HF access; pre-staged models can also be uploaded
+into `models/` out-of-band.
+
 ### Code Formatting
 ```bash
 clang-format -i src/main/cpp/*.cpp src/main/cpp/*.hpp   # Format C++ code

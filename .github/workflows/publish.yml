@@ -20,6 +20,8 @@ env:
   DRAFT_MODEL_NAME: "AMD-Llama-135m-code.Q2_K.gguf"
   REASONING_MODEL_URL: "https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf"
   REASONING_MODEL_NAME: "Qwen3-0.6B-Q4_K_M.gguf"
+  NOMIC_EMBED_MODEL_URL: "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.f16.gguf"
+  NOMIC_EMBED_MODEL_NAME: "nomic-embed-text-v1.5.f16.gguf"
 permissions:
   contents: read
 jobs:
@@ -389,6 +391,8 @@ jobs:
         run: curl -L --fail ${DRAFT_MODEL_URL} --create-dirs -o models/${DRAFT_MODEL_NAME}
       - name: Download reasoning model
         run: curl -L --fail ${REASONING_MODEL_URL} --create-dirs -o models/${REASONING_MODEL_NAME}
+      - name: Download nomic embedding model (issue #98 regression)
+        run: curl -L --fail ${NOMIC_EMBED_MODEL_URL} --create-dirs -o models/${NOMIC_EMBED_MODEL_NAME}
       - name: List files in models directory
         run: ls -l models/
       - name: Validate model files
@@ -404,7 +408,7 @@ jobs:
           ulimit -c unlimited
           echo "${{ github.workspace }}/core.%e.%p" | sudo tee /proc/sys/kernel/core_pattern
       - name: Run tests
-        run: mvn --no-transfer-progress test
+        run: mvn --no-transfer-progress test -Dnet.ladenthin.llama.nomic.path=models/${NOMIC_EMBED_MODEL_NAME}
       - uses: actions/upload-artifact@v7
         if: success()
         with:
