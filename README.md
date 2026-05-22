@@ -75,6 +75,7 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
     3.5 [Embeddings & Reranking](#embeddings--reranking)  
     3.6 [Raw JSON Endpoints](#raw-json-endpoints)
 4. [Android](#importing-in-android)
+5. [Feature Ideas](#feature-ideas)
 
 ## Features
 
@@ -478,6 +479,14 @@ android {
 ```proguard
 keep class net.ladenthin.llama.** { *; }
 ```
+
+## Feature Ideas
+
+Forward-looking ideas being tracked for this fork:
+
+- **Adopt feature ideas from the Kotlin Llama Stack client.** Candidates (multimodal image input, typed chat messages, async API, batch inference, typed usage/timings) are inventoried with effort estimates in [`docs/feature-investigation-llama-stack-client-kotlin.md`](docs/feature-investigation-llama-stack-client-kotlin.md), derived from [`ogx-ai/llama-stack-client-kotlin`](https://github.com/ogx-ai/llama-stack-client-kotlin).
+- **Ship a directly Android-capable artifact.** Building on the existing [Importing in Android](#importing-in-android) flow and the `opencl-android-aarch64` classifier (see [Choosing the right classifier](#choosing-the-right-classifier)), the goal is a first-class Android Maven artifact — including a typed image-input helper for VLMs such as Qwen2.5-VL — so downstream Android projects can drop their dependency on [`ogx-ai/llama-stack-client-kotlin`](https://github.com/ogx-ai/llama-stack-client-kotlin) entirely.
+- **Resolve all upstream `kherud/java-llama.cpp` open issues.** All 37 open issues at fork time are catalogued with per-issue verdicts in [`docs/history/49be664_open_issues.md`](docs/history/49be664_open_issues.md); fixes land in this fork as they are completed. The remaining headline item is a typed Java image API for multimodal inputs (issues [#103](docs/history/49be664_open_issues.md#103--vlm-support--image-input-for-multimodal-models) and [#34](docs/history/49be664_open_issues.md#34--support-multimodal-inputs), both PARTIALLY FIXED) — the same work that closes §2.1 of the Kotlin feature inventory.
 
 ## Troubleshooting
 
