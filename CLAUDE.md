@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b9279**
+Current llama.cpp pinned version: **b9284**
 
 ## Upgrading CUDA Version
 
@@ -357,6 +357,10 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b9264–b9279 | `examples/save-load-state/` removed, `tests/test-save-load-state.cpp` added; `tools/{batched-bench,fit-params,quantize,perplexity}/CMakeLists.txt` | The `llama-save-load-state` example binary was removed and re-homed as a CTest target; the four remaining standalone tools were each split into a `*-impl` static library + a thin `main.cpp` wrapper (mirroring the b9245 split of cli/completion/llama-bench/server), with the entry-point renamed to `llama_batched_bench` / `llama_fit_params` / `llama_quantize` / `llama_perplexity` to satisfy `-Wmissing-declarations`. Project does not compile any of these `.cpp` files (only `server-context.cpp`, `server-queue.cpp`, `server-task.cpp`, `server-models.cpp` — see `CMakeLists.txt`), so no impact |
 | ~b9264–b9279 | `app/` (`CMakeLists.txt`, `llama.cpp`) | `llama-app` unified binary gains four new subcommands (`batched-bench`, `fit-params`, `quantize`, `perplexity`) and sets `LLAMA_APP_CMD` in the env before dispatching so that the router can re-inject the subcommand into spawned child argv. Guarded by `LLAMA_BUILD_APP=OFF` default — project doesn't enable it, no impact |
 | ~b9264–b9279 | `conversion/base.py` + `conversion/llama.py` | New `_set_vocab_hybriddna()` Python helper that emits a `gpt2`-style BPE vocab tagged as `tokenizer.model = "hybriddna"`; `LlamaModel.set_vocab()` dispatches to it when `tokenizer_config.json` declares `"tokenizer_class": "HybridDNATokenizer"`; `add_prefix_space` handling moved earlier in the same method. Conversion tooling only, not compiled by project |
+| ~b9279–b9284 | upstream `CMakeLists.txt` | `LLAMA_BUILD_APP` default flipped `OFF` → `ON`. Project's `LLAMA_BUILD_TOOLS` is OFF (FetchContent, `LLAMA_STANDALONE=OFF`), so `tools/`-dependent app targets are not configured; nevertheless `CMakeLists.txt:108` now explicitly forces `set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)` to keep the cache pinned across upgrades |
+| ~b9279–b9284 | `tools/{batched-bench,cli,completion,fit-params,llama-bench,perplexity,quantize,server}/CMakeLists.txt` | Each `*-impl` target switched from `add_library(... STATIC ...)` to default library type (becomes SHARED when `BUILD_SHARED_LIBS=ON`); added `WINDOWS_EXPORT_ALL_SYMBOLS ON` and conditional `install(TARGETS ... LIBRARY)` under `LLAMA_TOOLS_INSTALL`. Project doesn't enable `LLAMA_BUILD_TOOLS`, so none of these targets are configured — no impact |
+| ~b9279–b9284 | `src/llama-vocab.cpp` + `conversion/base.py` | HybridDNA tokenizer fix: k-mers are now stored in `token_to_id` with a reserved `\xee\x80\x80` (U+E000) suffix to disambiguate them from identical base-vocab BPE tokens (e.g. `CCCCCC`); the suffix is stripped from `id_to_token` text after vocab load. Pure tokenizer internals, not exposed via JNI — no project changes required |
+| ~b9279–b9284 | `ggml/src/ggml-cuda/common.cuh` | PDL-launch gating now uses `ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_HOPPER` instead of the raw device cc — fixes false negatives when running on a Hopper device with a binary compiled for an older arch. Internal CUDA backend, no project changes required |
 
 ## Build Commands
 

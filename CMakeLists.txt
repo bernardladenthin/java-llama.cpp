@@ -105,10 +105,12 @@ set(GGML_FMA     ON  CACHE BOOL "" FORCE)
 set(GGML_F16C    ON  CACHE BOOL "" FORCE)
 set(GGML_AVX512  OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_WEBUI OFF CACHE BOOL "" FORCE)
+# b9284 flipped LLAMA_BUILD_APP default to ON; we don't build the unified binary
+set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b9279
+	GIT_TAG        b9284
 )
 FetchContent_MakeAvailable(llama.cpp)
 
