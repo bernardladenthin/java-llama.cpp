@@ -264,6 +264,22 @@ TEST_F(MockJniFixture, GetJllamaContext_ReturnsWrapperNotInnerServer) {
 }
 
 // ============================================================
+// require_embedding_support
+// ============================================================
+
+TEST_F(MockJniFixture, RequireEmbeddingSupport_Enabled_ReturnsTrueNoThrow) {
+    EXPECT_TRUE(require_embedding_support(env, true, dummy_class));
+    EXPECT_FALSE(g_throw_called);
+}
+
+TEST_F(MockJniFixture, RequireEmbeddingSupport_Disabled_ReturnsFalseAndThrows) {
+    EXPECT_FALSE(require_embedding_support(env, false, dummy_class));
+    EXPECT_TRUE(g_throw_called);
+    EXPECT_NE(g_throw_message.find("embedding support"), std::string::npos);
+    EXPECT_NE(g_throw_message.find("setEmbedding"), std::string::npos);
+}
+
+// ============================================================
 // require_json_field_impl
 // ============================================================
 

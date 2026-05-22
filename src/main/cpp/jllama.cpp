@@ -784,9 +784,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_receiveCompletionJ
 JNIEXPORT jfloatArray JNICALL Java_net_ladenthin_llama_LlamaModel_embed(JNIEnv *env, jobject obj, jstring jprompt) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
-    if (!jctx->params.embedding) {
-        env->ThrowNew(c_llama_error,
-                      "Model was not loaded with embedding support (see ModelParameters#setEmbedding(boolean))");
+    if (!require_embedding_support(env, jctx->params.embedding, c_llama_error)) {
         return nullptr;
     }
 
@@ -1049,9 +1047,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleEmbeddings(J
                                                                            jstring jparams, jboolean joaiCompat) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
-    if (!jctx->params.embedding) {
-        env->ThrowNew(c_llama_error,
-                      "Model was not loaded with embedding support (see ModelParameters#setEmbedding(boolean))");
+    if (!require_embedding_support(env, jctx->params.embedding, c_llama_error)) {
         return nullptr;
     }
 

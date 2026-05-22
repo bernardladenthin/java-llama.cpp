@@ -78,6 +78,19 @@ inline void erase_reader(jllama_context *jctx, int id_task) {
     jctx->readers.erase(id_task);
 }
 
+// Guard: throw and return false if the model was loaded without embedding
+// support enabled. Used by every JNI entry point that produces embeddings.
+[[nodiscard]] inline bool require_embedding_support(JNIEnv         *env,
+                                                     bool            embedding_enabled,
+                                                     jclass          error_class) {
+    if (embedding_enabled) {
+        return true;
+    }
+    env->ThrowNew(error_class,
+                  "Model was not loaded with embedding support (see ModelParameters#setEmbedding(boolean))");
+    return false;
+}
+
 // ---------------------------------------------------------------------------
 // get_jllama_context_impl
 //
