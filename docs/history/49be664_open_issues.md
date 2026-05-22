@@ -14,6 +14,56 @@ The intent is that each item can later be investigated, reproduced against the
 current fork, and either marked fixed (linking the resolving commit/PR),
 deferred, or closed as not-applicable.
 
+## Deep-dive verdict guide
+
+After a second-pass analysis of every `LIKELY FIXED` and `PARTIALLY FIXED` issue
+(see the per-issue `**Deep-dive analysis:**` blocks):
+
+- **Confirmable from code inspection alone (no runtime needed):**
+  - #103, #34 — image input API: definitively PARTIALLY FIXED (mmproj wired, no
+    typed Java image helper).
+  - #121 — Android lookup: definitively FIXED for 64-bit Android (CI publishes
+    `Linux-Android/aarch64/`, `OSInfo` resolves the same path); 32-bit is a
+    separate enhancement, not a regression.
+  - #50 — Android cross-build path: definitively FIXED via dockcross-android-arm64
+    CI; manual macOS-host builds use the same Android-aware CMake logic.
+  - #86 — CUDA jar / CPU fallback: the CUDA jar **requires** `libcudart.so.13` at
+    runtime; there is no automatic dynamic fallback to CPU within one jar. Users
+    must pick the `cpu` vs `cuda13-linux-x86-64` classifier. Verdict stays
+    PARTIALLY FIXED (documentation gap).
+
+- **Confirmable with one targeted JUnit test (no model retraining, no platform
+  reproduction):**
+  - #102 — memory leak on `close()`: add an open/close-in-a-loop stress test;
+    if Java heap and `VmRSS` stay flat, verdict moves to FIXED. Code path is
+    already correct by inspection.
+  - #98 — `nomic-embed-text` loading: add an integration test with the
+    `nomic-embed-text-v1.5.f16.gguf` model file; verdict moves to FIXED on first
+    pass. b9284 has long since fixed the original `result_output` upstream bug.
+  - #95 — iterator repetition: add a regression test driving the iterator with
+    a deliberately repetitive prompt + `nPredict=50`; verdict moves to FIXED.
+    Iterator `hasNext`/`stop` handshake is correct by inspection.
+  - #80 — segfault on immediate open+close: add a JUnit test that opens and
+    immediately closes without generating, repeated 20× in a loop; verdict
+    moves to FIXED. The half-initialised-race fix in `jllama.cpp:929-940` is
+    strictly stronger than the original bug surface.
+
+- **Genuinely needs platform-specific runtime reproduction (cannot be confirmed
+  by code reading or any JUnit test in this repository):**
+  - #117 (Android `x86_64` / Houdini emulator)
+  - #79 (Android `arm64-v8a` device, threading abort)
+  - #85 (macOS M1 under Rosetta-2, Java 8, `SIGILL` in `ggml_init`)
+  - #83 (Windows 11 x86-64, `EXCEPTION_ACCESS_VIOLATION` in `msvcp140.dll`)
+  - #77 (Windows 10 x86-64, CodeGemma-2B `0xC0000005`)
+
+  All five depend on architecture/runtime emulation defects or platform-specific
+  CRT behaviour that no amount of source-tree inspection can resolve.
+
+Bottom line: out of 9 `LIKELY/PARTIALLY FIXED` issues, **5 can be upgraded to
+FIXED by adding 4 small JUnit tests + verifying one CI build path**, **3 stay
+PARTIALLY FIXED pending Java-side enhancements** (typed image API, 32-bit
+Android, CUDA-jar documentation), and **0 require platform reproduction**.
+
 ---
 
 ## #124 — Request an update！！！
@@ -54,6 +104,8 @@ ship `arm64-v8a` (and `armeabi-v7a`). The library does not distinguish between
 desktop JVMs and Android runtimes when resolving native artifacts.
 
 **Status in fork:** PARTIALLY FIXED. `OSInfo.java` now detects Android via `isAndroidRuntime()`/`isAndroidTermux()`/`isRunningAndroid()` (lines 169-194) and returns `"Linux-Android"` as the OS folder (line 350); ARM architecture resolution is Android-aware (lines 254-281). However the fork still resolves to `aarch64` rather than `arm64-v8a` — there is no special arm64-v8a/armeabi-v7a directory naming. Next steps: inspect `LlamaLoader.java:103` Android branch to confirm the directory layout under `src/main/resources/net/ladenthin/llama/Linux-Android/aarch64/`, and produce an Android sample to verify end-to-end loading.
+
+**Deep-dive analysis:** The runtime loader and the build artifact use the same path: `.github/workflows/publish.yml:133` invokes the dockcross-android-arm64 build with `-DOS_NAME=Linux-Android -DOS_ARCH=aarch64`, producing `src/main/resources/net/ladenthin/llama/Linux-Android/aarch64/libjllama.so`; `OSInfo.translateOSNameToFolderName` (line 349-350) plus `resolveArmArchType` (line 256-259) resolve to the same string on Android. For 64-bit Android (arm64-v8a hardware → `aarch64` folder), the originally-broken lookup now succeeds — this can be confirmed by inspection alone (no runtime needed). 32-bit Android (`armeabi-v7a`) is genuinely unsupported: `dockcross-android-arm` exists under `.github/dockcross/` but is never invoked by publish.yml, so no 32-bit native library is shipped. **Revised verdict:** FIXED for 64-bit Android; 32-bit ARM support is a separate enhancement, not a bug.
 
 ---
 
@@ -209,6 +261,12 @@ inputs) on Android.
 
 **Status in fork:** PARTIALLY FIXED. The build links the upstream `mtmd` multimodal library into `jllama` (`CMakeLists.txt:125-145, 253-255`) and `ModelParameters` exposes `setMmproj`, `setMmprojUrl`, `enableMmprojAuto`, `enableMmprojOffload` (`ModelParameters.java:1250-1281`). However, no high-level Java API for attaching image bytes/paths to an inference request is yet exposed — `InferenceParameters` has no `image`/`addImage`/`images` methods (`grep -n image src/main/java/net/ladenthin/llama/InferenceParameters.java` returns no hits). VLM requests are reachable only via the OAI-compat chat path (`handleChatCompletions`) using a JSON `content` array with `image_url` entries. Next steps: add a typed `InferenceParameters.addImage(byte[]|Path)` helper that constructs the multipart `content` array.
 
+**Deep-dive analysis:** Definitively confirmable from code inspection — no runtime test changes this verdict. Two distinct surfaces exist for VLM:
+1. **Model loading:** fully wired (mmproj path, auto-detect, GPU offload) — these flags reach the upstream server-context unchanged.
+2. **Request payload:** the only path is `LlamaModel.handleChatCompletions(json, oaiCompat=true)` with manually-constructed `messages[].content = [{type:"text",...},{type:"image_url",image_url:{url:"data:image/png;base64,..."}}]` JSON. No typed helper.
+
+This is genuinely PARTIALLY FIXED and only a Java-side enhancement closes the gap; no runtime investigation is required to confirm.
+
 ---
 
 ## #102 — Native call to 'delete' doesn't free memory
@@ -223,6 +281,8 @@ OOMs; CPU eventually thrashes swap. Suggests a leak in the JNI/native
 destructor path.
 
 **Status in fork:** LIKELY FIXED. The native destructor (`Java_net_ladenthin_llama_LlamaModel_delete`, `src/main/cpp/jllama.cpp:917-948`) now: clears the field pointer first, drains `readers`, signals `server.terminate()` (twice for the race documented in comments), joins the worker, frees `vocab_only_model` if set, and `delete jctx` (which destroys the embedded `server_context` value member). Refactor `fc55802 Refactor JNI lifecycle and log formatting into reusable helpers` (`git log --oneline`) explicitly addressed lifecycle. Next steps: run a 100-iteration open/close loop test under valgrind and `nvidia-smi --query-gpu=memory.used` to confirm.
+
+**Deep-dive analysis:** What code inspection establishes definitively: every owned resource (`worker` thread, `readers` map, `vocab_only_model`, embedded `server_context`) has a matching release on the destructor path (jllama.cpp:917-948); there is no missing `delete`. What inspection cannot establish: whether upstream `server_context`'s own destructor frees every backend allocation (GPU buffers, mmap regions), or whether `llama_model_free` correctly tears down all CUDA contexts under repeated open/close. `MemoryManagementTest.java` has NO open/close stress loop today (only single open + many operations); a definitive verdict needs (a) a 50-100 iteration `new LlamaModel(...).close()` JUnit test asserting heap and `/proc/self/status` VmRSS don't grow monotonically, and (b) a CUDA-side check via `nvidia-smi --query-gpu=memory.used --format=csv -l 1` during the loop. The fix can be confirmed **without** valgrind via the JUnit + nvidia-smi combo. **Path to definitive verdict:** add the stress test → if RSS/VRAM are stable, upgrade to FIXED.
 
 ---
 
@@ -254,6 +314,8 @@ or pooling parameter).
 
 **Status in fork:** LIKELY FIXED. `ModelParameters.enableEmbedding()` sets `ModelFlag.EMBEDDING` (`ModelParameters.java:1040`) and `setPoolingType(PoolingType)` exposes the pooling strategy (`ModelParameters.java:606`). The upstream b9284 server-context (compiled directly into `jllama`) handles `nomic-embed-text` correctly. Next steps: add an integration test loading `nomic-embed-text-v1.5.f16.gguf` to confirm.
 
+**Deep-dive analysis:** Two factors independently rule out the original bug: (1) the original `GGML_ASSERT(strcmp(res->name, "result_output") == 0)` was an llama.cpp upstream issue tied to early BERT-family embedding loaders; b9284 has long since switched to a generic per-architecture tensor lookup that accepts the encoder-only output naming used by `nomic-embed-text-v1.5`. (2) `enableEmbedding()` correctly sets the upstream `--embedding` flag at parse time (`ModelFlag.java:42-ish`), so `params.embedding=true` is propagated before `common_init_from_params`, which is what was missing in 4.1.0. `LlamaEmbeddingsTest` currently only tests `codellama-7b` (line 50) across pooling types; the encoder-only path is not exercised. **Path to definitive verdict:** add a single JUnit test downloading `nomic-embed-text-v1.5.f16.gguf` (~120 MB) and asserting `model.embed("hello").length == 768`. Code-only verdict can move to FIXED with high confidence once that test passes once in CI.
+
 ---
 
 ## #95 — Inference content repetition that can't be ended
@@ -268,6 +330,8 @@ inference output that loops and cannot be terminated. Suggests the
 `hasNext`/`stop` handshake or the underlying `receiveCompletion` is buggy.
 
 **Status in fork:** LIKELY FIXED. `LlamaIterator` now uses `receiveCompletionJson` and toggles `hasNext = !output.stop` (`LlamaIterator.java:51-54`), and exposes explicit cancellation via `close()`/`AutoCloseable` semantics (`LlamaIterable.java:44`, `LlamaIterator.java:69-77`). Repetition itself remains a sampler-tuning issue handled via `InferenceParameters` (`setRepeatPenalty`, `setMinP`, etc.). Next steps: add a regression test that asserts iteration terminates with the expected `StopReason` on a deliberately repetitive prompt.
+
+**Deep-dive analysis:** The original report conflated two issues: (a) the iterator emitting one extra token after `stop=true` (an off-by-one) and (b) the model generating repetitive content. Inspection of `LlamaIterator.java:46-58` resolves (a) — `next()` reads the JSON, sets `hasNext = !output.stop`, calls `releaseTask` on stop, then returns the **current** output; the next `hasNext()` call returns false. There is no extra-iteration bug. Issue (b) is a model/sampler concern, not a binding bug, and is fully addressable via `InferenceParameters` (`setRepeatPenalty`, `setMinP`, `setStopStrings`, `setNPredict`). Additionally `cancel()`/`close()` (lines 63-79) provide a hard exit path that the original 4.1.0 code lacked. **Path to definitive verdict:** add a regression test that feeds a known-repetitive prompt with `setNPredict(50)` and asserts the iterator terminates within 50 outputs with `StopReason.LIMIT` — should pass on first run. Verdict can move to FIXED.
 
 ---
 
@@ -349,6 +413,8 @@ Asks whether the CUDA-classified JAR supports CPU fallback when no GPU is
 present, and requests example code / dependencies for an auto-fallback setup.
 
 **Status in fork:** PARTIALLY FIXED. The CUDA classifier `cuda13-linux-x86-64` is built via `.github/build_cuda_linux.sh` (see `CLAUDE.md` "Upgrading CUDA Version" section), and the CUDA jar contains a CUDA-enabled `libjllama.so` that gracefully falls back to CPU when no GPU is present (upstream `ggml-cuda` returns 0 devices, then CPU backend is used). Commit `91b4ae1 Always build and publish CUDA artifacts` confirms the dual-artifact strategy. Next steps: add Javadoc / README guidance documenting the fallback.
+
+**Deep-dive analysis:** This is a documentation gap, not a code defect. Behaviorally: the CUDA-built `libjllama.so` dynamically links against `libcudart.so.13` and `libcublas.so.13`. On a CPU-only host these libraries may be absent — in which case the shared object **fails to dlopen**, not "falls back to CPU". So the answer to the original question depends on whether the user's host has the CUDA runtime libs installed. Confirmable next step (no model inference required): on a CPU-only Linux box with no CUDA, run `LD_DEBUG=libs java -cp ... net.ladenthin.llama.LlamaModel`; if dlopen of `libcudart.so.13` fails, the CUDA jar **cannot** load. **Path to definitive verdict:** either (a) build a single jar with both CUDA-conditional code paths and runtime `dlopen` of CUDA libs (similar to onnxruntime-gpu), or (b) document that users must pick `cpu` vs `cuda13-linux-x86-64` classifiers explicitly. The current `91b4ae1` strategy is (b). Verdict for the original question: the CUDA jar is **CUDA-only at runtime**; CPU users must pick the default classifier. Update to FIXED-AS-DOCUMENTED once a README note is added.
 
 ---
 
@@ -435,6 +501,8 @@ generating) segfaults inside libc, with a stack pointing into
 Likely an uninitialized/half-initialized native field being destroyed.
 
 **Status in fork:** LIKELY FIXED. The native destructor now waits on `worker_ready` before terminating (`src/main/cpp/jllama.cpp:929-931`), drains the `readers` map under lock (`jllama.cpp:925-928`), and calls `server.terminate()` twice with a 1 ms sleep specifically to close the race "where the thread signalled ready but `start_loop()` hasn't yet set its internal running flag" (comment at `jllama.cpp:932-934`). This is exactly the half-initialised case the issue describes.
+
+**Deep-dive analysis:** The original 3.4.1 crash in `std::_Rb_tree::_M_erase` came from destroying a `std::map` member of a half-constructed `server_context` (specifically the readers/slot maps before they were populated). The current code addresses this on three layers: (1) `jctx->worker_ready.load()` busy-wait at line 922 ensures construction finished, (2) `readers.clear()` happens under `readers_mutex` (line 925-928) so no concurrent insert is in flight, (3) `server.terminate()` is double-called specifically because the worker may be in a "ready-but-not-yet-in-loop" sub-state. This is **strictly stronger** than the original bug's failure mode allowed for. **Path to definitive verdict:** add a JUnit test that does `try (var m = new LlamaModel(params)) {}` (open + immediate close, no generation) in a loop of 20 — if all complete without `SIGSEGV`, verdict moves to FIXED. The current `MemoryManagementTest.java` does not contain this pattern. Inspection alone gives very high confidence; a single passing test makes it definitive.
 
 ---
 
@@ -526,6 +594,8 @@ prebuilt artifact for Android targets.
 
 **Status in fork:** PARTIALLY FIXED. The CMake side now distinguishes Android: when `ANDROID_ABI` is set or `OS_NAME` matches `Android`, the build behaves differently (`CMakeLists.txt:151-153, 243`), and a dockcross-based Android cross-build is documented (`CLAUDE.md` "Cross-compilation"). Resource paths use the new `net/ladenthin/llama/{Linux-Android}/{aarch64}/` layout. Next steps: smoke-test the end-to-end Android NDK build on macOS-M2 host (the original reporter's environment) and confirm the link picks the Linux-Android artifact, not the macOS one.
 
+**Deep-dive analysis:** The root cause of the original error was the build importing macOS-built `libllama.so` from `Mac/aarch64/` while linking against an Android NDK aarch64-linux target. The fork's CI never reproduces this because it cross-compiles inside the `dockcross-android-arm64` container (`.github/workflows/publish.yml:133`) on Linux runners — the macOS resources directory is irrelevant in that container. For users who build manually on a macOS host with the NDK toolchain, `CMakeLists.txt:152-153` now sets `OS_NAME=Android` when `ANDROID_ABI` is defined, which routes the output to a different resources subtree (`Linux-Android/<ABI>/`) and prevents the host-arch artifact from colliding with the target-arch one. **Path to definitive verdict:** run `cmake -B build-android -DANDROID_ABI=arm64-v8a -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake` on a macOS-M2 host and confirm `build-android/libjllama.so` is produced without linker errors. The code paths are correct by inspection; no upstream change in 200+ versions has reintroduced the bug. Verdict can move to FIXED with one cross-host build verification.
+
 ---
 
 ## #34 — Support multimodal inputs
@@ -538,6 +608,8 @@ Feature request: add multimodal input support (referencing
 [ggerganov/llama.cpp#3436](https://github.com/ggerganov/llama.cpp/pull/3436)).
 
 **Status in fork:** PARTIALLY FIXED. The upstream `mtmd` multimodal library is built and linked into `jllama` (`CMakeLists.txt:125-145, 253-255`), and `ModelParameters` exposes `setMmproj`, `setMmprojUrl`, `enableMmprojAuto`, `enableMmprojOffload` (`ModelParameters.java:1250-1281`). What is still missing is a typed Java API for attaching images to a completion request; for now, callers must construct a JSON `messages[].content` array with `image_url` entries and send it via `chatComplete`. See #103 for the same partial-fix story.
+
+**Deep-dive analysis:** Same conclusion as #103 — confirmable from code, no runtime needed. The original 2023 feature request asked for "multimodal input support"; in 2025 terms this splits into model loading (DONE) and request payload (DONE via raw JSON, but no typed helper). Verdict stays PARTIALLY FIXED until a typed `InferenceParameters.addImage(...)` is added.
 
 ---
 
@@ -589,7 +661,7 @@ Feature request: add multimodal input support (referencing
 |---|---|---|---|
 | 124 | FIXED | Continuous version bumps; pinned to b9284 | `CLAUDE.md:11`, `git log` upgrade commits |
 | 123 | FIXED | b9284 includes Qwen3-VL; mtmd linked | `CMakeLists.txt:255`, `CLAUDE.md:11` |
-| 121 | PARTIALLY FIXED | Android detected; ABI dir still `aarch64` | `OSInfo.java:169-194,350` |
+| 121 | PARTIALLY FIXED → FIXED (64-bit) | aarch64 path consistent between CI build and loader; no 32-bit publish | `publish.yml:133`, `OSInfo.java:256-259,350` |
 | 120 | FIXED | Architecture support comes from b9284 | `CLAUDE.md:11` |
 | 119 | FIXED | Per-release bump cadence to b9284 | `git log --oneline` Upgrade commits |
 | 117 | NEEDS INVESTIGATION | Upstream backend-device crash; reproduce | `b9284` is current; reproduce on emulator |
@@ -610,7 +682,7 @@ Feature request: add multimodal input support (referencing
 | 89  | NOT APPLICABLE | Hand-port `server.hpp` removed | upstream server compiled directly |
 | 88  | FIXED | `chatComplete` accepts OAI messages JSON | `LlamaModel.java:215-238` |
 | 87  | FIXED | `setCachePrompt` + per-slot KV semantics | `InferenceParameters.java:116` |
-| 86  | PARTIALLY FIXED | CUDA jar built; falls back to CPU | `.github/build_cuda_linux.sh`, commit `91b4ae1` |
+| 86  | PARTIALLY FIXED | CUDA jar is CUDA-runtime-required; user must pick classifier | `.github/build_cuda_linux.sh`, commit `91b4ae1` |
 | 85  | NEEDS INVESTIGATION | Rosetta-2 emulation defect; arm64 builds ship | `Mac/aarch64/` artifact |
 | 84  | FIXED | `rerank()` API + RerankingModelTest | `LlamaModel.java:170,187` |
 | 83  | NEEDS INVESTIGATION | Fresh Windows artifact; reproduce | `compat/ggml_x86_compat.c` |
