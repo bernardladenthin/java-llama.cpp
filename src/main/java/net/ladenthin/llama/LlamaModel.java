@@ -350,6 +350,22 @@ public class LlamaModel implements AutoCloseable {
 			new com.fasterxml.jackson.databind.ObjectMapper();
 
 	/**
+	 * Typed accessor for {@link #getMetrics()}. Parses the raw JSON into a
+	 * {@link ServerMetrics} view that exposes cumulative {@link Usage} and
+	 * {@link Timings}, slot counts, and a passthrough to the underlying JSON.
+	 *
+	 * @return parsed {@link ServerMetrics}
+	 * @throws LlamaException if the native call fails or the response cannot be parsed
+	 */
+	public ServerMetrics getMetricsTyped() throws LlamaException {
+		try {
+			return new ServerMetrics(OBJECT_MAPPER.readTree(getMetrics()));
+		} catch (java.io.IOException e) {
+			throw new LlamaException("Failed to parse server metrics JSON: " + e.getMessage());
+		}
+	}
+
+	/**
 	 * Returns model metadata with typed accessors for vocab, context, embedding,
 	 * parameter count, size, and modality support flags (vision, audio).
 	 * <p>
