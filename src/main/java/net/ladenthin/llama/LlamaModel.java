@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.BiConsumer;
 
 /**
@@ -84,6 +85,58 @@ public class LlamaModel implements AutoCloseable {
 	 * @param token cancellation handle; {@link CancellationToken#cancel()} aborts the loop
 	 * @return the text generated up to the point of stop or cancellation
 	 */
+	/**
+	 * Asynchronous variant of {@link #complete(InferenceParameters)}. Runs the inference on
+	 * the common {@link java.util.concurrent.ForkJoinPool} so it does not block the calling
+	 * thread. The native worker thread inside the JNI context still serializes the actual
+	 * model work &mdash; this wrapper only moves the blocking Java call off the caller.
+	 *
+	 * @param parameters the inference configuration
+	 * @return a future completed with the generated text
+	 */
+	public CompletableFuture<String> completeAsync(InferenceParameters parameters) {
+		return CompletableFuture.supplyAsync(() -> complete(parameters));
+	}
+
+	/**
+	 * Cancellable async variant. The returned future is wired to the supplied
+	 * {@link CancellationToken}: calling {@code future.cancel(true)} also invokes
+	 * {@link CancellationToken#cancel()} so the inference loop returns early.
+	 *
+	 * @param parameters the inference configuration
+	 * @param token cancellation handle bound to the underlying inference loop
+	 * @return a future completed with whatever text was generated up to the point of stop or cancellation
+	 */
+	public CompletableFuture<String> completeAsync(InferenceParameters parameters, CancellationToken token) {
+		CompletableFuture<String> future = CompletableFuture.supplyAsync(() -> complete(parameters, token));
+		future.whenComplete((result, ex) -> {
+			if (ex instanceof java.util.concurrent.CancellationException) {
+				token.cancel();
+			}
+		});
+		return future;
+	}
+
+	/**
+	 * Asynchronous variant of {@link #chatComplete(InferenceParameters)}.
+	 *
+	 * @param parameters the inference parameters including messages
+	 * @return a future completed with the raw OAI-format JSON response
+	 */
+	public CompletableFuture<String> chatCompleteAsync(InferenceParameters parameters) {
+		return CompletableFuture.supplyAsync(() -> chatComplete(parameters));
+	}
+
+	/**
+	 * Asynchronous variant of {@link #chatCompleteText(InferenceParameters)}.
+	 *
+	 * @param parameters the inference parameters including messages
+	 * @return a future completed with the assistant's reply text
+	 */
+	public CompletableFuture<String> chatCompleteTextAsync(InferenceParameters parameters) {
+		return CompletableFuture.supplyAsync(() -> chatCompleteText(parameters));
+	}
+
 	public String complete(InferenceParameters parameters, CancellationToken token) {
 		token.reset();
 		parameters.setStream(true);

@@ -278,6 +278,42 @@ public class LlamaModelTest {
 		Assert.assertNotNull(model.complete(new InferenceParameters(prefix).setNPredict(3)));
 	}
 
+	/**
+	 * Regression: {@link LlamaModel#completeAsync(InferenceParameters)} must
+	 * complete with the same text {@link LlamaModel#complete(InferenceParameters)}
+	 * would have produced, on a background thread.
+	 */
+	@Test
+	public void testCompleteAsync() throws Exception {
+		InferenceParameters params = new InferenceParameters(prefix).setNPredict(8).setSeed(42);
+		String sync = model.complete(new InferenceParameters(prefix).setNPredict(8).setSeed(42));
+		String async = model.completeAsync(params).get(30, java.util.concurrent.TimeUnit.SECONDS);
+		Assert.assertEquals(sync, async);
+	}
+
+	/**
+	 * Regression: cancelling the future from {@link LlamaModel#completeAsync(InferenceParameters, CancellationToken)}
+	 * must propagate to the underlying inference loop via the token.
+	 */
+	@Test
+	public void testCompleteAsyncCancelPropagates() throws Exception {
+		InferenceParameters params = new InferenceParameters(prefix).setNPredict(512);
+		CancellationToken token = new CancellationToken();
+		java.util.concurrent.CompletableFuture<String> future = model.completeAsync(params, token);
+
+		Thread.sleep(200);
+		future.cancel(true);
+
+		// give the propagation a moment
+		for (int i = 0; i < 50 && !token.isCancelled() && i < 50; i++) {
+			Thread.sleep(20);
+		}
+		Assert.assertTrue("cancel(true) on the future should flip the token", token.isCancelled());
+
+		// Model is still usable
+		Assert.assertNotNull(model.complete(new InferenceParameters(prefix).setNPredict(3)));
+	}
+
 	@Test
 	public void testEmbedding() {
 		float[] embedding = model.embed(prefix);
