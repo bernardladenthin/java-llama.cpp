@@ -598,7 +598,26 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     llama_backend_free();
 }
 
-JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_loadModel(JNIEnv *env, jobject obj, jobjectArray jparams) {
+// Trampoline state for llama.cpp's load_progress_callback. The native loader runs
+// on the calling JNI thread so we can capture JNIEnv directly. Lifetime is bounded
+// by the single load_model_impl call.
+namespace {
+struct load_progress_ud {
+    JNIEnv  *env;
+    jobject  callback;
+    jmethodID on_progress;
+};
+
+bool jni_load_progress_trampoline(float progress, void *user_data) {
+    auto *ud = static_cast<load_progress_ud *>(user_data);
+    return ud->env->CallBooleanMethod(ud->callback, ud->on_progress, progress) == JNI_TRUE;
+}
+} // namespace
+
+// Shared implementation of loadModel and loadModelWithProgress. When `progress` is
+// non-null, installs a load-progress trampoline; otherwise behaves identically to
+// the no-callback path.
+static void load_model_impl(JNIEnv *env, jobject obj, jobjectArray jparams, jobject progress) {
     common_params params;
 
     const jsize argc = env->GetArrayLength(jparams);
@@ -662,6 +681,21 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_loadModel(JNIEnv *env
 
     LOG_INF("%s: loading model\n", __func__);
 
+    // Install the load-progress trampoline if the caller supplied a callback.
+    load_progress_ud progress_ud{};
+    if (progress != nullptr) {
+        jclass cb_cls = env->GetObjectClass(progress);
+        progress_ud.env         = env;
+        progress_ud.callback    = progress;
+        progress_ud.on_progress = env->GetMethodID(cb_cls, "onProgress", "(F)Z");
+        if (progress_ud.on_progress == nullptr) {
+            fail_load("LoadProgressCallback.onProgress(float) not found");
+            return;
+        }
+        params.load_progress_callback           = jni_load_progress_trampoline;
+        params.load_progress_callback_user_data = &progress_ud;
+    }
+
     if (!jctx->server.load_model(params)) {
         fail_load("could not load model from given file path");
         return;
@@ -704,6 +738,16 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_loadModel(JNIEnv *env
     }
 
     env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(jctx));
+}
+
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_loadModel(JNIEnv *env, jobject obj, jobjectArray jparams) {
+    load_model_impl(env, obj, jparams, nullptr);
+}
+
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_loadModelWithProgress(JNIEnv *env, jobject obj,
+                                                                              jobjectArray jparams,
+                                                                              jobject       callback) {
+    load_model_impl(env, obj, jparams, callback);
 }
 
 JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_getModelMetaJson(JNIEnv *env, jobject obj) {

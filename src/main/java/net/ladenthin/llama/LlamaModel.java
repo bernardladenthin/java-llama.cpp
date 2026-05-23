@@ -59,6 +59,24 @@ public class LlamaModel implements AutoCloseable {
 	}
 
 	/**
+	 * Load the model and forward progress updates to {@code progress}. The callback is
+	 * invoked synchronously on the constructor thread by the native loader and may
+	 * return {@code false} to abort the load (in which case this constructor throws
+	 * {@link LlamaException}).
+	 *
+	 * @param parameters the set of options
+	 * @param progress   load progress sink; {@code null} disables the callback
+	 * @throws LlamaException if loading fails or the callback aborts
+	 */
+	public LlamaModel(ModelParameters parameters, LoadProgressCallback progress) {
+		if (progress == null) {
+			loadModel(parameters.toArray());
+		} else {
+			loadModelWithProgress(parameters.toArray(), progress);
+		}
+	}
+
+	/**
 	 * Generate and return a whole answer with custom parameters. Note, that the prompt isn't preprocessed in any
 	 * way, nothing like "User: ", "###Instruction", etc. is added.
 	 *
@@ -256,6 +274,8 @@ public class LlamaModel implements AutoCloseable {
 	native byte[] decodeBytes(int[] tokens);
 
 	private native void loadModel(String... parameters) throws LlamaException;
+
+	private native void loadModelWithProgress(String[] parameters, LoadProgressCallback callback) throws LlamaException;
 
 	private native void delete();
 	
