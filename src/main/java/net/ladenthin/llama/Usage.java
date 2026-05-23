@@ -16,19 +16,37 @@ public final class Usage {
     private final long promptTokens;
     private final long completionTokens;
 
+    /**
+     * Construct a usage record.
+     *
+     * @param promptTokens     number of prompt tokens
+     * @param completionTokens number of completion tokens
+     */
     public Usage(long promptTokens, long completionTokens) {
         this.promptTokens = promptTokens;
         this.completionTokens = completionTokens;
     }
 
+    /**
+     * Prompt-side token count.
+     * @return number of prompt tokens
+     */
     public long getPromptTokens() {
         return promptTokens;
     }
 
+    /**
+     * Completion-side token count.
+     * @return number of completion tokens
+     */
     public long getCompletionTokens() {
         return completionTokens;
     }
 
+    /**
+     * Convenience sum of the prompt and completion counts.
+     * @return sum of prompt and completion tokens
+     */
     public long getTotalTokens() {
         return promptTokens + completionTokens;
     }

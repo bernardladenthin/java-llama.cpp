@@ -514,6 +514,52 @@ into `models/` out-of-band.
 clang-format -i src/main/cpp/*.cpp src/main/cpp/*.hpp   # Format C++ code
 ```
 
+### Javadoc — must build cleanly before `mvn package`
+
+The release packaging job runs `mvn package` with the `release` profile, which attaches
+a javadoc jar via `maven-javadoc-plugin`. The plugin treats Javadoc tool **errors** as
+build failures (warnings are tolerated). After changing any public/protected Java API,
+verify the javadoc build succeeds locally:
+
+```bash
+mvn clean javadoc:jar -DskipTests=true -Dgpg.skip=true
+# expected: BUILD SUCCESS
+```
+
+Common Javadoc errors that fail the build (not warnings):
+
+- **Unbalanced HTML**: `</p>` without a matching `<p>`, mismatched `<ul>`/`<li>`, stray
+  closing tags. Symptom: `error: unexpected end tag: </p>`.
+- **Invalid `{@link …}` targets**: typo'd class, method, or parameter name.
+- **Self-closing void HTML elements written as `<br>` inside `<pre>` blocks** in HTML5
+  mode (rare but seen).
+
+Common Javadoc *warnings* (do not fail the build, but should be cleaned up on new code):
+
+- `no main description` — a doc comment containing only `@param`/`@return`/`@throws`
+  tags with no leading prose. Fix: add a one-line description before the tags.
+- `no @return` / `no @param` — public method missing the tag. Fix: add it.
+- `no comment` — public method/field/enum constant has no doc comment at all.
+- `use of default constructor, which does not provide a comment` — public class with
+  no explicit constructor (the synthetic default has no Javadoc). Fix: add an explicit
+  no-arg constructor with a Javadoc comment.
+
+Preferred doc-comment shapes for getters and small value types:
+
+```java
+/**
+ * Brief one-line description of the value.
+ *
+ * @return the value
+ */
+public T getThing() { ... }
+```
+
+A bare `/** @return … */` triggers `no main description`; add a leading sentence.
+
+If the local check passes (`BUILD SUCCESS`), the `mvn package` job in
+`.github/workflows/publish.yml` will pass the `attach-javadocs` step.
+
 ## Architecture
 
 ### Two-Layer Design

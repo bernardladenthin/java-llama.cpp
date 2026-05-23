@@ -58,7 +58,12 @@ public final class Session implements AutoCloseable {
         this.paramsCustomizer = paramsCustomizer;
     }
 
-    /** Send a user message and return the assistant's text reply, appending both to the transcript. */
+    /**
+     * Send a user message and return the assistant's text reply, appending both to the transcript.
+     *
+     * @param userMessage the user turn to append before invoking the model
+     * @return the assistant's reply text
+     */
     public String send(String userMessage) {
         turns.add(new Pair<String, String>("user", userMessage));
         InferenceParameters params = buildParams();
@@ -72,6 +77,9 @@ public final class Session implements AutoCloseable {
      * the assistant reply; consume it fully (or via try-with-resources) before calling
      * {@link #send(String)} again, because the assistant turn is only appended to the
      * transcript when the caller invokes {@link #commitStreamedReply(String)}.
+     *
+     * @param userMessage the user turn to append before starting the stream
+     * @return a {@link LlamaIterable} that yields assistant reply chunks
      */
     public LlamaIterable stream(String userMessage) {
         turns.add(new Pair<String, String>("user", userMessage));
@@ -81,22 +89,37 @@ public final class Session implements AutoCloseable {
     /**
      * Record an assistant reply that was produced by a previous {@link #stream(String)}
      * call. Called by the caller after it has accumulated the streamed text.
+     *
+     * @param assistantText the assistant text accumulated from a prior {@link #stream(String)} call
      */
     public void commitStreamedReply(String assistantText) {
         turns.add(new Pair<String, String>("assistant", assistantText));
     }
 
-    /** Save this session's slot KV cache to {@code filepath}. */
+    /**
+     * Save this session's slot KV cache to {@code filepath}.
+     *
+     * @param filepath destination file path passed to {@link LlamaModel#saveSlot(int, String)}
+     * @return the JSON response from the native save action
+     */
     public String save(String filepath) {
         return model.saveSlot(slotId, filepath);
     }
 
-    /** Restore this session's slot KV cache from {@code filepath}. */
+    /**
+     * Restore this session's slot KV cache from {@code filepath}.
+     *
+     * @param filepath source file path passed to {@link LlamaModel#restoreSlot(int, String)}
+     * @return the JSON response from the native restore action
+     */
     public String restore(String filepath) {
         return model.restoreSlot(slotId, filepath);
     }
 
-    /** The accumulated turns so far, in order. */
+    /**
+     * Transcript accessor.
+     * @return the accumulated transcript so far, in order, including the system message if any
+     */
     public List<ChatMessage> getMessages() {
         List<ChatMessage> out = new ArrayList<ChatMessage>(turns.size() + 1);
         if (systemMessage != null && !systemMessage.isEmpty()) {

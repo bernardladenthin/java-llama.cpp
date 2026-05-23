@@ -32,32 +32,50 @@ public final class ServerMetrics {
         this.node = node;
     }
 
-    /** Number of slots currently idle. */
+    /**
+     * Idle slot count.
+     * @return number of slots currently idle
+     */
     public int getIdleSlots() {
         return node.path("idle").asInt(0);
     }
 
-    /** Number of slots currently processing a task. */
+    /**
+     * Busy slot count.
+     * @return number of slots currently processing a task
+     */
     public int getProcessingSlots() {
         return node.path("processing").asInt(0);
     }
 
-    /** Number of tasks waiting in the deferred queue. */
+    /**
+     * Backlog size.
+     * @return number of tasks waiting in the deferred queue
+     */
     public int getDeferredTasks() {
         return node.path("deferred").asInt(0);
     }
 
-    /** Server start timestamp (millis since epoch as reported by llama.cpp). */
+    /**
+     * Server start timestamp.
+     * @return millis since epoch as reported by llama.cpp
+     */
     public long getStartTimestamp() {
         return node.path("t_start").asLong(0L);
     }
 
-    /** Total decode invocations since server start. */
+    /**
+     * Lifetime decode counter.
+     * @return total decode invocations since server start
+     */
     public long getDecodeTotal() {
         return node.path("n_decode_total").asLong(0L);
     }
 
-    /** Cumulative number of busy-slot ticks (1 per decode per busy slot). */
+    /**
+     * Lifetime busy-slot counter.
+     * @return cumulative number of busy-slot ticks (1 per decode per busy slot)
+     */
     public long getBusySlotsTotal() {
         return node.path("n_busy_slots_total").asLong(0L);
     }
@@ -65,6 +83,8 @@ public final class ServerMetrics {
     /**
      * Maximum number of tokens any active slot is configured to hold. Absent in the
      * upstream JSON when no slot has been used yet; this getter returns {@code 0} then.
+     *
+     * @return the slot token-budget ceiling, or {@code 0} when no slot has been active
      */
     public int getTokensMax() {
         return node.path("n_tokens_max").asInt(0);
@@ -74,6 +94,8 @@ public final class ServerMetrics {
      * Cumulative server-wide token usage since startup. Prompt tokens come from
      * {@code n_prompt_tokens_processed_total} and completion tokens from
      * {@code n_tokens_predicted_total}.
+     *
+     * @return cumulative {@link Usage} across all completions since server start
      */
     public Usage getCumulativeUsage() {
         return new Usage(
@@ -82,8 +104,10 @@ public final class ServerMetrics {
     }
 
     /**
-     * Usage counters from the most recent measurement window (current bucket) —
+     * Usage counters from the most recent measurement window (current bucket) &mdash;
      * {@code n_prompt_tokens_processed} and {@code n_tokens_predicted}.
+     *
+     * @return per-window {@link Usage} since the previous metrics emission
      */
     public Usage getWindowUsage() {
         return new Usage(
@@ -94,6 +118,8 @@ public final class ServerMetrics {
     /**
      * Cumulative throughput derived from the totals fields. Returns {@code 0.0} for
      * any rate where the corresponding ms total is zero.
+     *
+     * @return cumulative {@link Timings} aggregated from server-wide totals
      */
     public Timings getCumulativeTimings() {
         long promptN = node.path("n_prompt_tokens_processed_total").asLong(0L);
@@ -106,12 +132,18 @@ public final class ServerMetrics {
                 (int) predictedN, predictedMs, predictedPerSec, 0, 0);
     }
 
-    /** The {@code slots} array node, or a missing-node when no slots are reported. */
+    /**
+     * Slots array passthrough.
+     * @return the {@code slots} array node, or a missing-node when no slots are reported
+     */
     public JsonNode getSlots() {
         return node.path("slots");
     }
 
-    /** Underlying JSON for direct access to fields not yet exposed by typed getters. */
+    /**
+     * Raw passthrough escape hatch.
+     * @return underlying JSON for direct access to fields not yet exposed by typed getters
+     */
     public JsonNode asJson() {
         return node;
     }

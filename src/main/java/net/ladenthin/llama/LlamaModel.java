@@ -137,6 +137,16 @@ public class LlamaModel implements AutoCloseable {
 		return CompletableFuture.supplyAsync(() -> chatCompleteText(parameters));
 	}
 
+	/**
+	 * Cancellable variant of {@link #complete(InferenceParameters)}. Runs in streaming mode
+	 * internally so the inference loop can observe a {@link CancellationToken#cancel()} call
+	 * from another thread between token boundaries and return early with whatever text was
+	 * accumulated so far.
+	 *
+	 * @param parameters the inference configuration (its {@code stream} flag is set to {@code true})
+	 * @param token cancellation handle observed at each token boundary
+	 * @return the text generated up to the point of stop or cancellation
+	 */
 	public String complete(InferenceParameters parameters, CancellationToken token) {
 		token.reset();
 		parameters.setStream(true);
@@ -454,14 +464,6 @@ public class LlamaModel implements AutoCloseable {
 			new com.fasterxml.jackson.databind.ObjectMapper();
 
 	/**
-	 * Typed accessor for {@link #getMetrics()}. Parses the raw JSON into a
-	 * {@link ServerMetrics} view that exposes cumulative {@link Usage} and
-	 * {@link Timings}, slot counts, and a passthrough to the underlying JSON.
-	 *
-	 * @return parsed {@link ServerMetrics}
-	 * @throws LlamaException if the native call fails or the response cannot be parsed
-	 */
-	/**
 	 * Run {@link #complete(InferenceParameters)} constrained to the supplied JSON Schema
 	 * and deserialize the result into an instance of {@code type}. The schema is applied
 	 * via {@link InferenceParameters#setJsonSchema(String)} for the duration of this call;
@@ -506,6 +508,14 @@ public class LlamaModel implements AutoCloseable {
 		}
 	}
 
+	/**
+	 * Typed accessor for {@link #getMetrics()}. Parses the raw JSON into a
+	 * {@link ServerMetrics} view that exposes cumulative {@link Usage} and
+	 * {@link Timings}, slot counts, and a passthrough to the underlying JSON.
+	 *
+	 * @return parsed {@link ServerMetrics}
+	 * @throws LlamaException if the native call fails or the response cannot be parsed
+	 */
 	public ServerMetrics getMetricsTyped() throws LlamaException {
 		try {
 			return new ServerMetrics(OBJECT_MAPPER.readTree(getMetrics()));

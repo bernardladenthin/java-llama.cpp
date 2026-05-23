@@ -24,11 +24,15 @@ public final class CancellationToken {
 
     private volatile boolean cancelled;
 
+    /** Construct a fresh, not-cancelled token. */
     public CancellationToken() {
         // empty
     }
 
-    /** Returns {@code true} once {@link #cancel()} has been called and before {@link #reset()}. */
+    /**
+     * Cancellation flag accessor.
+     * @return {@code true} once {@link #cancel()} has been called and before {@link #reset()}
+     */
     public boolean isCancelled() {
         return cancelled;
     }

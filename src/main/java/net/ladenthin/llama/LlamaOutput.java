@@ -52,10 +52,27 @@ public final class LlamaOutput {
     @NotNull
     public final StopReason stopReason;
 
+    /**
+     * Backwards-compatible constructor that leaves {@link #logprobs} empty.
+     *
+     * @param text          generated text fragment
+     * @param probabilities token-to-probability map (may be empty)
+     * @param stop          whether this is the final token
+     * @param stopReason    the stop reason ({@link StopReason#NONE} on intermediate tokens)
+     */
     public LlamaOutput(@NotNull String text, @NotNull Map<String, Float> probabilities, boolean stop, @NotNull StopReason stopReason) {
         this(text, probabilities, Collections.<TokenLogprob>emptyList(), stop, stopReason);
     }
 
+    /**
+     * Construct an output with typed per-token logprobs in addition to the flat probability map.
+     *
+     * @param text          generated text fragment
+     * @param probabilities token-to-probability map (may be empty)
+     * @param logprobs      typed per-token logprob entries (may be empty)
+     * @param stop          whether this is the final token
+     * @param stopReason    the stop reason ({@link StopReason#NONE} on intermediate tokens)
+     */
     public LlamaOutput(@NotNull String text, @NotNull Map<String, Float> probabilities,
                        @NotNull List<TokenLogprob> logprobs, boolean stop, @NotNull StopReason stopReason) {
         this.text = text;
