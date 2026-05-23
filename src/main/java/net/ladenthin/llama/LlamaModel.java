@@ -91,6 +91,23 @@ public class LlamaModel implements AutoCloseable {
 	}
 
 	/**
+	 * Typed variant of {@link #complete(InferenceParameters)} that surfaces per-completion
+	 * {@link Usage}, {@link Timings}, {@link TokenLogprob} entries, and {@link StopReason}.
+	 * <p>
+	 * Logprobs are populated only when {@link InferenceParameters#setNProbs(int)} is &gt; 0.
+	 * The raw native JSON is preserved on {@link CompletionResult#getRawJson()}.
+	 *
+	 * @param parameters the inference configuration
+	 * @return a populated {@link CompletionResult}
+	 */
+	public CompletionResult completeWithStats(InferenceParameters parameters) {
+		parameters.setStream(false);
+		int taskId = requestCompletion(parameters.toString());
+		String json = receiveCompletionJson(taskId);
+		return completionParser.parseCompletionResult(json);
+	}
+
+	/**
 	 * Cancellable variant of {@link #complete(InferenceParameters)}. Runs in streaming mode
 	 * internally so the inference loop can observe a {@link CancellationToken#cancel()} call
 	 * from another thread and return early with whatever text was accumulated so far.

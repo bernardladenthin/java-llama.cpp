@@ -7,10 +7,13 @@ package net.ladenthin.llama.json;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import net.ladenthin.llama.CompletionResult;
 import net.ladenthin.llama.InferenceParameters;
 import net.ladenthin.llama.LlamaOutput;
 import net.ladenthin.llama.StopReason;
+import net.ladenthin.llama.Timings;
 import net.ladenthin.llama.TokenLogprob;
+import net.ladenthin.llama.Usage;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -157,6 +160,35 @@ public class CompletionResponseParser {
             result.add(parseLogprobEntry(entry));
         }
         return result;
+    }
+
+    /**
+     * Parse a {@link CompletionResult} from the non-streaming, non-OAI completion JSON
+     * emitted by {@code server_task_result_cmpl_final::to_json_non_oaicompat}.
+     * <p>
+     * Maps {@code content} → text, {@code tokens_evaluated}/{@code tokens_predicted} →
+     * {@link Usage}, the {@code timings} sub-object → {@link Timings},
+     * {@code completion_probabilities} → {@link TokenLogprob} list, and
+     * {@code stop_type} → {@link StopReason}.
+     *
+     * @param json raw JSON string from the native completion response
+     * @return a populated {@link CompletionResult}; fields default to empty/zero on parse failure
+     */
+    public CompletionResult parseCompletionResult(String json) {
+        try {
+            JsonNode node = OBJECT_MAPPER.readTree(json);
+            String text = extractContent(node);
+            Usage usage = new Usage(
+                    node.path("tokens_evaluated").asLong(0L),
+                    node.path("tokens_predicted").asLong(0L));
+            Timings timings = Timings.fromJson(node.path("timings"));
+            List<TokenLogprob> logprobs = parseLogprobs(node);
+            StopReason stopReason = StopReason.fromStopType(node.path("stop_type").asText(""));
+            return new CompletionResult(text, usage, timings, logprobs, stopReason, json);
+        } catch (IOException e) {
+            return new CompletionResult("", new Usage(0L, 0L), Timings.fromJson(null),
+                    Collections.<TokenLogprob>emptyList(), StopReason.NONE, json);
+        }
     }
 
     private TokenLogprob parseLogprobEntry(JsonNode entry) {
