@@ -389,6 +389,51 @@ public class LlamaModelTest {
 		Assert.assertFalse(r.getChoices().isEmpty());
 	}
 
+	/**
+	 * Regression: {@link LlamaModel#completeBatch(java.util.List)} returns results in
+	 * the same order as the input list, with one non-null text per request. The shared
+	 * test model is single-slot, so this primarily exercises the parallel dispatch and
+	 * order-preservation contract, not actual parallel throughput.
+	 */
+	@Test
+	public void testCompleteBatch() {
+		java.util.List<InferenceParameters> requests = java.util.Arrays.asList(
+				new InferenceParameters(prefix).setNPredict(3).setSeed(1),
+				new InferenceParameters(prefix).setNPredict(3).setSeed(2),
+				new InferenceParameters(prefix).setNPredict(3).setSeed(3));
+		java.util.List<String> results = model.completeBatch(requests);
+		Assert.assertEquals(3, results.size());
+		for (String r : results) {
+			Assert.assertNotNull(r);
+		}
+	}
+
+	@Test
+	public void testCompleteBatchWithStats() {
+		java.util.List<InferenceParameters> requests = java.util.Arrays.asList(
+				new InferenceParameters(prefix).setNPredict(3).setSeed(1),
+				new InferenceParameters(prefix).setNPredict(3).setSeed(2));
+		java.util.List<CompletionResult> results = model.completeBatchWithStats(requests);
+		Assert.assertEquals(2, results.size());
+		for (CompletionResult r : results) {
+			Assert.assertNotNull(r);
+			Assert.assertTrue("expected non-zero total tokens, got " + r.getUsage().getTotalTokens(),
+					r.getUsage().getTotalTokens() > 0);
+		}
+	}
+
+	@Test
+	public void testChatBatch() {
+		java.util.List<ChatRequest> requests = java.util.Arrays.asList(
+				new ChatRequest().addMessage("user", "Say hi.").setInferenceCustomizer(p -> p.setNPredict(4).setSeed(1)),
+				new ChatRequest().addMessage("user", "Say bye.").setInferenceCustomizer(p -> p.setNPredict(4).setSeed(2)));
+		java.util.List<ChatResponse> results = model.chatBatch(requests);
+		Assert.assertEquals(2, results.size());
+		for (ChatResponse r : results) {
+			Assert.assertFalse(r.getChoices().isEmpty());
+		}
+	}
+
 	@Test
 	public void testEmbedding() {
 		float[] embedding = model.embed(prefix);

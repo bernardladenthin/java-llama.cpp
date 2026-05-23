@@ -121,6 +121,67 @@ public class LlamaModel implements AutoCloseable {
 	 * @return the text generated up to the point of stop or cancellation
 	 */
 	/**
+	 * Dispatch a list of completion requests in parallel and return the generated texts
+	 * in the same order. Each request is sent immediately; the native scheduler dispatches
+	 * tasks across whatever slot count {@link ModelParameters#setParallel(int)} was
+	 * configured with. With a default single-slot model the requests still run, but
+	 * sequentially.
+	 *
+	 * @param requests the list of inference parameter blocks (must be distinct instances)
+	 * @return the generated texts in input order
+	 */
+	public java.util.List<String> completeBatch(java.util.List<InferenceParameters> requests) {
+		java.util.List<CompletableFuture<String>> futures = new java.util.ArrayList<CompletableFuture<String>>(requests.size());
+		for (InferenceParameters req : requests) {
+			futures.add(completeAsync(req));
+		}
+		java.util.List<String> out = new java.util.ArrayList<String>(futures.size());
+		for (CompletableFuture<String> f : futures) {
+			out.add(f.join());
+		}
+		return out;
+	}
+
+	/**
+	 * Like {@link #completeBatch(java.util.List)} but each result carries
+	 * {@link CompletionResult}'s typed Usage, Timings, logprobs, and stop reason.
+	 *
+	 * @param requests the list of inference parameter blocks (must be distinct instances)
+	 * @return parsed completion results in input order
+	 */
+	public java.util.List<CompletionResult> completeBatchWithStats(java.util.List<InferenceParameters> requests) {
+		java.util.List<CompletableFuture<CompletionResult>> futures = new java.util.ArrayList<CompletableFuture<CompletionResult>>(requests.size());
+		for (final InferenceParameters req : requests) {
+			futures.add(CompletableFuture.supplyAsync(() -> completeWithStats(req)));
+		}
+		java.util.List<CompletionResult> out = new java.util.ArrayList<CompletionResult>(futures.size());
+		for (CompletableFuture<CompletionResult> f : futures) {
+			out.add(f.join());
+		}
+		return out;
+	}
+
+	/**
+	 * Dispatch a list of typed chat requests in parallel and return the parsed responses
+	 * in the same order. Requires {@link ModelParameters#setParallel(int)} &gt; 1 for
+	 * actual parallelism; otherwise the calls run sequentially on the single slot.
+	 *
+	 * @param requests the typed chat requests (must be distinct instances)
+	 * @return parsed responses in input order
+	 */
+	public java.util.List<ChatResponse> chatBatch(java.util.List<ChatRequest> requests) {
+		java.util.List<CompletableFuture<ChatResponse>> futures = new java.util.ArrayList<CompletableFuture<ChatResponse>>(requests.size());
+		for (final ChatRequest req : requests) {
+			futures.add(CompletableFuture.supplyAsync(() -> chat(req)));
+		}
+		java.util.List<ChatResponse> out = new java.util.ArrayList<ChatResponse>(futures.size());
+		for (CompletableFuture<ChatResponse> f : futures) {
+			out.add(f.join());
+		}
+		return out;
+	}
+
+	/**
 	 * Asynchronous variant of {@link #complete(InferenceParameters)}. Runs the inference on
 	 * the common {@link java.util.concurrent.ForkJoinPool} so it does not block the calling
 	 * thread. The native worker thread inside the JNI context still serializes the actual
