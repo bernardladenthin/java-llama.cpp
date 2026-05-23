@@ -349,6 +349,46 @@ public class LlamaModelTest {
 		}
 	}
 
+	/**
+	 * Regression: {@link LlamaModel#chat(ChatRequest)} returns a typed
+	 * {@link ChatResponse} with usage / timings populated and at least one
+	 * choice carrying assistant content.
+	 */
+	@Test
+	public void testTypedChat() {
+		ChatRequest req = new ChatRequest()
+				.addMessage("user", "Say hi in one word.")
+				.setInferenceCustomizer(p -> p.setNPredict(8).setSeed(1));
+		ChatResponse r = model.chat(req);
+		Assert.assertNotNull(r);
+		Assert.assertFalse(r.getChoices().isEmpty());
+		Assert.assertNotNull(r.getFirstMessage());
+		Assert.assertTrue(r.getUsage().getTotalTokens() > 0);
+	}
+
+	/**
+	 * Regression: {@link LlamaModel#chatWithTools(ChatRequest, java.util.Map)}
+	 * runs at least one round and returns a final {@link ChatResponse} even when
+	 * no tools are triggered. CodeLlama-7B is not a tool-trained model, so this
+	 * primarily exercises the loop contract; tool wiring is unit-tested in
+	 * ChatResponseTest.
+	 */
+	@Test
+	public void testChatWithToolsLoopShortCircuits() {
+		ToolDefinition echo = new ToolDefinition("echo", "Echo a string",
+				"{\"type\":\"object\",\"properties\":{\"s\":{\"type\":\"string\"}},\"required\":[\"s\"]}");
+		ChatRequest req = new ChatRequest()
+				.addMessage("user", "Hello.")
+				.addTool(echo)
+				.setMaxToolRounds(2)
+				.setInferenceCustomizer(p -> p.setNPredict(8).setSeed(1));
+		java.util.Map<String, ToolHandler> handlers = new java.util.HashMap<>();
+		handlers.put("echo", args -> args);
+		ChatResponse r = model.chatWithTools(req, handlers);
+		Assert.assertNotNull(r);
+		Assert.assertFalse(r.getChoices().isEmpty());
+	}
+
 	@Test
 	public void testEmbedding() {
 		float[] embedding = model.embed(prefix);

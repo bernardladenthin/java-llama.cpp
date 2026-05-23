@@ -554,6 +554,43 @@ public final class InferenceParameters extends JsonParameters {
         return this;
     }
 
+    /**
+     * Set the {@code messages} array directly from a pre-built JSON string. Use this
+     * for the typed chat API (see {@link ChatRequest#buildMessagesJson()}) when the
+     * conversation includes tool-call / tool-result turns that {@link #setMessages}
+     * does not support.
+     *
+     * @param messagesJson the JSON array, e.g. {@code [{"role":"user","content":"hi"}]}
+     * @return this builder
+     */
+    public InferenceParameters setMessagesJson(String messagesJson) {
+        parameters.put(PARAM_MESSAGES, messagesJson);
+        return this;
+    }
+
+    /**
+     * Set the OAI-style {@code tools} array directly from a pre-built JSON string.
+     * Pairs with {@link ChatRequest#buildToolsJson()} to enable tool calling.
+     *
+     * @param toolsJson the JSON array, e.g. {@code [{"type":"function","function":{...}}]}
+     * @return this builder
+     */
+    public InferenceParameters setToolsJson(String toolsJson) {
+        parameters.put("tools", toolsJson);
+        return this;
+    }
+
+    /**
+     * Set the OAI-style {@code tool_choice} hint.
+     *
+     * @param toolChoice the hint string (typically {@code "auto"}, {@code "none"}, or {@code "required"})
+     * @return this builder
+     */
+    public InferenceParameters setToolChoice(String toolChoice) {
+        parameters.put("tool_choice", toJsonString(toolChoice));
+        return this;
+    }
+
 	/**
 	 * Set top-n-sigma sampling threshold (default: -1.0, disabled).
 	 * Only tokens whose logit is within {@code n} standard deviations of the maximum logit

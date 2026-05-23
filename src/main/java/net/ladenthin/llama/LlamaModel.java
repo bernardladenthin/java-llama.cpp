@@ -387,6 +387,75 @@ public class LlamaModel implements AutoCloseable {
 	}
 
 	/**
+	 * Typed chat completion: serialize a {@link ChatRequest} (with optional tools), call
+	 * the native chat endpoint, and return a parsed {@link ChatResponse} carrying typed
+	 * {@link Usage}, {@link Timings}, and {@link ChatChoice} list.
+	 *
+	 * @param request the typed request (messages + optional tools)
+	 * @return the parsed typed response
+	 */
+	public ChatResponse chat(ChatRequest request) {
+		InferenceParameters params = new InferenceParameters("")
+				.setMessagesJson(request.buildMessagesJson());
+		String toolsJson = request.buildToolsJson();
+		if (toolsJson != null) {
+			params.setToolsJson(toolsJson);
+			if (request.getToolChoice() != null) {
+				params.setToolChoice(request.getToolChoice());
+			}
+			params.setUseChatTemplate(true);
+		}
+		request.applyCustomizer(params);
+		String raw = chatComplete(params);
+		return chatParser.parseResponse(raw);
+	}
+
+	/**
+	 * Tool-calling agent loop. Repeatedly calls {@link #chat(ChatRequest)}; on each
+	 * response that includes {@code tool_calls}, invokes the matching {@link ToolHandler}
+	 * for every call, appends the assistant turn and tool-result turns to the request's
+	 * message list, and loops until either the model responds without tool calls or the
+	 * round cap from {@link ChatRequest#getMaxToolRounds()} is reached.
+	 * <p>
+	 * Handler exceptions are caught and reported back to the model as
+	 * {@code {"error":"..."}} tool results so the loop can continue. Unknown tool names
+	 * produce {@code {"error":"unknown tool: <name>"}}.
+	 * </p>
+	 *
+	 * @param request  the typed request; must declare tools that the model can call
+	 * @param handlers map from tool name to handler
+	 * @return the final {@link ChatResponse} when the model stops issuing tool calls
+	 *         (or the last response when the round cap is hit)
+	 */
+	public ChatResponse chatWithTools(ChatRequest request, java.util.Map<String, ToolHandler> handlers) {
+		ChatResponse last = null;
+		for (int round = 0; round < request.getMaxToolRounds(); round++) {
+			last = chat(request);
+			ChatMessage assistant = last.getFirstMessage();
+			if (assistant == null || assistant.getToolCalls().isEmpty()) {
+				return last;
+			}
+			request.addMessage(assistant);
+			for (ToolCall call : assistant.getToolCalls()) {
+				ToolHandler handler = handlers.get(call.getName());
+				String result;
+				if (handler == null) {
+					result = "{\"error\":\"unknown tool: " + call.getName() + "\"}";
+				} else {
+					try {
+						result = handler.invoke(call.getArgumentsJson());
+					} catch (Exception e) {
+						result = "{\"error\":" + net.ladenthin.llama.json.ChatResponseParser.OBJECT_MAPPER.valueToTree(
+								e.getClass().getSimpleName() + ": " + e.getMessage()) + "}";
+					}
+				}
+				request.addMessage(ChatMessage.toolResult(call.getId(), result));
+			}
+		}
+		return last;
+	}
+
+	/**
 	 * Stream an OpenAI-compatible chat completion token by token. The parameters must contain a
 	 * "messages" array in the standard OpenAI chat format. The model's chat template is automatically applied.
 	 * <p>

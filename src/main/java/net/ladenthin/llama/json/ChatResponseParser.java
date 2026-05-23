@@ -7,8 +7,17 @@ package net.ladenthin.llama.json;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import net.ladenthin.llama.ChatChoice;
+import net.ladenthin.llama.ChatMessage;
+import net.ladenthin.llama.ChatResponse;
+import net.ladenthin.llama.Timings;
+import net.ladenthin.llama.ToolCall;
+import net.ladenthin.llama.Usage;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Pure JSON transforms for OAI-compatible chat completion responses.
@@ -120,5 +129,65 @@ public class ChatResponseParser {
     public int countChoices(JsonNode node) {
         JsonNode choices = node.path("choices");
         return choices.isArray() ? choices.size() : 0;
+    }
+
+    /**
+     * Parse a full OAI chat completion JSON string into a typed {@link ChatResponse}.
+     * Carries the {@code id}, choices, {@link Usage}, and {@link Timings}. The original
+     * JSON is preserved on {@link ChatResponse#getRawJson()}.
+     *
+     * @param json the OAI-compatible chat completion JSON string
+     * @return a parsed {@link ChatResponse} (empty choices on malformed input)
+     */
+    public ChatResponse parseResponse(String json) {
+        try {
+            JsonNode node = OBJECT_MAPPER.readTree(json);
+            String id = node.path("id").asText("");
+            List<ChatChoice> choices = parseChoices(node.path("choices"));
+            Usage usage = new Usage(
+                    node.path("usage").path("prompt_tokens").asLong(0L),
+                    node.path("usage").path("completion_tokens").asLong(0L));
+            Timings timings = Timings.fromJson(node.path("timings"));
+            return new ChatResponse(id, choices, usage, timings, json);
+        } catch (IOException e) {
+            return new ChatResponse("",
+                    Collections.<ChatChoice>emptyList(),
+                    new Usage(0L, 0L),
+                    Timings.fromJson(null),
+                    json);
+        }
+    }
+
+    private List<ChatChoice> parseChoices(JsonNode arr) {
+        if (!arr.isArray() || arr.size() == 0) return Collections.emptyList();
+        List<ChatChoice> out = new ArrayList<ChatChoice>(arr.size());
+        for (JsonNode c : arr) {
+            int index = c.path("index").asInt(0);
+            JsonNode msg = c.path("message");
+            String role = msg.path("role").asText("assistant");
+            String content = msg.path("content").asText("");
+            List<ToolCall> toolCalls = parseToolCalls(msg.path("tool_calls"));
+            ChatMessage message = toolCalls.isEmpty()
+                    ? new ChatMessage(role, content)
+                    : ChatMessage.assistantToolCalls(content, toolCalls);
+            String finishReason = c.path("finish_reason").asText("");
+            out.add(new ChatChoice(index, message, finishReason));
+        }
+        return out;
+    }
+
+    private List<ToolCall> parseToolCalls(JsonNode arr) {
+        if (!arr.isArray() || arr.size() == 0) return Collections.emptyList();
+        List<ToolCall> out = new ArrayList<ToolCall>(arr.size());
+        for (JsonNode tc : arr) {
+            String id = tc.path("id").asText("");
+            JsonNode fn = tc.path("function");
+            String name = fn.path("name").asText("");
+            JsonNode argsNode = fn.path("arguments");
+            // OAI emits arguments as a string; some shapes emit a nested object.
+            String args = argsNode.isTextual() ? argsNode.asText("") : argsNode.toString();
+            out.add(new ToolCall(id, name, args));
+        }
+        return out;
     }
 }
