@@ -182,6 +182,30 @@ public class LlamaModel implements AutoCloseable {
 	}
 
 	/**
+	 * Reactive-streams variant of {@link #generate(InferenceParameters)}. Returns a
+	 * {@link org.reactivestreams.Publisher} of {@link LlamaOutput} tokens. Each subscriber
+	 * triggers a fresh streaming inference on a dedicated background thread; backpressure
+	 * is honoured via the Reactive Streams {@code request(n)} protocol. Use
+	 * {@link org.reactivestreams.Subscription#cancel()} to stop the inference early.
+	 *
+	 * @param parameters the inference configuration
+	 * @return a single-subscriber {@link org.reactivestreams.Publisher} of tokens
+	 */
+	public LlamaPublisher streamPublisher(InferenceParameters parameters) {
+		return new LlamaPublisher(this, parameters, false);
+	}
+
+	/**
+	 * Reactive-streams variant of {@link #generateChat(InferenceParameters)}.
+	 *
+	 * @param parameters the inference parameters including messages
+	 * @return a single-subscriber {@link org.reactivestreams.Publisher} of tokens
+	 */
+	public LlamaPublisher streamChatPublisher(InferenceParameters parameters) {
+		return new LlamaPublisher(this, parameters, true);
+	}
+
+	/**
 	 * Asynchronous variant of {@link #complete(InferenceParameters)}. Runs the inference on
 	 * the common {@link java.util.concurrent.ForkJoinPool} so it does not block the calling
 	 * thread. The native worker thread inside the JNI context still serializes the actual

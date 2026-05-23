@@ -73,6 +73,14 @@ SPDX-License-Identifier: MIT
 			<artifactId>jackson-databind</artifactId>
 			<version>2.21.3</version>
 		</dependency>
+		<!-- Reactive Streams API used by LlamaPublisher to expose token streams as a
+		     Publisher<LlamaOutput>. Java 8 compatible, ~5 KB, supplies the standard
+		     interfaces that Reactor / RxJava / Kotlin coroutines bridge to. -->
+		<dependency>
+			<groupId>org.reactivestreams</groupId>
+			<artifactId>reactive-streams</artifactId>
+			<version>1.0.4</version>
+		</dependency>
 		<!-- Required by OSInfo (vendored from xerial/sqlite-jdbc) for log emission. -->
 		<dependency>
 			<groupId>org.slf4j</groupId>
