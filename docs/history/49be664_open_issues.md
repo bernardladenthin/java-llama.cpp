@@ -188,7 +188,22 @@ vs. total, whether the file is the weights file, whether it is a download or
 disk load) via a `Consumer<LLamaLoadProgress>` callback passed to the
 `LlamaModel` constructor. Intended for showing a progress bar to end users.
 
-**Status in fork:** STILL POSSIBLE. No `LLamaLoadProgress`, `Consumer<…>` or `setProgressCallback` exists in `LlamaModel.java` / `ModelParameters.java` (`grep -n "progress\|Progress"` returns only iterator cancellation comments). Next steps: expose `llama_model_params.progress_callback` through `ModelParameters` (Java side: a `Consumer<Float>` field; JNI side: wire a trampoline in `jllama.cpp` similar to `log_callback_trampoline`).
+**Status in fork:** FIXED in PR #188 (commit `70df324`). New
+`LoadProgressCallback` functional interface (single method
+`boolean onProgress(float progress)`; return `false` to abort).
+New constructor overload
+`LlamaModel(ModelParameters, LoadProgressCallback)` plumbs the
+callback through a new JNI entry point `loadModelWithProgress`,
+which installs a trampoline on `common_params.load_progress_callback`
+that forwards the float to `LoadProgressCallback.onProgress(float)Z`
+via `CallBooleanMethod`. The existing `loadModel` JNI symbol still
+exists; both entry points share a `load_model_impl` helper.
+Callback fires synchronously on the loader thread with progress in
+`[0.0, 1.0]`; returning `false` aborts and the constructor throws
+`LlamaException`. The original report's richer payload (file name,
+bytes, weights vs download flag) is NOT exposed — only the float —
+because `llama_model_params.progress_callback` itself only emits the
+float; richer fields would require an upstream API change.
 
 ---
 

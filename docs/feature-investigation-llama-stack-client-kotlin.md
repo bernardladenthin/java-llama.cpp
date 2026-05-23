@@ -29,14 +29,41 @@ T-shirt sizes:
 | Slot save / restore / erase                              | ✅ |
 | `continueFinalMessage`                                   | ✅ |
 | Tokenize / decode / template apply                       | ✅ |
-| Metrics string (`getMetrics()`)                          | ✅ |
+| Metrics string (`getMetrics()`) + typed `ServerMetrics`  | ✅ |
 | Speculative draft model wiring                           | ✅ |
+| Typed `ChatRequest` / `ChatResponse` + tool calling      | ✅ (§2.2) |
+| `CompletableFuture` async wrappers                       | ✅ (§2.3) |
+| Reactive Streams `Publisher<LlamaOutput>` token stream   | ✅ (§2.3) |
+| `completeBatch` / `chatBatch` parallel dispatch          | ✅ (§2.4) |
+| Typed `Usage` / `Timings` / `CompletionResult`           | ✅ (§2.5) |
+| `Session` helper (single-threaded)                       | ✅ (§2.6) |
+| `AutoCloseable` iterator + cancel polish                 | ✅ (§2.7) |
+| Per-request `setJsonSchema` + `completeAsJson<T>`        | ✅ (§2.8) |
+| Typed `TokenLogprob` in `LlamaOutput`                    | ✅ (§2.9) |
+| `CancellationToken` (cooperative)                        | ✅ (§2.10) |
+| `LoadProgressCallback` model-load progress               | ✅ (#113) |
 
 These do not need work — they already match or exceed the Kotlin client.
+
+### 1.1 Status legend for §2
+
+Each §2.x subsection below carries a **Status:** line at the top:
+
+| Marker | Meaning |
+|--------|---------|
+| `SHIPPED` | Fully landed; commit refs follow. |
+| `PARTIAL` | Core landed; a documented follow-up remains (called out inline). |
+| `OPEN` | Not started. |
+
+All references point to PR #188 on the `claude/upbeat-hypatia-wPdK5`
+branch unless noted.
 
 ## 2. Recommended additions (in priority order)
 
 ### 2.1 Multimodal image input (mtmd) — **L**
+
+**Status: OPEN.** `ModelParameters.setMmproj` already wires the projector; no
+typed Java image API yet. Same gap as issues #103 / #34.
 
 **Gap.** Upstream llama.cpp ships `mtmd` (vision + audio for some models) and
 the compiled-in server already pulls it in via `mtmd.h` / `mtmd-helper.h`. No
@@ -58,6 +85,16 @@ Gemma 3, MiniCPM-V, LLaVA, etc.
 ---
 
 ### 2.2 Typed `ChatMessage` / `ChatResponse` model + tool calling — **M**
+
+**Status: SHIPPED** (PR #188, commit `f2c7ed1`). New value types
+`ChatRequest`, `ChatResponse`, `ChatChoice`, `ChatMessage` (extended),
+`ToolCall`, `ToolDefinition`, plus `ToolHandler` functional interface.
+`LlamaModel.chat(ChatRequest)` returns a typed `ChatResponse`;
+`chatWithTools(ChatRequest, Map<String, ToolHandler>)` runs the agent
+auto-loop (capturing handler exceptions as `{"error":...}` tool results
+so the loop continues; cap via `ChatRequest.maxToolRounds`, default 8).
+The tier-1 (typed response only) and tier-2 (manual tool round-trip via
+`ChatMessage.toolResult`) APIs are equally usable.
 
 **Gap.** Today: `setMessages(String system, List<Pair<String,String>>)` and
 `chatComplete → String`. The server *parses* tool calls
@@ -85,6 +122,15 @@ papercut.
 
 ### 2.3 Async / non-blocking API — **S–M**
 
+**Status: SHIPPED.** `CompletableFuture` wrappers (`completeAsync`,
+`chatCompleteAsync`, `chatCompleteTextAsync`, plus a
+`completeAsync(params, CancellationToken)` bridge that propagates
+`future.cancel(true)` into the cooperative token) in commit `1e673a9`.
+The reactive `Publisher<LlamaOutput>` follow-up (backpressure via
+Reactive Streams, single-subscriber) shipped in commit `afa4f65` as
+`LlamaModel.streamPublisher(...)` and `streamChatPublisher(...)` backed
+by `LlamaPublisher`. New runtime dep: `org.reactivestreams:reactive-streams:1.0.4`.
+
 **Gap.** All `LlamaModel` methods are blocking. Kotlin offers
 `suspend fun` + Flow variants. JVM users currently dedicate platform
 threads per inference.
@@ -108,6 +154,13 @@ RxJava, Kotlin coroutines from Java consumers.
 
 ### 2.4 Batch inference across slots — **M**
 
+**Status: SHIPPED** (PR #188, commit `de457b2`).
+`LlamaModel.completeBatch(List<InferenceParameters>)`,
+`completeBatchWithStats(...)`, and `chatBatch(List<ChatRequest>)` dispatch
+all requests at once via the existing async wrappers; results returned in
+input order. Throughput scales with `ModelParameters.setParallel(N)`
+(default `N=1` runs sequentially across the single slot).
+
 **Gap.** llama.cpp natively serves parallel slots; the compiled-in server
 handles concurrent tasks. `LlamaModel` exposes no batch entry point.
 
@@ -126,6 +179,12 @@ rerank pipelines; close to a free win.
 ---
 
 ### 2.5 Typed `Usage` / `Timings` result — **XS–S**
+
+**Status: SHIPPED** (PR #188, commits `fe1cf3b` + `c529499`). `Usage`,
+`Timings`, and `ServerMetrics` value classes + `LlamaModel.getMetricsTyped()`
+parse server-wide metrics. Per-completion `Usage`/`Timings` land in
+`ChatResponse` (§2.2) and in the new `CompletionResult` returned by
+`LlamaModel.completeWithStats(InferenceParameters)`.
 
 **Gap.** `getMetrics()` returns a raw JSON `String`. Kotlin exposes
 `Usage(promptTokens, completionTokens, totalTokens)` plus a richer
@@ -146,6 +205,12 @@ rerank pipelines; close to a free win.
 
 ### 2.6 `Session` helper (multi-turn) — **S–M**
 
+**Status: PARTIAL** (PR #188, commit `e4f531c`). `Session` ships as an
+`AutoCloseable` wrapper with `send(...)`, `stream(...)`,
+`commitStreamedReply(...)`, `save(Path)` / `restore(Path)`, and an
+optional `InferenceParameters` customizer. Single-thread only in this
+pass — per-session locking is the remaining M-effort follow-up.
+
 **Gap.** Slots exist as a low-level primitive. Kotlin offers
 "agents/sessions/turns" with persistence and resume.
 
@@ -165,6 +230,12 @@ rerank pipelines; close to a free win.
 
 ### 2.7 Stream cancellation & `AutoCloseable` iterator — **S**
 
+**Status: SHIPPED** (PR #188, commit `d1c9fb0`). `LlamaIterator` already
+implemented `AutoCloseable` with `cancel()`/`close()`; this commit
+audited the path, documented the cancel-vs-stop nuance and idempotency
+in the javadoc, added a try-with-resources example on
+`LlamaModel.generate(...)`, and added `testIteratorCloseIdempotent`.
+
 **Gap.** `LlamaIterable` / `LlamaIterator` cannot be cancelled mid-stream;
 the underlying slot task keeps running until natural stop. Kotlin marks
 streaming returns `@MustBeClosed`.
@@ -182,6 +253,13 @@ Java side.
 ---
 
 ### 2.8 Structured-output convenience helpers — **S**
+
+**Status: SHIPPED** (PR #188, commit `80e5c13`).
+`InferenceParameters.setJsonSchema(String)` mirrors the existing
+`setGrammar`. `LlamaModel.completeAsJson(Class<T>, String schema, InferenceParameters)`
+sets the schema and Jackson-deserializes the result. The
+single-argument overload `completeAsJson(Class<T>, InferenceParameters)`
+trusts that the caller already set schema/grammar.
 
 **Gap.** `setJsonSchema` / `setGrammar` already exist on `ModelParameters`
 but not on `InferenceParameters`. No typed-result helper.
@@ -202,6 +280,13 @@ SDKs.
 
 ### 2.9 Logprobs in the typed result — **S**
 
+**Status: SHIPPED** (PR #188, commit `a8077b6`). `TokenLogprob` value
+type carries `token`, `tokenId`, `logprob`, and the nested
+`topLogprobs` alternatives. `LlamaOutput.logprobs` is populated by
+`CompletionResponseParser.parseLogprobs` (post-sampling `prob` or
+pre-sampling `logprob` mode auto-detected). Also surfaces in
+`CompletionResult.getLogprobs()` (§2.5).
+
 **Gap.** `setNProbs` exists; the result type is a plain `String`, so
 per-token probabilities are not surfaced.
 
@@ -218,6 +303,17 @@ per-token probabilities are not surfaced.
 ---
 
 ### 2.10 Cancellation token / abort for blocking calls — **S**
+
+**Status: SHIPPED — cooperative only** (PR #188, commits `ad66e3a` +
+`e3b9043`). `CancellationToken.cancel()` sets a `volatile` flag observed
+between tokens by the inference loop in
+`LlamaModel.complete(InferenceParameters, CancellationToken)`. Effective
+latency is one token interval (the loop checks at each token boundary).
+Immediate cancel (requiring a new server-side stop-task JNI primitive)
+is the remaining M-effort follow-up. The initial impl tried to abort
+mid-token via a cross-thread JNI call; that race was the root cause of
+a `std::system_error` JVM abort in CI and was reverted to the safe
+cooperative path.
 
 **Gap.** A blocking `complete(...)` cannot be aborted from another thread.
 
