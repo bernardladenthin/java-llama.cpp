@@ -115,10 +115,10 @@ public class ParameterJsonSerializerTest {
         assertEquals("line1\nline2\t\"quoted\"", arr.get(0).path("content").asText());
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void testBuildMessages_invalidRole_throws() {
         List<Pair<String, String>> msgs = Collections.singletonList(new Pair<>("system", "oops"));
-        serializer.buildMessages(null, msgs);
+        assertThrows(IllegalArgumentException.class, () -> serializer.buildMessages(null, msgs));
     }
 
     @Test

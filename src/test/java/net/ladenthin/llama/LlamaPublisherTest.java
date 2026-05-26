@@ -145,7 +145,7 @@ public class LlamaPublisherTest {
         // Construct a publisher without a model — subscribe(null) must NPE before any model use.
         try {
             new LlamaPublisher(null, null, false).subscribe(null);
-            org.junit.fail("expected NPE");
+            fail("expected NPE");
         } catch (NullPointerException expected) {
             assertEquals("subscriber", expected.getMessage());
         }

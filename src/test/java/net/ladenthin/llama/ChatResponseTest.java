@@ -113,7 +113,7 @@ public class ChatResponseTest {
     @Test
     public void buildToolsJsonEmptyWhenNoTools() {
         ChatRequest req = new ChatRequest().addMessage("user", "hi");
-        org.junit.assertNull(req.buildToolsJson());
+        assertNull(req.buildToolsJson());
     }
 
     @Test

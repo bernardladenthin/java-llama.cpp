@@ -70,7 +70,7 @@ public class MemoryManagementTest {
      */
     private static LlamaModel smallCtxModel;
 
-    @BeforeClass
+    @BeforeAll
     public static void setup() {
         Assumptions.assumeTrue(new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping MemoryManagementTest");
 
@@ -93,7 +93,7 @@ public class MemoryManagementTest {
                         .setFit(false));
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         if (model != null) {
             model.close();

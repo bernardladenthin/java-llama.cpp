@@ -16,6 +16,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -50,7 +51,7 @@ public class SessionConcurrencyTest {
     private static final int N_PREDICT = 2;
     private static LlamaModel model;
 
-    @BeforeClass
+    @BeforeAll
     public static void setup() {
         Assumptions.assumeTrue(new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping SessionConcurrencyTest");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
@@ -63,7 +64,7 @@ public class SessionConcurrencyTest {
         );
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         if (model != null) {
             model.close();
@@ -85,7 +86,8 @@ public class SessionConcurrencyTest {
     // callsPerThread or threads up only if the bug it is guarding regresses;
     // do not push it past what the slowest CI runner can finish in <half the
     // @Test budget.
-    @Test(timeout = 300_000)
+    @Timeout(value = 300_000, unit = TimeUnit.MILLISECONDS)
+    @Test
     public void testConcurrentSendProducesAlternatingTranscript() throws Exception {
         final int threads = 2;
         final int callsPerThread = 2;
@@ -138,7 +140,8 @@ public class SessionConcurrencyTest {
      * {@link Session#commitStreamedReply(String)} clears the guard and the next
      * {@link Session#send(String)} succeeds.
      */
-    @Test(timeout = 120_000)
+    @Timeout(value = 120_000, unit = TimeUnit.MILLISECONDS)
+    @Test
     public void testStreamGuardBlocksOtherOperationsUntilCommit() throws Exception {
         try (Session session = new Session(model, 1, null,
                 p -> p.setNPredict(N_PREDICT).setTemperature(0.0f))) {
@@ -194,7 +197,8 @@ public class SessionConcurrencyTest {
      * Calling {@link Session#commitStreamedReply(String)} without a preceding
      * {@link Session#stream(String)} must throw and must not mutate the transcript.
      */
-    @Test(timeout = 30_000)
+    @Timeout(value = 30_000, unit = TimeUnit.MILLISECONDS)
+    @Test
     public void testCommitStreamedReplyWithoutStreamThrows() {
         try (Session session = new Session(model, 2, null)) {
             int before = session.getMessages().size();
@@ -213,7 +217,8 @@ public class SessionConcurrencyTest {
      * Guards against the synchronization wrapper accidentally double-appending or
      * dropping turns.
      */
-    @Test(timeout = 60_000)
+    @Timeout(value = 60_000, unit = TimeUnit.MILLISECONDS)
+    @Test
     public void testSequentialSendsAlternateRoles() {
         try (Session session = new Session(model, 3, null,
                 p -> p.setNPredict(N_PREDICT).setTemperature(0.0f))) {

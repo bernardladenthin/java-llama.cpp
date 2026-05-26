@@ -68,7 +68,7 @@ public class ReasoningBudgetTest {
     private static LlamaModel model;
     private final ChatResponseParser parser = new ChatResponseParser();
 
-    @BeforeClass
+    @BeforeAll
     public static void setup() {
         Assumptions.assumeTrue(new File(TestConstants.REASONING_MODEL_PATH).exists(), "Reasoning model not found, skipping ReasoningBudgetTest");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
@@ -83,7 +83,7 @@ public class ReasoningBudgetTest {
         );
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         if (model != null) {
             model.close();

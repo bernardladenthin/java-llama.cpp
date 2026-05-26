@@ -44,7 +44,7 @@ public class LlamaModelTest {
 
 	private static LlamaModel model;
 
-	@BeforeClass
+	@BeforeAll
 	public static void setup() {
 		Assumptions.assumeTrue(new java.io.File("models/codellama-7b.Q2_K.gguf").exists(), "Model file not found, skipping LlamaModelTest");
 //		LlamaModel.setLogger(LogFormat.TEXT, (level, msg) -> System.out.println(level + ": " + msg));
@@ -60,7 +60,7 @@ public class LlamaModelTest {
 		);
 	}
 
-	@AfterClass
+	@AfterAll
 	public static void tearDown() {
 		if (model != null) {
 			model.close();

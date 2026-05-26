@@ -53,7 +53,7 @@ public class ChatScenarioTest {
 
     private static LlamaModel model;
 
-    @BeforeClass
+    @BeforeAll
     public static void setup() {
         Assumptions.assumeTrue(new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping ChatScenarioTest");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
@@ -70,7 +70,7 @@ public class ChatScenarioTest {
         );
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         if (model != null) {
             model.close();

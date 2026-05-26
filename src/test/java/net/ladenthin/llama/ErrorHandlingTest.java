@@ -36,7 +36,7 @@ public class ErrorHandlingTest {
     private static LlamaModel model;
     private static LlamaModel modelNoEmbed;
 
-    @BeforeClass
+    @BeforeAll
     public static void setup() {
         Assumptions.assumeTrue(new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping ErrorHandlingTest");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
@@ -59,7 +59,7 @@ public class ErrorHandlingTest {
         );
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         if (model != null) {
             model.close();
@@ -73,22 +73,22 @@ public class ErrorHandlingTest {
     // Invalid model path
     // -------------------------------------------------------------------------
 
-    @Test(expected = LlamaException.class)
+    @Test
     public void testInvalidModelPathThrows() {
-        new LlamaModel(
+        assertThrows(LlamaException.class, () -> new LlamaModel(
                 new ModelParameters()
                         .setModel("/nonexistent/path/model.gguf")
                         .setFit(false)
-        );
+        ));
     }
 
-    @Test(expected = LlamaException.class)
+    @Test
     public void testEmptyModelPathThrows() {
-        new LlamaModel(
+        assertThrows(LlamaException.class, () -> new LlamaModel(
                 new ModelParameters()
                         .setModel("")
                         .setFit(false)
-        );
+        ));
     }
 
     // -------------------------------------------------------------------------

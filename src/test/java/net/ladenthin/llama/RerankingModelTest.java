@@ -24,7 +24,7 @@ public class RerankingModelTest {
 			"Machine learning is a field of study in artificial intelligence concerned with the development and study of statistical algorithms that can learn from data and generalize to unseen data, and thus perform tasks without explicit instructions.",
 			"Paris, capitale de la France, est une grande ville européenne et un centre mondial de l'art, de la mode, de la gastronomie et de la culture. Son paysage urbain du XIXe siècle est traversé par de larges boulevards et la Seine." };
 
-	@BeforeClass
+	@BeforeAll
 	public static void setup() {
 		int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
 		model = new LlamaModel(
@@ -33,7 +33,7 @@ public class RerankingModelTest {
 						.skipWarmup());
 	}
 
-	@AfterClass
+	@AfterAll
 	public static void tearDown() {
 		if (model != null) {
 			model.close();
@@ -195,7 +195,7 @@ public class RerankingModelTest {
 		float score1 = first.probabilities.values().iterator().next();
 		float score2 = second.probabilities.values().iterator().next();
 
-		assertEquals("Reranking must be deterministic", score1, score2, 1e-4f);
+		assertEquals(score1, score2, 1e-4f, "Reranking must be deterministic");
 	}
 
 	/**

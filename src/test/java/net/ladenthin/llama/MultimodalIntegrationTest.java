@@ -8,10 +8,12 @@ import java.io.File;
 import java.nio.file.Paths;
 import java.util.Collections;
 
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -60,7 +62,7 @@ public class MultimodalIntegrationTest {
     private static String imagePath;
     private static LlamaModel model;
 
-    @BeforeClass
+    @BeforeAll
     public static void setup() {
         modelPath  = System.getProperty(TestConstants.PROP_VISION_MODEL_PATH);
         mmprojPath = System.getProperty(TestConstants.PROP_VISION_MMPROJ_PATH);
@@ -90,7 +92,7 @@ public class MultimodalIntegrationTest {
                         .setFit(false));
     }
 
-    @AfterClass
+    @AfterAll
     public static void tearDown() {
         if (model != null) {
             model.close();
@@ -106,7 +108,8 @@ public class MultimodalIntegrationTest {
      * JSON &#x2192; upstream mtmd &#x2192; non-empty token stream pipeline
      * works without crashing.
      */
-    @Test(timeout = 240_000)
+    @Timeout(value = 240_000, unit = TimeUnit.MILLISECONDS)
+    @Test
     public void multimodalRequestProducesNonEmptyReply() throws Exception {
         ChatMessage userMsg = ChatMessage.userMultimodal(
                 ContentPart.text("Describe what you see in this image in one short sentence."),
@@ -127,7 +130,8 @@ public class MultimodalIntegrationTest {
      * legacy split in {@code ParameterJsonSerializer.buildMessages} doesn't
      * poison the inference context for subsequent requests.
      */
-    @Test(timeout = 240_000)
+    @Timeout(value = 240_000, unit = TimeUnit.MILLISECONDS)
+    @Test
     public void multimodalThenTextOnSameModel() throws Exception {
         ChatMessage img = ChatMessage.userMultimodal(
                 ContentPart.text("What is this?"),

@@ -556,16 +556,16 @@ public class InferenceParametersTest {
 		assertFalse(value.contains("system"));
 	}
 
-	@Test(expected = IllegalArgumentException.class)
+	@Test
 	public void testSetMessagesInvalidRole() {
 		List<Pair<String, String>> messages = Collections.singletonList(new Pair<>("system", "Bad"));
-		new InferenceParameters("").setMessages(null, messages);
+		assertThrows(IllegalArgumentException.class, () -> new InferenceParameters("").setMessages(null, messages));
 	}
 
-	@Test(expected = IllegalArgumentException.class)
+	@Test
 	public void testSetMessagesInvalidRoleOther() {
 		List<Pair<String, String>> messages = Collections.singletonList(new Pair<>("admin", "Hack"));
-		new InferenceParameters("").setMessages(null, messages);
+		assertThrows(IllegalArgumentException.class, () -> new InferenceParameters("").setMessages(null, messages));
 	}
 
 	// -------------------------------------------------------------------------

@@ -184,9 +184,8 @@ public class LlamaEmbeddingsTest {
     @Test
     public void testNomicEmbedLoads() {
         String nomicPath = System.getProperty(TestConstants.PROP_NOMIC_MODEL_PATH);
-        Assume.assumeNotNull(
-                "Set -D" + TestConstants.PROP_NOMIC_MODEL_PATH + " to a nomic-embed-text GGUF to run this test",
-                nomicPath);
+        Assumptions.assumeTrue(nomicPath != null,
+                "Set -D" + TestConstants.PROP_NOMIC_MODEL_PATH + " to a nomic-embed-text GGUF to run this test");
         Assumptions.assumeTrue(new File(nomicPath).exists(), "Nomic model file not found at " + nomicPath);
 
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
