@@ -51,7 +51,7 @@ public class LlamaEmbeddingsTest {
 
     private LlamaModel model;
 
-    @After
+    @AfterEach
     public void tearDown() {
         if (model != null) {
             model.close();

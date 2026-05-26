@@ -23,12 +23,12 @@ public class OSInfoTest {
 	private static final String ARCH_OVERRIDE_PROP = LlamaSystemProperties.PREFIX + ".osinfo.architecture";
 	private String previousArchOverride;
 
-	@Before
+	@BeforeEach
 	public void saveProperties() {
 		previousArchOverride = System.getProperty(ARCH_OVERRIDE_PROP);
 	}
 
-	@After
+	@AfterEach
 	public void restoreProperties() {
 		if (previousArchOverride == null) {
 			System.clearProperty(ARCH_OVERRIDE_PROP);

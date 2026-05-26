@@ -31,12 +31,12 @@ public class LlamaLoaderTest {
 	private static final String TMPDIR_PROP = LlamaSystemProperties.PREFIX + ".tmpdir";
 	private String previousTmpDir;
 
-	@Before
+	@BeforeEach
 	public void saveTmpDirProp() {
 		previousTmpDir = System.getProperty(TMPDIR_PROP);
 	}
 
-	@After
+	@AfterEach
 	public void restoreTmpDirProp() {
 		if (previousTmpDir == null) {
 			System.clearProperty(TMPDIR_PROP);
