@@ -70,17 +70,17 @@ public class ServerMetricsTest {
         ServerMetrics m = parse(SAMPLE);
         Timings t = m.getCumulativeTimings();
         assertEquals(100, t.getPromptN());
-        assertEquals(t.getPromptMs(), 1e-9, 50.0);
+        assertEquals(50.0, t.getPromptMs(), 1e-9);
         // 100 tokens / 50ms = 2000/s
-        assertEquals(t.getPromptPerSecond(), 1e-9, 2000.0);
+        assertEquals(2000.0, t.getPromptPerSecond(), 1e-9);
         // 200 / 80ms = 2500/s
-        assertEquals(t.getPredictedPerSecond(), 1e-9, 2500.0);
+        assertEquals(2500.0, t.getPredictedPerSecond(), 1e-9);
     }
 
     @Test
     public void cumulativeTimingsZeroMsYieldsZeroRate() throws Exception {
         ServerMetrics m = parse("{\"n_prompt_tokens_processed_total\":5,\"t_prompt_processing_total\":0}");
-        assertEquals(m.getCumulativeTimings().getPromptPerSecond(), 1e-9, 0.0);
+        assertEquals(0.0, m.getCumulativeTimings().getPromptPerSecond(), 1e-9);
     }
 
     @Test

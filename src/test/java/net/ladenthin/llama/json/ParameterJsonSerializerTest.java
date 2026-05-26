@@ -227,9 +227,9 @@ public class ParameterJsonSerializerTest {
         ArrayNode arr = serializer.buildTokenIdBiasArray(biases);
         assertEquals(2, arr.size());
         assertEquals(15043, arr.get(0).get(0).asInt());
-        assertEquals(arr.get(0).get(1).asDouble(), 0.001, 1.0);
+        assertEquals(1.0, arr.get(0).get(1).asDouble(), 0.001);
         assertEquals(50256, arr.get(1).get(0).asInt());
-        assertEquals(arr.get(1).get(1).asDouble(), 0.001, -0.5);
+        assertEquals(-0.5, arr.get(1).get(1).asDouble(), 0.001);
     }
 
     @Test
@@ -250,7 +250,7 @@ public class ParameterJsonSerializerTest {
         ArrayNode arr = serializer.buildTokenStringBiasArray(biases);
         assertEquals(2, arr.size());
         assertEquals("Hello", arr.get(0).get(0).asText());
-        assertEquals(arr.get(0).get(1).asDouble(), 0.001, 1.0);
+        assertEquals(1.0, arr.get(0).get(1).asDouble(), 0.001);
         assertEquals(" world", arr.get(1).get(0).asText());
     }
 

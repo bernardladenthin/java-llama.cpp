@@ -163,8 +163,8 @@ public class CompletionResponseParserTest {
         JsonNode node = MAPPER.readTree(json);
         Map<String, Float> probs = parser.parseProbabilities(node);
         assertEquals(2, probs.size());
-        assertEquals(probs.get("Hello"), 0.001f, 0.82f);
-        assertEquals(probs.get(" world"), 0.001f, 0.65f);
+        assertEquals(0.82f, probs.get("Hello"), 0.001f);
+        assertEquals(0.65f, probs.get(" world"), 0.001f);
     }
 
     @Test
@@ -177,7 +177,7 @@ public class CompletionResponseParserTest {
         JsonNode node = MAPPER.readTree(json);
         Map<String, Float> probs = parser.parseProbabilities(node);
         assertEquals(1, probs.size());
-        assertEquals(probs.get("Hello"), 0.001f, -0.2f);
+        assertEquals(-0.2f, probs.get("Hello"), 0.001f);
     }
 
     @Test
@@ -190,7 +190,7 @@ public class CompletionResponseParserTest {
         JsonNode node = MAPPER.readTree(json);
         Map<String, Float> probs = parser.parseProbabilities(node);
         assertEquals(1, probs.size());
-        assertEquals(probs.get("say \"yes\""), 0.001f, 0.5f);
+        assertEquals(0.5f, probs.get("say \"yes\""), 0.001f);
     }
 
     @Test
