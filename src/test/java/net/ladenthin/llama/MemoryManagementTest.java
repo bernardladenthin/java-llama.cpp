@@ -11,11 +11,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 /**
  * Exercises complex C++ memory-management logic inside {@code server.hpp} that is not reached
@@ -72,9 +72,7 @@ public class MemoryManagementTest {
 
     @BeforeClass
     public static void setup() {
-        Assume.assumeTrue(
-                "Model file not found, skipping MemoryManagementTest",
-                new File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping MemoryManagementTest");
 
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
 
@@ -131,8 +129,8 @@ public class MemoryManagementTest {
 
         String output = smallCtxModel.complete(params);
 
-        Assert.assertNotNull("Output must not be null after a context shift", output);
-        Assert.assertFalse("Output must not be empty after a context shift", output.isEmpty());
+        assertNotNull(output, "Output must not be null after a context shift");
+        assertFalse(output.isEmpty(), "Output must not be empty after a context shift");
     }
 
     /**
@@ -158,10 +156,8 @@ public class MemoryManagementTest {
                 .setSeed(2);
         String output = smallCtxModel.complete(freshParams);
 
-        Assert.assertNotNull(output);
-        Assert.assertFalse(
-                "Model must still generate output after a prior context shift",
-                output.isEmpty());
+        assertNotNull(output);
+        assertFalse(output.isEmpty(), "Model must still generate output after a prior context shift");
     }
 
     // ------------------------------------------------------------------
@@ -188,11 +184,9 @@ public class MemoryManagementTest {
         String first  = model.complete(params);
         String second = model.complete(params);
 
-        Assert.assertFalse("First cached-prompt call must produce output", first.isEmpty());
-        Assert.assertFalse("Second cached-prompt call must produce output", second.isEmpty());
-        Assert.assertEquals(
-                "Both calls share the same prompt and seed; cache_prompt=true must not change output",
-                first, second);
+        assertFalse(first.isEmpty(), "First cached-prompt call must produce output");
+        assertFalse(second.isEmpty(), "Second cached-prompt call must produce output");
+        assertEquals(first, second, "Both calls share the same prompt and seed; cache_prompt=true must not change output");
     }
 
     /**
@@ -212,10 +206,8 @@ public class MemoryManagementTest {
         String first  = model.complete(params);
         String second = model.complete(params);
 
-        Assert.assertFalse(first.isEmpty());
-        Assert.assertEquals(
-                "Without cache_prompt, repeated calls with the same seed must still be deterministic",
-                first, second);
+        assertFalse(first.isEmpty());
+        assertEquals(first, second, "Without cache_prompt, repeated calls with the same seed must still be deterministic");
     }
 
     // ------------------------------------------------------------------
@@ -247,10 +239,8 @@ public class MemoryManagementTest {
                 .setSeed(2);
         String output = model.complete(extended);
 
-        Assert.assertNotNull(output);
-        Assert.assertFalse(
-                "Generation with a cached prefix and a new suffix must produce output",
-                output.isEmpty());
+        assertNotNull(output);
+        assertFalse(output.isEmpty(), "Generation with a cached prefix and a new suffix must produce output");
     }
 
     /**
@@ -270,9 +260,9 @@ public class MemoryManagementTest {
         String second = model.complete(params);
         String third  = model.complete(params);
 
-        Assert.assertFalse("First call must produce output", first.isEmpty());
-        Assert.assertEquals("Second call must match first",  first, second);
-        Assert.assertEquals("Third call must match first",   first, third);
+        assertFalse(first.isEmpty(), "First call must produce output");
+        assertEquals(first, second, "Second call must match first");
+        assertEquals(first, third, "Third call must match first");
     }
 
     // ------------------------------------------------------------------
@@ -315,8 +305,8 @@ public class MemoryManagementTest {
 
         String output = smallCtxModel.complete(params);
 
-        Assert.assertNotNull("Output must not be null after a context shift with n_keep > 0", output);
-        Assert.assertFalse("Output must not be empty after a context shift with n_keep > 0", output.isEmpty());
+        assertNotNull(output, "Output must not be null after a context shift with n_keep > 0");
+        assertFalse(output.isEmpty(), "Output must not be empty after a context shift with n_keep > 0");
     }
 
     // ------------------------------------------------------------------
@@ -364,8 +354,8 @@ public class MemoryManagementTest {
                 .setSeed(99);
         String afterMiss = model.complete(missParams);
 
-        Assert.assertNotNull(afterMiss);
-        Assert.assertFalse("Cache-miss call must still produce output", afterMiss.isEmpty());
+        assertNotNull(afterMiss);
+        assertFalse(afterMiss.isEmpty(), "Cache-miss call must still produce output");
 
         // Step 3: baseline — fresh model (no prior cache) on the same disjoint prompt.
         // Output must be identical, proving that the stale A cache had no effect on B's logits.
@@ -383,9 +373,7 @@ public class MemoryManagementTest {
                     .setSeed(99);
             String fresh = freshModel.complete(freshParams);
 
-            Assert.assertEquals(
-                    "A cache-miss call must produce the same output as a cold-start call on the same prompt",
-                    fresh, afterMiss);
+            assertEquals(fresh, afterMiss, "A cache-miss call must produce the same output as a cold-start call on the same prompt");
         }
     }
 
@@ -428,11 +416,9 @@ public class MemoryManagementTest {
 
         if (baseline > 0 && after > 0) {
             long deltaKb = after - baseline;
-            Assert.assertTrue(
-                    "VmRSS grew by " + deltaKb + " kB across 20 open/close iterations "
+            assertTrue(deltaKb < 200_000L, "VmRSS grew by " + deltaKb + " kB across 20 open/close iterations "
                             + "(baseline=" + baseline + " kB, after=" + after + " kB); "
-                            + "indicates a native-side leak in LlamaModel.close()",
-                    deltaKb < 200_000L);
+                            + "indicates a native-side leak in LlamaModel.close()");
         }
     }
 

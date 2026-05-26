@@ -5,12 +5,14 @@
 
 package net.ladenthin.llama.args;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Shared parameterized assertions for enums implementing {@link CliArg}.
@@ -21,33 +23,27 @@ import static org.junit.Assert.assertTrue;
  */
 public abstract class AbstractCliArgEnumTest<E extends Enum<E> & CliArg> {
 
-    private final E value;
-    private final String expectedArgValue;
-    private final int expectedEnumCount;
-
-    protected AbstractCliArgEnumTest(E value, String expectedArgValue, int expectedEnumCount) {
-        this.value = value;
-        this.expectedArgValue = expectedArgValue;
-        this.expectedEnumCount = expectedEnumCount;
-    }
-
-    @Test
-    public void testGetArgValue() {
+    @ParameterizedTest(name = "{0} -> {1}")
+    @MethodSource("data")
+    public void testGetArgValue(E value, String expectedArgValue, int expectedEnumCount) {
         assertEquals(expectedArgValue, value.getArgValue());
     }
 
-    @Test
-    public void testEnumCount() {
+    @ParameterizedTest(name = "{0} -> {1}")
+    @MethodSource("data")
+    public void testEnumCount(E value, String expectedArgValue, int expectedEnumCount) {
         assertEquals(expectedEnumCount, value.getDeclaringClass().getEnumConstants().length);
     }
 
-    @Test
-    public void testImplementsCliArg() {
+    @ParameterizedTest(name = "{0} -> {1}")
+    @MethodSource("data")
+    public void testImplementsCliArg(E value, String expectedArgValue, int expectedEnumCount) {
         assertTrue(value instanceof CliArg);
     }
 
-    @Test
-    public void testArgValueNonEmpty() {
+    @ParameterizedTest(name = "{0} -> {1}")
+    @MethodSource("data")
+    public void testArgValueNonEmpty(E value, String expectedArgValue, int expectedEnumCount) {
         assertNotNull(value.getArgValue());
         assertFalse(value.getArgValue().isEmpty());
     }

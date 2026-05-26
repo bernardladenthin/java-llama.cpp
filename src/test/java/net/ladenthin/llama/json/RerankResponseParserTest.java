@@ -8,11 +8,11 @@ package net.ladenthin.llama.json;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import net.ladenthin.llama.Pair;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Unit tests for {@link RerankResponseParser}.
@@ -33,7 +33,7 @@ public class RerankResponseParserTest {
         List<Pair<String, Float>> result = parser.parse(json);
         assertEquals(1, result.size());
         assertEquals("The quick brown fox", result.get(0).getKey());
-        assertEquals(0.92f, result.get(0).getValue(), 0.001f);
+        assertEquals(result.get(0).getValue(), 0.001f, 0.92f);
     }
 
     @Test
@@ -48,9 +48,9 @@ public class RerankResponseParserTest {
         assertEquals("First",  result.get(0).getKey());
         assertEquals("Second", result.get(1).getKey());
         assertEquals("Third",  result.get(2).getKey());
-        assertEquals(0.9f, result.get(0).getValue(), 0.001f);
-        assertEquals(0.5f, result.get(1).getValue(), 0.001f);
-        assertEquals(0.1f, result.get(2).getValue(), 0.001f);
+        assertEquals(result.get(0).getValue(), 0.001f, 0.9f);
+        assertEquals(result.get(1).getValue(), 0.001f, 0.5f);
+        assertEquals(result.get(2).getValue(), 0.001f, 0.1f);
     }
 
     @Test
@@ -84,7 +84,7 @@ public class RerankResponseParserTest {
         String json = "[{\"document\":\"irrelevant\",\"index\":0,\"score\":0.0}]";
         List<Pair<String, Float>> result = parser.parse(json);
         assertEquals(1, result.size());
-        assertEquals(0.0f, result.get(0).getValue(), 0.001f);
+        assertEquals(result.get(0).getValue(), 0.001f, 0.0f);
     }
 
     // ------------------------------------------------------------------
@@ -115,7 +115,7 @@ public class RerankResponseParserTest {
         JsonNode arr = MAPPER.readTree("[{\"document\":\"doc\",\"index\":0}]");
         List<Pair<String, Float>> result = parser.parse(arr);
         assertEquals(1, result.size());
-        assertEquals(0.0f, result.get(0).getValue(), 0.001f);
+        assertEquals(result.get(0).getValue(), 0.001f, 0.0f);
     }
 
     @Test

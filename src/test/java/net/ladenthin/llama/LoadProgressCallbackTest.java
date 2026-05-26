@@ -4,16 +4,16 @@
 
 package net.ladenthin.llama;
 
-import org.junit.Assume;
-import org.junit.Test;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotEquals;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 @ClaudeGenerated(
         purpose = "Verify LoadProgressCallback receives non-decreasing progress values in [0,1] "
@@ -23,7 +23,7 @@ public class LoadProgressCallbackTest {
 
     @Test
     public void receivesProgressUpdates() {
-        Assume.assumeTrue("Model file not found", new java.io.File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new java.io.File(TestConstants.MODEL_PATH).exists(), "Model file not found");
 
         List<Float> updates = new ArrayList<Float>();
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
@@ -41,17 +41,15 @@ public class LoadProgressCallbackTest {
             // model load completed
         }
 
-        assertFalse("expected at least one progress update", updates.isEmpty());
+        assertFalse(updates.isEmpty(), "expected at least one progress update");
         for (Float p : updates) {
-            assertTrue("progress out of range: " + p, p >= 0.0f && p <= 1.0f);
+            assertTrue(p >= 0.0f && p <= 1.0f, "progress out of range: " + p);
         }
         // Last update should reach (or be very close to) 1.0
-        assertTrue("last progress should reach completion, got " + updates.get(updates.size() - 1),
-                updates.get(updates.size() - 1) >= 0.9f);
+        assertTrue(updates.get(updates.size() - 1) >= 0.9f, "last progress should reach completion, got " + updates.get(updates.size() - 1));
         // Non-decreasing
         for (int i = 1; i < updates.size(); i++) {
-            assertTrue("progress decreased at index " + i + ": " + updates.get(i - 1) + " -> " + updates.get(i),
-                    updates.get(i) >= updates.get(i - 1));
+            assertTrue(updates.get(i) >= updates.get(i - 1), "progress decreased at index " + i + ": " + updates.get(i - 1) + " -> " + updates.get(i));
         }
         // Sanity: progress actually advanced
         assertNotEquals("progress never advanced", updates.get(0), updates.get(updates.size() - 1));
@@ -59,7 +57,7 @@ public class LoadProgressCallbackTest {
 
     @Test
     public void returningFalseAbortsLoad() {
-        Assume.assumeTrue("Model file not found", new java.io.File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new java.io.File(TestConstants.MODEL_PATH).exists(), "Model file not found");
 
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         try {
@@ -78,7 +76,7 @@ public class LoadProgressCallbackTest {
 
     @Test
     public void nullCallbackBehavesAsDefault() {
-        Assume.assumeTrue("Model file not found", new java.io.File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new java.io.File(TestConstants.MODEL_PATH).exists(), "Model file not found");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         try (LlamaModel m = new LlamaModel(
                 new ModelParameters()

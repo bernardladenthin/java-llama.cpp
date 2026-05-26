@@ -5,16 +5,11 @@
 
 package net.ladenthin.llama.args;
 
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
 import java.util.Arrays;
 import java.util.Collection;
 
-@RunWith(Parameterized.class)
 public class SamplerTest extends AbstractCliArgEnumTest<Sampler> {
 
-    @Parameterized.Parameters(name = "{0} -> {1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
             {Sampler.DRY,         "dry",         9},
@@ -29,7 +24,4 @@ public class SamplerTest extends AbstractCliArgEnumTest<Sampler> {
         });
     }
 
-    public SamplerTest(Sampler value, String expectedArgValue, int expectedEnumCount) {
-        super(value, expectedArgValue, expectedEnumCount);
-    }
 }

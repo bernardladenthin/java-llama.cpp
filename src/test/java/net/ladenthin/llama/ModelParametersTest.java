@@ -12,12 +12,12 @@ import net.ladenthin.llama.args.NumaStrategy;
 import net.ladenthin.llama.args.PoolingType;
 import net.ladenthin.llama.args.RopeScalingType;
 import net.ladenthin.llama.args.Sampler;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.List;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 @ClaudeGenerated(
         purpose = "Verify ModelParameters input validation (priority 0-3, repeatLastN/dryPenaltyLastN >= -1), " +
@@ -46,14 +46,14 @@ public class ModelParametersTest {
 		assertEquals("3", p.parameters.get("--prio"));
 	}
 
-	@Test(expected = IllegalArgumentException.class)
+	@Test
 	public void testSetPriorityNegative() {
-		new ModelParameters().setPriority(-1);
+	assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setPriority(-1));
 	}
 
-	@Test(expected = IllegalArgumentException.class)
+	@Test
 	public void testSetPriorityTooHigh() {
-		new ModelParameters().setPriority(4);
+	assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setPriority(4));
 	}
 
 	// -------------------------------------------------------------------------
@@ -66,14 +66,14 @@ public class ModelParametersTest {
 		assertEquals("1", p.parameters.get("--prio-batch"));
 	}
 
-	@Test(expected = IllegalArgumentException.class)
+	@Test
 	public void testSetPriorityBatchNegative() {
-		new ModelParameters().setPriorityBatch(-1);
+	assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setPriorityBatch(-1));
 	}
 
-	@Test(expected = IllegalArgumentException.class)
+	@Test
 	public void testSetPriorityBatchTooHigh() {
-		new ModelParameters().setPriorityBatch(4);
+	assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setPriorityBatch(4));
 	}
 
 	// -------------------------------------------------------------------------
@@ -98,9 +98,9 @@ public class ModelParametersTest {
 		assertEquals("64", p.parameters.get("--repeat-last-n"));
 	}
 
-	@Test(expected = RuntimeException.class)
+	@Test
 	public void testSetRepeatLastNTooLow() {
-		new ModelParameters().setRepeatLastN(-2);
+	assertThrows(RuntimeException.class, () -> new ModelParameters().setRepeatLastN(-2));
 	}
 
 	// -------------------------------------------------------------------------
@@ -119,9 +119,9 @@ public class ModelParametersTest {
 		assertEquals("0", p.parameters.get("--dry-penalty-last-n"));
 	}
 
-	@Test(expected = RuntimeException.class)
+	@Test
 	public void testSetDryPenaltyLastNTooLow() {
-		new ModelParameters().setDryPenaltyLastN(-2);
+	assertThrows(RuntimeException.class, () -> new ModelParameters().setDryPenaltyLastN(-2));
 	}
 
 	// -------------------------------------------------------------------------
@@ -245,8 +245,7 @@ public class ModelParametersTest {
 	@Test
 	public void testSetPoolingTypeUnspecifiedDoesNotSetParam() {
 		ModelParameters p = new ModelParameters().setPoolingType(PoolingType.UNSPECIFIED);
-		assertFalse("UNSPECIFIED pooling type must not add " + ModelParameters.ARG_POOLING + " to parameters",
-				p.parameters.containsKey(ModelParameters.ARG_POOLING));
+		assertFalse(p.parameters.containsKey(ModelParameters.ARG_POOLING), "UNSPECIFIED pooling type must not add " + ModelParameters.ARG_POOLING + " to parameters");
 	}
 
 	@Test
@@ -400,9 +399,9 @@ public class ModelParametersTest {
 	@Test
 	public void testBuilderChainingReturnsSameInstance() {
 		ModelParameters p = new ModelParameters();
-		assertSame(p, p.setThreads(4));
-		assertSame(p, p.setGpuLayers(10));
-		assertSame(p, p.enableEmbedding());
+		assertSame(p.setThreads(4), p);
+		assertSame(p.setGpuLayers(10), p);
+		assertSame(p.enableEmbedding(), p);
 	}
 
 	// -------------------------------------------------------------------------

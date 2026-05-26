@@ -5,16 +5,11 @@
 
 package net.ladenthin.llama.args;
 
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
 import java.util.Arrays;
 import java.util.Collection;
 
-@RunWith(Parameterized.class)
 public class ReasoningFormatTest extends AbstractCliArgEnumTest<ReasoningFormat> {
 
-    @Parameterized.Parameters(name = "{0} -> {1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
             {ReasoningFormat.NONE,            "none",            4},
@@ -24,7 +19,4 @@ public class ReasoningFormatTest extends AbstractCliArgEnumTest<ReasoningFormat>
         });
     }
 
-    public ReasoningFormatTest(ReasoningFormat value, String expectedArgValue, int expectedEnumCount) {
-        super(value, expectedArgValue, expectedEnumCount);
-    }
 }

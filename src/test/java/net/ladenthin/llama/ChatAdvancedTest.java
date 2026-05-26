@@ -14,11 +14,11 @@ import java.util.List;
 import net.ladenthin.llama.args.MiroStat;
 import net.ladenthin.llama.args.Sampler;
 import net.ladenthin.llama.json.CompletionResponseParser;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 /**
  * Advanced inference parameter scenarios covering code paths untested by
@@ -55,8 +55,7 @@ public class ChatAdvancedTest {
 
     @BeforeClass
     public static void setup() {
-        Assume.assumeTrue("Model file not found, skipping ChatAdvancedTest",
-                new File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping ChatAdvancedTest");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         model = new LlamaModel(
                 new ModelParameters()
@@ -94,9 +93,8 @@ public class ChatAdvancedTest {
         String first  = model.complete(params);
         String second = model.complete(params);
 
-        Assert.assertFalse("First cached call must produce output", first.isEmpty());
-        Assert.assertEquals("Same prompt with cache_prompt must produce identical output",
-                first, second);
+        assertFalse(first.isEmpty(), "First cached call must produce output");
+        assertEquals(first, second, "Same prompt with cache_prompt must produce identical output");
     }
 
     // ------------------------------------------------------------------
@@ -119,10 +117,9 @@ public class ChatAdvancedTest {
 
         String output = model.complete(params);
 
-        Assert.assertNotNull("Unbounded+stop output must not be null", output);
+        assertNotNull(output, "Unbounded+stop output must not be null");
         // The stop string itself must not appear in the completion
-        Assert.assertFalse("Output must not contain the stop string 'E'",
-                output.contains("E"));
+        assertFalse(output.contains("E"), "Output must not contain the stop string 'E'");
     }
 
     // ------------------------------------------------------------------
@@ -150,7 +147,7 @@ public class ChatAdvancedTest {
         boolean done = false;
         while (!done) {
             String json = model.receiveCompletionJson(taskId);
-            Assert.assertNotNull("receiveCompletionJson must not be null", json);
+            assertNotNull(json, "receiveCompletionJson must not be null");
             LlamaOutput output = completionParser.parse(json);
             if (json.contains("\"completion_probabilities\"")) {
                 foundProbabilities = true;
@@ -166,10 +163,7 @@ public class ChatAdvancedTest {
             }
         }
 
-        Assert.assertTrue(
-                "At least one streaming JSON chunk must contain 'completion_probabilities' when nProbs>0",
-                foundProbabilities
-        );
+        assertTrue(foundProbabilities, "At least one streaming JSON chunk must contain 'completion_probabilities' when nProbs>0");
     }
 
     // ------------------------------------------------------------------
@@ -211,13 +205,9 @@ public class ChatAdvancedTest {
         // Must not throw; parameter is accepted and forwarded to native layer
         String result = model.applyTemplate(params);
 
-        Assert.assertNotNull("applyTemplate with setChatTemplate must return non-null", result);
-        Assert.assertFalse("applyTemplate with setChatTemplate must return non-empty result",
-                result.isEmpty());
-        Assert.assertTrue(
-                "Result must contain the message content 'hello world' regardless of template used",
-                result.contains("hello world")
-        );
+        assertNotNull(result, "applyTemplate with setChatTemplate must return non-null");
+        assertFalse(result.isEmpty(), "applyTemplate with setChatTemplate must return non-empty result");
+        assertTrue(result.contains("hello world"), "Result must contain the message content 'hello world' regardless of template used");
     }
 
     // ------------------------------------------------------------------
@@ -247,8 +237,7 @@ public class ChatAdvancedTest {
             output.append(token.text);
         }
 
-        Assert.assertFalse("generate() with use_chat_template must produce output",
-                output.toString().isEmpty());
+        assertFalse(output.toString().isEmpty(), "generate() with use_chat_template must produce output");
     }
 
     // ------------------------------------------------------------------
@@ -272,7 +261,7 @@ public class ChatAdvancedTest {
                 .setRepeatLastN(32);
 
         String output = model.complete(params);
-        Assert.assertFalse("Penalty params must not produce empty output", output.isEmpty());
+        assertFalse(output.isEmpty(), "Penalty params must not produce empty output");
     }
 
     // ------------------------------------------------------------------
@@ -295,7 +284,7 @@ public class ChatAdvancedTest {
                 .setSamplers(Sampler.TOP_K, Sampler.TOP_P, Sampler.TEMPERATURE);
 
         String output = model.complete(params);
-        Assert.assertFalse("Custom sampler chain must produce non-empty output", output.isEmpty());
+        assertFalse(output.isEmpty(), "Custom sampler chain must produce non-empty output");
     }
 
     // ------------------------------------------------------------------
@@ -317,7 +306,7 @@ public class ChatAdvancedTest {
                 .setMiroStatEta(0.1f);
 
         String output = model.complete(params);
-        Assert.assertFalse("MiroStat V2 must produce non-empty output", output.isEmpty());
+        assertFalse(output.isEmpty(), "MiroStat V2 must produce non-empty output");
     }
 
     // ------------------------------------------------------------------
@@ -344,7 +333,7 @@ public class ChatAdvancedTest {
         boolean stopped = false;
         while (!stopped) {
             String json = model.receiveCompletionJson(taskId);
-            Assert.assertNotNull("receiveCompletionJson must not return null", json);
+            assertNotNull(json, "receiveCompletionJson must not return null");
             LlamaOutput output = completionParser.parse(json);
             sb.append(output.text);
             tokens++;
@@ -354,13 +343,12 @@ public class ChatAdvancedTest {
             }
             if (tokens > N_PREDICT + 2) {
                 model.releaseTask(taskId);
-                Assert.fail("Direct streaming did not stop within nPredict tokens");
+                fail("Direct streaming did not stop within nPredict tokens");
             }
         }
 
-        Assert.assertTrue("Direct non-chat streaming must emit at least one token", tokens > 0);
-        Assert.assertFalse("Direct non-chat streaming must produce non-empty content",
-                sb.toString().isEmpty());
+        assertTrue(tokens > 0, "Direct non-chat streaming must emit at least one token");
+        assertFalse(sb.toString().isEmpty(), "Direct non-chat streaming must produce non-empty content");
     }
 
     // ------------------------------------------------------------------
@@ -397,7 +385,7 @@ public class ChatAdvancedTest {
                 .disableTokenIds(Collections.singletonList(disabledId));
 
         String output = model.complete(params);
-        Assert.assertFalse("disableTokenIds must not produce empty output", output.isEmpty());
+        assertFalse(output.isEmpty(), "disableTokenIds must not produce empty output");
     }
 
     // ------------------------------------------------------------------
@@ -418,14 +406,13 @@ public class ChatAdvancedTest {
                 .setPenaltyPrompt("def ")
                 .setRepeatPenalty(1.2f);
 
-        Assert.assertFalse("setPenaltyPrompt(String) must produce output",
-                model.complete(params).isEmpty());
+        assertFalse(model.complete(params).isEmpty(), "setPenaltyPrompt(String) must produce output");
     }
 
     @Test
     public void testPenaltyPromptTokenArrayAccepted() {
         int[] penaltyTokens = model.encode("def ");
-        Assume.assumeTrue("Need at least one penalty token", penaltyTokens.length > 0);
+        Assumptions.assumeTrue(penaltyTokens.length > 0, "Need at least one penalty token");
 
         InferenceParameters params = new InferenceParameters(SIMPLE_PROMPT)
                 .setNPredict(N_PREDICT)
@@ -434,8 +421,7 @@ public class ChatAdvancedTest {
                 .setPenaltyPrompt(penaltyTokens)
                 .setRepeatPenalty(1.2f);
 
-        Assert.assertFalse("setPenaltyPrompt(int[]) must produce output",
-                model.complete(params).isEmpty());
+        assertFalse(model.complete(params).isEmpty(), "setPenaltyPrompt(int[]) must produce output");
     }
 
     // ------------------------------------------------------------------
@@ -457,13 +443,10 @@ public class ChatAdvancedTest {
 
         String output = model.complete(params);
 
-        Assert.assertNotNull(output);
+        assertNotNull(output);
         // None of the stop strings should appear in the output
         for (String stop : new String[]{"4", "5", "6"}) {
-            Assert.assertFalse(
-                    "Output must not contain stop string '" + stop + "', got: " + output,
-                    output.contains(stop)
-            );
+            assertFalse(output.contains(stop), "Output must not contain stop string '" + stop + "', got: " + output);
         }
     }
 
@@ -484,7 +467,7 @@ public class ChatAdvancedTest {
                 .setTemperature(0.7f)
                 .setMinP(0.05f);
 
-        Assert.assertFalse("setMinP must produce output", model.complete(params).isEmpty());
+        assertFalse(model.complete(params).isEmpty(), "setMinP must produce output");
     }
 
     @Test
@@ -495,7 +478,7 @@ public class ChatAdvancedTest {
                 .setTemperature(0.7f)
                 .setTfsZ(0.95f);
 
-        Assert.assertFalse("setTfsZ must produce output", model.complete(params).isEmpty());
+        assertFalse(model.complete(params).isEmpty(), "setTfsZ must produce output");
     }
 
     @Test
@@ -506,7 +489,7 @@ public class ChatAdvancedTest {
                 .setTemperature(0.7f)
                 .setTypicalP(0.9f);
 
-        Assert.assertFalse("setTypicalP must produce output", model.complete(params).isEmpty());
+        assertFalse(model.complete(params).isEmpty(), "setTypicalP must produce output");
     }
 
     // ------------------------------------------------------------------
@@ -526,7 +509,7 @@ public class ChatAdvancedTest {
                 .setTemperature(0.0f)
                 .setNKeep(-1);
 
-        Assert.assertFalse("setNKeep(-1) must produce output", model.complete(params).isEmpty());
+        assertFalse(model.complete(params).isEmpty(), "setNKeep(-1) must produce output");
     }
 
     // ------------------------------------------------------------------
@@ -547,8 +530,7 @@ public class ChatAdvancedTest {
                 .setTemperature(0.0f)
                 .disableTokens(Arrays.asList("!!!"));
 
-        Assert.assertFalse("disableTokens must not produce empty output",
-                model.complete(params).isEmpty());
+        assertFalse(model.complete(params).isEmpty(), "disableTokens must not produce empty output");
     }
 
     // ------------------------------------------------------------------
@@ -568,7 +550,6 @@ public class ChatAdvancedTest {
                 .setMiroStatTau(5.0f)
                 .setMiroStatEta(0.1f);
 
-        Assert.assertFalse("MiroStat V1 must produce non-empty output",
-                model.complete(params).isEmpty());
+        assertFalse(model.complete(params).isEmpty(), "MiroStat V1 must produce non-empty output");
     }
 }

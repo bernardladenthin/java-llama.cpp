@@ -10,12 +10,12 @@ import java.util.Collections;
 
 import net.ladenthin.llama.args.ReasoningFormat;
 import net.ladenthin.llama.json.ChatResponseParser;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.BeforeClass;
-import org.junit.Ignore;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
+import org.junit.jupiter.api.Test;
 
 /**
  * Integration tests for thinking/reasoning mode using Qwen3-0.6B-Q4_K_M.
@@ -70,8 +70,7 @@ public class ReasoningBudgetTest {
 
     @BeforeClass
     public static void setup() {
-        Assume.assumeTrue("Reasoning model not found, skipping ReasoningBudgetTest",
-                new File(TestConstants.REASONING_MODEL_PATH).exists());
+        Assumptions.assumeTrue(new File(TestConstants.REASONING_MODEL_PATH).exists(), "Reasoning model not found, skipping ReasoningBudgetTest");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         model = new LlamaModel(
                 new ModelParameters()
@@ -106,12 +105,8 @@ public class ReasoningBudgetTest {
         String reasoningContent = parser.extractChoiceReasoningContent(json);
         String content = parser.extractChoiceContent(json);
 
-        Assert.assertFalse(
-                "reasoning_content should be non-empty (Qwen3 thinks by default)",
-                reasoningContent == null || reasoningContent.trim().isEmpty());
-        Assert.assertFalse(
-                "content must not be empty (model must produce an answer after thinking)",
-                content == null || content.trim().isEmpty());
+        assertFalse(reasoningContent == null || reasoningContent.trim().isEmpty(), "reasoning_content should be non-empty (Qwen3 thinks by default)");
+        assertFalse(content == null || content.trim().isEmpty(), "content must not be empty (model must produce an answer after thinking)");
     }
 
     /**
@@ -140,15 +135,13 @@ public class ReasoningBudgetTest {
 
         String json = model.chatComplete(params);
 
-        Assert.assertNotNull("Response JSON must not be null", json);
+        assertNotNull(json, "Response JSON must not be null");
 
         String reasoningContent = parser.extractChoiceReasoningContent(json);
-        Assert.assertFalse(
-                "reasoning_content is expected to be present because the per-request " +
+        assertFalse(reasoningContent == null || reasoningContent.trim().isEmpty(), "reasoning_content is expected to be present because the per-request " +
                 "budget is not applied (llama.cpp server-common.cpp copy-loop bug). " +
                 "If this assertion fails, the bug has been fixed — remove this test and " +
-                "enable testReasoningBudgetZero_expectedBehavior_suppressesThinking.",
-                reasoningContent == null || reasoningContent.trim().isEmpty());
+                "enable testReasoningBudgetZero_expectedBehavior_suppressesThinking.");
     }
 
     /**
@@ -181,7 +174,7 @@ public class ReasoningBudgetTest {
      * {@link #testReasoningBudgetZero_parameterAccepted_thinkingNotSuppressed}.
      * Tracked in <a href="https://github.com/ggml-org/llama.cpp/pull/23116">llama.cpp PR #23116</a>.
      */
-    @Ignore("llama.cpp bug: per-request reasoning_budget_tokens is overwritten by model default " +
+    @Disabled("llama.cpp bug: per-request reasoning_budget_tokens is overwritten by model default " +
             "in oaicompat_chat_params_parse (server-common.cpp). " +
             "See Javadoc for exact fix location and code.")
     @Test
@@ -192,13 +185,11 @@ public class ReasoningBudgetTest {
                 .setNPredict(N_PREDICT);
 
         String json = model.chatComplete(params);
-        Assert.assertNotNull("Response JSON must not be null", json);
+        assertNotNull(json, "Response JSON must not be null");
 
         String reasoningContent = parser.extractChoiceReasoningContent(json);
-        Assert.assertTrue(
-                "reasoning_content should be empty when budget=0 suppresses thinking, " +
-                "but was: " + reasoningContent,
-                reasoningContent == null || reasoningContent.trim().isEmpty());
+        assertTrue(reasoningContent == null || reasoningContent.trim().isEmpty(), "reasoning_content should be empty when budget=0 suppresses thinking, " +
+                "but was: " + reasoningContent);
     }
 
     /**
@@ -222,15 +213,13 @@ public class ReasoningBudgetTest {
                 .setNPredict(N_PREDICT);
 
         String json = model.chatComplete(params);
-        Assert.assertNotNull("Response JSON must not be null", json);
+        assertNotNull(json, "Response JSON must not be null");
 
         String reasoningContent = parser.extractChoiceReasoningContent(json);
         String content = parser.extractChoiceContent(json);
         boolean hasReasoning = reasoningContent != null && !reasoningContent.trim().isEmpty();
         boolean hasContent   = content          != null && !content.trim().isEmpty();
-        Assert.assertTrue(
-                "model must produce at least some output in reasoning_content or content, " +
-                "but both were empty",
-                hasReasoning || hasContent);
+        assertTrue(hasReasoning || hasContent, "model must produce at least some output in reasoning_content or content, " +
+                "but both were empty");
     }
 }

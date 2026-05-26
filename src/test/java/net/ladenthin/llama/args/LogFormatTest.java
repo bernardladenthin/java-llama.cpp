@@ -6,9 +6,9 @@
 package net.ladenthin.llama.args;
 
 import net.ladenthin.llama.ClaudeGenerated;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 @ClaudeGenerated(
         purpose = "Verify LogFormat enum values and count.",
@@ -33,7 +33,7 @@ public class LogFormatTest {
 
     @Test
     public void testValueOf() {
-        assertSame(LogFormat.JSON, LogFormat.valueOf("JSON"));
-        assertSame(LogFormat.TEXT, LogFormat.valueOf("TEXT"));
+        assertSame(LogFormat.valueOf("JSON"), LogFormat.JSON);
+        assertSame(LogFormat.valueOf("TEXT"), LogFormat.TEXT);
     }
 }

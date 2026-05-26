@@ -7,11 +7,11 @@ package net.ladenthin.llama;
 
 import java.io.File;
 
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 /**
  * Tests for error handling paths in the JNI layer. Verifies that:
@@ -38,8 +38,7 @@ public class ErrorHandlingTest {
 
     @BeforeClass
     public static void setup() {
-        Assume.assumeTrue("Model file not found, skipping ErrorHandlingTest",
-                new File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping ErrorHandlingTest");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         // Model WITH embedding
         model = new LlamaModel(
@@ -96,9 +95,9 @@ public class ErrorHandlingTest {
     // embed() without embedding support
     // -------------------------------------------------------------------------
 
-    @Test(expected = LlamaException.class)
+    @Test
     public void testEmbedWithoutEnableEmbeddingThrows() {
-        modelNoEmbed.embed("hello world");
+        assertThrows(LlamaException.class, () -> modelNoEmbed.embed("hello world"));
     }
 
     // -------------------------------------------------------------------------
@@ -111,10 +110,9 @@ public class ErrorHandlingTest {
         try {
             String result = modelNoEmbed.handleEmbeddings(json, false);
             // If it doesn't throw, the result should indicate an error
-            Assert.fail("Expected LlamaException for embeddings without embedding support");
+            fail("Expected LlamaException for embeddings without embedding support");
         } catch (LlamaException e) {
-            Assert.assertTrue("Error should mention embedding",
-                    e.getMessage().toLowerCase().contains("embedding"));
+            assertTrue(e.getMessage().toLowerCase().contains("embedding"), "Error should mention embedding");
         }
     }
 
@@ -127,10 +125,9 @@ public class ErrorHandlingTest {
         String json = "{\"input\":\"hello world\",\"encoding_format\":\"invalid\"}";
         try {
             String result = model.handleEmbeddings(json, false);
-            Assert.fail("Expected LlamaException for invalid encoding_format");
+            fail("Expected LlamaException for invalid encoding_format");
         } catch (LlamaException e) {
-            Assert.assertTrue("Error should mention encoding_format",
-                    e.getMessage().contains("encoding_format"));
+            assertTrue(e.getMessage().contains("encoding_format"), "Error should mention encoding_format");
         }
     }
 
@@ -144,10 +141,10 @@ public class ErrorHandlingTest {
         try {
             String result = model.handleEmbeddings(json, false);
             // Native code may handle empty input gracefully — that's acceptable
-            Assert.assertNotNull("Result should not be null", result);
+            assertNotNull(result, "Result should not be null");
         } catch (LlamaException e) {
             // Also acceptable if the native code rejects empty input
-            Assert.assertNotNull("Exception message should not be null", e.getMessage());
+            assertNotNull(e.getMessage(), "Exception message should not be null");
         }
     }
 
@@ -174,8 +171,7 @@ public class ErrorHandlingTest {
             model.handleInfill(json);
             // May succeed with empty suffix or throw
         } catch (LlamaException e) {
-            Assert.assertTrue("Error should mention input_suffix",
-                    e.getMessage().contains("input_suffix"));
+            assertTrue(e.getMessage().contains("input_suffix"), "Error should mention input_suffix");
         }
     }
 
@@ -187,10 +183,9 @@ public class ErrorHandlingTest {
     public void testConfigureParallelInferenceInvalidNThreads() {
         try {
             boolean result = model.configureParallelInference("{\"n_threads\":-1}");
-            Assert.fail("Expected exception for invalid n_threads");
+            fail("Expected exception for invalid n_threads");
         } catch (LlamaException e) {
-            Assert.assertTrue("Error should mention n_threads",
-                    e.getMessage().contains("n_threads"));
+            assertTrue(e.getMessage().contains("n_threads"), "Error should mention n_threads");
         }
     }
 
@@ -198,10 +193,9 @@ public class ErrorHandlingTest {
     public void testConfigureParallelInferenceInvalidNThreadsBatch() {
         try {
             boolean result = model.configureParallelInference("{\"n_threads_batch\":-1}");
-            Assert.fail("Expected exception for invalid n_threads_batch");
+            fail("Expected exception for invalid n_threads_batch");
         } catch (LlamaException e) {
-            Assert.assertTrue("Error should mention n_threads_batch",
-                    e.getMessage().contains("n_threads_batch"));
+            assertTrue(e.getMessage().contains("n_threads_batch"), "Error should mention n_threads_batch");
         }
     }
 
@@ -209,10 +203,9 @@ public class ErrorHandlingTest {
     public void testConfigureParallelInferenceZeroNThreads() {
         try {
             boolean result = model.configureParallelInference("{\"n_threads\":0}");
-            Assert.fail("Expected exception for n_threads=0");
+            fail("Expected exception for n_threads=0");
         } catch (LlamaException e) {
-            Assert.assertTrue("Error should mention n_threads",
-                    e.getMessage().contains("n_threads"));
+            assertTrue(e.getMessage().contains("n_threads"), "Error should mention n_threads");
         }
     }
 
@@ -232,9 +225,9 @@ public class ErrorHandlingTest {
         // caught by the std::exception catch → throw_invalid_request → LlamaException
         try {
             model.handleCompletions("{\"n_predict\":1}");
-            Assert.fail("Expected LlamaException for missing 'prompt' key");
+            fail("Expected LlamaException for missing 'prompt' key");
         } catch (LlamaException e) {
-            Assert.assertNotNull("Exception message must not be null", e.getMessage());
+            assertNotNull(e.getMessage(), "Exception message must not be null");
         }
     }
 
@@ -242,9 +235,9 @@ public class ErrorHandlingTest {
     public void testHandleCompletionsOaiMissingPromptThrows() {
         try {
             model.handleCompletionsOai("{\"n_predict\":1}");
-            Assert.fail("Expected LlamaException for missing 'prompt' key");
+            fail("Expected LlamaException for missing 'prompt' key");
         } catch (LlamaException e) {
-            Assert.assertNotNull("Exception message must not be null", e.getMessage());
+            assertNotNull(e.getMessage(), "Exception message must not be null");
         }
     }
 
@@ -260,7 +253,7 @@ public class ErrorHandlingTest {
             // the point is that no uncaught C++ exception escapes the JNI boundary.
             // If it succeeds, verify the response is valid JSON.
         } catch (LlamaException e) {
-            Assert.assertNotNull("Exception message must not be null", e.getMessage());
+            assertNotNull(e.getMessage(), "Exception message must not be null");
         }
     }
 }

@@ -8,14 +8,14 @@ import java.io.File;
 import java.nio.file.Paths;
 import java.util.Collections;
 
-import org.junit.AfterClass;
-import org.junit.Assume;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * End-to-end multimodal regression. Loads a vision-capable model + matching
@@ -72,19 +72,12 @@ public class MultimodalIntegrationTest {
         imagePath  = System.getProperty(TestConstants.PROP_VISION_IMAGE_PATH,
                 TestConstants.DEFAULT_VISION_IMAGE_PATH);
 
-        Assume.assumeTrue(
-                "Vision model path not set (-D" + TestConstants.PROP_VISION_MODEL_PATH + "=...)",
-                modelPath != null && !modelPath.isEmpty());
-        Assume.assumeTrue(
-                "Vision mmproj path not set (-D" + TestConstants.PROP_VISION_MMPROJ_PATH + "=...)",
-                mmprojPath != null && !mmprojPath.isEmpty());
+        Assumptions.assumeTrue(modelPath != null && !modelPath.isEmpty(), "Vision model path not set (-D" + TestConstants.PROP_VISION_MODEL_PATH + "=...)");
+        Assumptions.assumeTrue(mmprojPath != null && !mmprojPath.isEmpty(), "Vision mmproj path not set (-D" + TestConstants.PROP_VISION_MMPROJ_PATH + "=...)");
 
-        Assume.assumeTrue("Vision model file missing: " + modelPath,
-                new File(modelPath).exists());
-        Assume.assumeTrue("Vision mmproj file missing: " + mmprojPath,
-                new File(mmprojPath).exists());
-        Assume.assumeTrue("Vision image file missing: " + imagePath,
-                new File(imagePath).exists());
+        Assumptions.assumeTrue(new File(modelPath).exists(), "Vision model file missing: " + modelPath);
+        Assumptions.assumeTrue(new File(mmprojPath).exists(), "Vision mmproj file missing: " + mmprojPath);
+        Assumptions.assumeTrue(new File(imagePath).exists(), "Vision image file missing: " + imagePath);
 
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
 
@@ -124,9 +117,8 @@ public class MultimodalIntegrationTest {
                 .setNPredict(48)
                 .setTemperature(0.0f));
 
-        assertNotNull("chatCompleteText must return a string, not null", reply);
-        assertFalse("reply must be non-empty for a multimodal prompt; got: \"" + reply + "\"",
-                reply.trim().isEmpty());
+        assertNotNull(reply, "chatCompleteText must return a string, not null");
+        assertFalse(reply.trim().isEmpty(), "reply must be non-empty for a multimodal prompt; got: \"" + reply + "\"");
     }
 
     /**
@@ -152,7 +144,6 @@ public class MultimodalIntegrationTest {
                 .setNPredict(8)
                 .setTemperature(0.0f));
         assertNotNull(secondReply);
-        assertTrue("text-only call after multimodal must still produce tokens; got: \"" + secondReply + "\"",
-                secondReply.trim().length() > 0);
+        assertTrue(secondReply.trim().length() > 0, "text-only call after multimodal must still produce tokens; got: \"" + secondReply + "\"");
     }
 }

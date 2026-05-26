@@ -13,12 +13,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 
 import net.ladenthin.llama.json.ParameterJsonSerializer;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 @ClaudeGenerated(
         purpose = "Verify multimodal ChatMessage flow: parts-based constructor, getParts()/hasParts(), "
@@ -67,14 +67,14 @@ public class MultimodalMessagesTest {
         assertEquals(ContentPart.Type.IMAGE_URL, m.getParts().get(1).getType());
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void emptyPartsListIsRejected() {
-        new ChatMessage("user", Collections.<ContentPart>emptyList());
+        assertThrows(IllegalArgumentException.class, () -> new ChatMessage("user", Collections.<ContentPart>emptyList()));
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void nullPartsListIsRejected() {
-        new ChatMessage("user", (List<ContentPart>) null);
+        assertThrows(IllegalArgumentException.class, () -> new ChatMessage("user", (List<ContentPart>) null));
     }
 
     @Test
@@ -101,7 +101,7 @@ public class MultimodalMessagesTest {
         assertEquals("user", msg.get("role").asText());
 
         JsonNode content = msg.get("content");
-        assertTrue("content must be an array when parts are present", content.isArray());
+        assertTrue(content.isArray(), "content must be an array when parts are present");
         assertEquals(2, content.size());
 
         JsonNode p0 = content.get(0);
@@ -122,8 +122,7 @@ public class MultimodalMessagesTest {
         assertEquals(1, arr.size());
         JsonNode msg = arr.get(0);
         assertEquals("user", msg.get("role").asText());
-        assertTrue("content must remain a string for legacy messages",
-                msg.get("content").isTextual());
+        assertTrue(msg.get("content").isTextual(), "content must remain a string for legacy messages");
         assertEquals("plain text", msg.get("content").asText());
     }
 
@@ -155,10 +154,8 @@ public class MultimodalMessagesTest {
         // resulting JSON has the array form, which is what the upstream OAI chat
         // parser expects for multimodal routing.
         String json = params.toString();
-        assertTrue("messages array must be present", json.contains("\"messages\""));
-        assertTrue("multimodal part type must be in the serialised JSON",
-                json.contains("\"image_url\""));
-        assertTrue("data URI must round-trip into the request body",
-                json.contains("data:image/png;base64,QQ"));
+        assertTrue(json.contains("\"messages\""), "messages array must be present");
+        assertTrue(json.contains("\"image_url\""), "multimodal part type must be in the serialised JSON");
+        assertTrue(json.contains("data:image/png;base64,QQ"), "data URI must round-trip into the request body");
     }
 }

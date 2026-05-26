@@ -5,11 +5,11 @@
 package net.ladenthin.llama;
 
 import net.ladenthin.llama.json.CompletionResponseParser;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ClaudeGenerated(
         purpose = "Verify CompletionResponseParser.parseCompletionResult maps the non-OAI completion JSON "
@@ -38,14 +38,14 @@ public class CompletionResultTest {
         assertEquals(17L, r.getUsage().getTotalTokens());
         assertEquals(12, r.getTimings().getPromptN());
         assertEquals(3, r.getTimings().getCacheN());
-        assertEquals(100.0, r.getTimings().getPredictedPerSecond(), 1e-9);
+        assertEquals(r.getTimings().getPredictedPerSecond(), 1e-9, 100.0);
         assertEquals(StopReason.EOS, r.getStopReason());
 
         assertEquals(1, r.getLogprobs().size());
         TokenLogprob lp = r.getLogprobs().get(0);
         assertEquals("hello", lp.getToken());
         assertEquals(15043, lp.getTokenId());
-        assertEquals(0.9f, lp.getLogprob(), 1e-4f);
+        assertEquals(lp.getLogprob(), 1e-4f, 0.9f);
         assertEquals(1, lp.getTopLogprobs().size());
 
         assertNotNull(r.getRawJson());

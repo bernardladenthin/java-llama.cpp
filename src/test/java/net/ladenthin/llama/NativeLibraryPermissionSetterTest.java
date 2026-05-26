@@ -8,11 +8,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.PrintStream;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ClaudeGenerated(
 		purpose = "Verify NativeLibraryPermissionSetter.apply(File): returns the AND of " +
@@ -62,9 +62,8 @@ public class NativeLibraryPermissionSetterTest {
 	@Test
 	public void testApplyAllSucceed() {
 		setUp();
-		assertTrue("expected success when all setters return true",
-				setter.apply(new StubFile(true, true, true)));
-		assertEquals("no warning expected on success", "", sink.toString());
+		assertTrue(setter.apply(new StubFile(true, true, true)), "expected success when all setters return true");
+		assertEquals("", sink.toString(), "no warning expected on success");
 	}
 
 	@Test
@@ -72,10 +71,10 @@ public class NativeLibraryPermissionSetterTest {
 		setUp();
 		assertFalse(setter.apply(new StubFile(false, true, true)));
 		String out = sink.toString();
-		assertTrue("warning should mention readable=false: " + out, out.contains("readable=false"));
-		assertTrue("warning should mention writable=true: " + out, out.contains("writable=true"));
-		assertTrue("warning should mention executable=true: " + out, out.contains("executable=true"));
-		assertTrue("warning should mention file path: " + out, out.contains("stub-native-lib"));
+		assertTrue(out.contains("readable=false"), "warning should mention readable=false: " + out);
+		assertTrue(out.contains("writable=true"), "warning should mention writable=true: " + out);
+		assertTrue(out.contains("executable=true"), "warning should mention executable=true: " + out);
+		assertTrue(out.contains("stub-native-lib"), "warning should mention file path: " + out);
 	}
 
 	@Test
@@ -102,8 +101,8 @@ public class NativeLibraryPermissionSetterTest {
 		assertTrue(out.contains("executable=false"));
 	}
 
-	@Test(expected = NullPointerException.class)
+	@Test
 	public void testConstructorRejectsNullSink() {
-		new NativeLibraryPermissionSetter(null);
+	assertThrows(NullPointerException.class, () -> new NativeLibraryPermissionSetter(null));
 	}
 }

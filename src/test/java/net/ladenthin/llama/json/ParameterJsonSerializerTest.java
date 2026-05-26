@@ -10,7 +10,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import net.ladenthin.llama.Pair;
 import net.ladenthin.llama.args.Sampler;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -18,7 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Unit tests for {@link ParameterJsonSerializer}.
@@ -227,9 +227,9 @@ public class ParameterJsonSerializerTest {
         ArrayNode arr = serializer.buildTokenIdBiasArray(biases);
         assertEquals(2, arr.size());
         assertEquals(15043, arr.get(0).get(0).asInt());
-        assertEquals(1.0, arr.get(0).get(1).asDouble(), 0.001);
+        assertEquals(arr.get(0).get(1).asDouble(), 0.001, 1.0);
         assertEquals(50256, arr.get(1).get(0).asInt());
-        assertEquals(-0.5, arr.get(1).get(1).asDouble(), 0.001);
+        assertEquals(arr.get(1).get(1).asDouble(), 0.001, -0.5);
     }
 
     @Test
@@ -250,7 +250,7 @@ public class ParameterJsonSerializerTest {
         ArrayNode arr = serializer.buildTokenStringBiasArray(biases);
         assertEquals(2, arr.size());
         assertEquals("Hello", arr.get(0).get(0).asText());
-        assertEquals(1.0, arr.get(0).get(1).asDouble(), 0.001);
+        assertEquals(arr.get(0).get(1).asDouble(), 0.001, 1.0);
         assertEquals(" world", arr.get(1).get(0).asText());
     }
 
@@ -311,7 +311,7 @@ public class ParameterJsonSerializerTest {
     public void testBuildRawValueObject_numberValue() {
         Map<String, String> map = Collections.singletonMap("temperature", "0.7");
         ObjectNode node = serializer.buildRawValueObject(map);
-        assertEquals(0.7, node.path("temperature").asDouble(), 0.001);
+        assertEquals(node.path("temperature").asDouble(), 0.001, 0.7);
     }
 
     @Test

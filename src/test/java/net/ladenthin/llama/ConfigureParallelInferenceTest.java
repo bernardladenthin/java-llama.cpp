@@ -7,11 +7,11 @@ package net.ladenthin.llama;
 
 import java.io.File;
 
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 /**
  * Tests for {@link LlamaModel#configureParallelInference(String)} covering:
@@ -34,8 +34,7 @@ public class ConfigureParallelInferenceTest {
 
     @BeforeClass
     public static void setup() {
-        Assume.assumeTrue("Model file not found, skipping ConfigureParallelInferenceTest",
-                new File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping ConfigureParallelInferenceTest");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         model = new LlamaModel(
                 new ModelParameters()
@@ -60,13 +59,13 @@ public class ConfigureParallelInferenceTest {
     @Test
     public void testConfigureNThreads() {
         boolean result = model.configureParallelInference("{\"n_threads\":2}");
-        Assert.assertTrue("configureParallelInference with valid n_threads should succeed", result);
+        assertTrue(result, "configureParallelInference with valid n_threads should succeed");
     }
 
     @Test
     public void testConfigureNThreadsOne() {
         boolean result = model.configureParallelInference("{\"n_threads\":1}");
-        Assert.assertTrue("configureParallelInference with n_threads=1 should succeed", result);
+        assertTrue(result, "configureParallelInference with n_threads=1 should succeed");
     }
 
     // -------------------------------------------------------------------------
@@ -76,13 +75,13 @@ public class ConfigureParallelInferenceTest {
     @Test
     public void testConfigureNThreadsBatch() {
         boolean result = model.configureParallelInference("{\"n_threads_batch\":2}");
-        Assert.assertTrue("configureParallelInference with valid n_threads_batch should succeed", result);
+        assertTrue(result, "configureParallelInference with valid n_threads_batch should succeed");
     }
 
     @Test
     public void testConfigureNThreadsBatchOne() {
         boolean result = model.configureParallelInference("{\"n_threads_batch\":1}");
-        Assert.assertTrue("configureParallelInference with n_threads_batch=1 should succeed", result);
+        assertTrue(result, "configureParallelInference with n_threads_batch=1 should succeed");
     }
 
     // -------------------------------------------------------------------------
@@ -93,14 +92,14 @@ public class ConfigureParallelInferenceTest {
     public void testConfigureCombinedThreadsAndBatch() {
         boolean result = model.configureParallelInference(
                 "{\"n_threads\":2,\"n_threads_batch\":4}");
-        Assert.assertTrue("Combined n_threads + n_threads_batch should succeed", result);
+        assertTrue(result, "Combined n_threads + n_threads_batch should succeed");
     }
 
     @Test
     public void testConfigureCombinedAllParams() {
         boolean result = model.configureParallelInference(
                 "{\"slot_prompt_similarity\":0.5,\"n_threads\":2,\"n_threads_batch\":2}");
-        Assert.assertTrue("Combined all params should succeed", result);
+        assertTrue(result, "Combined all params should succeed");
     }
 
     // -------------------------------------------------------------------------
@@ -110,19 +109,19 @@ public class ConfigureParallelInferenceTest {
     @Test
     public void testConfigureSlotPromptSimilarityValid() {
         boolean result = model.configureParallelInference("{\"slot_prompt_similarity\":0.8}");
-        Assert.assertTrue("Valid slot_prompt_similarity should succeed", result);
+        assertTrue(result, "Valid slot_prompt_similarity should succeed");
     }
 
     @Test
     public void testConfigureSlotPromptSimilarityZero() {
         boolean result = model.configureParallelInference("{\"slot_prompt_similarity\":0.0}");
-        Assert.assertTrue("slot_prompt_similarity=0.0 should succeed", result);
+        assertTrue(result, "slot_prompt_similarity=0.0 should succeed");
     }
 
     @Test
     public void testConfigureSlotPromptSimilarityOne() {
         boolean result = model.configureParallelInference("{\"slot_prompt_similarity\":1.0}");
-        Assert.assertTrue("slot_prompt_similarity=1.0 should succeed", result);
+        assertTrue(result, "slot_prompt_similarity=1.0 should succeed");
     }
 
     // -------------------------------------------------------------------------
@@ -132,7 +131,7 @@ public class ConfigureParallelInferenceTest {
     @Test
     public void testConfigureEmptyJson() {
         boolean result = model.configureParallelInference("{}");
-        Assert.assertTrue("Empty config should succeed (no-op)", result);
+        assertTrue(result, "Empty config should succeed (no-op)");
     }
 
     // -------------------------------------------------------------------------
@@ -146,7 +145,7 @@ public class ConfigureParallelInferenceTest {
                 .setNPredict(5)
                 .setTemperature(0);
         String result = model.complete(params);
-        Assert.assertNotNull("Model should produce output after reconfiguration", result);
-        Assert.assertFalse("Output should not be empty", result.isEmpty());
+        assertNotNull(result, "Model should produce output after reconfiguration");
+        assertFalse(result.isEmpty(), "Output should not be empty");
     }
 }

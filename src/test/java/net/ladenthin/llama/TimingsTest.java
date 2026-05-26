@@ -5,9 +5,9 @@
 package net.ladenthin.llama;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @ClaudeGenerated(
         purpose = "Verify Timings.fromJson maps every result_timings field and treats missing nodes as zero."
@@ -24,11 +24,11 @@ public class TimingsTest {
         Timings t = Timings.fromJson(MAPPER.readTree(json));
         assertEquals(7, t.getCacheN());
         assertEquals(10, t.getPromptN());
-        assertEquals(200.0, t.getPromptMs(), 1e-9);
-        assertEquals(50.0, t.getPromptPerSecond(), 1e-9);
+        assertEquals(t.getPromptMs(), 1e-9, 200.0);
+        assertEquals(t.getPromptPerSecond(), 1e-9, 50.0);
         assertEquals(5, t.getPredictedN());
-        assertEquals(100.0, t.getPredictedMs(), 1e-9);
-        assertEquals(50.0, t.getPredictedPerSecond(), 1e-9);
+        assertEquals(t.getPredictedMs(), 1e-9, 100.0);
+        assertEquals(t.getPredictedPerSecond(), 1e-9, 50.0);
         assertEquals(0, t.getDraftN());
         assertEquals(0, t.getDraftNAccepted());
     }
@@ -45,7 +45,7 @@ public class TimingsTest {
     public void missingNodeYieldsAllZeroes() {
         Timings t = Timings.fromJson(null);
         assertEquals(0, t.getPromptN());
-        assertEquals(0.0, t.getPromptMs(), 1e-9);
+        assertEquals(t.getPromptMs(), 1e-9, 0.0);
         assertEquals(0, t.getDraftN());
     }
 
@@ -53,6 +53,6 @@ public class TimingsTest {
     public void missingFieldsDefaultToZero() throws Exception {
         Timings t = Timings.fromJson(MAPPER.readTree("{}"));
         assertEquals(0, t.getCacheN());
-        assertEquals(0.0, t.getPredictedPerSecond(), 1e-9);
+        assertEquals(t.getPredictedPerSecond(), 1e-9, 0.0);
     }
 }

@@ -5,19 +5,17 @@
 
 package net.ladenthin.llama.args;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.util.Arrays;
 import java.util.Collection;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
-@RunWith(Parameterized.class)
 public class ModelFlagTest {
 
-    @Parameterized.Parameters(name = "{0} -> {1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
             {ModelFlag.NO_CONTEXT_SHIFT,       "--no-context-shift"},
@@ -54,16 +52,9 @@ public class ModelFlagTest {
         });
     }
 
-    private final ModelFlag flag;
-    private final String expectedCliFlag;
-
-    public ModelFlagTest(ModelFlag flag, String expectedCliFlag) {
-        this.flag = flag;
-        this.expectedCliFlag = expectedCliFlag;
-    }
-
-    @Test
-    public void testGetCliFlag() {
+    @ParameterizedTest(name = "{0} -> {1}")
+    @MethodSource("data")
+    public void testGetCliFlag(ModelFlag flag, String expectedCliFlag) {
         assertEquals(expectedCliFlag, flag.getCliFlag());
     }
 
@@ -76,13 +67,15 @@ public class ModelFlagTest {
         assertEquals(31, ModelFlag.values().length);
     }
 
-    @Test
-    public void testCliFlagStartsWithDoubleDash() {
-        assertTrue("Flag " + flag + " must start with --", flag.getCliFlag().startsWith("--"));
+    @ParameterizedTest(name = "{0} -> {1}")
+    @MethodSource("data")
+    public void testCliFlagStartsWithDoubleDash(ModelFlag flag, String expectedCliFlag) {
+        assertTrue(flag.getCliFlag().startsWith("--"), "Flag " + flag + " must start with --");
     }
 
-    @Test
-    public void testCliFlagNonEmpty() {
-        assertFalse("Flag " + flag + " has empty CLI string", flag.getCliFlag().isEmpty());
+    @ParameterizedTest(name = "{0} -> {1}")
+    @MethodSource("data")
+    public void testCliFlagNonEmpty(ModelFlag flag, String expectedCliFlag) {
+        assertFalse(flag.getCliFlag().isEmpty(), "Flag " + flag + " has empty CLI string");
     }
 }

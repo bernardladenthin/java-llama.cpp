@@ -4,8 +4,8 @@
 
 package net.ladenthin.llama;
 
-import org.junit.Assume;
-import org.junit.Test;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Test;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
@@ -14,9 +14,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ClaudeGenerated(
         purpose = "Verify LlamaPublisher honours Reactive Streams contracts: backpressure via request(n), "
@@ -29,7 +29,7 @@ public class LlamaPublisherTest {
      */
     @Test
     public void backpressureAndCancel() throws Exception {
-        Assume.assumeTrue("Model file not found", new java.io.File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new java.io.File(TestConstants.MODEL_PATH).exists(), "Model file not found");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
 
         try (LlamaModel model = new LlamaModel(new ModelParameters()
@@ -66,17 +66,17 @@ public class LlamaPublisherTest {
                 @Override public void onComplete() { done.countDown(); }
             });
 
-            assertTrue("subscriber did not terminate in 30s", done.await(30, TimeUnit.SECONDS));
+            assertTrue(done.await(30, TimeUnit.SECONDS), "subscriber did not terminate in 30s");
             // After cancel we may receive 3-4 in-flight tokens; should not be far above the
             // demand actually requested (3 here).
             int got = received.get();
-            assertTrue("expected ~3 tokens, got " + got, got >= 3 && got <= 6);
+            assertTrue(got >= 3 && got <= 6, "expected ~3 tokens, got " + got);
         }
     }
 
     @Test
     public void singleSubscriberContract() throws Exception {
-        Assume.assumeTrue("Model file not found", new java.io.File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new java.io.File(TestConstants.MODEL_PATH).exists(), "Model file not found");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
 
         try (LlamaModel model = new LlamaModel(new ModelParameters()
@@ -107,14 +107,14 @@ public class LlamaPublisherTest {
                 @Override public void onComplete() { second.countDown(); }
             });
             assertTrue(second.await(5, TimeUnit.SECONDS));
-            assertNotNull("expected onError on second subscribe", err.get());
+            assertNotNull(err.get(), "expected onError on second subscribe");
             assertTrue(err.get() instanceof IllegalStateException);
         }
     }
 
     @Test
     public void invalidRequestSignalsError() throws Exception {
-        Assume.assumeTrue("Model file not found", new java.io.File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new java.io.File(TestConstants.MODEL_PATH).exists(), "Model file not found");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
 
         try (LlamaModel model = new LlamaModel(new ModelParameters()
@@ -135,7 +135,7 @@ public class LlamaPublisherTest {
                 @Override public void onComplete() { done.countDown(); }
             });
             assertTrue(done.await(10, TimeUnit.SECONDS));
-            assertNotNull("expected onError for request(0)", err.get());
+            assertNotNull(err.get(), "expected onError for request(0)");
             assertTrue(err.get() instanceof IllegalArgumentException);
         }
     }
@@ -145,7 +145,7 @@ public class LlamaPublisherTest {
         // Construct a publisher without a model — subscribe(null) must NPE before any model use.
         try {
             new LlamaPublisher(null, null, false).subscribe(null);
-            org.junit.Assert.fail("expected NPE");
+            org.junit.fail("expected NPE");
         } catch (NullPointerException expected) {
             assertEquals("subscriber", expected.getMessage());
         }

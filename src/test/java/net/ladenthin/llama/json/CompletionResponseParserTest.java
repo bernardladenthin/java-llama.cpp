@@ -9,11 +9,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import net.ladenthin.llama.LlamaOutput;
 import net.ladenthin.llama.StopReason;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Unit tests for {@link CompletionResponseParser}.
@@ -163,8 +163,8 @@ public class CompletionResponseParserTest {
         JsonNode node = MAPPER.readTree(json);
         Map<String, Float> probs = parser.parseProbabilities(node);
         assertEquals(2, probs.size());
-        assertEquals(0.82f, probs.get("Hello"), 0.001f);
-        assertEquals(0.65f, probs.get(" world"), 0.001f);
+        assertEquals(probs.get("Hello"), 0.001f, 0.82f);
+        assertEquals(probs.get(" world"), 0.001f, 0.65f);
     }
 
     @Test
@@ -177,7 +177,7 @@ public class CompletionResponseParserTest {
         JsonNode node = MAPPER.readTree(json);
         Map<String, Float> probs = parser.parseProbabilities(node);
         assertEquals(1, probs.size());
-        assertEquals(-0.2f, probs.get("Hello"), 0.001f);
+        assertEquals(probs.get("Hello"), 0.001f, -0.2f);
     }
 
     @Test
@@ -190,7 +190,7 @@ public class CompletionResponseParserTest {
         JsonNode node = MAPPER.readTree(json);
         Map<String, Float> probs = parser.parseProbabilities(node);
         assertEquals(1, probs.size());
-        assertEquals(0.5f, probs.get("say \"yes\""), 0.001f);
+        assertEquals(probs.get("say \"yes\""), 0.001f, 0.5f);
     }
 
     @Test
@@ -204,7 +204,7 @@ public class CompletionResponseParserTest {
         JsonNode node = MAPPER.readTree(json);
         Map<String, Float> probs = parser.parseProbabilities(node);
         assertEquals(1, probs.size());
-        assertTrue("only outer token 'A' should be present", probs.containsKey("A"));
-        assertFalse("inner top_probs token 'B' must not appear", probs.containsKey("B"));
+        assertTrue(probs.containsKey("A"), "only outer token 'A' should be present");
+        assertFalse(probs.containsKey("B"), "inner top_probs token 'B' must not appear");
     }
 }

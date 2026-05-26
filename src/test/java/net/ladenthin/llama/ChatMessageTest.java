@@ -4,9 +4,9 @@
 
 package net.ladenthin.llama;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 
 @ClaudeGenerated(
         purpose = "Verify ChatMessage value class accessors and toString format used by Session.getMessages()."

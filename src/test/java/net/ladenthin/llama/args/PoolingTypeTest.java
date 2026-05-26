@@ -5,16 +5,11 @@
 
 package net.ladenthin.llama.args;
 
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
 import java.util.Arrays;
 import java.util.Collection;
 
-@RunWith(Parameterized.class)
 public class PoolingTypeTest extends AbstractCliArgEnumTest<PoolingType> {
 
-    @Parameterized.Parameters(name = "{0} -> {1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
             {PoolingType.UNSPECIFIED, "unspecified", 6},
@@ -26,7 +21,4 @@ public class PoolingTypeTest extends AbstractCliArgEnumTest<PoolingType> {
         });
     }
 
-    public PoolingTypeTest(PoolingType value, String expectedArgValue, int expectedEnumCount) {
-        super(value, expectedArgValue, expectedEnumCount);
-    }
 }

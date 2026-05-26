@@ -9,23 +9,22 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
 
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-import org.junit.Rule;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 @ClaudeGenerated(
         purpose = "Factory contracts and data-URI shape for the multimodal ContentPart value type."
 )
 public class ContentPartTest {
 
-    @Rule
-    public TemporaryFolder tmp = new TemporaryFolder();
+    @TempDir
+    Path tmp;
 
     @Test
     public void textPartCarriesText() {
@@ -51,34 +50,34 @@ public class ContentPartTest {
         assertEquals(expected, p.getImageUrl());
     }
 
-    @Test(expected = NullPointerException.class)
+    @Test
     public void textRejectsNull() {
-        ContentPart.text(null);
+        assertThrows(NullPointerException.class, () -> ContentPart.text(null));
     }
 
-    @Test(expected = NullPointerException.class)
+    @Test
     public void imageUrlRejectsNull() {
-        ContentPart.imageUrl(null);
+        assertThrows(NullPointerException.class, () -> ContentPart.imageUrl(null));
     }
 
-    @Test(expected = NullPointerException.class)
+    @Test
     public void imageBytesRejectsNullBytes() {
-        ContentPart.imageBytes(null, "image/png");
+        assertThrows(NullPointerException.class, () -> ContentPart.imageBytes(null, "image/png"));
     }
 
-    @Test(expected = NullPointerException.class)
+    @Test
     public void imageBytesRejectsNullMimeType() {
-        ContentPart.imageBytes(new byte[]{0}, null);
+        assertThrows(NullPointerException.class, () -> ContentPart.imageBytes(new byte[]{0}, null));
     }
 
-    @Test(expected = IllegalArgumentException.class)
+    @Test
     public void imageBytesRejectsEmptyMimeType() {
-        ContentPart.imageBytes(new byte[]{0}, "");
+        assertThrows(IllegalArgumentException.class, () -> ContentPart.imageBytes(new byte[]{0}, ""));
     }
 
     @Test
     public void imageFileDetectsPngMime() throws IOException {
-        Path file = tmp.newFile("logo.PNG").toPath();
+        Path file = tmp.resolve("logo.PNG");
         Files.write(file, new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47});
         ContentPart p = ContentPart.imageFile(file);
         assertTrue(p.getImageUrl().startsWith("data:image/png;base64,"));
@@ -86,7 +85,7 @@ public class ContentPartTest {
 
     @Test
     public void imageFileDetectsJpegFromJpgExtension() throws IOException {
-        Path file = tmp.newFile("photo.jpg").toPath();
+        Path file = tmp.resolve("photo.jpg");
         Files.write(file, new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF});
         ContentPart p = ContentPart.imageFile(file);
         assertTrue(p.getImageUrl().startsWith("data:image/jpeg;base64,"));
@@ -94,7 +93,7 @@ public class ContentPartTest {
 
     @Test
     public void imageFileDetectsJpegFromJpegExtension() throws IOException {
-        Path file = tmp.newFile("photo.jpeg").toPath();
+        Path file = tmp.resolve("photo.jpeg");
         Files.write(file, new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF});
         ContentPart p = ContentPart.imageFile(file);
         assertTrue(p.getImageUrl().startsWith("data:image/jpeg;base64,"));
@@ -102,7 +101,7 @@ public class ContentPartTest {
 
     @Test
     public void imageFileDetectsWebp() throws IOException {
-        Path file = tmp.newFile("img.webp").toPath();
+        Path file = tmp.resolve("img.webp");
         Files.write(file, new byte[]{0x52, 0x49, 0x46, 0x46});
         ContentPart p = ContentPart.imageFile(file);
         assertTrue(p.getImageUrl().startsWith("data:image/webp;base64,"));
@@ -110,7 +109,7 @@ public class ContentPartTest {
 
     @Test
     public void imageFileDetectsGif() throws IOException {
-        Path file = tmp.newFile("anim.gif").toPath();
+        Path file = tmp.resolve("anim.gif");
         Files.write(file, new byte[]{0x47, 0x49, 0x46, 0x38});
         ContentPart p = ContentPart.imageFile(file);
         assertTrue(p.getImageUrl().startsWith("data:image/gif;base64,"));
@@ -118,7 +117,7 @@ public class ContentPartTest {
 
     @Test
     public void imageFileRejectsUnknownExtension() throws IOException {
-        Path file = tmp.newFile("doc.txt").toPath();
+        Path file = tmp.resolve("doc.txt");
         Files.write(file, "hello".getBytes());
         try {
             ContentPart.imageFile(file);

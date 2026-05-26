@@ -5,12 +5,12 @@
 package net.ladenthin.llama;
 
 import net.ladenthin.llama.json.ChatResponseParser;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ClaudeGenerated(
         purpose = "Verify ChatResponseParser.parseResponse maps the OAI-compatible chat completion JSON "
@@ -45,8 +45,8 @@ public class ChatResponseTest {
         assertEquals(17L, r.getUsage().getTotalTokens());
 
         assertEquals(12, r.getTimings().getPromptN());
-        assertEquals(100.0, r.getTimings().getPromptMs(), 1e-9);
-        assertEquals(100.0, r.getTimings().getPredictedPerSecond(), 1e-9);
+        assertEquals(r.getTimings().getPromptMs(), 1e-9, 100.0);
+        assertEquals(r.getTimings().getPredictedPerSecond(), 1e-9, 100.0);
 
         assertEquals("Hello!", r.getFirstContent());
     }
@@ -83,7 +83,7 @@ public class ChatResponseTest {
         ChatResponse r = parser.parseResponse(json);
         String args = r.getFirstMessage().getToolCalls().get(0).getArgumentsJson();
         // exact text isn't guaranteed, but must contain both fields
-        assertTrue("expected serialized object, got: " + args, args.contains("\"a\":1"));
+        assertTrue(args.contains("\"a\":1"), "expected serialized object, got: " + args);
         assertTrue(args.contains("\"b\":2"));
     }
 
@@ -105,15 +105,15 @@ public class ChatResponseTest {
                 .addMessage(ChatMessage.toolResult("c1", "4"));
 
         String msgs = req.buildMessagesJson();
-        assertTrue(msgs, msgs.contains("\"tool_calls\""));
-        assertTrue(msgs, msgs.contains("\"tool_call_id\":\"c1\""));
-        assertTrue(msgs, msgs.contains("\"name\":\"add\""));
+        assertTrue(msgs.contains("\"tool_calls\""), msgs);
+        assertTrue(msgs.contains("\"tool_call_id\":\"c1\""), msgs);
+        assertTrue(msgs.contains("\"name\":\"add\""), msgs);
     }
 
     @Test
     public void buildToolsJsonEmptyWhenNoTools() {
         ChatRequest req = new ChatRequest().addMessage("user", "hi");
-        org.junit.Assert.assertNull(req.buildToolsJson());
+        org.junit.assertNull(req.buildToolsJson());
     }
 
     @Test
@@ -122,8 +122,8 @@ public class ChatResponseTest {
                 "echo", "Echo a string",
                 "{\"type\":\"object\",\"properties\":{\"s\":{\"type\":\"string\"}}}"));
         String tools = req.buildToolsJson();
-        assertTrue(tools, tools.contains("\"type\":\"function\""));
-        assertTrue(tools, tools.contains("\"name\":\"echo\""));
-        assertTrue(tools, tools.contains("\"properties\""));
+        assertTrue(tools.contains("\"type\":\"function\""), tools);
+        assertTrue(tools.contains("\"name\":\"echo\""), tools);
+        assertTrue(tools.contains("\"properties\""), tools);
     }
 }

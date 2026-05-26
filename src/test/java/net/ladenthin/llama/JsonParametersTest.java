@@ -6,10 +6,10 @@ package net.ladenthin.llama;
 
 import net.ladenthin.llama.args.CacheType;
 import net.ladenthin.llama.args.CliArg;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertSame;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
 @ClaudeGenerated(
         purpose = "Verify the putScalar and putEnum helpers on JsonParameters: that they store the " +
@@ -101,7 +101,7 @@ public class JsonParametersTest {
     public void putScalar_returnsSameBuilderInstance() {
         TestBuilder b = new TestBuilder();
         TestBuilder returned = b.putScalarPublic("--threads", 1);
-        assertSame(b, returned);
+        assertSame(returned, b);
     }
 
     @Test
@@ -117,7 +117,7 @@ public class JsonParametersTest {
     public void putEnum_returnsSameBuilderInstance() {
         TestBuilder b = new TestBuilder();
         TestBuilder returned = b.putEnumPublic("--cache-type-k", CacheType.F16);
-        assertSame(b, returned);
+        assertSame(returned, b);
     }
 
     @Test
@@ -154,7 +154,7 @@ public class JsonParametersTest {
     public void cliPutScalar_returnsSameBuilderInstance() {
         CliTestBuilder b = new CliTestBuilder();
         CliTestBuilder returned = b.putScalarPublic("--threads", 1);
-        assertSame(b, returned);
+        assertSame(returned, b);
     }
 
     @Test
@@ -168,6 +168,6 @@ public class JsonParametersTest {
     public void cliPutEnum_returnsSameBuilderInstance() {
         CliTestBuilder b = new CliTestBuilder();
         CliTestBuilder returned = b.putEnumPublic("--cache-type-k", CacheType.F16);
-        assertSame(b, returned);
+        assertSame(returned, b);
     }
 }

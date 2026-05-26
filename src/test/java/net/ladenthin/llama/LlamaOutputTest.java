@@ -10,9 +10,9 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 @ClaudeGenerated(
         purpose = "Verify that LlamaOutput correctly stores text, the probability map, stop flag, " +
@@ -48,8 +48,8 @@ public class LlamaOutputTest {
 		probs.put("world", 0.1f);
 		LlamaOutput output = new LlamaOutput("", probs, false, StopReason.NONE);
 		assertEquals(2, output.probabilities.size());
-		assertEquals(0.9f, output.probabilities.get("hello"), 0.0001f);
-		assertEquals(0.1f, output.probabilities.get("world"), 0.0001f);
+		assertEquals(output.probabilities.get("hello"), 0.0001f, 0.9f);
+		assertEquals(output.probabilities.get("world"), 0.0001f, 0.1f);
 	}
 
 	@Test
@@ -127,7 +127,7 @@ public class LlamaOutputTest {
 	public void testProbabilitiesAbsentWhenNoProbsKey() {
 		String json = "{\"content\":\"hi\",\"stop\":true,\"stop_type\":\"eos\"}";
 		LlamaOutput output = parser.parse(json);
-		assertTrue("No completion_probabilities key → empty map", output.probabilities.isEmpty());
+		assertTrue(output.probabilities.isEmpty(), "No completion_probabilities key → empty map");
 	}
 
 	@Test
@@ -142,8 +142,8 @@ public class LlamaOutputTest {
 				"]}";
 		LlamaOutput output = parser.parse(json);
 		assertEquals(2, output.probabilities.size());
-		assertEquals(0.82f, output.probabilities.get("Hello"), 0.001f);
-		assertEquals(0.65f, output.probabilities.get(" world"), 0.001f);
+		assertEquals(output.probabilities.get("Hello"), 0.001f, 0.82f);
+		assertEquals(output.probabilities.get(" world"), 0.001f, 0.65f);
 	}
 
 	@Test
@@ -156,7 +156,7 @@ public class LlamaOutputTest {
 				"]}";
 		LlamaOutput output = parser.parse(json);
 		assertEquals(1, output.probabilities.size());
-		assertEquals(-0.2f, output.probabilities.get("Hello"), 0.001f);
+		assertEquals(output.probabilities.get("Hello"), 0.001f, -0.2f);
 	}
 
 	@Test
@@ -168,7 +168,7 @@ public class LlamaOutputTest {
 				"]}";
 		LlamaOutput output = parser.parse(json);
 		assertEquals(1, output.probabilities.size());
-		assertEquals(0.5f, output.probabilities.get("say \"yes\""), 0.001f);
+		assertEquals(output.probabilities.get("say \"yes\""), 0.001f, 0.5f);
 	}
 
 	// --- StopReason tests ---

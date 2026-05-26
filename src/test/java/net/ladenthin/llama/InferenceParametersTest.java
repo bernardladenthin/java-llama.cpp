@@ -15,9 +15,9 @@ import net.ladenthin.llama.args.ContinuationMode;
 import net.ladenthin.llama.args.MiroStat;
 import net.ladenthin.llama.args.ReasoningFormat;
 import net.ladenthin.llama.args.Sampler;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 @ClaudeGenerated(
         purpose = "Verify that every InferenceParameters setter correctly stores its value in the " +
@@ -650,9 +650,9 @@ public class InferenceParametersTest {
 	@Test
 	public void testBuilderChainingReturnsSameInstance() {
 		InferenceParameters params = new InferenceParameters("");
-		assertSame(params, params.setTemperature(0.5f));
-		assertSame(params, params.setTopK(10));
-		assertSame(params, params.setNPredict(5));
+		assertSame(params.setTemperature(0.5f), params);
+		assertSame(params.setTopK(10), params);
+		assertSame(params.setNPredict(5), params);
 	}
 
 	// -------------------------------------------------------------------------

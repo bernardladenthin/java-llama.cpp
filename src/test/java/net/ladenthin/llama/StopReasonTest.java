@@ -5,14 +5,11 @@
 
 package net.ladenthin.llama;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
-import java.util.Arrays;
-import java.util.Collection;
-
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Round-trip tests for {@link StopReason}.
@@ -26,22 +23,11 @@ import static org.junit.Assert.*;
  * <p>Edge cases (null, empty string, unknown value) are tested in separate
  * {@code @Test} methods below the round-trip test.
  */
-@RunWith(Parameterized.class)
 public class StopReasonTest {
 
-    @Parameterized.Parameters(name = "{0}")
-    public static Collection<StopReason> data() {
-        return Arrays.asList(StopReason.values());
-    }
-
-    private final StopReason reason;
-
-    public StopReasonTest(StopReason reason) {
-        this.reason = reason;
-    }
-
-    @Test
-    public void testRoundTrip() {
+    @ParameterizedTest(name = "{0}")
+    @EnumSource(StopReason.class)
+    public void testRoundTrip(StopReason reason) {
         assertSame(reason, StopReason.fromStopType(reason.getStopType()));
     }
 

@@ -12,11 +12,11 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Paths;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 @ClaudeGenerated(
         purpose = "Verify the helper statics extracted from LlamaLoader without requiring any " +
@@ -188,14 +188,14 @@ public class LlamaLoaderTest {
 	@Test
 	public void testGetNativeResourcePathStartsWithSlash() {
 		String path = LlamaLoader.getNativeResourcePath();
-		assertTrue("Resource path should start with '/'", path.startsWith("/"));
+		assertTrue(path.startsWith("/"), "Resource path should start with '/'");
 	}
 
 	@Test
 	public void testGetNativeResourcePathContainsPackage() {
 		String path = LlamaLoader.getNativeResourcePath();
 		// Package net.ladenthin.llama maps to net/ladenthin/llama
-		assertTrue("Resource path should contain package", path.contains("net/ladenthin/llama"));
+		assertTrue(path.contains("net/ladenthin/llama"), "Resource path should contain package");
 	}
 
 	@Test
@@ -203,7 +203,6 @@ public class LlamaLoaderTest {
 		String path = LlamaLoader.getNativeResourcePath();
 		// Should end with OS/arch from OSInfo
 		String osArch = OSInfo.getNativeLibFolderPathForCurrentOS();
-		assertTrue("Resource path should end with OS/arch: " + path,
-				path.endsWith(osArch));
+		assertTrue(path.endsWith(osArch), "Resource path should end with OS/arch: " + path);
 	}
 }

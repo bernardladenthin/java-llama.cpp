@@ -6,10 +6,10 @@
 package net.ladenthin.llama;
 
 import net.ladenthin.llama.args.PoolingType;
-import org.junit.After;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Test;
 
 import java.io.File;
 
@@ -64,10 +64,7 @@ public class LlamaEmbeddingsTest {
     // -------------------------------------------------------------------------
 
     private LlamaModel openModel(PoolingType type) {
-        Assume.assumeTrue(
-                "Model file not found, skipping " + getClass().getSimpleName(),
-                new File(TestConstants.MODEL_PATH).exists()
-        );
+        Assumptions.assumeTrue(new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping " + getClass().getSimpleName());
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         return new LlamaModel(
                 new ModelParameters()
@@ -92,7 +89,7 @@ public class LlamaEmbeddingsTest {
     public void testEmbedUnspecifiedPooling() {
         model = openModel(PoolingType.UNSPECIFIED);
         float[] embedding = model.embed(TEXT);
-        Assert.assertEquals(EXPECTED_DIM, embedding.length);
+        assertEquals(EXPECTED_DIM, embedding.length);
         assertEmbeddingValid(embedding, PoolingType.UNSPECIFIED);
     }
 
@@ -101,7 +98,7 @@ public class LlamaEmbeddingsTest {
     public void testEmbedMeanPooling() {
         model = openModel(PoolingType.MEAN);
         float[] embedding = model.embed(TEXT);
-        Assert.assertEquals(EXPECTED_DIM, embedding.length);
+        assertEquals(EXPECTED_DIM, embedding.length);
         assertEmbeddingValid(embedding, PoolingType.MEAN);
     }
 
@@ -110,7 +107,7 @@ public class LlamaEmbeddingsTest {
     public void testEmbedLastPooling() {
         model = openModel(PoolingType.LAST);
         float[] embedding = model.embed(TEXT);
-        Assert.assertEquals(EXPECTED_DIM, embedding.length);
+        assertEquals(EXPECTED_DIM, embedding.length);
         assertEmbeddingValid(embedding, PoolingType.LAST);
     }
 
@@ -132,7 +129,7 @@ public class LlamaEmbeddingsTest {
         model = openModel(PoolingType.LAST);
         float[] last = model.embed(TEXT);
 
-        Assert.assertEquals(mean.length, last.length);
+        assertEquals(mean.length, last.length);
         boolean differ = false;
         for (int i = 0; i < mean.length; i++) {
             if (Math.abs(mean[i] - last[i]) > 1e-6f) {
@@ -140,7 +137,7 @@ public class LlamaEmbeddingsTest {
                 break;
             }
         }
-        Assert.assertTrue("MEAN and LAST pooling must produce different vectors for multi-token input", differ);
+        assertTrue(differ, "MEAN and LAST pooling must produce different vectors for multi-token input");
     }
 
     // -------------------------------------------------------------------------
@@ -149,14 +146,8 @@ public class LlamaEmbeddingsTest {
 
     private static void assertEmbeddingValid(float[] embedding, PoolingType type) {
         for (int i = 0; i < embedding.length; i++) {
-            Assert.assertFalse(
-                    type + " embedding[" + i + "] is NaN",
-                    Float.isNaN(embedding[i])
-            );
-            Assert.assertFalse(
-                    type + " embedding[" + i + "] is infinite",
-                    Float.isInfinite(embedding[i])
-            );
+            assertFalse(Float.isNaN(embedding[i]), type + " embedding[" + i + "] is NaN");
+            assertFalse(Float.isInfinite(embedding[i]), type + " embedding[" + i + "] is infinite");
         }
         boolean hasNonZero = false;
         for (float v : embedding) {
@@ -165,7 +156,7 @@ public class LlamaEmbeddingsTest {
                 break;
             }
         }
-        Assert.assertTrue(type + " embedding must not be all-zeros", hasNonZero);
+        assertTrue(hasNonZero, type + " embedding must not be all-zeros");
     }
 
     // -------------------------------------------------------------------------
@@ -196,9 +187,7 @@ public class LlamaEmbeddingsTest {
         Assume.assumeNotNull(
                 "Set -D" + TestConstants.PROP_NOMIC_MODEL_PATH + " to a nomic-embed-text GGUF to run this test",
                 nomicPath);
-        Assume.assumeTrue(
-                "Nomic model file not found at " + nomicPath,
-                new File(nomicPath).exists());
+        Assumptions.assumeTrue(new File(nomicPath).exists(), "Nomic model file not found at " + nomicPath);
 
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         model = new LlamaModel(
@@ -212,9 +201,7 @@ public class LlamaEmbeddingsTest {
         );
 
         float[] embedding = model.embed("search_query: What is TSNE?");
-        Assert.assertEquals(
-                "nomic-embed-text-v1.5 must return a " + TestConstants.NOMIC_EMBED_DIM + "-dim vector",
-                TestConstants.NOMIC_EMBED_DIM, embedding.length);
+        assertEquals(TestConstants.NOMIC_EMBED_DIM, embedding.length, "nomic-embed-text-v1.5 must return a " + TestConstants.NOMIC_EMBED_DIM + "-dim vector");
         assertEmbeddingValid(embedding, PoolingType.MEAN);
     }
 }

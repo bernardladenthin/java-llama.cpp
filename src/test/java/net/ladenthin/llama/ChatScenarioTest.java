@@ -14,11 +14,11 @@ import java.util.List;
 import net.ladenthin.llama.args.PoolingType;
 import net.ladenthin.llama.json.ChatResponseParser;
 import net.ladenthin.llama.json.CompletionResponseParser;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 /**
  * Complex chat scenario tests exercising code paths not covered by LlamaModelTest:
@@ -55,8 +55,7 @@ public class ChatScenarioTest {
 
     @BeforeClass
     public static void setup() {
-        Assume.assumeTrue("Model file not found, skipping ChatScenarioTest",
-                new File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping ChatScenarioTest");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         model = new LlamaModel(
                 new ModelParameters()
@@ -100,13 +99,12 @@ public class ChatScenarioTest {
 
         String response = model.chatComplete(params);
 
-        Assert.assertNotNull(response);
-        Assert.assertFalse("Response must not be empty", response.isEmpty());
-        Assert.assertTrue("OAI chat response must contain 'choices'", response.contains("\"choices\""));
-        Assert.assertTrue("OAI chat response must contain 'message'", response.contains("\"message\""));
-        Assert.assertTrue("OAI chat response must contain 'content'", response.contains("\"content\""));
-        Assert.assertTrue("OAI chat response must have assistant role",
-                response.contains("\"assistant\"") || response.contains("assistant"));
+        assertNotNull(response);
+        assertFalse(response.isEmpty(), "Response must not be empty");
+        assertTrue(response.contains("\"choices\""), "OAI chat response must contain 'choices'");
+        assertTrue(response.contains("\"message\""), "OAI chat response must contain 'message'");
+        assertTrue(response.contains("\"content\""), "OAI chat response must contain 'content'");
+        assertTrue(response.contains("\"assistant\"") || response.contains("assistant"), "OAI chat response must have assistant role");
     }
 
     /**
@@ -126,9 +124,9 @@ public class ChatScenarioTest {
 
         String text = model.chatCompleteText(params);
 
-        Assert.assertNotNull(text);
-        Assert.assertFalse("chatCompleteText must not be empty", text.isEmpty());
-        Assert.assertFalse("chatCompleteText must not contain OAI JSON wrapper", text.contains("\"choices\""));
+        assertNotNull(text);
+        assertFalse(text.isEmpty(), "chatCompleteText must not be empty");
+        assertFalse(text.contains("\"choices\""), "chatCompleteText must not contain OAI JSON wrapper");
     }
 
     /**
@@ -150,7 +148,7 @@ public class ChatScenarioTest {
         String text = model.chatCompleteText(params);
 
         String expected = chatParser.extractChoiceContent(rawJson);
-        Assert.assertEquals("chatCompleteText must match choices[0].message.content", expected, text);
+        assertEquals(expected, text, "chatCompleteText must match choices[0].message.content");
     }
 
     /**
@@ -164,11 +162,9 @@ public class ChatScenarioTest {
 
         String response = model.handleChatCompletions(json);
 
-        Assert.assertNotNull(response);
-        Assert.assertTrue("Direct handleChatCompletions must return choices array",
-                response.contains("\"choices\""));
-        Assert.assertTrue("Direct handleChatCompletions must return message content",
-                response.contains("\"content\""));
+        assertNotNull(response);
+        assertTrue(response.contains("\"choices\""), "Direct handleChatCompletions must return choices array");
+        assertTrue(response.contains("\"content\""), "Direct handleChatCompletions must return message content");
     }
 
     // ------------------------------------------------------------------
@@ -199,7 +195,7 @@ public class ChatScenarioTest {
         boolean stopped = false;
         while (!stopped) {
             String json = model.receiveCompletionJson(taskId);
-            Assert.assertNotNull("receiveCompletionJson must not return null", json);
+            assertNotNull(json, "receiveCompletionJson must not return null");
             LlamaOutput output = completionParser.parse(json);
             sb.append(output.text);
             tokens++;
@@ -209,12 +205,12 @@ public class ChatScenarioTest {
             }
             if (tokens > N_PREDICT + 2) {
                 model.releaseTask(taskId);
-                Assert.fail("Streaming did not stop after nPredict tokens");
+                fail("Streaming did not stop after nPredict tokens");
             }
         }
 
-        Assert.assertTrue("Direct streaming must produce at least one token", tokens > 0);
-        Assert.assertFalse("Direct streaming must produce non-empty content", sb.toString().isEmpty());
+        assertTrue(tokens > 0, "Direct streaming must produce at least one token");
+        assertFalse(sb.toString().isEmpty(), "Direct streaming must produce non-empty content");
     }
 
     // ------------------------------------------------------------------
@@ -241,9 +237,9 @@ public class ChatScenarioTest {
                 .setSeed(123)
                 .setTemperature(0.0f);
         String blockingJson = model.chatComplete(blockingParams);
-        Assert.assertNotNull("Blocking chat must return non-null JSON", blockingJson);
-        Assert.assertFalse("Blocking chat must return non-empty JSON", blockingJson.isEmpty());
-        Assert.assertTrue("Blocking chat JSON must contain 'choices'", blockingJson.contains("\"choices\""));
+        assertNotNull(blockingJson, "Blocking chat must return non-null JSON");
+        assertFalse(blockingJson.isEmpty(), "Blocking chat must return non-empty JSON");
+        assertTrue(blockingJson.contains("\"choices\""), "Blocking chat JSON must contain 'choices'");
 
         // Streaming
         InferenceParameters streamingParams = new InferenceParameters("")
@@ -255,8 +251,7 @@ public class ChatScenarioTest {
         for (LlamaOutput output : model.generateChat(streamingParams)) {
             streamedContent.append(output.text);
         }
-        Assert.assertFalse("Streaming chat must produce non-empty content",
-                streamedContent.toString().isEmpty());
+        assertFalse(streamedContent.toString().isEmpty(), "Streaming chat must produce non-empty content");
     }
 
     // ------------------------------------------------------------------
@@ -291,17 +286,11 @@ public class ChatScenarioTest {
         String stJson = model.chatComplete(stopped);
         String stContent = chatParser.extractChoiceContent(stJson);
 
-        Assert.assertNotNull("Stop-string response must not be null", stJson);
+        assertNotNull(stJson, "Stop-string response must not be null");
         // Content with stop should be shorter (or at most equal)
-        Assert.assertTrue(
-                "Content with stop string must not exceed unconstrained content length",
-                stContent.length() <= unContent.length()
-        );
+        assertTrue(stContent.length() <= unContent.length(), "Content with stop string must not exceed unconstrained content length");
         // The stopped content must not contain "4" (the stop string itself is excluded)
-        Assert.assertFalse(
-                "Content stopped at '4' must not contain '4'",
-                stContent.contains("4")
-        );
+        assertFalse(stContent.contains("4"), "Content stopped at '4' must not contain '4'");
     }
 
     // ------------------------------------------------------------------
@@ -334,10 +323,9 @@ public class ChatScenarioTest {
 
         String responseJson = model.chatComplete(params);
 
-        Assert.assertNotNull("Grammar-constrained chat must return non-null", responseJson);
-        Assert.assertFalse("Grammar-constrained chat must return non-empty response", responseJson.isEmpty());
-        Assert.assertTrue("Grammar-constrained chat must return OAI choices array",
-                responseJson.contains("\"choices\""));
+        assertNotNull(responseJson, "Grammar-constrained chat must return non-null");
+        assertFalse(responseJson.isEmpty(), "Grammar-constrained chat must return non-empty response");
+        assertTrue(responseJson.contains("\"choices\""), "Grammar-constrained chat must return OAI choices array");
     }
 
     // ------------------------------------------------------------------
@@ -367,8 +355,8 @@ public class ChatScenarioTest {
             String json = model.chatComplete(params);
             String content = chatParser.extractChoiceContent(json);
 
-            Assert.assertNotNull("Turn " + turn + ": response must not be null", json);
-            Assert.assertFalse("Turn " + turn + ": content must not be empty", content.isEmpty());
+            assertNotNull(json, "Turn " + turn + ": response must not be null");
+            assertFalse(content.isEmpty(), "Turn " + turn + ": content must not be empty");
 
             // Append assistant response and a new user message for the next turn
             messages.add(new Pair<>("assistant", content));
@@ -400,8 +388,8 @@ public class ChatScenarioTest {
 
         // Must not throw
         String response = model.chatComplete(params);
-        Assert.assertNotNull("Unicode message must produce a non-null response", response);
-        Assert.assertFalse("Unicode message must produce a non-empty response", response.isEmpty());
+        assertNotNull(response, "Unicode message must produce a non-null response");
+        assertFalse(response.isEmpty(), "Unicode message must produce a non-empty response");
     }
 
     // ------------------------------------------------------------------
@@ -427,8 +415,8 @@ public class ChatScenarioTest {
 
         // Must not throw a JSON parse error in the native layer
         String response = model.chatComplete(params);
-        Assert.assertNotNull("Special-char message must not return null", response);
-        Assert.assertFalse("Special-char message must not return empty response", response.isEmpty());
+        assertNotNull(response, "Special-char message must not return null");
+        assertFalse(response.isEmpty(), "Special-char message must not return empty response");
     }
 
     // ------------------------------------------------------------------
@@ -456,8 +444,8 @@ public class ChatScenarioTest {
                     .setTemperature(0.0f);
 
             responses[i] = model.chatComplete(params);
-            Assert.assertNotNull("Call " + i + " must not return null", responses[i]);
-            Assert.assertFalse("Call " + i + " must not return empty response", responses[i].isEmpty());
+            assertNotNull(responses[i], "Call " + i + " must not return null");
+            assertFalse(responses[i].isEmpty(), "Call " + i + " must not return empty response");
         }
     }
 
@@ -481,8 +469,8 @@ public class ChatScenarioTest {
 
         String response = model.handleInfill(json);
 
-        Assert.assertNotNull("handleInfill must return non-null", response);
-        Assert.assertTrue("handleInfill response must contain 'content'", response.contains("\"content\""));
+        assertNotNull(response, "handleInfill must return non-null");
+        assertTrue(response.contains("\"content\""), "handleInfill response must contain 'content'");
     }
 
     // ------------------------------------------------------------------
@@ -506,12 +494,12 @@ public class ChatScenarioTest {
             response = model.handleEmbeddings(json, true);
         } catch (LlamaException e) {
             // If the model's pooling type is incompatible with OAI format, skip.
-            Assume.assumeTrue("Skipping OAI-compat embeddings (pooling type not supported): "
-                    + e.getMessage(), false);
+            Assumptions.assumeTrue(false, "Skipping OAI-compat embeddings (pooling type not supported): "
+                    + e.getMessage());
             return; // unreachable, but satisfies the compiler
         }
-        Assert.assertNotNull("OAI-compat embeddings must not be null", response);
-        Assert.assertTrue("OAI-compat embeddings must contain 'data'", response.contains("\"data\""));
+        assertNotNull(response, "OAI-compat embeddings must not be null");
+        assertTrue(response.contains("\"data\""), "OAI-compat embeddings must contain 'data'");
     }
 
     /**
@@ -523,8 +511,8 @@ public class ChatScenarioTest {
         String json = "{\"content\": \"Hello world\"}";
         String response = model.handleEmbeddings(json, false);
 
-        Assert.assertNotNull("Raw embeddings must not be null", response);
-        Assert.assertTrue("Raw embeddings must contain 'embedding'", response.contains("\"embedding\""));
+        assertNotNull(response, "Raw embeddings must not be null");
+        assertTrue(response.contains("\"embedding\""), "Raw embeddings must contain 'embedding'");
     }
 
     // ------------------------------------------------------------------
@@ -542,18 +530,15 @@ public class ChatScenarioTest {
         String withSpecial    = model.handleTokenize(content, true,  false);
         String withoutSpecial = model.handleTokenize(content, false, false);
 
-        Assert.assertNotNull(withSpecial);
-        Assert.assertNotNull(withoutSpecial);
-        Assert.assertTrue("Both responses must contain 'tokens'", withSpecial.contains("\"tokens\""));
+        assertNotNull(withSpecial);
+        assertNotNull(withoutSpecial);
+        assertTrue(withSpecial.contains("\"tokens\""), "Both responses must contain 'tokens'");
 
         int countWith    = tokenCount(withSpecial);
         int countWithout = tokenCount(withoutSpecial);
 
-        Assert.assertTrue(
-                "addSpecial=true should produce at least as many tokens as addSpecial=false " +
-                "(got " + countWith + " vs " + countWithout + ")",
-                countWith >= countWithout
-        );
+        assertTrue(countWith >= countWithout, "addSpecial=true should produce at least as many tokens as addSpecial=false " +
+                "(got " + countWith + " vs " + countWithout + ")");
     }
 
     // ------------------------------------------------------------------
@@ -568,19 +553,16 @@ public class ChatScenarioTest {
     public void testHandleDetokenizeRoundTrip() {
         String original = "Hello, world!";
         int[] tokens = model.encode(original);
-        Assert.assertTrue("encode must produce at least one token", tokens.length > 0);
+        assertTrue(tokens.length > 0, "encode must produce at least one token");
 
         String response = model.handleDetokenize(tokens);
-        Assert.assertNotNull(response);
-        Assert.assertTrue("handleDetokenize response must contain 'content'", response.contains("\"content\""));
+        assertNotNull(response);
+        assertTrue(response.contains("\"content\""), "handleDetokenize response must contain 'content'");
 
         // Extract the detokenized text (simple search for content field value)
         String detokenized = completionParser.parse(response).text;
         // The tokenizer typically prepends a space; check the meaningful content
-        Assert.assertTrue(
-                "Detokenized text should contain original content (got: '" + detokenized + "')",
-                detokenized.contains("Hello") && detokenized.contains("world")
-        );
+        assertTrue(detokenized.contains("Hello") && detokenized.contains("world"), "Detokenized text should contain original content (got: '" + detokenized + "')");
     }
 
     // ------------------------------------------------------------------
@@ -604,18 +586,16 @@ public class ChatScenarioTest {
         Files.delete(tempFile.toPath());
 
         String saveResult = model.saveSlot(0, filepath);
-        Assert.assertNotNull("saveSlot must return non-null", saveResult);
-        Assert.assertTrue("saveSlot result must contain id_slot",
-                saveResult.contains("\"id_slot\""));
+        assertNotNull(saveResult, "saveSlot must return non-null");
+        assertTrue(saveResult.contains("\"id_slot\""), "saveSlot result must contain id_slot");
 
         // File must now exist
         File saved = new File(filepath);
         if (saved.exists()) {
             // Only attempt restore if file was actually written
             String restoreResult = model.restoreSlot(0, filepath);
-            Assert.assertNotNull("restoreSlot must return non-null", restoreResult);
-            Assert.assertTrue("restoreSlot result must contain id_slot",
-                    restoreResult.contains("\"id_slot\""));
+            assertNotNull(restoreResult, "restoreSlot must return non-null");
+            assertTrue(restoreResult.contains("\"id_slot\""), "restoreSlot result must contain id_slot");
             saved.delete();
         }
         // If the file wasn't written we still pass: the save attempt exercised the code path.
@@ -641,11 +621,11 @@ public class ChatScenarioTest {
                 .setTemperature(0.0f);
 
         String response = model.chatComplete(params);
-        Assert.assertNotNull(response);
-        Assert.assertFalse("nPredict=1 must still return a non-empty response", response.isEmpty());
+        assertNotNull(response);
+        assertFalse(response.isEmpty(), "nPredict=1 must still return a non-empty response");
         String content = chatParser.extractChoiceContent(response);
         // Content should be at most one token long — just verify it doesn't crash
-        Assert.assertNotNull("Content must not be null for nPredict=1", content);
+        assertNotNull(content, "Content must not be null for nPredict=1");
     }
 
     // ------------------------------------------------------------------
@@ -673,20 +653,14 @@ public class ChatScenarioTest {
             outputs.add(output);
         }
 
-        Assert.assertFalse("generateChat must emit at least one output", outputs.isEmpty());
+        assertFalse(outputs.isEmpty(), "generateChat must emit at least one output");
 
         // Every output except the last must NOT be the stop token
         for (int i = 0; i < outputs.size() - 1; i++) {
-            Assert.assertFalse(
-                    "Token " + i + " must not be marked stop before the final token",
-                    outputs.get(i).stop
-            );
+            assertFalse(outputs.get(i).stop, "Token " + i + " must not be marked stop before the final token");
         }
         // The last output must be the stop token
-        Assert.assertTrue(
-                "The final output from generateChat must be marked as stop",
-                outputs.get(outputs.size() - 1).stop
-        );
+        assertTrue(outputs.get(outputs.size() - 1).stop, "The final output from generateChat must be marked as stop");
     }
 
     // ------------------------------------------------------------------

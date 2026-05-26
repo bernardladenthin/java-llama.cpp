@@ -5,11 +5,11 @@
 
 package net.ladenthin.llama;
 
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 @ClaudeGenerated(
         purpose = "Verify that OSInfo correctly maps OS names to folder names used for native " +
@@ -70,8 +70,7 @@ public class OSInfoTest {
 	public void testTranslateLinuxOnNonMuslNonAndroid() {
 		// On a standard Linux test environment (non-musl, non-Android) this should return "Linux"
 		String result = OSInfo.translateOSNameToFolderName("Linux");
-		assertTrue("Expected Linux or Linux-Musl or Linux-Android, got: " + result,
-				result.equals("Linux") || result.equals("Linux-Musl") || result.equals("Linux-Android"));
+		assertTrue(result.equals("Linux") || result.equals("Linux-Musl") || result.equals("Linux-Android"), "Expected Linux or Linux-Musl or Linux-Android, got: " + result);
 	}
 
 	@Test
@@ -129,14 +128,14 @@ public class OSInfoTest {
 	@Test
 	public void testGetNativeLibFolderPathContainsSlash() {
 		String path = OSInfo.getNativeLibFolderPathForCurrentOS();
-		assertTrue("Expected os/arch format, got: " + path, path.contains("/"));
+		assertTrue(path.contains("/"), "Expected os/arch format, got: " + path);
 	}
 
 	@Test
 	public void testGetNativeLibFolderPathHasTwoParts() {
 		String path = OSInfo.getNativeLibFolderPathForCurrentOS();
 		String[] parts = path.split("/");
-		assertEquals("Expected exactly 2 parts in path: " + path, 2, parts.length);
+		assertEquals(2, parts.length, "Expected exactly 2 parts in path: " + path);
 		assertFalse(parts[0].isEmpty());
 		assertFalse(parts[1].isEmpty());
 	}

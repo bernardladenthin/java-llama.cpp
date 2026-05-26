@@ -50,16 +50,15 @@ SPDX-License-Identifier: MIT
 
 	<properties>
 		<jna.version>5.18.1</jna.version>
-		<junit.version>4.13.2</junit.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.build.outputTimestamp>${git.commit.time}</project.build.outputTimestamp>
 	</properties>
 
 	<dependencies>
 		<dependency>
-			<groupId>junit</groupId>
-			<artifactId>junit</artifactId>
-			<version>${junit.version}</version>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<version>6.1.0</version>
 			<scope>test</scope>
 		</dependency>
 		<dependency>

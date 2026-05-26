@@ -5,9 +5,9 @@
 
 package net.ladenthin.llama;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 @ClaudeGenerated(
         purpose = "Verify that LlamaException correctly propagates its message through the " +
@@ -49,6 +49,6 @@ public class LlamaExceptionTest {
 			assertEquals("thrown", e.getMessage());
 			caught = true;
 		}
-		assertTrue("Expected LlamaException to be thrown", caught);
+		assertTrue(caught, "Expected LlamaException to be thrown");
 	}
 }

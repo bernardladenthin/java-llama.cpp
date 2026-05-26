@@ -12,16 +12,16 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-import org.junit.AfterClass;
-import org.junit.Assume;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Per-Session thread-safety follow-up to PR #188 (§2.6 of the
@@ -52,8 +52,7 @@ public class SessionConcurrencyTest {
 
     @BeforeClass
     public static void setup() {
-        Assume.assumeTrue("Model file not found, skipping SessionConcurrencyTest",
-                new File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping SessionConcurrencyTest");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         model = new LlamaModel(
                 new ModelParameters()
@@ -116,8 +115,7 @@ public class SessionConcurrencyTest {
             }
 
             start.countDown();
-            assertTrue("threads did not finish within timeout",
-                    done.await(270, TimeUnit.SECONDS));
+            assertTrue(done.await(270, TimeUnit.SECONDS), "threads did not finish within timeout");
             pool.shutdown();
 
             if (failure.get() != null) {
@@ -125,12 +123,10 @@ public class SessionConcurrencyTest {
             }
 
             List<ChatMessage> messages = session.getMessages();
-            assertEquals("transcript must contain 2 entries per send()",
-                    2 * threads * callsPerThread, messages.size());
+            assertEquals(2 * threads * callsPerThread, messages.size(), "transcript must contain 2 entries per send()");
             for (int i = 0; i < messages.size(); i++) {
                 String expectedRole = (i % 2 == 0) ? "user" : "assistant";
-                assertEquals("role mismatch at index " + i,
-                        expectedRole, messages.get(i).getRole());
+                assertEquals(expectedRole, messages.get(i).getRole(), "role mismatch at index " + i);
             }
         }
     }
@@ -175,8 +171,7 @@ public class SessionConcurrencyTest {
                     // ok
                 }
 
-                assertEquals("transcript must not be mutated by failed calls",
-                        before, session.getMessages().size());
+                assertEquals(before, session.getMessages().size(), "transcript must not be mutated by failed calls");
 
                 StringBuilder reply = new StringBuilder();
                 for (LlamaOutput out : stream) {
@@ -185,8 +180,7 @@ public class SessionConcurrencyTest {
                 session.commitStreamedReply(reply.toString());
 
                 List<ChatMessage> messages = session.getMessages();
-                assertEquals("last message must be the committed assistant reply",
-                        "assistant", messages.get(messages.size() - 1).getRole());
+                assertEquals("assistant", messages.get(messages.size() - 1).getRole(), "last message must be the committed assistant reply");
                 assertEquals(reply.toString(),
                         messages.get(messages.size() - 1).getContent());
 

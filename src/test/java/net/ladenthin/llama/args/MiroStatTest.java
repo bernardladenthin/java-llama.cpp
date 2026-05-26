@@ -5,16 +5,11 @@
 
 package net.ladenthin.llama.args;
 
-import org.junit.runner.RunWith;
-import org.junit.runners.Parameterized;
-
 import java.util.Arrays;
 import java.util.Collection;
 
-@RunWith(Parameterized.class)
 public class MiroStatTest extends AbstractCliArgEnumTest<MiroStat> {
 
-    @Parameterized.Parameters(name = "{0} -> {1}")
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][]{
             {MiroStat.DISABLED, "0", 3},
@@ -23,7 +18,4 @@ public class MiroStatTest extends AbstractCliArgEnumTest<MiroStat> {
         });
     }
 
-    public MiroStatTest(MiroStat value, String expectedArgValue, int expectedEnumCount) {
-        super(value, expectedArgValue, expectedEnumCount);
-    }
 }

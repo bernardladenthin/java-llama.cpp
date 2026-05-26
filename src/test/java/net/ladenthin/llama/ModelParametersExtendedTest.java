@@ -6,12 +6,12 @@
 package net.ladenthin.llama;
 
 import net.ladenthin.llama.args.*;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
 import java.util.Map;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Extended tests for {@link ModelParameters} covering CLI argument serialization
@@ -510,19 +510,19 @@ public class ModelParametersExtendedTest {
     @Test
     public void testSetKvUnifiedReturnsSameInstance() {
         ModelParameters p = new ModelParameters();
-        assertSame(p, p.setKvUnified(true));
+        assertSame(p.setKvUnified(true), p);
     }
 
     @Test
     public void testSetCacheRamMibReturnsSameInstance() {
         ModelParameters p = new ModelParameters();
-        assertSame(p, p.setCacheRamMib(4096));
+        assertSame(p.setCacheRamMib(4096), p);
     }
 
     @Test
     public void testSetClearIdleReturnsSameInstance() {
         ModelParameters p = new ModelParameters();
-        assertSame(p, p.setClearIdle(true));
+        assertSame(p.setClearIdle(true), p);
     }
 
     // -------------------------------------------------------------------------
@@ -920,8 +920,7 @@ public class ModelParametersExtendedTest {
         // at model load. Must use --spec-draft-n-max.
         ModelParameters p = new ModelParameters().setDraftMax(8);
         assertEquals("8", p.parameters.get("--spec-draft-n-max"));
-        assertFalse("--draft-max throws on b9016+; must not appear in args",
-                p.parameters.containsKey("--draft-max"));
+        assertFalse(p.parameters.containsKey("--draft-max"), "--draft-max throws on b9016+; must not appear in args");
     }
 
     @Test
@@ -930,8 +929,7 @@ public class ModelParametersExtendedTest {
         // at model load. Must use --spec-draft-n-min.
         ModelParameters p = new ModelParameters().setDraftMin(2);
         assertEquals("2", p.parameters.get("--spec-draft-n-min"));
-        assertFalse("--draft-min throws on b9016+; must not appear in args",
-                p.parameters.containsKey("--draft-min"));
+        assertFalse(p.parameters.containsKey("--draft-min"), "--draft-min throws on b9016+; must not appear in args");
     }
 
     @Test
@@ -1031,18 +1029,18 @@ public class ModelParametersExtendedTest {
     @Test
     public void testExtendedChainingReturnsSameInstance() {
         ModelParameters p = new ModelParameters();
-        assertSame(p, p.setCtxSize(2048));
-        assertSame(p, p.setBatchSize(512));
-        assertSame(p, p.setTemp(0.7f));
-        assertSame(p, p.setTopK(50));
-        assertSame(p, p.setDryMultiplier(0.5f));
-        assertSame(p, p.setXtcProbability(0.3f));
-        assertSame(p, p.setRopeScale(2.0f));
-        assertSame(p, p.setGpuLayers(32));
-        assertSame(p, p.enableFlashAttn());
-        assertSame(p, p.disableContextShift());
-        assertSame(p, p.setModelDraft("/draft.gguf"));
-        assertSame(p, p.disableLog());
+        assertSame(p.setCtxSize(2048), p);
+        assertSame(p.setBatchSize(512), p);
+        assertSame(p.setTemp(0.7f), p);
+        assertSame(p.setTopK(50), p);
+        assertSame(p.setDryMultiplier(0.5f), p);
+        assertSame(p.setXtcProbability(0.3f), p);
+        assertSame(p.setRopeScale(2.0f), p);
+        assertSame(p.setGpuLayers(32), p);
+        assertSame(p.enableFlashAttn(), p);
+        assertSame(p.disableContextShift(), p);
+        assertSame(p.setModelDraft("/draft.gguf"), p);
+        assertSame(p.disableLog(), p);
     }
 
     // -------------------------------------------------------------------------

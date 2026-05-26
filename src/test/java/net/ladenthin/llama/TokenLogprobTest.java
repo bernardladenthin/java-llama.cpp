@@ -5,13 +5,13 @@
 package net.ladenthin.llama;
 
 import net.ladenthin.llama.json.CompletionResponseParser;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @ClaudeGenerated(
         purpose = "Verify CompletionResponseParser.parseLogprobs populates TokenLogprob entries "
@@ -41,11 +41,11 @@ public class TokenLogprobTest {
         TokenLogprob first = out.logprobs.get(0);
         assertEquals("Hello", first.getToken());
         assertEquals(15043, first.getTokenId());
-        assertEquals(0.82f, first.getLogprob(), 1e-4f);
+        assertEquals(first.getLogprob(), 1e-4f, 0.82f);
         assertEquals(2, first.getTopLogprobs().size());
         assertEquals("Hi", first.getTopLogprobs().get(0).getToken());
         assertEquals(9932, first.getTopLogprobs().get(0).getTokenId());
-        assertEquals(0.10f, first.getTopLogprobs().get(0).getLogprob(), 1e-4f);
+        assertEquals(first.getTopLogprobs().get(0).getLogprob(), 1e-4f, 0.10f);
     }
 
     @Test
@@ -58,9 +58,9 @@ public class TokenLogprobTest {
         LlamaOutput out = parser.parse(json);
         assertEquals(1, out.logprobs.size());
         TokenLogprob first = out.logprobs.get(0);
-        assertEquals(-0.20f, first.getLogprob(), 1e-4f);
+        assertEquals(first.getLogprob(), 1e-4f, -0.20f);
         assertEquals(1, first.getTopLogprobs().size());
-        assertEquals(-2.3f, first.getTopLogprobs().get(0).getLogprob(), 1e-4f);
+        assertEquals(first.getTopLogprobs().get(0).getLogprob(), 1e-4f, -2.3f);
     }
 
     @Test
@@ -85,7 +85,7 @@ public class TokenLogprobTest {
                 + "]}";
         LlamaOutput out = parser.parse(json);
         assertEquals(1, out.logprobs.size());
-        assertEquals(0.9f, out.probabilities.get("hello"), 1e-4f);
+        assertEquals(out.probabilities.get("hello"), 1e-4f, 0.9f);
     }
 
     @Test

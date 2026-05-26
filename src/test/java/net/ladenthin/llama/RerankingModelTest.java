@@ -8,10 +8,10 @@ package net.ladenthin.llama;
 import java.util.List;
 import java.util.Map;
 
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 public class RerankingModelTest {
 
@@ -48,7 +48,7 @@ public class RerankingModelTest {
 				TEST_DOCUMENTS[3]);
 
 		Map<String, Float> rankedDocumentsMap = llamaOutput.probabilities;
-		Assert.assertTrue(rankedDocumentsMap.size()==TEST_DOCUMENTS.length);
+		assertTrue(rankedDocumentsMap.size()==TEST_DOCUMENTS.length);
 		
 		 // Finding the most and least relevant documents
         String mostRelevantDoc = null;
@@ -68,9 +68,9 @@ public class RerankingModelTest {
         }
 
         // Assertions
-        Assert.assertTrue(maxScore > minScore);
-        Assert.assertEquals("Machine learning is a field of study in artificial intelligence concerned with the development and study of statistical algorithms that can learn from data and generalize to unseen data, and thus perform tasks without explicit instructions.", mostRelevantDoc);
-        Assert.assertEquals("Paris, capitale de la France, est une grande ville européenne et un centre mondial de l'art, de la mode, de la gastronomie et de la culture. Son paysage urbain du XIXe siècle est traversé par de larges boulevards et la Seine.", leastRelevantDoc);
+        assertTrue(maxScore > minScore);
+        assertEquals("Machine learning is a field of study in artificial intelligence concerned with the development and study of statistical algorithms that can learn from data and generalize to unseen data, and thus perform tasks without explicit instructions.", mostRelevantDoc);
+        assertEquals("Paris, capitale de la France, est une grande ville européenne et un centre mondial de l'art, de la mode, de la gastronomie et de la culture. Son paysage urbain du XIXe siècle est traversé par de larges boulevards et la Seine.", leastRelevantDoc);
 
 		
 	}
@@ -78,13 +78,13 @@ public class RerankingModelTest {
 	@Test
 	public void testSortedReRanking() {
 		List<Pair<String, Float>> rankedDocuments = model.rerank(true, query, TEST_DOCUMENTS);
-		Assert.assertEquals(rankedDocuments.size(), TEST_DOCUMENTS.length);
+		assertEquals(rankedDocuments.size(), TEST_DOCUMENTS.length);
 
 		// Check the ranking order: each score should be >= the next one
 	    for (int i = 0; i < rankedDocuments.size() - 1; i++) {
 	        float currentScore = rankedDocuments.get(i).getValue();
 	        float nextScore = rankedDocuments.get(i + 1).getValue();
-	        Assert.assertTrue("Ranking order incorrect at index " + i, currentScore >= nextScore);
+	        assertTrue(currentScore >= nextScore, "Ranking order incorrect at index " + i);
 	    }
 	}
 
@@ -107,11 +107,11 @@ public class RerankingModelTest {
 		// The ML document is the most relevant one for the query
 		LlamaOutput output = model.rerank(query, TEST_DOCUMENTS[2]);
 
-		Assert.assertNotNull(output);
-		Assert.assertEquals("Expected exactly one score", 1, output.probabilities.size());
+		assertNotNull(output);
+		assertEquals(1, output.probabilities.size(), "Expected exactly one score");
 
 		float score = output.probabilities.values().iterator().next();
-		Assert.assertTrue("Score should be positive for a relevant document: " + score, score > 0.0f);
+		assertTrue(score > 0.0f, "Score should be positive for a relevant document: " + score);
 	}
 
 	/**
@@ -128,13 +128,13 @@ public class RerankingModelTest {
 	public void testRerankScoreRange() {
 		LlamaOutput output = model.rerank(query, TEST_DOCUMENTS);
 
-		Assert.assertEquals(TEST_DOCUMENTS.length, output.probabilities.size());
+		assertEquals(TEST_DOCUMENTS.length, output.probabilities.size());
 
 		for (Map.Entry<String, Float> entry : output.probabilities.entrySet()) {
 			float score = entry.getValue();
-			Assert.assertFalse("Score must not be NaN: " + entry.getKey(), Float.isNaN(score));
-			Assert.assertFalse("Score must not be Inf: " + entry.getKey(), Float.isInfinite(score));
-			Assert.assertTrue("Score magnitude implausible: " + score, Math.abs(score) < 10.0f);
+			assertFalse(Float.isNaN(score), "Score must not be NaN: " + entry.getKey());
+			assertFalse(Float.isInfinite(score), "Score must not be Inf: " + entry.getKey());
+			assertTrue(Math.abs(score) < 10.0f, "Score magnitude implausible: " + score);
 		}
 	}
 
@@ -165,11 +165,9 @@ public class RerankingModelTest {
 		float mlScore       = output.probabilities.get(TEST_DOCUMENTS[2]);
 		float parisScore    = output.probabilities.get(TEST_DOCUMENTS[3]);
 
-		Assert.assertTrue("ML doc must score > 0 with canonical format: " + mlScore,
-				mlScore > 0.0f);
-		Assert.assertTrue("Paris doc must score below machine doc: paris=" + parisScore
-						+ ", machine=" + machineScore,
-				parisScore < machineScore);
+		assertTrue(mlScore > 0.0f, "ML doc must score > 0 with canonical format: " + mlScore);
+		assertTrue(parisScore < machineScore, "Paris doc must score below machine doc: paris=" + parisScore
+						+ ", machine=" + machineScore);
 
 		float max = Math.max(Math.max(mlScore, parisScore), Math.max(machineScore, learningScore));
 		float min = Math.min(Math.min(mlScore, parisScore), Math.min(machineScore, learningScore));
@@ -178,9 +176,8 @@ public class RerankingModelTest {
 		// 0.19972 on macOS).  A regression to the doubled-BOS/EOS format would
 		// re-cluster scores into a tight band; the 0.1 threshold catches that without
 		// being sensitive to per-platform quantisation rounding.
-		Assert.assertTrue("Score spread implausibly small (" + (max - min)
-						+ ") — possible regression to doubled-token format",
-				(max - min) > 0.1f);
+		assertTrue((max - min) > 0.1f, "Score spread implausibly small (" + (max - min)
+						+ ") — possible regression to doubled-token format");
 	}
 
 	/**
@@ -198,7 +195,7 @@ public class RerankingModelTest {
 		float score1 = first.probabilities.values().iterator().next();
 		float score2 = second.probabilities.values().iterator().next();
 
-		Assert.assertEquals("Reranking must be deterministic", score1, score2, 1e-4f);
+		assertEquals("Reranking must be deterministic", score1, score2, 1e-4f);
 	}
 
 	/**
@@ -215,9 +212,7 @@ public class RerankingModelTest {
 		float mlScore     = mlOutput.probabilities.values().iterator().next();
 		float frenchScore = frenchOutput.probabilities.values().iterator().next();
 
-		Assert.assertTrue(
-				"ML document should score higher than the French document. " +
-				"ml=" + mlScore + " french=" + frenchScore,
-				mlScore > frenchScore);
+		assertTrue(mlScore > frenchScore, "ML document should score higher than the French document. " +
+				"ml=" + mlScore + " french=" + frenchScore);
 	}
 }

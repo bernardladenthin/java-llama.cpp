@@ -10,11 +10,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 import net.ladenthin.llama.args.PoolingType;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.Assume;
-import org.junit.BeforeClass;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterAll;
+import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 /**
  * Validates the full JSON response structure from various endpoints:
@@ -46,8 +46,7 @@ public class ResponseJsonStructureTest {
 
     @BeforeClass
     public static void setup() {
-        Assume.assumeTrue("Model file not found, skipping ResponseJsonStructureTest",
-                new File(TestConstants.MODEL_PATH).exists());
+        Assumptions.assumeTrue(new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping ResponseJsonStructureTest");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         model = new LlamaModel(
                 new ModelParameters()
@@ -75,71 +74,70 @@ public class ResponseJsonStructureTest {
     public void testNonOaiCompletionHasContentField() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Response must contain 'content'", result.contains("\"content\""));
+        assertTrue(result.contains("\"content\""), "Response must contain 'content'");
     }
 
     @Test
     public void testNonOaiCompletionHasStopField() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Response must contain 'stop'", result.contains("\"stop\""));
+        assertTrue(result.contains("\"stop\""), "Response must contain 'stop'");
     }
 
     @Test
     public void testNonOaiCompletionHasStopType() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Response must contain 'stop_type'", result.contains("\"stop_type\""));
+        assertTrue(result.contains("\"stop_type\""), "Response must contain 'stop_type'");
     }
 
     @Test
     public void testNonOaiCompletionHasModelField() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Response must contain 'model'", result.contains("\"model\""));
+        assertTrue(result.contains("\"model\""), "Response must contain 'model'");
     }
 
     @Test
     public void testNonOaiCompletionHasTokensPredicted() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Response must contain 'tokens_predicted'", result.contains("\"tokens_predicted\""));
+        assertTrue(result.contains("\"tokens_predicted\""), "Response must contain 'tokens_predicted'");
     }
 
     @Test
     public void testNonOaiCompletionHasTokensEvaluated() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Response must contain 'tokens_evaluated'", result.contains("\"tokens_evaluated\""));
+        assertTrue(result.contains("\"tokens_evaluated\""), "Response must contain 'tokens_evaluated'");
     }
 
     @Test
     public void testNonOaiCompletionHasTimings() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Response must contain 'timings'", result.contains("\"timings\""));
+        assertTrue(result.contains("\"timings\""), "Response must contain 'timings'");
     }
 
     @Test
     public void testNonOaiCompletionHasGenerationSettings() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Response must contain 'generation_settings'",
-                result.contains("\"generation_settings\""));
+        assertTrue(result.contains("\"generation_settings\""), "Response must contain 'generation_settings'");
     }
 
     @Test
     public void testNonOaiCompletionHasTokensCached() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Response must contain 'tokens_cached'", result.contains("\"tokens_cached\""));
+        assertTrue(result.contains("\"tokens_cached\""), "Response must contain 'tokens_cached'");
     }
 
     @Test
     public void testNonOaiCompletionHasIdSlot() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Response must contain 'id_slot'", result.contains("\"id_slot\""));
+        assertTrue(result.contains("\"id_slot\""), "Response must contain 'id_slot'");
     }
 
     // -------------------------------------------------------------------------
@@ -150,48 +148,44 @@ public class ResponseJsonStructureTest {
     public void testTimingsHasPromptN() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Timings must contain 'prompt_n'", result.contains("\"prompt_n\""));
+        assertTrue(result.contains("\"prompt_n\""), "Timings must contain 'prompt_n'");
     }
 
     @Test
     public void testTimingsHasPromptMs() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Timings must contain 'prompt_ms'", result.contains("\"prompt_ms\""));
+        assertTrue(result.contains("\"prompt_ms\""), "Timings must contain 'prompt_ms'");
     }
 
     @Test
     public void testTimingsHasPredictedN() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Timings must contain 'predicted_n'", result.contains("\"predicted_n\""));
+        assertTrue(result.contains("\"predicted_n\""), "Timings must contain 'predicted_n'");
     }
 
     @Test
     public void testTimingsHasPredictedMs() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Timings must contain 'predicted_ms'", result.contains("\"predicted_ms\""));
+        assertTrue(result.contains("\"predicted_ms\""), "Timings must contain 'predicted_ms'");
     }
 
     @Test
     public void testTimingsHasPerTokenFields() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Timings must contain 'prompt_per_token_ms'",
-                result.contains("\"prompt_per_token_ms\""));
-        Assert.assertTrue("Timings must contain 'predicted_per_token_ms'",
-                result.contains("\"predicted_per_token_ms\""));
+        assertTrue(result.contains("\"prompt_per_token_ms\""), "Timings must contain 'prompt_per_token_ms'");
+        assertTrue(result.contains("\"predicted_per_token_ms\""), "Timings must contain 'predicted_per_token_ms'");
     }
 
     @Test
     public void testTimingsHasPerSecondFields() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Timings must contain 'prompt_per_second'",
-                result.contains("\"prompt_per_second\""));
-        Assert.assertTrue("Timings must contain 'predicted_per_second'",
-                result.contains("\"predicted_per_second\""));
+        assertTrue(result.contains("\"prompt_per_second\""), "Timings must contain 'prompt_per_second'");
+        assertTrue(result.contains("\"predicted_per_second\""), "Timings must contain 'predicted_per_second'");
     }
 
     // -------------------------------------------------------------------------
@@ -203,8 +197,7 @@ public class ResponseJsonStructureTest {
         // n_predict=N_PREDICT with no stop string should result in "limit" stop_type
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("stop_type should be 'limit' when max tokens reached",
-                result.contains("\"stop_type\":\"limit\""));
+        assertTrue(result.contains("\"stop_type\":\"limit\""), "stop_type should be 'limit' when max tokens reached");
     }
 
     @Test
@@ -212,10 +205,9 @@ public class ResponseJsonStructureTest {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":50" + DETERMINISTIC + ",\"stop\":[\"return\"]}";
         String result = model.handleCompletions(json);
         // May be "word" if stop string matched, or "limit" if n_predict reached first
-        Assert.assertTrue("stop_type should be present",
-                result.contains("\"stop_type\":\"word\"") ||
+        assertTrue(result.contains("\"stop_type\":\"word\"") ||
                 result.contains("\"stop_type\":\"limit\"") ||
-                result.contains("\"stop_type\":\"eos\""));
+                result.contains("\"stop_type\":\"eos\""), "stop_type should be present");
     }
 
     // -------------------------------------------------------------------------
@@ -226,71 +218,65 @@ public class ResponseJsonStructureTest {
     public void testOaiCompletionHasChoices() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletionsOai(json);
-        Assert.assertTrue("OAI response must contain 'choices'", result.contains("\"choices\""));
+        assertTrue(result.contains("\"choices\""), "OAI response must contain 'choices'");
     }
 
     @Test
     public void testOaiCompletionHasUsage() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletionsOai(json);
-        Assert.assertTrue("OAI response must contain 'usage'", result.contains("\"usage\""));
+        assertTrue(result.contains("\"usage\""), "OAI response must contain 'usage'");
     }
 
     @Test
     public void testOaiCompletionHasObject() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletionsOai(json);
-        Assert.assertTrue("OAI response must contain 'object':'text_completion'",
-                result.contains("\"object\":\"text_completion\""));
+        assertTrue(result.contains("\"object\":\"text_completion\""), "OAI response must contain 'object':'text_completion'");
     }
 
     @Test
     public void testOaiCompletionHasCreated() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletionsOai(json);
-        Assert.assertTrue("OAI response must contain 'created'", result.contains("\"created\""));
+        assertTrue(result.contains("\"created\""), "OAI response must contain 'created'");
     }
 
     @Test
     public void testOaiCompletionHasModel() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletionsOai(json);
-        Assert.assertTrue("OAI response must contain 'model'", result.contains("\"model\""));
+        assertTrue(result.contains("\"model\""), "OAI response must contain 'model'");
     }
 
     @Test
     public void testOaiCompletionHasSystemFingerprint() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletionsOai(json);
-        Assert.assertTrue("OAI response must contain 'system_fingerprint'",
-                result.contains("\"system_fingerprint\""));
+        assertTrue(result.contains("\"system_fingerprint\""), "OAI response must contain 'system_fingerprint'");
     }
 
     @Test
     public void testOaiCompletionHasId() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletionsOai(json);
-        Assert.assertTrue("OAI response must contain 'id'", result.contains("\"id\""));
+        assertTrue(result.contains("\"id\""), "OAI response must contain 'id'");
     }
 
     @Test
     public void testOaiCompletionUsageFields() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletionsOai(json);
-        Assert.assertTrue("Usage must contain 'completion_tokens'",
-                result.contains("\"completion_tokens\""));
-        Assert.assertTrue("Usage must contain 'prompt_tokens'",
-                result.contains("\"prompt_tokens\""));
-        Assert.assertTrue("Usage must contain 'total_tokens'",
-                result.contains("\"total_tokens\""));
+        assertTrue(result.contains("\"completion_tokens\""), "Usage must contain 'completion_tokens'");
+        assertTrue(result.contains("\"prompt_tokens\""), "Usage must contain 'prompt_tokens'");
+        assertTrue(result.contains("\"total_tokens\""), "Usage must contain 'total_tokens'");
     }
 
     @Test
     public void testOaiCompletionChoiceHasFinishReason() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletionsOai(json);
-        Assert.assertTrue("Choice must contain 'finish_reason'",
-                result.contains("\"finish_reason\""));
+        assertTrue(result.contains("\"finish_reason\""), "Choice must contain 'finish_reason'");
     }
 
     @Test
@@ -298,9 +284,8 @@ public class ResponseJsonStructureTest {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletionsOai(json);
         // With small n_predict, finish_reason should be "length"
-        Assert.assertTrue("finish_reason should be 'length' or 'stop'",
-                result.contains("\"finish_reason\":\"length\"") ||
-                result.contains("\"finish_reason\":\"stop\""));
+        assertTrue(result.contains("\"finish_reason\":\"length\"") ||
+                result.contains("\"finish_reason\":\"stop\""), "finish_reason should be 'length' or 'stop'");
     }
 
     // -------------------------------------------------------------------------
@@ -315,7 +300,7 @@ public class ResponseJsonStructureTest {
                 .setNPredict(N_PREDICT)
                 .setTemperature(0);
         String result = model.chatComplete(params);
-        Assert.assertTrue("Chat response must contain 'choices'", result.contains("\"choices\""));
+        assertTrue(result.contains("\"choices\""), "Chat response must contain 'choices'");
     }
 
     @Test
@@ -326,7 +311,7 @@ public class ResponseJsonStructureTest {
                 .setNPredict(N_PREDICT)
                 .setTemperature(0);
         String result = model.chatComplete(params);
-        Assert.assertTrue("Chat response must contain 'usage'", result.contains("\"usage\""));
+        assertTrue(result.contains("\"usage\""), "Chat response must contain 'usage'");
     }
 
     @Test
@@ -337,7 +322,7 @@ public class ResponseJsonStructureTest {
                 .setNPredict(N_PREDICT)
                 .setTemperature(0);
         String result = model.chatComplete(params);
-        Assert.assertTrue("Chat response must contain 'message'", result.contains("\"message\""));
+        assertTrue(result.contains("\"message\""), "Chat response must contain 'message'");
     }
 
     @Test
@@ -348,8 +333,7 @@ public class ResponseJsonStructureTest {
                 .setNPredict(N_PREDICT)
                 .setTemperature(0);
         String result = model.chatComplete(params);
-        Assert.assertTrue("Chat response 'object' must be 'chat.completion'",
-                result.contains("\"object\":\"chat.completion\""));
+        assertTrue(result.contains("\"object\":\"chat.completion\""), "Chat response 'object' must be 'chat.completion'");
     }
 
     @Test
@@ -360,8 +344,7 @@ public class ResponseJsonStructureTest {
                 .setNPredict(N_PREDICT)
                 .setTemperature(0);
         String result = model.chatComplete(params);
-        Assert.assertTrue("Message must contain 'role':'assistant'",
-                result.contains("\"role\":\"assistant\""));
+        assertTrue(result.contains("\"role\":\"assistant\""), "Message must contain 'role':'assistant'");
     }
 
     // -------------------------------------------------------------------------
@@ -372,22 +355,18 @@ public class ResponseJsonStructureTest {
     public void testEmbeddingOaiResponseStructure() {
         String json = "{\"input\":\"hello world\"}";
         String result = model.handleEmbeddings(json, true);
-        Assert.assertTrue("OAI embedding must contain 'data'", result.contains("\"data\""));
-        Assert.assertTrue("OAI embedding must contain 'object':'embedding'",
-                result.contains("\"object\":\"embedding\""));
-        Assert.assertTrue("OAI embedding must contain 'embedding' array",
-                result.contains("\"embedding\""));
-        Assert.assertTrue("OAI embedding must contain 'usage'", result.contains("\"usage\""));
+        assertTrue(result.contains("\"data\""), "OAI embedding must contain 'data'");
+        assertTrue(result.contains("\"object\":\"embedding\""), "OAI embedding must contain 'object':'embedding'");
+        assertTrue(result.contains("\"embedding\""), "OAI embedding must contain 'embedding' array");
+        assertTrue(result.contains("\"usage\""), "OAI embedding must contain 'usage'");
     }
 
     @Test
     public void testEmbeddingNonOaiResponseStructure() {
         String json = "{\"input\":\"hello world\"}";
         String result = model.handleEmbeddings(json, false);
-        Assert.assertTrue("Non-OAI embedding must contain 'embedding'",
-                result.contains("\"embedding\""));
-        Assert.assertTrue("Non-OAI embedding must contain 'index'",
-                result.contains("\"index\""));
+        assertTrue(result.contains("\"embedding\""), "Non-OAI embedding must contain 'embedding'");
+        assertTrue(result.contains("\"index\""), "Non-OAI embedding must contain 'index'");
     }
 
     // -------------------------------------------------------------------------
@@ -397,23 +376,23 @@ public class ResponseJsonStructureTest {
     @Test
     public void testTokenizeResponseStructure() {
         String result = model.handleTokenize("hello world", false, false);
-        Assert.assertNotNull(result);
-        Assert.assertTrue("Tokenize response must contain 'tokens'", result.contains("\"tokens\""));
+        assertNotNull(result);
+        assertTrue(result.contains("\"tokens\""), "Tokenize response must contain 'tokens'");
     }
 
     @Test
     public void testTokenizeWithPiecesResponseStructure() {
         String result = model.handleTokenize("hello world", false, true);
-        Assert.assertNotNull(result);
-        Assert.assertTrue("Tokenize with pieces must contain 'tokens'", result.contains("\"tokens\""));
+        assertNotNull(result);
+        assertTrue(result.contains("\"tokens\""), "Tokenize with pieces must contain 'tokens'");
     }
 
     @Test
     public void testDetokenizeResponseStructure() {
         int[] tokens = model.encode("hello world");
         String result = model.handleDetokenize(tokens);
-        Assert.assertNotNull(result);
-        Assert.assertTrue("Detokenize response must contain 'content'", result.contains("\"content\""));
+        assertNotNull(result);
+        assertTrue(result.contains("\"content\""), "Detokenize response must contain 'content'");
     }
 
     // -------------------------------------------------------------------------
@@ -425,8 +404,7 @@ public class ResponseJsonStructureTest {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT
                 + DETERMINISTIC + ",\"n_probs\":3}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("Response with n_probs should contain 'completion_probabilities'",
-                result.contains("\"completion_probabilities\""));
+        assertTrue(result.contains("\"completion_probabilities\""), "Response with n_probs should contain 'completion_probabilities'");
     }
 
     // -------------------------------------------------------------------------
@@ -438,21 +416,16 @@ public class ResponseJsonStructureTest {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
         // generation_settings should echo back the sampling parameters
-        Assert.assertTrue("generation_settings should contain 'temperature'",
-                result.contains("\"temperature\""));
-        Assert.assertTrue("generation_settings should contain 'top_k'",
-                result.contains("\"top_k\""));
-        Assert.assertTrue("generation_settings should contain 'top_p'",
-                result.contains("\"top_p\""));
-        Assert.assertTrue("generation_settings should contain 'min_p'",
-                result.contains("\"min_p\""));
+        assertTrue(result.contains("\"temperature\""), "generation_settings should contain 'temperature'");
+        assertTrue(result.contains("\"top_k\""), "generation_settings should contain 'top_k'");
+        assertTrue(result.contains("\"top_p\""), "generation_settings should contain 'top_p'");
+        assertTrue(result.contains("\"min_p\""), "generation_settings should contain 'min_p'");
     }
 
     @Test
     public void testGenerationSettingsContainsSamplers() {
         String json = "{\"prompt\":\"" + PROMPT + "\",\"n_predict\":" + N_PREDICT + DETERMINISTIC + "}";
         String result = model.handleCompletions(json);
-        Assert.assertTrue("generation_settings should contain 'samplers'",
-                result.contains("\"samplers\""));
+        assertTrue(result.contains("\"samplers\""), "generation_settings should contain 'samplers'");
     }
 }

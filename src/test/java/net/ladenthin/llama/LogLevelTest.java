@@ -5,9 +5,9 @@
 
 package net.ladenthin.llama;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 @ClaudeGenerated(
         purpose = "Verify LogLevel enum values, count, and ordinal order matching llama.cpp native log levels.",
@@ -50,9 +50,9 @@ public class LogLevelTest {
 
     @Test
     public void testValueOf() {
-        assertSame(LogLevel.DEBUG, LogLevel.valueOf("DEBUG"));
-        assertSame(LogLevel.INFO, LogLevel.valueOf("INFO"));
-        assertSame(LogLevel.WARN, LogLevel.valueOf("WARN"));
-        assertSame(LogLevel.ERROR, LogLevel.valueOf("ERROR"));
+        assertSame(LogLevel.valueOf("DEBUG"), LogLevel.DEBUG);
+        assertSame(LogLevel.valueOf("INFO"), LogLevel.INFO);
+        assertSame(LogLevel.valueOf("WARN"), LogLevel.WARN);
+        assertSame(LogLevel.valueOf("ERROR"), LogLevel.ERROR);
     }
 }
