@@ -1,6 +1,9 @@
 **Build:**  
 ![Java 11+](https://img.shields.io/badge/Java-11%2B-informational)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit4-yellow)  
+[![jqwik](https://img.shields.io/badge/tested%20with-jqwik-1f6feb)](https://jqwik.net)  
+[![ArchUnit](https://img.shields.io/badge/tested%20with-ArchUnit-c71a36)](https://www.archunit.org)  
+[![SpotBugs](https://img.shields.io/badge/analyzed%20with-SpotBugs-3b5998)](https://spotbugs.github.io)  
 [![llama.cpp b9333](https://img.shields.io/badge/llama.cpp-%23b9333-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b9333)  
 [![Publish](https://github.com/bernardladenthin/java-llama.cpp/actions/workflows/publish.yml/badge.svg)](https://github.com/bernardladenthin/java-llama.cpp/actions/workflows/publish.yml)  
 [![CodeQL](https://github.com/bernardladenthin/java-llama.cpp/actions/workflows/codeql.yml/badge.svg)](https://github.com/bernardladenthin/java-llama.cpp/actions/workflows/codeql.yml)  
