@@ -52,7 +52,7 @@ public class LoadProgressCallbackTest {
             assertTrue(updates.get(i) >= updates.get(i - 1), "progress decreased at index " + i + ": " + updates.get(i - 1) + " -> " + updates.get(i));
         }
         // Sanity: progress actually advanced
-        assertNotEquals("progress never advanced", updates.get(0), updates.get(updates.size() - 1));
+        assertNotEquals(updates.get(0), updates.get(updates.size() - 1), "progress never advanced");
     }
 
     @Test
