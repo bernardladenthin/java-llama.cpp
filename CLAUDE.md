@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b9333**
+Current llama.cpp pinned version: **b9354**
 
 ## Upgrading CUDA Version
 
@@ -434,6 +434,14 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | ~b9305–b9333 | `src/llama-arch.cpp` | `LLM_TENSOR_FFN_LATENT_DOWN` and `LLM_TENSOR_FFN_LATENT_UP` probe op changed from `GGML_OP_MUL` to `GGML_OP_MUL_MAT`; fixes Nemotron 3 Super latent projections not staying on GPU (buft probe must use `MUL_MAT` to keep them there); internal upstream fix, no project changes required |
 | ~b9305–b9333 | `vendor/cpp-httplib/httplib.{h,cpp}` | Bumped to v0.45.1: `close_socket`, `shutdown_socket`, `Server::stop` marked `noexcept`; macOS Keychain cert loading migrated from deprecated `SecTrustCopyAnchorCertificates` to `SecTrustSettingsCopyCertificates` (all three trust domains: system, admin, user); `CPPHTTPLIB_USE_CERTS_FROM_MACOSX_KEYCHAIN` now restricted to `TARGET_OS_OSX` only with compile-time `#error` on iOS/tvOS/watchOS; compiled automatically, no project changes required |
 | ~b9305–b9333 | `common/common.h` | New `string_lcs(std::string_view a, std::string_view b)` function (longest common substring via DP); additive, not used by project directly |
+| ~b9333–b9354 | `src/models/talkie.cpp` (new) + `src/llama-arch.h/cpp` + `src/llama-model.cpp` + `src/llama-vocab.cpp/h` | New Talkie model architecture (`LLM_ARCH_TALKIE`); uses NEOX rope type; embedding skip connections via `out_scale`; per-head Q gain via `attn_q_norm`; logit scale; new `LLAMA_VOCAB_PRE_TYPE_MINICPM5 = 52` ("minicpm5" pre-type with `ignore_merges = true`); "talkie" tokenizer_pre mapped to GPT4O; `Gemma4ForCausalLM` registered as Gemma4 in HF conversion map; all additive, no project source changes required |
+| ~b9333–b9354 | `src/models/mistral3.cpp` | Dense FFN now passes `ffn_up_s`/`ffn_gate_s`/`ffn_down_s` instead of `nullptr`; MoE passes `ffn_up_exps_s`/`ffn_gate_exps_s`/`ffn_down_exps_s` to `build_moe_ffn`; bug fix for NVFP4 Mistral3/Mistral-MoE models; upstream only, no project changes required |
+| ~b9333–b9354 | `tools/server/server-http.h` + `server-http.cpp` | `bool is_ssl = false` field added to `server_http_context`; `listening_address` now uses `https://` prefix when SSL is configured (was always `http://`); compiled from upstream, no project changes required |
+| ~b9333–b9354 | `ggml/src/ggml-sycl/ggml-sycl.cpp` | Virtual memory pool (`ggml_sycl_pool_vmm`) implemented when `SYCL_EXT_ONEAPI_VIRTUAL_MEM` is available; `GGML_SYCL_ENABLE_VMM` env var (default `1`) controls it; `DEBUG_SYCL_MALLOC` compile flag for verbose allocation logging; `vmm_granularity` field in `sycl_device_info`; internal SYCL backend, no project changes required |
+| ~b9333–b9354 | `ggml/src/ggml-cuda/fwht.cu` + `fwht.cuh` | `ggml_cuda_op_fwht` return type changed `void` &#x2192; `bool`; returns `false` for non-contiguous tensors or unsupported N values instead of calling `GGML_ABORT`; caller in `ggml-cuda.cu` now skips FWHT gracefully; internal CUDA backend, no project changes required |
+| ~b9333–b9354 | `ggml/src/ggml-vulkan/ggml-vulkan.cpp` + `conv2d_mm.comp` | Cooperative matrix 1 (cm1) path for conv2d; new `CONV_SHAPE_64x128` tile size; `aligned` spec constant skips bounds checks when K/CRS/NPQ are tile-aligned; `csh_store` stages cm2/cm1 output through shared memory for coalesced global stores; internal Vulkan backend, no project changes required |
+| ~b9333–b9354 | `ggml/src/ggml-webgpu/` | New MMVQ path for mat-vec using `packed_4x8_integer_dot_product`; legacy `mul_mat.wgsl` removed (replaced by register-tile path); new `quantize_q8.wgsl` and `mul_mat_vec_q_acc.tmpl`; vendor and dot-product capability detection at init; `q8_1.m` renamed to `q8_1.s` in WGSL struct; internal WebGPU backend, no project changes required |
+| ~b9333–b9354 | upstream CI (`.github/workflows/`) | CANN and SYCL builds disabled to save Actions resources; macOS builds moved to `build-apple.yml`; cache keys prefixed with `cache-gha-`; `[no release]` commit message token skips release pipeline; no project changes required |
 
 ## Build Commands
 
