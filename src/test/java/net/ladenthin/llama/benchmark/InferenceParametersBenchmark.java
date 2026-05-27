@@ -46,7 +46,7 @@ public class InferenceParametersBenchmark {
      */
     @Benchmark
     public void serializeDefault(Blackhole bh) {
-        bh.consume(new InferenceParameters().toString());
+        bh.consume(new InferenceParameters("").toString());
     }
 
     /**
@@ -59,11 +59,11 @@ public class InferenceParametersBenchmark {
      */
     @Benchmark
     public void serializeWithSamplingParams(Blackhole bh) {
-        bh.consume(new InferenceParameters()
+        bh.consume(new InferenceParameters("")
                 .setTemperature(0.7f)
                 .setTopP(0.9f)
                 .setNPredict(512)
-                .setStop(java.util.Arrays.asList("</s>", "<|im_end|>"))
+                .setStopStrings("</s>", "<|im_end|>")
                 .toString());
     }
 }

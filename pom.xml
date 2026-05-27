@@ -158,6 +158,8 @@ SPDX-License-Identifier: MIT
 				<configuration>
 					<source>1.8</source>
 					<target>1.8</target>
+					<testSource>21</testSource>
+					<testTarget>21</testTarget>
 				</configuration>
 				<executions>
 					<!-- We have to perform a separate build pass for cuda
