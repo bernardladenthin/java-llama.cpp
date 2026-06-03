@@ -72,7 +72,7 @@ SPDX-License-Identifier: MIT
 		     and is the pinned version for this repo. Any CI / Dependabot /
 		     contributor PR that bumps this MUST be rejected. See CLAUDE.md
 		     section "jqwik prompt-injection in test output" for full context. -->
-		<jqwik.version>1.9.3</jqwik.version>
+		<jqwik.version>1.10.1</jqwik.version>
 		<archunit.version>1.4.2</archunit.version>
 		<spotbugs.version>4.9.8.3</spotbugs.version>
 		<fb-contrib.version>7.6.4</fb-contrib.version>
