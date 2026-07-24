@@ -348,8 +348,11 @@ are all git-ignored (staged by CI, never committed).
 Every pipeline run assembles **per-OS multi-backend server fat jars** and, on the release
 paths, attaches them to GitHub: `llama-<version>-all-<os>-<arch>-jar-with-dependencies.jar`
 for `linux-x86-64`, `linux-aarch64`, `windows-x86-64`, `windows-aarch64`, plus the default
-CPU fat jar — each with a `.sha256` file. They are **download assets only**: the Central
-deploy invocations run without the `assembly` profile and are untouched.
+CPU fat jar — each with a `.sha256` **and** a detached GPG `.asc` signature. They are
+**download assets only**: the Central deploy invocations run without the `assembly` profile
+and are untouched. (The cross-repo "fat jar → GitHub Release, never Central, signed `.asc`"
+convention shared with BAF and srcmorph is documented in
+[`../workspace/policies/fat-jar-release-assets.md`](../workspace/policies/fat-jar-release-assets.md).)
 
 Mechanism (three pieces):
 
@@ -379,8 +382,13 @@ Mechanism (three pieces):
    `--chat-template chatml`): poll `/health` to 200, assert a `/v1/chat/completions` choice,
    and require the loader's backend-selection log line. `publish-snapshot`/`publish-release`
    `need` `package-fatjars` + both smokes (fail-loud gating); `github-release-signed` and
-   `github-snapshot` additionally download `llama-fatjars` into their asset directory so the
-   fat jars land on the tag release and the rolling `snapshot` pre-release.
+   `github-snapshot` additionally download `llama-fatjars` into their asset directory, then
+   **GPG-sign each fat jar** via `.github/sign-fatjars.sh` (a detached `.asc` alongside the
+   `.sha256`), so the fat jars land signed on the tag release and the rolling `snapshot`
+   pre-release. Both jobs declare `environment: maven-central` (where the signing key secret is
+   scoped; it has no approval gate) and `checkout` the repo so the script is present. Signing
+   happens in these attach jobs — not in `package-fatjars` — because only this dispatch-gated
+   release path receives the key.
 
 A backend loading successfully but finding **zero usable devices** (e.g. CUDA toolkit
 installed, no NVIDIA GPU) is benign: ggml's backend registry contributes no devices and

@@ -3188,9 +3188,15 @@ jobs:
     # the GitHub pre-release assets must not be lost in that case.
     if: ${{ !cancelled() && (needs.publish-snapshot.result == 'success' || needs.publish-snapshot.result == 'failure') && needs.package-fatjars.result == 'success' }}
     runs-on: ubuntu-latest
+    # maven-central so the GPG_PRIVATE_KEY / GPG_PASSPHRASE secret is delivered (it is
+    # scoped to this environment) for signing the fat jars below. This environment has
+    # no approval gate (the standalone verify-signing-key jobs use it on every run), so
+    # declaring it here does not block the release.
+    environment: maven-central
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: signed-snapshot-assets
@@ -3203,6 +3209,16 @@ jobs:
         with:
           name: llama-fatjars
           path: snapshot-assets/
+      # GPG-sign the fat jars so each carries a detached .asc signature alongside its
+      # .sha256 checksum — signature parity with the thin jars (which maven-gpg signs at
+      # deploy) and with the BAF / srcmorph sibling fat jars. The .sha256 files (integrity)
+      # are kept; the .asc adds authenticity. Signed here (not in package-fatjars) because
+      # only this dispatch-gated path has the key. See workspace/policies/fat-jar-release-assets.md.
+      - name: GPG-sign the fat jars (.asc)
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: bash .github/sign-fatjars.sh snapshot-assets
       - name: Update snapshot pre-release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -3386,9 +3402,15 @@ jobs:
     # the GitHub release assets must not be lost in that case.
     if: ${{ !cancelled() && (needs.publish-release.result == 'success' || needs.publish-release.result == 'failure') && needs.package-fatjars.result == 'success' }}
     runs-on: ubuntu-latest
+    # maven-central so the GPG_PRIVATE_KEY / GPG_PASSPHRASE secret is delivered (it is
+    # scoped to this environment) for signing the fat jars below. This environment has
+    # no approval gate (the standalone verify-signing-key jobs use it on every run), so
+    # declaring it here does not block the release.
+    environment: maven-central
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: signed-release-assets
@@ -3401,6 +3423,16 @@ jobs:
         with:
           name: llama-fatjars
           path: release-assets/
+      # GPG-sign the fat jars so each carries a detached .asc signature alongside its
+      # .sha256 checksum — signature parity with the thin jars (which maven-gpg signs at
+      # deploy) and with the BAF / srcmorph sibling fat jars. The .sha256 files (integrity)
+      # are kept; the .asc adds authenticity. Signed here (not in package-fatjars) because
+      # only this dispatch-gated path has the key. See workspace/policies/fat-jar-release-assets.md.
+      - name: GPG-sign the fat jars (.asc)
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: bash .github/sign-fatjars.sh release-assets
       - name: Upload release assets
         uses: softprops/action-gh-release@v3
         with:
