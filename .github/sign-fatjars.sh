@@ -2,21 +2,21 @@
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
-# GPG-signs the all-backends server fat jars (jar-with-dependencies) with a detached,
-# armored .asc signature — the authenticity counterpart to the .sha256 integrity files
-# that package-fatjars.sh already emits. Signature parity with the thin jars (which
-# maven-gpg signs at deploy time) and with the BAF / srcmorph sibling fat jars.
+# Cross-repo shared script — kept BYTE-IDENTICAL in java-llama.cpp and srcmorph (sync any
+# edit to both). GPG-signs the fat jars (jar-with-dependencies) in a directory with a
+# detached, armored .asc signature — the authenticity counterpart to any .sha256 integrity
+# file. The caller builds/collects the fat jars; this only signs every
+# *-jar-with-dependencies*.jar it finds in <asset-dir> (thin jars are left untouched).
 #
-# Signed in the GitHub-Release attach jobs (github-snapshot / github-release-signed),
-# not in package-fatjars, because only that dispatch-gated path receives the signing
-# key: the GPG_PRIVATE_KEY / GPG_PASSPHRASE secrets are scoped to the `maven-central`
-# environment. The cross-repo mechanism is documented in
+# Signed in the GitHub-Release attach path, not at Maven build time, because only that
+# dispatch-gated path receives the signing key: GPG_PRIVATE_KEY / GPG_PASSPHRASE are scoped
+# to the `maven-central` GitHub Environment. Cross-repo convention + per-repo shapes:
 # workspace/policies/fat-jar-release-assets.md.
 #
 # Usage: sign-fatjars.sh <asset-dir>
-#   <asset-dir>  directory holding the downloaded fat jars (and the thin jars); every
+#   <asset-dir>  directory holding the fat jars (and possibly thin jars); every
 #                *-jar-with-dependencies*.jar in it is signed in place (-> <jar>.asc).
 #
 # Env: GPG_PRIVATE_KEY   armored secret key (required)
