@@ -59,7 +59,9 @@ bool finetune(const finetune_config &cfg, std::string &err) {
 
     // Training needs writable weights (mmap yields read-only pointers) and an f32 KV cache
     // (OUT_PROD has no f16 support) — same forced settings as upstream finetune.cpp.
-    params.use_mmap = false;
+    // b10107 replaced the use_mmap/use_mlock/use_direct_io booleans with a single load_mode
+    // enum; LLAMA_LOAD_MODE_NONE disables mmap so the weight pointers stay writable.
+    params.load_mode = LLAMA_LOAD_MODE_NONE;
     params.cache_type_k = GGML_TYPE_F32;
     params.cache_type_v = GGML_TYPE_F32;
 
