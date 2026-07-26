@@ -67,7 +67,7 @@ SPDX-License-Identifier: MIT
 		<hamcrest.version>3.0</hamcrest.version>
 		<surefire.version>3.5.6</surefire.version>
 		<source.plugin.version>3.4.0</source.plugin.version>
-		<jar.plugin.version>3.5.0</jar.plugin.version>
+		<jar.plugin.version>3.5.1</jar.plugin.version>
 	</properties>
 
 	<dependencies>
