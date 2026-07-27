@@ -1,5 +1,5 @@
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index dc9e718..47da913 100644
+index ce1d239c3..b242fc48a 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
 @@ -63,6 +63,7 @@ int llama_server(int argc, char ** argv);
@@ -10,22 +10,18 @@ index dc9e718..47da913 100644
  void llama_server_terminate();
  void llama_server_terminate() {
      if (shutdown_handler) {
-@@ -107,6 +108,102 @@ static server_http_context::handler_t ex_wrapper(server_http_context::handler_t
+@@ -107,6 +108,57 @@ static server_http_context::handler_t ex_wrapper(server_http_context::handler_t
      };
  }
  
-+// [jllama] Route table shared by the standalone single-model server, the router, and the
-+// embedded attach mode (llama_server_attach below). Extracted verbatim from llama_server() so the
-+// entry points cannot drift. The resumable-streaming routes are NOT registered here: their
-+// handlers differ between router and non-router mode, so each entry point wires its own. The
-+// experimental-feature WARNINGS (CORS/router/tools) are likewise logged per-entry-point, since
-+// they depend on router state the helper does not carry; the helper only binds the routes. Returns
-+// false when the experimental built-in tools were requested but failed to set up.
-+[[nodiscard]] static bool llama_server_register_common_routes(
-+        server_http_context & ctx_http,
-+        server_routes       & routes,
-+        const common_params & params,
-+        server_tools        & tools) {
++// [jllama] Pure route table shared by the standalone single-model server and the embedded
++// attach mode (llama_server_attach below), extracted verbatim from llama_server() so the two
++// entry points cannot drift on the core endpoint set. Only the stable, state-independent
++// routes live here (health .. slots); the resumable-streaming routes (handlers differ by
++// router vs non-router), the GCP-compat shim and the experimental CORS-proxy / MCP /
++// built-in-tools wiring stay in each entry point, since upstream couples them to per-call
++// state (server_mcp mcp_mgr lifecycle, is_router_server).
++static void llama_server_register_common_routes(server_http_context & ctx_http, server_routes & routes) {
 +    ctx_http.get ("/health",                   ex_wrapper(routes.get_health)); // public endpoint (no API key check)
 +    ctx_http.get ("/v1/health",                ex_wrapper(routes.get_health)); // public endpoint (no API key check)
 +    ctx_http.get ("/metrics",                  ex_wrapper(routes.get_metrics));
@@ -67,53 +63,12 @@ index dc9e718..47da913 100644
 +    // Save & load slots
 +    ctx_http.get ("/slots",                    ex_wrapper(routes.get_slots));
 +    ctx_http.post("/slots/:id_slot",           ex_wrapper(routes.post_slots));
-+
-+    // Google Cloud Platform (Vertex AI) compat
-+    ctx_http.register_gcp_compat();
-+
-+    // return 403 for disabled features
-+    server_http_context::handler_t res_403 = [](const server_http_req &) {
-+        auto res = std::make_unique<server_http_res>();
-+        res->status = 403;
-+        res->data = safe_json_to_str({
-+            {"error", {
-+                {"message", "this feature is disabled"},
-+                {"type", "feature_disabled"},
-+            }}
-+        });
-+        return res;
-+    };
-+
-+    // CORS proxy (EXPERIMENTAL, only used by the Web UI for MCP)
-+    if (params.ui_mcp_proxy) {
-+        ctx_http.get ("/cors-proxy",      ex_wrapper(proxy_handler_get));
-+        ctx_http.post("/cors-proxy",      ex_wrapper(proxy_handler_post));
-+    } else {
-+        ctx_http.get ("/cors-proxy",      ex_wrapper(res_403));
-+        ctx_http.post("/cors-proxy",      ex_wrapper(res_403));
-+    }
-+
-+    // EXPERIMENTAL built-in tools
-+    if (!params.server_tools.empty()) {
-+        try {
-+            tools.setup(params.server_tools);
-+        } catch (const std::exception & e) {
-+            SRV_ERR("tools setup failed: %s\n", e.what());
-+            return false;
-+        }
-+        ctx_http.get ("/tools",           ex_wrapper(tools.handle_get));
-+        ctx_http.post("/tools",           ex_wrapper(tools.handle_post));
-+    } else {
-+        ctx_http.get ("/tools",           ex_wrapper(res_403));
-+        ctx_http.post("/tools",           ex_wrapper(res_403));
-+    }
-+    return true;
 +}
 +
  int llama_server(int argc, char ** argv) {
      std::setlocale(LC_NUMERIC, "C");
  
-@@ -250,47 +347,9 @@ int llama_server(common_params & params, int argc, char ** argv) {
+@@ -258,47 +310,7 @@ int llama_server(common_params & params, int argc, char ** argv) {
          ctx_http.del ("/models",               ex_wrapper(models_routes->del_router_models));
      }
  
@@ -158,82 +113,16 @@ index dc9e718..47da913 100644
 -    // Save & load slots
 -    ctx_http.get ("/slots",                    ex_wrapper(routes.get_slots));
 -    ctx_http.post("/slots/:id_slot",           ex_wrapper(routes.post_slots));
-+    if (!llama_server_register_common_routes(ctx_http, routes, params, tools)) {
-+        return 1;
-+    }
++    llama_server_register_common_routes(ctx_http, routes);
  
-     // resumable streaming, the conversation_id is the session identity end to end. router and
-     // child wire different handlers under the same paths: a child binds the local session
-@@ -315,22 +374,9 @@ int llama_server(common_params & params, int argc, char ** argv) {
-     ctx_http.post("/v1/streams/lookup",        ex_wrapper(streams_lookup_h));
-     ctx_http.del ("/v1/stream/:conv_id",       ex_wrapper(stream_delete_h));
- 
--    // Google Cloud Platform (Vertex AI) compat
--    ctx_http.register_gcp_compat();
--
--    // return 403 for disabled features
--    server_http_context::handler_t res_403 = [](const server_http_req &) {
--        auto res = std::make_unique<server_http_res>();
--        res->status = 403;
--        res->data = safe_json_to_str({
--            {"error", {
--                {"message", "this feature is disabled"},
--                {"type", "feature_disabled"},
--            }}
--        });
--        return res;
--    };
--
-+    // experimental-feature warnings — the CORS-proxy, /tools and health...slots routes are all
-+    // bound by llama_server_register_common_routes() above; only these log lines stay here because
-+    // they depend on router state (is_router_server) the shared helper does not carry.
-     if (params.cors_origins == "*" && params.api_keys.empty()) {
-         SRV_WRN("%s", "-----------------\n");
-         SRV_WRN("%s", "CORS is set to allow all origins ('*') and no API key is set\n");
-@@ -339,37 +385,16 @@ int llama_server(common_params & params, int argc, char ** argv) {
-         SRV_WRN("%s", "-----------------\n");
-     }
- 
--    // CORS proxy (EXPERIMENTAL, only used by the Web UI for MCP)
-     std::vector<std::string> warn_names;
-     if (is_router_server) {
-         warn_names.push_back("router mode");
-     }
--
-     if (params.ui_mcp_proxy) {
--        ctx_http.get ("/cors-proxy",      ex_wrapper(proxy_handler_get));
--        ctx_http.post("/cors-proxy",      ex_wrapper(proxy_handler_post));
-         warn_names.push_back("MCP proxy (experimental)");
--    } else {
--        ctx_http.get ("/cors-proxy",      ex_wrapper(res_403));
--        ctx_http.post("/cors-proxy",      ex_wrapper(res_403));
-     }
--
--    // EXPERIMENTAL built-in tools
-     if (!params.server_tools.empty()) {
--        try {
--            tools.setup(params.server_tools);
--        } catch (const std::exception & e) {
--            SRV_ERR("tools setup failed: %s\n", e.what());
--            return 1;
--        }
--        ctx_http.get ("/tools",           ex_wrapper(tools.handle_get));
--        ctx_http.post("/tools",           ex_wrapper(tools.handle_post));
-         warn_names.push_back("built-in tools (experimental)");
--    } else {
--        ctx_http.get ("/tools",           ex_wrapper(res_403));
--        ctx_http.post("/tools",           ex_wrapper(res_403));
-     }
--
-     if (warn_names.size() > 0) {
-         SRV_WRN("%s", "-----------------\n");
-         SRV_WRN("%s", "the following feature(s) are enabled:\n");
-@@ -538,3 +563,68 @@ int llama_server(common_params & params, int argc, char ** argv) {
+     // resumable streaming: a child binds the local session factories, the router binds
+     // proxies that resolve the owning child, see server-stream.h
+@@ -556,3 +568,89 @@ int llama_server(common_params & params, int argc, char ** argv) {
  
      return 0;
  }
 +
-+// [jllama] Attach the upstream HTTP frontend — full route table, WebUI assets, resumable
++// [jllama] Attach the upstream HTTP frontend — full core route table, WebUI assets, resumable
 +// streaming — to an ALREADY-LOADED server_context owned by an embedding caller (a LlamaModel
 +// driven over JNI). Unlike llama_server(): no common_init(), no backend/NUMA init, no model
 +// load and no start_loop() — the caller's worker thread keeps driving the context, the HTTP
@@ -241,7 +130,10 @@ index dc9e718..47da913 100644
 +// HTTP-relevant argv (--host/--port/--api-key/...; no -m). Blocks until
 +// llama_server_request_shutdown(); never terminates the shared server_context or frees the
 +// backend — the embedding caller owns both. Shares shutdown_handler with llama_server(), so the
-+// single-instance-per-process rule covers both entry points.
++// single-instance-per-process rule covers both entry points. The experimental CORS-proxy / MCP
++// server / built-in-tools endpoints are NOT wired in attach mode (they belong to a full
++// llama-server host, not an embedded model); they answer 403 "disabled" like a stock build with
++// those features off.
 +int llama_server_attach(int argc, char ** argv, server_context & ctx_server) {
 +    std::setlocale(LC_NUMERIC, "C");
 +
@@ -262,16 +154,34 @@ index dc9e718..47da913 100644
 +    }
 +
 +    server_routes routes(params, ctx_server);
-+    server_tools tools;
-+    if (!llama_server_register_common_routes(ctx_http, routes, params, tools)) {
-+        server_stream_session_manager_stop();
-+        return 1;
-+    }
++    llama_server_register_common_routes(ctx_http, routes);
 +
-+    // single-model (non-router) resumable-streaming handlers
-+    ctx_http.get ("/v1/stream/:conv_id",       ex_wrapper(server_stream_make_get_handler()));
++    // single-model (non-router) resumable-streaming handlers (upstream b10154 paths)
++    ctx_http.get ("/v1/stream",                ex_wrapper(server_stream_make_get_handler()));
 +    ctx_http.post("/v1/streams/lookup",        ex_wrapper(server_stream_make_lookup_handler()));
-+    ctx_http.del ("/v1/stream/:conv_id",       ex_wrapper(server_stream_make_delete_handler()));
++    ctx_http.del ("/v1/stream",                ex_wrapper(server_stream_make_delete_handler()));
++
++    // Google Cloud Platform (Vertex AI) compat — cheap, kept for parity with llama_server()
++    ctx_http.register_gcp_compat();
++
++    // return 403 for the experimental features attach mode does not wire (CORS proxy, built-in
++    // tools), so those paths answer "disabled" rather than 404 — matching a stock server built
++    // with the features off.
++    server_http_context::handler_t res_403 = [](const server_http_req &) {
++        auto res = std::make_unique<server_http_res>();
++        res->status = 403;
++        res->data = safe_json_to_str({
++            {"error", {
++                {"message", "this feature is disabled"},
++                {"type", "feature_disabled"},
++            }}
++        });
++        return res;
++    };
++    ctx_http.get ("/cors-proxy",      ex_wrapper(res_403));
++    ctx_http.post("/cors-proxy",      ex_wrapper(res_403));
++    ctx_http.get ("/tools",           ex_wrapper(res_403));
++    ctx_http.post("/tools",           ex_wrapper(res_403));
 +
 +    if (!ctx_http.start()) {
 +        SRV_ERR("%s", "exiting due to HTTP server error\n");
