@@ -22,11 +22,11 @@ pluginManagement {
     // AGP 9.0+ has built-in Kotlin support (runtime dependency on Kotlin Gradle plugin
     // 2.2.10+), so the standalone org.jetbrains.kotlin.android plugin is no longer
     // applied/needed — see https://developer.android.com/build/migrate-to-built-in-kotlin.
-    // The Compose compiler plugin (2.4.0) still applies separately and exceeds AGP's
+    // The Compose compiler plugin (2.4.10) still applies separately and exceeds AGP's
     // 2.2.10 floor.
     plugins {
         id("com.android.application") version "9.2.1"
-        id("org.jetbrains.kotlin.plugin.compose") version "2.4.0"
+        id("org.jetbrains.kotlin.plugin.compose") version "2.4.10"
     }
 }
 
