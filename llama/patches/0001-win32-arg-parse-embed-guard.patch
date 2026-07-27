@@ -1,8 +1,8 @@
 diff --git a/common/arg.cpp b/common/arg.cpp
-index a26093199..61fdfabb1 100644
+index 79480e06f..ed7793b4d 100644
 --- a/common/arg.cpp
 +++ b/common/arg.cpp
-@@ -1051,14 +1051,10 @@ static utf8_argv make_utf8_argv() {
+@@ -1201,14 +1201,10 @@ static utf8_argv make_utf8_argv() {
  #endif
  
  bool common_params_parse(int argc, char ** argv, common_params & params, llama_example ex, void(*print_usage)(int, char **)) {
@@ -21,7 +21,7 @@ index a26093199..61fdfabb1 100644
      auto ctx_arg = common_params_parser_init(params, ex, print_usage);
      const common_params params_org = ctx_arg.params; // the example can modify the default params
  
-@@ -1091,6 +1087,21 @@ bool common_params_parse(int argc, char ** argv, common_params & params, llama_e
+@@ -1242,6 +1238,21 @@ bool common_params_parse(int argc, char ** argv, common_params & params, llama_e
      return true;
  }
  
@@ -44,7 +44,7 @@ index a26093199..61fdfabb1 100644
      std::vector<const char *> supported_tmpl;
      int32_t res = llama_chat_builtin_templates(nullptr, 0);
 diff --git a/common/arg.h b/common/arg.h
-index 54a38b9cc..04e934f6c 100644
+index 8f609e356..62c615d29 100644
 --- a/common/arg.h
 +++ b/common/arg.h
 @@ -123,6 +123,11 @@ struct common_params_context {
@@ -56,8 +56,8 @@ index 54a38b9cc..04e934f6c 100644
 +// callers that supply their own argv must call common_params_parse() directly.
 +bool common_params_parse_main(int argc, char ** argv, common_params & params, llama_example ex, void(*print_usage)(int, char **) = nullptr);
 +
- // parse input arguments from CLI into a map
- bool common_params_to_map(int argc, char ** argv, llama_example ex, std::map<common_arg, std::string> & out_map);
+ // load all backends and print the list of available (non-CPU) devices to stdout
+ void common_print_available_devices();
  
 diff --git a/examples/batched/batched.cpp b/examples/batched/batched.cpp
 index 830e45f5a..15b6910d7 100644
@@ -86,7 +86,7 @@ index 761e7a2db..c955241ea 100644
      }
  
 diff --git a/examples/diffusion/diffusion-cli.cpp b/examples/diffusion/diffusion-cli.cpp
-index 86ebbf88c..a4d5b04bb 100644
+index d58d22eff..1ab28accd 100644
 --- a/examples/diffusion/diffusion-cli.cpp
 +++ b/examples/diffusion/diffusion-cli.cpp
 @@ -108,7 +108,7 @@ int main(int argc, char ** argv) {
@@ -255,7 +255,7 @@ index f7fa5e306..36f14bf45 100644
      }
  
 diff --git a/examples/training/finetune.cpp b/examples/training/finetune.cpp
-index 0a75ac110..bdf13ba6a 100644
+index 44b284391..f99918aa0 100644
 --- a/examples/training/finetune.cpp
 +++ b/examples/training/finetune.cpp
 @@ -22,7 +22,7 @@ int main(int argc, char ** argv) {
@@ -268,10 +268,10 @@ index 0a75ac110..bdf13ba6a 100644
      }
  
 diff --git a/tests/test-arg-parser.cpp b/tests/test-arg-parser.cpp
-index e83ee85dd..f8605657d 100644
+index 1d3584f90..48cf43fd8 100644
 --- a/tests/test-arg-parser.cpp
 +++ b/tests/test-arg-parser.cpp
-@@ -113,6 +113,15 @@ static void test(void) {
+@@ -112,6 +112,15 @@ static void test(void) {
      assert(true == common_params_parse(argv.size(), list_str_to_char(argv).data(), params, LLAMA_EXAMPLE_COMMON));
      assert(params.model.path == "model_file.gguf");
  
@@ -288,7 +288,7 @@ index e83ee85dd..f8605657d 100644
      assert(true == common_params_parse(argv.size(), list_str_to_char(argv).data(), params, LLAMA_EXAMPLE_COMMON));
      assert(params.cpuparams.n_threads == 1234);
 diff --git a/tests/test-export-graph-ops.cpp b/tests/test-export-graph-ops.cpp
-index 7d8118dcd..88b76410f 100644
+index 46ded1398..d5f1cabe7 100644
 --- a/tests/test-export-graph-ops.cpp
 +++ b/tests/test-export-graph-ops.cpp
 @@ -131,7 +131,7 @@ int main(int argc, char ** argv) {
@@ -301,7 +301,7 @@ index 7d8118dcd..88b76410f 100644
      }
  
 diff --git a/tests/test-recurrent-state-rollback.cpp b/tests/test-recurrent-state-rollback.cpp
-index be19316db..26a041aea 100644
+index 8e2eace6a..d7a7afed9 100644
 --- a/tests/test-recurrent-state-rollback.cpp
 +++ b/tests/test-recurrent-state-rollback.cpp
 @@ -44,7 +44,7 @@ int main(int argc, char ** argv) {
@@ -314,10 +314,10 @@ index be19316db..26a041aea 100644
      }
  
 diff --git a/tests/test-save-load-state.cpp b/tests/test-save-load-state.cpp
-index b097d752a..bbafc5234 100644
+index 6e93ce6fb..9caab1653 100644
 --- a/tests/test-save-load-state.cpp
 +++ b/tests/test-save-load-state.cpp
-@@ -281,7 +281,7 @@ int main(int argc, char ** argv) {
+@@ -358,7 +358,7 @@ int main(int argc, char ** argv) {
  
      common_init();
  
@@ -366,10 +366,10 @@ index e2dcd0b2e..0fdecd02c 100644
      }
  
 diff --git a/tools/cli/cli.cpp b/tools/cli/cli.cpp
-index d974a4019..98a1bdd75 100644
+index dcdb6aeac..0f4a2d188 100644
 --- a/tools/cli/cli.cpp
 +++ b/tools/cli/cli.cpp
-@@ -371,7 +371,7 @@ int llama_cli(int argc, char ** argv) {
+@@ -37,7 +37,7 @@ int llama_cli(int argc, char ** argv) {
  
      common_init();
  
@@ -457,10 +457,10 @@ index b88a16f0f..db4facf3d 100644
      }
  
 diff --git a/tools/mtmd/mtmd-cli.cpp b/tools/mtmd/mtmd-cli.cpp
-index 8704ea79d..eecbaaeb0 100644
+index 08288c868..54ee01c66 100644
 --- a/tools/mtmd/mtmd-cli.cpp
 +++ b/tools/mtmd/mtmd-cli.cpp
-@@ -375,7 +375,7 @@ int main(int argc, char ** argv) {
+@@ -376,7 +376,7 @@ int main(int argc, char ** argv) {
  
      common_init();
  
@@ -496,10 +496,10 @@ index f2179ed27..6d958a861 100644
      }
      if (params.out_file.empty()) {
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index 9e8603be6..e81ecba3f 100644
+index a3b2a8b0f..80d6a3ff6 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -87,7 +87,7 @@ int llama_server(int argc, char ** argv) {
+@@ -102,7 +102,7 @@ int llama_server(int argc, char ** argv) {
      // touch it. lifecycle is symmetric, stop_gc() runs in clean_up() before backend free
      server_stream_session_manager_start();
  
