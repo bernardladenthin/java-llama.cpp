@@ -429,17 +429,36 @@ endif()
 # entry point (server.cpp's `llama_server`, made embeddable by patches/0006) and its tools helper
 # (server-tools.cpp); jllama's JNI bridge (native_server.cpp) then calls llama_server on a worker
 # thread. This runs the *full* upstream HTTP server — WebUI included, every llama-server flag
-# forwarded — inside libjllama, with no separate llama-server executable. server.cpp and
-# server-tools.cpp both pull in vendor/sheredom/subprocess.h (posix_spawn_*), so they share the
-# non-Android guard used for server-models.cpp above; native_server.cpp links against llama_server
-# and is guarded too. On Android the NativeServer native methods are simply absent (its JNI calls
-# throw UnsatisfiedLinkError) — use OpenAiCompatServer there.
+# forwarded — inside libjllama, with no separate llama-server executable. server.cpp,
+# server-tools.cpp and server-mcp.cpp all pull in vendor/sheredom/subprocess.h (posix_spawn_*), so
+# they share the non-Android guard used for server-models.cpp above; native_server.cpp links against
+# llama_server and is guarded too. On Android the NativeServer native methods are simply absent (its
+# JNI calls throw UnsatisfiedLinkError) — use OpenAiCompatServer there.
+#
+# server-mcp.cpp is new in b10154 (upstream MCP-server support): both server.cpp (llama_server's
+# mcp_mgr lifecycle) and server-tools.cpp (tools.setup(..., mcp_mgr) / server_mcp::call_tool) now
+# reference server_mcp, so it MUST be compiled in or the link fails with undefined server_mcp
+# symbols. This is latent on Linux (a shared lib tolerates undefined symbols) but a hard link error
+# on macOS/ld64 and Windows. It is not compiled into jllama_test (that target links neither
+# server.cpp nor server-tools.cpp, so it never references server_mcp).
 if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
     target_sources(jllama PRIVATE
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-mcp.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-tools.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server.cpp
         ${CMAKE_SOURCE_DIR}/src/main/cpp/native_server.cpp
     )
+endif()
+
+# b10154's server-tools.cpp embeds a U+2192 (→) in a narrow string literal. MSVC (and clang-cl)
+# decode narrow literals in the system code page (1252 on the CI runners) and emit warning C4566
+# ("character ... cannot be represented in the current code page"), substituting the arrow at
+# runtime. /utf-8 makes the compiler read sources as UTF-8 and use a UTF-8 execution charset so the
+# arrow survives; it is the fix Microsoft documents for C4566. Scoped to jllama's own TUs and gated
+# on MSVC (true for both cl.exe and clang-cl; /utf-8 is invalid on gcc/clang), so non-Windows builds
+# are unaffected.
+if(MSVC)
+    target_compile_options(jllama PRIVATE /utf-8)
 endif()
 
 # Phase 2: also compile the upstream HTTP transport (server-http.cpp) and its
