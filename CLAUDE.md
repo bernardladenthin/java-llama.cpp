@@ -1677,20 +1677,20 @@ compiles/loads the API); this one has a UI and is driven end-to-end. The name is
 domain is the only string that must be globally unique.
 
 Structure (mirrors the consumer-test's plumbing):
-- **`settings.gradle.kts`** — `rootProject.name = "android-llmservice"`; pins AGP `9.2.1` + the
-  Compose compiler plugin (`2.4.0`); `mavenLocal()` first so the freshly-built AAR + façade
-  resolve there in CI (Maven Central for real users). `9.2.1` (not `9.2.0`) fixes a real R8
-  regression (`ClassNotFoundException` on `com.android.tools.r8.RecordTag` after upgrading
-  Gradle to 9.x with AGP 9.2.0) that hits this project directly since `buildTypes.release`
-  sets `isMinifyEnabled = true`; the `.github/android-consumer-test` fixture is pinned the
-  same way for the same reason. AGP 9.x requires Gradle >= 9.4.1 and
-  JDK 17+; CI already runs JDK 21 everywhere (`env.JAVA_VERSION`), so only the `gradle-version`
+- **`settings.gradle.kts`** — `rootProject.name = "android-llmservice"`; pins AGP `9.3.0` + the
+  Compose compiler plugin (`2.4.10`); `mavenLocal()` first so the freshly-built AAR + façade
+  resolve there in CI (Maven Central for real users). Stay at `>= 9.2.1`: `9.2.1` (not `9.2.0`)
+  first fixed a real R8 regression (`ClassNotFoundException` on `com.android.tools.r8.RecordTag`
+  after upgrading Gradle to 9.x with AGP 9.2.0) that hits this project directly since
+  `buildTypes.release` sets `isMinifyEnabled = true`; `9.3.0` carries that fix forward and the
+  `.github/android-consumer-test` fixture is pinned the same way. AGP 9.3.x requires Gradle >= 9.5.0
+  and JDK 17+; CI already runs JDK 21 everywhere (`env.JAVA_VERSION`), so only the `gradle-version`
   pin on the jobs that build this project (and the `.github/android-consumer-test` fixture)
-  needed bumping. AGP 9.0+ has **built-in Kotlin support** (a runtime dependency on Kotlin
-  Gradle plugin 2.2.10+), so the standalone `org.jetbrains.kotlin.android` plugin is no longer
+  needed bumping (9.4.1 → 9.5.0). AGP 9.0+ has **built-in Kotlin support** (a runtime dependency on
+  Kotlin Gradle plugin 2.2.10+), so the standalone `org.jetbrains.kotlin.android` plugin is no longer
   applied — applying it now fails the build with "no longer required for Kotlin support since
   AGP 9.0" (`app/build.gradle.kts` line 7). The Compose compiler plugin still applies
-  separately and its 2.4.0 pin exceeds AGP's 2.2.10 floor, so no other version changed.
+  separately and its 2.4.10 pin exceeds AGP's 2.2.10 floor, so no other version changed.
 - **`app/build.gradle.kts`** — `namespace`/`applicationId` `net.ladenthin.android.llmservice`,
   `minSdk 28` (AAR floor), `compileSdk 37` (raised from 35 — Compose/lifecycle/activity AAR
   metadata now requires it), `targetSdk 35`, Jetpack Compose, `androidx.appcompat` (only for
