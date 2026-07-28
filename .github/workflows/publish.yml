@@ -918,7 +918,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           # AGP 9.3.0 (the .github/android-consumer-test fixture) requires Gradle >= 9.5.0.
-          gradle-version: "9.5.0"
+          gradle-version: "9.6.1"
       - name: Build core jar (byte-identical classes payload for the AAR)
         run: >
           mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
@@ -1049,7 +1049,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           # AGP 9.3.0 (the .github/android-consumer-test fixture) requires Gradle >= 9.5.0.
-          gradle-version: "9.5.0"
+          gradle-version: "9.6.1"
       - name: Enable KVM group permissions (GitHub-hosted runner)
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -1145,7 +1145,7 @@ jobs:
           # AGP 9.3.0 (android-llmservice) requires Gradle >= 9.5.0; also satisfies Kotlin
           # 2.4's Gradle-plugin floor. The AAR/lib-only jobs stay on an older Gradle since
           # they build no AGP project.
-          gradle-version: "9.5.0"
+          gradle-version: "9.6.1"
       - name: Build core jar + install llama-kotlin facade to mavenLocal
         # install (not package) so the app's Gradle build resolves llama-kotlin +
         # the core POM from mavenLocal. llama-kotlin's core dep is provided-scope, so the
@@ -1229,7 +1229,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           # AGP 9.3.0 (android-llmservice) requires Gradle >= 9.5.0.
-          gradle-version: "9.5.0"
+          gradle-version: "9.6.1"
       - name: Enable KVM group permissions (GitHub-hosted runner)
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

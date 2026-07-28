@@ -12,7 +12,7 @@ on:
 # reproducible between contributors and CI. Bump CLANG_FORMAT_VERSION here and in
 # CLAUDE.md (Code Formatting) together, then reformat the tree with the same version.
 env:
-  CLANG_FORMAT_VERSION: "22.1.5"
+  CLANG_FORMAT_VERSION: "22.1.8"
 
 jobs:
   clang-format:
