@@ -192,7 +192,7 @@ jobs:
   # SECURITY: prints no secret material. Key/passphrase reach Gradle only via env
   # (read by System.getenv at runtime); `set -x` is never enabled; the passphrase
   # is `::add-mask::`ed; Gradle runs with `--stacktrace` only. Only the produced
-  # `.asc` (exit code) is asserted. Uses Gradle 8.14.3.
+  # `.asc` (exit code) is asserted. Uses Gradle 9.6.1.
   # ---------------------------------------------------------------------------
   verify-signing-key-gradle:
     name: Verify GPG signing key — Gradle/BouncyCastle path (no secrets printed)
@@ -206,7 +206,7 @@ jobs:
           distribution: temurin
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: "8.14.3"
+          gradle-version: "9.6.1"
       - name: Sign a throwaway artifact via useInMemoryPgpKeys (BouncyCastle)
         shell: bash
         env:
@@ -3145,7 +3145,7 @@ jobs:
       # downloads above; the core jar was just built by the reactor deploy.
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: "8.14.3"
+          gradle-version: "9.6.1"
       - name: Publish Android AAR snapshots (llama-android + llama-android-opencl)
         run: |
           mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64 llama-android/natives/opencl/arm64-v8a
@@ -3350,7 +3350,7 @@ jobs:
       # built by the reactor deploy.
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: "8.14.3"
+          gradle-version: "9.6.1"
       - name: Publish Android AAR release bundle to Central Portal
         shell: bash
         run: |
