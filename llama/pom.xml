@@ -55,7 +55,6 @@ SPDX-License-Identifier: MIT
 
 	<properties>
 		<sonar.organization>bernardladenthin</sonar.organization>
-		<jna.version>5.19.1</jna.version>
 		<jspecify.version>1.0.0</jspecify.version>
 		<lombok.version>1.18.46</lombok.version>
 		<errorprone.version>2.50.0</errorprone.version>
@@ -85,7 +84,7 @@ SPDX-License-Identifier: MIT
 		<spotbugs.version>4.10.3.0</spotbugs.version>
 		<fb-contrib.version>7.7.4</fb-contrib.version>
 		<findsecbugs.version>1.14.0</findsecbugs.version>
-		<spotless.version>3.8.0</spotless.version>
+		<spotless.version>3.9.0</spotless.version>
 		<palantir-java-format.version>2.96.0</palantir-java-format.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.build.outputTimestamp>2026-07-07T07:32:17Z</project.build.outputTimestamp>

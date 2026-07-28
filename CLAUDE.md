@@ -948,12 +948,12 @@ not track the loader's own Java package). This is the same
 ### Code Formatting
 
 C++ formatting is **enforced in CI** (`.github/workflows/clang-format.yml`) with a **pinned**
-clang-format — currently **22.1.5**, installed via `pip install clang-format==22.1.5`. Format with
+clang-format — currently **22.1.8**, installed via `pip install clang-format==22.1.8`. Format with
 that exact version before committing; a different clang-format version reflows code differently and
 will fail the check.
 
 ```bash
-pip install "clang-format==22.1.5"
+pip install "clang-format==22.1.8"
 clang-format -i src/main/cpp/*.cpp src/main/cpp/*.hpp src/test/cpp/*.cpp   # Format C++ code
 ```
 
