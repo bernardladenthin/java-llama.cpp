@@ -91,9 +91,9 @@ workflow in `.github/workflows/`). It contributes to the `mergeable_state: block
 
 ### Upstream PR submissions — drop the carried patches (open)
 
-Six of the eight `patches/` are upstream-submittable verbatim; each accepted PR (once the pin is
-bumped past it) deletes a patch from the bump checklist. (`0003`/`0004` are carries of already-open
-upstream PRs #22393/#23116 — they drop automatically when those merge.)
+Six of the seven `patches/` are upstream-submittable verbatim; each accepted PR (once the pin is
+bumped past it) deletes a patch from the bump checklist. (`0003` is a carry of an already-open
+upstream PR #22393 — it drops automatically when that merges.)
 
 - **`0001` Windows arg-parse embed guard** (against #24779): `common_params_parse` trusts the caller's
   argv; `common_params_parse_main()` keeps the standalone tools' UTF-8 recovery. Ship with the
@@ -101,13 +101,13 @@ upstream PRs #22393/#23116 — they drop automatically when those merge.)
   host process line).
 - **`0002` preserve caller load-progress callback** (b9789 regression: server clobbers
   `params_base.load_progress_callback`).
-- **`0005` recurrent near-prompt-end checkpoints** (agentic checkpoint starvation on recurrent/hybrid
-  models; complements upstream #24035/#24899/#24891).
 - **`0006` embeddable `llama_server`** (no process signal handlers, forwarded-argv parse, out-of-band
   shutdown).
 - **`0007` `llama_server_attach`** (HTTP frontend on an existing `server_context`).
 - **`0008` `LLAMA_SERVER_WORKER_CMD` router worker override** (also useful for containerized/wrapped
   deployments).
+- **`0009` guard `posix_spawn_file_actions_addchdir_np` on old glibc** (b10154 cross-compile break on
+  manylinux2014 / glibc 2.17; adds a `__GLIBC_PREREQ(2, 29)` probe — submittable to sheredom/subprocess.h).
 
 ### llama.cpp upstream feature exposure (queued, deferred by policy)
 
@@ -191,7 +191,7 @@ real arm64 hardware and the Adreno/OpenCL flavor. Treat LLaMAndroid as prior art
 - **Evaluate GraalVM Native Image as an alternative distribution target.** Reference: [GraalVM Native Image](https://www.graalvm.org/latest/reference-manual/native-image/). The pure-Java sibling projects in the README's "Similar Projects" list (mukel's `llama3.java` / `gemma4.java` / `gptoss.java` / `qwen35.java` / `nemotron3.java`) demonstrate that single-jar, no-JNI Java inference is viable for individual model architectures. Native Image opens an orthogonal direction for THIS project: AOT-compile the Java layer + JNI bridge to a self-contained binary that bundles the libjllama.so (or per-OS equivalent) and starts in milliseconds without a JVM, which would make jllama usable in CLI tools, serverless functions, and short-lived processes where JVM startup is the dominant cost.
 
   **What to investigate before committing**:
-  - **JNI-loading shape.** Native Image supports JNI but requires `--enable-native-access=ALL-UNNAMED` + reflection/JNI configuration files (`reflect-config.json`, `jni-config.json`, `resource-config.json`) describing every class/method/field reachable across the JNI boundary. The 17 native methods in `jllama.cpp` plus the JNI-side `FindClass` / `GetFieldID` / `GetMethodID` calls at `JNI_OnLoad` need to be mapped. The GraalVM tracing agent (`-agentlib:native-image-agent=config-output-dir=...`) can auto-generate the config during a representative test run, but the `LlamaLoader` JAR-extraction path needs at least one resource-config rule for `net/ladenthin/llama/{OS}/{ARCH}/lib*.so`.
+  - **JNI-loading shape.** Native Image supports JNI but requires `--enable-native-access=ALL-UNNAMED` + reflection/JNI configuration files (`reflect-config.json`, `jni-config.json`, `resource-config.json`) describing every class/method/field reachable across the JNI boundary. The 34 native methods in `jllama.cpp` plus the JNI-side `FindClass` / `GetFieldID` / `GetMethodID` calls at `JNI_OnLoad` need to be mapped. The GraalVM tracing agent (`-agentlib:native-image-agent=config-output-dir=...`) can auto-generate the config during a representative test run, but the `LlamaLoader` JAR-extraction path needs at least one resource-config rule for `net/ladenthin/llama/{OS}/{ARCH}/lib*.so`.
   - **Native-library packaging.** The current `LlamaLoader` extracts the OS-specific `.so`/`.dll`/`.dylib` from the JAR to a tmp dir at first use. Native Image needs the same file at AOT-execution time, so either (a) ship the native lib alongside the produced binary as a sidecar file and adjust `LlamaLoader` to find it on the same directory, or (b) embed the native lib as a resource and keep the existing extract-to-tmpdir flow (which Native Image supports via `resource-config.json`).
   - **CUDA / Metal / OpenCL backend selection.** Today the choice between CPU-only / `cuda13-linux-x86-64` / `opencl-android-aarch64` JARs is at Maven-classifier time. Native Image would need either one binary per backend (multiplying the release matrix) or a runtime selector inside `LlamaLoader` that picks among bundled backend libs. The latter is a bigger refactor.
   - **Startup-time benchmark to justify the work.** Measure cold-start of a current java-llama.cpp `LlamaModel(new ModelParameters().setModel("...").setNPredict(1))` invocation: how much is JVM startup + class load vs JNI load + model parse + tokenize + 1 token? If JVM startup is < 10 % of cold-start, Native Image yields little. If JVM startup is > 50 %, it's a clear win for CLI / serverless use cases.
@@ -274,8 +274,8 @@ One-liners for the sections removed from "Open" (full detail: PR #298, CLAUDE.md
   with GCC 14 (mirroring upstream), runs `ctest` on real ARM (446 tests green), and warms sccache
   (99.66% hits). Trade-off: glibc floor 2.17 → ~2.39 (same envelope as upstream's ARM binaries);
   documented in the README classifier table. `build.sh` sccache auto-fetch generalized to aarch64.
-- **Generic `patches/` mechanism** — drop `*.patch`/`*.diff` in repo-root `patches/`, applied to the
-  FetchContent'd llama.cpp source by `cmake/apply-llama-patches.cmake` via the llama.cpp
+- **Generic `patches/` mechanism** — drop `*.patch`/`*.diff` in `llama/patches/`, applied to the
+  FetchContent'd llama.cpp source by `llama/cmake/apply-llama-patches.cmake` via the llama.cpp
   `PATCH_COMMAND` (cross-platform, idempotent, fail-loud). Covers every C++ build from one place.
   First patch fixes the Windows JNI arg-parse regression (`1d875b1` → deterministic form `f651b53`).
   REUSE annotated via `patches/**` glob (`0cffac1`).

@@ -57,10 +57,9 @@ SPDX-License-Identifier: MIT
 
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-		<!-- One minor behind the latest stable Kotlin on purpose: Kotlin consumers can
-		     read metadata at most one minor version ahead of their own compiler, so
-		     compiling with 2.2.x keeps this artifact consumable from Kotlin 2.1+
-		     projects (typical Android Studio installs) instead of forcing 2.2+. -->
+		<!-- Kotlin consumers can read metadata at most one minor version ahead of
+		     their own compiler, so compiling with Kotlin 2.4 keeps this artifact
+		     consumable from Kotlin 2.3+ projects (typical Android Studio installs). -->
 		<kotlin.version>2.4.10</kotlin.version>
 		<kotlinx.coroutines.version>1.11.0</kotlinx.coroutines.version>
 		<junit.version>6.1.2</junit.version>

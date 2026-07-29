@@ -14,8 +14,8 @@ Current CUDA version: **13.2**
 
 To change the CUDA version, update the following **three** places:
 
-1. **`.github/build_cuda_linux.sh`** — Line 10: `sudo dnf install -y cuda-toolkit-13-2`
-2. **`.github/build_cuda_linux.sh`** — Line 12: `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.2/bin/nvcc`
+1. **`.github/build_cuda_linux.sh`** — Line 16: `sudo dnf install -y cuda-toolkit-13-2`
+2. **`.github/build_cuda_linux.sh`** — Line 41: `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.2/bin/nvcc`
 3. **`llama/pom.xml`** — The `<classifier>` tag in the `cuda` jar execution: `cuda13-linux-x86-64`
 
 Also update the header comment in `build_cuda_linux.sh` and the job name in `.github/workflows/release.yaml` for clarity.
@@ -557,15 +557,15 @@ are kept jllama-only) is explained in the cross-repo status under "Deliberate no
 
 The fetched llama.cpp source is patched before it compiles, via a generic mechanism:
 
-- **`patches/`** (repo root) — drop any number of `*.patch` / `*.diff` files here. They are applied
+- **`llama/patches/`** — drop any number of `*.patch` / `*.diff` files here. They are applied
   in **filename order** (use a numeric prefix, e.g. `0001-`, `0002-`), so keep them independent or
   ordered. Each must be a `git apply`-compatible unified diff with paths relative to the llama.cpp
   source root (`a/common/arg.cpp` / `b/common/arg.cpp`, i.e. `-p1`).
-- **`cmake/apply-llama-patches.cmake`** — the applier. Cross-platform (`cmake -P`, so identical on
+- **`llama/cmake/apply-llama-patches.cmake`** — the applier. Cross-platform (`cmake -P`, so identical on
   Linux/macOS/Windows), **idempotent** (`git apply --reverse --check` skips already-applied patches
   so a reconfigure never double-applies) and **fail-loud** (a patch that no longer applies aborts
   the configure — a stale patch can't be silently dropped from a release build).
-- **`CMakeLists.txt`** — wired as the llama.cpp `FetchContent_Declare(... PATCH_COMMAND ...)`, so it
+- **`llama/CMakeLists.txt`** — wired as the llama.cpp `FetchContent_Declare(... PATCH_COMMAND ...)`, so it
   runs for **every** C++ build (all CI jobs *and* local `cmake -B build`) from one place — no
   per-build-step plumbing.
 
@@ -604,7 +604,7 @@ prefill behavior shows up, re-check `tools/server/server-context.cpp`'s `create_
 (`test_reasoning_budget_tokens_per_request` / `test_reasoning_budget_message_per_request`,
 byte-identical body). No local patch needed — the tree already matches what `0004` used to add.
 
-## OuteTTS build-time extraction (`cmake/generate-tts-upstream.cmake`)
+## OuteTTS build-time extraction (`llama/cmake/generate-tts-upstream.cmake`)
 
 The `TextToSpeech` native pipeline reuses llama.cpp's OuteTTS helpers (`tools/tts/tts.cpp`)
 **without hand-copying them**. A verbatim copy would be a DRY/maintenance hazard that silently
@@ -615,7 +615,7 @@ are unreachable from another TU even if it were linked.
 
 Instead the helpers are **DERIVED mechanically at configure time** from the pinned upstream source:
 
-- **`cmake/generate-tts-upstream.cmake`** — reads `${llama.cpp_SOURCE_DIR}/tools/tts/tts.cpp`, keeps
+- **`llama/cmake/generate-tts-upstream.cmake`** — reads `${llama.cpp_SOURCE_DIR}/tools/tts/tts.cpp`, keeps
   the pre-`main()` span (the DSP `fill_hann_window`/`irfft`/`fold`/`embd_to_audio`, the prompt/text
   helpers incl. `process_text`'s number-to-words, the `outetts_version` enum), strips `static` from
   the handful the JNI engine calls (giving them external linkage), and extracts the two hard-coded
@@ -1032,7 +1032,7 @@ If the local check passes (`BUILD SUCCESS`), the `mvn package` job in
   - The `server` package is a dedicated top layer in the ArchUnit `layeredArchitecture` rule (the only layer allowed to access the root `Api`); `noInternalJdkImports` carries an explicit exception for the supported `com.sun.net.httpserver` (the exported `jdk.httpserver` module, which `module-info.java` `requires`). See README "OpenAI-compatible HTTP server".
 
 **Native layer** (`src/main/cpp/`):
-- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp. ~1,650 lines; 33 native methods (29 `LlamaModel` + 3 `TextToSpeech` + 1 `LlamaQuantizer`).
+- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp. ~1,650 lines; 34 native methods (30 `LlamaModel` + 3 `TextToSpeech` + 1 `LlamaQuantizer`).
 - `utils.hpp` — Helper utilities (format helpers, argv stripping, token-piece serialisation).
 - `json_helpers.hpp` — Pure JSON transformation helpers (no JNI, no llama state). Independently unit-testable.
 - `jni_helpers.hpp` — JNI bridge helpers (handle management + server orchestration). Includes `json_helpers.hpp`.
