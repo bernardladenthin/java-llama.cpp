@@ -135,4 +135,4 @@ jina-reranker models the core test jobs already download) — the
 
 - **`modelName()`** is ignored since one model is bound per adapter.
 
-Requires Java 17+ (langchain4j 1.x baseline). Targets `langchain4j-core` 1.17.1.
+Requires Java 17+ (langchain4j 1.x baseline). Targets `langchain4j-core` 1.18.0.
