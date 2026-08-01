@@ -8,6 +8,12 @@ additive (two new accessors + their declarations) and is a verbatim copy of the 
 so it can be dropped from patches/ once b<nnnn> includes it. Refresh against the new source on
 every llama.cpp version bump (the applier fails loud if the context shifts).
 
+Update: upstream closed PR #22393 without merging -- ngxson rejected it, reasoning that
+slot_prompt_similarity is internal, single-use-case state that shouldn't be exposed as public
+API and should instead live in downstream code. This patch is therefore now carried
+indefinitely, not pending-merge; it will never be droppable via an upstream bump and must keep
+being refreshed on every version bump like the other permanent patches (0001, 0002, 0006-0009).
+
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
 index 39b7eb2..7c274cb 100644
 --- a/tools/server/server-context.cpp
