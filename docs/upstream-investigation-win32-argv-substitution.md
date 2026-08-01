@@ -7,6 +7,10 @@ Technical findings for llama.cpp. Everything below was verified against
 Downstream context: this is patch `0001` of [java-llama.cpp](https://github.com/bernardladenthin/java-llama.cpp),
 which embeds `llama-server` in a JVM process and therefore builds its own `argv`.
 
+Reported upstream as [ggml-org/llama.cpp#26416](https://github.com/ggml-org/llama.cpp/issues/26416)
+(2026-08-01), which links back to this document and asks which of the two directions below the
+maintainers prefer before a pull request is opened.
+
 ## Summary
 
 On Windows, `common_params_parse` replaces the `argv` it was passed with one
