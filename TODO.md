@@ -99,7 +99,8 @@ upstream PR #22393 — it drops automatically when that merges.)
   argv; `common_params_parse_main()` keeps the standalone tools' UTF-8 recovery. Ship with the
   standalone-safe repro (synthetic argv discarded on Windows because `GetCommandLineW()` returns the
   host process line) — written up, with the reproducer executed, in
-  `docs/upstream-investigation-win32-argv-substitution.md`.
+  `docs/upstream-investigation-win32-argv-substitution.md`. Reported upstream as
+  ggml-org/llama.cpp#26416; waiting on the maintainers to pick a direction before a PR.
 - **`0002` preserve caller load-progress callback** (b9789 regression: server clobbers
   `params_base.load_progress_callback`).
 - **`0006` embeddable `llama_server`** (no process signal handlers, forwarded-argv parse, out-of-band
