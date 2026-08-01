@@ -12,7 +12,7 @@ Update: upstream closed PR #22393 without merging -- ngxson rejected it, reasoni
 slot_prompt_similarity is internal, single-use-case state that shouldn't be exposed as public
 API and should instead live in downstream code. This patch is therefore now carried
 indefinitely, not pending-merge; it will never be droppable via an upstream bump and must keep
-being refreshed on every version bump like the other permanent patches (0001, 0002, 0006-0009).
+being refreshed on every version bump.
 
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
 index 39b7eb2..7c274cb 100644
