@@ -98,7 +98,8 @@ upstream PR #22393 — it drops automatically when that merges.)
 - **`0001` Windows arg-parse embed guard** (against #24779): `common_params_parse` trusts the caller's
   argv; `common_params_parse_main()` keeps the standalone tools' UTF-8 recovery. Ship with the
   standalone-safe repro (synthetic argv discarded on Windows because `GetCommandLineW()` returns the
-  host process line).
+  host process line) — written up, with the reproducer executed, in
+  `docs/upstream-investigation-win32-argv-substitution.md`.
 - **`0002` preserve caller load-progress callback** (b9789 regression: server clobbers
   `params_base.load_progress_callback`).
 - **`0006` embeddable `llama_server`** (no process signal handlers, forwarded-argv parse, out-of-band
@@ -107,7 +108,9 @@ upstream PR #22393 — it drops automatically when that merges.)
 - **`0008` `LLAMA_SERVER_WORKER_CMD` router worker override** (also useful for containerized/wrapped
   deployments).
 - **`0009` guard `posix_spawn_file_actions_addchdir_np` on old glibc** (b10154 cross-compile break on
-  manylinux2014 / glibc 2.17; adds a `__GLIBC_PREREQ(2, 29)` probe — submittable to sheredom/subprocess.h).
+  manylinux2014 / glibc 2.17 and manylinux_2_28 / glibc 2.28; adds an overridable
+  `SUBPROCESS_HAVE_CWD` probe via `__GLIBC_PREREQ(2, 29)` — submitted as sheredom/subprocess.h#104,
+  drops automatically once llama.cpp bumps the vendored pin).
 
 ### llama.cpp upstream feature exposure (queued, deferred by policy)
 

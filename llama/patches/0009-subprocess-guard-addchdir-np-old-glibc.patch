@@ -1,32 +1,35 @@
 diff --git a/vendor/sheredom/subprocess.h b/vendor/sheredom/subprocess.h
-index 5e809023a..f980bf386 100644
+index 5e80902..dc0153c 100644
 --- a/vendor/sheredom/subprocess.h
 +++ b/vendor/sheredom/subprocess.h
-@@ -1203,10 +1203,27 @@ cleanup:
-   }
-   actions_created = 1;
+@@ -274,6 +274,21 @@ subprocess_weak int subprocess_alive(struct subprocess_s *const process);
+ #include <unistd.h>
+ #endif
  
-+  /* [jllama] posix_spawn_file_actions_addchdir_np is a non-portable extension
-+     (glibc >= 2.29, bionic API >= 34, macOS >= 10.15). On older glibc such as
-+     manylinux2014 (glibc 2.17) the declaration is absent, which broke the
-+     cross-compile build at b10154 (new vendored subprocess.h + common/subproc.cpp).
-+     Detect it and fall back to reporting cwd-spawning as unsupported (ENOSYS)
-+     instead of failing to compile. This build path never spawns with a cwd. */
++/* Whether subprocess_create_ex can honour process_cwd. glibc only gained
++   posix_spawn_file_actions_addchdir_np in 2.29. Define this yourself to
++   override the detection, for instance on musl older than 1.1.24. */
++#if !defined(SUBPROCESS_HAVE_CWD)
 +#if defined(__GLIBC__)
-+#  if __GLIBC_PREREQ(2, 29)
-+#    define SUBPROCESS_HAVE_ADDCHDIR_NP 1
-+#  else
-+#    define SUBPROCESS_HAVE_ADDCHDIR_NP 0
-+#  endif
++#if __GLIBC_PREREQ(2, 29)
++#define SUBPROCESS_HAVE_CWD 1
 +#else
-+#  define SUBPROCESS_HAVE_ADDCHDIR_NP 1
++#define SUBPROCESS_HAVE_CWD 0
 +#endif
-   // Set working directory
++#else
++#define SUBPROCESS_HAVE_CWD 1
++#endif
++#endif
++
+ #if defined(_WIN32)
+ 
+ #include <wchar.h>
+@@ -1207,6 +1222,8 @@ cleanup:
    if (process_cwd) {
  #if defined(__APPLE__) && MAC_OS_X_VERSION_MIN_REQUIRED >= 260000
      posix_error = posix_spawn_file_actions_addchdir(&actions, process_cwd);
-+#elif !SUBPROCESS_HAVE_ADDCHDIR_NP
-+    posix_error = ENOSYS; /* [jllama] old glibc: addchdir_np unavailable */
++#elif !SUBPROCESS_HAVE_CWD
++    posix_error = ENOSYS;
  #else
  #if defined(__APPLE__) && defined(__clang__)
  #pragma clang diagnostic push
