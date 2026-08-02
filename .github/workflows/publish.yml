@@ -200,7 +200,7 @@ jobs:
     environment: maven-central
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           java-version: '21'
           distribution: temurin
@@ -322,7 +322,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           java-version: '21'
           distribution: temurin
@@ -355,7 +355,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
@@ -379,7 +379,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
@@ -422,7 +422,7 @@ jobs:
           path: models/
           key: gguf-models-${{ hashFiles('.github/models.csv') }}
           enableCrossOsArchive: true
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -630,7 +630,7 @@ jobs:
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -687,7 +687,7 @@ jobs:
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -731,7 +731,7 @@ jobs:
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -770,7 +770,7 @@ jobs:
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -911,7 +911,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
@@ -1042,7 +1042,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
@@ -1136,7 +1136,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
@@ -1222,7 +1222,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
@@ -1311,7 +1311,7 @@ jobs:
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -1356,7 +1356,7 @@ jobs:
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -1815,7 +1815,7 @@ jobs:
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -1900,7 +1900,7 @@ jobs:
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -1938,7 +1938,7 @@ jobs:
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2042,7 +2042,7 @@ jobs:
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2121,7 +2121,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2155,7 +2155,7 @@ jobs:
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2223,7 +2223,7 @@ jobs:
           enableCrossOsArchive: true
       - name: Validate model files
         run: bash .github/validate-models.sh
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2292,7 +2292,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2346,7 +2346,7 @@ jobs:
           enableCrossOsArchive: true
       - name: Validate model files
         run: bash .github/validate-models.sh
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2415,7 +2415,7 @@ jobs:
           enableCrossOsArchive: true
       - name: Validate model files
         run: bash .github/validate-models.sh
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2484,7 +2484,7 @@ jobs:
           enableCrossOsArchive: true
       - name: Validate model files
         run: bash .github/validate-models.sh
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2555,7 +2555,7 @@ jobs:
           enableCrossOsArchive: true
       - name: Validate model files
         run: .github\validate-models.bat
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2649,7 +2649,7 @@ jobs:
           enableCrossOsArchive: true
       - name: Validate model files
         run: .github\validate-models.bat
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2822,7 +2822,7 @@ jobs:
         with:
           name: Windows-x86_64-openvino
           path: ${{ github.workspace }}/llama/src/main/resources_windows_openvino/net/ladenthin/llama/
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2917,7 +2917,7 @@ jobs:
           enableCrossOsArchive: true
       - name: Validate model files
         run: .github/validate-models.sh
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2955,7 +2955,7 @@ jobs:
           enableCrossOsArchive: true
       - name: Validate model files
         run: .github\validate-models.bat
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
@@ -2980,7 +2980,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v5.6.0
         with: { java-version: '${{ env.JAVA_VERSION }}', distribution: temurin }
       - uses: actions/download-artifact@v8
         with: { name: jacoco-report, path: target/site/jacoco/ }
@@ -3104,7 +3104,7 @@ jobs:
           name: Windows-x86_64-openvino
           path: ${{ github.workspace }}/llama/src/main/resources_windows_openvino/net/ladenthin/llama/
       - name: Set up Maven Central Repository
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v5.6.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
@@ -3317,7 +3317,7 @@ jobs:
           name: Windows-x86_64-openvino
           path: ${{ github.workspace }}/llama/src/main/resources_windows_openvino/net/ladenthin/llama/
       - name: Set up Maven Central Repository
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v5.6.0
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: 'temurin'
