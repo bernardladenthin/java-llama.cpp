@@ -1201,17 +1201,16 @@ Require a model file. The CI downloads models from HuggingFace:
 
 **CI model policy (publish.yml): the full model set is downloaded and exercised on EVERY
 Java test job** — Linux x86_64, all three macOS arm64 jobs (Metal / no-Metal / Metal-15), and
-both Windows jobs (MSVC + Ninja). That includes the nomic embedding model and the SmolVLM vision
-model + mmproj, with their `-Dnet.ladenthin.llama.*` properties set, so `LlamaEmbeddingsTest` and
-`MultimodalIntegrationTest` **run on every platform** rather than self-skipping.
-`validate-models.{sh,bat}` treats all of these as **required** (a missing model hard-fails the job
-before tests run, so a download regression can never silently downgrade to a skip). Two models
-still self-skip: the audio-input model (`AudioInputIntegrationTest`) — the prompt clip is committed
-(`src/test/resources/audios/sample.wav`) but the audio model + mmproj have no CI download — and the
-Qwen3-TTS backbone + mmproj (`TtsIntegrationTest`), whose predecessor (OuteTTS + WavTokenizer) was
-retired when upstream #26254 replaced the whole TTS pipeline (see "Qwen3-TTS via
-`mtmd_helper::gen_audio`" above); no verified Qwen3-TTS HF filenames have been added to
-`.github/models.csv` yet.
+both Windows jobs (MSVC + Ninja). That includes the nomic embedding model, the SmolVLM vision
+model + mmproj, and the Qwen3-TTS backbone + mmproj (`ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF`,
+smallest available quants: `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf` backbone +
+`mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf` mmproj — no smaller mmproj quant is published), with
+their `-Dnet.ladenthin.llama.*` properties set, so `LlamaEmbeddingsTest`, `MultimodalIntegrationTest`,
+and `TtsIntegrationTest` **run on every platform** rather than self-skipping. `validate-models.{sh,bat}`
+treats all of these as **required** (a missing model hard-fails the job before tests run, so a
+download regression can never silently downgrade to a skip). Only the audio-input model
+(`AudioInputIntegrationTest`) still self-skips — the prompt clip is committed
+(`src/test/resources/audios/sample.wav`) but the audio model + mmproj have no CI download.
 The model set has a **single source of truth: `.github/models.csv`** (one `filename,url` row per
 model; `#` comments). Everything derives from it: the **`download-models`** job (ubuntu,
 `needs: startgate`) is the only place models are fetched from HuggingFace (one manifest-driven

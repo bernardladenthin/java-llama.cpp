@@ -17,3 +17,5 @@ Qwen2.5-1.5B-Instruct-Q4_K_M.gguf,https://huggingface.co/bartowski/Qwen2.5-1.5B-
 nomic-embed-text-v1.5.f16.gguf,https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.f16.gguf
 SmolVLM-500M-Instruct-Q8_0.gguf,https://huggingface.co/ggml-org/SmolVLM-500M-Instruct-GGUF/resolve/main/SmolVLM-500M-Instruct-Q8_0.gguf
 mmproj-SmolVLM-500M-Instruct-Q8_0.gguf,https://huggingface.co/ggml-org/SmolVLM-500M-Instruct-GGUF/resolve/main/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf
+Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf,https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/main/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf
+mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf,https://huggingface.co/ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF/resolve/main/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf

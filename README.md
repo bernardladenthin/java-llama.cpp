@@ -356,8 +356,8 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.audio.model` | unset (test self-skips) | test | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | Path to an audio-input model GGUF (e.g. Ultravox, Qwen2.5-Omni). |
 | `net.ladenthin.llama.audio.mmproj` | unset (test self-skips) | test | `AudioInputIntegrationTest` | Matching audio mmproj (encoder) GGUF. |
 | `net.ladenthin.llama.audio.input` | `src/test/resources/audios/sample.wav` (committed) | test | `AudioInputIntegrationTest` | `.wav`/`.mp3` audio prompt clip; the extension drives format detection. |
-| `net.ladenthin.llama.tts.model` | unset (test self-skips) | test | `TtsIntegrationTest` | Path to the Qwen3-TTS backbone (text) GGUF. No CI download yet — see "Qwen3-TTS via `mtmd_helper::gen_audio`" in `CLAUDE.md`. |
-| `net.ladenthin.llama.tts.mmproj` | unset (test self-skips) | test | `TtsIntegrationTest` | Path to the matching Qwen3-TTS mmproj GGUF (speaker encoder + code predictor + code2wav decoder). |
+| `net.ladenthin.llama.tts.model` | unset (test self-skips) | test | `TtsIntegrationTest` | Path to the Qwen3-TTS backbone (text) GGUF. Any Qwen3-TTS-family model works; CI default is `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf`. |
+| `net.ladenthin.llama.tts.mmproj` | unset (test self-skips) | test | `TtsIntegrationTest` | Path to the matching Qwen3-TTS mmproj GGUF (speaker encoder + code predictor + code2wav decoder); CI default is `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf`. |
 
 `MultimodalIntegrationTest` self-skips when any of the three `vision.*` properties points at a missing path, so a partial setup (just the vision model + the committed image, no mmproj) lets the test class load without erroring. `AudioInputIntegrationTest` self-skips the same way over the three `audio.*` properties. `TtsIntegrationTest` likewise self-skips unless both `tts.model` and `tts.mmproj` point at existing files.
 
