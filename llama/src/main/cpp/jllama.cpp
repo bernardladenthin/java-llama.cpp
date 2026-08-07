@@ -243,7 +243,7 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
 
 // Tokenise the prompt in `data` and fill task.tokens + task.params.
 // Callers must wrap this in try/catch (params_from_json_cmpl can throw).
-static void populate_completion_task(server_task &task, jllama_context *jctx, int n_ctx_slot,
+static void populate_completion_task(server_task &task, jllama_context *jctx,
                                      const std::vector<llama_logit_bias> &logit_bias_eog, const json &data,
                                      bool has_mtmd, std::vector<raw_buffer> files = {}) {
     if (!configure_multimodal_task_impl(task, has_mtmd, data, std::move(files))) {
@@ -252,7 +252,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx, in
             task.tokens = std::move(tokenized_prompts[0]);
         }
     }
-    task.params = server_schema::eval_llama_cmpl_schema(jctx->vocab, jctx->params, n_ctx_slot, logit_bias_eog, data);
+    task.params = server_schema::eval_llama_cmpl_schema(jctx->vocab, jctx->params, logit_bias_eog, data);
     configure_task_slot_impl(task, data);
 }
 
@@ -266,8 +266,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx, in
     try {
         server_task task(task_type);
         task.id = tid;
-        populate_completion_task(task, jctx, meta.slot_n_ctx, meta.logit_bias_eog, data, meta.has_mtmd,
-                                 std::move(files));
+        populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
         task.params.res_type = res_type;
         rd->post_task(std::move(task));
     } catch (const std::exception &e) {
@@ -296,8 +295,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx, in
     server_task task(task_type);
     task.id = rd.get_new_id();
     try {
-        populate_completion_task(task, jctx, meta.slot_n_ctx, meta.logit_bias_eog, data, meta.has_mtmd,
-                                 std::move(files));
+        populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
     } catch (const std::exception &e) {
         throw_invalid_request(env, e);
         return nullptr;

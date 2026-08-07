@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b10275**
+Current llama.cpp pinned version: **b10280**
 
 ## Upgrading CUDA Version
 
@@ -429,7 +429,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network; embed.cpp is plain C++17 (no npm)
-git clone --depth 1 --branch b10275 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b10280 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build \
   && ( cd dist && find . -type f -not -path './_gzip/*' \
        | while read -r f; do mkdir -p "_gzip/$(dirname "$f")"; gzip -9 -c "$f" > "_gzip/$f"; done ) \
@@ -469,7 +469,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b10275`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b10280`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -583,7 +583,23 @@ Current patches:
 | `0007-server-attach-http-frontend.patch` | **Adds `llama_server_attach(argc, argv, server_context&)`** so the `NativeServer` *attach mode* can serve an **already-loaded `LlamaModel`** over the upstream HTTP frontend — no second model load, no `start_loop()`; the LlamaModel's worker keeps driving the shared `server_context` and the HTTP routes post tasks to its queue (the queue is the synchronization point). Mechanically: (1) extracts the **pure core route table** (`health` … `slots`) out of `llama_server()` into `static void llama_server_register_common_routes(ctx_http, routes)` (shared, so the two entry points cannot drift on the core endpoint set). **Scope note (narrowed at the b10154 bump):** the helper deliberately carries **only** the stable, state-independent route table — **not** the resumable-streaming routes (their handlers differ between router / non-router), the GCP-compat shim, or the experimental **CORS-proxy / MCP-server / built-in-tools** wiring. b10154 (upstream MCP-server support) moved the streaming routes into the middle of that block and coupled tools/CORS to a per-call `server_mcp mcp_mgr` lifecycle, so the earlier contiguous "route-table + CORS-proxy + tools" extraction is no longer possible; `llama_server()` keeps all of that inline, **byte-identical to upstream b10154** (only the route-table block is factored out). (2) adds `llama_server_attach`, which parses only the HTTP-side argv via `common_params_parse`, starts the stream-session GC + `server_http_context`, registers the common route table, the **non-router** resumable-streaming handlers (upstream b10154 paths `/v1/stream` GET/DEL + `/v1/streams/lookup` POST), the GCP-compat shim, and **403 "disabled" stubs for `/cors-proxy` + `/tools`** (attach mode does not wire the experimental CORS-proxy / MCP / built-in-tools host — those belong to a full `llama-server`, not an embedded model), marks ready immediately (model already loaded), and blocks on the HTTP thread until `llama_server_request_shutdown()` — never calling `common_init()`, backend init, `ctx_server.terminate()` or `llama_backend_free()` (the embedding caller owns those). Applies after `0001`+`0006` (same file); closes the "NativeServer — reuse an already-loaded LlamaModel" TODO. Upstream-submittable ("server: let embedding callers attach the HTTP frontend to an existing server_context"). |
 | `0008-server-models-worker-cmd-override.patch` | **Makes router mode usable in-JVM.** The router (`server-models.cpp`) spawns each model worker by re-executing its own binary (`get_server_exec_path()` = `/proc/self/exe` & friends) — inside a JVM that binary is `java`, not a llama-server, so embedded router workers could never start. The patch adds env `LLAMA_SERVER_WORKER_CMD` (whitespace-split; read in `server_model_meta::update_args`) which replaces only the leading binary-path token of the rendered worker args, letting an embedding host relaunch workers through its own bootstrap — e.g. `java -cp app.jar net.ladenthin.llama.server.NativeServer` (each worker is then a fresh JVM running the classic single-model `NativeServer`). Exposed in Java as `NativeServer.setWorkerCommand(String...)` (JNI `setenv`); exercised by `RouterModeIntegrationTest` (Linux CI). Upstream-submittable (also useful for containerized/wrapped deployments). |
 | `0006-server-embed-native-server-jni.patch` | **Makes `server.cpp`'s `llama_server` embeddable in the JVM** so the `NativeServer` JNI bridge can run the full upstream HTTP server (WebUI included) inside `libjllama` — see "Two server modes" below. b9870 already exposes `int llama_server(int, char**)` (non-static; no `main` in the file), so the patch only adds embedded-mode support: (1) a `g_llama_server_embedded` flag + `llama_server_set_embedded()` / `llama_server_request_shutdown()` (declared in the committed `src/main/cpp/native_server_bridge.h`); (2) skips installing the process-wide SIGINT/SIGTERM handlers when embedded (they would hijack the JVM's); (3) in embedded mode parses the **forwarded** argv via `common_params_parse` instead of `common_params_parse_main` (whose `GetCommandLineW` recovery would pick up `java.exe`'s command line — the same Windows class of bug `0001` fixes). `llama_server_request_shutdown()` mirrors the SIGTERM path (invokes the installed `shutdown_handler` → `ctx_server.terminate()` unblocks `start_loop()`), giving JNI an out-of-band stop since `ctx_server` is loop-local. Applies **after `0001`** (which flips this call site to `common_params_parse_main`), so its context is the post-`0001` tree; regenerate against `0001`+source on a bump. Only touches `tools/server/server.cpp`. |
-| `0009-subprocess-guard-addchdir-np-old-glibc.patch` | **Fixes the b10154 cross-compile break on old glibc.** b10154 bumped the vendored `vendor/sheredom/subprocess.h` to a version that calls `posix_spawn_file_actions_addchdir_np` (a non-portable extension: glibc **≥ 2.29**, bionic API ≥ 34, macOS ≥ 10.15) to honor a spawn `process_cwd`, and added `common/subproc.cpp` (both pulled in via the new MCP-server support). Upstream guards that call **only for macOS**, so on **manylinux2014 (glibc 2.17)** the declaration is absent and `subprocess.h` (via `subproc.cpp` + `mtmd-helper.cpp` + `server-mcp.cpp`) fails to compile (`'posix_spawn_file_actions_addchdir_np' was not declared`). Android is unaffected — `__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__` already makes the declaration visible (weak). The patch adds a `SUBPROCESS_HAVE_CWD` compile-time probe (`__GLIBC_PREREQ(2, 29)`, nested under `defined(__GLIBC__)` so non-glibc platforms never evaluate it, and skipped entirely when the macro is already defined so unrecognized platforms can override it) next to the POSIX includes and, when unavailable, reports a requested cwd as `ENOSYS` instead of failing to compile — this build never spawns with a cwd. **Not reproducible on a modern-glibc dev box** (the `addchdir_np` branch is taken there); the manylinux CI job is the gate. Also affects `manylinux_2_28` (glibc 2.28). **Submitted upstream as [sheredom/subprocess.h#104](https://github.com/sheredom/subprocess.h/pull/104)** and byte-identical to its head `620ce44`, so the applier will report "already applied" and skip once llama.cpp bumps the vendored pin. Two side findings from that work were filed separately and do not affect this project: [#105](https://github.com/sheredom/subprocess.h/pull/105) (`-std=c++20` unknown to GCC 8) and [#106](https://github.com/sheredom/subprocess.h/pull/106) (`posix_spawn` not reporting exec failures before glibc 2.24). Only touches `vendor/sheredom/subprocess.h`. |
+
+**`0009` was dropped at the b10280 bump.** Upstream merged
+[sheredom/subprocess.h#104](https://github.com/sheredom/subprocess.h/pull/104) — the exact fix this
+patch submitted — via [ggml-org/llama.cpp#26606](https://github.com/ggml-org/llama.cpp/pull/26606)
+("vendor: apply patches for subprocess.h"): `vendor/sheredom/subprocess.h` at b10280 already defines
+the `SUBPROCESS_HAVE_CWD` compile-time probe and the `ENOSYS` fallback our patch added, so the
+old-glibc build break `0009` fixed no longer exists upstream. The applier's idempotent
+`git apply --reverse --check` could **not** auto-skip this one (unlike a byte-identical carry): the
+same PR also rewrote the neighboring Windows argv-quoting logic and added a `__NetBSD__` branch next
+to the `process_cwd` guard, shifting the patch's second hunk's context, so it failed loud with "does
+not apply cleanly" at configure time exactly as designed — confirming the patch needed to be dropped,
+not refreshed. Also folded into that PR: a fix for `-std=c++20` unknown to GCC 8
+([#105](https://github.com/sheredom/subprocess.h/pull/105)) and a `posix_spawn` exec-failure
+reporting fix pre-glibc-2.24 ([#106](https://github.com/sheredom/subprocess.h/pull/106)) — neither
+affects this project. If a regression surfaces on old-glibc builds (manylinux2014/manylinux_2_28),
+re-check `vendor/sheredom/subprocess.h`'s `SUBPROCESS_HAVE_CWD` guard against this description before
+reintroducing a local patch.
 
 **`0005` was dropped at the b9981 bump.** Upstream's own `server-context.cpp` picked up an
 equivalent — and broader — fix for the same checkpoint-starvation problem: `create_checkpoint`
@@ -740,6 +756,7 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | `common/sampling.h` | Sampler API, `common_sampler_*` functions |
 | `common/log.h` | Log macro signatures |
 | `tools/mtmd/mtmd-helper.h` | `mtmd_helper::gen_audio` (used directly by `tts_engine.cpp` since the Qwen3-TTS rework — no longer safe to skip), `mtmd_helper_bitmap_init_from_file` |
+| `tools/server/server-schema.h` | `eval_llama_cmpl_schema` signature (called directly by `jllama.cpp`'s `populate_completion_task`) — **b10275 dropped its `n_ctx_slot` parameter** and broke a full build without any diff review catching it, because this file is a same-repo header `jllama.cpp` includes directly rather than one pulled in transitively through `common.h`/`llama.h`; it was outside this table until that incident (see `docs/history/llama-cpp-breaking-changes.md`'s b10270–b10275 row). Also watch `server-common.h`/`server-chat.h`/`server-task.h` the same way — anything under `tools/server/*.h` that `jllama.cpp`/`jni_helpers.hpp`/`json_helpers.hpp` `#include`s directly is in scope here, not just headers reachable from the dependency graph above. |
 | `common/json-schema-to-grammar.h` | Grammar API |
 | `ggml/include/ggml.h` | `ggml_type` enum values (e.g. `GGML_TYPE_F16`), tensor primitives |
 | `ggml/include/ggml-backend.h` | Backend/device abstraction types |
@@ -1262,7 +1279,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b10275`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b10280`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.17.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the

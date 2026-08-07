@@ -1773,20 +1773,19 @@ TEST(CmplFinalChatStream, IncludeUsageTrue_TrailingChunkHasEmptyChoicesAndUsage)
 //   Called with nullptr vocab when the JSON does not exercise
 //   grammar/preserved_tokens tokenisation.  Tests verify:
 //     - simple field round-trip (temperature, seed, n_predict)
-//     - repeat_last_n=-1 is expanded to n_ctx_slot
-//     - dry_penalty_last_n=-1 is expanded to n_ctx_slot
+//     - repeat_last_n/dry_penalty_last_n reject negative values (b10275 dropped the -1=ctx-size
+//       sentinel; the hard lower limit moved from -1 to 0)
 //     - dry_base < 1.0 is reset to default
 //     - n_discard negative throws std::invalid_argument (b9739: range-checked, no longer clamped)
 //     - empty dry_sequence_breakers throws std::invalid_argument
 //     - lora field not an array throws std::invalid_argument
-//     - repeat_last_n < -1 throws std::invalid_argument
 // ============================================================
 
 namespace {
-task_params parse_params(const json &data, int n_ctx = 512) {
+task_params parse_params(const json &data) {
     common_params params_base;
     std::vector<llama_logit_bias> no_bias;
-    return server_schema::eval_llama_cmpl_schema(nullptr, params_base, n_ctx, no_bias, data);
+    return server_schema::eval_llama_cmpl_schema(nullptr, params_base, no_bias, data);
 }
 } // namespace
 
@@ -1817,14 +1816,15 @@ TEST(ParamsFromJsonCmpl, SsePingInterval_Absent_InheritsServerSetting) {
     EXPECT_EQ(parse_params({}).sse_ping_interval, defaults.sse_ping_interval);
 }
 
-TEST(ParamsFromJsonCmpl, RepeatLastN_MinusOne_ExpandsToNCtxSlot) {
-    const auto p = parse_params({{"repeat_last_n", -1}}, /*n_ctx=*/256);
-    EXPECT_EQ(p.sampling.penalty_last_n, 256);
+// b10275: the -1=ctx-size sentinel was dropped from repeat_last_n; the hard lower limit is now 0,
+// so a request-supplied -1 is out of range and throws instead of expanding to the slot context size.
+TEST(ParamsFromJsonCmpl, RepeatLastN_MinusOne_Throws) {
+    EXPECT_THROW(parse_params({{"repeat_last_n", -1}}), std::invalid_argument);
 }
 
-TEST(ParamsFromJsonCmpl, DryPenaltyLastN_MinusOne_ExpandsToNCtxSlot) {
-    const auto p = parse_params({{"dry_penalty_last_n", -1}}, /*n_ctx=*/128);
-    EXPECT_EQ(p.sampling.dry_penalty_last_n, 128);
+// b10275: same sentinel removal for dry_penalty_last_n.
+TEST(ParamsFromJsonCmpl, DryPenaltyLastN_MinusOne_Throws) {
+    EXPECT_THROW(parse_params({{"dry_penalty_last_n", -1}}), std::invalid_argument);
 }
 
 TEST(ParamsFromJsonCmpl, DryBase_BelowOne_ResetToDefault) {
@@ -1868,7 +1868,7 @@ TEST(ParamsFromJsonCmpl, DryAllowedLength_RoundTrip) {
 }
 
 TEST(ParamsFromJsonCmpl, DryPenaltyLastN_Positive_RoundTrip) {
-    // a positive value is kept verbatim (only -1 expands to n_ctx_slot, covered above)
+    // a positive value is kept verbatim (negative values throw, covered above)
     const auto p = parse_params({{"dry_penalty_last_n", 64}});
     EXPECT_EQ(p.sampling.dry_penalty_last_n, 64);
 }
@@ -1887,7 +1887,7 @@ TEST(ParamsFromJsonCmpl, LoraNotArray_Throws) {
     EXPECT_THROW(parse_params({{"lora", "not-an-array"}}), std::invalid_argument);
 }
 
-TEST(ParamsFromJsonCmpl, RepeatLastN_BelowMinusOne_Throws) {
+TEST(ParamsFromJsonCmpl, RepeatLastN_BelowZero_Throws) {
     EXPECT_THROW(parse_params({{"repeat_last_n", -2}}), std::invalid_argument);
 }
 
