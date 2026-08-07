@@ -3,16 +3,14 @@
 // SPDX-License-Identifier: MIT
 //
 // Unit tests for the in-memory WAV writer (src/main/cpp/tts_wav.hpp) — our own code, not upstream.
-// The OuteTTS DSP it pairs with (embd_to_audio etc.) is derived from upstream tts.cpp at build time
-// and exercised end-to-end by the Java TtsIntegrationTest, not unit-tested here.
+// The Qwen3-TTS pipeline it pairs with (mtmd_helper::gen_audio) is entirely upstream-owned (no
+// project-side DSP to unit-test here) and exercised end-to-end by the Java TtsIntegrationTest.
 
 #include "tts_wav.hpp"
 
 #include <cstdint>
 #include <gtest/gtest.h>
 #include <vector>
-
-#include "tts_engine.h"
 
 using namespace jllama_tts;
 
@@ -52,35 +50,4 @@ TEST(TtsWav, ClampsAndEncodesSamplesLittleEndian) {
     EXPECT_EQ(sample(1), 32767);
     EXPECT_EQ(sample(2), -32767);
     EXPECT_EQ(sample(3), -32768);
-}
-
-// ============================================================
-// filter_outetts_codec_tokens (OuteTTS V0_2 / V0_3 codec window)
-// ============================================================
-
-// The OuteTTS codec window is identical for V0_2 and V0_3 (verified against upstream
-// tools/tts/tts.cpp). In-range tokens — including both window boundaries — are kept
-// and rebased to 0-based codec ids.
-TEST(OuteTtsCodecFilter, InRangeTokensAreRebased) {
-    std::vector<int32_t> codes = {k_outetts_codec_lo, k_outetts_codec_lo + 1, k_outetts_codec_hi};
-    filter_outetts_codec_tokens(codes);
-    ASSERT_EQ(codes.size(), 3u);
-    EXPECT_EQ(codes[0], 0);
-    EXPECT_EQ(codes[1], 1);
-    EXPECT_EQ(codes[2], k_outetts_codec_hi - k_outetts_codec_lo);
-}
-
-// Tokens just below / just above the window (e.g. text, control, or speaker tokens)
-// are dropped — the off-by-one boundary cases on both ends.
-TEST(OuteTtsCodecFilter, OutOfRangeTokensAreDropped) {
-    std::vector<int32_t> codes = {k_outetts_codec_lo - 1, 198 /*newline*/, k_outetts_codec_hi + 1, k_outetts_codec_lo};
-    filter_outetts_codec_tokens(codes);
-    ASSERT_EQ(codes.size(), 1u);
-    EXPECT_EQ(codes[0], 0);
-}
-
-TEST(OuteTtsCodecFilter, EmptyInput_StaysEmpty) {
-    std::vector<int32_t> codes;
-    filter_outetts_codec_tokens(codes);
-    EXPECT_TRUE(codes.empty());
 }

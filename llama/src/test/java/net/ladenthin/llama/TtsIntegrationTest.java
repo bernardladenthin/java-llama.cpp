@@ -19,13 +19,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 /**
- * Real-model coverage for {@link TextToSpeech} (OuteTTS audio output, llama.cpp {@code llama-tts}
- * pipeline). Loads the two-model TTS pipeline and synthesizes a short clip, checking the WAV
- * container is well-formed.
+ * Real-model coverage for {@link TextToSpeech} (Qwen3-TTS audio output, llama.cpp's upstream
+ * {@code mtmd_helper::gen_audio} pipeline). Loads the backbone+mmproj TTS pipeline and synthesizes
+ * a short clip, checking the WAV container is well-formed.
  *
- * <p>Self-skips when {@link TestConstants#PROP_TTS_TTC_MODEL} or
- * {@link TestConstants#PROP_TTS_VOCODER_MODEL} is unset or its file is missing, so it runs only where
- * the (large) OuteTTS + WavTokenizer GGUFs have been staged.
+ * <p>Self-skips when {@link TestConstants#PROP_TTS_MODEL} or {@link TestConstants#PROP_TTS_MMPROJ}
+ * is unset or its file is missing, so it runs only where the (large) Qwen3-TTS backbone + mmproj
+ * GGUFs have been staged.
  */
 public class TtsIntegrationTest {
 
@@ -36,18 +36,18 @@ public class TtsIntegrationTest {
     @DisplayName("synthesize() returns a well-formed, non-silent 24 kHz mono 16-bit WAV")
     @Timeout(value = 300_000, unit = TimeUnit.MILLISECONDS)
     public void synthesizesWellFormedWav() {
-        String ttc = System.getProperty(TestConstants.PROP_TTS_TTC_MODEL);
-        String vocoder = System.getProperty(TestConstants.PROP_TTS_VOCODER_MODEL);
+        String model = System.getProperty(TestConstants.PROP_TTS_MODEL);
+        String mmproj = System.getProperty(TestConstants.PROP_TTS_MMPROJ);
         Assumptions.assumeTrue(
-                ttc != null && !ttc.isEmpty(), "TTS model not set (-D" + TestConstants.PROP_TTS_TTC_MODEL + "=...)");
+                model != null && !model.isEmpty(), "TTS model not set (-D" + TestConstants.PROP_TTS_MODEL + "=...)");
         Assumptions.assumeTrue(
-                vocoder != null && !vocoder.isEmpty(),
-                "TTS vocoder not set (-D" + TestConstants.PROP_TTS_VOCODER_MODEL + "=...)");
-        Assumptions.assumeTrue(new File(ttc).exists(), "TTS model file missing: " + ttc);
-        Assumptions.assumeTrue(new File(vocoder).exists(), "TTS vocoder file missing: " + vocoder);
+                mmproj != null && !mmproj.isEmpty(),
+                "TTS mmproj not set (-D" + TestConstants.PROP_TTS_MMPROJ + "=...)");
+        Assumptions.assumeTrue(new File(model).exists(), "TTS model file missing: " + model);
+        Assumptions.assumeTrue(new File(mmproj).exists(), "TTS mmproj file missing: " + mmproj);
 
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, 0);
-        try (TextToSpeech tts = new TextToSpeech(ttc, vocoder, gpuLayers, 0)) {
+        try (TextToSpeech tts = new TextToSpeech(model, mmproj, gpuLayers, 0)) {
             byte[] wav = tts.synthesize("hello from llama");
 
             assertNotNull(wav, "WAV bytes must not be null");

@@ -5,26 +5,24 @@
 package net.ladenthin.llama;
 
 import net.ladenthin.llama.loader.LlamaLoader;
+import org.jspecify.annotations.Nullable;
 
 /**
- * Text-to-speech synthesis over llama.cpp's OuteTTS pipeline. Loads two models — a text-to-codes
- * (OuteTTS) model and a codes-to-speech (WavTokenizer) vocoder — and turns text into a 24&nbsp;kHz
- * mono 16-bit WAV byte stream.
+ * Text-to-speech synthesis over llama.cpp's upstream Qwen3-TTS audio-generation pipeline. Loads a
+ * backbone text model plus an mmproj GGUF (speaker encoder + code predictor + code2wav decoder,
+ * all bundled in one file) and turns text into a 24&nbsp;kHz mono 16-bit WAV byte stream.
  *
- * <p>This is a separate native type from {@link LlamaModel} because TTS is a two-model pipeline that
- * does not use the chat/completion server path. Native memory is not GC-managed: use
+ * <p>This is a separate native type from {@link LlamaModel} because TTS uses its own model pair
+ * and does not go through the chat/completion server path. Native memory is not GC-managed: use
  * try-with-resources or call {@link #close()} explicitly.
  *
  * <pre>{@code
  * try (TextToSpeech tts = new TextToSpeech(
- *         "models/OuteTTS-0.2-500M.gguf", "models/WavTokenizer.gguf")) {
+ *         "models/qwen3-tts-backbone.gguf", "models/qwen3-tts-mmproj.gguf")) {
  *     byte[] wav = tts.synthesize("Hello from llama dot c p p.");
  *     Files.write(Paths.get("out.wav"), wav);
  * }
  * }</pre>
- *
- * <p>Synthesis uses the built-in default speaker profile. English number words are expanded for
- * speech (e.g. {@code 3} is spoken as "three"); non-English text is not romanized.
  */
 public final class TextToSpeech implements AutoCloseable {
 
@@ -37,49 +35,74 @@ public final class TextToSpeech implements AutoCloseable {
     /**
      * Load the TTS pipeline CPU-only.
      *
-     * @param ttcModelPath path to the text-to-codes (OuteTTS) GGUF
-     * @param vocoderModelPath path to the codes-to-speech (WavTokenizer) vocoder GGUF
+     * @param modelPath path to the backbone (text) GGUF
+     * @param mmprojPath path to the mmproj GGUF (speaker encoder + code predictor + code2wav)
      */
-    public TextToSpeech(String ttcModelPath, String vocoderModelPath) {
-        this(ttcModelPath, vocoderModelPath, 0, 0);
+    public TextToSpeech(String modelPath, String mmprojPath) {
+        this(modelPath, mmprojPath, 0, 0);
     }
 
     /**
      * Load the TTS pipeline.
      *
-     * @param ttcModelPath path to the text-to-codes (OuteTTS) GGUF
-     * @param vocoderModelPath path to the codes-to-speech (WavTokenizer) vocoder GGUF
+     * @param modelPath path to the backbone (text) GGUF
+     * @param mmprojPath path to the mmproj GGUF (speaker encoder + code predictor + code2wav)
      * @param gpuLayers number of layers to offload to the GPU (0 = CPU only)
-     * @param threads CPU threads for the spectral DSP (0 = a small default)
+     * @param threads CPU threads for the backbone (0 = a small default)
      */
-    public TextToSpeech(String ttcModelPath, String vocoderModelPath, int gpuLayers, int threads) {
-        this.handle = loadNative(ttcModelPath, vocoderModelPath, gpuLayers, threads);
+    public TextToSpeech(String modelPath, String mmprojPath, int gpuLayers, int threads) {
+        this.handle = loadNative(modelPath, mmprojPath, gpuLayers, threads);
     }
 
     /**
-     * Synthesize speech with default sampling (top-k 4, seed 0, up to 4096 code tokens).
+     * Synthesize speech with the model's default voice and default sampling (top-k 4, seed 0, up
+     * to 512 audio frames).
      *
      * @param text the text to speak
      * @return a 24&nbsp;kHz mono 16-bit WAV byte stream
      */
     public byte[] synthesize(String text) {
-        return synthesize(text, 4096, 4, 0);
+        return synthesize(text, 512, 4, 0);
     }
 
     /**
-     * Synthesize speech with explicit sampling parameters.
+     * Synthesize speech with the model's default voice and explicit sampling parameters.
      *
      * @param text the text to speak
-     * @param maxCodeTokens cap on generated audio-code tokens (longer = longer audio)
-     * @param topK top-k sampling cutoff for the code model
+     * @param maxFrames cap on generated audio frames (longer = longer audio)
+     * @param topK top-k sampling cutoff for the semantic (backbone) token stream
      * @param seed sampler seed
      * @return a 24&nbsp;kHz mono 16-bit WAV byte stream
      */
-    public byte[] synthesize(String text, int maxCodeTokens, int topK, int seed) {
+    public byte[] synthesize(String text, int maxFrames, int topK, int seed) {
+        return synthesize(text, null, null, maxFrames, topK, seed);
+    }
+
+    /**
+     * Synthesize speech with an optional cloned voice and language.
+     *
+     * @param text the text to speak
+     * @param speakerReferenceAudioPath path to a reference audio clip (wav/mp3) whose voice is
+     *     cloned, or {@code null}/empty for the model's default voice
+     * @param language ISO 639-1-ish language name understood by the model (e.g. {@code "english"},
+     *     {@code "chinese"} — see the model's own documentation for the supported set), or
+     *     {@code null}/empty for the model's default
+     * @param maxFrames cap on generated audio frames (longer = longer audio)
+     * @param topK top-k sampling cutoff for the semantic (backbone) token stream
+     * @param seed sampler seed
+     * @return a 24&nbsp;kHz mono 16-bit WAV byte stream
+     */
+    public byte[] synthesize(
+            String text,
+            @Nullable String speakerReferenceAudioPath,
+            @Nullable String language,
+            int maxFrames,
+            int topK,
+            int seed) {
         if (handle == 0L) {
             throw new IllegalStateException("TextToSpeech is closed");
         }
-        return synthesizeNative(handle, text, maxCodeTokens, topK, seed);
+        return synthesizeNative(handle, text, speakerReferenceAudioPath, language, maxFrames, topK, seed);
     }
 
     @Override
@@ -90,9 +113,16 @@ public final class TextToSpeech implements AutoCloseable {
         }
     }
 
-    private static native long loadNative(String ttcModelPath, String vocoderModelPath, int gpuLayers, int threads);
+    private static native long loadNative(String modelPath, String mmprojPath, int gpuLayers, int threads);
 
-    private static native byte[] synthesizeNative(long handle, String text, int maxCodeTokens, int topK, int seed);
+    private static native byte[] synthesizeNative(
+            long handle,
+            String text,
+            @Nullable String speakerReferenceAudioPath,
+            @Nullable String language,
+            int maxFrames,
+            int topK,
+            int seed);
 
     private static native void deleteNative(long handle);
 }

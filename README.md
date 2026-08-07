@@ -11,7 +11,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b10217](https://img.shields.io/badge/llama.cpp-%23b10217-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b10217)  
+[![llama.cpp b10319](https://img.shields.io/badge/llama.cpp-%23b10319-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b10319)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.0%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -108,7 +108,7 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - OpenAI-compatible **chat completion** with automatic chat-template application, including streaming and tool/function calling support via the upstream server.
 - **Embeddings** (single and native-batched via `embed(Collection<String>)`) and **reranking** for retrieval pipelines.
 - **Runtime LoRA adapter control** — list the loaded adapters and change their scales at runtime without reloading the model (`getLoraAdapters()` / `setLoraAdapters(Map)`), the typed counterpart of the upstream `GET`/`POST /lora-adapters` endpoints.
-- **Text-to-speech** (`TextToSpeech`) over the two-model OuteTTS + WavTokenizer pipeline, returning WAV audio.
+- **Text-to-speech** (`TextToSpeech`) over llama.cpp's Qwen3-TTS pipeline (`mtmd_helper::gen_audio`), returning WAV audio.
 - **In-JVM GGUF quantization** (`LlamaQuantizer`) over llama.cpp's `llama_model_quantize` — convert a GGUF to another quantization scheme without shelling out to `llama-quantize`.
 - **Infilling** (fill-in-the-middle) for code models.
 - **Tokenize / detokenize** and **JSON-schema → grammar** conversion.
@@ -356,10 +356,10 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.audio.model` | unset (test self-skips) | test | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | Path to an audio-input model GGUF (e.g. Ultravox, Qwen2.5-Omni). |
 | `net.ladenthin.llama.audio.mmproj` | unset (test self-skips) | test | `AudioInputIntegrationTest` | Matching audio mmproj (encoder) GGUF. |
 | `net.ladenthin.llama.audio.input` | `src/test/resources/audios/sample.wav` (committed) | test | `AudioInputIntegrationTest` | `.wav`/`.mp3` audio prompt clip; the extension drives format detection. |
-| `net.ladenthin.llama.tts.ttc.model` | unset (test self-skips) | test | `TtsIntegrationTest` | Path to the OuteTTS text-to-codes GGUF. CI default is `OuteTTS-0.2-500M-Q4_K_M.gguf`. |
-| `net.ladenthin.llama.tts.vocoder.model` | unset (test self-skips) | test | `TtsIntegrationTest` | Path to the matching codes-to-speech vocoder GGUF. CI default is `WavTokenizer-Large-75-F16.gguf`. |
+| `net.ladenthin.llama.tts.model` | unset (test self-skips) | test | `TtsIntegrationTest` | Path to the Qwen3-TTS backbone (text) GGUF. Any Qwen3-TTS-family model works; CI default is `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf`. |
+| `net.ladenthin.llama.tts.mmproj` | unset (test self-skips) | test | `TtsIntegrationTest` | Path to the matching Qwen3-TTS mmproj GGUF (speaker encoder + code predictor + code2wav decoder); CI default is `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf`. |
 
-`MultimodalIntegrationTest` self-skips when any of the three `vision.*` properties points at a missing path, so a partial setup (just the vision model + the committed image, no mmproj) lets the test class load without erroring. `AudioInputIntegrationTest` self-skips the same way over the three `audio.*` properties. `TtsIntegrationTest` likewise self-skips unless both `tts.ttc.model` and `tts.vocoder.model` point at existing files.
+`MultimodalIntegrationTest` self-skips when any of the three `vision.*` properties points at a missing path, so a partial setup (just the vision model + the committed image, no mmproj) lets the test class load without erroring. `AudioInputIntegrationTest` self-skips the same way over the three `audio.*` properties. `TtsIntegrationTest` likewise self-skips unless both `tts.model` and `tts.mmproj` point at existing files.
 
 ## Documentation
 
@@ -590,29 +590,29 @@ effective adapter set changes.
 
 ### Text-to-Speech
 
-`TextToSpeech` synthesizes audio from text over llama.cpp's OuteTTS pipeline. It is a separate
-`AutoCloseable` native type (not a `LlamaModel`) because TTS is a **two-model** pipeline: a
-text-to-codes model (OuteTTS) and a codes-to-speech vocoder (WavTokenizer). `synthesize(String)`
-returns a 24&nbsp;kHz mono 16-bit WAV byte stream.
+`TextToSpeech` synthesizes audio from text over llama.cpp's upstream Qwen3-TTS pipeline
+(`mtmd_helper::gen_audio`). It is a separate `AutoCloseable` native type (not a `LlamaModel`)
+because TTS loads its own **model pair**: a backbone (text) GGUF and an mmproj GGUF bundling the
+speaker encoder, code predictor, and code2wav decoder. `synthesize(String)` returns a
+24&nbsp;kHz mono 16-bit WAV byte stream.
 
 ```java
 try (TextToSpeech tts = new TextToSpeech(
-        "models/OuteTTS-0.2-500M-Q4_K_M.gguf",
-        "models/WavTokenizer-Large-75-F16.gguf")) {
+        "models/qwen3-tts-backbone.gguf", "models/qwen3-tts-mmproj.gguf")) {
     byte[] wav = tts.synthesize("Hello from llama dot c p p.");
     Files.write(Paths.get("out.wav"), wav);
 }
 ```
 
-Add `(ttcPath, vocoderPath, gpuLayers, threads)` to offload to the GPU, or
-`synthesize(text, maxCodeTokens, topK, seed)` for explicit sampling. As with `LlamaModel`, native
-memory is not GC-managed — use try-with-resources or call `close()`. Synthesis uses the built-in
-default speaker profile; English number words are expanded for speech (`3` → "three"), and
-non-English text is not romanized.
+Add `(modelPath, mmprojPath, gpuLayers, threads)` to offload to the GPU, or
+`synthesize(text, maxFrames, topK, seed)` for explicit sampling, or the full
+`synthesize(text, speakerReferenceAudioPath, language, maxFrames, topK, seed)` overload for
+voice cloning from a reference clip. As with `LlamaModel`, native memory is not GC-managed — use
+try-with-resources or call `close()`.
 
-Compatible GGUFs (the CI test defaults): OuteTTS
-[`OuteTTS-0.2-500M-GGUF`](https://huggingface.co/second-state/OuteTTS-0.2-500M-GGUF) +
-[`WavTokenizer`](https://huggingface.co/ggml-org/WavTokenizer).
+This replaces the project's earlier two-model OuteTTS + WavTokenizer pipeline, which upstream
+[#26254](https://github.com/ggml-org/llama.cpp/pull/26254) deleted entirely in favor of Qwen3-TTS
+(llama.cpp `b10270`); there is no backward-compatible path for the old model pair.
 
 ### GGUF Quantization
 

@@ -173,36 +173,13 @@ set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b10217
+	GIT_TAG        b10319
 	PATCH_COMMAND  ${CMAKE_COMMAND}
 		-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patches
 		-DLLAMA_SRC=<SOURCE_DIR>
 		-P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply-llama-patches.cmake
 )
 FetchContent_MakeAvailable(llama.cpp)
-
-# OuteTTS native pipeline: DERIVE the upstream tts.cpp helpers (DSP + prompt + text + the default
-# speaker profile) into a compilable translation unit at configure time, rather than hand-copying
-# them — a hand copy is a DRY/maintenance hazard that silently diverges on every llama.cpp upgrade.
-# tts.cpp cannot simply be added to target_sources because it defines its own main(); the generator
-# drops main() and gives the helpers external linkage. See cmake/generate-tts-upstream.cmake. The
-# generated file is never committed; it is regenerated from whatever tts.cpp the pinned GIT_TAG
-# resolves to, so a version bump is picked up automatically. The tag below is cosmetic provenance in
-# the generated banner — keep it in sync with the llama.cpp GIT_TAG above.
-set(JLLAMA_TTS_GEN_DIR ${CMAKE_BINARY_DIR}/tts_generated)
-set(JLLAMA_TTS_GEN_CPP ${JLLAMA_TTS_GEN_DIR}/tts_upstream_gen.cpp)
-file(MAKE_DIRECTORY ${JLLAMA_TTS_GEN_DIR})
-execute_process(
-    COMMAND ${CMAKE_COMMAND}
-        -DTTS_SRC=${llama.cpp_SOURCE_DIR}/tools/tts/tts.cpp
-        -DOUT_CPP=${JLLAMA_TTS_GEN_CPP}
-        -DLLAMA_TAG=b10217
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/generate-tts-upstream.cmake
-    RESULT_VARIABLE JLLAMA_TTS_GEN_RESULT
-)
-if(NOT JLLAMA_TTS_GEN_RESULT EQUAL 0)
-    message(FATAL_ERROR "OuteTTS extraction failed; see cmake/generate-tts-upstream.cmake")
-endif()
 
 # b8831 added ggml_graph_next_uid() which calls _InterlockedIncrement64 via
 # <intrin.h> on x86. The intrinsic only exists on x64; provide the
@@ -382,17 +359,9 @@ add_library(jllama SHARED
     src/main/cpp/jllama.cpp
     src/main/cpp/tts_engine.cpp
     src/main/cpp/train_engine.cpp
-    ${JLLAMA_TTS_GEN_CPP}
     src/main/cpp/utils.hpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp)
-
-# The generated TU keeps the whole pre-main() span of tts.cpp, so a few upstream CLI-only
-# helpers (print_usage, save_wav16, xterm colour) come along unused. Silence the resulting
-# unused-function warning on that one file (non-MSVC; MSVC's C4505 is off by default).
-if(NOT MSVC)
-    set_source_files_properties(${JLLAMA_TTS_GEN_CPP} PROPERTIES COMPILE_FLAGS "-Wno-unused-function")
-endif()
 
 # Phase 1 refactoring: compile upstream server library units directly into jllama
 # server.hpp has been replaced by direct upstream includes in jllama.cpp.

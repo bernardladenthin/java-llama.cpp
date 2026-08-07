@@ -243,7 +243,7 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
 
 // Tokenise the prompt in `data` and fill task.tokens + task.params.
 // Callers must wrap this in try/catch (params_from_json_cmpl can throw).
-static void populate_completion_task(server_task &task, jllama_context *jctx, int n_ctx_slot,
+static void populate_completion_task(server_task &task, jllama_context *jctx,
                                      const std::vector<llama_logit_bias> &logit_bias_eog, const json &data,
                                      bool has_mtmd, std::vector<raw_buffer> files = {}) {
     if (!configure_multimodal_task_impl(task, has_mtmd, data, std::move(files))) {
@@ -252,7 +252,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx, in
             task.tokens = std::move(tokenized_prompts[0]);
         }
     }
-    task.params = server_schema::eval_llama_cmpl_schema(jctx->vocab, jctx->params, n_ctx_slot, logit_bias_eog, data);
+    task.params = server_schema::eval_llama_cmpl_schema(jctx->vocab, jctx->params, logit_bias_eog, data);
     configure_task_slot_impl(task, data);
 }
 
@@ -266,8 +266,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx, in
     try {
         server_task task(task_type);
         task.id = tid;
-        populate_completion_task(task, jctx, meta.slot_n_ctx, meta.logit_bias_eog, data, meta.has_mtmd,
-                                 std::move(files));
+        populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
         task.params.res_type = res_type;
         rd->post_task(std::move(task));
     } catch (const std::exception &e) {
@@ -296,8 +295,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx, in
     server_task task(task_type);
     task.id = rd.get_new_id();
     try {
-        populate_completion_task(task, jctx, meta.slot_n_ctx, meta.logit_bias_eog, data, meta.has_mtmd,
-                                 std::move(files));
+        populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
     } catch (const std::exception &e) {
         throw_invalid_request(env, e);
         return nullptr;
@@ -1750,21 +1748,22 @@ JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_LlamaModel_configureParallel
 }
 
 // ---------------------------------------------------------------------------
-// TextToSpeech (OuteTTS) — native methods for the two-model TTS pipeline.
-// Separate Java type (net.ladenthin.llama.TextToSpeech); implemented here so it
-// can reuse parse_jstring / c_llama_error / c_error_oom from this TU.
+// TextToSpeech (upstream Qwen3-TTS via mtmd_helper::gen_audio) — native methods for the
+// backbone+mmproj TTS pipeline. Separate Java type (net.ladenthin.llama.TextToSpeech);
+// implemented here so it can reuse parse_jstring / c_llama_error / c_error_oom from this TU.
 // ---------------------------------------------------------------------------
 extern "C" {
 
-JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_TextToSpeech_loadNative(JNIEnv *env, jclass clazz, jstring jttc,
-                                                                         jstring jcts, jint gpu_layers, jint threads) {
+JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_TextToSpeech_loadNative(JNIEnv *env, jclass clazz, jstring jmodel,
+                                                                         jstring jmmproj, jint gpu_layers,
+                                                                         jint threads) {
     (void)clazz;
     try {
-        const std::string ttc = parse_jstring(env, jttc);
-        const std::string cts = parse_jstring(env, jcts);
+        const std::string model = parse_jstring(env, jmodel);
+        const std::string mmproj = parse_jstring(env, jmmproj);
         std::string err;
         jllama_tts::tts_engine *engine =
-            jllama_tts::engine_init(ttc, cts, static_cast<int>(gpu_layers), static_cast<int>(threads), err);
+            jllama_tts::engine_init(model, mmproj, static_cast<int>(gpu_layers), static_cast<int>(threads), err);
         if (engine == nullptr) {
             env->ThrowNew(c_llama_error, err.c_str());
             return 0;
@@ -1778,8 +1777,9 @@ JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_TextToSpeech_loadNative(JNIEnv 
 
 JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNative(JNIEnv *env, jclass clazz,
                                                                                     jlong handle, jstring jtext,
-                                                                                    jint max_codes, jint top_k,
-                                                                                    jint seed) {
+                                                                                    jstring jspeaker_reference_path,
+                                                                                    jstring jlang, jint max_frames,
+                                                                                    jint top_k, jint seed) {
     (void)clazz;
     try {
         auto *engine = reinterpret_cast<jllama_tts::tts_engine *>(handle);
@@ -1788,10 +1788,13 @@ JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNat
             return nullptr;
         }
         const std::string text = parse_jstring(env, jtext);
+        const std::string speaker_reference_path =
+            jspeaker_reference_path == nullptr ? std::string() : parse_jstring(env, jspeaker_reference_path);
+        const std::string lang = jlang == nullptr ? std::string() : parse_jstring(env, jlang);
         std::vector<uint8_t> wav;
         std::string err;
-        if (!jllama_tts::engine_synthesize(engine, text, static_cast<int>(max_codes), static_cast<int>(top_k),
-                                           static_cast<uint32_t>(seed), wav, err)) {
+        if (!jllama_tts::engine_synthesize(engine, text, speaker_reference_path, lang, static_cast<int>(max_frames),
+                                           static_cast<int>(top_k), static_cast<uint32_t>(seed), wav, err)) {
             env->ThrowNew(c_llama_error, err.c_str());
             return nullptr;
         }
