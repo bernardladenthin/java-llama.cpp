@@ -36,9 +36,11 @@ env:
   # under the upstream mtmd pipeline.
   VISION_MODEL_NAME: "SmolVLM-500M-Instruct-Q8_0.gguf"
   VISION_MMPROJ_NAME: "mmproj-SmolVLM-500M-Instruct-Q8_0.gguf"
-  # Text-to-speech models for AudioInputIntegrationTest's sibling TtsIntegrationTest (OuteTTS pipeline).
-  TTS_MODEL_NAME: "OuteTTS-0.2-500M-Q4_K_M.gguf"
-  TTS_VOCODER_NAME: "WavTokenizer-Large-75-F16.gguf"
+  # TtsIntegrationTest (Qwen3-TTS backbone + mmproj) has no CI model download yet — the project's
+  # OuteTTS+WavTokenizer models were retired when upstream #26254 replaced the whole TTS pipeline
+  # (see docs/history/llama-cpp-breaking-changes.md, b10269-b10270); TtsIntegrationTest self-skips
+  # like AudioInputIntegrationTest until a verified Qwen3-TTS HF model/mmproj URL is added to
+  # .github/models.csv (needs an environment with huggingface.co access to find the exact filenames).
   # Test image used by MultimodalIntegrationTest is committed to the repo
   # at src/test/resources/images/test-image.jpg (see the README in that
   # directory for licensing). No download step is needed; CI just points
@@ -2240,9 +2242,7 @@ jobs:
             -Dnet.ladenthin.llama.nomic.path=models/${NOMIC_EMBED_MODEL_NAME} \
             -Dnet.ladenthin.llama.vision.model=models/${VISION_MODEL_NAME} \
             -Dnet.ladenthin.llama.vision.mmproj=models/${VISION_MMPROJ_NAME} \
-            -Dnet.ladenthin.llama.vision.image=${VISION_IMAGE_PATH} \
-            -Dnet.ladenthin.llama.tts.ttc.model=models/${TTS_MODEL_NAME} \
-            -Dnet.ladenthin.llama.tts.vocoder.model=models/${TTS_VOCODER_NAME}
+            -Dnet.ladenthin.llama.vision.image=${VISION_IMAGE_PATH}
       - uses: actions/upload-artifact@v7
         if: success()
         with:
@@ -2361,9 +2361,7 @@ jobs:
             -Dnet.ladenthin.llama.nomic.path=models/${NOMIC_EMBED_MODEL_NAME} \
             -Dnet.ladenthin.llama.vision.model=models/${VISION_MODEL_NAME} \
             -Dnet.ladenthin.llama.vision.mmproj=models/${VISION_MMPROJ_NAME} \
-            -Dnet.ladenthin.llama.vision.image=${VISION_IMAGE_PATH} \
-            -Dnet.ladenthin.llama.tts.ttc.model=models/${TTS_MODEL_NAME} \
-            -Dnet.ladenthin.llama.tts.vocoder.model=models/${TTS_VOCODER_NAME}
+            -Dnet.ladenthin.llama.vision.image=${VISION_IMAGE_PATH}
       - name: Memory after tests
         if: always()
         run: vm_stat && sysctl hw.memsize hw.physmem
@@ -2430,9 +2428,7 @@ jobs:
             -Dnet.ladenthin.llama.nomic.path=models/${NOMIC_EMBED_MODEL_NAME} \
             -Dnet.ladenthin.llama.vision.model=models/${VISION_MODEL_NAME} \
             -Dnet.ladenthin.llama.vision.mmproj=models/${VISION_MMPROJ_NAME} \
-            -Dnet.ladenthin.llama.vision.image=${VISION_IMAGE_PATH} \
-            -Dnet.ladenthin.llama.tts.ttc.model=models/${TTS_MODEL_NAME} \
-            -Dnet.ladenthin.llama.tts.vocoder.model=models/${TTS_VOCODER_NAME}
+            -Dnet.ladenthin.llama.vision.image=${VISION_IMAGE_PATH}
       - name: Memory after tests
         if: always()
         run: vm_stat && sysctl hw.memsize hw.physmem
@@ -2499,9 +2495,7 @@ jobs:
             -Dnet.ladenthin.llama.nomic.path=models/${NOMIC_EMBED_MODEL_NAME} \
             -Dnet.ladenthin.llama.vision.model=models/${VISION_MODEL_NAME} \
             -Dnet.ladenthin.llama.vision.mmproj=models/${VISION_MMPROJ_NAME} \
-            -Dnet.ladenthin.llama.vision.image=${VISION_IMAGE_PATH} \
-            -Dnet.ladenthin.llama.tts.ttc.model=models/${TTS_MODEL_NAME} \
-            -Dnet.ladenthin.llama.tts.vocoder.model=models/${TTS_VOCODER_NAME}
+            -Dnet.ladenthin.llama.vision.image=${VISION_IMAGE_PATH}
       - name: Memory after tests
         if: always()
         run: vm_stat && sysctl hw.memsize hw.physmem
@@ -2586,9 +2580,7 @@ jobs:
             "-Dnet.ladenthin.llama.nomic.path=models/$env:NOMIC_EMBED_MODEL_NAME" `
             "-Dnet.ladenthin.llama.vision.model=models/$env:VISION_MODEL_NAME" `
             "-Dnet.ladenthin.llama.vision.mmproj=models/$env:VISION_MMPROJ_NAME" `
-            "-Dnet.ladenthin.llama.vision.image=$env:VISION_IMAGE_PATH" `
-            "-Dnet.ladenthin.llama.tts.ttc.model=models/$env:TTS_MODEL_NAME" `
-            "-Dnet.ladenthin.llama.tts.vocoder.model=models/$env:TTS_VOCODER_NAME"
+            "-Dnet.ladenthin.llama.vision.image=$env:VISION_IMAGE_PATH"
       - name: Memory after tests
         if: always()
         run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
@@ -2680,9 +2672,7 @@ jobs:
             "-Dnet.ladenthin.llama.nomic.path=models/$env:NOMIC_EMBED_MODEL_NAME" `
             "-Dnet.ladenthin.llama.vision.model=models/$env:VISION_MODEL_NAME" `
             "-Dnet.ladenthin.llama.vision.mmproj=models/$env:VISION_MMPROJ_NAME" `
-            "-Dnet.ladenthin.llama.vision.image=$env:VISION_IMAGE_PATH" `
-            "-Dnet.ladenthin.llama.tts.ttc.model=models/$env:TTS_MODEL_NAME" `
-            "-Dnet.ladenthin.llama.tts.vocoder.model=models/$env:TTS_VOCODER_NAME"
+            "-Dnet.ladenthin.llama.vision.image=$env:VISION_IMAGE_PATH"
       - name: Memory after tests
         if: always()
         run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List

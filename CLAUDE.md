@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b10269**
+Current llama.cpp pinned version: **b10270**
 
 ## Upgrading CUDA Version
 
@@ -429,7 +429,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network; embed.cpp is plain C++17 (no npm)
-git clone --depth 1 --branch b10269 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b10270 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build \
   && ( cd dist && find . -type f -not -path './_gzip/*' \
        | while read -r f; do mkdir -p "_gzip/$(dirname "$f")"; gzip -9 -c "$f" > "_gzip/$f"; done ) \
@@ -469,7 +469,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b10269`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b10270`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -604,40 +604,36 @@ prefill behavior shows up, re-check `tools/server/server-context.cpp`'s `create_
 (`test_reasoning_budget_tokens_per_request` / `test_reasoning_budget_message_per_request`,
 byte-identical body). No local patch needed — the tree already matches what `0004` used to add.
 
-## OuteTTS build-time extraction (`llama/cmake/generate-tts-upstream.cmake`)
+## Qwen3-TTS via `mtmd_helper::gen_audio` (was: OuteTTS build-time extraction)
 
-The `TextToSpeech` native pipeline reuses llama.cpp's OuteTTS helpers (`tools/tts/tts.cpp`)
-**without hand-copying them**. A verbatim copy would be a DRY/maintenance hazard that silently
-diverges on every upgrade, and `tts.cpp` cannot simply be added to `target_sources` — it defines its
-own `main()`, which would clash at link time (the same reason `tools/server/server.cpp` is excluded
-while `server-*.cpp` are compiled in), and all its helpers are `static` (internal linkage), so they
-are unreachable from another TU even if it were linked.
+The `TextToSpeech` native pipeline (`tts_engine.{h,cpp}`) drives llama.cpp's upstream Qwen3-TTS
+audio-generation pipeline directly through its public C++ API — `mtmd_helper::gen_audio`
+(`tools/mtmd/mtmd-helper.h`) — rather than deriving/extracting anything from upstream source. `mtmd`
+is already a `target_link_libraries(jllama ...)` dependency (vision/audio-input support), so this
+needed no new CMake wiring at all: no generator, no build-time extraction, no hand-written interface
+header to keep in sync. Loads a backbone text GGUF (a normal `llama_model`) plus an mmproj GGUF
+(speaker encoder + code predictor + code2wav decoder, all bundled in one file by upstream's
+`conversion/qwen3tts.py`), and drives the streaming API: `mtmd_helper_gen_audio_set_input()` (prompt
++ optional speaker-reference audio + language) → a `step_prompt()` loop → a `step_gen()` loop (the
+engine owns semantic-token sampling via a `common_sampler`, feeding each sampled token + the
+backbone's hidden state into `step_gen()` and receiving the next hidden state back — the same pattern
+upstream's own `tools/tts/tts.cpp` `main()` uses) → `get_output()` for raw PCM, which the engine
+encodes to WAV itself via `tts_wav.hpp` (not upstream's own WAV writer) so that already-tested code
+stays in the loop.
 
-Instead the helpers are **DERIVED mechanically at configure time** from the pinned upstream source:
+**Why this replaced OuteTTS, not extended it.** Upstream #26254 ("mtmd: support Qwen3-TTS") deleted
+the entire OuteTTS implementation from `tools/tts/tts.cpp` (it shrank from ~1450 to 205 lines) and
+replaced the two-model OuteTTS-(text-to-codes)-+-WavTokenizer-(vocoder) design with the single
+backbone+mmproj design above — there is no upstream code path for OuteTTS left at all past b10269
+(`enum mtmd_gen_audio_type` has exactly `MTMD_GEN_AUDIO_TYPE_NONE` and `MTMD_GEN_AUDIO_TYPE_QWEN3TTS`).
+See `docs/history/llama-cpp-breaking-changes.md`'s `b10269–b10270` row for the full investigation;
+this was a breaking **public API** change (`TextToSpeech`'s constructor and `synthesize()` overloads
+all changed shape) done deliberately — the project does not carry OuteTTS-compatibility shims.
 
-- **`llama/cmake/generate-tts-upstream.cmake`** — reads `${llama.cpp_SOURCE_DIR}/tools/tts/tts.cpp`, keeps
-  the pre-`main()` span (the DSP `fill_hann_window`/`irfft`/`fold`/`embd_to_audio`, the prompt/text
-  helpers incl. `process_text`'s number-to-words, the `outetts_version` enum), strips `static` from
-  the handful the JNI engine calls (giving them external linkage), and extracts the two hard-coded
-  default-speaker literals out of `main()` into `extern const` strings. Writes
-  `build/tts_generated/tts_upstream_gen.cpp`.
-- **`CMakeLists.txt`** — runs the generator via `execute_process` right after
-  `FetchContent_MakeAvailable(llama.cpp)`, then compiles the generated TU into `jllama`. The file is
-  **never committed** (build artifact, like the native libs / WebUI assets); it is regenerated from
-  whatever `tts.cpp` the pinned `GIT_TAG` resolves to, so a version bump is picked up automatically.
-- **`src/main/cpp/tts_upstream.h`** — committed, hand-written declarations of the extracted symbols
-  (interface facts, not the implementation). `tts_engine.cpp` includes it and links against the
-  generated definitions. The in-memory WAV writer (`tts_wav.hpp`) is ours, not extracted.
-
-**Fail-loud on drift (same contract as `patches/`):** the generator asserts every anchor — the
-`int main(` split point, each `static <signature>` it de-statics, the `outetts_version` enum
-(enumerators + order, kept ODR-identical to the hand-written copy in `tts_upstream.h`), both
-`prompt_add` overloads the header declares (the bare `void prompt_add(` prefix de-statics all three
-upstream overloads, so the two the header relies on are pinned individually), and both speaker
-literals. If an upgrade renames a helper, reorders the enum, or moves a literal, the **configure step
-aborts** with a pointer to the generator; if upstream changes a *type*, `tts_upstream.h` stops
-matching and the **link fails**. Either way a silent divergence is impossible. On a llama.cpp bump,
-re-verify the generator the same way you re-verify `patches/`.
+**Nothing to re-verify on a llama.cpp bump.** Because there is no generator or extracted header
+anymore, a version bump cannot silently break the TTS surface the way `patches/` or the old
+extraction could — `mtmd_helper::gen_audio`'s API surface is upstream's own committed public header,
+covered by the normal priority-8 API-compat review (`tools/mtmd/mtmd-helper.h` is on that list).
 
 ## Upgrading/Downgrading llama.cpp Version
 
@@ -743,14 +739,14 @@ Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. ren
 | `common/chat.cpp` | Chat parsing implementation |
 | `common/sampling.h` | Sampler API, `common_sampler_*` functions |
 | `common/log.h` | Log macro signatures |
-| `tools/mtmd/mtmd-helper.h` | Multimodal helper functions |
+| `tools/mtmd/mtmd-helper.h` | `mtmd_helper::gen_audio` (used directly by `tts_engine.cpp` since the Qwen3-TTS rework — no longer safe to skip), `mtmd_helper_bitmap_init_from_file` |
 | `common/json-schema-to-grammar.h` | Grammar API |
 | `ggml/include/ggml.h` | `ggml_type` enum values (e.g. `GGML_TYPE_F16`), tensor primitives |
 | `ggml/include/ggml-backend.h` | Backend/device abstraction types |
 | `ggml/include/ggml-opt.h` | Optimizer params pulled in via `common.h` |
 
 **Safe to skip** (have never caused a break; not used directly by project code):
-`common/sampling.h`, `common/log.h`, `tools/mtmd/mtmd-helper.h`, `common/json-schema-to-grammar.h`,
+`common/sampling.h`, `common/log.h`, `common/json-schema-to-grammar.h`,
 `ggml/include/ggml.h`, `ggml/include/ggml-backend.h`, `ggml/include/ggml-opt.h`,
 `ggml-alloc.h`, `ggml-cpu.h`, `peg-parser.h`, `base64.hpp`
 
@@ -864,8 +860,8 @@ the README. The summary below covers only the optional-model bindings:
 | `net.ladenthin.llama.audio.model` | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | audio-input model GGUF, e.g. `ultravox-v0_5-llama-3_2-1b.gguf` |
 | `net.ladenthin.llama.audio.mmproj` | `AudioInputIntegrationTest` | matching audio mmproj/encoder, e.g. `mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf` |
 | `net.ladenthin.llama.audio.input` | `AudioInputIntegrationTest` | committed default `src/test/resources/audios/sample.wav`; override to any `.wav`/`.mp3` on disk |
-| `net.ladenthin.llama.tts.ttc.model` | `TtsIntegrationTest` | OuteTTS text-to-codes model, e.g. `OuteTTS-0.2-500M-Q4_K_M.gguf` |
-| `net.ladenthin.llama.tts.vocoder.model` | `TtsIntegrationTest` | matching codes-to-speech vocoder, e.g. `WavTokenizer-Large-75-F16.gguf` |
+| `net.ladenthin.llama.tts.model` | `TtsIntegrationTest` | Qwen3-TTS backbone GGUF (any Qwen3-TTS-family model works) |
+| `net.ladenthin.llama.tts.mmproj` | `TtsIntegrationTest` | matching mmproj GGUF (speaker encoder + code predictor + code2wav) |
 
 Run those tests by setting the property:
 ```bash
@@ -884,8 +880,8 @@ mvn test -Dtest=AudioInputIntegrationTest \
          -Dnet.ladenthin.llama.audio.mmproj=models/mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf \
          -Dnet.ladenthin.llama.audio.input=/path/to/speech.wav   # optional: defaults to the committed src/test/resources/audios/sample.wav
 mvn test -Dtest=TtsIntegrationTest \
-         -Dnet.ladenthin.llama.tts.ttc.model=models/OuteTTS-0.2-500M-Q4_K_M.gguf \
-         -Dnet.ladenthin.llama.tts.vocoder.model=models/WavTokenizer-Large-75-F16.gguf
+         -Dnet.ladenthin.llama.tts.model=models/qwen3-tts-backbone.gguf \
+         -Dnet.ladenthin.llama.tts.mmproj=models/qwen3-tts-mmproj.gguf
 ```
 
 `MultimodalIntegrationTest` self-skips when any of the three vision properties
@@ -1020,7 +1016,7 @@ If the local check passes (`BUILD SUCCESS`), the `mvn package` job in
 
 **Java layer** (`src/main/java/net/ladenthin/llama/`):
 - `LlamaModel` — Main API class (AutoCloseable). Wraps native context for inference, embeddings, re-ranking, and tokenization.
-- `TextToSpeech` — Separate AutoCloseable native type for speech synthesis over the two-model OuteTTS (text-to-codes) + WavTokenizer (codes-to-speech vocoder) pipeline; `synthesize(text)` returns a 24 kHz mono 16-bit WAV byte stream. Native orchestration in `tts_engine.{h,cpp}`; the OuteTTS DSP / prompt / text helpers + default speaker are **derived at build time from upstream `tts.cpp`** (see "OuteTTS build-time extraction" below), not hand-copied; the in-memory WAV writer is `tts_wav.hpp`.
+- `TextToSpeech` — Separate AutoCloseable native type for speech synthesis over llama.cpp's upstream Qwen3-TTS pipeline (a backbone text GGUF + an mmproj GGUF bundling the speaker encoder, code predictor, and code2wav decoder); `synthesize(text)` returns a 24 kHz mono 16-bit WAV byte stream, with overloads for a cloned-voice speaker-reference clip and language. Native orchestration in `tts_engine.{h,cpp}` drives upstream's `mtmd_helper::gen_audio` streaming API directly (see "Qwen3-TTS via `mtmd_helper::gen_audio`" below) — there is nothing extracted or hand-copied from llama.cpp source; the in-memory WAV writer is `tts_wav.hpp`.
 - `ModelParameters` / `InferenceParameters` — Builder-pattern parameter classes that serialize to JSON (extend `JsonParameters`) for passing to native code.
 - `LlamaIterator` / `LlamaIterable` — Streaming generation via Java `Iterator`/`Iterable`.
 - `LlamaLoader` — Extracts the platform-specific native library from the JAR to a temp directory, or finds it on `java.library.path`.
@@ -1188,14 +1184,17 @@ Require a model file. The CI downloads models from HuggingFace:
 
 **CI model policy (publish.yml): the full model set is downloaded and exercised on EVERY
 Java test job** — Linux x86_64, all three macOS arm64 jobs (Metal / no-Metal / Metal-15), and
-both Windows jobs (MSVC + Ninja). That includes the nomic embedding model, the SmolVLM vision
-model + mmproj, and the OuteTTS + WavTokenizer TTS pair, with their `-Dnet.ladenthin.llama.*`
-properties set, so `LlamaEmbeddingsTest`, `MultimodalIntegrationTest`, and `TtsIntegrationTest`
-**run on every platform** rather than self-skipping. `validate-models.{sh,bat}` treats all of
-these as **required** (a missing model hard-fails the job before tests run, so a download
-regression can never silently downgrade to a skip). The only model still self-skipping is the
-audio-input model (`AudioInputIntegrationTest`) — the prompt clip is committed
-(`src/test/resources/audios/sample.wav`) but the audio model + mmproj have no CI download.
+both Windows jobs (MSVC + Ninja). That includes the nomic embedding model and the SmolVLM vision
+model + mmproj, with their `-Dnet.ladenthin.llama.*` properties set, so `LlamaEmbeddingsTest` and
+`MultimodalIntegrationTest` **run on every platform** rather than self-skipping.
+`validate-models.{sh,bat}` treats all of these as **required** (a missing model hard-fails the job
+before tests run, so a download regression can never silently downgrade to a skip). Two models
+still self-skip: the audio-input model (`AudioInputIntegrationTest`) — the prompt clip is committed
+(`src/test/resources/audios/sample.wav`) but the audio model + mmproj have no CI download — and the
+Qwen3-TTS backbone + mmproj (`TtsIntegrationTest`), whose predecessor (OuteTTS + WavTokenizer) was
+retired when upstream #26254 replaced the whole TTS pipeline (see "Qwen3-TTS via
+`mtmd_helper::gen_audio`" above); no verified Qwen3-TTS HF filenames have been added to
+`.github/models.csv` yet.
 The model set has a **single source of truth: `.github/models.csv`** (one `filename,url` row per
 model; `#` comments). Everything derives from it: the **`download-models`** job (ubuntu,
 `needs: startgate`) is the only place models are fetched from HuggingFace (one manifest-driven
@@ -1257,13 +1256,13 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 | `src/test/cpp/test_json_helpers.cpp` | 50 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json` (incl. missing/out-of-range `index` rejection), `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk` |
 | `src/test/cpp/test_log_helpers.cpp` | 13 | All functions in `log_helpers.hpp`: `log_level_name`, `format_log_as_json` |
 | `src/test/cpp/test_jni_helpers.cpp` | 54 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock (incl. the `utf8_to_jstring_impl` byte-array string path: emoji byte-preservation, truncated-UTF-8 replace-not-throw) |
-| `src/test/cpp/test_tts_wav.cpp` | 5 | The in-memory WAV writer `pcm_to_wav16_bytes` in `tts_wav.hpp` (WAV header/payload + little-endian clamping) plus the pure OuteTTS codec-window filter `filter_outetts_codec_tokens` (`tts_engine.h`: boundary keep/drop + rebase). The OuteTTS DSP it pairs with is derived from upstream `tts.cpp` and covered end-to-end by the Java `TtsIntegrationTest`, not unit-tested here. |
+| `src/test/cpp/test_tts_wav.cpp` | 2 | The in-memory WAV writer `pcm_to_wav16_bytes` in `tts_wav.hpp` (WAV header/payload + little-endian clamping) — our own code, not upstream. The Qwen3-TTS pipeline it pairs with (`mtmd_helper::gen_audio`) is entirely upstream-owned (no project-side DSP to unit-test here) and covered end-to-end by the Java `TtsIntegrationTest`. |
 
-**Current total: 485 tests (all passing).**
+**Current total: 482 tests (all passing).**
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b10269`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b10270`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.17.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the

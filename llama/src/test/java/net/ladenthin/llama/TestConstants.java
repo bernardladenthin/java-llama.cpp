@@ -99,11 +99,14 @@ public class TestConstants {
     public static final String DEFAULT_AUDIO_INPUT_PATH = "src/test/resources/audios/sample.wav";
 
     /**
-     * System property holding a path to the text-to-codes (OuteTTS) GGUF used by
-     * {@code TtsIntegrationTest}. The test self-skips when this or the vocoder is unset/missing.
+     * System property holding a path to the Qwen3-TTS backbone GGUF used by
+     * {@code TtsIntegrationTest}. The test self-skips when this or the mmproj is unset/missing.
      */
-    public static final String PROP_TTS_TTC_MODEL = LlamaSystemProperties.PREFIX + ".tts.ttc.model";
+    public static final String PROP_TTS_MODEL = LlamaSystemProperties.PREFIX + ".tts.model";
 
-    /** System property holding a path to the codes-to-speech (WavTokenizer) vocoder GGUF. */
-    public static final String PROP_TTS_VOCODER_MODEL = LlamaSystemProperties.PREFIX + ".tts.vocoder.model";
+    /**
+     * System property holding a path to the Qwen3-TTS mmproj GGUF (speaker encoder + code
+     * predictor + code2wav decoder).
+     */
+    public static final String PROP_TTS_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.mmproj";
 }
