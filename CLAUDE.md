@@ -1769,6 +1769,14 @@ llmservice job is **yet a publish gate** (not in the `publish-snapshot`/`publish
 graphs) so a Compose/AGP version-pin hiccup can't block a library release.
 `android-llmservice/**/build/` is git-ignored.
 
+## Dependency Convergence Pinning
+
+`dependencyConvergence` is enabled (maven-enforcer, `llama/pom.xml`). Convention for pinning a
+direct-vs-transitive version mismatch in `dependencyManagement`, the
+`excludedScopes=[test,provided]` enforcer default gotcha (jspecify/logback-classic here are
+pinned defensively because of it — see that file), and merge-discipline guidance are in
+[`../workspace/policies/dependency-convergence-pinning.md`](../workspace/policies/dependency-convergence-pinning.md).
+
 ## Open TODOs
 
 Open TODOs for this repo live in [`TODO.md`](TODO.md). Cross-repo status
