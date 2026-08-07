@@ -355,7 +355,7 @@ SPDX-License-Identifier: MIT
 				<plugin>
 					<groupId>org.pitest</groupId>
 					<artifactId>pitest-maven</artifactId>
-					<version>1.25.8</version>
+					<version>1.25.9</version>
 				</plugin>
 				<plugin>
 					<groupId>org.sonatype.central</groupId>
