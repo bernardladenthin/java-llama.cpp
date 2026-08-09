@@ -1668,7 +1668,7 @@ jobs:
         # A reduced network sub-package set ("nvcc","cudart","cublas",…) omitted the
         # nvcc crt headers (crt/host_config.h), so cmake's CUDA compiler detection
         # failed at configure. The full installer ships every header reliably.
-        uses: Jimver/cuda-toolkit@v0.2.35
+        uses: Jimver/cuda-toolkit@v0.2.36
         id: cuda-toolkit
         with:
           cuda: '13.2.0'
