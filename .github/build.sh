@@ -137,12 +137,16 @@ cmake -Bbuild $LAUNCH $@ || exit 1
 # still fails fast (and is reported) instead of triggering a wasteful uncached rebuild. The
 # "Compiler not supported" signature additionally covers the CUDA case: if wrapping nvcc breaks
 # (sccache declining/erroring on the nvcc driver), the retry rebuilds the full-arch CUDA job
-# without any launcher rather than redding it.
+# without any launcher rather than redding it. "Compiler killed by signal" covers a second CUDA
+# failure mode seen with CUDA 13.3's nvcc: sccache's nvcc wrapping loses an intermediate .ptx file
+# for a "-virtual" architecture target (e.g. 75-virtual), so fatbinary aborts with "Could not open
+# input file '*.ptx'" and sccache reports the underlying nvcc invocation as killed — an sccache/nvcc
+# incompatibility, not a real compile error, so it gets the same uncached-retry treatment.
 build_log="$(mktemp 2>/dev/null || echo "/tmp/jllama-build.$$.log")"
 cmake --build build --config Release -j"${JOBS}" 2>&1 | tee "$build_log"
 build_rc=${PIPESTATUS[0]}
 if [ "$build_rc" -ne 0 ]; then
-  if [ -n "$LAUNCH" ] && grep -qiE 'sccache: error|Server startup failed|cache storage failed|Compiler not supported' "$build_log"; then
+  if [ -n "$LAUNCH" ] && grep -qiE 'sccache: error|Server startup failed|cache storage failed|Compiler not supported|Compiler killed by signal' "$build_log"; then
     echo "build.sh: build failed via an sccache cache error — retrying WITHOUT cache (clean reconfigure)."
     rm -f "$build_log"
     rm -rf build && mkdir -p build
