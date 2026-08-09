@@ -150,7 +150,15 @@ if [ "$build_rc" -ne 0 ]; then
     echo "build.sh: build failed via an sccache cache error — retrying WITHOUT cache (clean reconfigure)."
     rm -f "$build_log"
     rm -rf build && mkdir -p build
-    cmake -Bbuild $@ || exit 1
+    # -DGGML_CCACHE=OFF is required here, not just dropping our own $LAUNCH flags: ggml's own
+    # CMakeLists.txt self-enables ccache/sccache (GGML_CCACHE, default ON) whenever it finds one
+    # on PATH and CMAKE_C_COMPILER_LAUNCHER/CMAKE_CXX_COMPILER_LAUNCHER are unset — which is exactly
+    # this retry's state, since sccache is still on PATH from the failed attempt. It wires itself in
+    # via the global RULE_LAUNCH_COMPILE property (wraps nvcc too, not just C/C++), so without this
+    # flag the "uncached" retry silently re-enables the very launcher it's trying to avoid and fails
+    # identically. Confirmed live: the b10333/CUDA-13.3 retry hit the same fatbinary/.ptx failure
+    # because of this (see CLAUDE.md's sccache rollout section for the incident).
+    cmake -Bbuild -DGGML_CCACHE=OFF $@ || exit 1
     cmake --build build --config Release -j"${JOBS}" || exit 1
     LAUNCH=""  # cache disabled for this run; skip the stats query below
   else
