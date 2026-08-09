@@ -526,7 +526,15 @@ v0.16.0 + the probe this is no longer a risk.) Job-by-job status:
    **100%** on CUDA / CUBIN / device-code (139 CUDA hits, 99.86% overall, 3 misses), cutting the job
    from **~51 min cold to ~15 min warm**. The first-run debug diagnostics (`SCCACHE_LOG` /
    `SCCACHE_ERROR_LOG` / `RUST_BACKTRACE`) were dropped once confirmed; `sccache --show-stats` still
-   prints the hit table every run.
+   prints the hit table every run. **CUDA 13.3 regression (caught on the b10333/CUDA-13.3 publish
+   dispatch, run 31339594933):** nvcc 13.3's device-compile pipeline broke sccache's nvcc wrapping —
+   `fatbinary fatal: Could not open input file 'acc.compute_75.ptx'` immediately followed by
+   `sccache: Compiler killed by signal 1`, on the very first `.cu` TU (a cold-cache miss, not a hit
+   issue) — an sccache/nvcc incompatibility for `-virtual` architecture targets (e.g. `75-virtual`),
+   not a real compile error. The existing mid-build retry-without-cache mechanism (see below) didn't
+   catch it because its trigger regex didn't include this failure's wording; `build.sh`'s regex now
+   also matches `Compiler killed by signal`, so this failure mode falls back to an uncached, green
+   `-O3` build like every other sccache/nvcc incompatibility instead of redding the job.
 3. `crosscompile-linux-aarch64` — ✅ **enabled**, now a **native `ubuntu-24.04-arm` build** (not
    dockcross): `build.sh` self-fetches the aarch64 static-musl sccache (the fetch block in
    `build.sh` maps `uname -m` → `x86_64`/`aarch64`) and the probe guards it. See "Linux aarch64:
