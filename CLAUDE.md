@@ -6,16 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b10327**
+Current llama.cpp pinned version: **b10333**
 
 ## Upgrading CUDA Version
 
-Current CUDA version: **13.2**
+Current CUDA version: **13.3**
 
 To change the CUDA version, update the following **three** places:
 
-1. **`.github/build_cuda_linux.sh`** — Line 16: `sudo dnf install -y cuda-toolkit-13-2`
-2. **`.github/build_cuda_linux.sh`** — Line 41: `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.2/bin/nvcc`
+1. **`.github/build_cuda_linux.sh`** — Line 16: `sudo dnf install -y cuda-toolkit-13-3`
+2. **`.github/build_cuda_linux.sh`** — Line 41: `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.3/bin/nvcc`
 3. **`llama/pom.xml`** — The `<classifier>` tag in the `cuda` jar execution: `cuda13-linux-x86-64`
 
 Also update the header comment in `build_cuda_linux.sh` and the job name in `.github/workflows/release.yaml` for clarity.
@@ -27,15 +27,15 @@ https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/
 
 **Note:** Each CUDA version supports only certain GCC versions. If the dockcross container uses a newer GCC than CUDA supports, the build will fail with `unsupported GNU version`. Check NVIDIA's compatibility table before downgrading CUDA.
 
-Example: To upgrade from 13.2 to a hypothetical 13.3:
+Example: To upgrade from 13.3 to a hypothetical 13.4:
 ```bash
 # Edit .github/build_cuda_linux.sh:
-#   line 10: cuda-toolkit-13-2 -> cuda-toolkit-13-3
-#   line 12: /usr/local/cuda-13.2/bin/nvcc -> /usr/local/cuda-13.3/bin/nvcc
+#   line 10: cuda-toolkit-13-3 -> cuda-toolkit-13-4
+#   line 12: /usr/local/cuda-13.3/bin/nvcc -> /usr/local/cuda-13.4/bin/nvcc
 # Edit llama/pom.xml classifier: cuda13-linux-x86-64 (major version only, no need to change for minor bumps)
-# Edit CLAUDE.md line: Current CUDA version: **13.2** -> **13.3**
+# Edit CLAUDE.md line: Current CUDA version: **13.3** -> **13.4**
 git add .github/build_cuda_linux.sh llama/pom.xml CLAUDE.md
-git commit -m "Upgrade CUDA from 13.2 to 13.3"
+git commit -m "Upgrade CUDA from 13.3 to 13.4"
 ```
 
 ### Fast local CUDA builds (`CUDA_FAST_BUILD`) — single-arch speed knob
@@ -217,7 +217,7 @@ Wiring (mirrors the CUDA-Linux / OpenCL-Android classifier pattern):
    - `build-windows-x86_64` / `build-windows-x86` — **Ninja CPU**, artifacts `Windows-{arch}-libraries`
      → picked up by the `package` job's `pattern: "*-libraries"` into the **default** tree.
    - `build-windows-x86_64-msvc` / `build-windows-x86-msvc` — **MSVC CPU**, artifacts `Windows-{arch}-msvc`.
-   - `build-windows-x86_64-cuda` — `Jimver/cuda-toolkit@v0.2.35` (CUDA `13.2.0`) + `-DGGML_CUDA=ON`,
+   - `build-windows-x86_64-cuda` — `Jimver/cuda-toolkit@v0.2.36` (CUDA `13.3.1`) + `-DGGML_CUDA=ON`,
      artifact `Windows-x86_64-cuda`.
    - `build-windows-x86_64-vulkan` — `jakoch/install-vulkan-sdk-action` + `-DGGML_VULKAN=ON`, artifact
      `Windows-x86_64-vulkan`.
@@ -429,7 +429,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network; embed.cpp is plain C++17 (no npm)
-git clone --depth 1 --branch b10327 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b10333 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build \
   && ( cd dist && find . -type f -not -path './_gzip/*' \
        | while read -r f; do mkdir -p "_gzip/$(dirname "$f")"; gzip -9 -c "$f" > "_gzip/$f"; done ) \
@@ -469,7 +469,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b10327`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b10333`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -1278,7 +1278,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b10327`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b10333`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.17.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
