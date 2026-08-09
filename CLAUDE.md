@@ -531,10 +531,20 @@ v0.16.0 + the probe this is no longer a risk.) Job-by-job status:
    `fatbinary fatal: Could not open input file 'acc.compute_75.ptx'` immediately followed by
    `sccache: Compiler killed by signal 1`, on the very first `.cu` TU (a cold-cache miss, not a hit
    issue) — an sccache/nvcc incompatibility for `-virtual` architecture targets (e.g. `75-virtual`),
-   not a real compile error. The existing mid-build retry-without-cache mechanism (see below) didn't
-   catch it because its trigger regex didn't include this failure's wording; `build.sh`'s regex now
-   also matches `Compiler killed by signal`, so this failure mode falls back to an uncached, green
-   `-O3` build like every other sccache/nvcc incompatibility instead of redding the job.
+   not a real compile error. **Two fixes were needed, not one.** (1) The existing mid-build
+   retry-without-cache mechanism (see below) didn't catch it because its trigger regex didn't include
+   this failure's wording; `build.sh`'s regex now also matches `Compiler killed by signal`. (2) That
+   alone still wasn't enough — verified live on the very next dispatch (run 31340386884): the retry
+   fired but failed **identically**, because ggml's own `ggml/src/CMakeLists.txt` self-enables
+   ccache/sccache (`GGML_CCACHE`, default `ON`) whenever it finds one on `PATH` and
+   `CMAKE_C_COMPILER_LAUNCHER`/`CMAKE_CXX_COMPILER_LAUNCHER` are unset — exactly the retry's state,
+   since sccache is still on `PATH` from the failed attempt (build.sh only clears its own `$LAUNCH`
+   flags, not ggml's independent detection). ggml wires itself in via the **global**
+   `RULE_LAUNCH_COMPILE` CMake property, which wraps nvcc too, not just C/C++ — so the "uncached"
+   retry silently re-enabled the very launcher it was trying to avoid. Fix: the retry's `cmake
+   -Bbuild` now also passes `-DGGML_CCACHE=OFF`, so a genuinely uncached build is guaranteed
+   regardless of what's left on `PATH`. This fallback now falls back to a real, green `-O3` build
+   like every other sccache/nvcc incompatibility instead of redding the job.
 3. `crosscompile-linux-aarch64` — ✅ **enabled**, now a **native `ubuntu-24.04-arm` build** (not
    dockcross): `build.sh` self-fetches the aarch64 static-musl sccache (the fetch block in
    `build.sh` maps `uname -m` → `x86_64`/`aarch64`) and the probe guards it. See "Linux aarch64:
