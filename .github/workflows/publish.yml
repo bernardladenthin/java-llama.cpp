@@ -1340,7 +1340,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: macos-15-libraries
+          name: macos-15-no-metal
           path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
 
   build-macos-arm64-metal:
@@ -1385,7 +1385,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: macos-14-libraries
+          name: macos-14-metal
           path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
 
   build-windows-x86_64-msvc:
@@ -2184,7 +2184,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: macos-15-metal-libraries
+          name: macos-15-metal
           path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
 
   # ---------------------------------------------------------------------------
@@ -2330,7 +2330,7 @@ jobs:
           system_profiler SPHardwareDataType
       - uses: actions/download-artifact@v8
         with:
-          name: macos-14-libraries
+          name: macos-14-metal
           path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
       # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
       # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
@@ -2399,7 +2399,7 @@ jobs:
           system_profiler SPHardwareDataType
       - uses: actions/download-artifact@v8
         with:
-          name: macos-15-libraries
+          name: macos-15-no-metal
           path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
       # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
       # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
@@ -2468,7 +2468,7 @@ jobs:
           system_profiler SPHardwareDataType
       - uses: actions/download-artifact@v8
         with:
-          name: macos-15-metal-libraries
+          name: macos-15-metal
           path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
       # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
       # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
@@ -2751,6 +2751,15 @@ jobs:
         with:
           pattern: "*-libraries"
           merge-multiple: true
+          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+      # All three macOS arm64 build jobs emit the same path Mac/aarch64/libjllama.dylib, so their
+      # artifact names are kept outside the "*-libraries" glob above — merging them would drop
+      # three different dylibs onto one file. The variant that ships is selected explicitly:
+      # macos-15-metal is the only one built with both Metal and GGML_NATIVE=OFF (portable across
+      # CPU generations); macos-14-metal and macos-15-no-metal remain test-only.
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-15-metal
           path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
       - uses: actions/download-artifact@v8
         with:
@@ -3038,6 +3047,15 @@ jobs:
           pattern: "*-libraries"
           merge-multiple: true
           path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+      # All three macOS arm64 build jobs emit the same path Mac/aarch64/libjllama.dylib, so their
+      # artifact names are kept outside the "*-libraries" glob above — merging them would drop
+      # three different dylibs onto one file. The variant that ships is selected explicitly:
+      # macos-15-metal is the only one built with both Metal and GGML_NATIVE=OFF (portable across
+      # CPU generations); macos-14-metal and macos-15-no-metal remain test-only.
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-15-metal
+          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
       - uses: actions/download-artifact@v8
         with:
           name: linux-libraries-cuda
@@ -3250,6 +3268,15 @@ jobs:
         with:
           pattern: "*-libraries"
           merge-multiple: true
+          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+      # All three macOS arm64 build jobs emit the same path Mac/aarch64/libjllama.dylib, so their
+      # artifact names are kept outside the "*-libraries" glob above — merging them would drop
+      # three different dylibs onto one file. The variant that ships is selected explicitly:
+      # macos-15-metal is the only one built with both Metal and GGML_NATIVE=OFF (portable across
+      # CPU generations); macos-14-metal and macos-15-no-metal remain test-only.
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-15-metal
           path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
       - uses: actions/download-artifact@v8
         with:
