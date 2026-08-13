@@ -8,7 +8,7 @@
 // the Java integration tests run.
 //
 // Covered:
-//   - result_timings::to_json()       — draft_n/draft_n_accepted conditional fields
+//   - server_slot_stats::to_json()    — draft_n/draft_n_accepted conditional fields
 //   - task_params::to_json()          — grammar, chat_parser_params, grammar_triggers
 //   - completion_token_output         — logarithm edge-case, str_to_bytes, to_json, probs_vector_to_json
 //   - server_task_result_rerank       — score / index / tokens_evaluated
@@ -29,31 +29,42 @@
 #include "utils.hpp"
 
 // ============================================================
-// result_timings::to_json
-//   New fields draft_n / draft_n_accepted added in b8576.
-//   They must be absent when draft_n == 0 (default) and present
-//   only when draft_n > 0 (i.e. speculative decoding was active).
+// server_slot_stats::to_json
+//   b10408 (upstream #26920) replaced result_timings — which carried
+//   pre-computed durations and rates — with server_slot_stats, which stores
+//   raw counters plus absolute timestamps and derives every duration/rate in
+//   its accessors.  The emitted JSON keys are unchanged, so the client-facing
+//   "timings" contract is the same; only how the numbers are produced moved.
+//
+//   Fields draft_n / draft_n_accepted must be absent when n_draft_tokens == 0
+//   (default) and present only when it is > 0 (speculative decoding active).
 // ============================================================
 
 namespace {
 
-result_timings make_base_timings() {
-    result_timings t;
-    t.prompt_n = 10;
-    t.prompt_ms = 200.0;
-    t.prompt_per_token_ms = 20.0;
-    t.prompt_per_second = 50.0;
-    t.predicted_n = 5;
-    t.predicted_ms = 100.0;
-    t.predicted_per_token_ms = 20.0;
-    t.predicted_per_second = 50.0;
-    return t;
+// t_start/t_prompt_last/t_gen_last are absolute microsecond timestamps; the
+// values below are chosen so the derived numbers are exact:
+//   t_prompt_ms  = (1'200'000 - 1'000'000) / 1000            = 200.0
+//   per-token    = 200.0 / n_prompt_processed(10)            =  20.0
+//   prompt tps   = 1e3 / 200.0 * 10                          =  50.0
+//   t_gen_ms     = (1'300'000 - 1'200'000) / 1000            = 100.0
+//   gen steps    = n_gen(5) - 1 (first token is free)        =   4
+//   per-token    = 100.0 / 4                                 =  25.0
+//   gen tps      = 1e3 / 100.0 * 4                           =  40.0
+server_slot_stats make_base_stats() {
+    server_slot_stats s;
+    s.n_prompt_processed = 10;
+    s.n_gen = 5;
+    s.t_start = 1000000;
+    s.t_prompt_last = 1200000;
+    s.t_gen_last = 1300000;
+    return s;
 }
 
 } // namespace
 
-TEST(ResultTimings, BaseFields_AlwaysPresent) {
-    const json j = make_base_timings().to_json();
+TEST(ServerSlotStats, BaseFields_AlwaysPresent) {
+    const json j = make_base_stats().to_json();
 
     EXPECT_TRUE(j.contains("cache_n"));
     EXPECT_TRUE(j.contains("prompt_n"));
@@ -66,54 +77,77 @@ TEST(ResultTimings, BaseFields_AlwaysPresent) {
     EXPECT_TRUE(j.contains("predicted_per_second"));
 }
 
-TEST(ResultTimings, CacheN_ReflectsValue) {
-    result_timings t = make_base_timings();
-    t.cache_n = 7;
-    const json j = t.to_json();
+TEST(ServerSlotStats, CacheN_ReflectsCachedPromptTokens) {
+    server_slot_stats s = make_base_stats();
+    s.n_prompt_cached = 7;
+    const json j = s.to_json();
     EXPECT_EQ(j.at("cache_n").get<int>(), 7);
 }
 
-TEST(ResultTimings, BaseFieldValues_MatchInput) {
-    result_timings t = make_base_timings();
-    const json j = t.to_json();
+TEST(ServerSlotStats, BaseFieldValues_DerivedFromCountersAndTimestamps) {
+    const json j = make_base_stats().to_json();
 
     EXPECT_EQ(j.at("prompt_n").get<int>(), 10);
     EXPECT_EQ(j.at("predicted_n").get<int>(), 5);
     EXPECT_DOUBLE_EQ(j.at("prompt_ms").get<double>(), 200.0);
-    EXPECT_DOUBLE_EQ(j.at("predicted_per_second").get<double>(), 50.0);
+    EXPECT_DOUBLE_EQ(j.at("prompt_per_token_ms").get<double>(), 20.0);
+    EXPECT_DOUBLE_EQ(j.at("prompt_per_second").get<double>(), 50.0);
+    EXPECT_DOUBLE_EQ(j.at("predicted_ms").get<double>(), 100.0);
+    // The first generated token comes from the prompt batch's logits, so the
+    // per-token rates divide by n_gen - 1, not n_gen.
+    EXPECT_DOUBLE_EQ(j.at("predicted_per_token_ms").get<double>(), 25.0);
+    EXPECT_DOUBLE_EQ(j.at("predicted_per_second").get<double>(), 40.0);
 }
 
-TEST(ResultTimings, WithoutSpeculative_DraftFieldsAbsent) {
-    // default draft_n = 0  →  fields must NOT appear in JSON
-    result_timings t = make_base_timings();
-    // draft_n and draft_n_accepted remain at their default (0)
-
-    const json j = t.to_json();
-
-    EXPECT_FALSE(j.contains("draft_n")) << "draft_n must be absent when draft_n == 0";
-    EXPECT_FALSE(j.contains("draft_n_accepted")) << "draft_n_accepted must be absent when draft_n == 0";
+TEST(ServerSlotStats, IsSet_FalseUntilPromptStarts) {
+    server_slot_stats s;
+    EXPECT_FALSE(s.is_set()) << "a slot that never ran carries no stats";
+    s.t_start = 1;
+    EXPECT_TRUE(s.is_set());
 }
 
-TEST(ResultTimings, WithSpeculative_DraftFieldsPresent) {
-    result_timings t = make_base_timings();
-    t.draft_n = 50;
-    t.draft_n_accepted = 35;
+TEST(ServerSlotStats, UnstartedGeneration_ZeroDurations) {
+    // Only the prompt was processed: t_gen_last == 0 → generation duration 0.
+    server_slot_stats s;
+    s.t_start = 1000000;
+    s.n_prompt_processed = 4;
+    const json j = s.to_json();
+    EXPECT_DOUBLE_EQ(j.at("prompt_ms").get<double>(), 0.0) << "t_prompt_last == 0 → prompt not finished";
+    EXPECT_DOUBLE_EQ(j.at("predicted_ms").get<double>(), 0.0);
+    EXPECT_DOUBLE_EQ(j.at("predicted_per_second").get<double>(), 0.0);
+}
 
-    const json j = t.to_json();
+TEST(ServerSlotStats, WithoutSpeculative_DraftFieldsAbsent) {
+    // default n_draft_tokens = 0  →  fields must NOT appear in JSON
+    server_slot_stats s = make_base_stats();
+    // n_draft_tokens and n_draft_accepted remain at their default (0)
 
-    EXPECT_TRUE(j.contains("draft_n")) << "draft_n must be present when draft_n > 0";
-    EXPECT_TRUE(j.contains("draft_n_accepted")) << "draft_n_accepted must be present when draft_n > 0";
+    const json j = s.to_json();
+
+    EXPECT_FALSE(j.contains("draft_n")) << "draft_n must be absent when n_draft_tokens == 0";
+    EXPECT_FALSE(j.contains("draft_n_accepted")) << "draft_n_accepted must be absent when n_draft_tokens == 0";
+}
+
+TEST(ServerSlotStats, WithSpeculative_DraftFieldsPresent) {
+    server_slot_stats s = make_base_stats();
+    s.n_draft_tokens = 50;
+    s.n_draft_accepted = 35;
+
+    const json j = s.to_json();
+
+    EXPECT_TRUE(j.contains("draft_n")) << "draft_n must be present when n_draft_tokens > 0";
+    EXPECT_TRUE(j.contains("draft_n_accepted")) << "draft_n_accepted must be present when n_draft_tokens > 0";
     EXPECT_EQ(j.at("draft_n").get<int>(), 50);
     EXPECT_EQ(j.at("draft_n_accepted").get<int>(), 35);
 }
 
-TEST(ResultTimings, DraftNOne_FieldsPresent) {
+TEST(ServerSlotStats, DraftNOne_FieldsPresent) {
     // Edge case: even a single speculative token triggers the fields
-    result_timings t = make_base_timings();
-    t.draft_n = 1;
-    t.draft_n_accepted = 0;
+    server_slot_stats s = make_base_stats();
+    s.n_draft_tokens = 1;
+    s.n_draft_accepted = 0;
 
-    const json j = t.to_json();
+    const json j = s.to_json();
 
     EXPECT_TRUE(j.contains("draft_n"));
     EXPECT_TRUE(j.contains("draft_n_accepted"));
@@ -121,12 +155,12 @@ TEST(ResultTimings, DraftNOne_FieldsPresent) {
     EXPECT_EQ(j.at("draft_n_accepted").get<int>(), 0);
 }
 
-TEST(ResultTimings, DraftFieldsAbsent_WhenExplicitlyZero) {
-    result_timings t = make_base_timings();
-    t.draft_n = 0;
-    t.draft_n_accepted = 0;
+TEST(ServerSlotStats, DraftFieldsAbsent_WhenExplicitlyZero) {
+    server_slot_stats s = make_base_stats();
+    s.n_draft_tokens = 0;
+    s.n_draft_accepted = 0;
 
-    const json j = t.to_json();
+    const json j = s.to_json();
 
     EXPECT_FALSE(j.contains("draft_n"));
     EXPECT_FALSE(j.contains("draft_n_accepted"));
@@ -716,8 +750,13 @@ TEST(ServerTaskNTokens, PopulatedTokens_ReturnsCount) {
 }
 
 // ============================================================
-// server_task_result_metrics::to_json
-//   Pure struct → JSON; no model needed.
+// server_task_result_metrics::to_json / ::to_metrics
+//   Pure struct → JSON / Prometheus text; no model needed.
+//
+//   b10408 (upstream #26920) split this result in two: to_json() now serves
+//   /slots and returns the slot array verbatim, while the cumulative counters
+//   moved into an embedded server_metrics and are rendered as Prometheus
+//   exposition text by the new to_metrics() for /metrics.
 // ============================================================
 
 namespace {
@@ -726,62 +765,82 @@ server_task_result_metrics make_metrics() {
     m.n_idle_slots = 2;
     m.n_processing_slots = 1;
     m.n_tasks_deferred = 3;
-    m.t_start = 1234567890LL;
-    m.n_prompt_tokens_processed_total = 100;
-    m.t_prompt_processing_total = 50;
-    m.n_tokens_predicted_total = 200;
-    m.t_tokens_generation_total = 80;
-    m.n_prompt_tokens_processed = 10;
-    m.t_prompt_processing = 5;
-    m.n_tokens_predicted = 20;
-    m.t_tokens_generation = 8;
-    m.n_decode_total = 300;
-    m.n_busy_slots_total = 4;
+    m.metrics.t_start = 1234567890LL;
+    m.metrics.prompt.add(/*n=*/100, /*n_steps=*/100, /*t_us=*/50);
+    m.metrics.predict.add(/*n=*/200, /*n_steps=*/200, /*t_us=*/80);
+    m.metrics.n_prompt_cached = 10;
+    m.metrics.n_decode = 300;
+    m.metrics.n_busy_slots = 4;
     return m;
+}
+
+// Reads the value of a `llamacpp:<name> <value>` sample line out of Prometheus
+// exposition text (the "# HELP"/"# TYPE" lines for the same name are skipped).
+double prometheus_value(const std::string &text, const std::string &name) {
+    const std::string prefix = "llamacpp:" + name + " ";
+    for (size_t pos = 0; pos < text.size();) {
+        const size_t eol = text.find('\n', pos);
+        const std::string line = text.substr(pos, eol == std::string::npos ? std::string::npos : eol - pos);
+        if (line.rfind(prefix, 0) == 0) {
+            return std::stod(line.substr(prefix.size()));
+        }
+        if (eol == std::string::npos) {
+            break;
+        }
+        pos = eol + 1;
+    }
+    ADD_FAILURE() << "no sample line for llamacpp:" << name;
+    return -1.0;
 }
 } // namespace
 
-TEST(ServerTaskResultMetrics, ToJson_SlotCountFields) {
-    const json j = make_metrics().to_json();
-    EXPECT_EQ(j.at("idle").get<int>(), 2);
-    EXPECT_EQ(j.at("processing").get<int>(), 1);
-    EXPECT_EQ(j.at("deferred").get<int>(), 3);
-    EXPECT_EQ(j.at("t_start").get<int64_t>(), 1234567890LL);
-}
-
-TEST(ServerTaskResultMetrics, ToJson_NTokensMax) {
-    server_task_result_metrics m = make_metrics();
-    m.n_tokens_max = 4096;
-    const json j = m.to_json();
-    EXPECT_EQ(j.at("n_tokens_max").get<int>(), 4096);
-}
-
-TEST(ServerTaskResultMetrics, ToJson_TokenCountFields) {
-    const json j = make_metrics().to_json();
-    EXPECT_EQ(j.at("n_prompt_tokens_processed_total").get<uint64_t>(), 100u);
-    EXPECT_EQ(j.at("n_tokens_predicted_total").get<uint64_t>(), 200u);
-    EXPECT_EQ(j.at("n_decode_total").get<uint64_t>(), 300u);
-    EXPECT_EQ(j.at("n_busy_slots_total").get<uint64_t>(), 4u);
-}
-
-TEST(ServerTaskResultMetrics, ToJson_TimingAndWindowFields) {
-    const json j = make_metrics().to_json();
-    // Timing totals
-    EXPECT_EQ(j.at("t_prompt_processing_total").get<uint64_t>(), 50u);
-    EXPECT_EQ(j.at("t_tokens_generation_total").get<uint64_t>(), 80u);
-    // Current-window counts (not the _total variants)
-    EXPECT_EQ(j.at("n_prompt_tokens_processed").get<uint64_t>(), 10u);
-    EXPECT_EQ(j.at("t_prompt_processing").get<uint64_t>(), 5u);
-    EXPECT_EQ(j.at("n_tokens_predicted").get<uint64_t>(), 20u);
-    EXPECT_EQ(j.at("t_tokens_generation").get<uint64_t>(), 8u);
-}
-
-TEST(ServerTaskResultMetrics, ToJson_SlotDataIsArray) {
+TEST(ServerTaskResultMetrics, ToJson_ReturnsSlotsArrayVerbatim) {
     server_task_result_metrics m = make_metrics();
     m.slots_data = json::array({{{"id", 0}}, {{"id", 1}}});
     const json j = m.to_json();
-    ASSERT_TRUE(j.at("slots").is_array());
-    EXPECT_EQ(j.at("slots").size(), 2u);
+    ASSERT_TRUE(j.is_array());
+    EXPECT_EQ(j.size(), 2u);
+    EXPECT_EQ(j.at(0).at("id").get<int>(), 0);
+}
+
+TEST(ServerTaskResultMetrics, ToMetrics_SlotGauges) {
+    const std::string text = make_metrics().to_metrics();
+    EXPECT_DOUBLE_EQ(prometheus_value(text, "requests_processing"), 1.0);
+    EXPECT_DOUBLE_EQ(prometheus_value(text, "requests_deferred"), 3.0);
+}
+
+TEST(ServerTaskResultMetrics, ToMetrics_NTokensMax) {
+    server_task_result_metrics m = make_metrics();
+    m.metrics.n_tokens_max = 4096;
+    EXPECT_DOUBLE_EQ(prometheus_value(m.to_metrics(), "n_tokens_max"), 4096.0);
+}
+
+TEST(ServerTaskResultMetrics, ToMetrics_TokenCountCounters) {
+    const std::string text = make_metrics().to_metrics();
+    EXPECT_DOUBLE_EQ(prometheus_value(text, "prompt_tokens_total"), 100.0);
+    EXPECT_DOUBLE_EQ(prometheus_value(text, "prompt_tokens_cached_total"), 10.0);
+    EXPECT_DOUBLE_EQ(prometheus_value(text, "tokens_predicted_total"), 200.0);
+    EXPECT_DOUBLE_EQ(prometheus_value(text, "n_decode_total"), 300.0);
+    // n_busy_slots is exposed as an average per llama_decode() call: 4 / 300.
+    EXPECT_DOUBLE_EQ(prometheus_value(text, "n_busy_slots_per_decode"), 4.0 / 300.0);
+}
+
+TEST(ServerTaskResultMetrics, ToMetrics_TimeCountersAreSeconds) {
+    const std::string text = make_metrics().to_metrics();
+    // The struct stores microseconds; Prometheus counters are in seconds.
+    EXPECT_DOUBLE_EQ(prometheus_value(text, "prompt_seconds_total"), 50.0 / 1e6);
+    EXPECT_DOUBLE_EQ(prometheus_value(text, "tokens_predicted_seconds_total"), 80.0 / 1e6);
+}
+
+TEST(ServerTaskResultMetrics, ToMetrics_SpeculativePerPositionSeriesOnlyWhenPresent) {
+    server_task_result_metrics m = make_metrics();
+    EXPECT_EQ(m.to_metrics().find("spec_decode_num_accepted_tokens_per_pos_total"), std::string::npos)
+        << "the labeled series must be omitted when no per-position data was collected";
+
+    m.metrics.n_accepted_per_pos = {7, 3};
+    const std::string text = m.to_metrics();
+    EXPECT_NE(text.find("llamacpp:spec_decode_num_accepted_tokens_per_pos_total{position=\"0\"} 7"), std::string::npos);
+    EXPECT_NE(text.find("llamacpp:spec_decode_num_accepted_tokens_per_pos_total{position=\"1\"} 3"), std::string::npos);
 }
 
 // ============================================================
@@ -1019,16 +1078,16 @@ TEST(ServerTaskResultCmplPartial, NonOaicompat_TimingsAbsentByDefault) {
     server_task_result_cmpl_partial p;
     p.is_updated = true;
     p.res_type = TASK_RESPONSE_TYPE_NONE;
-    // timings.prompt_n == 0 by default → timings should be absent
+    // stats.t_start == 0 by default (slot never started) → timings should be absent
     const json j = p.to_json_non_oaicompat();
     EXPECT_FALSE(j.contains("timings"));
 }
 
-TEST(ServerTaskResultCmplPartial, NonOaicompat_TimingsPresentWhenPromptNNonzero) {
+TEST(ServerTaskResultCmplPartial, NonOaicompat_TimingsPresentWhenStatsSet) {
     server_task_result_cmpl_partial p;
     p.is_updated = true;
     p.res_type = TASK_RESPONSE_TYPE_NONE;
-    p.timings.prompt_n = 5;
+    p.stats.t_start = 1000000; // is_set() → timings are emitted
     const json j = p.to_json_non_oaicompat();
     EXPECT_TRUE(j.contains("timings"));
 }
@@ -1686,14 +1745,14 @@ TEST(CmplFinalVerboseFlag, OaicompatChat_VerboseTrue_DebugKeyPresent) {
 
 TEST(CmplFinalVerboseFlag, Oaicompat_TimingsAbsentByDefault) {
     auto f = make_oai_final();
-    // timings.prompt_n is default-constructed to a value < 0 — absent
+    // stats.t_start is default-constructed to 0 (slot never started) — absent
     const json j = f.to_json_oaicompat();
     EXPECT_FALSE(j.contains("timings"));
 }
 
-TEST(CmplFinalVerboseFlag, Oaicompat_TimingsPresentWhenPromptNNonNeg) {
+TEST(CmplFinalVerboseFlag, Oaicompat_TimingsPresentWhenStatsSet) {
     auto f = make_oai_final();
-    f.timings.prompt_n = 0; // >= 0 triggers inclusion
+    f.stats.t_start = 1000000; // is_set() triggers inclusion
     const json j = f.to_json_oaicompat();
     EXPECT_TRUE(j.contains("timings"));
 }
