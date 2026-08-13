@@ -115,6 +115,7 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     inp.lang = lang.empty() ? "english" : lang.c_str();
     inp.top_k = top_k > 0 ? top_k : 50;
     inp.top_p = 1.0f;
+    inp.seed = seed;
     // We do our own WAV framing (pcm_to_wav16_bytes) rather than trust upstream's own writer, so
     // that already-tested code stays in the loop; ask for raw PCM.
     inp.out_type = MTMD_HELPER_GEN_AUDIO_OUTTYPE_PCM;
@@ -137,7 +138,7 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
         }
     }
 
-    const llama_vocab *vocab = llama_model_get_vocab(engine->model);
+    // note: some pipelines ignore this token and drive generation from the hidden state instead
     auto sample_semantic_code = [&]() -> llama_token {
         llama_token t = common_sampler_sample(smpl, engine->ctx, -1);
         common_sampler_accept(smpl, t, true);
@@ -149,13 +150,21 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
     llama_token sampled = sample_semantic_code();
     const float *h_state = llama_get_embeddings_ith(engine->ctx, -1);
 
-    for (; n_frames < max_new && !llama_vocab_is_eog(vocab, sampled); n_frames++) {
+    // End-of-speech is reported by step_gen() itself (out_stop / a null next hidden state) rather
+    // than by an end-of-generation backbone token, so that pipelines without a discrete backbone
+    // token (pocket-tts) terminate too. Mirrors upstream tools/tts/tts.cpp.
+    bool stop = false;
+    while (!stop && n_frames < max_new) {
         const float *h_next = nullptr;
-        if (gen.step_gen(sampled, h_state, &h_next) != 0) {
+        if (gen.step_gen(sampled, h_state, &h_next, &stop) != 0) {
             common_sampler_free(smpl);
             err = "audio-frame generation failed at frame " + std::to_string(n_frames);
             return false;
         }
+        if (h_next == nullptr) {
+            break; // stopped without generating a frame
+        }
+        n_frames++;
         h_state = h_next;
         sampled = sample_semantic_code();
     }
