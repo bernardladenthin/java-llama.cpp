@@ -770,7 +770,10 @@ server_task_result_metrics make_metrics() {
     m.metrics.predict.add(/*n=*/200, /*n_steps=*/200, /*t_us=*/80);
     m.metrics.n_prompt_cached = 10;
     m.metrics.n_decode = 300;
-    m.metrics.n_busy_slots = 4;
+    // 600 busy-slot observations over 300 decode calls → exactly 2.0 per decode.
+    // Prometheus samples are rendered with the default 6-significant-digit
+    // ostream precision, so the fixture keeps every derived value exact.
+    m.metrics.n_busy_slots = 600;
     return m;
 }
 
@@ -821,8 +824,8 @@ TEST(ServerTaskResultMetrics, ToMetrics_TokenCountCounters) {
     EXPECT_DOUBLE_EQ(prometheus_value(text, "prompt_tokens_cached_total"), 10.0);
     EXPECT_DOUBLE_EQ(prometheus_value(text, "tokens_predicted_total"), 200.0);
     EXPECT_DOUBLE_EQ(prometheus_value(text, "n_decode_total"), 300.0);
-    // n_busy_slots is exposed as an average per llama_decode() call: 4 / 300.
-    EXPECT_DOUBLE_EQ(prometheus_value(text, "n_busy_slots_per_decode"), 4.0 / 300.0);
+    // n_busy_slots is exposed as an average per llama_decode() call: 600 / 300.
+    EXPECT_DOUBLE_EQ(prometheus_value(text, "n_busy_slots_per_decode"), 2.0);
 }
 
 TEST(ServerTaskResultMetrics, ToMetrics_TimeCountersAreSeconds) {
