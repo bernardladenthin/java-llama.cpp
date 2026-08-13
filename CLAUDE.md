@@ -381,10 +381,28 @@ while the artifacts are still separate. A future job that reopens the hole (a se
 `Mac/aarch64`, or a new platform whose auto-detected subdir clashes) reds the pipeline instead of
 shipping a corrupt binary.
 
-**Still uncovered (see [`TODO.md`](TODO.md)):** the three macOS Java test jobs each test the dylib
-*their own job* built, so nothing exercises the **merged/packaged** artifact on macOS. Linux and
-Windows have `smoke-fatjar-*` jobs downstream of `package`; macOS has none — which is why this bug
-reached three releases with a fully green pipeline.
+**The end-to-end gate: `smoke-fatjar-macos`.** The three macOS Java test jobs each test the dylib
+*their own job* built, so until now nothing exercised the **packaged** artifact on macOS — Linux and
+Windows had `smoke-fatjar-*` downstream of `package`, macOS had none, which is why this bug reached
+three releases with a fully green pipeline. The job (`needs: [package]`, `macos-15`, gates both
+publish jobs) downloads `llama-jars` and runs `.github/smoke-native-macos.sh`, which extracts
+`Mac/aarch64/libjllama.dylib` from the **default fat jar** and asserts two things: `codesign --verify
+--strict` (re-hashes the code pages against the signature's stored hashes — the direct check for a
+dylib assembled from two builds) and a real JVM load via `.github/smoke/NativeLoadSmoke.java`
+(`java -cp <fatjar> …`, the JDK single-file source launcher), which forces
+`LlamaLoader.initialize() → System.load() → JNI_OnLoad` and then crosses JNI for
+`getLlamaCppBuildInfo()`, checked against the `LlamaCppVersion` pin.
+
+Two macOS specifics: it targets the **default** fat jar because there is no `all-macos-*` fat jar to
+target (macOS has no GPU classifier — Metal is in the default jar — so `package-fatjars` builds no
+macOS variant), and it asserts native loadability rather than a CLI exit code, so it cannot reuse
+`smoke-test-fatjar.sh` (whose backend-manifest grep never matches the manifest-less default jar).
+Deliberately model-free (~1 min, no GGUF/cache restore/network): a full model-backed macOS server
+smoke would be strictly more, but this catches the failure class that actually shipped and is cheap
+enough to always run. It is the macOS member of the cross-repo convention in
+[`../workspace/policies/fat-jar-release-assets.md`](../workspace/policies/fat-jar-release-assets.md)
+("No release asset is attached that CI has not run"), which BAF and srcmorph implement with a shared
+`smoke-fatjar-cli.sh`.
 
 ## All-backends server fat jars (GitHub Release assets, never Maven Central)
 
