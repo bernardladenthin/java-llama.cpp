@@ -173,7 +173,7 @@ set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b10360
+	GIT_TAG        b10423
 	PATCH_COMMAND  ${CMAKE_COMMAND}
 		-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patches
 		-DLLAMA_SRC=<SOURCE_DIR>
@@ -193,12 +193,20 @@ endif()
 # LLAMA_BUILD_TOOLS defaults to LLAMA_STANDALONE, which is OFF when llama.cpp
 # is consumed via FetchContent.  Build mtmd explicitly so the target exists.
 if(NOT TARGET mtmd)
-    # LLAMA_INSTALL_VERSION is set inside llama.cpp's directory scope and is not
-    # visible here.  tools/mtmd/CMakeLists.txt uses it in set_target_properties()
-    # as a VERSION value; if the variable is empty the token list after PROPERTIES
-    # becomes odd-length and CMake aborts with "incorrect number of arguments".
-    if(NOT DEFINED LLAMA_INSTALL_VERSION)
-        set(LLAMA_INSTALL_VERSION "0")
+    # LLAMA_VERSION_BASE / LLAMA_VERSION_MAJOR are set inside llama.cpp's directory
+    # scope and are not visible here.  tools/mtmd/CMakeLists.txt uses them in
+    # set_target_properties() as VERSION/SOVERSION values; if a variable is empty the
+    # token list after PROPERTIES becomes odd-length and CMake aborts with "incorrect
+    # number of arguments".  Both are cosmetic for this build (BUILD_SHARED_LIBS is
+    # OFF, so mtmd is a static library and VERSION/SOVERSION are no-ops), hence the
+    # neutral placeholder rather than a mirror of upstream's numbers.
+    # (b10398 replaced the older LLAMA_INSTALL_VERSION with these two — upstream
+    # #26839, "cmake: introduce semantic versioning".)
+    if(NOT DEFINED LLAMA_VERSION_BASE)
+        set(LLAMA_VERSION_BASE "0")
+    endif()
+    if(NOT DEFINED LLAMA_VERSION_MAJOR)
+        set(LLAMA_VERSION_MAJOR "0")
     endif()
     add_subdirectory(${llama.cpp_SOURCE_DIR}/tools/mtmd ${llama.cpp_BINARY_DIR}/tools/mtmd)
 endif()
