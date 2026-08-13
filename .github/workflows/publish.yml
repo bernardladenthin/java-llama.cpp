@@ -2747,11 +2747,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Downloaded UNMERGED (one subdirectory per artifact name) on purpose: `merge-multiple: true`
+      # would silently overwrite — and can byte-level interleave — two artifacts that carry the same
+      # relative path, which is how the corrupt macOS dylib shipped. merge-native-artifacts.sh does
+      # the merge instead, and fails the job if any {OS}/{ARCH} path is claimed by more than one
+      # `*-libraries` artifact. A post-merge check cannot catch this (the collision leaves exactly
+      # one file on the path — a corrupt one), so the check has to happen before the merge.
       - uses: actions/download-artifact@v8
         with:
           pattern: "*-libraries"
-          merge-multiple: true
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          path: ${{ github.workspace }}/native-artifacts/
+      - name: Merge native libraries into the default resource tree (collision-checked)
+        run: |
+          bash .github/merge-native-artifacts.sh \
+            "${{ github.workspace }}/native-artifacts" \
+            "${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/"
       # All three macOS arm64 build jobs emit the same path Mac/aarch64/libjllama.dylib, so their
       # artifact names are kept outside the "*-libraries" glob above — merging them would drop
       # three different dylibs onto one file. The variant that ships is selected explicitly:
@@ -3042,11 +3052,21 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      # Downloaded UNMERGED (one subdirectory per artifact name) on purpose: `merge-multiple: true`
+      # would silently overwrite — and can byte-level interleave — two artifacts that carry the same
+      # relative path, which is how the corrupt macOS dylib shipped. merge-native-artifacts.sh does
+      # the merge instead, and fails the job if any {OS}/{ARCH} path is claimed by more than one
+      # `*-libraries` artifact. A post-merge check cannot catch this (the collision leaves exactly
+      # one file on the path — a corrupt one), so the check has to happen before the merge.
       - uses: actions/download-artifact@v8
         with:
           pattern: "*-libraries"
-          merge-multiple: true
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          path: ${{ github.workspace }}/native-artifacts/
+      - name: Merge native libraries into the default resource tree (collision-checked)
+        run: |
+          bash .github/merge-native-artifacts.sh \
+            "${{ github.workspace }}/native-artifacts" \
+            "${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/"
       # All three macOS arm64 build jobs emit the same path Mac/aarch64/libjllama.dylib, so their
       # artifact names are kept outside the "*-libraries" glob above — merging them would drop
       # three different dylibs onto one file. The variant that ships is selected explicitly:
@@ -3264,11 +3284,21 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      # Downloaded UNMERGED (one subdirectory per artifact name) on purpose: `merge-multiple: true`
+      # would silently overwrite — and can byte-level interleave — two artifacts that carry the same
+      # relative path, which is how the corrupt macOS dylib shipped. merge-native-artifacts.sh does
+      # the merge instead, and fails the job if any {OS}/{ARCH} path is claimed by more than one
+      # `*-libraries` artifact. A post-merge check cannot catch this (the collision leaves exactly
+      # one file on the path — a corrupt one), so the check has to happen before the merge.
       - uses: actions/download-artifact@v8
         with:
           pattern: "*-libraries"
-          merge-multiple: true
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          path: ${{ github.workspace }}/native-artifacts/
+      - name: Merge native libraries into the default resource tree (collision-checked)
+        run: |
+          bash .github/merge-native-artifacts.sh \
+            "${{ github.workspace }}/native-artifacts" \
+            "${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/"
       # All three macOS arm64 build jobs emit the same path Mac/aarch64/libjllama.dylib, so their
       # artifact names are kept outside the "*-libraries" glob above — merging them would drop
       # three different dylibs onto one file. The variant that ships is selected explicitly:

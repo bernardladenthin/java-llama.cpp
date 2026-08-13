@@ -203,6 +203,32 @@ real arm64 hardware and the Adreno/OpenCL flavor. Treat LLaMAndroid as prior art
 
   **Out of scope until evidence supports it**: actually implementing any of the above. This entry exists so that when someone asks "can I ship java-llama.cpp as a single 30 MB binary?" the answer points to a concrete investigation plan rather than restarting from zero.
 
+### macOS has no post-`package` smoke test (the gap that let a corrupt dylib ship)
+
+The three macOS Java test jobs each run against the dylib **their own build job** produced, so
+nothing in the pipeline ever loads the dylib that actually goes **into the published JAR**. That is
+why the `*-libraries` glob collision (three macOS artifacts overwriting
+`Mac/aarch64/libjllama.dylib` into a hybrid that macOS SIGKILLs on load — see CLAUDE.md, "macOS
+arm64: three build jobs, one shipped dylib") shipped in 5.0.6 and several 5.0.7 snapshots with an
+all-green pipeline. Linux and Windows do have the equivalent gate: `smoke-fatjar-linux` /
+`smoke-fatjar-windows` run `java -jar` against the **packaged** artifact downstream of `package`.
+
+`.github/merge-native-artifacts.sh` now closes the specific hole (fails the merge when two
+`*-libraries` artifacts claim one path), but it is a guard on *one known* corruption mechanism, not
+an end-to-end check that the shipped macOS binary loads.
+
+- **Add a `smoke-fatjar-macos` job** (`needs: [package-fatjars, verify-model-cache]`, `runs-on:
+  macos-15`), mirroring the two existing smoke jobs: download `llama-fatjars`, run
+  `.github/smoke-test-fatjar.sh` against the `all-macos-aarch64` / default fat jar. On macOS this
+  also catches the code-signature class of failure for free, since `dyld` refuses to map a dylib
+  whose ad-hoc signature does not match its pages.
+- **Cheaper interim option** if a full model-backed macOS smoke is too slow: a macOS job downstream
+  of `package` that only downloads `llama-jars`, extracts the dylib, and runs `codesign --verify
+  --strict` plus a `NativeLibraryLoadSmokeTest`-style `System.load` (no GGUF needed). That alone
+  would have caught this bug.
+
+Not a release gate until it has run flake-free (same rollout the Android emulator job followed).
+
 ## Open — cross-cutting (slice for this repo)
 
 - **jqwik pin policy** — see [`../workspace/policies/jqwik-prompt-injection.md`](../workspace/policies/jqwik-prompt-injection.md). `jqwik.version ≤ 1.9.3` is mandatory.
