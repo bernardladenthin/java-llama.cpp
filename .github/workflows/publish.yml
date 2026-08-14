@@ -2747,11 +2747,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      # Downloaded UNMERGED (one subdirectory per artifact name) on purpose: `merge-multiple: true`
+      # would silently overwrite — and can byte-level interleave — two artifacts that carry the same
+      # relative path, which is how the corrupt macOS dylib shipped. merge-native-artifacts.sh does
+      # the merge instead, and fails the job if any {OS}/{ARCH} path is claimed by more than one
+      # `*-libraries` artifact. A post-merge check cannot catch this (the collision leaves exactly
+      # one file on the path — a corrupt one), so the check has to happen before the merge.
       - uses: actions/download-artifact@v8
         with:
           pattern: "*-libraries"
-          merge-multiple: true
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          path: ${{ github.workspace }}/native-artifacts/
+      - name: Merge native libraries into the default resource tree (collision-checked)
+        run: |
+          bash .github/merge-native-artifacts.sh \
+            "${{ github.workspace }}/native-artifacts" \
+            "${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/"
       # All three macOS arm64 build jobs emit the same path Mac/aarch64/libjllama.dylib, so their
       # artifact names are kept outside the "*-libraries" glob above — merging them would drop
       # three different dylibs onto one file. The variant that ships is selected explicitly:
@@ -2984,6 +2994,40 @@ jobs:
             server-err.log
           if-no-files-found: warn
 
+  # ---------------------------------------------------------------------------
+  # macOS member of the cross-repo "no release asset is attached that CI has not run" convention
+  # (workspace/policies/fat-jar-release-assets.md; BitcoinAddressFinder and srcmorph run the shared
+  # .github/smoke-fatjar-cli.sh in the same job shape). It closes the gap that let a corrupt dylib
+  # ship: the three macOS Java test jobs each test the dylib THEIR OWN build job produced, so until
+  # now nothing ever loaded the one that goes into the published jar — see CLAUDE.md, "macOS arm64:
+  # three build jobs, one shipped dylib".
+  #
+  # macOS-specific in two ways. It targets the DEFAULT fat jar from `llama-jars`, because there is
+  # no `all-macos-*` fat jar to target: macOS has no GPU classifier (Metal ships in the default
+  # jar), so package-fatjars builds no macOS variant. And it asserts native loadability rather than
+  # a CLI exit code — this jar's Main-Class is a server that never returns, and `codesign --strict`
+  # is what actually detects a dylib assembled from two builds. Deliberately model-free (no GGUF,
+  # no cache restore, ~1 min): a full model-backed macOS server smoke would be strictly more, but
+  # this catches the failure class that shipped and is cheap enough to always run.
+  # ---------------------------------------------------------------------------
+
+  smoke-fatjar-macos:
+    name: Smoke test packaged natives (macOS)
+    needs: [package]
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: llama-jars
+          path: jars/
+      - uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+      - name: Run packaged-native smoke test
+        run: .github/smoke-native-macos.sh jars 'llama-*-jar-with-dependencies.jar'
+
   report:
     name: Report
     needs: [package]
@@ -3034,7 +3078,7 @@ jobs:
 
   publish-snapshot:
     name: Publish Snapshot to Central
-    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows]
+    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows, smoke-fatjar-macos]
     if: needs.check-snapshot.result == 'success' && inputs.publish_to_central
     runs-on: ubuntu-latest
     environment: maven-central
@@ -3042,11 +3086,21 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      # Downloaded UNMERGED (one subdirectory per artifact name) on purpose: `merge-multiple: true`
+      # would silently overwrite — and can byte-level interleave — two artifacts that carry the same
+      # relative path, which is how the corrupt macOS dylib shipped. merge-native-artifacts.sh does
+      # the merge instead, and fails the job if any {OS}/{ARCH} path is claimed by more than one
+      # `*-libraries` artifact. A post-merge check cannot catch this (the collision leaves exactly
+      # one file on the path — a corrupt one), so the check has to happen before the merge.
       - uses: actions/download-artifact@v8
         with:
           pattern: "*-libraries"
-          merge-multiple: true
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          path: ${{ github.workspace }}/native-artifacts/
+      - name: Merge native libraries into the default resource tree (collision-checked)
+        run: |
+          bash .github/merge-native-artifacts.sh \
+            "${{ github.workspace }}/native-artifacts" \
+            "${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/"
       # All three macOS arm64 build jobs emit the same path Mac/aarch64/libjllama.dylib, so their
       # artifact names are kept outside the "*-libraries" glob above — merging them would drop
       # three different dylibs onto one file. The variant that ships is selected explicitly:
@@ -3257,18 +3311,28 @@ jobs:
   publish-release:
     name: Publish Release to Central
     if: needs.check-tag.result == 'success' && inputs.publish_to_central
-    needs: [check-tag, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows]
+    needs: [check-tag, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows, smoke-fatjar-macos]
     runs-on: ubuntu-latest
     environment: maven-central
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v7
+      # Downloaded UNMERGED (one subdirectory per artifact name) on purpose: `merge-multiple: true`
+      # would silently overwrite — and can byte-level interleave — two artifacts that carry the same
+      # relative path, which is how the corrupt macOS dylib shipped. merge-native-artifacts.sh does
+      # the merge instead, and fails the job if any {OS}/{ARCH} path is claimed by more than one
+      # `*-libraries` artifact. A post-merge check cannot catch this (the collision leaves exactly
+      # one file on the path — a corrupt one), so the check has to happen before the merge.
       - uses: actions/download-artifact@v8
         with:
           pattern: "*-libraries"
-          merge-multiple: true
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          path: ${{ github.workspace }}/native-artifacts/
+      - name: Merge native libraries into the default resource tree (collision-checked)
+        run: |
+          bash .github/merge-native-artifacts.sh \
+            "${{ github.workspace }}/native-artifacts" \
+            "${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/"
       # All three macOS arm64 build jobs emit the same path Mac/aarch64/libjllama.dylib, so their
       # artifact names are kept outside the "*-libraries" glob above — merging them would drop
       # three different dylibs onto one file. The variant that ships is selected explicitly:

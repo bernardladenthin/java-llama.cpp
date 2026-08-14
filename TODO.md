@@ -203,6 +203,25 @@ real arm64 hardware and the Adreno/OpenCL flavor. Treat LLaMAndroid as prior art
 
   **Out of scope until evidence supports it**: actually implementing any of the above. This entry exists so that when someone asks "can I ship java-llama.cpp as a single 30 MB binary?" the answer points to a concrete investigation plan rather than restarting from zero.
 
+### macOS packaged-artifact gate — landed cheap, optional depth remains
+
+**Done:** `smoke-fatjar-macos` (`needs: [package]`, gates both publish jobs) now verifies the dylib
+inside the packaged jar — `codesign --verify --strict` plus a real JVM load and JNI round-trip via
+`.github/smoke/NativeLoadSmoke.java`. See CLAUDE.md, "macOS arm64: three build jobs, one shipped
+dylib". This closes the gap that let a SIGKILL-on-load binary ship through three releases with a
+green pipeline, and is the macOS member of the cross-repo convention in
+[`../workspace/policies/fat-jar-release-assets.md`](../workspace/policies/fat-jar-release-assets.md).
+
+**Optional depth, not scheduled:** a full model-backed macOS server smoke (poll `/health`, assert a
+`/v1/chat/completions` choice) as Linux and Windows run. It would need `verify-model-cache` +
+a cache restore, and — since there is no `all-macos-*` fat jar — either a macOS variant from
+`package-fatjars` or a `smoke-test-fatjar.sh` flag making the backend-manifest grep optional for the
+manifest-less default jar. Worth doing only if a macOS-specific *inference* regression ever appears;
+the load-time failure class is already covered, and a slow smoke tends to get made non-gating.
+
+**Not yet observed green in CI** — the job and the two sibling-repo smokes landed in one change set
+and have only run locally so far.
+
 ## Open — cross-cutting (slice for this repo)
 
 - **jqwik pin policy** — see [`../workspace/policies/jqwik-prompt-injection.md`](../workspace/policies/jqwik-prompt-injection.md). `jqwik.version ≤ 1.9.3` is mandatory.

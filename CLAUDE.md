@@ -343,6 +343,67 @@ pinned to a specific version): if a URL/version 404s in CI, the job fails loud a
 `src/main/resources_{linux_rocm,windows_rocm,linux_sycl_fp16,linux_sycl_fp32,windows_sycl,linux_openvino,windows_openvino}/`
 are all git-ignored (staged by CI, never committed).
 
+## macOS arm64: three build jobs, one shipped dylib
+
+macOS arm64 is the **only** `{OS}/{ARCH}` built by more than one job, and it has **no classifier** —
+all three variants ship (or don't) into the same default-JAR path `Mac/aarch64/libjllama.dylib`:
+
+| Job | Build flags | Artifact | Role |
+|---|---|---|---|
+| `build-macos-arm64-metal-15` (macos-15) | `-DLLAMA_METAL_EMBED_LIBRARY=ON -DGGML_NATIVE=OFF` | `macos-15-metal` | **shipped** in the default JAR |
+| `build-macos-arm64-metal` (macos-14) | `-DLLAMA_METAL_EMBED_LIBRARY=ON` (host-native) | `macos-14-metal` | test-only |
+| `build-macos-arm64-no-metal` (macos-15) | `-DLLAMA_METAL=OFF -DGGML_NATIVE=OFF` | `macos-15-no-metal` | test-only |
+
+None of the three passes `-DOS_NAME`/`-DOS_ARCH`, so `CMakeLists.txt` auto-detects the **same**
+output subdirectory in all three. The shipped variant is `macos-15-metal` because it is the only one
+with **both** Metal **and** `GGML_NATIVE=OFF` (portable across Apple-silicon generations); the other
+two exist to prove the no-Metal path and the macos-14 SDK still build and pass the Java suite.
+
+**The invariant: at most one `*-libraries` artifact per `{OS}/{ARCH}`.** The `package`,
+`publish-snapshot` and `publish-release` jobs collect the default JAR's natives with one globbed
+`actions/download-artifact` (`pattern: "*-libraries"`). An artifact *name* says nothing about which
+subdirectory the job actually wrote, so two artifacts sharing a relative path get extracted onto one
+file — and the survivor can be a **byte-level hybrid** of both, not either input. All three macOS
+jobs used to upload under a `*-libraries` name: the published dylib's ad-hoc linker signature then no
+longer matched its own `__TEXT` pages and macOS **SIGKILLed every process that loaded it** (shipped
+broken in 5.0.6 and several 5.0.7 snapshots; 66/4078 and 1141/4097 code pages failed their stored
+hashes). Windows already avoided this by naming its MSVC variants outside the glob; macOS now does
+the same, and the shipped variant is chosen by an **explicit download step by name**, never by which
+artifact name happens to match a glob.
+
+**The guard: `.github/merge-native-artifacts.sh`.** The three consumer jobs download the glob
+**unmerged** (`merge-multiple` off → one subdirectory per artifact) and let that script do the merge.
+It fails the job when any relative path is claimed by more than one `*-libraries` artifact, and when
+the glob matched nothing at all (a silently native-library-free default JAR). Note **why the check
+runs before the merge**: a collision still leaves exactly one file on the path, so a post-merge
+assertion like "exactly one dylib per `{OS}/{ARCH}`" cannot see it — the collision is only observable
+while the artifacts are still separate. A future job that reopens the hole (a second job writing
+`Mac/aarch64`, or a new platform whose auto-detected subdir clashes) reds the pipeline instead of
+shipping a corrupt binary.
+
+**The end-to-end gate: `smoke-fatjar-macos`.** The three macOS Java test jobs each test the dylib
+*their own job* built, so until now nothing exercised the **packaged** artifact on macOS — Linux and
+Windows had `smoke-fatjar-*` downstream of `package`, macOS had none, which is why this bug reached
+three releases with a fully green pipeline. The job (`needs: [package]`, `macos-15`, gates both
+publish jobs) downloads `llama-jars` and runs `.github/smoke-native-macos.sh`, which extracts
+`Mac/aarch64/libjllama.dylib` from the **default fat jar** and asserts two things: `codesign --verify
+--strict` (re-hashes the code pages against the signature's stored hashes — the direct check for a
+dylib assembled from two builds) and a real JVM load via `.github/smoke/NativeLoadSmoke.java`
+(`java -cp <fatjar> …`, the JDK single-file source launcher), which forces
+`LlamaLoader.initialize() → System.load() → JNI_OnLoad` and then crosses JNI for
+`getLlamaCppBuildInfo()`, checked against the `LlamaCppVersion` pin.
+
+Two macOS specifics: it targets the **default** fat jar because there is no `all-macos-*` fat jar to
+target (macOS has no GPU classifier — Metal is in the default jar — so `package-fatjars` builds no
+macOS variant), and it asserts native loadability rather than a CLI exit code, so it cannot reuse
+`smoke-test-fatjar.sh` (whose backend-manifest grep never matches the manifest-less default jar).
+Deliberately model-free (~1 min, no GGUF/cache restore/network): a full model-backed macOS server
+smoke would be strictly more, but this catches the failure class that actually shipped and is cheap
+enough to always run. It is the macOS member of the cross-repo convention in
+[`../workspace/policies/fat-jar-release-assets.md`](../workspace/policies/fat-jar-release-assets.md)
+("No release asset is attached that CI has not run"), which BAF and srcmorph implement with a shared
+`smoke-fatjar-cli.sh`.
+
 ## All-backends server fat jars (GitHub Release assets, never Maven Central)
 
 Every pipeline run assembles **per-OS multi-backend server fat jars** and, on the release
