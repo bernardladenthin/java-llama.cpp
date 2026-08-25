@@ -13,114 +13,6 @@ cross-cutting initiative.
 
 ## Open — jllama-specific
 
-### Model-gated Java tests silently self-skip in CI (Surefire's working directory)
-
-**Found while bumping to b10618; pre-existing and independent of that bump.** Every model-gated Java
-test decides whether to run with a *relative* path — `new File("models/codellama-7b.Q2_K.gguf")`
-(`LlamaModelTest`), `TestConstants.MODEL_PATH`, the `-Dnet.ladenthin.llama.*` model properties CI
-passes as `models/<name>`. Surefire resolves those against its working directory, which defaults to
-the **module** basedir. CI runs `mvn -f llama/pom.xml … test` while the shared GGUF cache is restored
-to `<workspace>/models/`, so the tests look in `<workspace>/llama/models/` and find nothing.
-
-Verified empirically, not inferred: a throwaway test run under `mvn -f llama/pom.xml` reported
-`user.dir=<repo>/llama`, `models/<marker at repo root> exists=false`, `models/<marker under llama/>
-exists=true`.
-
-Consequence: the whole model-backed Java suite — `LlamaModelTest`, `LlamaEmbeddingsTest`,
-`MultimodalIntegrationTest`, `TtsIntegrationTest`, the reranking/draft/tool-model tests — aborts in
-`@BeforeAll` and reports as skipped on every `test-java-*` job, while the job still goes green. That
-contradicts the "CI model policy" section of `CLAUDE.md`, which states these run on every platform,
-and it is why the two stale assertions below have never failed.
-
-Fixing it is a one-line change (a Surefire `<workingDirectory>${project.basedir}/..</workingDirectory>`,
-or making the paths module-relative) — but it will **immediately turn ~100 currently-skipped tests
-on**, including the known-stale ones, so it must be done as its own change with the fallout fixed in
-the same PR, not folded into an unrelated bump.
-
-### The `getMetrics()` payload contract drifted at b10408 and three consumers still assume the old one
-
-`LlamaModel.getMetrics()` returns whatever the native slot-introspection task's `to_json()` produces.
-Until llama.cpp **b10408** (upstream #26920) that was an object — `idle` / `processing` / `deferred` /
-`t_start` / `n_*_total` counters plus a nested `slots` array. Since b10408 it is the **slot array
-verbatim**; the cumulative counters moved to Prometheus exposition text behind `to_metrics()`, which
-the JNI layer does not expose at all. Three consumers were written against the old shape and are all
-still on it:
-
-- **`value.ServerMetrics`** — `getIdleSlots()`, `getProcessingSlots()`, `getDeferredTasks()`,
-  `getCumulativeUsage()`, `getSlots()`, `getSlotMetrics()` all read keys that no longer exist, so
-  they return zeros / a missing node. Only `asJson()` (the raw array) carries real data.
-  `ServerMetricsTest` builds its input from string literals, so it passes either way and is not a
-  guard.
-- **`LlamaModelTest#testGetMetrics`** — asserts the live payload `contains("\"slots\"")` and
-  `contains("\"idle\"")`. Neither substring occurs anywhere in the current payload (checked against
-  upstream's `server_slot::to_json` and `task_params::to_json` key lists). It does not fail today
-  only because of the Surefire working-directory issue above; fixing that surfaces this immediately.
-- **`server.OpenAiCompatServer.handleMetricsView`** — `GET /slots` does
-  `readTree(metrics).path("slots").toString()`, and `path()` on an array node is a `MissingNode`
-  whose `toString()` is the empty string, so the route answers **200 with a zero-length body**. Its
-  sibling `GET /metrics` serves the slot array under a name that no longer describes it.
-  `OpenAiCompatServerHttpTest`'s fake backend returns the *pre-b10408* object, so the test exercises
-  a shape production never produces — the fake is what hides the bug.
-
-**Not a regression of the b10456 → b10618 walk.** That walk only re-pointed the JNI task at the new
-`SERVER_TASK_TYPE_SLOT_GET`, which is what keeps the array arriving at all (b10519 split the old
-`METRICS` task and would otherwise have degraded the payload to JSON null).
-
-Fixing it means picking the Java-side contract first: either reshape `ServerMetrics` (and `/slots`)
-around the slot array and drop the counter getters, or add a second JNI entry point for
-`SERVER_TASK_TYPE_METRICS` → `to_metrics()` and serve/parse the Prometheus text. Whichever is chosen,
-update all three consumers, the `OpenAiCompatServerHttpTest` fake, and the `/metrics` route naming
-together.
-
-### `RouterClient` has no API-key support, and `/models` stopped being a public endpoint at b10519
-
-`server.RouterClient` sets only `Content-Type` on its requests — there is no `Authorization` header
-and no constructor parameter for a key. `POST /models/load` and `/models/unload` have always gone
-through the server's API-key middleware, so those two already failed against a router started with
-`--api-key`. Upstream **#26347** (b10519) additionally removed `/models` and `/v1/models` from the
-public-endpoint set, so `listModels()`, `findModel()` and `awaitModelLoaded()` now answer `401`
-there as well — the whole typed router API is unusable against an authenticated router.
-
-Found while bumping to b10618; the upstream change is noted in the `b10509–b10519` row of
-`docs/history/llama-cpp-breaking-changes.md`. CI is unaffected because `RouterModeIntegrationTest`
-starts its router without a key, which is also why nothing caught it.
-
-Fix: add an optional key — e.g. a `RouterClient(String host, int port, String apiKey)` overload that
-sets `Authorization: Bearer <key>` in the private `request()` helper. Deliberately not done as part
-of the version bump: it adds public API surface, which is the owner's design call. The limitation is
-documented in `RouterClient`'s class javadoc in the meantime.
-
-### `RouterClient.awaitModelLoaded` rejects hidden-but-loadable router models
-
-b10507 (upstream #27346) added `server_model_meta::hidden` and a `continue` in the `GET /models`
-handler; upstream's own comment is "hidden from GET /models, but still accept if requested" — a
-hidden model still loads and still serves by name. `awaitModelLoaded` treats absence from the
-listing as a hard error and fails fast, so `loadModel(id)` succeeds, the worker comes up, and
-`awaitModelLoaded(id)` throws a message that sends the user off to check `--models-dir` and the
-identifier. Only reachable when a preset opts in with `dedup-cache-models`, which the project's own
-code never writes — but `NativeServer` forwards raw llama-server argv verbatim by design, so a
-caller can enable it.
-
-Fix: either retry until the timeout instead of rejecting on the first poll (a hidden model still
-reaches `LOADED`), or widen the error message to name `dedup-cache-models` as a cause.
-
-### `apply-llama-patches.cmake` is not idempotent when two patches touch one file
-
-`CLAUDE.md` and the applier's own header describe it as idempotent: a `git apply --reverse --check`
-is supposed to detect an already-applied patch and skip it, so a CMake **re**configure over an
-already-patched source tree is a no-op. That holds only while no two patches touch the same file.
-`0001` patches `tools/server/server.cpp` (one of its ~34 `common_params_parse_main` call-site flips)
-and `0006`/`0007` then rewrite the same region, so `0001`'s reverse-check no longer matches; the
-applier falls through to a forward apply, which also fails, and aborts the configure with the
-misleading "does not apply cleanly — a llama.cpp version bump probably shifted the patched code".
-
-Confirmed at b10618: reverse-check `0001` → fails at `tools/server/server.cpp:102`; `0006` and
-`0007` → skip cleanly. The practical effect is that **any** reconfigure of an existing build dir
-fails, which is why the runbook says to use a fresh one. A fix would be to reverse-check in reverse
-filename order (`0008` → `0001`), or to record an applied-marker per patch in the build tree. Left
-alone for now because it is release-critical build machinery and the fresh-build-dir workaround is
-already documented.
-
 ### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
 
 Left over from the 2026-06-20 code audit (18/18 findings fixed in PRs #258/#260, regression tests in
@@ -363,6 +255,41 @@ and have only run locally so far.
 - **Cross-repo code-quality TODOs** — see [`../workspace/policies/code-quality-todos.md`](../workspace/policies/code-quality-todos.md) for the canonical `@VisibleForTesting` design-fit review, package hierarchy review, and class/method naming review. This repo has no `@VisibleForTesting` usages today; package and naming reviews remain open.
 
 ## Done (kept for history)
+
+### 2026-08-25 — the five gaps recorded during the b10618 bump, now fixed
+
+All five were found while bumping llama.cpp to b10618, recorded there as diagnoses rather than fixes
+(the bump commit had to stay a bump), and closed in a follow-up. Details in CLAUDE.md; one-liners:
+
+- **Model-gated Java tests silently self-skipped in CI** — Surefire's working directory is the
+  module basedir while the GGUF cache is restored to the reactor root, so every `models/…` path
+  resolved to nothing, every model-gated class aborted in `@BeforeAll`, and the job still went green.
+  Fixed with `TestConstants.resolveModelPath` / `resolveModelProperty` (accept either layout), routed
+  through every path constant and every `-Dnet.ladenthin.llama.*` fixture property, plus
+  `TestConstantsTest` pinning the resolver **and** the wiring. `llama-langchain4j` had the same
+  defect and got the same resolver as `TestModelPaths`. Verified end-to-end: with a placeholder at
+  `<repo>/models/`, `LlamaModelTest` reports `Skipped: 0` and actually attempts the load.
+- **`getMetrics()` payload contract drifted at b10408** — restored in the native layer instead of
+  bending the Java contract: `handleSlotAction(0, …)` now posts both `SERVER_TASK_TYPE_METRICS` and
+  `SERVER_TASK_TYPE_SLOT_GET` and merges them via the pure `server_metrics_to_json`. All three
+  consumers keep working unchanged; `value.ServerMetrics` additionally exposes the cache and
+  speculative-decoding counters that previously existed only in the Prometheus text.
+  `LlamaModelTest#testGetMetrics` now asserts the parsed shape rather than substrings (the old
+  assertion was satisfiable by the slot entries themselves), and `GET /slots` answers `[]` instead of
+  an empty body when the payload carries no `slots` key.
+- **`RouterClient` had no API-key support** — added `RouterClient(port, apiKey)` /
+  `RouterClient(host, port, apiKey)` sending `Authorization: Bearer <key>`; an empty key behaves like
+  none, `toString()` never prints it, `equals` includes it.
+- **`RouterClient.awaitModelLoaded` vs hidden router models** — the TODO's first suggestion (poll to
+  the timeout) was wrong: upstream filters hidden models out of `GET /models` permanently, so no
+  amount of polling observes one. Fixed the honest way — the "not listed" message now names the
+  `dedup-cache-models` cause and the javadoc documents the direct-request path.
+- **`apply-llama-patches.cmake` was not idempotent** — replaced per-patch reverse-checking with a
+  stamp file (llama.cpp commit + per-patch SHA-256) gated on git's clean/dirty state. A reconfigure
+  over a patched tree is now a no-op; a genuine mismatch fails with an accurate message instead of a
+  misleading "does not apply cleanly". Verified against the real build tree and a purpose-built
+  two-patches-one-file fixture that reproduces the old failure.
+
 
 ### 2026-07-05 feature wave (PR #298) + follow-ups
 

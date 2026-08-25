@@ -124,8 +124,10 @@ Concretely:
    `*.patch` in `llama/patches/`** must still apply. Do not maintain a list of them here or anywhere
    else: `apply-llama-patches.cmake` `file(GLOB)`s the directory and applies them in filename order,
    so an enumeration can only go stale (it did, one commit after being written). Use a **fresh**
-   build dir (a stale one re-applies over an already-patched tree and reports a false "does not
-   apply" — see the applier note in `TODO.md` for why):
+   build dir: the applier's stamp file pins the patch set to the *checked-out llama.cpp commit*, so
+   after a `GIT_TAG` change an existing build dir is exactly the case it refuses to guess at — it
+   aborts and tells you to configure fresh, which is what actually re-runs the patches against the
+   new source:
    ```bash
    cd llama && mvn -q compile          # generates the OSInfo class CMake's OS-detection needs
    rm -rf build && cmake -B build       # fail-loud: aborts here if any patch no longer applies

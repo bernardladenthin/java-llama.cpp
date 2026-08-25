@@ -694,7 +694,11 @@ request, so generation and `save`/`restore` operate on the same KV state.
 Typed results expose logical prompt, generated, cached prompt, and evaluated prompt counts through
 `Usage`. Per-request timing also remains available through `Timings.getCacheN()`.
 `LlamaModel.getMetricsTyped().getSlotMetrics()` reports each slot's logical, processed, cached,
-decoded, and remaining token counts.
+decoded, and remaining token counts, and the same `ServerMetrics` view carries the server-wide
+lifetime counters — including cached prompt tokens (`getCumulativeCachedPromptTokens()`) and the
+speculative-decoding tallies (`getDraftTokensTotal()`, `getDraftAcceptedTotal()`,
+`getDraftVerifyStepsTotal()`, `getDraftAcceptedPerPosition()`, plus the derived
+`getDraftAcceptanceRate()`), which upstream otherwise exposes only as Prometheus text.
 
 The embedded HTTP server exposes the same native JSON at authenticated `GET /metrics`, with the slot
 array alone at `GET /slots`. OpenAI responses preserve
@@ -922,6 +926,21 @@ client.unloadModel("Qwen3-0.6B-Q4_K_M");                 // POST /models/unload
 (`UNLOADED`/`LOADING`/`LOADED`/`SLEEPING`/`DOWNLOADING`/`DOWNLOADED`), and the router's
 failed-worker marker. Chat requests then select a model per request via the standard
 `"model"` field on `POST /v1/chat/completions`.
+
+Against a router started with `--api-key`, pass the key — it is sent as
+`Authorization: Bearer <key>` on every call. All of them need it: `/models/load` and
+`/models/unload` were always gated, and since llama.cpp b10519 the listing endpoints are too.
+
+```java
+RouterClient client = new RouterClient(8080, System.getenv("LLAMA_API_KEY"));
+// or, for a remote router: new RouterClient("router.internal", 8080, key)
+```
+
+> [!NOTE]
+> `awaitModelLoaded` waits by polling `GET /models`, so it cannot observe a model the router
+> deliberately hides from that listing — a cache model deduplicated by a preset with
+> `dedup-cache-models` still loads and still serves by name, but never appears. For those, skip the
+> await and issue the request directly; with autoload the router waits for the worker itself.
 
 ### LangChain4j integration
 
