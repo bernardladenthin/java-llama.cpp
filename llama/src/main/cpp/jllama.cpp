@@ -349,19 +349,31 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
 // Post a single pre-built task and wait for its result.  Returns nullptr after
 // throwing via JNI when the task failed; callers must return immediately then.
 // The task's id field is assigned here; callers must not set it beforehand.
-[[nodiscard]] static server_task_result_ptr post_and_wait(JNIEnv *env, server_context *ctx_server, server_task task) {
-    auto rd = ctx_server->get_response_reader();
+//
+// Posted high-priority (front of the queue), like upstream does for its own
+// introspection endpoints, and waited on with the same `closing` predicate every other
+// wait site in this file uses, so close() can unblock a pending call.
+//
+// KNOWN LIMITATION: a task posted just as the queue enters its idle-sleep state is never
+// processed -- upstream's own /metrics handler says so verbatim ("a task posted right
+// before sleeping is never processed, do not wait for it") and guards it by adding
+// queue_tasks.is_sleeping() to its wait predicate. That getter is not on
+// server_context's public header, so this layer cannot ask; the `closing` predicate is
+// what bounds the wait instead. Reaching that state needs
+// ModelParameters.setSleepIdleSeconds(> 0), which is off by default (-1).
+[[nodiscard]] static server_task_result_ptr post_and_wait(JNIEnv *env, jllama_context *jctx, server_task task) {
+    auto rd = jctx->server.get_response_reader();
     task.id = rd.get_new_id();
-    rd.post_task(std::move(task));
-    auto result = rd.next([] { return false; });
+    rd.post_task(std::move(task), true);
+    auto result = rd.next([jctx] { return jctx->closing.load(); });
     if (!result_ok_or_throw(env, result))
         return nullptr;
     return result;
 }
 
 // Post a single pre-built task, wait for its result, and return JSON as a jstring.
-[[nodiscard]] static jstring dispatch_one_shot_task(JNIEnv *env, server_context *ctx_server, server_task task) {
-    auto result = post_and_wait(env, ctx_server, std::move(task));
+[[nodiscard]] static jstring dispatch_one_shot_task(JNIEnv *env, jllama_context *jctx, server_task task) {
+    auto result = post_and_wait(env, jctx, std::move(task));
     if (!result)
         return nullptr;
     return json_to_jstring(env, result->to_json());
@@ -369,9 +381,8 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
 
 // Post a single slot file task (SAVE or RESTORE), wait for its result, and
 // return the result JSON as a jstring.
-[[nodiscard]] static jstring exec_slot_file_task(JNIEnv *env, server_context *ctx_server, jint slotId,
-                                                 jstring jfilename, server_task_type task_type,
-                                                 const char *empty_filename_error) {
+[[nodiscard]] static jstring exec_slot_file_task(JNIEnv *env, jllama_context *jctx, jint slotId, jstring jfilename,
+                                                 server_task_type task_type, const char *empty_filename_error) {
     const std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
     if (filename.empty()) {
         env->ThrowNew(c_llama_error, empty_filename_error);
@@ -381,7 +392,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
     task.slot_action.id_slot = slotId;
     task.slot_action.filename = filename;
     task.slot_action.filepath = filename;
-    return dispatch_one_shot_task(env, ctx_server, std::move(task));
+    return dispatch_one_shot_task(env, jctx, std::move(task));
 }
 
 char **parse_string_array(JNIEnv *env, const jobjectArray string_array, const jsize length) {
@@ -1640,10 +1651,10 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleSlotAction(J
         // is unused and returns JSON null; to_metrics() renders them as Prometheus text) and
         // SERVER_TASK_TYPE_SLOT_GET carries the slot array plus the idle-slot count.  Post both and
         // merge them so getMetrics() keeps returning the single documented object.
-        auto metrics_result = post_and_wait(env, ctx_server, server_task(SERVER_TASK_TYPE_METRICS));
+        auto metrics_result = post_and_wait(env, jctx, server_task(SERVER_TASK_TYPE_METRICS));
         if (!metrics_result)
             return nullptr;
-        auto slots_result = post_and_wait(env, ctx_server, server_task(SERVER_TASK_TYPE_SLOT_GET));
+        auto slots_result = post_and_wait(env, jctx, server_task(SERVER_TASK_TYPE_SLOT_GET));
         if (!slots_result)
             return nullptr;
 
@@ -1656,15 +1667,15 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleSlotAction(J
         return json_to_jstring(env, server_metrics_to_json(*metrics, *slots));
     }
     case 1: // SAVE
-        return exec_slot_file_task(env, ctx_server, slotId, jfilename, SERVER_TASK_TYPE_SLOT_SAVE,
+        return exec_slot_file_task(env, jctx, slotId, jfilename, SERVER_TASK_TYPE_SLOT_SAVE,
                                    "Filename is required for slot save");
     case 2: // RESTORE
-        return exec_slot_file_task(env, ctx_server, slotId, jfilename, SERVER_TASK_TYPE_SLOT_RESTORE,
+        return exec_slot_file_task(env, jctx, slotId, jfilename, SERVER_TASK_TYPE_SLOT_RESTORE,
                                    "Filename is required for slot restore");
     case 3: { // ERASE
         server_task task(SERVER_TASK_TYPE_SLOT_ERASE);
         task.slot_action.id_slot = slotId;
-        return dispatch_one_shot_task(env, ctx_server, std::move(task));
+        return dispatch_one_shot_task(env, jctx, std::move(task));
     }
     default:
         env->ThrowNew(c_llama_error, "Invalid slot action");
@@ -1675,7 +1686,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleSlotAction(J
 JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_getLoraAdaptersJson(JNIEnv *env, jobject obj) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
-    return dispatch_one_shot_task(env, ctx_server, server_task(SERVER_TASK_TYPE_GET_LORA));
+    return dispatch_one_shot_task(env, jctx, server_task(SERVER_TASK_TYPE_GET_LORA));
 }
 
 JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_setLoraAdaptersJson(JNIEnv *env, jobject obj,
@@ -1693,7 +1704,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_setLoraAdaptersJso
     }
     server_task task(SERVER_TASK_TYPE_SET_LORA);
     task.set_lora = parse_lora_request(data);
-    return dispatch_one_shot_task(env, ctx_server, std::move(task));
+    return dispatch_one_shot_task(env, jctx, std::move(task));
 }
 
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative(JNIEnv *env, jclass, jstring jinput,

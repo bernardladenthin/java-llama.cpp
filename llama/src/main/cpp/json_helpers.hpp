@@ -247,10 +247,12 @@
 // object here.
 //
 // Key names are the pre-b10408 ones — `idle`, `processing`, `deferred`,
-// `t_start`, the `n_*`/`t_*` counter pairs and `slots` — so every existing
-// consumer keeps working.  The counters upstream added since (cached prompt
-// tokens and the speculative-decoding tallies) are emitted alongside them; they
-// were previously reachable only through the Prometheus text.
+// `t_start`, the `n_*`/`t_*` counter pairs, the speculative-decoding tallies and
+// `slots` — so every existing consumer keeps working.  The speculative counters
+// deliberately keep upstream's own historical spelling (`n_draft_verif_steps_total`,
+// `n_accepted_per_pos_total`), not a tidied-up one, so the payload stays a faithful
+// reproduction.  Only `n_prompt_tokens_cached_total` is genuinely new: `n_prompt_cached`
+// did not exist in the struct before b10408 and has no Prometheus counterpart either.
 //
 // Durations are microseconds upstream and milliseconds here, matching what the
 // pre-b10408 payload used.
@@ -284,12 +286,13 @@
     out["n_tokens_predicted"] = m.predict_bucket.count;
     out["t_tokens_generation"] = to_ms(m.predict_bucket.time);
 
-    // Counters with no pre-b10408 equivalent.
+    // Cache counter (new since b10408) plus the speculative-decoding tallies, which the
+    // pre-b10408 payload already carried under exactly these names.
     out["n_prompt_tokens_cached_total"] = m.n_prompt_cached;
     out["n_draft_tokens_total"] = m.n_draft_tokens;
     out["n_draft_accepted_total"] = m.n_draft_accepted;
-    out["n_draft_verify_steps_total"] = m.n_draft_verif_steps;
-    out["n_draft_accepted_per_pos"] = m.n_accepted_per_pos;
+    out["n_draft_verif_steps_total"] = m.n_draft_verif_steps;
+    out["n_accepted_per_pos_total"] = m.n_accepted_per_pos;
 
     out["slots"] = slots_result.slots_data;
     return out;

@@ -582,13 +582,13 @@ TEST(ServerMetricsToJson, CarriesCurrentWindowCounters) {
     EXPECT_EQ(j.at("n_tokens_predicted").get<int64_t>(), 20);
 }
 
-TEST(ServerMetricsToJson, CarriesCountersUpstreamAddedAfterB10408) {
+TEST(ServerMetricsToJson, CarriesCacheAndSpeculativeDecodingCounters) {
     const json j = server_metrics_to_json(make_metrics_half(), make_slots_half());
     EXPECT_EQ(j.at("n_prompt_tokens_cached_total").get<int64_t>(), 77);
     EXPECT_EQ(j.at("n_draft_tokens_total").get<int64_t>(), 30);
     EXPECT_EQ(j.at("n_draft_accepted_total").get<int64_t>(), 21);
-    EXPECT_EQ(j.at("n_draft_verify_steps_total").get<int64_t>(), 7);
-    const json per_pos = j.at("n_draft_accepted_per_pos");
+    EXPECT_EQ(j.at("n_draft_verif_steps_total").get<int64_t>(), 7);
+    const json per_pos = j.at("n_accepted_per_pos_total");
     ASSERT_TRUE(per_pos.is_array());
     ASSERT_EQ(per_pos.size(), 3u);
     EXPECT_EQ(per_pos.at(0).get<int64_t>(), 5);
@@ -611,7 +611,7 @@ TEST(ServerMetricsToJson, DefaultConstructedHalvesProduceZeroesAndAnEmptySlotArr
     EXPECT_DOUBLE_EQ(j.at("t_prompt_processing_total").get<double>(), 0.0);
     ASSERT_TRUE(j.at("slots").is_array());
     EXPECT_EQ(j.at("slots").size(), 0u);
-    EXPECT_TRUE(j.at("n_draft_accepted_per_pos").is_array());
+    EXPECT_TRUE(j.at("n_accepted_per_pos_total").is_array());
 }
 
 TEST(ServerMetricsToJson, CountersAreNumbersNotBooleans) {

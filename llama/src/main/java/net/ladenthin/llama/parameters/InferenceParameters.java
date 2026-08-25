@@ -801,7 +801,7 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the per-request DRY penalty window replaced (0 = disabled). Only takes
+     * Returns a new request with the per-request DRY penalty window replaced (default: 64, 0 = disabled). Only takes
      * effect when {@link #withDryMultiplier(float)} is non-zero. Per-request mirror of
      * {@link ModelParameters#setDryPenaltyLastN(int)} (the {@code --dry-penalty-last-n} launch flag).
      *

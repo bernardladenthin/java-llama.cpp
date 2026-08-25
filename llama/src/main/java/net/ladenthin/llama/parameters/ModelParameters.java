@@ -511,7 +511,7 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set DRY penalty for the last n tokens (0 = disable).
+     * Set DRY penalty for the last n tokens (default: 64, 0 = disable).
      *
      * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10275</strong>:
      * the lower bound is now {@code 0}, and {@code --dry-penalty-last-n -1} makes
@@ -1363,7 +1363,7 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Select the device the multimodal projector runs on ({@code --mmproj-device}, upstream
-     * llama.cpp b10618). Independent of {@link #setDevices(String)}, which covers the main model:
+     * llama.cpp b10541). Independent of {@link #setDevices(String)}, which covers the main model:
      * on a multi-GPU host the projector can be pinned to a different device than the weights.
      *
      * <p>Exactly one device may be named &mdash; upstream rejects a list &mdash; and the literal

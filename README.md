@@ -490,7 +490,7 @@ OpenAI-compatible `/v1/chat/completions` server. For a strictly CPU-only run, us
 has its own upstream default.
 
 On a multi-GPU host the projector can be placed independently of the weights with
-`setMmprojDevice("CUDA1")` (llama.cpp `--mmproj-device`, added upstream in b10618). Exactly one
+`setMmprojDevice("CUDA1")` (llama.cpp `--mmproj-device`, added upstream in b10541). Exactly one
 device may be named; the literal `"none"` keeps the projector on the CPU. `OpenAiCompatServer`'s CLI
 accepts the same flag as `-mmdev`/`--mmproj-device`, and `NativeServer` forwards it verbatim like
 every other llama-server flag.

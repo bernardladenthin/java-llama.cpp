@@ -146,7 +146,11 @@ Concretely:
    git show b<from>:tools/server/server-schema.cpp | tr '\n' ' ' \
      | grep -oE 'field_[a-z]+[^(]*\("[a-z_0-9]+"[^;]*?set_(hard_)?limits\([^)]*\)' | sort -u
    # response keys
-   git show b<from>:tools/server/server-task.cpp   | grep -oE '\{"[a-z_0-9.]+",' | sort -u
+   # response keys -- BOTH emit forms: brace-init AND res["k"] = ...; the b10585 migration
+   # moved `timings`/`prompt_progress` between the two, so a single-form grep reports
+   # false removals and would silently miss a new operator[] key.
+   git show b<from>:tools/server/server-task.cpp | { grep -oE '\{ *"[A-Za-z_0-9.]+" *,'; \
+     git show b<from>:tools/server/server-task.cpp | grep -oE '\[ *"[A-Za-z_0-9.]+" *\] *='; } | sort -u
    ```
    Repeat with `b<to>` and `comm -13` / `comm -23` the two outputs.
 

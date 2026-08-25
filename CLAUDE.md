@@ -851,7 +851,9 @@ git show <old>:tools/server/server-schema.cpp | grep -oE 'field_[a-z_]+\("[a-z_0
 git show <old>:tools/server/server-schema.cpp | tr '\n' ' ' \
   | grep -oE 'field_[a-z]+[^(]*\("[a-z_0-9]+"[^;]*?set_(hard_)?limits\([^)]*\)'
 # response keys emitted by the result types
-git show <old>:tools/server/server-task.cpp   | grep -oE '\{"[a-z_0-9.]+",' | sort -u
+# response keys -- both emit forms; a single-form grep misses res["k"] = ... entirely
+git show <old>:tools/server/server-task.cpp | { grep -oE '\{ *"[A-Za-z_0-9.]+" *,'; \
+  git show <old>:tools/server/server-task.cpp | grep -oE '\[ *"[A-Za-z_0-9.]+" *\] *='; } | sort -u
 ```
 
 | File | What to watch for |

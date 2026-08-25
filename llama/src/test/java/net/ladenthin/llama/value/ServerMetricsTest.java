@@ -33,8 +33,8 @@ public class ServerMetricsTest {
             // Counters that only became reachable as JSON once the JNI layer started merging the
             // METRICS and SLOT_GET halves back together (upstream split them at b10408/b10519).
             + "\"n_prompt_tokens_cached_total\":700,\"n_draft_tokens_total\":40,"
-            + "\"n_draft_accepted_total\":30,\"n_draft_verify_steps_total\":12,"
-            + "\"n_draft_accepted_per_pos\":[20,8,2],"
+            + "\"n_draft_accepted_total\":30,\"n_draft_verif_steps_total\":12,"
+            + "\"n_accepted_per_pos_total\":[20,8,2],"
             // next_token is an ARRAY of one object — this mirrors llama.cpp's server_slot::to_json
             // at b9739, not a bare object; SlotMetrics must unwrap next_token[0].
             + "\"slots\":[{\"id\":0,\"n_ctx\":4096,\"is_processing\":true,"
@@ -209,7 +209,7 @@ public class ServerMetricsTest {
     @Test
     public void draftAcceptedPerPositionIsEmptyWhenAbsentOrNotAnArray() throws Exception {
         assertTrue(parse("{}").getDraftAcceptedPerPosition().isEmpty());
-        assertTrue(parse("{\"n_draft_accepted_per_pos\":7}")
+        assertTrue(parse("{\"n_accepted_per_pos_total\":7}")
                 .getDraftAcceptedPerPosition()
                 .isEmpty());
     }

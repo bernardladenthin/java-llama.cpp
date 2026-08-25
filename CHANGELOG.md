@@ -18,7 +18,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 - `QuantizationType.Q2_0` — maps the new upstream `LLAMA_FTYPE_MOSTLY_Q2_0` (llama.cpp b9916) for `LlamaQuantizer`.
 - **Voice cloning and language selection for `TextToSpeech`**: `synthesize(String text, String speakerReferenceAudioPath, String language, int maxFrames, int topK, int seed)` — a speaker-reference clip makes the model imitate that voice. Part of the Qwen3-TTS rework (see Changed).
 - **`ModelParameters.setMmprojDevice(String)`** — places the multimodal projector on a device of its own
-  (llama.cpp `--mmproj-device`, added upstream in b10618), independently of `setDevices(...)`. Exactly one
+  (llama.cpp `--mmproj-device`, added upstream in b10541), independently of `setDevices(...)`. Exactly one
   device may be named; the literal `"none"` keeps the projector on the CPU. `OpenAiCompatServer`'s CLI
   accepts the same flag as `-mmdev`/`--mmproj-device`; `NativeServer` already forwarded it verbatim.
 - **`RouterClient` API-key constructors** (`RouterClient(int, String)`, `RouterClient(String, int, String)`) —
