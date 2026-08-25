@@ -17,6 +17,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 - CI actions bumped to latest: `actions/setup-java` v5 → v6.
 - Upgraded llama.cpp from **b9894 to b9917** (all eight local patches re-verified across the range).
 
+### Fixed
+- **CVE-2026-49844** (GHSA-qv9r-c865-cp47, moderate): `org.apache.logging.log4j:log4j-api`
+  2.25.3 arrives as a **test-scope** transitive of `io.github.hakky54:logcaptor` 2.12.6, and
+  Dependabot could not update it on its own. Pinned `log4j-api` **and** `log4j-to-slf4j` to
+  **2.26.1** in `dependencyManagement` — both together, since `log4j-to-slf4j` requires a
+  matching `log4j-api` and the two must not skew. Neither reaches a published artifact.
+
 ## [5.0.6] - 2026-07-07
 
 Feature release. Headline additions are the Android AAR + Kotlin coroutines
