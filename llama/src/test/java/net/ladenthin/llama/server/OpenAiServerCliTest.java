@@ -97,6 +97,36 @@ public class OpenAiServerCliTest {
     }
 
     @Test
+    public void mmprojDeviceFlagParsedUnderBothSpellings() {
+        assertThat(
+                OpenAiServerCli.parse("-m", "m.gguf", "--mmproj-device", "CUDA1")
+                        .getMmprojDevice(),
+                is("CUDA1"));
+        assertThat(OpenAiServerCli.parse("-m", "m.gguf", "-mmdev", "CUDA1").getMmprojDevice(), is("CUDA1"));
+        assertThat(OpenAiServerCli.parse("-m", "m.gguf").getMmprojDevice(), is((String) null));
+    }
+
+    @Test
+    public void mmprojDeviceReachesModelParameters() {
+        assertThat(
+                OpenAiServerCli.parse("-m", "m.gguf", "--mmproj", "proj.gguf", "-mmdev", "none")
+                        .toModelParameters()
+                        .toString(),
+                containsString("--mmproj-device"));
+    }
+
+    @Test
+    public void mmprojDeviceDoesNotByItselfEnableVisionCapability() {
+        // The vision hint is derived from --mmproj; naming a device without a projector must not
+        // make the server advertise image support.
+        assertThat(
+                OpenAiServerCli.parse("-m", "m.gguf", "-mmdev", "CUDA1")
+                        .toServerConfig()
+                        .isSupportsVision(),
+                is(false));
+    }
+
+    @Test
     public void mmprojEnablesVisionCapabilityInServerConfig() {
         assertThat(
                 OpenAiServerCli.parse("-m", "m.gguf", "--mmproj", "proj.gguf")

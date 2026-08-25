@@ -442,6 +442,28 @@ public class ModelParametersTest {
     }
 
     @Test
+    public void testSetMmprojDevice() {
+        ModelParameters p = new ModelParameters().setMmprojDevice("CUDA1");
+        assertThat(p.parameters.get("--mmproj-device"), is("CUDA1"));
+    }
+
+    @Test
+    public void testSetMmprojDeviceNoneIsPassedThroughVerbatim() {
+        // "none" is upstream's sentinel for "do not offload the projector"; it must reach the
+        // native parser as-is rather than being translated into --no-mmproj-offload here.
+        ModelParameters p = new ModelParameters().setMmprojDevice("none");
+        assertThat(p.parameters.get("--mmproj-device"), is("none"));
+        assertThat(p.parameters, not(hasKey("--no-mmproj-offload")));
+    }
+
+    @Test
+    public void testSetMmprojDeviceIsIndependentOfTheMainModelDevices() {
+        ModelParameters p = new ModelParameters().setDevices("CUDA0").setMmprojDevice("CUDA1");
+        assertThat(p.parameters.get("--device"), is("CUDA0"));
+        assertThat(p.parameters.get("--mmproj-device"), is("CUDA1"));
+    }
+
+    @Test
     public void testEnableMmprojOffload() {
         ModelParameters p = new ModelParameters().enableMmprojOffload();
         assertThat(p.parameters, hasKey("--mmproj-offload"));

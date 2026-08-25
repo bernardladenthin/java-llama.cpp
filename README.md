@@ -489,6 +489,12 @@ OpenAI-compatible `/v1/chat/completions` server. For a strictly CPU-only run, us
 `setDevices("none").setMmprojOffload(false)` in addition to `setGpuLayers(0)`; projector offload
 has its own upstream default.
 
+On a multi-GPU host the projector can be placed independently of the weights with
+`setMmprojDevice("CUDA1")` (llama.cpp `--mmproj-device`, added upstream in b10618). Exactly one
+device may be named; the literal `"none"` keeps the projector on the CPU. `OpenAiCompatServer`'s CLI
+accepts the same flag as `-mmdev`/`--mmproj-device`, and `NativeServer` forwards it verbatim like
+every other llama-server flag.
+
 **Audio input** works identically — load an audio-capable model (Ultravox, Qwen2.5-Omni, …) with its
 audio `--mmproj` and add a `ContentPart.audioFile(...)` (or `inputAudio(bytes, "wav"|"mp3")`) part. It
 serializes to the OpenAI `input_audio` content part and routes through the same `mtmd` pipeline:
@@ -783,7 +789,7 @@ java -cp target/llama-<version>.jar net.ladenthin.llama.server.OpenAiCompatServe
 Run with `--help` for the full option list (`-m/--model`, `--host`, `-p/--port`, `-c/--ctx-size`,
 `-b/--batch-size`, `-ub/--ubatch-size`, `-ngl/--n-gpu-layers`, `-t/--threads`, `-tb/--threads-batch`,
 `-ctk/--cache-type-k`, `-ctv/--cache-type-v`, `--jinja`, `--chat-template-kwargs`, `--parallel`,
-`--model-id`, `--api-key`, `--mmproj`, `--embedding`, `--reranking`). The tuning flags mirror
+`--model-id`, `--api-key`, `--mmproj`, `-mmdev/--mmproj-device`, `--embedding`, `--reranking`). The tuning flags mirror
 llama.cpp's server, so an invocation like
 `--jinja --chat-template-kwargs '{"reasoning_effort":"low"}' -ctk q8_0 -ctv q8_0 -b 4096 -ub 2048`
 works directly.

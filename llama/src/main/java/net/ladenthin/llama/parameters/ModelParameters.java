@@ -1350,6 +1350,25 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Select the device the multimodal projector runs on ({@code --mmproj-device}, upstream
+     * llama.cpp b10618). Independent of {@link #setDevices(String)}, which covers the main model:
+     * on a multi-GPU host the projector can be pinned to a different device than the weights.
+     *
+     * <p>Exactly one device may be named &mdash; upstream rejects a list &mdash; and the literal
+     * {@code "none"} disables projector offload entirely, the same end state as
+     * {@code setMmprojOffload(false)}. Use {@code --list-devices} (or
+     * {@code llama-server --list-devices}) to see the available names. When unset, upstream picks
+     * the device automatically.</p>
+     *
+     * @param device the device name, or {@code "none"} to keep the projector on the CPU
+     * @return this builder
+     */
+    public ModelParameters setMmprojDevice(String device) {
+        parameters.put("--mmproj-device", device);
+        return this;
+    }
+
+    /**
      * Enable offloading of the mmproj model to the GPU.
      *
      * @return this builder
