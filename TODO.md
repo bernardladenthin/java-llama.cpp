@@ -26,6 +26,12 @@ tests), so those jobs report *nothing but* the crash. The two Windows jobs happe
 therefore reach **1461** tests — they are the only jobs whose failure list is complete. Do not read a
 short Linux failure list as "Linux is healthier".
 
+**Confirmed platform-independent (macOS 14, head `42ce225`).** That job reached **517** tests before
+the crash and reproduced `SessionForkRewindIntegrationTest` (both cases) and
+`NativeServerAttachIntegrationTest` **identically** — same assertions, same messages. So these are
+not a Windows quirk. Its exit code was **141 (SIGPIPE)** rather than Ubuntu's 134 (SIGABRT), on the
+same crashed test.
+
 - **[OPEN, MAJOR] `TtsIntegrationTest` aborts the JVM natively on all 6 test platforms.**
   Ubuntu exit 134 (SIGABRT); macOS 14 Metal, macOS 15 Metal, macOS 15 no-Metal; Windows Ninja and
   Windows MSVC exit 1. Not an OOM (Linux had ~14 GiB free, Windows ~12.3 GiB of 16 GiB). Not caused by
@@ -68,7 +74,10 @@ short Linux failure list as "Linux is healthier".
   resolve it. Reproduced on Linux with `nm -D`, so it was never Windows-specific — the public
   `LlamaQuantizer` API has never worked. Fixed, and guarded model-free by
   `NativeLibraryLoadSmokeTest.quantizerNativeEntryPointResolves` (`nm -D` on the rebuilt lib now shows
-  zero mangled `Java_*` exports).
+  zero mangled `Java_*` exports). **Confirmed on a second toolchain:** at `42ce225` the macOS 14 job
+  ran `QuantizerIntegrationTest` at *3 tests, 0 failures, 0 errors* with no `UnsatisfiedLinkError`
+  anywhere in the run — the same 3 tests that were 2 failures + 1 error before the fix. Worth having,
+  since symbol export and mangling differ between ELF/gcc and Mach-O/clang.
 
 - **[FIXED in this PR] `JsonEndpointParametersTest.testDryMultiplierAccepted` sent
   `dry_penalty_last_n: -1`.** The one genuine b10456→b10618 regression in the list: b10275 gave the
