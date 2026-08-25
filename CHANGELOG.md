@@ -9,15 +9,58 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+> Note: llama.cpp bumps between **b9917** and **b10456** were not recorded here individually.
+> [`docs/history/llama-cpp-breaking-changes.md`](docs/history/llama-cpp-breaking-changes.md) is the
+> complete per-range record and remains authoritative for what each upgrade changed.
+
 ### Added
 - `QuantizationType.Q2_0` — maps the new upstream `LLAMA_FTYPE_MOSTLY_Q2_0` (llama.cpp b9916) for `LlamaQuantizer`.
+- **`ModelParameters.setMmprojDevice(String)`** — places the multimodal projector on a device of its own
+  (llama.cpp `--mmproj-device`, added upstream in b10618), independently of `setDevices(...)`. Exactly one
+  device may be named; the literal `"none"` keeps the projector on the CPU. `OpenAiCompatServer`'s CLI
+  accepts the same flag as `-mmdev`/`--mmproj-device`; `NativeServer` already forwarded it verbatim.
+- **`RouterClient` API-key constructors** (`RouterClient(int, String)`, `RouterClient(String, int, String)`) —
+  send `Authorization: Bearer <key>`, which a router started with `--api-key` requires for *every* call:
+  `/models/load` and `/models/unload` were always gated, and since b10519 (upstream #26347) the listing
+  endpoints are too. An empty key behaves like none, and `toString()` never prints it.
+- **`ServerMetrics` cache and speculative-decoding counters** — `getCumulativeCachedPromptTokens()`,
+  `getDraftTokensTotal()`, `getDraftAcceptedTotal()`, `getDraftVerifyStepsTotal()`,
+  `getDraftAcceptedPerPosition()` and the derived `getDraftAcceptanceRate()`. Upstream exposes these only
+  as Prometheus text; they now arrive in the JSON payload.
 
 ### Changed
 - `ch.qos.logback:logback-classic` bumped 1.6.2 → 1.6.3 (test/runtime binding only).
 - CI actions bumped to latest: `actions/setup-java` v5 → v6.
 - Upgraded llama.cpp from **b9894 to b9917** (all eight local patches re-verified across the range).
+- Upgraded llama.cpp from **b10456 to b10618**, in 25 reviewed steps. Patch `0007` refreshed (upstream
+  #26347 deleted comments inside its removal block, breaking `git apply` at every tag from b10519 on) and
+  a new patch `0010` carries a one-line upstream fix: `GET /models` emitted `vocab_type` as a JSON boolean
+  after the `common_json` switch (#27511), because an unscoped enum binds to the `bool` constructor.
+  The project's own C++ moved to `common_json` in the same range.
+- **`apply-llama-patches.cmake` is now genuinely idempotent**, via a stamp file (llama.cpp commit plus each
+  patch's SHA-256) gated on git's clean/dirty state. Reconfiguring an existing build directory is a no-op
+  instead of aborting with a misleading "does not apply cleanly"; a real mismatch fails with an accurate
+  message. A source tree supplied via `-DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP` that is not a git work tree
+  keeps the previous per-patch behaviour.
+- `ServerMetrics.getStartTimestamp()` is documented correctly: `t_start` is a monotonic-clock **microsecond**
+  reading (`ggml_time_us()`), not milliseconds since the epoch. The value is unchanged.
 
 ### Fixed
+- **`LlamaModel.getMetrics()` returned the wrong shape.** Upstream reduced the payload to a bare slot array
+  at b10408 (#26920) and split the task in two at b10519 (#27376), so the counter getters on
+  `value.ServerMetrics`, `LlamaModelTest#testGetMetrics` and `OpenAiCompatServer`'s metrics routes had all
+  been reading keys that no longer existed. The JNI layer now posts both tasks and merges them, restoring the
+  documented object rather than following upstream's transport split.
+- **`GET /slots` answered HTTP 200 with a zero-length body** whenever the metrics payload carried no `slots`
+  key (`MissingNode.toString()` is `""`). It now always answers with a JSON array.
+- **Model-gated Java tests silently self-skipped in CI.** Surefire's working directory is the module basedir
+  while the shared GGUF cache is restored to the reactor root, so every `models/…` path resolved to nothing,
+  every such class aborted in its `@BeforeAll`, and the job still reported success — which is why the stale
+  `getMetrics()` assertions above never failed. Test paths now resolve against either layout.
+  `llama-langchain4j` had the identical defect.
+- **`RouterClient.awaitModelLoaded` misdiagnosed hidden router models.** A cache model deduplicated by a
+  preset with `dedup-cache-models` (b10507, #27346) is omitted from `GET /models` although it still loads and
+  serves by name; the error now names that cause instead of sending callers to re-check `--models-dir`.
 - **CVE-2026-49844** (GHSA-qv9r-c865-cp47, moderate): `org.apache.logging.log4j:log4j-api`
   2.25.3 arrives as a **test-scope** transitive of `io.github.hakky54:logcaptor` 2.12.6, and
   Dependabot could not update it on its own. Pinned `log4j-api` **and** `log4j-to-slf4j` to
