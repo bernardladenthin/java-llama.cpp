@@ -72,6 +72,38 @@ around the slot array and drop the counter getters, or add a second JNI entry po
 update all three consumers, the `OpenAiCompatServerHttpTest` fake, and the `/metrics` route naming
 together.
 
+### `RouterClient` has no API-key support, and `/models` stopped being a public endpoint at b10519
+
+`server.RouterClient` sets only `Content-Type` on its requests — there is no `Authorization` header
+and no constructor parameter for a key. `POST /models/load` and `/models/unload` have always gone
+through the server's API-key middleware, so those two already failed against a router started with
+`--api-key`. Upstream **#26347** (b10519) additionally removed `/models` and `/v1/models` from the
+public-endpoint set, so `listModels()`, `findModel()` and `awaitModelLoaded()` now answer `401`
+there as well — the whole typed router API is unusable against an authenticated router.
+
+Found while bumping to b10618; the upstream change is noted in the `b10509–b10519` row of
+`docs/history/llama-cpp-breaking-changes.md`. CI is unaffected because `RouterModeIntegrationTest`
+starts its router without a key, which is also why nothing caught it.
+
+Fix: add an optional key — e.g. a `RouterClient(String host, int port, String apiKey)` overload that
+sets `Authorization: Bearer <key>` in the private `request()` helper. Deliberately not done as part
+of the version bump: it adds public API surface, which is the owner's design call. The limitation is
+documented in `RouterClient`'s class javadoc in the meantime.
+
+### `RouterClient.awaitModelLoaded` rejects hidden-but-loadable router models
+
+b10507 (upstream #27346) added `server_model_meta::hidden` and a `continue` in the `GET /models`
+handler; upstream's own comment is "hidden from GET /models, but still accept if requested" — a
+hidden model still loads and still serves by name. `awaitModelLoaded` treats absence from the
+listing as a hard error and fails fast, so `loadModel(id)` succeeds, the worker comes up, and
+`awaitModelLoaded(id)` throws a message that sends the user off to check `--models-dir` and the
+identifier. Only reachable when a preset opts in with `dedup-cache-models`, which the project's own
+code never writes — but `NativeServer` forwards raw llama-server argv verbatim by design, so a
+caller can enable it.
+
+Fix: either retry until the timeout instead of rejecting on the first poll (a hidden model still
+reaches `LOADED`), or widen the error message to name `dedup-cache-models` as a cause.
+
 ### `apply-llama-patches.cmake` is not idempotent when two patches touch one file
 
 `CLAUDE.md` and the applier's own header describe it as idempotent: a `git apply --reverse --check`
