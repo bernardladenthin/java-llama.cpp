@@ -1623,8 +1623,12 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleSlotAction(J
     REQUIRE_SERVER_CONTEXT(nullptr);
 
     switch (action) {
-    case 0: // LIST — get slot info via metrics task
-        return dispatch_one_shot_task(env, ctx_server, server_task(SERVER_TASK_TYPE_METRICS));
+    case 0: // LIST — get slot info via the dedicated slot-get task
+        // b10519 (upstream #27376) split the old METRICS task in two: METRICS now carries only the
+        // cumulative counters (rendered as Prometheus text by to_metrics(); its to_json() returns an
+        // empty object), and the /slots payload moved to SERVER_TASK_TYPE_SLOT_GET ->
+        // server_task_result_slots::to_json(), which returns the slot array verbatim.
+        return dispatch_one_shot_task(env, ctx_server, server_task(SERVER_TASK_TYPE_SLOT_GET));
     case 1: // SAVE
         return exec_slot_file_task(env, ctx_server, slotId, jfilename, SERVER_TASK_TYPE_SLOT_SAVE,
                                    "Filename is required for slot save");

@@ -15,7 +15,8 @@
 //   - server_task_result_embd         — oaicompat vs non-oaicompat shapes
 //   - format_error_response           — all 7 error types → correct HTTP code + type string
 //   - server_task::need_embd/logits   — routing helpers
-//   - server_task_result_metrics      — slot count + token count fields
+//   - server_task_result_metrics      — cumulative token/slot counters (/metrics)
+//   - server_task_result_slots        — the /slots array payload
 //   - server_task_result_slot_*       — save/load/erase JSON shapes
 
 #include <gtest/gtest.h>
@@ -750,19 +751,25 @@ TEST(ServerTaskNTokens, PopulatedTokens_ReturnsCount) {
 }
 
 // ============================================================
-// server_task_result_metrics::to_json / ::to_metrics
+// server_task_result_metrics::to_metrics / server_task_result_slots::to_json
 //   Pure struct → JSON / Prometheus text; no model needed.
 //
-//   b10408 (upstream #26920) split this result in two: to_json() now serves
-//   /slots and returns the slot array verbatim, while the cumulative counters
-//   moved into an embedded server_metrics and are rendered as Prometheus
-//   exposition text by the new to_metrics() for /metrics.
+//   b10408 (upstream #26920) split the old single result in two: to_json()
+//   served /slots and returned the slot array verbatim, while the cumulative
+//   counters moved into an embedded server_metrics rendered as Prometheus
+//   exposition text by to_metrics() for /metrics.
+//
+//   b10519 (upstream #27376, "allow access /metrics during sleep") split the
+//   *type* in two as well: server_task_result_metrics keeps only the counters
+//   (n_processing_slots / n_tasks_deferred / metrics) and its to_json() is now
+//   an unused empty object, while the /slots payload (n_idle_slots +
+//   slots_data) moved to the new server_task_result_slots, produced by the new
+//   SERVER_TASK_TYPE_SLOT_GET task.
 // ============================================================
 
 namespace {
 server_task_result_metrics make_metrics() {
     server_task_result_metrics m;
-    m.n_idle_slots = 2;
     m.n_processing_slots = 1;
     m.n_tasks_deferred = 3;
     m.metrics.t_start = 1234567890LL;
@@ -797,13 +804,30 @@ double prometheus_value(const std::string &text, const std::string &name) {
 }
 } // namespace
 
-TEST(ServerTaskResultMetrics, ToJson_ReturnsSlotsArrayVerbatim) {
-    server_task_result_metrics m = make_metrics();
-    m.slots_data = json::array({{{"id", 0}}, {{"id", 1}}});
+TEST(ServerTaskResultSlots, ToJson_ReturnsSlotsArrayVerbatim) {
+    server_task_result_slots m;
+    m.n_idle_slots = 2;
+    m.slots_data = json::array({json::object({{"id", 0}}), json::object({{"id", 1}})});
     const json j = m.to_json();
     ASSERT_TRUE(j.is_array());
     EXPECT_EQ(j.size(), 2u);
     EXPECT_EQ(j.at(0).at("id").get<int>(), 0);
+}
+
+TEST(ServerTaskResultSlots, ToJson_EmptyByDefault) {
+    server_task_result_slots m;
+    const json j = m.to_json();
+    ASSERT_TRUE(j.is_array());
+    EXPECT_EQ(j.size(), 0u);
+    EXPECT_EQ(m.n_idle_slots, 0);
+}
+
+TEST(ServerTaskResultMetrics, ToJson_UnusedEmptyObject) {
+    // /metrics renders Prometheus text via to_metrics(); to_json() is not used any more
+    // and returns an empty object since b10519.
+    server_task_result_metrics m = make_metrics();
+    const json j = m.to_json();
+    EXPECT_TRUE(j.empty());
 }
 
 TEST(ServerTaskResultMetrics, ToMetrics_SlotGauges) {
