@@ -120,9 +120,12 @@ Concretely:
      if you forget it, `NativeLibraryLoadSmokeTest.nativeBuildInfoMatchesPinnedVersionConstant` fails
      the build (it cross-checks the constant against `LlamaModel.getLlamaCppBuildInfo()`, which reads
      llama.cpp's own linked-in `build-info`).
-2. **Re-verify `patches/`** — a clean configure re-runs the fail-loud `PATCH_COMMAND`, so all six
-   patches (`0001`, `0002`, `0003`, `0006`, `0007`, `0008`) must still apply. Use a **fresh** build
-   dir (a stale one re-applies over an already-patched tree and reports a false "does not apply"):
+2. **Re-verify `patches/`** — a clean configure re-runs the fail-loud `PATCH_COMMAND`, so **every
+   `*.patch` in `llama/patches/`** must still apply. Do not maintain a list of them here or anywhere
+   else: `apply-llama-patches.cmake` `file(GLOB)`s the directory and applies them in filename order,
+   so an enumeration can only go stale (it did, one commit after being written). Use a **fresh**
+   build dir (a stale one re-applies over an already-patched tree and reports a false "does not
+   apply" — see the applier note in `TODO.md` for why):
    ```bash
    cd llama && mvn -q compile          # generates the OSInfo class CMake's OS-detection needs
    rm -rf build && cmake -B build       # fail-loud: aborts here if any patch no longer applies
