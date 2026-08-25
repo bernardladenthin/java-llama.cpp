@@ -35,8 +35,6 @@
 //   8.  parse_positive_int_config       — used by nothing above it
 //   9.  wrap_stream_chunk               — used by nothing above it
 
-#include "nlohmann/json.hpp"
-
 #include <cmath>
 #include <optional>
 #include <stdexcept>

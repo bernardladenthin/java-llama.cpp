@@ -10,7 +10,6 @@
 #include "json-schema-to-grammar.h"
 #include "llama.h"
 #include "log.h"
-#include "nlohmann/json.hpp"
 #include "server-context.h"
 #include "server-queue.h"
 #include "server-task.h"
@@ -1628,9 +1627,10 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleSlotAction(J
     switch (action) {
     case 0: // LIST — get slot info via the dedicated slot-get task
         // b10519 (upstream #27376) split the old METRICS task in two: METRICS now carries only the
-        // cumulative counters (rendered as Prometheus text by to_metrics(); its to_json() returns an
-        // empty object), and the /slots payload moved to SERVER_TASK_TYPE_SLOT_GET ->
-        // server_task_result_slots::to_json(), which returns the slot array verbatim.
+        // cumulative counters (rendered as Prometheus text by to_metrics(); its to_json() is unused
+        // and returns `json{}`, i.e. JSON null), and the /slots payload moved to
+        // SERVER_TASK_TYPE_SLOT_GET -> server_task_result_slots::to_json(), which returns the slot
+        // array verbatim.
         return dispatch_one_shot_task(env, ctx_server, server_task(SERVER_TASK_TYPE_SLOT_GET));
     case 1: // SAVE
         return exec_slot_file_task(env, ctx_server, slotId, jfilename, SERVER_TASK_TYPE_SLOT_SAVE,

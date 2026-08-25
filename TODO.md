@@ -13,24 +13,81 @@ cross-cutting initiative.
 
 ## Open — jllama-specific
 
-### `ServerMetrics` describes a JSON shape the native layer stopped emitting at b10408
+### Model-gated Java tests silently self-skip in CI (Surefire's working directory)
 
-`LlamaModel.getMetrics()` / `getMetricsTyped()` are documented (and their `ServerMetrics` getters are
-written) against the *pre-b10408* payload: an object with `idle` / `processing` / `deferred` /
-`t_start` / `n_*_total` counters **and** a nested `slots` array. Since llama.cpp **b10408** (upstream
-#26920) the underlying result's `to_json()` returns the **slot array verbatim** — the cumulative
-counters moved to Prometheus exposition text behind `to_metrics()`, which the JNI layer does not
-expose. So `getIdleSlots()`, `getProcessingSlots()`, `getDeferredTasks()`, `getCumulativeUsage()`,
-`getSlots()` and `getSlotMetrics()` have all been returning zeros / a missing node since that bump;
-only `asJson()` (the raw array) carries real data.
+**Found while bumping to b10618; pre-existing and independent of that bump.** Every model-gated Java
+test decides whether to run with a *relative* path — `new File("models/codellama-7b.Q2_K.gguf")`
+(`LlamaModelTest`), `TestConstants.MODEL_PATH`, the `-Dnet.ladenthin.llama.*` model properties CI
+passes as `models/<name>`. Surefire resolves those against its working directory, which defaults to
+the **module** basedir. CI runs `mvn -f llama/pom.xml … test` while the shared GGUF cache is restored
+to `<workspace>/models/`, so the tests look in `<workspace>/llama/models/` and find nothing.
 
-This is **pre-existing**, not a regression of the b10456 → b10618 walk — that walk only re-pointed
-the JNI task at `SERVER_TASK_TYPE_SLOT_GET` so the array keeps arriving at all (b10519 would
-otherwise have degraded it to `{}`). Fixing it properly means deciding what the Java surface should
-be: either reshape `ServerMetrics` around the slot array and drop the counter getters, or add a
-second JNI entry point for `SERVER_TASK_TYPE_METRICS` → `to_metrics()` and parse the Prometheus text.
-`ServerMetricsTest` pins the *old* shape from string literals, so it passes either way and is not a
-guard here.
+Verified empirically, not inferred: a throwaway test run under `mvn -f llama/pom.xml` reported
+`user.dir=<repo>/llama`, `models/<marker at repo root> exists=false`, `models/<marker under llama/>
+exists=true`.
+
+Consequence: the whole model-backed Java suite — `LlamaModelTest`, `LlamaEmbeddingsTest`,
+`MultimodalIntegrationTest`, `TtsIntegrationTest`, the reranking/draft/tool-model tests — aborts in
+`@BeforeAll` and reports as skipped on every `test-java-*` job, while the job still goes green. That
+contradicts the "CI model policy" section of `CLAUDE.md`, which states these run on every platform,
+and it is why the two stale assertions below have never failed.
+
+Fixing it is a one-line change (a Surefire `<workingDirectory>${project.basedir}/..</workingDirectory>`,
+or making the paths module-relative) — but it will **immediately turn ~100 currently-skipped tests
+on**, including the known-stale ones, so it must be done as its own change with the fallout fixed in
+the same PR, not folded into an unrelated bump.
+
+### The `getMetrics()` payload contract drifted at b10408 and three consumers still assume the old one
+
+`LlamaModel.getMetrics()` returns whatever the native slot-introspection task's `to_json()` produces.
+Until llama.cpp **b10408** (upstream #26920) that was an object — `idle` / `processing` / `deferred` /
+`t_start` / `n_*_total` counters plus a nested `slots` array. Since b10408 it is the **slot array
+verbatim**; the cumulative counters moved to Prometheus exposition text behind `to_metrics()`, which
+the JNI layer does not expose at all. Three consumers were written against the old shape and are all
+still on it:
+
+- **`value.ServerMetrics`** — `getIdleSlots()`, `getProcessingSlots()`, `getDeferredTasks()`,
+  `getCumulativeUsage()`, `getSlots()`, `getSlotMetrics()` all read keys that no longer exist, so
+  they return zeros / a missing node. Only `asJson()` (the raw array) carries real data.
+  `ServerMetricsTest` builds its input from string literals, so it passes either way and is not a
+  guard.
+- **`LlamaModelTest#testGetMetrics`** — asserts the live payload `contains("\"slots\"")` and
+  `contains("\"idle\"")`. Neither substring occurs anywhere in the current payload (checked against
+  upstream's `server_slot::to_json` and `task_params::to_json` key lists). It does not fail today
+  only because of the Surefire working-directory issue above; fixing that surfaces this immediately.
+- **`server.OpenAiCompatServer.handleMetricsView`** — `GET /slots` does
+  `readTree(metrics).path("slots").toString()`, and `path()` on an array node is a `MissingNode`
+  whose `toString()` is the empty string, so the route answers **200 with a zero-length body**. Its
+  sibling `GET /metrics` serves the slot array under a name that no longer describes it.
+  `OpenAiCompatServerHttpTest`'s fake backend returns the *pre-b10408* object, so the test exercises
+  a shape production never produces — the fake is what hides the bug.
+
+**Not a regression of the b10456 → b10618 walk.** That walk only re-pointed the JNI task at the new
+`SERVER_TASK_TYPE_SLOT_GET`, which is what keeps the array arriving at all (b10519 split the old
+`METRICS` task and would otherwise have degraded the payload to JSON null).
+
+Fixing it means picking the Java-side contract first: either reshape `ServerMetrics` (and `/slots`)
+around the slot array and drop the counter getters, or add a second JNI entry point for
+`SERVER_TASK_TYPE_METRICS` → `to_metrics()` and serve/parse the Prometheus text. Whichever is chosen,
+update all three consumers, the `OpenAiCompatServerHttpTest` fake, and the `/metrics` route naming
+together.
+
+### `apply-llama-patches.cmake` is not idempotent when two patches touch one file
+
+`CLAUDE.md` and the applier's own header describe it as idempotent: a `git apply --reverse --check`
+is supposed to detect an already-applied patch and skip it, so a CMake **re**configure over an
+already-patched source tree is a no-op. That holds only while no two patches touch the same file.
+`0001` patches `tools/server/server.cpp` (one of its ~34 `common_params_parse_main` call-site flips)
+and `0006`/`0007` then rewrite the same region, so `0001`'s reverse-check no longer matches; the
+applier falls through to a forward apply, which also fails, and aborts the configure with the
+misleading "does not apply cleanly — a llama.cpp version bump probably shifted the patched code".
+
+Confirmed at b10618: reverse-check `0001` → fails at `tools/server/server.cpp:102`; `0006` and
+`0007` → skip cleanly. The practical effect is that **any** reconfigure of an existing build dir
+fails, which is why the runbook says to use a fresh one. A fix would be to reverse-check in reverse
+filename order (`0008` → `0001`), or to record an applied-marker per patch in the build tree. Left
+alone for now because it is release-critical build machinery and the fresh-build-dir workaround is
+already documented.
 
 ### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
 

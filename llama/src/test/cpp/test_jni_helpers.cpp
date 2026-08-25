@@ -30,6 +30,10 @@
 #include "server-chat.h"
 #include "utils.hpp"
 #include "jni_helpers.hpp"
+// The require_json_field_impl tests below deliberately exercise the helper with a real
+// nlohmann::json as well as with the upstream `json` alias (common_json since b10585), so this
+// TU needs nlohmann explicitly — the project headers no longer pull it in.
+#include "nlohmann/json.hpp"
 #include <cstring>
 #include <memory>
 #include <string>

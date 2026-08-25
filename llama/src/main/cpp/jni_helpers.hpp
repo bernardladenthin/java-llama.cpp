@@ -26,7 +26,6 @@
 // including translation unit BEFORE this header.
 
 #include "jni.h"
-#include "nlohmann/json.hpp"
 
 #include <atomic>
 #include <condition_variable>
