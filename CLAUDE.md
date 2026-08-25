@@ -1606,8 +1606,10 @@ See [`../workspace/policies/pit-mutation-testing.md`](../workspace/policies/pit-
 Run PIT with the lifecycle prefix — `mvn test-compile org.pitest:pitest-maven:mutationCoverage`
 (from the repo root add `-f llama/pom.xml`). The gate is **hermetic** — no model or audio fixture
 needed: `ContentPartTest`'s `@TempDir` tests cover `value.ContentPart.audioFile(Path)` (verified
-295/295, 0 NO_COVERAGE in a fixture-less sandbox; the former audio-fixture gotcha is resolved,
-see `TODO.md`).
+304/304, 0 NO_COVERAGE in a fixture-less sandbox; the former audio-fixture gotcha is resolved).
+**`net.ladenthin.llama.value.*` is a target at `mutationThreshold` 100**, so a new getter on a
+`value` type needs its own test or the gate reds — the `ServerMetrics` counters added for the
+`getMetrics()` merge are covered by `ServerMetricsTest`.
 
 ## JPMS Module Descriptor
 
