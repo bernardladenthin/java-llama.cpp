@@ -12,8 +12,12 @@
 #     Windows (the dockcross/native/MSVC jobs all call the same code path).
 #   * Every `patches/*.patch` and `patches/*.diff` is applied, sorted by filename (so a numeric
 #     prefix like 0001-, 0002- defines a deterministic order).
-#   * Idempotent: `git apply --reverse --check` detects an already-applied patch and skips it, so
-#     a CMake reconfigure over an already-patched source tree does not fail.
+#   * Idempotent ONLY while no two patches touch the same file: `git apply --reverse --check`
+#     detects an already-applied patch and skips it, so a CMake reconfigure over an already-patched
+#     source tree normally does not fail. It DOES fail when a later patch rewrites a region an
+#     earlier one also patched (today: 0006/0007 vs 0001 in tools/server/server.cpp) — the earlier
+#     patch's reverse-check then no longer matches and the forward apply aborts the configure with
+#     a misleading "does not apply cleanly". Configure into a fresh build dir; see TODO.md.
 #   * Fail-loud: a patch that no longer applies (e.g. after a llama.cpp version bump shifts the
 #     context) aborts the configure with a clear message, so a stale patch can never be silently
 #     dropped from a release build.

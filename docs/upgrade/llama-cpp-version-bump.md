@@ -110,7 +110,7 @@ Once you have the `b<cur> -> b<next>` step, apply it exactly as
 Concretely:
 
 1. **Edit the pin — four files:**
-   - `llama/CMakeLists.txt` — the `GIT_TAG b<cur>` line. (It is the only tag in this file; the
+   - `llama/CMakeLists.txt` — the `GIT_TAG b<cur>` line. (It is the only `b<nnnn>` tag in this file — the other two `GIT_TAG` lines pin nlohmann/json `v3.12.0` and GoogleTest `v1.17.0` and must NOT move with a llama.cpp bump. The
      `-DLLAMA_TAG=b<cur>` that once fed the build-time TTS extraction was removed with the
      Qwen3-TTS rework, and the WebUI auto-follows `GIT_TAG` in CI.)
    - `README.md` — the llama.cpp badge and link (version appears twice).
