@@ -84,7 +84,25 @@ class JllamaChatModelIntegrationTest {
                     });
 
             ChatResponse complete = done.get(60, TimeUnit.SECONDS);
-            assertThat(complete.aiMessage().text(), is(streamed.toString()));
+
+            // The CI model is Qwen3-0.6B, a reasoning model, and this request budgets 8 output
+            // tokens: a run can legitimately spend all of them inside <think> and produce no
+            // assistant text at all. StreamingChunkAssembler then routes every token to
+            // onPartialThinking and leaves AiMessage.text() null (it only sets text when it
+            // accumulated some), while `streamed` stays "" -- which is the "expected \"\" but was
+            // null" this assertion used to fail with once the test actually ran.
+            //
+            // Assert the invariant that holds in both shapes -- the concatenated onPartialResponse
+            // fragments are exactly the final text -- and separately that the stream delivered
+            // something, so a stream that produces nothing at all still fails.
+            String finalText = complete.aiMessage().text() == null
+                    ? ""
+                    : complete.aiMessage().text();
+            assertThat(finalText, is(streamed.toString()));
+            assertThat(
+                    "stream delivered neither content nor reasoning tokens",
+                    !streamed.toString().isEmpty() || complete.aiMessage().thinking() != null,
+                    is(true));
         }
     }
 }

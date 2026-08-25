@@ -6,6 +6,7 @@ package net.ladenthin.llama.langchain4j;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -149,6 +150,30 @@ class StreamingChunkAssemblerTest {
         assertThat(handler.thinking, contains("let me ", "think"));
         assertThat(response.aiMessage().thinking(), is("let me think"));
         assertThat(response.aiMessage().text(), is("42"));
+    }
+
+    @Test
+    void thinkingOnlyStreamLeavesTextNullAndDeliversNoContentFragments() {
+        // A reasoning model that spends its whole output budget inside <think> streams only
+        // reasoning_content. complete() then never calls message.text(...), so AiMessage.text()
+        // is null rather than "" -- which is exactly what made
+        // JllamaChatModelIntegrationTest#streamingDeliversTokensThenCompletes fail with
+        // "expected \"\" but was null" the first time it actually ran against Qwen3-0.6B.
+        // Pinned here, model-free, so the null is a known contract and not a surprise.
+        RecordingHandler handler = new RecordingHandler();
+        StreamingChunkAssembler assembler = new StreamingChunkAssembler(handler);
+
+        assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"still \"},"
+                + "\"finish_reason\":null}]}");
+        assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"thinking\"},"
+                + "\"finish_reason\":null}]}");
+        assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}");
+        ChatResponse response = assembler.complete();
+
+        assertThat(response.aiMessage().text(), is(nullValue()));
+        assertThat(response.aiMessage().thinking(), is("still thinking"));
+        assertThat(handler.partials, is(empty()));
+        assertThat(handler.thinking, contains("still ", "thinking"));
     }
 
     @Test
