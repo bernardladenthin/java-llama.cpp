@@ -9,12 +9,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
-> Note: llama.cpp bumps between **b9917** and **b10456** were not recorded here individually.
-> [`docs/history/llama-cpp-breaking-changes.md`](docs/history/llama-cpp-breaking-changes.md) is the
-> complete per-range record and remains authoritative for what each upgrade changed.
+> The entries below also cover the **b9917 → b10456** window (PRs #341–#394), which went unrecorded
+> here while it happened; they were reconstructed from the git history and from
+> [`docs/history/llama-cpp-breaking-changes.md`](docs/history/llama-cpp-breaking-changes.md), which
+> has a row per upgrade range and stays authoritative for the per-range detail.
 
 ### Added
 - `QuantizationType.Q2_0` — maps the new upstream `LLAMA_FTYPE_MOSTLY_Q2_0` (llama.cpp b9916) for `LlamaQuantizer`.
+- **Voice cloning and language selection for `TextToSpeech`**: `synthesize(String text, String speakerReferenceAudioPath, String language, int maxFrames, int topK, int seed)` — a speaker-reference clip makes the model imitate that voice. Part of the Qwen3-TTS rework (see Changed).
 - **`ModelParameters.setMmprojDevice(String)`** — places the multimodal projector on a device of its own
   (llama.cpp `--mmproj-device`, added upstream in b10618), independently of `setDevices(...)`. Exactly one
   device may be named; the literal `"none"` keeps the projector on the CPU. `OpenAiCompatServer`'s CLI
@@ -32,6 +34,34 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 - `ch.qos.logback:logback-classic` bumped 1.6.2 → 1.6.3 (test/runtime binding only).
 - CI actions bumped to latest: `actions/setup-java` v5 → v6.
 - Upgraded llama.cpp from **b9894 to b9917** (all eight local patches re-verified across the range).
+- **BREAKING — `TextToSpeech` was reworked onto Qwen3-TTS** (llama.cpp **b10270**, upstream #26254, which
+  upstream itself labels a breaking change). llama.cpp deleted the OuteTTS pipeline outright:
+  `tools/tts/tts.cpp` shrank from ~1450 to 205 lines and `mtmd_gen_audio_type` has only
+  `NONE`/`QWEN3TTS`, so there is no OuteTTS code path left anywhere upstream and no compatibility shim
+  was possible. The two-argument constructor keeps its **signature** but changes **meaning**:
+  `(ttcModelPath, vocoderModelPath)` → `(modelPath, mmprojPath)`, i.e. a Qwen3-TTS backbone plus the
+  mmproj that bundles speaker encoder, code predictor and code2wav decoder — an OuteTTS + WavTokenizer
+  pair no longer works and fails at load, not at compile time. `synthesize`'s `maxCodeTokens` parameter
+  became `maxFrames`, and the single-argument overload's default dropped 4096 → 512.
+- **BREAKING — `-1` is no longer accepted for the repetition-penalty windows** (llama.cpp **b10275**).
+  `repeat_last_n` and `dry_penalty_last_n` used to take `-1` for "the whole context"; upstream removed
+  the sentinel, moving the request schema's hard limits to `[0, INT32_MAX]` and making
+  `common_params_parse` throw on a negative value. `ModelParameters.setRepeatLastN` /
+  `setDryPenaltyLastN` and `InferenceParameters.withRepeatLastN` / `withDryPenaltyLastN` had kept
+  advertising and accepting `-1`, so the value reached llama.cpp and failed there — at model load for
+  the launch flags, as a rejected request for the per-request withers. All four now reject a negative
+  value with a message naming the change; pass the context size explicitly for the old behaviour.
+  (Verified exhaustively: these are the **only** two request-field limits that moved in the whole
+  b9994 → b10618 range.)
+- Upgraded llama.cpp from **b9917 to b10456** across PRs #341–#394. Local patches `0005` (b9981) and
+  `0004` (b9982) were dropped after upstream merged equivalent — and broader — fixes, and `0009`
+  (`subprocess.h` old-glibc build break) was dropped at b10280 once upstream vendored the same fix.
+- `server-mcp.cpp` is compiled into `libjllama` (llama.cpp **b10154** added upstream MCP-server
+  support; `server.cpp` and `server-tools.cpp` reference `server_mcp`, so omitting it is latent on
+  Linux but a hard link error on macOS/ld64 and Windows/MSVC). The `subprocess.h` `addchdir_np` use is
+  guarded for old glibc in the same change.
+- Android/Gradle toolchain: Gradle pins moved 8.14.3 → 9.6.1 and the dockcross cross-compile images
+  were bumped, alongside the AGP/Compose pin updates the Android builds needed.
 - Upgraded llama.cpp from **b10456 to b10618**, in 25 reviewed steps. Patch `0007` refreshed (upstream
   #26347 deleted comments inside its removal block, breaking `git apply` at every tag from b10519 on) and
   a new patch `0010` carries a one-line upstream fix: `GET /models` emitted `vocab_type` as a JSON boolean
@@ -46,6 +76,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   reading (`ggml_time_us()`), not milliseconds since the epoch. The value is unchanged.
 
 ### Fixed
+- **The macOS arm64 native library shipped corrupt in 5.0.6 and in several 5.0.7 snapshots.** All three
+  macOS arm64 build jobs uploaded their dylib under a `*-libraries` artifact name, and the packaging
+  job collects those with one globbed download — so three builds landed on the same
+  `Mac/aarch64/libjllama.dylib` and the survivor could be a byte-level hybrid of two of them rather
+  than either input. Its ad-hoc signature then no longer matched its own `__TEXT` pages (66/4078 and
+  1141/4097 code pages failed their stored hashes) and macOS **SIGKILLed every process that loaded
+  it**. Fixed by naming the test-only variants outside the glob and selecting the shipped variant by
+  an explicit download step (thanks to **@linking12**, #388), plus two guards so it cannot recur:
+  `merge-native-artifacts.sh` fails the build when any relative path is claimed by more than one
+  artifact — checked *before* the merge, since a collision leaves exactly one file behind and is
+  invisible afterwards — and the new `smoke-fatjar-macos` job runs `codesign --verify --strict` and a
+  real JVM load of the dylib extracted from the **packaged** fat jar (#390).
 - **`LlamaModel.getMetrics()` returned the wrong shape.** Upstream reduced the payload to a bare slot array
   at b10408 (#26920) and split the task in two at b10519 (#27376), so the counter getters on
   `value.ServerMetrics`, `LlamaModelTest#testGetMetrics` and `OpenAiCompatServer`'s metrics routes had all

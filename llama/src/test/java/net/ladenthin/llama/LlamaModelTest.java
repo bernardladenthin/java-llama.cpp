@@ -129,7 +129,7 @@ public class LlamaModelTest {
      * <p>With greedy decoding ({@code withTopK(1)}) and a fixed seed, two completions of the same
      * prompt are byte-identical unless something changes the sampler. The prompt is saturated with a
      * repeated multi-token n-gram, so enabling DRY with a strong multiplier and a short allowed length
-     * ({@code dry_penalty_last_n = -1} scans the whole context) penalizes the next token that would
+     * ({@code dry_penalty_last_n} is set to the full context size) penalizes the next token that would
      * extend that n-gram &mdash; forcing the DRY run to diverge from the baseline. This exercises the
      * full Java &rarr; JSON &rarr; native path for {@code withDryMultiplier} / {@code withDryBase} /
      * {@code withDryAllowedLength} / {@code withDryPenaltyLastN} end to end; the per-field JSON
@@ -152,7 +152,9 @@ public class LlamaModelTest {
                 .withDryMultiplier(4.0f)
                 .withDryBase(1.75f)
                 .withDryAllowedLength(2)
-                .withDryPenaltyLastN(-1);
+                // The whole context: llama.cpp b10275 dropped -1 as the "scan everything" sentinel,
+                // so the window is stated explicitly and must match the ctx size set in setup().
+                .withDryPenaltyLastN(128);
 
         String baselineOutput = model.complete(baseline);
         String dryOutput = model.complete(withDry);

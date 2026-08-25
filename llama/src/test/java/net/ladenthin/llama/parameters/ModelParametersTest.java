@@ -94,9 +94,10 @@ public class ModelParametersTest {
     }
 
     @Test
-    public void testSetRepeatLastNValidMinusOne() {
-        ModelParameters p = new ModelParameters().setRepeatLastN(-1);
-        assertThat(p.parameters.get("--repeat-last-n"), is("-1"));
+    public void testSetRepeatLastNRejectsMinusOne() {
+        // llama.cpp b10275 dropped the -1 = ctx_size sentinel; common_params_parse now throws on a
+        // negative value, so the model would fail to load. Reject it here where the message can say why.
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setRepeatLastN(-1));
     }
 
     @Test
@@ -111,13 +112,19 @@ public class ModelParametersTest {
     }
 
     // -------------------------------------------------------------------------
-    // setDryPenaltyLastN — validation (>= -1)
+    // setDryPenaltyLastN — validation (>= 0 since llama.cpp b10275)
     // -------------------------------------------------------------------------
 
     @Test
-    public void testSetDryPenaltyLastNValidMinusOne() {
-        ModelParameters p = new ModelParameters().setDryPenaltyLastN(-1);
-        assertThat(p.parameters.get("--dry-penalty-last-n"), is("-1"));
+    public void testSetDryPenaltyLastNRejectsMinusOne() {
+        // Same b10275 change as setRepeatLastN: --dry-penalty-last-n -1 makes common_params_parse throw.
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setDryPenaltyLastN(-1));
+    }
+
+    @Test
+    public void testSetDryPenaltyLastNValidPositive() {
+        ModelParameters p = new ModelParameters().setDryPenaltyLastN(256);
+        assertThat(p.parameters.get("--dry-penalty-last-n"), is("256"));
     }
 
     @Test

@@ -344,12 +344,22 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the repetition-penalty window replaced (default: 64, 0 = disabled, -1 = ctx_size).
+     * Returns a new request with the repetition-penalty window replaced (default: 64, 0 = disabled).
      *
-     * @param repeatLastN window size (0 = disabled, -1 = ctx_size)
+     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10275</strong>;
+     * the request schema's hard limits are now {@code [0, INT32_MAX]}, so {@code -1} makes the server
+     * reject the whole request. It is rejected here instead, so the failure names the cause rather
+     * than arriving as a generic parameter error.</p>
+     *
+     * @param repeatLastN window size (0 = disabled)
      * @return a new instance; this instance is unchanged
+     * @throws IllegalArgumentException if {@code repeatLastN} is negative
      */
     public InferenceParameters withRepeatLastN(int repeatLastN) {
+        if (repeatLastN < 0) {
+            throw new IllegalArgumentException("Invalid repeat_last_n value: " + repeatLastN
+                    + " (must be >= 0; 0 = disabled. llama.cpp b10275 dropped -1 = ctx_size)");
+        }
         return withScalar(PARAM_REPEAT_LAST_N, repeatLastN);
     }
 
@@ -791,19 +801,23 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the per-request DRY penalty window replaced (default: -1, -1 = context
-     * size, 0 = disabled). Only takes effect when {@link #withDryMultiplier(float)} is non-zero.
-     * Per-request mirror of {@link ModelParameters#setDryPenaltyLastN(int)} (the
-     * {@code --dry-penalty-last-n} launch flag); values below {@code -1} are rejected.
+     * Returns a new request with the per-request DRY penalty window replaced (0 = disabled). Only takes
+     * effect when {@link #withDryMultiplier(float)} is non-zero. Per-request mirror of
+     * {@link ModelParameters#setDryPenaltyLastN(int)} (the {@code --dry-penalty-last-n} launch flag).
      *
-     * @param dryPenaltyLastN the DRY penalty window (-1 = context size, 0 = disabled)
+     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10275</strong>;
+     * the request schema's hard limits are now {@code [0, INT32_MAX]}, so {@code -1} makes the server
+     * reject the whole request. It is rejected here instead, so the failure names the cause rather
+     * than arriving as a generic parameter error.</p>
+     *
+     * @param dryPenaltyLastN the DRY penalty window (0 = disabled)
      * @return a new instance; this instance is unchanged
-     * @throws IllegalArgumentException if {@code dryPenaltyLastN} is less than {@code -1}
+     * @throws IllegalArgumentException if {@code dryPenaltyLastN} is negative
      */
     public InferenceParameters withDryPenaltyLastN(int dryPenaltyLastN) {
-        if (dryPenaltyLastN < -1) {
+        if (dryPenaltyLastN < 0) {
             throw new IllegalArgumentException("Invalid dry_penalty_last_n value: " + dryPenaltyLastN
-                    + " (must be >= -1; -1 = context size, 0 = disabled)");
+                    + " (must be >= 0; 0 = disabled. llama.cpp b10275 dropped -1 = context size)");
         }
         return withScalar(PARAM_DRY_PENALTY_LAST_N, dryPenaltyLastN);
     }
