@@ -13,6 +13,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 - `QuantizationType.Q2_0` — maps the new upstream `LLAMA_FTYPE_MOSTLY_Q2_0` (llama.cpp b9916) for `LlamaQuantizer`.
 
 ### Changed
+- `ch.qos.logback:logback-classic` bumped 1.6.2 → 1.6.3 (test/runtime binding only).
+- CI actions bumped to latest: `actions/setup-java` v5 → v6.
 - Upgraded llama.cpp from **b9894 to b9917** (all eight local patches re-verified across the range).
 
 ## [5.0.6] - 2026-07-07
