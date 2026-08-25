@@ -644,11 +644,11 @@ TEST(JsonValue, BoolValue) {
 // json_is_array_of_numbers / json_is_array_of_mixed
 // ============================================================
 
-TEST(JsonArrayChecks, ArrayOfIntegers_IsNumbers) { EXPECT_TRUE(json_is_array_of_numbers(json{1, 2, 3})); }
+TEST(JsonArrayChecks, ArrayOfIntegers_IsNumbers) { EXPECT_TRUE(json_is_array_of_numbers(json::array({1, 2, 3}))); }
 
 TEST(JsonArrayChecks, EmptyArray_IsNumbers) { EXPECT_TRUE(json_is_array_of_numbers(json::array())); }
 
-TEST(JsonArrayChecks, ArrayWithString_NotNumbers) { EXPECT_FALSE(json_is_array_of_numbers(json{1, "hello", 3})); }
+TEST(JsonArrayChecks, ArrayWithString_NotNumbers) { EXPECT_FALSE(json_is_array_of_numbers(json::array({1, "hello", 3}))); }
 
 TEST(JsonArrayChecks, NonArray_NotNumbers) {
     EXPECT_FALSE(json_is_array_of_numbers(json("just a string")));
@@ -656,12 +656,12 @@ TEST(JsonArrayChecks, NonArray_NotNumbers) {
 }
 
 TEST(JsonArrayChecks, MixedNumbersAndStrings_IsMixed) {
-    EXPECT_TRUE(json_is_array_of_mixed_numbers_strings(json{1, "hello", 3}));
+    EXPECT_TRUE(json_is_array_of_mixed_numbers_strings(json::array({1, "hello", 3})));
 }
 
-TEST(JsonArrayChecks, OnlyNumbers_NotMixed) { EXPECT_FALSE(json_is_array_of_mixed_numbers_strings(json{1, 2, 3})); }
+TEST(JsonArrayChecks, OnlyNumbers_NotMixed) { EXPECT_FALSE(json_is_array_of_mixed_numbers_strings(json::array({1, 2, 3}))); }
 
-TEST(JsonArrayChecks, OnlyStrings_NotMixed) { EXPECT_FALSE(json_is_array_of_mixed_numbers_strings(json{"a", "b"})); }
+TEST(JsonArrayChecks, OnlyStrings_NotMixed) { EXPECT_FALSE(json_is_array_of_mixed_numbers_strings(json::array({"a", "b"}))); }
 
 TEST(JsonArrayChecks, EmptyArray_NotMixed) { EXPECT_FALSE(json_is_array_of_mixed_numbers_strings(json::array())); }
 
@@ -671,11 +671,11 @@ TEST(JsonArrayChecks, EmptyArray_NotMixed) { EXPECT_FALSE(json_is_array_of_mixed
 //   non-array value.
 
 TEST(JsonArrayChecks, ArrayWithNumber_ContainsNumbers) {
-    EXPECT_TRUE(json_is_array_and_contains_numbers(json{1, "hello"}));
+    EXPECT_TRUE(json_is_array_and_contains_numbers(json::array({1, "hello"})));
 }
 
 TEST(JsonArrayChecks, ArrayOnlyStrings_NotContainsNumbers) {
-    EXPECT_FALSE(json_is_array_and_contains_numbers(json{"a", "b"}));
+    EXPECT_FALSE(json_is_array_and_contains_numbers(json::array({"a", "b"})));
 }
 
 TEST(JsonArrayChecks, EmptyArray_NotContainsNumbers) {

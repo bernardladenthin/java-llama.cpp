@@ -36,7 +36,6 @@
 // JSON array.  The raw bytes are preserved exactly — no UTF-8 truncation.
 static json str_to_bytes(const std::string &str) {
     json bytes = json::array();
-    bytes.get_ref<json::array_t &>().reserve(str.size());
     for (unsigned char c : str) {
         bytes.push_back(static_cast<int>(c));
     }

@@ -347,12 +347,37 @@ TEST(ExtractEmbeddingPrompt, EmptyBody_ThrowsInvalidArgument) {
 
 TEST(ExtractEmbeddingPrompt, ArrayPrompt_ReturnedAsIs) {
     bool flag = false;
-    json prompt = extract_embedding_prompt({{"input", {"sentence one", "sentence two"}}}, flag);
+    json prompt = extract_embedding_prompt({{"input", json::array({"sentence one", "sentence two"})}}, flag);
     ASSERT_TRUE(prompt.is_array());
     ASSERT_EQ(prompt.size(), 2u);
     EXPECT_EQ(prompt[0], "sentence one");
     EXPECT_EQ(prompt[1], "sentence two");
     EXPECT_FALSE(flag);
+}
+
+// ============================================================
+// common_json enum trap (llama.cpp b10585, upstream #27511)
+//
+//   The upstream `json` alias is `common_json`, whose value constructors cover
+//   bool / integral / floating-point / string / container — but the integral one
+//   is `std::is_integral`-gated, and an *enum* is not integral.  An unscoped enum
+//   therefore binds to `common_json_value(bool)` and silently serialises as
+//   true/false.  Project code must cast enum values to `int` before putting them
+//   in JSON; `jllama.cpp`'s two "vocab_type" emit sites do exactly that, and
+//   `ModelMeta.getVocabType()` reads the result with Jackson's `asInt(0)`.
+// ============================================================
+
+TEST(CommonJsonEnumTrap, UncastEnumBecomesBoolean) {
+    // documents the trap this guard exists for (tripwire: if upstream ever adds an
+    // enum constructor, this flips and the cast convention can be revisited)
+    const json j = json::object({{"vocab_type", LLAMA_VOCAB_TYPE_WPM}});
+    EXPECT_TRUE(j.at("vocab_type").is_boolean());
+}
+
+TEST(CommonJsonEnumTrap, ExplicitIntCastKeepsTheNumericValue) {
+    const json j = json::object({{"vocab_type", static_cast<int>(LLAMA_VOCAB_TYPE_WPM)}});
+    EXPECT_TRUE(j.at("vocab_type").is_number_integer());
+    EXPECT_EQ(j.at("vocab_type").get<int>(), static_cast<int>(LLAMA_VOCAB_TYPE_WPM));
 }
 
 // ============================================================

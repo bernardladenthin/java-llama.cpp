@@ -1291,6 +1291,13 @@ public class LlamaModelTest {
         // Dynamic access via the underlying JsonNode
         assertTrue(meta.asJson().has("modalities"), "modalities field must be present");
         assertTrue(meta.asJson().has("vocab_type"), "vocab_type field must be present");
+        // vocab_type is an unscoped C enum on the native side. Since llama.cpp b10585 the upstream
+        // `json` alias is common_json, whose value ctors do not cover enums — an uncast enum binds
+        // to the bool ctor and arrives here as true/false, which getVocabType()'s asInt(0) would
+        // silently read as 1 for every non-SPM model. Pin the wire type, not just the key.
+        assertTrue(
+                meta.asJson().path("vocab_type").isIntegralNumber(),
+                "vocab_type must arrive as an integer, not a boolean");
 
         // Architecture and name from GGUF general.* metadata
         String architecture = meta.getArchitecture();

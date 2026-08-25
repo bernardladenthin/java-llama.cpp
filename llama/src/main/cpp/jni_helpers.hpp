@@ -185,8 +185,16 @@ struct jllama_context_guard {
 //
 // Checks that `data` contains the given key.  Returns true if present.
 // On missing key: throws "<field> is required" via JNI and returns false.
+//
+// Templated on the JSON type so the upstream `json` alias binds directly.  Since llama.cpp
+// b10585 (upstream #27511) that alias is `common_json`, not `nlohmann::ordered_json`, and a
+// non-template `const nlohmann::json &` parameter would still COMPILE for it — silently, via
+// common_json::operator std::string() feeding nlohmann's string-constructible converting
+// constructor — turning the presence check into a `json::type_error 302` thrown out of the JNI
+// frame.  Keep this a template.
 // ---------------------------------------------------------------------------
-[[nodiscard]] inline bool require_json_field_impl(JNIEnv *env, const nlohmann::json &data, const char *field,
+template <typename JsonT>
+[[nodiscard]] inline bool require_json_field_impl(JNIEnv *env, const JsonT &data, const char *field,
                                                   jclass error_class) {
     if (data.contains(field)) {
         return true;

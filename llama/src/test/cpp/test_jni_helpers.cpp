@@ -351,6 +351,25 @@ TEST_F(MockJniFixture, RequireJsonField_EmptyJson_ReturnsFalseAndThrows) {
     EXPECT_EQ(g_throw_message, "\"input_suffix\" is required");
 }
 
+// Regression guard for llama.cpp b10585 (upstream #27511): the upstream `json` alias became
+// `common_json`.  require_json_field_impl must bind it directly — while the parameter was a plain
+// `const nlohmann::json &`, a common_json still compiled here but was converted through
+// common_json::operator std::string(), so the call threw json::type_error 302 ("type must be
+// string, but is object") instead of checking the key.  handleInfill calls this outside a
+// try/catch, so the throw escaped the JNI frame.
+TEST_F(MockJniFixture, RequireJsonField_CommonJsonPresentField_ReturnsTrueNoThrow) {
+    const json data = json::object({{"input_prefix", "hello"}});
+    EXPECT_TRUE(require_json_field_impl(env, data, "input_prefix", dummy_class));
+    EXPECT_FALSE(g_throw_called);
+}
+
+TEST_F(MockJniFixture, RequireJsonField_CommonJsonMissingField_ReturnsFalseAndThrows) {
+    const json data = json::object({{"other", 1}});
+    EXPECT_FALSE(require_json_field_impl(env, data, "input_prefix", dummy_class));
+    EXPECT_TRUE(g_throw_called);
+    EXPECT_EQ(g_throw_message, "\"input_prefix\" is required");
+}
+
 // nlohmann::json::contains() returns true for keys whose value is null.
 // require_json_field_impl uses contains(), so a null-valued field passes
 // the presence check and returns true without throwing.  Callers that

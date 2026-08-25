@@ -8,8 +8,9 @@
 // json_helpers.hpp — Pure JSON transformation helpers.
 //
 // Every function in this file is pure data transformation:
-//   - input:  nlohmann::json values, server_task_result_ptr, or plain C++ types
-//   - output: nlohmann::json, std::vector, std::optional, or plain C++ types
+//   - input:  `json` values (the upstream alias — `common_json` since llama.cpp b10585,
+//             `nlohmann::ordered_json` before it), server_task_result_ptr, or plain C++ types
+//   - output: `json`, std::vector, std::optional, or plain C++ types
 //   - zero JNI calls (no JNIEnv*, jclass, jstring, …)
 //   - zero llama state (no llama_context*, llama_vocab*, server_context*)
 //

@@ -906,7 +906,9 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_getModelMetaJson(J
     REQUIRE_SERVER_CONTEXT(nullptr);
     if (jctx->vocab_only) {
         json meta = {
-            {"vocab_type", llama_vocab_type(jctx->vocab)},
+            // static_cast: an unscoped enum binds to common_json_value(bool) and would serialise
+            // as true/false — see the "vocab_type" note in docs/history/llama-cpp-breaking-changes.md
+            {"vocab_type", static_cast<int>(llama_vocab_type(jctx->vocab))},
             {"n_vocab", llama_vocab_n_tokens(jctx->vocab)},
             {"special_tokens", special_tokens_json(jctx->vocab)},
         };
@@ -929,7 +931,8 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_getModelMetaJson(J
         }
     }
     json j = {
-        {"vocab_type", m.model_vocab_type},
+        // static_cast: see the vocab_only branch above — an unscoped enum would become a boolean
+        {"vocab_type", static_cast<int>(m.model_vocab_type)},
         {"n_vocab", m.model_vocab_n_tokens},
         {"n_ctx_train", m.model_n_ctx_train},
         {"n_embd", m.model_n_embd_inp},
@@ -1401,7 +1404,7 @@ JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_LlamaModel_jsonSchemaToGra
                                                                                           jstring j_schema) {
     try {
         const std::string c_schema = parse_jstring(env, j_schema);
-        nlohmann::ordered_json c_schema_json = nlohmann::ordered_json::parse(c_schema);
+        const json c_schema_json = json::parse(c_schema);
         const std::string c_grammar = json_schema_to_grammar(c_schema_json);
         return parse_jbytes(env, c_grammar);
     } catch (const std::exception &e) {

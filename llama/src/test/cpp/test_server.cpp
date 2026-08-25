@@ -1961,7 +1961,7 @@ TEST(ParamsFromJsonCmpl, DryPenaltyLastN_Positive_RoundTrip) {
 
 TEST(ParamsFromJsonCmpl, DrySequenceBreakers_NonEmpty_RoundTrip) {
     // mirrors the llama.cpp default list that withDrySequenceBreakers forwards verbatim
-    const auto p = parse_params({{"dry_sequence_breakers", {"\n", ":", "\"", "*"}}});
+    const auto p = parse_params({{"dry_sequence_breakers", json::array({"\n", ":", "\"", "*"})}});
     ASSERT_EQ(p.sampling.dry_sequence_breakers.size(), 4u);
     EXPECT_EQ(p.sampling.dry_sequence_breakers[0], "\n");
     EXPECT_EQ(p.sampling.dry_sequence_breakers[1], ":");
@@ -2001,7 +2001,7 @@ TEST(ParamsFromJsonCmpl, NCmpl_AliasedFromN) {
 // ============================================================
 
 TEST(ParamsFromJsonCmpl, Samplers_CanonicalNames_Parsed) {
-    const auto p = parse_params({{"samplers", {"top_k", "top_p", "min_p", "temperature"}}});
+    const auto p = parse_params({{"samplers", json::array({"top_k", "top_p", "min_p", "temperature"})}});
     ASSERT_EQ(p.sampling.samplers.size(), 4u);
     EXPECT_EQ(p.sampling.samplers[0], COMMON_SAMPLER_TYPE_TOP_K);
     EXPECT_EQ(p.sampling.samplers[1], COMMON_SAMPLER_TYPE_TOP_P);
@@ -2011,14 +2011,14 @@ TEST(ParamsFromJsonCmpl, Samplers_CanonicalNames_Parsed) {
 
 TEST(ParamsFromJsonCmpl, Samplers_KebabCaseAlias_NowAccepted) {
     // "top-k" / "min-p" alt names were rejected by the server before b9553.
-    const auto p = parse_params({{"samplers", {"top-k", "min-p"}}});
+    const auto p = parse_params({{"samplers", json::array({"top-k", "min-p"})}});
     ASSERT_EQ(p.sampling.samplers.size(), 2u);
     EXPECT_EQ(p.sampling.samplers[0], COMMON_SAMPLER_TYPE_TOP_K);
     EXPECT_EQ(p.sampling.samplers[1], COMMON_SAMPLER_TYPE_MIN_P);
 }
 
 TEST(ParamsFromJsonCmpl, Samplers_CaseInsensitive) {
-    const auto p = parse_params({{"samplers", {"TOP_K", "Temperature", "Min-P"}}});
+    const auto p = parse_params({{"samplers", json::array({"TOP_K", "Temperature", "Min-P"})}});
     ASSERT_EQ(p.sampling.samplers.size(), 3u);
     EXPECT_EQ(p.sampling.samplers[0], COMMON_SAMPLER_TYPE_TOP_K);
     EXPECT_EQ(p.sampling.samplers[1], COMMON_SAMPLER_TYPE_TEMPERATURE);
@@ -2027,7 +2027,7 @@ TEST(ParamsFromJsonCmpl, Samplers_CaseInsensitive) {
 
 TEST(ParamsFromJsonCmpl, Samplers_MiscAliases_Parsed) {
     // "nucleus" -> top_p, "temp" -> temperature, "typ" -> typical_p
-    const auto p = parse_params({{"samplers", {"nucleus", "temp", "typ"}}});
+    const auto p = parse_params({{"samplers", json::array({"nucleus", "temp", "typ"})}});
     ASSERT_EQ(p.sampling.samplers.size(), 3u);
     EXPECT_EQ(p.sampling.samplers[0], COMMON_SAMPLER_TYPE_TOP_P);
     EXPECT_EQ(p.sampling.samplers[1], COMMON_SAMPLER_TYPE_TEMPERATURE);
@@ -2036,7 +2036,7 @@ TEST(ParamsFromJsonCmpl, Samplers_MiscAliases_Parsed) {
 
 TEST(ParamsFromJsonCmpl, Samplers_UnknownName_SkippedNotError) {
     // unknown names are warned and skipped, not a hard error.
-    const auto p = parse_params({{"samplers", {"top_k", "definitely_not_a_sampler"}}});
+    const auto p = parse_params({{"samplers", json::array({"top_k", "definitely_not_a_sampler"})}});
     ASSERT_EQ(p.sampling.samplers.size(), 1u);
     EXPECT_EQ(p.sampling.samplers[0], COMMON_SAMPLER_TYPE_TOP_K);
 }
