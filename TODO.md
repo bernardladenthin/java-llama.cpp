@@ -13,6 +13,25 @@ cross-cutting initiative.
 
 ## Open — jllama-specific
 
+### `ServerMetrics` describes a JSON shape the native layer stopped emitting at b10408
+
+`LlamaModel.getMetrics()` / `getMetricsTyped()` are documented (and their `ServerMetrics` getters are
+written) against the *pre-b10408* payload: an object with `idle` / `processing` / `deferred` /
+`t_start` / `n_*_total` counters **and** a nested `slots` array. Since llama.cpp **b10408** (upstream
+#26920) the underlying result's `to_json()` returns the **slot array verbatim** — the cumulative
+counters moved to Prometheus exposition text behind `to_metrics()`, which the JNI layer does not
+expose. So `getIdleSlots()`, `getProcessingSlots()`, `getDeferredTasks()`, `getCumulativeUsage()`,
+`getSlots()` and `getSlotMetrics()` have all been returning zeros / a missing node since that bump;
+only `asJson()` (the raw array) carries real data.
+
+This is **pre-existing**, not a regression of the b10456 → b10618 walk — that walk only re-pointed
+the JNI task at `SERVER_TASK_TYPE_SLOT_GET` so the array keeps arriving at all (b10519 would
+otherwise have degraded it to `{}`). Fixing it properly means deciding what the Java surface should
+be: either reshape `ServerMetrics` around the slot array and drop the counter getters, or add a
+second JNI entry point for `SERVER_TASK_TYPE_METRICS` → `to_metrics()` and parse the Prometheus text.
+`ServerMetricsTest` pins the *old* shape from string literals, so it passes either way and is not a
+guard here.
+
 ### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
 
 Left over from the 2026-06-20 code audit (18/18 findings fixed in PRs #258/#260, regression tests in

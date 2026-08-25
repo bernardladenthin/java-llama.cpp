@@ -5,7 +5,7 @@
 
 #pragma once
 
-// server-common.h provides: JSON_ASSERT, json, raw_buffer, json_value<T>,
+// server-common.h provides: json (= common_json since b10585), raw_buffer, json_value<T>,
 // server_grammar_trigger, server_tokens, error_type, SRV_* macros,
 // and many utility function declarations (implemented in server-common.cpp).
 #include "server-common.h"

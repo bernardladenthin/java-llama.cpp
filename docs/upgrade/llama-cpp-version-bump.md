@@ -110,8 +110,9 @@ Once you have the `b<cur> -> b<next>` step, apply it exactly as
 Concretely:
 
 1. **Edit the pin — four files:**
-   - `llama/CMakeLists.txt` — the `GIT_TAG b<cur>` line **and** the `-DLLAMA_TAG=b<cur>` used by the
-     WebUI/TTS extraction (both must move together).
+   - `llama/CMakeLists.txt` — the `GIT_TAG b<cur>` line. (It is the only tag in this file; the
+     `-DLLAMA_TAG=b<cur>` that once fed the build-time TTS extraction was removed with the
+     Qwen3-TTS rework, and the WebUI auto-follows `GIT_TAG` in CI.)
    - `README.md` — the llama.cpp badge and link (version appears twice).
    - `CLAUDE.md` — the "Current llama.cpp pinned version" line (and any build-example `b<nnnn>`).
    - `llama/src/main/java/net/ladenthin/llama/value/LlamaCppVersion.java` — the `LLAMA_CPP_VERSION`
@@ -119,9 +120,9 @@ Concretely:
      if you forget it, `NativeLibraryLoadSmokeTest.nativeBuildInfoMatchesPinnedVersionConstant` fails
      the build (it cross-checks the constant against `LlamaModel.getLlamaCppBuildInfo()`, which reads
      llama.cpp's own linked-in `build-info`).
-2. **Re-verify `patches/`** — a clean configure re-runs the fail-loud `PATCH_COMMAND`, so every patch
-   `0001`–`0006` must still apply. Use a **fresh** build dir (a stale one re-applies over an
-   already-patched tree and reports a false "does not apply"):
+2. **Re-verify `patches/`** — a clean configure re-runs the fail-loud `PATCH_COMMAND`, so all six
+   patches (`0001`, `0002`, `0003`, `0006`, `0007`, `0008`) must still apply. Use a **fresh** build
+   dir (a stale one re-applies over an already-patched tree and reports a false "does not apply"):
    ```bash
    cd llama && mvn -q compile          # generates the OSInfo class CMake's OS-detection needs
    rm -rf build && cmake -B build       # fail-loud: aborts here if any patch no longer applies

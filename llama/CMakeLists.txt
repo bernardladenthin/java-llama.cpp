@@ -173,7 +173,7 @@ set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b10615
+	GIT_TAG        b10618
 	PATCH_COMMAND  ${CMAKE_COMMAND}
 		-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patches
 		-DLLAMA_SRC=<SOURCE_DIR>
@@ -451,9 +451,12 @@ endif()
 # shared to every native build as a generated, platform-independent ui.cpp/ui.h;
 # the "WebUI assets" block below compiles it in when present and otherwise falls
 # back to the empty-asset stub (src/main/cpp/webui_stub/ui.h).
-# <cpp-httplib/httplib.h> already resolves via llama-common's vendor/ include dir,
-# whose bundled nlohmann/json is the same 3.12.0 as our FetchContent copy, so
-# adding nothing there shadows it.
+# <cpp-httplib/httplib.h> already resolves through llama-common: upstream #27304
+# (b10488) replaced its `PUBLIC . ../vendor` include dir with PUBLIC links to the
+# vendor::nlohmann / vendor::sheredom INTERFACE targets, and each of those exports
+# the vendor/ root (`target_include_directories(<t> INTERFACE ..)`), so the same
+# directory still reaches jllama transitively.  Its bundled nlohmann/json is the
+# same 3.12.0 as our FetchContent copy, so nothing added here shadows it.
 target_sources(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server/server-http.cpp
     ${llama.cpp_SOURCE_DIR}/vendor/cpp-httplib/httplib.cpp

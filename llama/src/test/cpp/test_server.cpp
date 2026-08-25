@@ -822,9 +822,11 @@ TEST(ServerTaskResultSlots, ToJson_EmptyByDefault) {
     EXPECT_EQ(m.n_idle_slots, 0);
 }
 
-TEST(ServerTaskResultMetrics, ToJson_UnusedEmptyObject) {
-    // /metrics renders Prometheus text via to_metrics(); to_json() is not used any more
-    // and returns an empty object since b10519.
+TEST(ServerTaskResultMetrics, ToJson_UnusedAndEmpty) {
+    // /metrics renders Prometheus text via to_metrics(); to_json() is not used any more and
+    // since b10519 just returns `json{}` — which selects the default constructor, i.e. JSON
+    // null rather than an empty object (true for nlohmann and for common_json alike). Assert
+    // only what upstream promises: it carries nothing.
     server_task_result_metrics m = make_metrics();
     const json j = m.to_json();
     EXPECT_TRUE(j.empty());
