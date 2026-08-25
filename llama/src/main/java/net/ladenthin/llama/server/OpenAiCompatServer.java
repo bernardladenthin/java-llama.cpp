@@ -787,7 +787,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
             }
             String metrics = backend.metrics();
             if (slotsOnly) {
-                metrics = OBJECT_MAPPER.readTree(metrics).path("slots").toString();
+                // path() yields a MissingNode when "slots" is absent, and MissingNode.toString()
+                // is the empty string — which would answer 200 with a zero-length body, i.e. not
+                // JSON at all. Fall back to an empty array so the route always answers in shape.
+                JsonNode slots = OBJECT_MAPPER.readTree(metrics).path("slots");
+                metrics = slots.isArray() ? slots.toString() : "[]";
             }
             sendJson(exchange, HTTP_OK, metrics);
         } catch (IOException | RuntimeException e) {

@@ -346,14 +346,23 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
     return task;
 }
 
-// Post a single pre-built task, wait for its result, and return JSON as a jstring.
+// Post a single pre-built task and wait for its result.  Returns nullptr after
+// throwing via JNI when the task failed; callers must return immediately then.
 // The task's id field is assigned here; callers must not set it beforehand.
-[[nodiscard]] static jstring dispatch_one_shot_task(JNIEnv *env, server_context *ctx_server, server_task task) {
+[[nodiscard]] static server_task_result_ptr post_and_wait(JNIEnv *env, server_context *ctx_server, server_task task) {
     auto rd = ctx_server->get_response_reader();
     task.id = rd.get_new_id();
     rd.post_task(std::move(task));
     auto result = rd.next([] { return false; });
     if (!result_ok_or_throw(env, result))
+        return nullptr;
+    return result;
+}
+
+// Post a single pre-built task, wait for its result, and return JSON as a jstring.
+[[nodiscard]] static jstring dispatch_one_shot_task(JNIEnv *env, server_context *ctx_server, server_task task) {
+    auto result = post_and_wait(env, ctx_server, std::move(task));
+    if (!result)
         return nullptr;
     return json_to_jstring(env, result->to_json());
 }
@@ -1625,13 +1634,27 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleSlotAction(J
     REQUIRE_SERVER_CONTEXT(nullptr);
 
     switch (action) {
-    case 0: // LIST — get slot info via the dedicated slot-get task
-        // b10519 (upstream #27376) split the old METRICS task in two: METRICS now carries only the
-        // cumulative counters (rendered as Prometheus text by to_metrics(); its to_json() is unused
-        // and returns `json{}`, i.e. JSON null), and the /slots payload moved to
-        // SERVER_TASK_TYPE_SLOT_GET -> server_task_result_slots::to_json(), which returns the slot
-        // array verbatim.
-        return dispatch_one_shot_task(env, ctx_server, server_task(SERVER_TASK_TYPE_SLOT_GET));
+    case 0: { // LIST — the full server-introspection payload
+        // b10408 (upstream #26920) reduced server_task_result_metrics::to_json() to the slot array
+        // and b10519 (#27376) split the task in two: METRICS keeps only the counters (its to_json()
+        // is unused and returns JSON null; to_metrics() renders them as Prometheus text) and
+        // SERVER_TASK_TYPE_SLOT_GET carries the slot array plus the idle-slot count.  Post both and
+        // merge them so getMetrics() keeps returning the single documented object.
+        auto metrics_result = post_and_wait(env, ctx_server, server_task(SERVER_TASK_TYPE_METRICS));
+        if (!metrics_result)
+            return nullptr;
+        auto slots_result = post_and_wait(env, ctx_server, server_task(SERVER_TASK_TYPE_SLOT_GET));
+        if (!slots_result)
+            return nullptr;
+
+        const auto *metrics = dynamic_cast<const server_task_result_metrics *>(metrics_result.get());
+        const auto *slots = dynamic_cast<const server_task_result_slots *>(slots_result.get());
+        if (metrics == nullptr || slots == nullptr) {
+            env->ThrowNew(c_llama_error, "Unexpected result type for server metrics");
+            return nullptr;
+        }
+        return json_to_jstring(env, server_metrics_to_json(*metrics, *slots));
+    }
     case 1: // SAVE
         return exec_slot_file_task(env, ctx_server, slotId, jfilename, SERVER_TASK_TYPE_SLOT_SAVE,
                                    "Filename is required for slot save");

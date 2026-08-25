@@ -113,6 +113,25 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     @Test
+    public void slotsAnswersAnEmptyArrayWhenTheBackendReportsNoSlotsKey() throws IOException {
+        // Regression guard: GET /slots used to hand MissingNode.toString() straight to the client,
+        // i.e. HTTP 200 with a zero-length body, whenever the metrics payload carried no "slots"
+        // key — which is exactly what the native layer produced between llama.cpp b10408 and the
+        // JNI merge that restored the object. The route must always answer with a JSON array.
+        OpenAiBackend noSlots = new FakeBackend() {
+            @Override
+            public String metrics() {
+                return "{\"idle\":1}";
+            }
+        };
+        try (OpenAiCompatServer server = new OpenAiCompatServer(noSlots, config()).start()) {
+            Response slots = get(server.getPort(), "/slots", "");
+            assertThat(slots.code, is(200));
+            assertThat(slots.body, is("[]"));
+        }
+    }
+
+    @Test
     public void oversizedRequestBodyRejectedWith413() throws IOException {
         OpenAiServerConfig cfg = OpenAiServerConfig.builder()
                 .host("127.0.0.1")
@@ -438,7 +457,7 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     /** Deterministic backend that returns canned OpenAI shapes for every operation. */
-    static final class FakeBackend implements OpenAiBackend {
+    static class FakeBackend implements OpenAiBackend {
         @Override
         public String metrics() {
             return "{\"idle\":1,\"slots\":[{\"id\":0,\"n_prompt_tokens_cache\":8}]}";

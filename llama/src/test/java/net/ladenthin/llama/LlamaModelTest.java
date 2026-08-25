@@ -7,6 +7,7 @@ package net.ladenthin.llama;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -63,8 +64,7 @@ public class LlamaModelTest {
     @BeforeAll
     public static void setup() {
         Assumptions.assumeTrue(
-                new java.io.File("models/codellama-7b.Q2_K.gguf").exists(),
-                "Model file not found, skipping LlamaModelTest");
+                new java.io.File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping LlamaModelTest");
         //		LlamaModel.setLogger(LogFormat.TEXT, (level, msg) -> System.out.println(level + ": " + msg));
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         model = new LlamaModel(new ModelParameters()
@@ -351,8 +351,7 @@ public class LlamaModelTest {
      */
     @Test
     public void testCloseDuringInference() throws Exception {
-        Assumptions.assumeTrue(
-                new java.io.File("models/codellama-7b.Q2_K.gguf").exists(), "Model file not found, skipping");
+        Assumptions.assumeTrue(new java.io.File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         try (LlamaModel localModel = new LlamaModel(new ModelParameters()
                 .setCtxSize(128)
@@ -1217,8 +1216,36 @@ public class LlamaModelTest {
     public void testGetMetrics() {
         String metrics = model.getMetrics();
         assertNotNull(metrics);
-        assertTrue(metrics.contains("\"slots\""), "Metrics should contain slots data");
-        assertTrue(metrics.contains("\"idle\""), "Metrics should contain idle count");
+
+        // Assert the parsed shape, not substrings. Upstream reduced the metrics payload to a bare
+        // slot array at b10408 and split the task in two at b10519; the JNI layer merges the halves
+        // back into this object. A substring check on "slots"/"idle" is satisfied by the slot
+        // entries themselves, so only structural assertions can see that drift.
+        JsonNode root = model.getMetricsTyped().asJson();
+        assertTrue(root.isObject(), "Metrics must be an object, not a bare slot array: " + metrics);
+        assertTrue(root.path("slots").isArray(), "Metrics must carry a slots array: " + metrics);
+        for (String counter : new String[] {
+            "idle",
+            "processing",
+            "deferred",
+            "n_decode_total",
+            "n_busy_slots_total",
+            "n_prompt_tokens_processed_total",
+            "n_tokens_predicted_total",
+            "n_prompt_tokens_cached_total"
+        }) {
+            assertTrue(
+                    root.path(counter).isIntegralNumber(),
+                    "Counter " + counter + " must be an integer, not "
+                            + root.path(counter).getNodeType() + ": " + metrics);
+        }
+        // A loaded model always has at least one slot, and the idle count is drawn from that same
+        // set — an exact equality would be flaky if a prior test left a slot mid-flight, so bound it
+        // instead of pinning it.
+        int slotCount = root.path("slots").size();
+        assertTrue(slotCount > 0, "a loaded model must report at least one slot: " + metrics);
+        int idle = model.getMetricsTyped().getIdleSlots();
+        assertTrue(idle >= 0 && idle <= slotCount, "idle slots out of range 0.." + slotCount + ": " + metrics);
     }
 
     @Test
