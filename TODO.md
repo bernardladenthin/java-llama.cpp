@@ -13,6 +13,71 @@ cross-cutting initiative.
 
 ## Open — jllama-specific
 
+### Model-backed tests that the CI-skip fix newly exposed (b10618 PR #403)
+
+Making the model-gated suite actually run in CI (`TestConstants.resolveModelPath`, see the Done
+section) turned a green-but-silent pipeline into a red-and-honest one. Everything below was already
+broken before this PR; none of it was visible while every model-gated class self-skipped. Two items
+were fixed in this PR, four are open.
+
+**How to read the CI evidence.** Surefire runs classes in filesystem order, which differs per OS, and
+`TtsIntegrationTest` kills the fork. On Linux/macOS it lands early (Ubuntu got through only **85**
+tests), so those jobs report *nothing but* the crash. The two Windows jobs happen to run it last and
+therefore reach **1461** tests — they are the only jobs whose failure list is complete. Do not read a
+short Linux failure list as "Linux is healthier".
+
+- **[OPEN, MAJOR] `TtsIntegrationTest` aborts the JVM natively on all 6 test platforms.**
+  Ubuntu exit 134 (SIGABRT); macOS 14 Metal, macOS 15 Metal, macOS 15 no-Metal; Windows Ninja and
+  Windows MSVC exit 1. Not an OOM (Linux had ~14 GiB free, Windows ~12.3 GiB of 16 GiB). Not caused by
+  the bump: `git log b10456..b10618 -- tools/mtmd/mtmd-helper.{cpp,h}` contains only video/webp/
+  mergeable/sha256/cmake commits, and grepping that diff for `gen_audio|step_gen|step_prompt|
+  get_output|GGML_ASSERT|GGML_ABORT|throw` yields zero hits. It is a latent defect in
+  `tts_engine.cpp`'s drive of `mtmd_helper::gen_audio`, exposed the first time the test ran.
+  Next step: read `hs_err_pid*.log` from artifact `windows-output` (ID 9583568326) or
+  `error-log-macos-14-metal` (ID 9583085009) of run 32899147975 for the aborting frame. Because it
+  takes the whole fork down it also truncates every job's test run, so it blocks seeing the rest of
+  the suite and should be fixed first.
+
+- **[OPEN] `SessionForkRewindIntegrationTest` — empty reply after a slot restore (2 failures).**
+  `rewindRestoresTranscriptAndConversationContinues:81` and
+  `forkCreatesIndependentSessionWithSameTranscript:98` both fail `assertThat(reply.isEmpty(),
+  is(false))`: generation returns an empty string after `rewind()` / `fork()`, i.e. after slot state
+  is restored from a file. The transcript assertions around them pass, so it is the KV restore, not
+  the bookkeeping. Checked and **not** a bump regression: the only slot-touching upstream commit in
+  b10456..b10618 is `e8eed4525` (`LLAMA_SERVER_SLOTS_N_DIFF`), which is env-var opt-in and defaults
+  to 0, hence inert.
+
+- **[OPEN] `NativeServerAttachIntegrationTest.completion_overHttp_served:108` — HTTP 500.**
+  `{"error":{"code":500,"message":"The model produced output that does not match the expected
+  Content-only format"}}`. `"Content-only"` is a `common_chat_format` name (`common/chat.cpp:856`), so
+  the request ran without a template and the reply failed to parse under that format. Checked and
+  **not** a bump regression: the error string is byte-identical at b10456 and b10618, and the only
+  upstream commit touching `common/chat.cpp` in the range is the `common_json` abstraction (#27511).
+
+- **[OPEN] Re-check the full suite once the TTS crash is fixed.** No platform has yet completed a run
+  past `TtsIntegrationTest` on Linux or macOS, so the 1461-test Windows list is the *lower* bound on
+  what is broken, not the complete picture.
+
+- **[FIXED in this PR] `LlamaQuantizer.quantizeNative` had C++ linkage — the whole class was
+  unusable in every published jar.** `QuantizerIntegrationTest` failed all 3 tests with
+  `UnsatisfiedLinkError: 'void net.ladenthin.llama.LlamaQuantizer.quantizeNative(...)'`. Cause: the
+  C-linkage declarations come from the javac-generated `jllama.h`, which covers **only**
+  `LlamaModel`; every other class's JNI function must say `extern "C"` itself (`train_engine.cpp` and
+  `native_server.cpp` do). `quantizeNative` did not, so it was exported as
+  `_Z54Java_net_ladenthin_llama_LlamaQuantizer_quantizeNativeP7JNIEnv_...` and the JVM could never
+  resolve it. Reproduced on Linux with `nm -D`, so it was never Windows-specific — the public
+  `LlamaQuantizer` API has never worked. Fixed, and guarded model-free by
+  `NativeLibraryLoadSmokeTest.quantizerNativeEntryPointResolves` (`nm -D` on the rebuilt lib now shows
+  zero mangled `Java_*` exports).
+
+- **[FIXED in this PR] `JsonEndpointParametersTest.testDryMultiplierAccepted` sent
+  `dry_penalty_last_n: -1`.** The one genuine b10456→b10618 regression in the list: b10275 gave the
+  field hard limits `[0, INT32_MAX]` (0 = disabled) and dropped the old "-1 = context size" sentinel,
+  so the request now 400s. The `InferenceParameters` / `ModelParameters` setters were already fixed in
+  this PR; this test builds raw JSON and bypassed them. A repo-wide sweep confirms it was the only
+  remaining `-1` on either de-sentinelled field.
+
+
 ### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
 
 Left over from the 2026-06-20 code audit (18/18 findings fixed in PRs #258/#260, regression tests in

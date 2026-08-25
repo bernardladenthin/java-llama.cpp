@@ -6,11 +6,15 @@ package net.ladenthin.llama.loader;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import net.ladenthin.llama.ClaudeGenerated;
 import net.ladenthin.llama.LlamaModel;
+import net.ladenthin.llama.LlamaQuantizer;
+import net.ladenthin.llama.args.QuantizationType;
+import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.value.LlamaCppVersion;
 import org.junit.jupiter.api.Test;
 
@@ -82,5 +86,41 @@ class NativeLibraryLoadSmokeTest {
                 "Linked build-info \"" + buildInfo + "\" must start with the pinned tag \""
                         + LlamaCppVersion.LLAMA_CPP_VERSION + "-\"; if this fails, GIT_TAG in "
                         + "llama/CMakeLists.txt and LlamaCppVersion.LLAMA_CPP_VERSION have drifted apart");
+    }
+
+    /**
+     * {@link LlamaQuantizer#quantize} must reach its native implementation. The declarations that
+     * give the {@code LlamaModel} entry points C linkage come from the javac-generated
+     * {@code jllama.h}, which covers <em>only</em> {@code LlamaModel} — so every JNI function for
+     * any other class has to say {@code extern "C"} itself. {@code quantizeNative} did not, and was
+     * therefore exported under its C++-mangled name, making this public API throw
+     * {@link UnsatisfiedLinkError} on every platform in every published jar.
+     *
+     * <p>Nothing caught it: the only coverage was {@code QuantizerIntegrationTest}, which gates on a
+     * GGUF being present and so skipped in CI for as long as the model paths resolved to the wrong
+     * directory. Asserting it here — model-free, next to the build-info linkage check — means a
+     * future entry point that forgets {@code extern "C"} fails a test that always runs wherever the
+     * library exists.
+     *
+     * <p>A missing input file is the cheapest call that still crosses JNI: reaching the native side
+     * at all produces {@link LlamaException}, whereas a linkage regression fails earlier and
+     * differently with {@link UnsatisfiedLinkError} (which is an {@link Error}, so it propagates out
+     * of an {@code assertThrows(LlamaException.class, ...)} rather than being reported as a
+     * wrong-exception mismatch).
+     */
+    @Test
+    void quantizerNativeEntryPointResolves() {
+        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping quantizer linkage check");
+        assertThrows(
+                LlamaException.class,
+                () -> LlamaQuantizer.quantize(
+                        "does-not-exist-quantizer-linkage-probe.gguf",
+                        "never-written.gguf",
+                        QuantizationType.Q8_0,
+                        0,
+                        true),
+                "LlamaQuantizer.quantize must reach the native implementation and fail with "
+                        + "LlamaException; an UnsatisfiedLinkError here means quantizeNative lost its "
+                        + "extern \"C\" linkage and is exported under a C++-mangled name");
     }
 }

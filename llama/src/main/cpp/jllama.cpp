@@ -1707,9 +1707,13 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_setLoraAdaptersJso
     return dispatch_one_shot_task(env, jctx, std::move(task));
 }
 
-JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative(JNIEnv *env, jclass, jstring jinput,
-                                                                              jstring joutput, jint ftype, jint nthread,
-                                                                              jboolean allowRequantize) {
+// LlamaQuantizer is not part of the javac-generated jllama.h (that header only covers LlamaModel),
+// so nothing else gives this definition C linkage and it would be exported under its C++-mangled
+// name -- which the JVM cannot resolve, failing every call with UnsatisfiedLinkError on every
+// platform. Same reason train_engine.cpp marks LlamaTrainer_finetuneNative and native_server.cpp
+// wraps the NativeServer entry points in an extern "C" block.
+extern "C" JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative(
+    JNIEnv *env, jclass, jstring jinput, jstring joutput, jint ftype, jint nthread, jboolean allowRequantize) {
     try {
         const std::string input_path = parse_jstring(env, jinput);
         const std::string output_path = parse_jstring(env, joutput);

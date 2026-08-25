@@ -76,6 +76,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   reading (`ggml_time_us()`), not milliseconds since the epoch. The value is unchanged.
 
 ### Fixed
+- **`LlamaQuantizer` never worked in any published jar — every call threw `UnsatisfiedLinkError`.**
+  The `extern "C"` declarations that give the JNI entry points C linkage come from the
+  javac-generated `jllama.h`, which covers **only** `LlamaModel`; a JNI function for any other class
+  has to declare its own (as `train_engine.cpp` and `native_server.cpp` do).
+  `Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative` did not, so it was exported under its
+  C++-mangled name and the JVM could never resolve it — on every platform, not just the two Windows
+  jobs that reported it. The only coverage was `QuantizerIntegrationTest`, which gates on a GGUF and
+  so skipped in CI for as long as the model paths resolved to the wrong directory. Fixed, and guarded
+  model-free by `NativeLibraryLoadSmokeTest.quantizerNativeEntryPointResolves` so a future entry point
+  that forgets `extern "C"` fails a test that runs wherever the library exists.
 - **The macOS arm64 native library shipped corrupt in 5.0.6 and in several 5.0.7 snapshots.** All three
   macOS arm64 build jobs uploaded their dylib under a `*-libraries` artifact name, and the packaging
   job collects those with one globbed download — so three builds landed on the same
