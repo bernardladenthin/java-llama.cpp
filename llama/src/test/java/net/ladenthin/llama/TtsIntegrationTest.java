@@ -36,8 +36,8 @@ public class TtsIntegrationTest {
     @DisplayName("synthesize() returns a well-formed, non-silent 24 kHz mono 16-bit WAV")
     @Timeout(value = 300_000, unit = TimeUnit.MILLISECONDS)
     public void synthesizesWellFormedWav() {
-        String model = System.getProperty(TestConstants.PROP_TTS_MODEL);
-        String mmproj = System.getProperty(TestConstants.PROP_TTS_MMPROJ);
+        String model = TestConstants.resolveModelProperty(TestConstants.PROP_TTS_MODEL);
+        String mmproj = TestConstants.resolveModelProperty(TestConstants.PROP_TTS_MMPROJ);
         Assumptions.assumeTrue(
                 model != null && !model.isEmpty(), "TTS model not set (-D" + TestConstants.PROP_TTS_MODEL + "=...)");
         Assumptions.assumeTrue(

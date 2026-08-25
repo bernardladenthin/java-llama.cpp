@@ -39,8 +39,8 @@ public class ToolCallingIntegrationTest {
 
     @BeforeAll
     public static void loadModel() {
-        String modelPath =
-                System.getProperty(TestConstants.PROP_TOOL_MODEL_PATH, TestConstants.DEFAULT_TOOL_MODEL_PATH);
+        String modelPath = TestConstants.resolveModelProperty(
+                TestConstants.PROP_TOOL_MODEL_PATH, TestConstants.DEFAULT_TOOL_MODEL_PATH);
         Assumptions.assumeTrue(new File(modelPath).exists(), "Tool-calling model missing: " + modelPath);
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, 0);
         ModelParameters parameters = new ModelParameters()

@@ -14,7 +14,6 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.LlamaModel;
@@ -30,9 +29,8 @@ import org.junit.jupiter.api.Test;
 class JllamaChatModelIntegrationTest {
 
     private static Path modelPath() {
-        String path = System.getProperty("net.ladenthin.llama.model.path");
-        Assumptions.assumeTrue(path != null && !path.isEmpty(), "model path property not set");
-        Path resolved = Paths.get(path);
+        Path resolved = TestModelPaths.fromProperty("net.ladenthin.llama.model.path");
+        Assumptions.assumeTrue(resolved != null, "model path property not set");
         Assumptions.assumeTrue(Files.exists(resolved), "model file not present: " + resolved);
         return resolved;
     }

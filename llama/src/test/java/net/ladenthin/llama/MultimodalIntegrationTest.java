@@ -91,14 +91,15 @@ public class MultimodalIntegrationTest {
 
     @BeforeAll
     public static void setup() {
-        modelPath = System.getProperty(TestConstants.PROP_VISION_MODEL_PATH);
-        mmprojPath = System.getProperty(TestConstants.PROP_VISION_MMPROJ_PATH);
+        modelPath = TestConstants.resolveModelProperty(TestConstants.PROP_VISION_MODEL_PATH);
+        mmprojPath = TestConstants.resolveModelProperty(TestConstants.PROP_VISION_MMPROJ_PATH);
         // Image path falls back to the committed test resource when the
         // -D property is unset, so the test works on local dev checkouts
         // without any extra wiring. The model / mmproj remain externally
         // staged because their combined size (~600 MB) is too large to
         // commit.
-        imagePath = System.getProperty(TestConstants.PROP_VISION_IMAGE_PATH, TestConstants.DEFAULT_VISION_IMAGE_PATH);
+        imagePath = TestConstants.resolveModelProperty(
+                TestConstants.PROP_VISION_IMAGE_PATH, TestConstants.DEFAULT_VISION_IMAGE_PATH);
 
         Assumptions.assumeTrue(
                 modelPath != null && !modelPath.isEmpty(),
