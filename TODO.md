@@ -34,8 +34,9 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
 - **Future *output* modalities (audio / image) — design note, not yet actionable.** llama.cpp's server
   produces text (plus embeddings/rerank) only; the integration points are isolated (a new
   `OpenAiBackend.stream*` primitive + `OpenAiSseFormatter.*Chunk` per modality). Two future hooks:
-  OuteTTS behind an `/v1/audio/speech`-style route; proxying image/audio generation to an external
-  model. Keep chunk formatters modality-neutral.
+  the existing `TextToSpeech` (Qwen3-TTS since llama.cpp b10270 — OuteTTS no longer exists upstream)
+  behind an `/v1/audio/speech`-style route; proxying image/audio generation to an external model.
+  Keep chunk formatters modality-neutral.
 - **Incremental tool-call streaming on the alternative surfaces.** Ollama/Anthropic/Responses emit each
   tool call whole at end-of-stream (`ToolCallDeltaAccumulator`); revisit only if a client needs
   incremental `input_json_delta` / `function_call_arguments.delta` fidelity.

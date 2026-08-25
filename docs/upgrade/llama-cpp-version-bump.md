@@ -133,17 +133,34 @@ Concretely:
    rm -rf build && cmake -B build       # fail-loud: aborts here if any patch no longer applies
    ```
    If a patch no longer applies, refresh its diff against the new source and recommit it.
-3. **Append the history rows** — add a pair of rows to
+3. **Check the server contract mechanically when the chunk touches `tools/server/`.** A header diff
+   only shows signature changes; it cannot see a *contract* change behind a stable signature. Two
+   breaks of that class already shipped — `getMetrics()`'s payload shape (b10408/b10519) and the
+   removal of the `-1` = context-size sentinel for `repeat_last_n`/`dry_penalty_last_n` (b10275) —
+   and neither was visible to the build. Diff these three sets between the two tags; anything that
+   changes has to be traced to the Java layer, not just to the C++ tests:
+   ```bash
+   # request-field set
+   git show b<from>:tools/server/server-schema.cpp | grep -oE 'field_[a-z_]+\("[a-z_0-9]+"' | sort -u
+   # request-field bounds
+   git show b<from>:tools/server/server-schema.cpp | tr '\n' ' ' \
+     | grep -oE 'field_[a-z]+[^(]*\("[a-z_0-9]+"[^;]*?set_(hard_)?limits\([^)]*\)' | sort -u
+   # response keys
+   git show b<from>:tools/server/server-task.cpp   | grep -oE '\{"[a-z_0-9.]+",' | sort -u
+   ```
+   Repeat with `b<to>` and `comm -13` / `comm -23` the two outputs.
+
+4. **Append the history rows** — add a pair of rows to
    [`../history/llama-cpp-breaking-changes.md`](../history/llama-cpp-breaking-changes.md) covering the
    `b<cur> -> b<next>` range (what broke / what was new; "no source change" is a valid row).
-4. **Commit + push** on the working branch (do not open a new PR if one already tracks the branch):
+5. **Commit + push** on the working branch (do not open a new PR if one already tracks the branch):
    ```bash
    git add llama/CMakeLists.txt README.md CLAUDE.md docs/history/llama-cpp-breaking-changes.md \
            llama/src/main/java/net/ladenthin/llama/value/LlamaCppVersion.java
    git commit -m "Upgrade llama.cpp from b<cur> to b<next>"
    git push -u origin <your-branch>
    ```
-5. **Re-run the helper** for the next chunk. Repeat until it reports the **final chunk** (target
+6. **Re-run the helper** for the next chunk. Repeat until it reports the **final chunk** (target
    reached).
 
 CI builds every native classifier from the new pin; the full model-backed Java + C++ suites gate the

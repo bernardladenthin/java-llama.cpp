@@ -828,9 +828,31 @@ jllama.cpp / server.hpp / utils.hpp
 
 **Priority-ordered review list for upgrade diffs** (highest break risk first)
 
-The top 8 rows cover all known API-level breaking changes from b5022 → b8831.
-For future upgrades, provide diffs for at least these 8 files rather than the full patch.
-Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. renamed link targets, new required headers) — those are not visible in header file diffs alone.
+The rows below cover the known **compile/link-level** breaks from b5022 to the current pin; start any
+upgrade review with them rather than the full patch. Also review the project `CMakeLists.txt` for
+build-system-level breaks (e.g. renamed link targets, new required headers) — those are not visible in
+header file diffs alone.
+
+**Two failure classes this list does NOT catch, both of which have bitten the project:**
+
+1. **A same-repo header the project includes directly but that is not reachable through the
+   dependency graph above.** `tools/server/server-schema.h` broke a full build at b10275 while sitting
+   outside this table; it is in it now, and the `tools/server/*.h` rule in its row generalises that.
+2. **A silent *contract* change behind an unchanged signature.** b10408 reduced
+   `server_task_result_metrics::to_json()` to a bare slot array and b10519 split the task; no
+   signature moved, every chunk compiled and linked clean, and `LlamaModel.getMetrics()` quietly
+   returned the wrong shape for hundreds of builds. The same class hit `repeat_last_n` /
+   `dry_penalty_last_n` at b10275, where only a *value range* moved. Two cheap mechanical checks catch
+   these where a header diff cannot — run them on any bump that touches `tools/server/`:
+
+```bash
+# request-field set + their bounds, old tag vs new
+git show <old>:tools/server/server-schema.cpp | grep -oE 'field_[a-z_]+\("[a-z_0-9]+"' | sort -u
+git show <old>:tools/server/server-schema.cpp | tr '\n' ' ' \
+  | grep -oE 'field_[a-z]+[^(]*\("[a-z_0-9]+"[^;]*?set_(hard_)?limits\([^)]*\)'
+# response keys emitted by the result types
+git show <old>:tools/server/server-task.cpp   | grep -oE '\{"[a-z_0-9.]+",' | sort -u
+```
 
 | File | What to watch for |
 |------|-------------------|
