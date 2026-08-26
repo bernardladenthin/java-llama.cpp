@@ -53,12 +53,27 @@ public class SessionForkRewindIntegrationTest {
         }
     }
 
+    /**
+     * Thinking is suppressed with {@code reasoning_budget_tokens=0}, and that is load-bearing
+     * rather than cosmetic. The fixture model is Qwen3-0.6B, whose chat template injects
+     * {@code <think>} into the prompt, so the model reasons on every turn; llama.cpp's
+     * {@code common_params.reasoning_format} defaults to {@code DEEPSEEK}, which strips the
+     * {@code <think>…</think>} block out of {@code content} and into {@code reasoning_content}.
+     * {@link Session#send(String)} returns {@code choices[0].message.content} only. Qwen3-0.6B
+     * spends roughly 200 tokens thinking before it answers (see {@code ReasoningBudgetTest}, which
+     * budgets 1500 for exactly this reason), so with the 24-token budget this test wants for speed
+     * every token is consumed inside the thinking block and {@code content} comes back <em>empty</em>
+     * — deterministically, on every platform. Suppressing thinking makes the model answer directly,
+     * which is what these assertions are actually about: this class tests session state
+     * (checkpoint/rewind/fork), not reasoning. Raising the budget instead would work but costs
+     * ~200 extra tokens per turn across five turns for no added coverage.
+     */
     private static Session newSession(int slotId) {
         return new Session(
                 model,
                 slotId,
                 "You are terse.",
-                p -> p.withNPredict(24).withTemperature(0.0f).withSeed(42));
+                p -> p.withNPredict(24).withTemperature(0.0f).withSeed(42).withReasoningBudgetTokens(0));
     }
 
     @Test
