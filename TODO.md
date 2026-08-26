@@ -47,7 +47,9 @@ same crashed test.
   `RDI=0, RSI=0` is `memset(NULL, 0, n)` — the same call macOS names outright as `bzero`. The Java
   frames are `TextToSpeech.loadNative` -> `TextToSpeech.<init>` ->
   `TtsIntegrationTest.synthesizesWellFormedWav`, on the `main` thread in `_thread_in_native`,
-  after ~258 s (Linux) / ~288 s (macOS) of elapsed time.
+  after ~258 s (Linux) / ~288-300 s (macOS) of **total JVM elapsed time** -- that is time since the
+  fork started and ran the rest of the suite, NOT time spent inside the load, so it says nothing
+  about how far the load got.
 
   Ruled out already, do not re-investigate: (1) a JNI signature mismatch of the kind that broke
   `LlamaQuantizer` — `loadNative` is `(String, String, int, int) -> long` on both the Java and the
@@ -55,6 +57,17 @@ same crashed test.
   null byte array, returning an empty string in each case; (3) the obvious null checks in
   `tts_engine.cpp`'s load, which do test `model` / `ctx` / `mctx` and return `nullptr` with a
   message. The faulting allocation is therefore *inside* the load, before those checks are reached.
+
+  **The macOS 15 Metal job resolved the native stack, and it is exactly two frames:**
+  `__bzero+0x20` called from `libjllama.dylib` `Java_..._TextToSpeech_loadNative+0x60`. Do NOT read
+  that as "the bug is in `loadNative`". Disassembling the shipped Linux library shows `loadNative`
+  contains **no** `memset`/`bzero` at all — its only calls are `parse_jstring`, `engine_init` (via
+  the PLT, so not inlined), `operator delete` and `__stack_chk_fail`. The JVM's frame-pointer
+  walker dropped the intermediate frames, leaving only the outermost and innermost. The fault is
+  therefore under `engine_init` — in `common_init_from_params` or the mtmd/mmproj init — not in the
+  JNI wrapper. (Symbol attribution itself *is* trustworthy here: the library exports 12 529 symbols,
+  the whole llama/common layer included, so a PC inside `common_init_from_params` would have been
+  named as such. What is unreliable is the *depth* of the walk, not the naming.)
 
   Worth noting for the next step: the macOS runner has **7 GB RAM / 3 cores** against Linux's
   15 GB / 4, yet both fail the same way, so a plain out-of-memory on the larger host is a weak
