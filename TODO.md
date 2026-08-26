@@ -32,7 +32,42 @@ the crash and reproduced `SessionForkRewindIntegrationTest` (both cases) and
 not a Windows quirk. Its exit code was **141 (SIGPIPE)** rather than Ubuntu's 134 (SIGABRT), on the
 same crashed test.
 
-- **[OPEN, MAJOR] `TtsIntegrationTest` aborts the JVM natively on all 6 test platforms.**
+- **[OPEN, MAJOR — now localised] `TtsIntegrationTest` aborts the JVM natively on all 6 test
+  platforms.** The crash log is readable in the job log itself since `cbb5e62` (the section-3.1
+  print step), which is what finally produced the following. The abort is a **null-pointer
+  dereference while zeroing a buffer during the TTS model load**, identically on two OS families:
+
+  | | Linux x86-64 (run 32941522341) | macOS 15 arm64 (same run) |
+  |---|---|---|
+  | signal | `SIGSEGV`, `si_code 1 (SEGV_MAPERR)`, `si_addr 0x0` | `SIGSEGV` |
+  | frame | `C [libc.so.6+0x1896ca]` | `C [libsystem_platform.dylib+0x2fb0] __bzero+0x20` |
+  | registers | `RDI=0`, `RSI=0` | — |
+
+  On x86-64 SysV `memset(void *s, int c, size_t n)` passes `s` in RDI and `c` in RSI, so
+  `RDI=0, RSI=0` is `memset(NULL, 0, n)` — the same call macOS names outright as `bzero`. The Java
+  frames are `TextToSpeech.loadNative` -> `TextToSpeech.<init>` ->
+  `TtsIntegrationTest.synthesizesWellFormedWav`, on the `main` thread in `_thread_in_native`,
+  after ~258 s (Linux) / ~288 s (macOS) of elapsed time.
+
+  Ruled out already, do not re-investigate: (1) a JNI signature mismatch of the kind that broke
+  `LlamaQuantizer` — `loadNative` is `(String, String, int, int) -> long` on both the Java and the
+  C++ side, verified; (2) `parse_jstring` — it guards a null `jstring`, a pending exception and a
+  null byte array, returning an empty string in each case; (3) the obvious null checks in
+  `tts_engine.cpp`'s load, which do test `model` / `ctx` / `mctx` and return `nullptr` with a
+  message. The faulting allocation is therefore *inside* the load, before those checks are reached.
+
+  Worth noting for the next step: the macOS runner has **7 GB RAM / 3 cores** against Linux's
+  15 GB / 4, yet both fail the same way, so a plain out-of-memory on the larger host is a weak
+  explanation on its own — but an allocation that returns null and is then zeroed unchecked fits
+  both. The `mmproj` (speaker encoder + code predictor + code2wav) is the largest new buffer in
+  this path. The native stack could not be walked on Linux (one libc frame only); the full
+  `hs_err` in the artifact has the memory map if the allocation size matters.
+
+  Superseded note (kept because the reasoning was cited earlier): it was NOT certain an `hs_err`
+  existed at all — `if-no-files-found: warn` and Windows' exit code 1 left that open. It does
+  exist, on both platforms checked.
+
+- **[SUPERSEDED — see the entry above] `TtsIntegrationTest` aborts the JVM natively on all 6 test platforms.**
   Ubuntu exit 134 (SIGABRT); macOS 14 Metal, macOS 15 Metal, macOS 15 no-Metal; Windows Ninja and
   Windows MSVC exit 1. Not an OOM (Linux had ~14 GiB free, Windows ~12.3 GiB of 16 GiB). Not caused by
   the bump: `git log b10456..b10618 -- tools/mtmd/mtmd-helper.{cpp,h}` contains only video/webp/
