@@ -32,8 +32,8 @@ the crash and reproduced `SessionForkRewindIntegrationTest` (both cases) and
 not a Windows quirk. Its exit code was **141 (SIGPIPE)** rather than Ubuntu's 134 (SIGABRT), on the
 same crashed test.
 
-- **[FIXED — root cause found, awaiting CI confirmation] `TtsIntegrationTest` aborted the JVM
-  natively on all 6 test platforms.** **Root cause: our own hand-built `common_params`.**
+- **[FIXED — confirmed in CI] `TtsIntegrationTest` aborted the JVM natively on all 6 test
+  platforms.** **Root cause: our own hand-built `common_params`.**
   `common_cpu_params::n_threads` defaults to **-1**, and `postprocess_cpu_params` — the function
   that resolves it — is called **only** from `common/arg.cpp`, i.e. only for params that came
   through `common_params_parse`. `common_init_from_params` does not call it. `tts_engine.cpp`
@@ -53,6 +53,10 @@ same crashed test.
   by negative control: removing the two calls turns `TtsParams.ResolvesBothCpuThreadCounts` red
   with `actual: -1 vs 0`. The builder was extracted to `tts_params.hpp` so the test exercises
   the *real* production path rather than a copy that could drift.
+
+  **CI confirmation** (Ubuntu, run 32950691947 on `f9c43dc`): **1689 tests ran** where the fork
+  previously died at 85, and the crash-print step found **no `hs_err_pid*.log` at all**. The only
+  thing it printed was the router worker's stderr (see the router entry below).
 
   **How it was localised** (kept because the method generalises, not because the bug is still
   open). The crash log became readable in the job log itself with `cbb5e62` (the section-3.1 print
@@ -132,9 +136,31 @@ same crashed test.
   **not** a bump regression: the error string is byte-identical at b10456 and b10618, and the only
   upstream commit touching `common/chat.cpp` in the range is the `common_json` abstraction (#27511).
 
-- **[OPEN] Re-check the full suite once the TTS crash is fixed.** No platform has yet completed a run
-  past `TtsIntegrationTest` on Linux or macOS, so the 1461-test Windows list is the *lower* bound on
-  what is broken, not the complete picture.
+- **[ANSWERED] Re-check the full suite once the TTS crash is fixed.** Done: Ubuntu on `f9c43dc`
+  ran **1689 tests, 3 failures, 1 error, 2 skipped**. Exactly one item was new — the router entry
+  below — and the other three are the already-recorded `SessionForkRewind` pair and
+  `NativeServerAttach`. So the earlier Windows list was a lower bound by one item, not by many.
+
+- **[FIXED in this PR] `RouterModeIntegrationTest.setup:114` — the worker JVM could not load its
+  own main class.** `IllegalState: Router worker for model 'Qwen3-0.6B-Q4_K_M' failed with exit
+  code 1`; the worker's stderr (visible only because of the section-3.1 print step, in the surefire
+  `.dumpstream`) said `Could not find or load main class net.ladenthin.llama.server.NativeServer`.
+  Not a bump regression and not a router defect: `target/classes` carries a `module-info.class`, so
+  **Surefire auto-detects a named module and runs the main classes on the module path** —
+  `java.class.path` then holds only `target/test-classes` plus the dependency jars. The test built
+  the worker command from that property alone, so the spawned JVM had neither `NativeServer` nor the
+  packaged native library. It had never surfaced because the test self-skipped in CI for as long as
+  the model paths resolved to the wrong directory (the `TestConstants.resolveModelPath` fix in this
+  PR is what made it run). Fixed by deriving the main-classes root from
+  `NativeServer.class.getProtectionDomain().getCodeSource()`, which is correct in either mode and
+  for a directory or a jar alike. Reproduced and verified locally without a model: with the old
+  classpath the worker exits 1 on `ClassNotFoundException`; with the fix it loads `libjllama.so` and
+  reaches llama-server's own argument parser.
+
+  Note for later: the project sets no `<useModulePath>false</useModulePath>` (srcmorph does, and its
+  pom explains why classpath mode is the representative test environment). Flipping it would remove
+  this whole class of surprise, but it changes how all 1689 tests run and does not belong in a
+  version-bump PR.
 
 - **[FIXED in this PR] `LlamaQuantizer.quantizeNative` had C++ linkage — the whole class was
   unusable in every published jar.** `QuantizerIntegrationTest` failed all 3 tests with

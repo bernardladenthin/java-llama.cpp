@@ -15,6 +15,7 @@ import java.net.ServerSocket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.CodeSource;
 import java.util.List;
 import java.util.Locale;
 import net.ladenthin.llama.ClaudeGenerated;
@@ -69,7 +70,7 @@ public class RouterModeIntegrationTest extends OpenAiServerTestSupport {
                 "Router worker-relaunch test runs on Linux only");
         File reasoningModel = new File(TestConstants.REASONING_MODEL_PATH);
         Assumptions.assumeTrue(reasoningModel.exists(), "Reasoning model not found, skipping router test");
-        String classpath = System.getProperty("java.class.path", "");
+        String classpath = workerClasspath();
         Assumptions.assumeTrue(
                 !classpath.isEmpty() && !classpath.matches(".*\\s.*"),
                 "Classpath contains whitespace; worker command cannot carry it");
@@ -123,6 +124,38 @@ public class RouterModeIntegrationTest extends OpenAiServerTestSupport {
         if (workerCommandSet) {
             NativeServer.setWorkerCommand(); // clear the process-wide override
         }
+    }
+
+    /**
+     * Builds the classpath the worker JVM is launched with.
+     *
+     * <p>{@code java.class.path} alone is NOT enough. {@code target/classes} carries a
+     * {@code module-info.class}, so Surefire auto-detects a named module and runs the main classes
+     * on the <em>module path</em>; {@code java.class.path} then holds only {@code target/test-classes}
+     * plus the dependency jars. A worker launched with just that dies immediately with
+     * {@code ClassNotFoundException: net.ladenthin.llama.server.NativeServer}, which the router
+     * surfaces only as the opaque "worker failed with exit code 1". The main-classes root is
+     * therefore derived from the class itself — correct in either mode, and a directory or a jar
+     * alike. It also carries the packaged native library the worker has to extract.</p>
+     *
+     * @return the worker classpath, or an empty string when the code source cannot be resolved
+     */
+    private static String workerClasspath() throws Exception {
+        String inherited = System.getProperty("java.class.path", "");
+        CodeSource source = NativeServer.class.getProtectionDomain().getCodeSource();
+        if (source == null || source.getLocation() == null) {
+            return inherited;
+        }
+        String mainClasses =
+                Paths.get(source.getLocation().toURI()).toAbsolutePath().toString();
+        if (inherited.isEmpty()) {
+            return mainClasses;
+        }
+        if ((File.pathSeparator + inherited + File.pathSeparator)
+                .contains(File.pathSeparator + mainClasses + File.pathSeparator)) {
+            return inherited;
+        }
+        return mainClasses + File.pathSeparator + inherited;
     }
 
     private static int findFreePort() throws IOException {
