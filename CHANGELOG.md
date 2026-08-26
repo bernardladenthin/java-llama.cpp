@@ -62,6 +62,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   guarded for old glibc in the same change.
 - Android/Gradle toolchain: Gradle pins moved 8.14.3 → 9.6.1 and the dockcross cross-compile images
   were bumped, alongside the AGP/Compose pin updates the Android builds needed.
+- Upgraded llama.cpp from **b10631 to b10639**, in two reviewed steps. Neither range changes any
+  project source. b10631→b10636 is ggml-cuda quantised-matmul configs for Pascal, ggml-metal
+  SSM/Mamba kernels, an upstream `LLAMA_BUILD_UI` default flip that is inert here (this project
+  compiles its own `webui-generated/ui.cpp`), and the WebUI. b10636→b10639 is the RPC backend's
+  event/async APIs (#18626, protocol 5.1 → 6.0 — `GGML_RPC` is never enabled in this project, so
+  `ggml-rpc.cpp` is not compiled) plus Vulkan `cross_entropy_loss` kernels (#27216) and a warptile
+  clamp for warp sizes > 64 (#27726). Neither range touches `common/`, `include/llama.h`,
+  `tools/server/` or `tools/mtmd/`, so no request field, no bound and no response key can have
+  moved. All seven local patches apply unchanged.
 - Upgraded llama.cpp from **b10618 to b10631**. No project-source change: the only edits in the
   range are a narrowing input validation in `oaicompat_chat_params_parse` (continuing a final
   assistant message that carries `tool_calls` now throws), a Qwen3-Coder-only grammar refinement
