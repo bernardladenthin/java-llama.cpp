@@ -120,6 +120,18 @@ Concretely:
      if you forget it, `NativeLibraryLoadSmokeTest.nativeBuildInfoMatchesPinnedVersionConstant` fails
      the build (it cross-checks the constant against `LlamaModel.getLlamaCppBuildInfo()`, which reads
      llama.cpp's own linked-in `build-info`).
+
+     > **Local-only gotcha: that guard can report a *false* drift after a bump.**
+     > `LLAMA_CPP_VERSION` is a `public static final String`, i.e. a **compile-time constant**, so
+     > javac inlines its value into every *referencing* class — including
+     > `NativeLibraryLoadSmokeTest`. Recompiling `LlamaCppVersion.java` alone therefore does **not**
+     > update the copy baked into the already-compiled test class, and Maven's incremental
+     > compilation cannot see the dependency (constant inlining is invisible to its change
+     > analysis). The symptom is a failure that looks alarming but is pure staleness, e.g.
+     > `Linked build-info "b10639-…" must start with the pinned tag "b10636-"` when both the source
+     > and `target/classes` already say `b10639`. Run **`mvn clean test`** (not a bare `mvn test`)
+     > when re-running this check locally after a bump. CI is immune — it always builds from a clean
+     > checkout.
 2. **Re-verify `patches/`** — a clean configure re-runs the fail-loud `PATCH_COMMAND`, so **every
    `*.patch` in `llama/patches/`** must still apply. Do not maintain a list of them here or anywhere
    else: `apply-llama-patches.cmake` `file(GLOB)`s the directory and applies them in filename order,
