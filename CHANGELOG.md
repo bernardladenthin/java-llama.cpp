@@ -62,6 +62,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   guarded for old glibc in the same change.
 - Android/Gradle toolchain: Gradle pins moved 8.14.3 → 9.6.1 and the dockcross cross-compile images
   were bumped, alongside the AGP/Compose pin updates the Android builds needed.
+- Upgraded llama.cpp from **b10618 to b10631**. No project-source change: the only edits in the
+  range are a narrowing input validation in `oaicompat_chat_params_parse` (continuing a final
+  assistant message that carries `tool_calls` now throws), a Qwen3-Coder-only grammar refinement
+  in `common_chat_params_init_qwen3_coder`, a cosmetic `LLAMA_VERSION_MINOR` bump, and the WebUI.
+  `server-schema.cpp`, `server-task.cpp`, `server-context.cpp`, the `tools/server/*.h` headers,
+  `common/common.h`, `include/llama.h` and `mtmd-helper.h` are byte-identical across the range, so
+  neither the request-field set and its bounds nor the emitted response keys can have moved. All
+  seven local patches re-verified against a clean b10631 checkout; C++ suite 499/499.
 - Upgraded llama.cpp from **b10456 to b10618**, in 25 reviewed steps. Patch `0007` refreshed (upstream
   #26347 deleted comments inside its removal block, breaking `git apply` at every tag from b10519 on) and
   a new patch `0010` carries a one-line upstream fix: `GET /models` emitted `vocab_type` as a JSON boolean
