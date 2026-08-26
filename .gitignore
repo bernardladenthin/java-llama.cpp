@@ -7,6 +7,11 @@
 target
 build
 build-android
+# Per-bump verification trees. The llama.cpp upgrade runbook requires a FRESH build
+# directory for every version bump -- the patch applier pins its stamp to the checked-out
+# llama.cpp commit and deliberately aborts rather than guess when an existing dir's stamp
+# names a different one -- and the convention names them build-b<version>.
+build-b*
 cmake-build-*
 .DS_Store
 .directory
