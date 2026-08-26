@@ -93,6 +93,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   reading (`ggml_time_us()`), not milliseconds since the epoch. The value is unchanged.
 
 ### Fixed
+- **A single malformed UTF-8 byte in a model's output turned a finished generation into an HTTP 500.**
+  The server parses *every* completion through `common_chat_parse()`; with no chat parser configured
+  (plain `/completion`) that is llama.cpp's content-only fallback, whose scan tolerates an incomplete
+  trailing UTF-8 sequence in lenient mode — which is the only mode the chat parser ever uses — but
+  rejected an *invalid* byte outright. The request then failed with `"The model produced output that
+  does not match the expected Content-only format"` even though generation had completed normally.
+  Carried as local patch `0011`, which makes the invalid-byte branch respect leniency the same way
+  (keeping the text up to the bad byte); strict-mode parsing is unchanged. Upstream-submittable.
 - **`TextToSpeech` crashed the JVM on every platform when loading a model.** A hand-built
   `common_params` never passes through `common_params_parse`, and `common/arg.cpp` is upstream's
   only caller of `postprocess_cpu_params` — `common_init_from_params` does not call it. So

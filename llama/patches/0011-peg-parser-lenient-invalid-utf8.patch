@@ -1,0 +1,74 @@
+diff --git a/common/peg-parser.cpp b/common/peg-parser.cpp
+index 46fc29bf2..3f2008217 100644
+--- a/common/peg-parser.cpp
++++ b/common/peg-parser.cpp
+@@ -680,7 +680,16 @@ struct parser_executor {
+ 
+             if (utf8_result.status == utf8_parse_result::INVALID) {
+                 // Malformed UTF-8
+-                return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_FAIL, start_pos);
++                if (!ctx.is_lenient()) {
++                    return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_FAIL, start_pos);
++                }
++                // Lenient: keep what was scanned before the malformed byte instead of failing the
++                // whole parse, mirroring the INCOMPLETE branch above. Failing here loses a result
++                // that was produced successfully: common_chat_peg_parse() always parses in lenient
++                // mode, and the server runs it over every completion (content-only when the request
++                // configures no chat parser), so a single stray byte anywhere in the generated text
++                // turns a finished generation into an HTTP 500 instead of a response.
++                return common_peg_parse_result(COMMON_PEG_PARSE_RESULT_NEED_MORE_INPUT, start_pos, last_valid_pos);
+             }
+ 
+             // Check if a delimiter starts at this position
+diff --git a/tests/peg-parser/test-unicode.cpp b/tests/peg-parser/test-unicode.cpp
+index 24663d701..9ba64b519 100644
+--- a/tests/peg-parser/test-unicode.cpp
++++ b/tests/peg-parser/test-unicode.cpp
+@@ -238,6 +238,47 @@ void test_unicode(testing &t) {
+             }
+         });
+ 
++        t.test("invalid UTF-8 is tolerated when lenient", [](testing &t) {
++            // A malformed byte must not fail the whole parse in lenient mode: common_chat_peg_parse()
++            // always parses leniently and the server runs it over every completion, so failing here
++            // would turn a finished generation into an error response. Keep what was scanned before
++            // the bad byte instead, exactly like the incomplete-sequence case above.
++            std::vector<test_case> test_cases {
++                // Lone continuation byte in the middle
++                {std::string("Hello\x80World"), "Hello", COMMON_PEG_PARSE_RESULT_NEED_MORE_INPUT},
++
++                // Truncated CJK sequence followed by more bytes
++                {std::string("ab\xE4\xB8cd"), "ab", COMMON_PEG_PARSE_RESULT_NEED_MORE_INPUT},
++
++                // Invalid lead byte
++                {std::string("abc\xFF" "d"), "abc", COMMON_PEG_PARSE_RESULT_NEED_MORE_INPUT},
++            };
++
++            auto parser = build_peg_parser([](common_peg_parser_builder& p) {
++                return p.until("</tag>");
++            });
++
++            for (size_t i = 0; i < test_cases.size(); i++) {
++                const auto & tc = test_cases[i];
++                std::string test_name = "case " + std::to_string(i) + ": " + hex_dump(tc.input);
++
++                t.test(test_name, [&](testing &t) {
++                    common_peg_parse_context lenient(tc.input, COMMON_PEG_PARSE_FLAG_LENIENT);
++                    auto result = parser.parse(lenient);
++
++                    assert_result_equal(t, tc.expected_result, result.type);
++
++                    std::string matched = tc.input.substr(result.start, result.end - result.start);
++                    t.assert_equal(tc.expected_text, matched);
++
++                    // Strict mode still rejects malformed input.
++                    common_peg_parse_context strict(tc.input);
++                    auto strict_result = parser.parse(strict);
++                    assert_result_equal(t, COMMON_PEG_PARSE_RESULT_FAIL, strict_result.type);
++                });
++            }
++        });
++
+         t.test("incomplete UTF-8 at end", [](testing &t) {
+             std::vector<test_case> test_cases {
+                 // Incomplete emoji at end, no delimiter

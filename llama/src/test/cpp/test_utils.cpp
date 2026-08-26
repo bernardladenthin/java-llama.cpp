@@ -1434,3 +1434,68 @@ TEST(FormatAnthropicSse, Array_EachElementDispatchedCorrectly) {
     // second element is bare
     EXPECT_EQ(s.find("event: bare"), std::string::npos);
 }
+
+// ============================================================
+// common_chat_parse — the content-only path over malformed UTF-8
+//
+//   Guards patches/0011. The server parses *every* completion through
+//   common_chat_parse(); with no chat parser configured that is the
+//   content-only fallback (`content(rest()) + end()`), whose scan is
+//   common_peg_until_parser. Upstream lets that scan tolerate an
+//   INCOMPLETE trailing UTF-8 sequence in lenient mode (and
+//   common_chat_peg_parse always parses leniently) but hard-fails on an
+//   INVALID byte, which turns a generation that finished normally into
+//   an HTTP 500 — "The model produced output that does not match the
+//   expected Content-only format" — for output the model really did
+//   produce. The patch makes the INVALID branch respect leniency the
+//   same way, keeping the text up to the bad byte.
+//
+//   These tests are the runnable half of that guard: if a llama.cpp bump
+//   drops the patch, or upstream reverts to failing, they go red here
+//   rather than in a model-backed Java integration test on one platform.
+// ============================================================
+
+namespace {
+
+// Parse `raw` exactly the way the server parses a finished completion with no
+// chat parser configured: default params (format = content-only, empty parser),
+// is_partial = false.
+std::string parse_content_only(const std::string &raw) {
+    const common_chat_parser_params params;
+    return common_chat_parse(raw, /*is_partial=*/false, params).content;
+}
+
+} // namespace
+
+TEST(ContentOnlyParseUtf8, ValidMultiByteContent_SurvivesByteForByte) {
+    const std::string in = "Hello \xE4\xB8\x96\xE7\x95\x8C \xF0\x9F\x98\x80!";
+    EXPECT_EQ(parse_content_only(in), in);
+}
+
+TEST(ContentOnlyParseUtf8, LoneContinuationByte_DoesNotThrow) {
+    // The failure that reached CI: a stray continuation byte in the middle of
+    // the generated text made the whole request 500.
+    std::string content;
+    EXPECT_NO_THROW(content = parse_content_only(std::string("Hello\x80World")));
+    EXPECT_EQ(content, "Hello");
+}
+
+TEST(ContentOnlyParseUtf8, TruncatedSequenceFollowedByMoreBytes_DoesNotThrow) {
+    std::string content;
+    EXPECT_NO_THROW(content = parse_content_only(std::string("ab\xE4\xB8") + "cd"));
+    EXPECT_EQ(content, "ab");
+}
+
+TEST(ContentOnlyParseUtf8, InvalidLeadByte_DoesNotThrow) {
+    std::string content;
+    EXPECT_NO_THROW(content = parse_content_only(std::string("abc\xFF") + "d"));
+    EXPECT_EQ(content, "abc");
+}
+
+TEST(ContentOnlyParseUtf8, IncompleteTrailingSequence_DoesNotThrow) {
+    // Upstream already tolerated this one; pinned so the two malformed-UTF-8
+    // branches cannot drift apart again.
+    std::string content;
+    EXPECT_NO_THROW(content = parse_content_only(std::string("abc\xE2\x82")));
+    EXPECT_EQ(content, "abc");
+}
