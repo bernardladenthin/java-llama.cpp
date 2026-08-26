@@ -1435,9 +1435,9 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 | `src/test/cpp/test_json_helpers.cpp` | 60 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json` (incl. missing/out-of-range `index` rejection), `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk`, `server_metrics_to_json` |
 | `src/test/cpp/test_log_helpers.cpp` | 13 | All functions in `log_helpers.hpp`: `log_level_name`, `format_log_as_json` |
 | `src/test/cpp/test_jni_helpers.cpp` | 56 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock (incl. the `utf8_to_jstring_impl` byte-array string path: emoji byte-preservation, truncated-UTF-8 replace-not-throw) |
-| `src/test/cpp/test_tts_wav.cpp` | 2 | The in-memory WAV writer `pcm_to_wav16_bytes` in `tts_wav.hpp` (WAV header/payload + little-endian clamping) — our own code, not upstream. The Qwen3-TTS pipeline it pairs with (`mtmd_helper::gen_audio`) is entirely upstream-owned (no project-side DSP to unit-test here). **It is NOT currently covered end-to-end**: `TtsIntegrationTest` aborts the JVM natively on every platform CI runs (SIGABRT on Linux, non-zero exit on macOS and Windows) — see `TODO.md`. Until that is fixed, these 2 WAV-writer tests are the only automated coverage the TTS surface has. |
+| `src/test/cpp/test_tts_wav.cpp` | 2 | The in-memory WAV writer `pcm_to_wav16_bytes` in `tts_wav.hpp` (WAV header/payload + little-endian clamping) — our own code, not upstream. The Qwen3-TTS pipeline it pairs with (`mtmd_helper::gen_audio`) is entirely upstream-owned (no project-side DSP to unit-test here). The load path is additionally covered by `test_tts_params.cpp` (5 tests over `tts_params.hpp`'s `build_tts_params`), which pins the CPU-thread resolution whose absence used to crash the JVM on every platform — see the `TODO.md` entry for the mechanism. End-to-end coverage is `TtsIntegrationTest`, which is model-gated. |
 
-**Current total: 499 tests (all passing).**
+**Current total: 504 tests (all passing).**
 
 #### Upstream source location (in CMake build tree)
 

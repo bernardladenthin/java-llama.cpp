@@ -84,6 +84,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   reading (`ggml_time_us()`), not milliseconds since the epoch. The value is unchanged.
 
 ### Fixed
+- **`TextToSpeech` crashed the JVM on every platform when loading a model.** A hand-built
+  `common_params` never passes through `common_params_parse`, and `common/arg.cpp` is upstream's
+  only caller of `postprocess_cpu_params` — `common_init_from_params` does not call it. So
+  `cpuparams_batch.n_threads` kept its `-1` default, `common_threadpools::init` created a second
+  threadpool with -1 threads, and `ggml_threadpool_new` sized its worker array as
+  `sizeof(ggml_compute_state) * -1` — a huge `size_t`, so the allocation returned `NULL` and the
+  unchecked `memset` that follows it faulted at address 0. `tts_engine.cpp` and `train_engine.cpp` now mirror `arg.cpp`'s two
+  calls; the `LlamaModel` paths were never affected because their params are parsed. Guarded by
+  five model-free C++ tests over the extracted `build_tts_params`.
 - **`LlamaQuantizer` never worked in any published jar — every call threw `UnsatisfiedLinkError`.**
   The `extern "C"` declarations that give the JNI entry points C linkage come from the
   javac-generated `jllama.h`, which covers **only** `LlamaModel`; a JNI function for any other class

@@ -32,10 +32,32 @@ the crash and reproduced `SessionForkRewindIntegrationTest` (both cases) and
 not a Windows quirk. Its exit code was **141 (SIGPIPE)** rather than Ubuntu's 134 (SIGABRT), on the
 same crashed test.
 
-- **[OPEN, MAJOR — now localised] `TtsIntegrationTest` aborts the JVM natively on all 6 test
-  platforms.** The crash log is readable in the job log itself since `cbb5e62` (the section-3.1
-  print step), which is what finally produced the following. The abort is a **null-pointer
-  dereference while zeroing a buffer during the TTS model load**, identically on two OS families:
+- **[FIXED — root cause found, awaiting CI confirmation] `TtsIntegrationTest` aborted the JVM
+  natively on all 6 test platforms.** **Root cause: our own hand-built `common_params`.**
+  `common_cpu_params::n_threads` defaults to **-1**, and `postprocess_cpu_params` — the function
+  that resolves it — is called **only** from `common/arg.cpp`, i.e. only for params that came
+  through `common_params_parse`. `common_init_from_params` does not call it. `tts_engine.cpp`
+  assembled `common_params` by hand and set only `cpuparams.n_threads`, so `cpuparams_batch`
+  stayed at -1; `common_threadpools::init` then saw a mismatch between the two and built a
+  *second* threadpool with **-1 threads**. `ggml_threadpool_new` sizes its worker array as
+  `sizeof(struct ggml_compute_state) * tpp->n_threads`, which for -1 wraps to a huge `size_t`;
+  `ggml_aligned_malloc` returns `NULL` (after logging *"insufficient memory"*) and the next line
+  is an unchecked `memset(workers, 0, workers_size)` — the `bzero`-at-address-0 seen on every
+  platform.
+  Fixed by mirroring `arg.cpp`'s two calls, including the `role_model` argument that makes the
+  batch pool inherit rather than resolve independently. `train_engine.cpp` had the same latent
+  defect (it set *neither* count, so both stayed -1 — they matched, so it built one pool with
+  -1 threads instead of two) and got the same fix. `jllama.cpp` / `jni_helpers.hpp` are safe:
+  their params come from `common_params_parse`, so `arg.cpp` resolves them.
+  Guarded by 5 new model-free C++ tests (`test_tts_params.cpp`, suite 499 → **504**), verified
+  by negative control: removing the two calls turns `TtsParams.ResolvesBothCpuThreadCounts` red
+  with `actual: -1 vs 0`. The builder was extracted to `tts_params.hpp` so the test exercises
+  the *real* production path rather than a copy that could drift.
+
+  **How it was localised** (kept because the method generalises, not because the bug is still
+  open). The crash log became readable in the job log itself with `cbb5e62` (the section-3.1 print
+  step), and that is what produced everything below. The abort is a **null-pointer dereference
+  while zeroing a buffer during the TTS model load**, identically on two OS families:
 
   | | Linux x86-64 (run 32941522341) | macOS 15 arm64 (same run) |
   |---|---|---|
@@ -65,16 +87,18 @@ same crashed test.
   the PLT, so not inlined), `operator delete` and `__stack_chk_fail`. The JVM's frame-pointer
   walker dropped the intermediate frames, leaving only the outermost and innermost. The fault is
   therefore under `engine_init` — in `common_init_from_params` or the mtmd/mmproj init — not in the
-  JNI wrapper. (Symbol attribution itself *is* trustworthy here: the library exports 12 529 symbols,
+  JNI wrapper. (That much held up: it is in `common_init_from_params`, via
+  `common_threadpools::init`.) (Symbol attribution itself *is* trustworthy here: the library exports 12 529 symbols,
   the whole llama/common layer included, so a PC inside `common_init_from_params` would have been
   named as such. What is unreliable is the *depth* of the walk, not the naming.)
 
-  Worth noting for the next step: the macOS runner has **7 GB RAM / 3 cores** against Linux's
-  15 GB / 4, yet both fail the same way, so a plain out-of-memory on the larger host is a weak
-  explanation on its own — but an allocation that returns null and is then zeroed unchecked fits
-  both. The `mmproj` (speaker encoder + code predictor + code2wav) is the largest new buffer in
-  this path. The native stack could not be walked on Linux (one libc frame only); the full
-  `hs_err` in the artifact has the memory map if the allocation size matters.
+  The shape of the guess at that point — *an allocation that returns null and is then zeroed
+  unchecked* — was right; the attribution was not. It was blamed on host memory pressure (the
+  macOS runner has **7 GB RAM / 3 cores** against Linux's 15 GB / 4) and on the `mmproj` being the
+  largest new buffer in the path. Neither is involved: the request is for
+  `sizeof(struct ggml_compute_state) * (size_t) -1` bytes, which no allocator can satisfy on any
+  host with any amount of RAM free. That both hosts failed identically was the clue that memory
+  pressure could not be the explanation.
 
   Superseded note (kept because the reasoning was cited earlier): it was NOT certain an `hs_err`
   existed at all — `if-no-files-found: warn` and Windows' exit code 1 left that open. It does

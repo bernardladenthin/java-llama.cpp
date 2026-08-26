@@ -6,7 +6,8 @@
 
 #include "tts_engine.h"
 
-#include "tts_wav.hpp" // pcm_to_wav16_bytes
+#include "tts_params.hpp" // build_tts_params
+#include "tts_wav.hpp"    // pcm_to_wav16_bytes
 
 #include "common.h"
 #include "llama.h"
@@ -39,15 +40,9 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
     auto engine = new tts_engine();
     engine->n_threads = n_threads > 0 ? n_threads : 4;
 
-    common_params params;
-    params.n_ctx = 8192;
-    params.n_batch = engine->n_batch;
-    params.n_gpu_layers = n_gpu_layers;
-    params.cpuparams.n_threads = engine->n_threads;
-    params.model.path = model_path;
-    // Always enable embd so the backbone's hidden state can be handed to the audio-generation
-    // helper between frames (mirrors upstream tools/tts/tts.cpp main()).
-    params.embedding = true;
+    // Built by tts_params.hpp so the exact params the engine uses are unit-testable without a
+    // model -- see the header for why the CPU-thread resolution there is load-bearing.
+    common_params params = build_tts_params(model_path, n_gpu_layers, engine->n_threads, engine->n_batch);
 
     engine->init = common_init_from_params(params);
     engine->model = engine->init ? engine->init->model() : nullptr;
