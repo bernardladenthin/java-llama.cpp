@@ -961,8 +961,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_getModelMetaJson(J
         // All three modalities upstream tracks. `video` was omitted here while server_context_meta
         // has carried it for releases, and upstream's own /props emits all three -- a consumer
         // feature-detecting from getModelMeta() would have concluded no model ever accepts video.
-        {"modalities",
-         {{"vision", m.has_inp_image}, {"audio", m.has_inp_audio}, {"video", m.has_inp_video}}},
+        {"modalities", {{"vision", m.has_inp_image}, {"audio", m.has_inp_audio}, {"video", m.has_inp_video}}},
         {"name", m.model_name},
         {"architecture", arch},
         {"ftype", m.model_ftype},
