@@ -26,7 +26,7 @@ tests), so those jobs report *nothing but* the crash. The two Windows jobs happe
 therefore reach **1461** tests — they are the only jobs whose failure list is complete. Do not read a
 short Linux failure list as "Linux is healthier".
 
-**Confirmed platform-independent (macOS 14, head `42ce225`).** That job reached **517** tests before
+**Confirmed platform-independent (macOS 14, head `7be24a6`).** That job reached **517** tests before
 the crash and reproduced `SessionForkRewindIntegrationTest` (both cases) and
 `NativeServerAttachIntegrationTest` **identically** — same assertions, same messages. So these are
 not a Windows quirk. Its exit code was **141 (SIGPIPE)** rather than Ubuntu's 134 (SIGABRT), on the
@@ -54,12 +54,12 @@ same crashed test.
   with `actual: -1 vs 0`. The builder was extracted to `tts_params.hpp` so the test exercises
   the *real* production path rather than a copy that could drift.
 
-  **CI confirmation** (Ubuntu, run 32950691947 on `f9c43dc`): **1689 tests ran** where the fork
+  **CI confirmation** (Ubuntu, run 32950691947 on `999034b`): **1689 tests ran** where the fork
   previously died at 85, and the crash-print step found **no `hs_err_pid*.log` at all**. The only
   thing it printed was the router worker's stderr (see the router entry below).
 
   **How it was localised** (kept because the method generalises, not because the bug is still
-  open). The crash log became readable in the job log itself with `cbb5e62` (the section-3.1 print
+  open). The crash log became readable in the job log itself with `cfda4a9` (the section-3.1 print
   step), and that is what produced everything below. The abort is a **null-pointer dereference
   while zeroing a buffer during the TTS model load**, identically on two OS families:
 
@@ -136,7 +136,7 @@ same crashed test.
   **not** a bump regression: the error string is byte-identical at b10456 and b10618, and the only
   upstream commit touching `common/chat.cpp` in the range is the `common_json` abstraction (#27511).
 
-- **[ANSWERED] Re-check the full suite once the TTS crash is fixed.** Done: Ubuntu on `f9c43dc`
+- **[ANSWERED] Re-check the full suite once the TTS crash is fixed.** Done: Ubuntu on `999034b`
   ran **1689 tests, 3 failures, 1 error, 2 skipped**. Exactly one item was new — the router entry
   below — and the other three are the already-recorded `SessionForkRewind` pair and
   `NativeServerAttach`. So the earlier Windows list was a lower bound by one item, not by many.
@@ -172,7 +172,7 @@ same crashed test.
   resolve it. Reproduced on Linux with `nm -D`, so it was never Windows-specific — the public
   `LlamaQuantizer` API has never worked. Fixed, and guarded model-free by
   `NativeLibraryLoadSmokeTest.quantizerNativeEntryPointResolves` (`nm -D` on the rebuilt lib now shows
-  zero mangled `Java_*` exports). **Confirmed on a second toolchain:** at `42ce225` the macOS 14 job
+  zero mangled `Java_*` exports). **Confirmed on a second toolchain:** at `7be24a6` the macOS 14 job
   ran `QuantizerIntegrationTest` at *3 tests, 0 failures, 0 errors* with no `UnsatisfiedLinkError`
   anywhere in the run — the same 3 tests that were 2 failures + 1 error before the fix. Worth having,
   since symbol export and mangling differ between ELF/gcc and Mach-O/clang.
