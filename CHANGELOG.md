@@ -62,6 +62,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   guarded for old glibc in the same change.
 - Android/Gradle toolchain: Gradle pins moved 8.14.3 → 9.6.1 and the dockcross cross-compile images
   were bumped, alongside the AGP/Compose pin updates the Android builds needed.
+- Upgraded llama.cpp from **b10639 to b10644**. No project-source change, and the only file on the
+  priority API-review list that the range touches is `include/llama.h`, whose entire diff is two
+  constants: `LLAMA_SESSION_VERSION` 9 → 10 and `LLAMA_STATE_SEQ_VERSION` 2 → 3. They follow from a new
+  `tok` field on `llama_kv_cell_ext` (n-gram input embeddings) that has to survive a state save/restore.
+  Everything else is the Snapdragon/Hexagon backend rework, a one-line fix in the nanbeige model graph,
+  and the WebUI. Nothing under `common/`, `tools/server/` or `tools/mtmd/` changed, so no request field,
+  no bound and no response key can have moved, and all eight local patches apply unchanged.
+  **One consumer-visible consequence:** the version bumps are a *state-file format* break. A slot state
+  saved by an earlier build — via `LlamaModel.handleSlotAction(..., save)` or the server's
+  `/slots/{id}?action=save` — is rejected by its own version check after this upgrade and has to be
+  regenerated. No Java or native signature changed.
 - Upgraded llama.cpp from **b10631 to b10639**, in two reviewed steps. Neither range changes any
   project source. b10631→b10636 is ggml-cuda quantised-matmul configs for Pascal, ggml-metal
   SSM/Mamba kernels, an upstream `LLAMA_BUILD_UI` default flip that is inert here (this project
