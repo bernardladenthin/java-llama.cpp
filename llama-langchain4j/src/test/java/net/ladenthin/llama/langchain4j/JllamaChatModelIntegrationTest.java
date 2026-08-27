@@ -28,6 +28,23 @@ import org.junit.jupiter.api.Test;
  */
 class JllamaChatModelIntegrationTest {
 
+    /**
+     * Generation budget for both tests, matching the core module's {@code ReasoningBudgetTest}
+     * ({@code N_PREDICT = 1500}) for the same model.
+     *
+     * <p>Qwen3-0.6B is a reasoning model: it spends its first few hundred tokens inside
+     * {@code <think>} and only then emits assistant content, so a budget that does not clear the
+     * thinking block yields an <em>empty</em> answer rather than a short one. 320 was tried and is
+     * right on the boundary — in one CI run (33109360197) the blocking test finished thinking at 267
+     * tokens and passed while the streaming test consumed all 320 inside {@code <think>} and failed,
+     * from the same prompt against the same model. The adapter exposes no reasoning-budget knob, so
+     * the output budget is the only lever.
+     *
+     * <p>This is a cap, not a target: a normal run stops around 270–340 tokens, so raising it costs
+     * nothing except in the pathological case it exists to absorb.
+     */
+    private static final int MAX_OUTPUT_TOKENS = 1500;
+
     private static Path modelPath() {
         Path resolved = TestModelPaths.fromProperty("net.ladenthin.llama.model.path");
         Assumptions.assumeTrue(resolved != null, "model path property not set");
@@ -45,11 +62,9 @@ class JllamaChatModelIntegrationTest {
                     chat.chat(
                             ChatRequest.builder()
                                     .messages(UserMessage.from("Reply with the single word: ok"))
-                                    // Same budget as the streaming sibling, for the same reason:
-                                    // Qwen3-0.6B spends ~200 tokens inside <think> first, so a small
-                                    // budget yields an EMPTY assistant text -- which a bare
-                                    // notNullValue() assertion would happily accept.
-                                    .maxOutputTokens(320)
+                                    // See MAX_OUTPUT_TOKENS: too small a budget yields an EMPTY
+                                    // assistant text, which a bare notNullValue() would accept.
+                                    .maxOutputTokens(MAX_OUTPUT_TOKENS)
                                     .build());
 
             assertThat(response.aiMessage(), is(notNullValue()));
@@ -70,13 +85,10 @@ class JllamaChatModelIntegrationTest {
             streaming.chat(
                     ChatRequest.builder()
                             .messages(UserMessage.from("Reply with the single word: ok"))
-                            // Qwen3-0.6B is a reasoning model and spends ~200 tokens inside <think>
-                            // before it answers (see the core module's ReasoningBudgetTest, which
-                            // budgets 1500 for exactly this reason). The adapter exposes no
-                            // reasoning-budget knob, so the budget has to clear the thinking block or
-                            // the run produces no assistant text at all -- and the assertion below
-                            // would then be satisfied by a stream that delivered only thinking.
-                            .maxOutputTokens(320)
+                            // See MAX_OUTPUT_TOKENS: the budget has to clear the thinking block, or
+                            // the run produces no assistant content at all and the second assertion
+                            // below fails on a healthy model.
+                            .maxOutputTokens(MAX_OUTPUT_TOKENS)
                             .build(),
                     new StreamingChatResponseHandler() {
                         @Override
@@ -95,7 +107,7 @@ class JllamaChatModelIntegrationTest {
                         }
                     });
 
-            ChatResponse complete = done.get(60, TimeUnit.SECONDS);
+            ChatResponse complete = done.get(180, TimeUnit.SECONDS);
 
             // Two independent assertions, both of which must hold.
             //
