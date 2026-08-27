@@ -124,14 +124,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   that can ingest media, changing the signature of `mtmd_helper_bitmap_init_from_file`,
   `tokenize_input_prompts` and `format_prompt_rerank`. Four call sites were adapted — all of them pass
   `mctx = nullptr` or handle audio, so each now passes upstream's own `mtmd_helper_init_opt_default()`.
-  The wire contract is unchanged (68 request fields, 23 bounds and 304 response keys identical across
-  the range; zero CLI flags removed or renamed), and all eight local patches apply unchanged even though
-  six patch-target files were touched.
-  Of the 7 new upstream flags, the two CPU-offload ones are now exposed (see Added). The two
-  `--spec-synth-*` flags are not: upstream marks them "benchmarking only" — they synthesise fake
-  acceptance probabilities to measure llama.cpp's own speculative harness. The three `--video-*` flags
-  are not either: `ContentPart` has no video input, so they would be inert knobs. Both decisions and
-  what a real video-input feature would require are recorded in `TODO.md`.
+  The wire contract is unchanged (68 request fields, 23 bounds and 286 response keys identical across
+  the range over the six compiled server TUs; zero CLI flags removed or renamed), and all eight local
+  patches apply unchanged even though six patch-target files were touched.
+  Of the 6 new upstream flags, four are now exposed (see Added): `--n-cpu-ffn` and the three
+  `--video-*` knobs. `--n-cpu-moe` is exposed alongside them but is not new — it has existed upstream
+  since b6089 and had simply never been surfaced here. The two `--spec-synth-*` flags stay unexposed:
+  upstream marks them "benchmarking only" — they synthesise fake acceptance probabilities to measure
+  llama.cpp's own speculative harness. The `--video-*` trio was initially refused as inert without a
+  `ContentPart` video factory; a follow-up audit showed that was wrong on both counts (they reach the
+  task path this binding drives, and `MTMD_VIDEO` is compiled into the shipped library), so they are
+  exposed. The content part itself — upstream's `input_video`, which takes raw base64 rather than a
+  `data:` URI — remains in `TODO.md`.
 - Upgraded llama.cpp from **b10639 to b10644**. No project-source change, and the only file on the
   priority API-review list that the range touches is `include/llama.h`, whose entire diff is two
   constants: `LLAMA_SESSION_VERSION` 9 → 10 and `LLAMA_STATE_SEQ_VERSION` 2 → 3. They follow from a new

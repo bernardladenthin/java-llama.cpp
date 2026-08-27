@@ -495,6 +495,24 @@ device may be named; the literal `"none"` keeps the projector on the CPU. `OpenA
 accepts the same flag as `-mmdev`/`--mmproj-device`, and `NativeServer` forwards it verbatim like
 every other llama-server flag.
 
+`setMmprojDevice(...)` and `setMmprojOffload(...)` are mutually exclusive: upstream writes both onto
+the single `mmproj_use_gpu` field, so only one may appear in the rendered argv and **the last of the
+two calls wins** — each clears the other. Pick one; if you need a device after disabling offload,
+call `setMmprojDevice` last.
+
+**Video input — decode settings only, so far.** llama.cpp b10649 added a video path to `mtmd`, and it
+is compiled into the shipped library (`MTMD_VIDEO` is on by default). Its decode settings are exposed
+as `setVideoFps(float)`, `setVideoTimestampInterval(long)` and `setVideoFfmpegDir(String)`. The last
+one matters most in a JVM: upstream shells out to `ffmpeg`/`ffprobe` and resolves them from `PATH`,
+which an application server, an Android app or a JAR-only container frequently does not have them on —
+naming the directory is then the only way for video to work at all.
+
+What is **not** here yet is the content part: upstream's wire type for a video is
+`{"type":"input_video","input_video":{"data":"<base64>"}}` (raw base64, not a `data:` URI, unlike
+`image_url`), gated server-side on `mtmd_helper_support_video`. `ContentPart` has no `videoFile(...)`
+factory emitting that shape, so these knobs currently configure a path this API cannot yet feed
+directly. Tracked in `TODO.md`.
+
 **Audio input** works identically — load an audio-capable model (Ultravox, Qwen2.5-Omni, …) with its
 audio `--mmproj` and add a `ContentPart.audioFile(...)` (or `inputAudio(bytes, "wav"|"mp3")`) part. It
 serializes to the OpenAI `input_audio` content part and routes through the same `mtmd` pipeline:

@@ -313,13 +313,22 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
   invocation strings. `setVideoFfmpegDir` is the one that matters most, because upstream otherwise
   looks the binaries up on `PATH`, which a JVM process frequently does not have them on.
 
-  What is still missing is only the *ergonomic* entry point: a `ContentPart.videoFile(Path)` and a
-  bytes overload. A caller can already submit video today by handing raw bytes to
-  `ContentPart.imageBytes(bytes, "video/mp4")` — `mtmd_helper_bitmap_init_from_buf` sniffs the
-  container and falls through to video decoding rather than trusting the declared MIME type — but
-  that is an obscure spelling for it, and the missing factory is the remaining work, together with
-  an integration test. Note the runtime cost: upstream **shells out to `ffmpeg`/`ffprobe`**, so a
-  consumer needs those binaries, which makes the feature untestable on a CI runner without them.
+  What is still missing is the content part. Upstream's wire type is
+  `{"type":"input_video","input_video":{"data":"<base64>"}}`, handled in
+  `oaicompat_chat_params_parse` and gated on `allow_video = mtmd_helper_support_video(mctx)`. Note it
+  calls `handle_media(..., accept_base64_uri = false)`, i.e. **raw base64 only** — unlike `image_url`,
+  it will not take a `data:` URI, so `ContentPart.videoFile(Path)` must emit the bare base64 payload,
+  not the `data:video/mp4;base64,...` form the image factories build.
+
+  (An earlier draft of this entry suggested smuggling video through
+  `ContentPart.imageBytes(bytes, "video/mp4")`, on the reasoning that `mtmd_helper_bitmap_init_from_buf`
+  sniffs the container. That is plausible — the `image_url` branch does pass
+  `accept_base64_uri = true` and does not validate the MIME string — but it is **untested here** and
+  additionally gated on `allow_image`, so it is not documented as a supported route.)
+
+  Remaining work: the factory, a bytes overload, and an integration test. Note the runtime cost:
+  upstream **shells out to `ffmpeg`/`ffprobe`**, so a consumer needs those binaries, which makes the
+  feature untestable on a CI runner without them.
 
 - **`--spec-synth-len` / `--spec-synth-rates` — deliberately NOT exposed, and this should stay that
   way.** Added in b10649. Upstream's own help text marks both **"(benchmarking only)"**: they

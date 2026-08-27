@@ -273,6 +273,14 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
 //
 // Used at every post site in this file. Sleeping is off by default (-1), in which case
 // wait_until_no_sleep() sees a non-sleeping queue and returns immediately.
+//
+// Ordering invariant this depends on: wait_until_no_sleep() blocks until the worker loop clears
+// `sleeping`, and upstream's loop leaves that flag SET when it exits on !running -- it breaks out
+// of the sleep block before the `sleeping = false; notify_all();` pair. So a caller parked here
+// when the queue is terminated is never released. It is safe only because every entry point holds
+// a jllama_context_guard user reference and Java_..._delete waits for users == 0 BEFORE calling
+// terminate(), so the loop is always alive to service this wait. Do not reorder that teardown to
+// terminate first.
 static void wake_and_post(server_response_reader &rd, server_task &&task, bool front = false) {
     rd.queue_tasks.wait_until_no_sleep();
     rd.post_task(std::move(task), front);
