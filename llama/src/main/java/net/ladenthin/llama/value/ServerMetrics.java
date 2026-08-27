@@ -246,6 +246,48 @@ public final class ServerMetrics {
     }
 
     /**
+     * Milliseconds spent evaluating prompts in the current metrics window.
+     *
+     * <p>The window counterpart of {@code t_prompt_processing_total}. Fractional: the JNI layer
+     * converts upstream's microseconds, so this is not a whole number of milliseconds.</p>
+     *
+     * @return prompt-evaluation time for the current window, in milliseconds
+     */
+    public double getWindowPromptProcessingMillis() {
+        return node.path("t_prompt_processing").asDouble(0.0);
+    }
+
+    /**
+     * Milliseconds spent generating tokens in the current metrics window.
+     *
+     * <p>The window counterpart of {@code t_tokens_generation_total}. Fractional, for the same
+     * reason as {@link #getWindowPromptProcessingMillis()}.</p>
+     *
+     * @return token-generation time for the current window, in milliseconds
+     */
+    public double getWindowTokenGenerationMillis() {
+        return node.path("t_tokens_generation").asDouble(0.0);
+    }
+
+    /**
+     * Per-window throughput, the counterpart of {@link #getCumulativeTimings()}.
+     *
+     * <p>Both windowed timing keys have always been emitted; they simply had no typed accessor
+     * until the counters were audited. Returns {@code 0.0} for any rate whose ms total is zero.</p>
+     *
+     * @return per-window {@link Timings} since the previous metrics emission
+     */
+    public Timings getWindowTimings() {
+        long promptN = node.path("n_prompt_tokens_processed").asLong(0L);
+        long predictedN = node.path("n_tokens_predicted").asLong(0L);
+        double promptMs = getWindowPromptProcessingMillis();
+        double predictedMs = getWindowTokenGenerationMillis();
+        double promptPerSec = promptMs > 0.0 ? promptN * 1000.0 / promptMs : 0.0;
+        double predictedPerSec = predictedMs > 0.0 ? predictedN * 1000.0 / predictedMs : 0.0;
+        return new Timings(0, promptN, promptMs, promptPerSec, predictedN, predictedMs, predictedPerSec, 0, 0);
+    }
+
+    /**
      * Cumulative throughput derived from the totals fields. Returns {@code 0.0} for
      * any rate where the corresponding ms total is zero.
      *

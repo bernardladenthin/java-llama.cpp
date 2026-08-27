@@ -788,7 +788,7 @@ public class InferenceParametersTest {
 
     @Test
     public void testSetDryPenaltyLastNRejectsMinusOne() {
-        // llama.cpp b10275 set the request schema's hard limits to [0, INT32_MAX]; -1 no longer means
+        // llama.cpp b10273 set the request schema's hard limits to [0, INT32_MAX]; -1 no longer means
         // "the whole context", it makes the server reject the request.
         assertThrows(IllegalArgumentException.class, () -> new InferenceParameters("").withDryPenaltyLastN(-1));
     }

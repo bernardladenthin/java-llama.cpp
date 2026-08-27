@@ -47,17 +47,32 @@ public class ModelMetaTest {
     public void testModalityGetters() throws Exception {
         ModelMeta textOnly = parse("{\"vocab_type\":1,\"n_vocab\":100,\"n_ctx_train\":4096,"
                 + "\"n_embd\":512,\"n_params\":1000000,\"size\":500000,"
-                + "\"modalities\":{\"vision\":false,\"audio\":false},"
+                + "\"modalities\":{\"vision\":false,\"audio\":false,\"video\":false},"
                 + "\"architecture\":\"llama\",\"name\":\"\"}");
         assertThat(textOnly.supportsVision(), is(false));
         assertThat(textOnly.supportsAudio(), is(false));
+        assertThat(textOnly.supportsVideo(), is(false));
 
         ModelMeta multimodal = parse("{\"vocab_type\":1,\"n_vocab\":100,\"n_ctx_train\":4096,"
                 + "\"n_embd\":512,\"n_params\":1000000,\"size\":500000,"
-                + "\"modalities\":{\"vision\":true,\"audio\":true},"
+                + "\"modalities\":{\"vision\":true,\"audio\":true,\"video\":true},"
                 + "\"architecture\":\"gemma3\",\"name\":\"Gemma-3\"}");
         assertThat(multimodal.supportsVision(), is(true));
         assertThat(multimodal.supportsAudio(), is(true));
+        assertThat(multimodal.supportsVideo(), is(true));
+    }
+
+    @Test
+    public void modalityGettersDefaultToFalseOnOlderMetadata() throws Exception {
+        // Metadata captured from a build that predates the `video` key: every accessor must answer
+        // false rather than throw, so feature detection degrades instead of breaking.
+        ModelMeta legacy = parse("{\"vocab_type\":1,\"n_vocab\":100,\"n_ctx_train\":4096,"
+                + "\"n_embd\":512,\"n_params\":1000000,\"size\":500000,"
+                + "\"modalities\":{\"vision\":true,\"audio\":false},"
+                + "\"architecture\":\"llama\",\"name\":\"\"}");
+        assertThat(legacy.supportsVision(), is(true));
+        assertThat(legacy.supportsAudio(), is(false));
+        assertThat(legacy.supportsVideo(), is(false));
     }
 
     @Test

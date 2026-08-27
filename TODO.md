@@ -178,7 +178,7 @@ same crashed test.
   since symbol export and mangling differ between ELF/gcc and Mach-O/clang.
 
 - **[FIXED in this PR] `JsonEndpointParametersTest.testDryMultiplierAccepted` sent
-  `dry_penalty_last_n: -1`.** The one genuine b10456→b10618 regression in the list: b10275 gave the
+  `dry_penalty_last_n: -1`.** The one genuine b10456→b10618 regression in the list: b10273 gave the
   field hard limits `[0, INT32_MAX]` (0 = disabled) and dropped the old "-1 = context size" sentinel,
   so the request now 400s. The `InferenceParameters` / `ModelParameters` setters were already fixed in
   this PR; this test builds raw JSON and bypassed them. A repo-wide sweep confirms it was the only

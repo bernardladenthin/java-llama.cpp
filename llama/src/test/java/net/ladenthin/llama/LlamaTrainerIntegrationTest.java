@@ -26,7 +26,7 @@ class LlamaTrainerIntegrationTest {
 
     @Test
     void finetuneWritesAnOutputModel(@TempDir Path tmp) throws Exception {
-        String modelPath = System.getProperty("net.ladenthin.llama.train.model");
+        String modelPath = TestConstants.resolveModelProperty("net.ladenthin.llama.train.model");
         Assumptions.assumeTrue(
                 modelPath != null && !modelPath.isEmpty() && Files.exists(Paths.get(modelPath)),
                 "set -Dnet.ladenthin.llama.train.model=/path/to/small.gguf to run the fine-tune smoke");

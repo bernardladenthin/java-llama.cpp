@@ -843,7 +843,7 @@ header file diffs alone.
    `server_task_result_metrics::to_json()` to a bare slot array and b10519 split the task; no
    signature moved, every chunk compiled and linked clean, and `LlamaModel.getMetrics()` quietly
    returned the wrong shape for hundreds of builds. The same class hit `repeat_last_n` /
-   `dry_penalty_last_n` at b10275, where only a *value range* moved. Two cheap mechanical checks catch
+   `dry_penalty_last_n` at b10273, where only a *value range* moved. Two cheap mechanical checks catch
    these where a header diff cannot — run them on any bump that touches `tools/server/`:
 
 ```bash
@@ -1372,9 +1372,13 @@ resolver as `TestModelPaths` (test classes are not shared between modules).
 
 `validate-models.{sh,bat}`
 treats all of these as **required** (a missing model hard-fails the job before tests run, so a
-download regression can never silently downgrade to a skip). Only the audio-input model
-(`AudioInputIntegrationTest`) still self-skips — the prompt clip is committed
-(`src/test/resources/audios/sample.wav`) but the audio model + mmproj have no CI download.
+download regression can never silently downgrade to a skip). **Two** classes still self-skip on
+every platform, both because their model is outside the manifest: `AudioInputIntegrationTest` — the
+prompt clip is committed (`src/test/resources/audios/sample.wav`) but the audio model + mmproj have
+no CI download — and `LlamaTrainerIntegrationTest`, whose `net.ladenthin.llama.train.model` property
+is set by no job and whose model is in no `models.csv` row. The trainer one matters more than it
+looks: `train_engine.cpp` carries the same `postprocess_cpu_params` pair as `tts_params.hpp`, so the
+JVM-abort class of bug documented under "Qwen3-TTS" can regress there with no runnable guard.
 The model set has a **single source of truth: `.github/models.csv`** (one `filename,url` row per
 model; `#` comments). Everything derives from it: the **`download-models`** job (ubuntu,
 `needs: startgate`) is the only place models are fetched from HuggingFace (one manifest-driven
@@ -1437,8 +1441,9 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 | `src/test/cpp/test_log_helpers.cpp` | 13 | All functions in `log_helpers.hpp`: `log_level_name`, `format_log_as_json` |
 | `src/test/cpp/test_jni_helpers.cpp` | 56 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock (incl. the `utf8_to_jstring_impl` byte-array string path: emoji byte-preservation, truncated-UTF-8 replace-not-throw) |
 | `src/test/cpp/test_tts_wav.cpp` | 2 | The in-memory WAV writer `pcm_to_wav16_bytes` in `tts_wav.hpp` (WAV header/payload + little-endian clamping) — our own code, not upstream. The Qwen3-TTS pipeline it pairs with (`mtmd_helper::gen_audio`) is entirely upstream-owned (no project-side DSP to unit-test here). The load path is additionally covered by `test_tts_params.cpp` (5 tests over `tts_params.hpp`'s `build_tts_params`), which pins the CPU-thread resolution whose absence used to crash the JVM on every platform — see the `TODO.md` entry for the mechanism. End-to-end coverage is `TtsIntegrationTest`, which is model-gated. |
+| `src/test/cpp/test_tts_params.cpp` | 8 | The two builders every hand-assembled `common_params` goes through: `build_tts_params` (`tts_params.hpp`, 5 tests) and the shared `jllama::resolve_cpu_params` (`cpu_params.hpp`, 3 tests). The shared one is what guards **`train_engine.cpp`** too — its own integration test needs a GGUF no CI job downloads, so without these the JVM-abort bug could regress in the trainer on every platform, unseen. |
 
-**Current total: 509 tests (all passing).**
+**Current total: 512 tests (all passing).**
 
 #### Upstream source location (in CMake build tree)
 

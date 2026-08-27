@@ -13,6 +13,7 @@
 #define JLLAMA_TTS_PARAMS_HPP
 
 #include "common.h"
+#include "cpu_params.hpp"
 
 #include <string>
 
@@ -27,17 +28,10 @@ inline constexpr int TTS_DEFAULT_THREADS = 4;
 // ---------------------------------------------------------------------------
 // Builds the common_params for the TTS backbone.
 //
-// The two postprocess_cpu_params calls are the load-bearing part. common/arg.cpp is the ONLY
-// caller of that function in upstream, so a common_params assembled by hand -- as this one is --
-// never gets its CPU fields resolved: common_cpu_params::n_threads defaults to -1, and
-// common_init_from_params does not fix it up. common_threadpools::init then finds tpp and
-// tpp_batch mismatched, builds a separate batch pool, and ggml_threadpool_new computes
-//   workers_size = sizeof(struct ggml_compute_state) * tpp->n_threads
-// with n_threads == -1 -- a huge size_t. ggml_aligned_malloc returns NULL and the very next line
-// memsets it unchecked, so the process dies on memset(NULL, 0, huge): SIGSEGV at address 0,
-// reported as __bzero on macOS and as a bare libc frame on Linux. The role_model argument is what
-// makes the batch pool inherit the main pool's count instead of staying at -1; passing nullptr for
-// both would resolve each independently. This mirrors arg.cpp exactly.
+// The jllama::resolve_cpu_params() call is the load-bearing part -- without it this hand-built
+// common_params reaches ggml_threadpool_new with n_threads == -1 and the process dies on a
+// memset of NULL. See cpu_params.hpp for the full mechanism; it is shared with train_engine.cpp,
+// which assembles its params by hand for the same reason.
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline common_params build_tts_params(const std::string &model_path, int n_gpu_layers, int n_threads,
                                                     int n_batch) {
@@ -51,8 +45,7 @@ inline constexpr int TTS_DEFAULT_THREADS = 4;
     // helper between frames (mirrors upstream tools/tts/tts.cpp main()).
     params.embedding = true;
 
-    postprocess_cpu_params(params.cpuparams, nullptr);
-    postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
+    jllama::resolve_cpu_params(params);
 
     return params;
 }

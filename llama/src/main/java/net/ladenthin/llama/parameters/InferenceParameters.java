@@ -296,9 +296,17 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with tail-free sampling z replaced (default: 1.0, 1.0 = disabled).
      *
+     * <p><strong>Ignored by the server.</strong> Upstream llama.cpp no longer reads this field — {@code tfs_z}
+     * appears nowhere in {@code common/} or {@code tools/server/} as of the pinned build, and the request
+     * schema silently discards unknown fields rather than rejecting them, so setting it has no effect on
+     * generation. Retained only so existing call sites keep compiling; it will be removed in a future
+     * release.</p>
+     *
      * @param tfsZ tail-free sampling parameter z (1.0 = disabled)
      * @return a new instance; this instance is unchanged
+     * @deprecated upstream removed tail-free sampling; the value is discarded by the server
      */
+    @Deprecated
     public InferenceParameters withTfsZ(float tfsZ) {
         return withScalar(PARAM_TFS_Z, tfsZ);
     }
@@ -346,7 +354,7 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with the repetition-penalty window replaced (default: 64, 0 = disabled).
      *
-     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10275</strong>;
+     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10273</strong> (upstream #26524);
      * the request schema's hard limits are now {@code [0, INT32_MAX]}, so {@code -1} makes the server
      * reject the whole request. It is rejected here instead, so the failure names the cause rather
      * than arriving as a generic parameter error.</p>
@@ -358,7 +366,7 @@ public final class InferenceParameters extends JsonParameters {
     public InferenceParameters withRepeatLastN(int repeatLastN) {
         if (repeatLastN < 0) {
             throw new IllegalArgumentException("Invalid repeat_last_n value: " + repeatLastN
-                    + " (must be >= 0; 0 = disabled. llama.cpp b10275 dropped -1 = ctx_size)");
+                    + " (must be >= 0; 0 = disabled. llama.cpp b10273 dropped -1 = ctx_size)");
         }
         return withScalar(PARAM_REPEAT_LAST_N, repeatLastN);
     }
@@ -430,9 +438,17 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with the newline-penalty flag replaced.
      *
+     * <p><strong>Ignored by the server.</strong> Upstream llama.cpp no longer reads this field — {@code penalize_nl}
+     * appears nowhere in {@code common/} or {@code tools/server/} as of the pinned build, and the request
+     * schema silently discards unknown fields rather than rejecting them, so setting it has no effect on
+     * generation. Retained only so existing call sites keep compiling; it will be removed in a future
+     * release.</p>
+     *
      * @param penalizeNl whether to penalize newline tokens
      * @return a new instance; this instance is unchanged
+     * @deprecated upstream removed the newline penalty; the value is discarded by the server
      */
+    @Deprecated
     public InferenceParameters withPenalizeNl(boolean penalizeNl) {
         return withScalar(PARAM_PENALIZE_NL, penalizeNl);
     }
@@ -528,9 +544,17 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with the repetition-penalty prompt-portion override replaced.
      *
+     * <p><strong>Ignored by the server.</strong> Upstream llama.cpp no longer reads this field — {@code penalty_prompt}
+     * appears nowhere in {@code common/} or {@code tools/server/} as of the pinned build, and the request
+     * schema silently discards unknown fields rather than rejecting them, so setting it has no effect on
+     * generation. Retained only so existing call sites keep compiling; it will be removed in a future
+     * release.</p>
+     *
      * @param penaltyPrompt the string portion of the prompt to penalize; {@code null} clears
      * @return a new instance; this instance is unchanged
+     * @deprecated upstream removed the penalty-prompt override; the value is discarded by the server
      */
+    @Deprecated
     public InferenceParameters withPenaltyPrompt(@Nullable String penaltyPrompt) {
         return withOptionalJson(PARAM_PENALTY_PROMPT, penaltyPrompt);
     }
@@ -539,9 +563,13 @@ public final class InferenceParameters extends JsonParameters {
      * Returns a new request with the repetition-penalty prompt-portion override replaced
      * (token-id form). Empty input is a no-op (returns {@code this}).
      *
+     * <p><strong>Ignored by the server</strong> — see {@link #withPenaltyPrompt(String)}.</p>
+     *
      * @param tokens token ids of the prompt portion to penalize
      * @return a new instance with the array set, or {@code this} if {@code tokens} is empty
+     * @deprecated upstream removed the penalty-prompt override; the value is discarded by the server
      */
+    @Deprecated
     public InferenceParameters withPenaltyPrompt(int... tokens) {
         if (tokens.length == 0) {
             return this;
@@ -805,7 +833,7 @@ public final class InferenceParameters extends JsonParameters {
      * effect when {@link #withDryMultiplier(float)} is non-zero. Per-request mirror of
      * {@link ModelParameters#setDryPenaltyLastN(int)} (the {@code --dry-penalty-last-n} launch flag).
      *
-     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10275</strong>;
+     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10273</strong> (upstream #26524);
      * the request schema's hard limits are now {@code [0, INT32_MAX]}, so {@code -1} makes the server
      * reject the whole request. It is rejected here instead, so the failure names the cause rather
      * than arriving as a generic parameter error.</p>
@@ -817,7 +845,7 @@ public final class InferenceParameters extends JsonParameters {
     public InferenceParameters withDryPenaltyLastN(int dryPenaltyLastN) {
         if (dryPenaltyLastN < 0) {
             throw new IllegalArgumentException("Invalid dry_penalty_last_n value: " + dryPenaltyLastN
-                    + " (must be >= 0; 0 = disabled. llama.cpp b10275 dropped -1 = context size)");
+                    + " (must be >= 0; 0 = disabled. llama.cpp b10273 dropped -1 = context size)");
         }
         return withScalar(PARAM_DRY_PENALTY_LAST_N, dryPenaltyLastN);
     }

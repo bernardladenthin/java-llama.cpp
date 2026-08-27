@@ -433,7 +433,7 @@ public final class ModelParameters extends CliParameters {
     /**
      * Set last n tokens to consider for penalize (default: 64, 0 = disabled).
      *
-     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10275</strong>:
+     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10273</strong> (upstream #26524):
      * the lower bound is now {@code 0}, and {@code --repeat-last-n -1} makes {@code common_params_parse}
      * throw, which surfaces as a model-load failure. It is rejected here instead, so the failure names
      * the cause rather than arriving from the native layer.</p>
@@ -445,7 +445,7 @@ public final class ModelParameters extends CliParameters {
     public ModelParameters setRepeatLastN(int repeatLastN) {
         if (repeatLastN < 0) {
             throw new IllegalArgumentException("Invalid repeat-last-n value: " + repeatLastN
-                    + " (must be >= 0; 0 = disabled. llama.cpp b10275 dropped -1 = ctx_size)");
+                    + " (must be >= 0; 0 = disabled. llama.cpp b10273 dropped -1 = ctx_size)");
         }
         return putScalar("--repeat-last-n", repeatLastN);
     }
@@ -513,7 +513,7 @@ public final class ModelParameters extends CliParameters {
     /**
      * Set DRY penalty for the last n tokens (default: 64, 0 = disable).
      *
-     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10275</strong>:
+     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10273</strong> (upstream #26524):
      * the lower bound is now {@code 0}, and {@code --dry-penalty-last-n -1} makes
      * {@code common_params_parse} throw, which surfaces as a model-load failure. It is rejected here
      * instead, so the failure names the cause rather than arriving from the native layer.</p>
@@ -525,7 +525,7 @@ public final class ModelParameters extends CliParameters {
     public ModelParameters setDryPenaltyLastN(int dryPenaltyLastN) {
         if (dryPenaltyLastN < 0) {
             throw new IllegalArgumentException("Invalid dry-penalty-last-n value: " + dryPenaltyLastN
-                    + " (must be >= 0; 0 = disabled. llama.cpp b10275 dropped -1 = context size)");
+                    + " (must be >= 0; 0 = disabled. llama.cpp b10273 dropped -1 = context size)");
         }
         return putScalar("--dry-penalty-last-n", dryPenaltyLastN);
     }
@@ -1377,6 +1377,12 @@ public final class ModelParameters extends CliParameters {
      */
     public ModelParameters setMmprojDevice(String device) {
         parameters.put("--mmproj-device", device);
+        // --mmproj-device and --no-mmproj-offload write the same upstream field
+        // (common_params::mmproj_use_gpu). The rendered argv comes out of a HashMap, so if both were
+        // present the winner would be hash order -- unspecified. Clear the conflicting flag the way
+        // setMmprojOffload clears its opposite, so an explicit device always wins.
+        clearFlag(ModelFlag.NO_MMPROJ_OFFLOAD);
+        clearFlag(ModelFlag.MMPROJ_OFFLOAD);
         return this;
     }
 

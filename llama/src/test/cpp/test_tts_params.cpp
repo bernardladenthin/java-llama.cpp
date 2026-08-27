@@ -11,6 +11,7 @@
 // one-line assertion is the entire point -- the failure it pins cost a full debugging cycle
 // (hs_err retrieval, cross-platform frame comparison, disassembly) to identify.
 
+#include "cpu_params.hpp"
 #include "tts_params.hpp"
 
 #include <gtest/gtest.h>
@@ -79,3 +80,53 @@ TEST(CommonParamsCpuTrap, RoleModelMakesBatchInheritTheMainCount) {
 }
 
 } // namespace
+
+// ============================================================
+// jllama::resolve_cpu_params — the shared guard for every hand-built common_params
+//
+//   tts_params.hpp and train_engine.cpp both assemble a common_params by hand and both must route
+//   it through this one resolver. The TtsParams tests above cover the TTS path; these cover the
+//   resolver directly, so the trainer — whose only integration test needs a GGUF that no CI job
+//   downloads (net.ladenthin.llama.train.model is set by no workflow) — is guarded too. Delete
+//   either call site's resolve_cpu_params() and the JVM dies on memset(NULL, 0, huge) with no
+//   hs_err_pid log; these tests are the cheap, model-free way to notice.
+// ============================================================
+
+TEST(ResolveCpuParams, LeavesBothThreadCountsUsable) {
+    common_params params;
+    // The raw defaults are the crash input: -1 reaches ggml_threadpool_new as a huge size_t.
+    ASSERT_LE(params.cpuparams.n_threads, 0);
+
+    jllama::resolve_cpu_params(params);
+
+    EXPECT_GT(params.cpuparams.n_threads, 0);
+    EXPECT_GT(params.cpuparams_batch.n_threads, 0);
+}
+
+TEST(ResolveCpuParams, BatchInheritsTheMainCountRatherThanResolvingAlone) {
+    // The role_model argument on the second postprocess_cpu_params call is the whole point: the
+    // batch pool must inherit, or common_threadpools::init sees a mismatch and builds a second pool.
+    common_params params;
+    params.cpuparams.n_threads = 3;
+
+    jllama::resolve_cpu_params(params);
+
+    EXPECT_EQ(params.cpuparams.n_threads, 3);
+    EXPECT_EQ(params.cpuparams_batch.n_threads, 3);
+}
+
+TEST(ResolveCpuParams, IsIdempotent) {
+    // Called twice (e.g. a future refactor routing both a builder and its caller through it) must
+    // not drift the counts.
+    common_params params;
+    params.cpuparams.n_threads = 5;
+
+    jllama::resolve_cpu_params(params);
+    const int once_main = params.cpuparams.n_threads;
+    const int once_batch = params.cpuparams_batch.n_threads;
+
+    jllama::resolve_cpu_params(params);
+
+    EXPECT_EQ(params.cpuparams.n_threads, once_main);
+    EXPECT_EQ(params.cpuparams_batch.n_threads, once_batch);
+}

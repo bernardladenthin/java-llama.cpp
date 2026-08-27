@@ -15,6 +15,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 > has a row per upgrade range and stays authoritative for the per-range detail.
 
 ### Added
+- **`ServerMetrics.getWindowPromptProcessingMillis()` / `getWindowTokenGenerationMillis()` /
+  `getWindowTimings()`** — typed access to the current-window timing keys `t_prompt_processing` and
+  `t_tokens_generation`. Both were always emitted; only the cumulative `_total` variants had accessors.
+- **`ModelMeta.supportsVideo()`**, and `getModelMeta()` now emits `modalities.video`. Upstream has
+  tracked `has_inp_video` on `server_context_meta` for releases and emits all three modalities from its
+  own `/props`; this binding emitted only vision and audio, so feature detection concluded no model
+  ever accepts video.
 - `QuantizationType.Q2_0` — maps the new upstream `LLAMA_FTYPE_MOSTLY_Q2_0` (llama.cpp b9916) for `LlamaQuantizer`.
 - **Voice cloning and language selection for `TextToSpeech`**: `synthesize(String text, String speakerReferenceAudioPath, String language, int maxFrames, int topK, int seed)` — a speaker-reference clip makes the model imitate that voice. Part of the Qwen3-TTS rework (see Changed).
 - **`ModelParameters.setMmprojDevice(String)`** — places the multimodal projector on a device of its own
@@ -31,6 +38,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   as Prometheus text; they now arrive in the JSON payload.
 
 ### Changed
+- **Deprecated `InferenceParameters.withTfsZ`, `withPenalizeNl` and both `withPenaltyPrompt` overloads.**
+  `tfs_z`, `penalize_nl` and `penalty_prompt` appear nowhere in upstream `common/` or `tools/server/`
+  at the pinned build, and the request schema discards unknown fields rather than rejecting them — so
+  these have been silently doing nothing. Kept compiling for now; they will be removed.
+- `ModelParameters.setMmprojDevice` now clears the mmproj-offload flags. Both write upstream's single
+  `mmproj_use_gpu` field, and the rendered argv comes out of a `HashMap`, so setting both previously
+  left the winner to hash order.
+- `getMetrics()` no longer blocks until `close()` when the task queue is asleep. The wait predicate now
+  mirrors upstream's own (`closing || queue_tasks.is_sleeping()`); a prior comment wrongly claimed the
+  getter was unreachable from this layer. Only reachable with `setSleepIdleSeconds(> 0)`, off by default.
 - `ch.qos.logback:logback-classic` bumped 1.6.2 → 1.6.3 (test/runtime binding only).
 - CI actions bumped to latest: `actions/setup-java` v5 → v6.
 - Upgraded llama.cpp from **b9894 to b9917** (all eight local patches re-verified across the range).
@@ -43,7 +60,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   mmproj that bundles speaker encoder, code predictor and code2wav decoder — an OuteTTS + WavTokenizer
   pair no longer works and fails at load, not at compile time. `synthesize`'s `maxCodeTokens` parameter
   became `maxFrames`, and the single-argument overload's default dropped 4096 → 512.
-- **BREAKING — `-1` is no longer accepted for the repetition-penalty windows** (llama.cpp **b10275**).
+- **BREAKING — `-1` is no longer accepted for the repetition-penalty windows** (llama.cpp **b10273**).
   `repeat_last_n` and `dry_penalty_last_n` used to take `-1` for "the whole context"; upstream removed
   the sentinel, moving the request schema's hard limits to `[0, INT32_MAX]` and making
   `common_params_parse` throw on a negative value. `ModelParameters.setRepeatLastN` /
@@ -62,6 +79,27 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   guarded for old glibc in the same change.
 - Android/Gradle toolchain: Gradle pins moved 8.14.3 → 9.6.1 and the dockcross cross-compile images
   were bumped, alongside the AGP/Compose pin updates the Android builds needed.
+- **Post-upgrade audit of the whole b10456→b10644 range** — three independent sweeps over the
+  upstream diff (completeness, adaptation correctness, test integrity) against the files the binding
+  actually consumes. No missed adaptation was found: the request-field set, their bounds and the
+  emitted response keys are identical at both ends of the range, and `libjllama` links with zero
+  undefined upstream symbols. The audit did surface documentation and coverage gaps, fixed here:
+  - The `-1` context-size sentinel was dropped upstream at **b10273** (#26524), not b10275 — corrected
+    in 4 Javadoc blocks, 4 exception messages and every doc that cited it. `b10275` remains correct
+    for the unrelated `server-schema.h` signature break.
+  - `LlamaModel.saveSlot`/`restoreSlot` now document that the on-disk format is version-locked to the
+    linked llama.cpp build, and that a mismatch surfaces as upstream's misleading
+    `"No available space in KV cache or invalid slot save file"`.
+  - `getMetrics()` documents that the merged payload is not an atomic snapshot and that it defers
+    idle-sleep, which upstream's own `/metrics` stopped doing at b10644.
+  - **`--tools get_datetime` no longer starts.** Upstream deleted that built-in tool in this range and
+    an unknown name is fatal (`server_tools::setup` throws), so a `NativeServer` command line carrying
+    it now fails at startup. Same block: `server_tool::type()` reports `"server"` instead of
+    `"builtin"`, changing the `/tools` payload in full `NativeServer` mode.
+  - The four `t_*` keys in `getMetrics()` are now fractional rather than whole milliseconds, because
+    the merge divides upstream's microseconds. `ServerMetrics` reads them as doubles; a consumer
+    parsing the raw JSON with an integer parser sees a type change.
+
 - Upgraded llama.cpp from **b10639 to b10644**. No project-source change, and the only file on the
   priority API-review list that the range touches is `include/llama.h`, whose entire diff is two
   constants: `LLAMA_SESSION_VERSION` 9 → 10 and `LLAMA_STATE_SEQ_VERSION` 2 → 3. They follow from a new
@@ -70,9 +108,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   and the WebUI. Nothing under `common/`, `tools/server/` or `tools/mtmd/` changed, so no request field,
   no bound and no response key can have moved, and all eight local patches apply unchanged.
   **One consumer-visible consequence:** the version bumps are a *state-file format* break. A slot state
-  saved by an earlier build — via `LlamaModel.handleSlotAction(..., save)` or the server's
-  `/slots/{id}?action=save` — is rejected by its own version check after this upgrade and has to be
-  regenerated. No Java or native signature changed.
+  saved by an earlier build — via the public `LlamaModel.saveSlot(int, String)`, or the server's
+  `/slots/{id}?action=save` — is rejected by `LlamaModel.restoreSlot` after this upgrade and has to be
+  regenerated. No Java or native signature changed. The rejection is graceful but its message is
+  upstream's misleading `"No available space in KV cache or invalid slot save file"`, which does not
+  name the version mismatch; `saveSlot`'s Javadoc now spells this out. Slot state files are a cache to
+  regenerate on upgrade, not durable storage. The in-memory `Session` snapshot/fork feature is
+  unaffected — it never writes a file.
 - Upgraded llama.cpp from **b10631 to b10639**, in two reviewed steps. Neither range changes any
   project source. b10631→b10636 is ggml-cuda quantised-matmul configs for Pascal, ggml-metal
   SSM/Mamba kernels, an upstream `LLAMA_BUILD_UI` default flip that is inert here (this project

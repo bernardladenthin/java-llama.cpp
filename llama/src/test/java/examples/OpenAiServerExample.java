@@ -7,6 +7,7 @@ package examples;
 
 import java.io.IOException;
 import net.ladenthin.llama.LlamaModel;
+import net.ladenthin.llama.TestConstants;
 import net.ladenthin.llama.parameters.ModelParameters;
 import net.ladenthin.llama.server.OpenAiCompatServer;
 import net.ladenthin.llama.server.OpenAiServerConfig;
@@ -19,7 +20,8 @@ import org.junit.jupiter.api.Disabled;
 public class OpenAiServerExample {
 
     public static void main(String... args) throws IOException, InterruptedException {
-        String modelPath = System.getProperty("net.ladenthin.llama.server.model", "models/codellama-7b.Q2_K.gguf");
+        String modelPath =
+                TestConstants.resolveModelProperty("net.ladenthin.llama.server.model", TestConstants.MODEL_PATH);
         int port = Integer.getInteger("net.ladenthin.llama.server.port", 8080);
 
         // Two parallel slots let the editor's chat and its background title/summary requests run

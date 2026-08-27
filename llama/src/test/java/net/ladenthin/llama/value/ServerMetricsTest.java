@@ -222,4 +222,35 @@ public class ServerMetricsTest {
         assertEquals(0L, m.getDraftAcceptedTotal());
         assertEquals(0L, m.getDraftVerifyStepsTotal());
     }
+
+    @Test
+    public void windowTimingsReadTheWindowKeysNotTheTotals() throws Exception {
+        // The fixture deliberately gives the window and the total different values, so a getter
+        // wired to the wrong half is visible rather than coincidentally equal.
+        ServerMetrics m = parse(SAMPLE);
+        assertEquals(5.0, m.getWindowPromptProcessingMillis(), 1e-9);
+        assertEquals(8.0, m.getWindowTokenGenerationMillis(), 1e-9);
+    }
+
+    @Test
+    public void windowTimingsDeriveRatesFromTheWindowCounts() throws Exception {
+        ServerMetrics m = parse(SAMPLE);
+        Timings t = m.getWindowTimings();
+        assertEquals(10L, t.getPromptN());
+        assertEquals(5.0, t.getPromptMs(), 1e-9);
+        assertEquals(10 * 1000.0 / 5.0, t.getPromptPerSecond(), 1e-9);
+        assertEquals(20L, t.getPredictedN());
+        assertEquals(8.0, t.getPredictedMs(), 1e-9);
+        assertEquals(20 * 1000.0 / 8.0, t.getPredictedPerSecond(), 1e-9);
+    }
+
+    @Test
+    public void windowTimingsAreZeroRatherThanInfiniteWhenNothingRanYet() throws Exception {
+        ServerMetrics m = parse("{}");
+        assertEquals(0.0, m.getWindowPromptProcessingMillis(), 1e-9);
+        assertEquals(0.0, m.getWindowTokenGenerationMillis(), 1e-9);
+        Timings t = m.getWindowTimings();
+        assertEquals(0.0, t.getPromptPerSecond(), 1e-9);
+        assertEquals(0.0, t.getPredictedPerSecond(), 1e-9);
+    }
 }

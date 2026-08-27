@@ -5,6 +5,7 @@
 #include "train_engine.h"
 
 #include "common.h"
+#include "cpu_params.hpp"
 #include "ggml-opt.h"
 #include "llama.h"
 
@@ -65,16 +66,10 @@ bool finetune(const finetune_config &cfg, std::string &err) {
     params.cache_type_k = GGML_TYPE_F32;
     params.cache_type_v = GGML_TYPE_F32;
 
-    // A hand-built common_params never passes through common_params_parse, and common/arg.cpp is
-    // the ONLY caller of postprocess_cpu_params -- common_init_from_params does not call it. Without
-    // these two lines common_cpu_params::n_threads keeps its -1 default, and common_threadpools::init
-    // hands that -1 to ggml_threadpool_new, whose workers_size = sizeof(ggml_compute_state) *
-    // n_threads then overflows to a huge size_t; the allocation returns NULL and the following
-    // memset is unchecked, so the process dies on memset(NULL, 0, huge) -- SIGSEGV at address 0.
-    // Mirrors common/arg.cpp's own two calls, including the role_model that makes the batch pool
-    // inherit rather than resolve independently.
-    postprocess_cpu_params(params.cpuparams, nullptr);
-    postprocess_cpu_params(params.cpuparams_batch, &params.cpuparams);
+    // A hand-built common_params never passes through common_params_parse, so its CPU fields are
+    // still unresolved here; without this the process dies on a memset of NULL inside
+    // ggml_threadpool_new. Shared with tts_params.hpp -- see cpu_params.hpp for the mechanism.
+    jllama::resolve_cpu_params(params);
 
     llama_backend_init();
     llama_numa_init(params.numa);

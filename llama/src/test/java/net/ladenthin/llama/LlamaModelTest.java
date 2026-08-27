@@ -152,7 +152,7 @@ public class LlamaModelTest {
                 .withDryMultiplier(4.0f)
                 .withDryBase(1.75f)
                 .withDryAllowedLength(2)
-                // The whole context: llama.cpp b10275 dropped -1 as the "scan everything" sentinel,
+                // The whole context: llama.cpp b10273 dropped -1 as the "scan everything" sentinel,
                 // so the window is stated explicitly and must match the ctx size set in setup().
                 .withDryPenaltyLastN(128);
 
@@ -1226,21 +1226,51 @@ public class LlamaModelTest {
         JsonNode root = model.getMetricsTyped().asJson();
         assertTrue(root.isObject(), "Metrics must be an object, not a bare slot array: " + metrics);
         assertTrue(root.path("slots").isArray(), "Metrics must carry a slots array: " + metrics);
+        // Every integral counter server_metrics_to_json emits. The full set matters: the C++ suite
+        // pins the helper's key names and ServerMetricsTest pins the Java getters' names, but this
+        // is the ONLY place the two are compared. Assert a subset and a rename on one side alone
+        // still ships — the getter then silently returns its default forever, which is exactly how
+        // the b10408 payload regression survived hundreds of builds.
         for (String counter : new String[] {
             "idle",
             "processing",
             "deferred",
             "n_decode_total",
             "n_busy_slots_total",
+            "n_tokens_max",
+            "n_prompt_tokens_processed",
             "n_prompt_tokens_processed_total",
+            "n_tokens_predicted",
             "n_tokens_predicted_total",
-            "n_prompt_tokens_cached_total"
+            "n_prompt_tokens_cached_total",
+            "n_draft_tokens_total",
+            "n_draft_accepted_total",
+            "n_draft_verif_steps_total"
         }) {
             assertTrue(
                     root.path(counter).isIntegralNumber(),
                     "Counter " + counter + " must be an integer, not "
                             + root.path(counter).getNodeType() + ": " + metrics);
         }
+        // The timing keys are fractional milliseconds since the merge divides upstream's
+        // microseconds by 1000.0 — isNumber(), not isIntegralNumber().
+        for (String timing : new String[] {
+            "t_start",
+            "t_prompt_processing",
+            "t_prompt_processing_total",
+            "t_tokens_generation",
+            "t_tokens_generation_total"
+        }) {
+            assertTrue(
+                    root.path(timing).isNumber(),
+                    "Timing " + timing + " must be numeric, not "
+                            + root.path(timing).getNodeType() + ": " + metrics);
+        }
+        // Speculative-decoding acceptance histogram: present even with no draft model, as an
+        // empty array rather than a missing key.
+        assertTrue(
+                root.path("n_accepted_per_pos_total").isArray(),
+                "n_accepted_per_pos_total must be an array: " + metrics);
         // A loaded model always has at least one slot, and the idle count is drawn from that same
         // set — an exact equality would be flaky if a prior test left a slot mid-flight, so bound it
         // instead of pinning it.

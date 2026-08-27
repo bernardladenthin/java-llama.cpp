@@ -64,7 +64,13 @@ class JllamaChatModelIntegrationTest {
             streaming.chat(
                     ChatRequest.builder()
                             .messages(UserMessage.from("Reply with the single word: ok"))
-                            .maxOutputTokens(8)
+                            // Qwen3-0.6B is a reasoning model and spends ~200 tokens inside <think>
+                            // before it answers (see the core module's ReasoningBudgetTest, which
+                            // budgets 1500 for exactly this reason). The adapter exposes no
+                            // reasoning-budget knob, so the budget has to clear the thinking block or
+                            // the run produces no assistant text at all -- and the assertion below
+                            // would then be satisfied by a stream that delivered only thinking.
+                            .maxOutputTokens(320)
                             .build(),
                     new StreamingChatResponseHandler() {
                         @Override
@@ -85,24 +91,21 @@ class JllamaChatModelIntegrationTest {
 
             ChatResponse complete = done.get(60, TimeUnit.SECONDS);
 
-            // The CI model is Qwen3-0.6B, a reasoning model, and this request budgets 8 output
-            // tokens: a run can legitimately spend all of them inside <think> and produce no
-            // assistant text at all. StreamingChunkAssembler then routes every token to
-            // onPartialThinking and leaves AiMessage.text() null (it only sets text when it
-            // accumulated some), while `streamed` stays "" -- which is the "expected \"\" but was
-            // null" this assertion used to fail with once the test actually ran.
+            // Two independent assertions, both of which must hold.
             //
-            // Assert the invariant that holds in both shapes -- the concatenated onPartialResponse
-            // fragments are exactly the final text -- and separately that the stream delivered
-            // something, so a stream that produces nothing at all still fails.
+            // 1. The concatenated onPartialResponse fragments are exactly the final text. This is the
+            //    streaming contract itself: a regression that misroutes content deltas into
+            //    reasoning_content, or drops a fragment, breaks it.
             String finalText = complete.aiMessage().text() == null
                     ? ""
                     : complete.aiMessage().text();
             assertThat(finalText, is(streamed.toString()));
-            assertThat(
-                    "stream delivered neither content nor reasoning tokens",
-                    !streamed.toString().isEmpty() || complete.aiMessage().thinking() != null,
-                    is(true));
+
+            // 2. Actual assistant CONTENT arrived -- not merely "content or thinking". With a budget
+            //    that clears the thinking block this is the real signal; accepting thinking alone
+            //    would let a content-routing regression pass unnoticed, which is what the earlier,
+            //    8-token version of this test did.
+            assertThat("stream delivered no assistant content", !streamed.toString().isEmpty(), is(true));
         }
     }
 }

@@ -109,6 +109,19 @@ public final class ModelMeta {
     }
 
     /**
+     * Returns true if the model supports video input.
+     *
+     * <p>Completes the modality trio upstream tracks on {@code server_context_meta}. Older builds of
+     * this library never emitted the underlying {@code modalities.video} key, so this returns
+     * {@code false} against metadata captured from one of those.</p>
+     *
+     * @return {@code true} if the model accepts video input
+     */
+    public boolean supportsVideo() {
+        return node.at("/modalities/video").asBoolean(false);
+    }
+
+    /**
      * The model architecture string from GGUF {@code general.architecture} metadata
      * (e.g. {@code "llama"}, {@code "gemma3"}, {@code "mistral"}).
      * Returns an empty string if the field is absent in the GGUF file.

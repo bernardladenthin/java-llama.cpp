@@ -148,7 +148,7 @@ Concretely:
 3. **Check the server contract mechanically when the chunk touches `tools/server/`.** A header diff
    only shows signature changes; it cannot see a *contract* change behind a stable signature. Two
    breaks of that class already shipped — `getMetrics()`'s payload shape (b10408/b10519) and the
-   removal of the `-1` = context-size sentinel for `repeat_last_n`/`dry_penalty_last_n` (b10275) —
+   removal of the `-1` = context-size sentinel for `repeat_last_n`/`dry_penalty_last_n` (b10273) —
    and neither was visible to the build. Diff these three sets between the two tags; anything that
    changes has to be traced to the Java layer, not just to the C++ tests:
    ```bash

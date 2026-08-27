@@ -84,7 +84,7 @@ public class JsonEndpointParametersTest {
                 + DETERMINISTIC
                 + ",\"dry_multiplier\":0.8,\"dry_base\":1.75,\"dry_allowed_length\":2"
                 // 256 == the ctx size configured above. This used to say -1, llama.cpp's old
-                // "scan the whole context" sentinel; b10275 gave dry_penalty_last_n the hard
+                // "scan the whole context" sentinel; b10273 gave dry_penalty_last_n the hard
                 // limits [0, INT32_MAX] (0 = disabled), so -1 is now rejected outright with a
                 // 400. Spelling the context size out keeps the original intent.
                 + ",\"dry_penalty_last_n\":256}";

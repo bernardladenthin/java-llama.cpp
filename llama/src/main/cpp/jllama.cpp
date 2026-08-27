@@ -354,18 +354,19 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
 // introspection endpoints, and waited on with the same `closing` predicate every other
 // wait site in this file uses, so close() can unblock a pending call.
 //
-// KNOWN LIMITATION: a task posted just as the queue enters its idle-sleep state is never
-// processed -- upstream's own /metrics handler says so verbatim ("a task posted right
-// before sleeping is never processed, do not wait for it") and guards it by adding
-// queue_tasks.is_sleeping() to its wait predicate. That getter is not on
-// server_context's public header, so this layer cannot ask; the `closing` predicate is
-// what bounds the wait instead. Reaching that state needs
-// ModelParameters.setSleepIdleSeconds(> 0), which is off by default (-1).
+// A task posted just as the queue enters its idle-sleep state is never processed --
+// upstream's own /metrics handler says so verbatim ("a task posted right before sleeping
+// is never processed, do not wait for it") and guards it by adding queue_tasks.is_sleeping()
+// to its wait predicate. We mirror that predicate exactly: server_context does not expose
+// the getter, but the reader's `queue_tasks` member and server_queue::is_sleeping() are both
+// public, so this layer can and does ask. Without it a call made while the queue is asleep
+// blocks until close(), because post_task() does not wake a sleeping queue. Reaching that
+// state needs ModelParameters.setSleepIdleSeconds(> 0), which is off by default (-1).
 [[nodiscard]] static server_task_result_ptr post_and_wait(JNIEnv *env, jllama_context *jctx, server_task task) {
     auto rd = jctx->server.get_response_reader();
     task.id = rd.get_new_id();
     rd.post_task(std::move(task), true);
-    auto result = rd.next([jctx] { return jctx->closing.load(); });
+    auto result = rd.next([jctx, &rd] { return jctx->closing.load() || rd.queue_tasks.is_sleeping(); });
     if (!result_ok_or_throw(env, result))
         return nullptr;
     return result;
@@ -957,7 +958,11 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_getModelMetaJson(J
         {"n_embd", m.model_n_embd_inp},
         {"n_params", m.model_n_params},
         {"size", m.model_size},
-        {"modalities", {{"vision", m.has_inp_image}, {"audio", m.has_inp_audio}}},
+        // All three modalities upstream tracks. `video` was omitted here while server_context_meta
+        // has carried it for releases, and upstream's own /props emits all three -- a consumer
+        // feature-detecting from getModelMeta() would have concluded no model ever accepts video.
+        {"modalities",
+         {{"vision", m.has_inp_image}, {"audio", m.has_inp_audio}, {"video", m.has_inp_video}}},
         {"name", m.model_name},
         {"architecture", arch},
         {"ftype", m.model_ftype},

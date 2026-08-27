@@ -35,7 +35,8 @@ public class SessionForkRewindIntegrationTest {
 
     @BeforeAll
     public static void loadModel() {
-        String modelPath = System.getProperty("net.ladenthin.llama.model.path", TestConstants.REASONING_MODEL_PATH);
+        String modelPath = TestConstants.resolveModelProperty(
+                "net.ladenthin.llama.model.path", TestConstants.REASONING_MODEL_PATH);
         Assumptions.assumeTrue(new File(modelPath).exists(), "Model missing: " + modelPath);
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         model = new LlamaModel(new ModelParameters()
