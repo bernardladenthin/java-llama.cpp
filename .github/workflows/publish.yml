@@ -457,6 +457,52 @@ jobs:
           -Dnet.ladenthin.llama.langchain4j.rerank.model=models/${RERANKING_MODEL_NAME}
           -Dnet.ladenthin.llama.langchain4j.tool.model=models/${TOOL_MODEL_NAME}
 
+      # This job is model-backed and crosses JNI, so a forked test JVM here can abort exactly the
+      # way the six test-java-* jobs can -- but it had neither of their diagnostics. Same step and
+      # same path set as those, scoped to this module. See
+      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      - name: Print crash logs (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          found=0
+          for f in llama-langchain4j/hs_err_pid*.log; do
+            found=1
+            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
+            sed -n '1,200p' "$f"
+          done
+          for f in llama-langchain4j/target/surefire-reports/*.dumpstream llama-langchain4j/target/surefire-reports/*.dump; do
+            found=1
+            echo "===== $f ====="
+            cat "$f"
+          done
+          if [ "$found" = 0 ]; then
+            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
+            echo
+            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
+            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
+            echo "crash log. Read the surefire output above for the real cause."
+            echo
+            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
+            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
+            echo "test results. In that case the abort bypassed the JVM error handler (a native"
+            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
+          fi
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: error-log-langchain4j-integration
+          path: |
+            ${{ github.workspace }}/llama-langchain4j/hs_err_pid*.log
+            ${{ github.workspace }}/core.*
+            ${{ github.workspace }}/llama-langchain4j/*.hprof
+            ${{ github.workspace }}/llama-langchain4j/target/surefire-reports/*.dump
+            ${{ github.workspace }}/llama-langchain4j/target/surefire-reports/*.dumpstream
+            ${{ github.workspace }}/llama-langchain4j/target/surefire-reports/*.txt
+            ${{ github.workspace }}/llama-langchain4j/target/surefire-reports/TEST-*.xml
+          if-no-files-found: warn
+
   # ---------------------------------------------------------------------------
   # Build the llama.cpp WebUI ONCE, from the same pinned tag CMakeLists.txt fetches,
   # and share it to every native build as the generated, platform-independent
