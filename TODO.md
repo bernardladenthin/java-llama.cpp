@@ -120,21 +120,28 @@ same crashed test.
   takes the whole fork down it also truncates every job's test run, so it blocks seeing the rest of
   the suite and should be fixed first.
 
-- **[OPEN] `SessionForkRewindIntegrationTest` — empty reply after a slot restore (2 failures).**
-  `rewindRestoresTranscriptAndConversationContinues:81` and
-  `forkCreatesIndependentSessionWithSameTranscript:98` both fail `assertThat(reply.isEmpty(),
-  is(false))`: generation returns an empty string after `rewind()` / `fork()`, i.e. after slot state
-  is restored from a file. The transcript assertions around them pass, so it is the KV restore, not
-  the bookkeeping. Checked and **not** a bump regression: the only slot-touching upstream commit in
-  b10456..b10618 is `e8eed4525` (`LLAMA_SERVER_SLOTS_N_DIFF`), which is env-var opt-in and defaults
-  to 0, hence inert.
+- **[FIXED in this PR] `SessionForkRewindIntegrationTest` — empty reply after a slot restore.**
+  `rewindRestoresTranscriptAndConversationContinues` and
+  `forkCreatesIndependentSessionWithSameTranscript` failed `assertThat(reply.isEmpty(), is(false))`
+  after `rewind()` / `fork()`. The diagnosis above was right that it is not a bump regression, but
+  wrong that it is the KV restore: the model is Qwen3-0.6B, a **reasoning** model, and the tests'
+  token budget was being spent entirely inside `<think>`, so generation completed normally and
+  returned no assistant *content*. Fixed in `cc67ea7` by budgeting past the thinking block. The same
+  root cause resurfaced later in `llama-langchain4j` (`dd07b0e`), where both chat tests now share a
+  `MAX_OUTPUT_TOKENS = 1500` matching `ReasoningBudgetTest`'s `N_PREDICT`. Green on all six Java
+  platforms in run 33111759140.
 
-- **[OPEN] `NativeServerAttachIntegrationTest.completion_overHttp_served:108` — HTTP 500.**
+- **[FIXED in this PR] `NativeServerAttachIntegrationTest.completion_overHttp_served` — HTTP 500.**
   `{"error":{"code":500,"message":"The model produced output that does not match the expected
-  Content-only format"}}`. `"Content-only"` is a `common_chat_format` name (`common/chat.cpp:856`), so
-  the request ran without a template and the reply failed to parse under that format. Checked and
-  **not** a bump regression: the error string is byte-identical at b10456 and b10618, and the only
-  upstream commit touching `common/chat.cpp` in the range is the `common_json` abstraction (#27511).
+  Content-only format"}}`. Correctly identified above as long-standing upstream behaviour rather than
+  a bump regression. Root cause: `common_peg_until_parser` (`common/peg-parser.cpp`) tolerates an
+  **incomplete** trailing UTF-8 sequence in lenient mode — the only mode `common_chat_peg_parse` ever
+  uses — but its **invalid**-byte branch returned `FAIL` unconditionally, so a single malformed byte
+  anywhere in the output turned a *finished* generation into a 500. Fixed by local patch `0011`
+  (`ca60947`), which makes the invalid branch honour leniency exactly as the incomplete branch does;
+  strict mode is unchanged. Guarded by the `ContentOnlyParseUtf8` tests in `test_utils.cpp`, which —
+  unlike the upstream test the patch also adds — run in CI on every platform. Upstream-submittable;
+  re-checked at b10649 and upstream has not fixed it, so the patch stays.
 
 - **[ANSWERED] Re-check the full suite once the TTS crash is fixed.** Done: Ubuntu on `999034b`
   ran **1689 tests, 3 failures, 1 error, 2 skipped**. Exactly one item was new — the router entry
