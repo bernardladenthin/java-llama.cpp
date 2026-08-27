@@ -1441,6 +1441,59 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Target frame rate at which an attached video is sampled (upstream {@code --video-fps},
+     * llama.cpp b10649; default 4.0).
+     *
+     * <p>Video frames are decoded through ffmpeg and fed to the projector as images, so this is the
+     * main cost/detail dial: doubling it doubles the frames, the tokens they occupy and the decode
+     * time. Applies only when a projector is loaded ({@link #setMmproj(String)}) and the request
+     * carries media &mdash; it is read once, when the projector is initialised.</p>
+     *
+     * @param fps frames per second to sample from the video; must be positive
+     * @return this builder
+     * @throws IllegalArgumentException if {@code fps} is not positive
+     */
+    public ModelParameters setVideoFps(float fps) {
+        if (!(fps > 0.0f)) {
+            throw new IllegalArgumentException("Invalid video-fps value: " + fps + " (must be > 0)");
+        }
+        return putScalar("--video-fps", fps);
+    }
+
+    /**
+     * Interval between the text timestamps interleaved into a decoded video (upstream
+     * {@code --video-timestamp-interval}, llama.cpp b10649; default 5000&nbsp;ms).
+     *
+     * @param intervalMillis milliseconds between timestamps; must not be negative
+     * @return this builder
+     * @throws IllegalArgumentException if {@code intervalMillis} is negative
+     */
+    public ModelParameters setVideoTimestampInterval(long intervalMillis) {
+        if (intervalMillis < 0) {
+            throw new IllegalArgumentException(
+                    "Invalid video-timestamp-interval value: " + intervalMillis + " (must be >= 0)");
+        }
+        return putScalar("--video-timestamp-interval", intervalMillis);
+    }
+
+    /**
+     * Directory holding the {@code ffmpeg} and {@code ffprobe} binaries used to decode video
+     * (upstream {@code --video-ffmpeg-dir}, llama.cpp b10649).
+     *
+     * <p>This matters more here than it does for the standalone server: llama.cpp looks the binaries
+     * up on {@code PATH} by default, and a JVM process &mdash; an application server, an Android app,
+     * a container built for the JAR alone &mdash; frequently has no ffmpeg on {@code PATH} even when
+     * one is installed. Naming the directory is then the only way to make video input work. When
+     * unset, upstream keeps its {@code PATH} lookup.</p>
+     *
+     * @param directory the directory containing the ffmpeg binaries
+     * @return this builder
+     */
+    public ModelParameters setVideoFfmpegDir(String directory) {
+        return putScalar("--video-ffmpeg-dir", directory);
+    }
+
+    /**
      * Enable or disable GPU offload for the multimodal projector. This is independent of
      * {@link #setGpuLayers(int)} because upstream enables projector offload by default.
      *

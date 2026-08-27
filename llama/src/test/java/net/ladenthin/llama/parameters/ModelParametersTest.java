@@ -504,6 +504,37 @@ public class ModelParametersTest {
         assertThat(p.parameters, not(hasKey("--no-mmproj-offload")));
     }
 
+    // -------------------------------------------------------------------------
+    // Video decoding — the mmproj-gated knobs added in llama.cpp b10649
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testVideoDecodingFlagsRenderTheUpstreamNames() {
+        ModelParameters p = new ModelParameters()
+                .setVideoFps(2.5f)
+                .setVideoTimestampInterval(1500L)
+                .setVideoFfmpegDir("/opt/ffmpeg/bin");
+        assertThat(p.parameters.get("--video-fps"), is("2.5"));
+        assertThat(p.parameters.get("--video-timestamp-interval"), is("1500"));
+        assertThat(p.parameters.get("--video-ffmpeg-dir"), is("/opt/ffmpeg/bin"));
+    }
+
+    @Test
+    public void testVideoFpsRejectsNonPositiveValues() {
+        // Upstream parses this with std::stof and never validates it; a zero or negative target
+        // frame rate reaches the decoder, so reject it here where the message can name the flag.
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoFps(0.0f));
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoFps(-1.0f));
+    }
+
+    @Test
+    public void testVideoTimestampIntervalRejectsNegativeValues() {
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoTimestampInterval(-1L));
+        // Zero is legal: it means "a timestamp on every frame".
+        ModelParameters p = new ModelParameters().setVideoTimestampInterval(0L);
+        assertThat(p.parameters.get("--video-timestamp-interval"), is("0"));
+    }
+
     @Test
     public void testMmprojDeviceAndOffloadClearEachOtherInBothDirections() {
         // Both write upstream's single mmproj_use_gpu field, and our argv is rendered from a HashMap

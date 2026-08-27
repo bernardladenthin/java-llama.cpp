@@ -21,6 +21,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   only the weight class that dominates a model's size, usually fitting a much larger model into the same
   VRAM at a smaller speed cost. Only `--n-cpu-ffn` is new in llama.cpp b10649; `--n-cpu-moe` has existed
   upstream since b6089 but had never been exposed here.
+- **`ModelParameters.setVideoFps(float)` / `setVideoTimestampInterval(long)` / `setVideoFfmpegDir(String)`**
+  — the video-decoding knobs upstream added in llama.cpp b10649 (`--video-fps`,
+  `--video-timestamp-interval`, `--video-ffmpeg-dir`). They apply to any media attached to a request
+  once a projector is loaded: `server_context` copies them into the `mtmd_helper_init_opt` it passes
+  to `process_mtmd_prompt`, and video decoding is compiled into the shipped library (`MTMD_VIDEO`
+  defaults on). `setVideoFfmpegDir` is the significant one — upstream otherwise looks `ffmpeg` and
+  `ffprobe` up on `PATH`, which a JVM process often does not have them on.
 - **`ServerMetrics.getWindowPromptProcessingMillis()` / `getWindowTokenGenerationMillis()` /
   `getWindowTimings()`** — typed access to the current-window timing keys `t_prompt_processing` and
   `t_tokens_generation`. Both were always emitted; only the cumulative `_total` variants had accessors.

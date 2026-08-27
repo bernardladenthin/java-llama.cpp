@@ -290,23 +290,29 @@ upstream PR #22393 — it drops automatically when that merges.)
 
 These are JNI plumbing items for upstream API additions. Policy: add only after a real user request — they are mostly relevant to specific model families or specialized workflows.
 
-- **Video input (`ContentPart.videoFile(...)` + the three `--video-*` knobs).** llama.cpp **b10649**
-  added an end-to-end video path to `mtmd`: `mtmd_helper_video_init_params` (fps target, ffmpeg binary
-  directory, timestamp interval), a fourth `mtmd_helper_init_opt` parameter on the bitmap/tokenize
-  helpers, and the CLI flags `--video-fps`, `--video-timestamp-interval`, `--video-ffmpeg-dir`.
+- **Video input (`ContentPart.videoFile(...)`).** llama.cpp **b10649** added an end-to-end video path
+  to `mtmd`: `mtmd_helper_video_init_params` (fps target, ffmpeg binary directory, timestamp
+  interval), a fourth `mtmd_helper_init_opt` parameter on the bitmap/tokenize helpers, and the CLI
+  flags `--video-fps`, `--video-timestamp-interval`, `--video-ffmpeg-dir`.
 
-  The three flags were **deliberately not exposed** at the b10649 bump. They configure video decoding
-  and are inert without a way to *submit* a video: `ContentPart` offers text, image and audio only, so
-  adding the knobs alone would create exactly the class of dead-but-documented parameter that
-  `withTfsZ` / `withPenalizeNl` / `withPenaltyPrompt` had to be deprecated for. The bump passes
-  `mtmd_helper_init_opt_default()` at every call site, which is correct for image and audio.
+  **The three flags are now exposed** as `ModelParameters.setVideoFps` /
+  `setVideoTimestampInterval` / `setVideoFfmpegDir`. They were initially refused at the b10649 bump
+  as "inert without a way to submit a video"; a later audit showed that reasoning was wrong on two
+  counts. First, they are not inert: `server_context::load_model` copies them into its own
+  `init_opt` when the projector loads, and that `init_opt` is what `server-context.cpp` passes to
+  `process_mtmd_prompt` on the task path this binding uses — so they take effect for any media the
+  caller attaches. Second, video decoding is genuinely compiled in: `MTMD_VIDEO` defaults to `ON`
+  (it needs only `LLAMA_SUBPROCESS`, also `ON`), and the shipped `libjllama.so` carries the ffmpeg
+  invocation strings. `setVideoFfmpegDir` is the one that matters most, because upstream otherwise
+  looks the binaries up on `PATH`, which a JVM process frequently does not have them on.
 
-  Doing it properly means: a `ContentPart.videoFile(Path)` (and probably a bytes overload), routing a
-  real `mtmd_helper_init_opt` from `ModelParameters` through the JNI multimodal path instead of the
-  default, `ModelParameters.setVideoFps/​setVideoTimestampInterval/​setVideoFfmpegDir`, and an
-  integration test. Note the runtime cost: upstream **shells out to `ffmpeg`/`ffprobe`**, so a
-  consumer needs those binaries on the host — worth stating prominently in the Javadoc, and it makes
-  the feature untestable on any CI runner without them.
+  What is still missing is only the *ergonomic* entry point: a `ContentPart.videoFile(Path)` and a
+  bytes overload. A caller can already submit video today by handing raw bytes to
+  `ContentPart.imageBytes(bytes, "video/mp4")` — `mtmd_helper_bitmap_init_from_buf` sniffs the
+  container and falls through to video decoding rather than trusting the declared MIME type — but
+  that is an obscure spelling for it, and the missing factory is the remaining work, together with
+  an integration test. Note the runtime cost: upstream **shells out to `ffmpeg`/`ffprobe`**, so a
+  consumer needs those binaries, which makes the feature untestable on a CI runner without them.
 
 - **`--spec-synth-len` / `--spec-synth-rates` — deliberately NOT exposed, and this should stay that
   way.** Added in b10649. Upstream's own help text marks both **"(benchmarking only)"**: they
