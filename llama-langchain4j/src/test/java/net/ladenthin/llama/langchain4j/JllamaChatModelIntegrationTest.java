@@ -45,11 +45,17 @@ class JllamaChatModelIntegrationTest {
                     chat.chat(
                             ChatRequest.builder()
                                     .messages(UserMessage.from("Reply with the single word: ok"))
-                                    .maxOutputTokens(8)
+                                    // Same budget as the streaming sibling, for the same reason:
+                                    // Qwen3-0.6B spends ~200 tokens inside <think> first, so a small
+                                    // budget yields an EMPTY assistant text -- which a bare
+                                    // notNullValue() assertion would happily accept.
+                                    .maxOutputTokens(320)
                                     .build());
 
             assertThat(response.aiMessage(), is(notNullValue()));
             assertThat(response.aiMessage().text(), is(notNullValue()));
+            assertThat("the model must produce assistant text, not only a thinking block",
+                    response.aiMessage().text().trim().isEmpty(), is(false));
         }
     }
 

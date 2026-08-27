@@ -5,9 +5,9 @@
 #include "train_engine.h"
 
 #include "common.h"
-#include "cpu_params.hpp"
 #include "ggml-opt.h"
 #include "llama.h"
+#include "train_params.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -24,27 +24,7 @@ using json = nlohmann::json;
 namespace jllama_train {
 
 bool finetune(const finetune_config &cfg, std::string &err) {
-    common_params params;
-    params.escape = false;
-    params.model.path = cfg.model_path;
-    params.out_file = cfg.output_path;
-    params.n_ctx = cfg.n_ctx;
-    params.n_gpu_layers = cfg.n_gpu_layers;
-    params.val_split = cfg.val_split;
-    if (cfg.n_batch > 0) {
-        params.n_batch = cfg.n_batch;
-    }
-    if (cfg.n_ubatch > 0) {
-        params.n_ubatch = cfg.n_ubatch;
-    }
-
-    params.optimizer = cfg.optimizer == 1 ? GGML_OPT_OPTIMIZER_TYPE_SGD : GGML_OPT_OPTIMIZER_TYPE_ADAMW;
-    params.lr.lr0 = cfg.learning_rate;
-    params.lr.lr_min = cfg.lr_min;
-    params.lr.decay_epochs = cfg.decay_epochs;
-    params.lr.wd = cfg.weight_decay;
-    params.lr.epochs = static_cast<unsigned>(cfg.epochs > 0 ? cfg.epochs : 1);
-    params.lr.init(); // required after setting lr fields, before the optimizer reads get_lr()
+    common_params params = build_train_params(cfg);
 
     // The corpus is either read from a file or supplied inline.
     if (!cfg.training_file.empty()) {
@@ -57,19 +37,6 @@ bool finetune(const finetune_config &cfg, std::string &err) {
     } else {
         params.prompt = cfg.training_text;
     }
-
-    // Training needs writable weights (mmap yields read-only pointers) and an f32 KV cache
-    // (OUT_PROD has no f16 support) — same forced settings as upstream finetune.cpp.
-    // b10107 replaced the use_mmap/use_mlock/use_direct_io booleans with a single load_mode
-    // enum; LLAMA_LOAD_MODE_NONE disables mmap so the weight pointers stay writable.
-    params.load_mode = LLAMA_LOAD_MODE_NONE;
-    params.cache_type_k = GGML_TYPE_F32;
-    params.cache_type_v = GGML_TYPE_F32;
-
-    // A hand-built common_params never passes through common_params_parse, so its CPU fields are
-    // still unresolved here; without this the process dies on a memset of NULL inside
-    // ggml_threadpool_new. Shared with tts_params.hpp -- see cpu_params.hpp for the mechanism.
-    jllama::resolve_cpu_params(params);
 
     llama_backend_init();
     llama_numa_init(params.numa);

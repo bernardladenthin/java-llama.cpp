@@ -256,6 +256,33 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
     configure_task_slot_impl(task, data);
 }
 
+// Wake the queue before posting, then post.
+//
+// With ModelParameters.setSleepIdleSeconds(> 0) the queue enters a sleeping state after the
+// configured idle period, and server_queue::post() does NOT leave it: post() only calls
+// condition_tasks.notify_one(), while the sleeping wait predicate is
+// `(!running || req_stop_sleeping)`. The loop wakes, re-tests, and goes straight back to
+// sleep with the task still queued. Only wait_until_no_sleep() sets req_stop_sleeping.
+//
+// Upstream does this wake for the caller: server_res_generator's constructor calls
+// queue_tasks.wait_until_no_sleep() for every route built with create_response(). Exactly
+// four routes opt out via create_response(true) -- health, metrics, props and models -- and
+// each answers from cache instead of waiting. This layer builds its readers with
+// server_context::get_response_reader(), the CLI-facing accessor, which performs no wake --
+// so the wake has to happen here or not at all.
+//
+// Used at every post site in this file. Sleeping is off by default (-1), in which case
+// wait_until_no_sleep() sees a non-sleeping queue and returns immediately.
+static void wake_and_post(server_response_reader &rd, server_task &&task, bool front = false) {
+    rd.queue_tasks.wait_until_no_sleep();
+    rd.post_task(std::move(task), front);
+}
+
+static void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks) {
+    rd.queue_tasks.wait_until_no_sleep();
+    rd.post_tasks(std::move(tasks));
+}
+
 [[nodiscard]] static jint dispatch_streaming_completion(JNIEnv *env, jllama_context *jctx, const json &data,
                                                         server_task_type task_type, task_response_type res_type,
                                                         std::vector<raw_buffer> files = {}) {
@@ -268,7 +295,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
         task.id = tid;
         populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
         task.params.res_type = res_type;
-        rd->post_task(std::move(task));
+        wake_and_post(*rd, std::move(task));
     } catch (const std::exception &e) {
         delete rd;
         throw_invalid_request(env, e);
@@ -301,7 +328,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
         return nullptr;
     }
     task.params.res_type = res_type;
-    rd.post_task(std::move(task));
+    wake_and_post(rd, std::move(task));
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     if (!batch_ok_or_throw(env, br))
         return nullptr;
@@ -355,18 +382,19 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
 // introspection endpoints, and waited on with the same `closing` predicate every other
 // wait site in this file uses, so close() can unblock a pending call.
 //
-// A task posted just as the queue enters its idle-sleep state is never processed --
-// upstream's own /metrics handler says so verbatim ("a task posted right before sleeping
-// is never processed, do not wait for it") and guards it by adding queue_tasks.is_sleeping()
-// to its wait predicate. We mirror that predicate exactly: server_context does not expose
-// the getter, but the reader's `queue_tasks` member and server_queue::is_sleeping() are both
-// public, so this layer can and does ask. Without it a call made while the queue is asleep
-// blocks until close(), because post_task() does not wake a sleeping queue. Reaching that
-// state needs ModelParameters.setSleepIdleSeconds(> 0), which is off by default (-1).
+// wake_and_post() has already left any idle-sleep state, so the task is guaranteed to be
+// seen by a running loop. The is_sleeping() disjunct below is only a backstop for the
+// narrow window in which the queue could fall asleep again between the wake and this wait
+// -- it takes a full idle period (>= 1s) of quiet to re-enter, so it needs the calling
+// thread to be descheduled for longer than that. Should it ever happen, the result is a
+// thrown "No result" rather than a block until close(); upstream's /metrics handler adds
+// the same is_sleeping() guard for the same reason ("a task posted right before sleeping
+// is never processed, do not wait for it"), differing only in that it can fall back to a
+// cached response where this has nothing to fall back to.
 [[nodiscard]] static server_task_result_ptr post_and_wait(JNIEnv *env, jllama_context *jctx, server_task task) {
     auto rd = jctx->server.get_response_reader();
     task.id = rd.get_new_id();
-    rd.post_task(std::move(task), true);
+    wake_and_post(rd, std::move(task), true);
     auto result = rd.next([jctx, &rd] { return jctx->closing.load() || rd.queue_tasks.is_sleeping(); });
     if (!result_ok_or_throw(env, result))
         return nullptr;
@@ -1139,7 +1167,7 @@ JNIEXPORT jfloatArray JNICALL Java_net_ladenthin_llama_LlamaModel_embed(JNIEnv *
     task.id = rd.get_new_id();
     task.tokens = server_tokens(tokens, false);
     task.index = 0;
-    rd.post_task(std::move(task));
+    wake_and_post(rd, std::move(task));
 
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     if (!batch_ok_or_throw(env, br))
@@ -1192,7 +1220,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleRerank(JNIEn
                                                           mtmd_helper_init_opt_default()),
                                      static_cast<int>(i), TASK_RESPONSE_TYPE_NONE));
     }
-    rd.post_tasks(std::move(tasks));
+    wake_and_post(rd, std::move(tasks));
 
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     if (!batch_ok_or_throw(env, br))
@@ -1579,7 +1607,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleEmbeddings(J
                                                  server_tokens(tokenized_prompts[i].get_tokens(), false),
                                                  static_cast<int>(i), res_type));
     }
-    rd.post_tasks(std::move(tasks));
+    wake_and_post(rd, std::move(tasks));
 
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     if (!batch_ok_or_throw(env, br))

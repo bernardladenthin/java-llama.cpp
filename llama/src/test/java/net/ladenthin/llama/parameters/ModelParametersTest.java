@@ -84,7 +84,8 @@ public class ModelParametersTest {
     }
 
     // -------------------------------------------------------------------------
-    // setCpuMoeLayers / setCpuFfnLayers — the CPU-offload pair added in llama.cpp b10649
+    // setCpuMoeLayers / setCpuFfnLayers — the CPU-offload pair. --n-cpu-ffn is new in llama.cpp
+    // b10649; --n-cpu-moe has existed upstream since b6089 but was never exposed here until now.
     // -------------------------------------------------------------------------
 
     @Test
@@ -501,6 +502,28 @@ public class ModelParametersTest {
         ModelParameters p = new ModelParameters().setMmprojDevice("none");
         assertThat(p.parameters.get("--mmproj-device"), is("none"));
         assertThat(p.parameters, not(hasKey("--no-mmproj-offload")));
+    }
+
+    @Test
+    public void testMmprojDeviceAndOffloadClearEachOtherInBothDirections() {
+        // Both write upstream's single mmproj_use_gpu field, and our argv is rendered from a HashMap
+        // whose iteration order is unspecified -- so if both keys were present the winner would be
+        // hash order. The contract is "the last of the two calls wins".
+        ModelParameters deviceLast =
+                new ModelParameters().setMmprojOffload(false).setMmprojDevice("CUDA1");
+        assertThat(deviceLast.parameters.get("--mmproj-device"), is("CUDA1"));
+        assertThat(deviceLast.parameters, not(hasKey("--no-mmproj-offload")));
+        assertThat(deviceLast.parameters, not(hasKey("--mmproj-offload")));
+
+        ModelParameters offloadLast =
+                new ModelParameters().setMmprojDevice("CUDA1").setMmprojOffload(false);
+        assertThat(offloadLast.parameters, hasKey("--no-mmproj-offload"));
+        assertThat(offloadLast.parameters, not(hasKey("--mmproj-device")));
+
+        ModelParameters enabledLast =
+                new ModelParameters().setMmprojDevice("CUDA1").setMmprojOffload(true);
+        assertThat(enabledLast.parameters, hasKey("--mmproj-offload"));
+        assertThat(enabledLast.parameters, not(hasKey("--mmproj-device")));
     }
 
     @Test

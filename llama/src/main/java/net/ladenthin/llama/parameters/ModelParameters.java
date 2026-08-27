@@ -884,7 +884,8 @@ public final class ModelParameters extends CliParameters {
      * which dominate a MoE model's size — so attention and the rest of each layer stay on the GPU.
      * That usually fits a far larger model in the same VRAM at a much smaller speed cost than
      * reducing the layer count would. Upstream {@code --n-cpu-moe} / {@code -ncmoe}, added in
-     * llama.cpp b10649; use {@link #setCpuFfnLayers(int)} for a dense model.</p>
+     * llama.cpp b6089 but never exposed here until now; use {@link #setCpuFfnLayers(int)} for a
+     * dense model.</p>
      *
      * @param layers the number of leading layers whose MoE expert weights stay on the CPU
      * @return this builder
@@ -1420,10 +1421,11 @@ public final class ModelParameters extends CliParameters {
      */
     public ModelParameters setMmprojDevice(String device) {
         parameters.put("--mmproj-device", device);
-        // --mmproj-device and --no-mmproj-offload write the same upstream field
-        // (common_params::mmproj_use_gpu). The rendered argv comes out of a HashMap, so if both were
-        // present the winner would be hash order -- unspecified. Clear the conflicting flag the way
-        // setMmprojOffload clears its opposite, so an explicit device always wins.
+        // --mmproj-device and --{no-,}mmproj-offload write the same upstream field
+        // (common_params::mmproj_use_gpu), so upstream resolves a clash by argv order. Our argv is
+        // rendered from a HashMap, where that order is unspecified -- so the pair must never both be
+        // present. setMmprojOffload clears this key in turn, making the rule simply "the last of the
+        // two calls wins".
         clearFlag(ModelFlag.NO_MMPROJ_OFFLOAD);
         clearFlag(ModelFlag.MMPROJ_OFFLOAD);
         return this;
@@ -1442,12 +1444,20 @@ public final class ModelParameters extends CliParameters {
      * Enable or disable GPU offload for the multimodal projector. This is independent of
      * {@link #setGpuLayers(int)} because upstream enables projector offload by default.
      *
+     * <p>Clears any device previously named by {@link #setMmprojDevice(String)}: both write
+     * upstream's single {@code mmproj_use_gpu} field, so only one of them may appear in the
+     * rendered argv. Between the two, the last call wins &mdash; call {@code setMmprojDevice}
+     * afterwards to pin a device again.</p>
+     *
      * @param enabled {@code true} to offload the projector, {@code false} to keep it on CPU
      * @return this builder
      */
     public ModelParameters setMmprojOffload(boolean enabled) {
         setFlag(enabled ? ModelFlag.MMPROJ_OFFLOAD : ModelFlag.NO_MMPROJ_OFFLOAD);
         clearFlag(enabled ? ModelFlag.NO_MMPROJ_OFFLOAD : ModelFlag.MMPROJ_OFFLOAD);
+        // Also drop any --mmproj-device: it writes the same upstream field, and with a HashMap-
+        // rendered argv the winner between the two would be hash order. See setMmprojDevice.
+        parameters.remove("--mmproj-device");
         return this;
     }
 

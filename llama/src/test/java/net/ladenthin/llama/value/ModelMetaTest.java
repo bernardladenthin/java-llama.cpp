@@ -63,6 +63,30 @@ public class ModelMetaTest {
     }
 
     @Test
+    public void eachModalityGetterReadsItsOwnKey() throws Exception {
+        // The other modality fixtures set audio and video to the same value throughout, so a getter
+        // wired to the wrong sibling key still satisfies them. These three isolate one key each.
+        assertThat(parse(modalities("true", "false", "false")).supportsVision(), is(true));
+        assertThat(parse(modalities("true", "false", "false")).supportsAudio(), is(false));
+        assertThat(parse(modalities("true", "false", "false")).supportsVideo(), is(false));
+
+        assertThat(parse(modalities("false", "true", "false")).supportsVision(), is(false));
+        assertThat(parse(modalities("false", "true", "false")).supportsAudio(), is(true));
+        assertThat(parse(modalities("false", "true", "false")).supportsVideo(), is(false));
+
+        assertThat(parse(modalities("false", "false", "true")).supportsVision(), is(false));
+        assertThat(parse(modalities("false", "false", "true")).supportsAudio(), is(false));
+        assertThat(parse(modalities("false", "false", "true")).supportsVideo(), is(true));
+    }
+
+    private static String modalities(String vision, String audio, String video) {
+        return "{\"vocab_type\":1,\"n_vocab\":100,\"n_ctx_train\":4096,"
+                + "\"n_embd\":512,\"n_params\":1000000,\"size\":500000,"
+                + "\"modalities\":{\"vision\":" + vision + ",\"audio\":" + audio + ",\"video\":" + video + "},"
+                + "\"architecture\":\"llama\",\"name\":\"\"}";
+    }
+
+    @Test
     public void modalityGettersDefaultToFalseOnOlderMetadata() throws Exception {
         // Metadata captured from a build that predates the `video` key: every accessor must answer
         // false rather than throw, so feature detection degrades instead of breaking.

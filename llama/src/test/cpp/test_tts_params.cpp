@@ -12,6 +12,7 @@
 // (hs_err retrieval, cross-platform frame comparison, disassembly) to identify.
 
 #include "cpu_params.hpp"
+#include "train_params.hpp"
 #include "tts_params.hpp"
 
 #include <gtest/gtest.h>
@@ -84,12 +85,12 @@ TEST(CommonParamsCpuTrap, RoleModelMakesBatchInheritTheMainCount) {
 // ============================================================
 // jllama::resolve_cpu_params — the shared guard for every hand-built common_params
 //
-//   tts_params.hpp and train_engine.cpp both assemble a common_params by hand and both must route
-//   it through this one resolver. The TtsParams tests above cover the TTS path; these cover the
-//   resolver directly, so the trainer — whose only integration test needs a GGUF that no CI job
-//   downloads (net.ladenthin.llama.train.model is set by no workflow) — is guarded too. Delete
-//   either call site's resolve_cpu_params() and the JVM dies on memset(NULL, 0, huge) with no
-//   hs_err_pid log; these tests are the cheap, model-free way to notice.
+//   tts_params.hpp and train_params.hpp both assemble a common_params by hand and both must route
+//   it through this one resolver. Delete either call site's resolve_cpu_params() and the JVM dies
+//   on memset(NULL, 0, huge) with no hs_err_pid log; these tests are the cheap, model-free way to
+//   notice. Each builder has its own guard above/below, because testing the resolver alone does
+//   NOT cover the call sites: train_engine.cpp is compiled into jllama only, and its integration
+//   test is gated on net.ladenthin.llama.train.model, which no CI job sets.
 // ============================================================
 
 TEST(ResolveCpuParams, LeavesBothThreadCountsUsable) {
@@ -106,27 +107,107 @@ TEST(ResolveCpuParams, LeavesBothThreadCountsUsable) {
 TEST(ResolveCpuParams, BatchInheritsTheMainCountRatherThanResolvingAlone) {
     // The role_model argument on the second postprocess_cpu_params call is the whole point: the
     // batch pool must inherit, or common_threadpools::init sees a mismatch and builds a second pool.
+    //
+    // The requested count is derived from the host rather than hardcoded: dropping role_model makes
+    // the batch pool resolve to the host's own core count, so a fixture that happened to equal that
+    // count (a 3-core runner, a 3-CPU container) would pass with the bug present.
+    common_params probe;
+    jllama::resolve_cpu_params(probe);
+    const int host_default = probe.cpuparams.n_threads;
+    ASSERT_GT(host_default, 0);
+    const int requested = host_default + 1;
+
     common_params params;
-    params.cpuparams.n_threads = 3;
+    params.cpuparams.n_threads = requested;
 
     jllama::resolve_cpu_params(params);
 
-    EXPECT_EQ(params.cpuparams.n_threads, 3);
-    EXPECT_EQ(params.cpuparams_batch.n_threads, 3);
+    EXPECT_EQ(params.cpuparams.n_threads, requested);
+    EXPECT_EQ(params.cpuparams_batch.n_threads, requested);
+    EXPECT_NE(params.cpuparams_batch.n_threads, host_default) << "batch pool resolved alone instead of inheriting";
 }
 
-TEST(ResolveCpuParams, IsIdempotent) {
-    // Called twice (e.g. a future refactor routing both a builder and its caller through it) must
-    // not drift the counts.
-    common_params params;
-    params.cpuparams.n_threads = 5;
+// ============================================================
+// build_train_params — the trainer's builder
+//
+//   The sibling of the TtsParams block. This is the only runnable guard on the trainer's
+//   resolve_cpu_params() call: train_engine.cpp is in the jllama target, not jllama_test, and
+//   LlamaTrainerIntegrationTest self-skips on every platform because its model is in no
+//   models.csv row.
+// ============================================================
 
-    jllama::resolve_cpu_params(params);
-    const int once_main = params.cpuparams.n_threads;
-    const int once_batch = params.cpuparams_batch.n_threads;
+namespace {
 
-    jllama::resolve_cpu_params(params);
+jllama_train::finetune_config minimal_train_config() {
+    jllama_train::finetune_config cfg{};
+    cfg.model_path = "base.gguf";
+    cfg.output_path = "tuned.gguf";
+    cfg.epochs = 2;
+    cfg.learning_rate = 1e-5f;
+    cfg.lr_min = -1.0f;
+    cfg.decay_epochs = 0.0f;
+    cfg.weight_decay = 0.0f;
+    cfg.optimizer = 0;
+    cfg.n_ctx = 512;
+    cfg.n_gpu_layers = 0;
+    cfg.val_split = 0.0f;
+    return cfg;
+}
 
-    EXPECT_EQ(params.cpuparams.n_threads, once_main);
-    EXPECT_EQ(params.cpuparams_batch.n_threads, once_batch);
+} // namespace
+
+TEST(TrainParams, ResolvesBothCpuThreadCounts) {
+    const common_params params = jllama_train::build_train_params(minimal_train_config());
+
+    // The one that crashed the JVM: left at -1, ggml_threadpool_new memsets NULL.
+    EXPECT_GT(params.cpuparams.n_threads, 0);
+    EXPECT_GT(params.cpuparams_batch.n_threads, 0);
+    EXPECT_EQ(params.cpuparams_batch.n_threads, params.cpuparams.n_threads);
+}
+
+TEST(TrainParams, ForcesTheSettingsTrainingRequires) {
+    const common_params params = jllama_train::build_train_params(minimal_train_config());
+
+    // Weights must stay writable (mmap yields read-only pointers) and the KV cache must be f32
+    // (OUT_PROD has no f16 support). Losing either turns into a runtime failure deep in ggml-opt.
+    EXPECT_EQ(params.load_mode, LLAMA_LOAD_MODE_NONE);
+    EXPECT_EQ(params.cache_type_k, GGML_TYPE_F32);
+    EXPECT_EQ(params.cache_type_v, GGML_TYPE_F32);
+    EXPECT_FALSE(params.escape);
+}
+
+TEST(TrainParams, MapsTheConfigOntoTheOptimizerFields) {
+    jllama_train::finetune_config cfg = minimal_train_config();
+    cfg.optimizer = 1;
+    cfg.epochs = 7;
+    cfg.n_batch = 64;
+    cfg.n_ubatch = 16;
+
+    const common_params params = jllama_train::build_train_params(cfg);
+
+    EXPECT_EQ(params.optimizer, GGML_OPT_OPTIMIZER_TYPE_SGD);
+    EXPECT_EQ(params.lr.epochs, 7u);
+    EXPECT_EQ(params.n_batch, 64);
+    EXPECT_EQ(params.n_ubatch, 16);
+    EXPECT_EQ(params.model.path, "base.gguf");
+    EXPECT_EQ(params.out_file, "tuned.gguf");
+}
+
+TEST(TrainParams, NonPositiveBatchSizesKeepTheNativeDefaults) {
+    const common_params defaults{};
+    jllama_train::finetune_config cfg = minimal_train_config();
+    cfg.n_batch = 0;
+    cfg.n_ubatch = 0;
+
+    const common_params params = jllama_train::build_train_params(cfg);
+
+    EXPECT_EQ(params.n_batch, defaults.n_batch);
+    EXPECT_EQ(params.n_ubatch, defaults.n_ubatch);
+}
+
+TEST(TrainParams, EpochsBelowOneAreClampedSoTheOptimizerRunsAtLeastOnce) {
+    jllama_train::finetune_config cfg = minimal_train_config();
+    cfg.epochs = 0;
+
+    EXPECT_EQ(jllama_train::build_train_params(cfg).lr.epochs, 1u);
 }

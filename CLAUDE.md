@@ -1195,8 +1195,8 @@ helper `server_metrics_to_json` (`json_helpers.hpp`, unit-tested in `test_json_h
 than letting the Java contract follow upstream's transport split. Durations are converted from
 upstream microseconds to the milliseconds the payload has always used. The merge also surfaces the
 counters upstream added since — `n_prompt_tokens_cached_total` and the speculative-decoding tallies
-(`n_draft_tokens_total`, `n_draft_accepted_total`, `n_draft_verify_steps_total`,
-`n_draft_accepted_per_pos`) — which previously existed only inside the Prometheus text and had no
+(`n_draft_tokens_total`, `n_draft_accepted_total`, `n_draft_verif_steps_total`,
+`n_accepted_per_pos_total` — upstream's own spellings, kept verbatim) — which previously existed only inside the Prometheus text and had no
 JSON representation at all; `value.ServerMetrics` exposes them with typed getters (plus a derived
 `getDraftAcceptanceRate()`). No second JNI entry point and no Prometheus-text parser were needed.
 

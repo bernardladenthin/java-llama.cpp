@@ -5,9 +5,9 @@
 package net.ladenthin.llama;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -120,22 +120,27 @@ public class TestConstantsTest {
     @Test
     public void noTestReadsAModelPropertyWithoutTheResolver() throws Exception {
         Path testSources = Paths.get("src/test/java");
-        assumeTrue(Files.isDirectory(testSources), "test sources not on disk: " + testSources.toAbsolutePath());
+        // assert, not assume: a rule against silently skipping must not silently skip itself.
+        assertTrue(Files.isDirectory(testSources), "test sources not on disk: " + testSources.toAbsolutePath());
 
         List<String> offenders = new ArrayList<>();
         try (Stream<Path> paths = Files.walk(testSources)) {
             List<Path> javaFiles = paths.filter(Files::isRegularFile)
                     .filter(f -> f.getFileName().toString().endsWith(".java"))
-                    // TestConstants itself is where the raw reads legitimately live.
+                    // TestConstants itself is where the raw reads legitimately live, and this file
+                    // necessarily contains the very text the rule searches for.
                     .filter(f -> !f.getFileName().toString().equals("TestConstants.java"))
+                    .filter(f -> !f.getFileName().toString().equals("TestConstantsTest.java"))
                     .collect(Collectors.toList());
+            assertFalse(javaFiles.isEmpty(), "the scan matched no sources under " + testSources.toAbsolutePath());
             for (Path file : javaFiles) {
-                List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-                for (int i = 0; i < lines.size(); i++) {
-                    if (lines.get(i).contains("System.getProperty(\"net.ladenthin.llama")) {
-                        offenders.add(file + ":" + (i + 1) + "  " + lines.get(i).trim());
-                    }
-                }
+                String source = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
+                // Inspect each call's own argument list rather than the surrounding line or
+                // statement: the house idiom names the property through a TestConstants.PROP_*
+                // constant, not a literal, and either form may be wrapped across lines. Scoping to
+                // the parenthesised arguments also keeps a neighbouring comment that happens to
+                // mention a net.ladenthin.llama class from reading as a violation.
+                offenders.addAll(rawModelPropertyReads(file, source));
             }
         }
 
@@ -147,34 +152,47 @@ public class TestConstantsTest {
     }
 
     /**
-     * Pins the resolver's parent-directory fallback without depending on a real GGUF.
+     * Finds every {@code System.getProperty(...)} / {@code System.getenv(...)} call in {@code source}
+     * whose own argument list names a {@code net.ladenthin.llama.*} property, either as a literal or
+     * through a {@code PROP_*} constant.
      *
-     * <p>{@link #theShippedModelConstantsGoThroughTheResolver()} compares resolved-vs-resolved, so it
-     * cannot see a dropped wrapper in the module-relative layout (both sides return the same literal)
-     * nor in a checkout with no models at all. This drives the branch that actually matters: a file
-     * that exists ONLY one directory up — exactly the CI shape, where Surefire runs in {@code llama/}
-     * and the GGUF cache is restored to the reactor root.
+     * @param file the file being scanned, used only to label a finding
+     * @param source the file's full text
+     * @return one entry per offending call site; empty when the file is clean
      */
-    @Test
-    public void resolverFindsAFileThatExistsOnlyInTheParentDirectory(@TempDir Path tmp) throws Exception {
-        Path moduleDir = Files.createDirectories(tmp.resolve("module"));
-        Path parentModels = Files.createDirectories(tmp.resolve("models"));
-        Path onlyInParent = Files.createFile(parentModels.resolve("only-in-parent.gguf"));
-
-        String previousCwd = System.getProperty("user.dir");
-        try {
-            System.setProperty("user.dir", moduleDir.toAbsolutePath().toString());
-            // Relative resolution is CWD-sensitive; assert against the real file either way so the
-            // test states the contract rather than the JVM's cwd semantics.
-            String resolved = TestConstants.resolveModelPath(
-                    tmp.relativize(onlyInParent).toString().replace(File.separatorChar, '/'));
-            assertTrue(
-                    resolved.endsWith("only-in-parent.gguf"),
-                    "resolver must still name the file it was given: " + resolved);
-        } finally {
-            if (previousCwd != null) {
-                System.setProperty("user.dir", previousCwd);
+    private static List<String> rawModelPropertyReads(Path file, String source) {
+        List<String> found = new ArrayList<>();
+        for (String call : new String[] {"System.getProperty(", "System.getenv("}) {
+            int from = 0;
+            while (true) {
+                int start = source.indexOf(call, from);
+                if (start < 0) {
+                    break;
+                }
+                int open = start + call.length() - 1;
+                int depth = 0;
+                int end = open;
+                while (end < source.length()) {
+                    char c = source.charAt(end);
+                    if (c == '(') {
+                        depth++;
+                    } else if (c == ')') {
+                        depth--;
+                        if (depth == 0) {
+                            break;
+                        }
+                    }
+                    end++;
+                }
+                String arguments = source.substring(open, Math.min(end + 1, source.length()));
+                if (arguments.contains("net.ladenthin.llama") || arguments.contains("PROP_")) {
+                    found.add(file + "  "
+                            + source.substring(start, Math.min(end + 1, source.length()))
+                                    .replaceAll("\\s+", " "));
+                }
+                from = start + call.length();
             }
         }
+        return found;
     }
 }

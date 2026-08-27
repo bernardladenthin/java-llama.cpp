@@ -125,6 +125,14 @@ public class MultimodalIntegrationTest {
         }
         model = new LlamaModel(parameters);
         assertTrue(model.getModelMeta().supportsVision(), "loaded model + mmproj must advertise vision input");
+        // The native side must emit all three modality keys. ModelMetaTest feeds ModelMeta its own
+        // JSON, so nothing there would notice getModelMetaJson() dropping one; this is the only
+        // place the real emitter is observed. Presence, not value -- whether this particular model
+        // accepts video is the model's business.
+        JsonNode modalities = model.getModelMeta().asJson().path("modalities");
+        for (String key : new String[] {"vision", "audio", "video"}) {
+            assertTrue(modalities.has(key), "getModelMetaJson() must emit modalities." + key + ": " + modalities);
+        }
     }
 
     @AfterAll

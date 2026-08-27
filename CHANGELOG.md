@@ -17,9 +17,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ### Added
 - **`ModelParameters.setCpuMoeLayers(int)` / `setCpuFfnLayers(int)`** — keep the first N layers'
   Mixture-of-Experts weights, or dense FFN weights, on the CPU (upstream `--n-cpu-moe` / `-ncmoe` and
-  `--n-cpu-ffn` / `-ncffn`, llama.cpp b10649). The companions to `setGpuLayers`: where that moves whole
-  layers, these move only the weight class that dominates a model's size, usually fitting a much larger
-  model into the same VRAM at a smaller speed cost. `--n-cpu-moe` had never been exposed either.
+  `--n-cpu-ffn` / `-ncffn`). The companions to `setGpuLayers`: where that moves whole layers, these move
+  only the weight class that dominates a model's size, usually fitting a much larger model into the same
+  VRAM at a smaller speed cost. Only `--n-cpu-ffn` is new in llama.cpp b10649; `--n-cpu-moe` has existed
+  upstream since b6089 but had never been exposed here.
 - **`ServerMetrics.getWindowPromptProcessingMillis()` / `getWindowTokenGenerationMillis()` /
   `getWindowTimings()`** — typed access to the current-window timing keys `t_prompt_processing` and
   `t_tokens_generation`. Both were always emitted; only the cumulative `_total` variants had accessors.
@@ -47,12 +48,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `tfs_z`, `penalize_nl` and `penalty_prompt` appear nowhere in upstream `common/` or `tools/server/`
   at the pinned build, and the request schema discards unknown fields rather than rejecting them — so
   these have been silently doing nothing. Kept compiling for now; they will be removed.
-- `ModelParameters.setMmprojDevice` now clears the mmproj-offload flags. Both write upstream's single
-  `mmproj_use_gpu` field, and the rendered argv comes out of a `HashMap`, so setting both previously
-  left the winner to hash order.
-- `getMetrics()` no longer blocks until `close()` when the task queue is asleep. The wait predicate now
-  mirrors upstream's own (`closing || queue_tasks.is_sleeping()`); a prior comment wrongly claimed the
-  getter was unreachable from this layer. Only reachable with `setSleepIdleSeconds(> 0)`, off by default.
+- `ModelParameters.setMmprojDevice` and `setMmprojOffload` now clear each other. Both write upstream's
+  single `mmproj_use_gpu` field, and the rendered argv comes out of a `HashMap`, so leaving both present
+  left the winner to hash order. Clearing in only one direction still lost the race whenever
+  `setMmprojOffload` was called second; the contract is now simply "the last of the two calls wins".
+- **Deprecated `InferenceParameters.withUseChatTemplate` and `withChatTemplate`.** Both are load-time
+  settings upstream, not per-request ones: `common_params::use_jinja` is set only by `--jinja` /
+  `--no-jinja`, and the only `"chat_template"` string in upstream `common/` or `tools/server/` is the one
+  the server *emits* from `/props`. Neither key is ever read from a request body, so both calls were
+  silently doing nothing — including at three call sites in this library that used
+  `withUseChatTemplate(true)` to "enable jinja for tools", which those calls could not do. Use
+  `ModelParameters.enableJinja()` / `setChatTemplate(String)` instead. Tool calling was unaffected in
+  practice only because upstream defaults `use_jinja` to true.
 - `ch.qos.logback:logback-classic` bumped 1.6.2 → 1.6.3 (test/runtime binding only).
 - CI actions bumped to latest: `actions/setup-java` v5 → v6.
 - Upgraded llama.cpp from **b9894 to b9917** (all eight local patches re-verified across the range).
@@ -164,6 +171,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   reading (`ggml_time_us()`), not milliseconds since the epoch. The value is unchanged.
 
 ### Fixed
+- **With `setSleepIdleSeconds(> 0)`, the model became permanently unusable after the first idle
+  period.** Once llama.cpp's task queue enters its sleeping state, posting a task does not leave it:
+  `server_queue::post()` only notifies the condition variable, whose sleeping predicate tests
+  `req_stop_sleeping`, so the loop woke, re-tested, and went straight back to sleep with the task
+  still queued. Upstream performs the wake on the caller's behalf in `server_res_generator`'s
+  constructor (`wait_until_no_sleep()`), but only for readers built through `create_response()`;
+  this binding builds its readers with the CLI-facing `get_response_reader()`, which does not, and
+  nothing in the JNI layer called `wait_until_no_sleep()` at all. Every subsequent call then either
+  blocked until `close()` (completions, embeddings, rerank, infill) or threw `"No result"`
+  (`getMetrics`, LoRA and slot operations), for the lifetime of the process. All six post sites now
+  wake the queue first. Idle-sleep is off by default (`-1`), so a default configuration was never
+  affected.
 - **A single malformed UTF-8 byte in a model's output turned a finished generation into an HTTP 500.**
   The server parses *every* completion through `common_chat_parse()`; with no chat parser configured
   (plain `/completion`) that is llama.cpp's content-only fallback, whose scan tolerates an incomplete

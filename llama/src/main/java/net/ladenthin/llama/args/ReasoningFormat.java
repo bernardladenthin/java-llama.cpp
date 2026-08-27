@@ -11,7 +11,7 @@ package net.ladenthin.llama.args;
  *
  * <p>Passed as {@code "reasoning_format"} in inference requests. Only meaningful when the model
  * uses a thinking tag (e.g. {@code <think>...</think>}) and chat-template rendering is active
- * ({@link net.ladenthin.llama.parameters.InferenceParameters#withUseChatTemplate(boolean)}).
+ * ({@link net.ladenthin.llama.parameters.ModelParameters#enableJinja()}, a load-time option).
  */
 public enum ReasoningFormat implements CliArg {
 

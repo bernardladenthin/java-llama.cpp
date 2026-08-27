@@ -8,6 +8,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -65,6 +66,18 @@ class TestModelPathsTest {
     }
 
     @Test
+    void aPathOnlyPresentFromTheReactorRootResolvesToAnExistingFile() {
+        // The branch this resolver exists for, and the only one the other cases never reach:
+        // Surefire's working directory is this module's basedir, so "llama-langchain4j/pom.xml"
+        // exists only when looked up from the parent. Exactly the models/ situation.
+        Path resolved = TestModelPaths.resolve("llama-langchain4j/pom.xml");
+        assertThat(resolved, is(notNullValue()));
+        assertThat("a path that only exists from the reactor root must resolve: " + resolved,
+                Files.exists(resolved), is(true));
+        assertThat(resolved.isAbsolute(), is(true));
+    }
+
+    @Test
     void fromPropertyIsNullWhenThePropertyIsUnset() {
         assertThat(TestModelPaths.fromProperty("net.ladenthin.llama.langchain4j.definitely.unset"), is(nullValue()));
     }
@@ -86,13 +99,14 @@ class TestModelPathsTest {
                     .filter(f -> !f.getFileName().toString().equals("TestModelPaths.java"))
                     .filter(f -> !f.getFileName().toString().equals("TestModelPathsTest.java"))
                     .collect(Collectors.toList());
+            assertFalse(javaFiles.isEmpty(), "the scan matched no sources under " + testSources.toAbsolutePath());
             for (Path file : javaFiles) {
-                List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-                for (int i = 0; i < lines.size(); i++) {
-                    if (lines.get(i).contains("System.getProperty(\"net.ladenthin.llama")) {
-                        offenders.add(file + ":" + (i + 1) + "  " + lines.get(i).trim());
-                    }
-                }
+                String source = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
+                // Inspect each call's own argument list rather than the surrounding line: a property
+                // is normally named through a constant, either form may be wrapped across lines, and
+                // scoping to the arguments keeps a neighbouring comment mentioning a
+                // net.ladenthin.llama class from reading as a violation.
+                offenders.addAll(rawModelPropertyReads(file, source));
             }
         }
 
@@ -102,4 +116,49 @@ class TestModelPathsTest {
                         + "- a bare read resolves against Surefire's module-basedir CWD and silently self-skips "
                         + "in CI. Offending sites:\n" + String.join("\n", offenders));
     }
+
+    /**
+     * Finds every {@code System.getProperty(...)} / {@code System.getenv(...)} call in {@code source}
+     * whose own argument list names a {@code net.ladenthin.llama.*} property, either as a literal or
+     * through a {@code PROP_*} constant.
+     *
+     * @param file the file being scanned, used only to label a finding
+     * @param source the file's full text
+     * @return one entry per offending call site; empty when the file is clean
+     */
+    private static List<String> rawModelPropertyReads(Path file, String source) {
+        List<String> found = new ArrayList<>();
+        for (String call : new String[] {"System.getProperty(", "System.getenv("}) {
+            int from = 0;
+            while (true) {
+                int start = source.indexOf(call, from);
+                if (start < 0) {
+                    break;
+                }
+                int open = start + call.length() - 1;
+                int depth = 0;
+                int end = open;
+                while (end < source.length()) {
+                    char c = source.charAt(end);
+                    if (c == '(') {
+                        depth++;
+                    } else if (c == ')') {
+                        depth--;
+                        if (depth == 0) {
+                            break;
+                        }
+                    }
+                    end++;
+                }
+                String arguments = source.substring(open, Math.min(end + 1, source.length()));
+                if (arguments.contains("net.ladenthin.llama") || arguments.contains("PROP_")) {
+                    found.add(file + "  " + source.substring(start, Math.min(end + 1, source.length()))
+                            .replaceAll("\\s+", " "));
+                }
+                from = start + call.length();
+            }
+        }
+        return found;
+    }
+
 }

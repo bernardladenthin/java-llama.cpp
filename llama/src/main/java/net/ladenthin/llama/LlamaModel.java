@@ -635,7 +635,7 @@ public class LlamaModel implements AutoCloseable {
         InferenceParameters params = InferenceParameters.empty().withMessagesJson(request.buildMessagesJson());
         Optional<String> toolsJsonOpt = request.buildToolsJson();
         if (toolsJsonOpt.isPresent()) {
-            params = params.withToolsJson(toolsJsonOpt.get()).withUseChatTemplate(true);
+            params = params.withToolsJson(toolsJsonOpt.get());
             Optional<String> toolChoice = request.getToolChoice();
             if (toolChoice.isPresent()) {
                 params = params.withToolChoice(toolChoice.get());
@@ -809,7 +809,7 @@ public class LlamaModel implements AutoCloseable {
      *   <li><strong>It is not an atomic snapshot.</strong> The two halves are separate round trips
      *       through the task queue, so the counters and the slot array can be a moment apart.
      *       Upstream's own two endpoints are no more atomic than this.</li>
-     *   <li><strong>It defers idle-sleep.</strong> llama.cpp b10644 stopped letting a {@code /metrics}
+     *   <li><strong>It defers idle-sleep.</strong> llama.cpp b10519 stopped letting a {@code /metrics}
      *       scrape reset the idle timer, but the slot half is not exempt, so calling this method
      *       still counts as activity. Polling it as a health check keeps a server configured with
      *       {@link net.ladenthin.llama.parameters.ModelParameters#setSleepIdleSeconds(int)} awake
@@ -956,12 +956,12 @@ public class LlamaModel implements AutoCloseable {
      * <p><strong>The file format is versioned by the linked llama.cpp build, not by this library.</strong>
      * llama.cpp stamps every state file with {@code LLAMA_STATE_SEQ_VERSION} and rejects one written
      * under a different value, so a file saved by a jar built against a different
-     * {@link net.ladenthin.llama.value.LlamaCppVersion#LLAMA_CPP_VERSION} may not load — b10644 bumped
+     * {@link net.ladenthin.llama.value.LlamaCppVersion#LLAMA_CPP_VERSION} may not load — b10642 bumped
      * that constant 2&nbsp;&rarr;&nbsp;3, invalidating every file written by an earlier release. Treat
      * these files as a cache to regenerate on upgrade, never as durable storage. A rejected file
-     * surfaces as a {@link net.ladenthin.llama.exception.LlamaException} carrying upstream's message
-     * {@code "No available space in KV cache or invalid slot save file"}, which does not name the
-     * version mismatch as the cause.</p>
+     * surfaces as a {@link net.ladenthin.llama.exception.LlamaException} whose message is upstream's
+     * wrapped form, {@code "Unable to restore slot: No available space in KV cache or invalid slot
+     * save file"} — it does not name the version mismatch as the cause.</p>
      *
      * @param slotId the slot ID to save
      * @param filepath the file path to save to
