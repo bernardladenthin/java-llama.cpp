@@ -21,6 +21,8 @@ uint32_t read_u32(const std::vector<uint8_t> &b, size_t off) {
 std::string read_tag(const std::vector<uint8_t> &b, size_t off) {
     return std::string(b.begin() + off, b.begin() + off + 4);
 }
+
+uint32_t read_u16(const std::vector<uint8_t> &b, size_t off) { return (uint32_t)b[off] | ((uint32_t)b[off + 1] << 8); }
 } // namespace
 
 TEST(TtsWav, HeaderAndPayloadAreWellFormed) {
@@ -37,6 +39,21 @@ TEST(TtsWav, HeaderAndPayloadAreWellFormed) {
     EXPECT_EQ(read_u32(wav, 24), 24000u);                          // sample rate
     EXPECT_EQ(read_u32(wav, 40), (uint32_t)(pcm.size() * 2));      // data size
     EXPECT_EQ(read_u32(wav, 4), 36u + (uint32_t)(pcm.size() * 2)); // RIFF chunk size
+
+    // fmt-chunk fields written via put_u16 (offsets 20/22/32/34). No other test reads a u16 from the
+    // header, so without these the s390x big-endian ctest gate cannot observe a put_u16 byte-order
+    // regression at all -- every other assertion here is a u32 or an ASCII tag.
+    EXPECT_EQ(read_u16(wav, 20), 1u);  // audio format = PCM
+    EXPECT_EQ(read_u16(wav, 22), 1u);  // mono
+    EXPECT_EQ(read_u16(wav, 32), 2u);  // block_align = num_channels * bits_per_sample/8
+    EXPECT_EQ(read_u16(wav, 34), 16u); // bits_per_sample
+
+    // byte_rate is the one computed u32 in the writer. Pin it at two sample rates so a hardcoded
+    // constant cannot satisfy it and a dropped factor is caught.
+    EXPECT_EQ(read_u32(wav, 28), 24000u * 2); // sample_rate * num_channels * bits_per_sample/8
+    const std::vector<uint8_t> wav16k = pcm_to_wav16_bytes(pcm, 16000);
+    EXPECT_EQ(read_u32(wav16k, 24), 16000u);
+    EXPECT_EQ(read_u32(wav16k, 28), 16000u * 2);
 }
 
 TEST(TtsWav, ClampsAndEncodesSamplesLittleEndian) {

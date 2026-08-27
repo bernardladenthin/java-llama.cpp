@@ -23,6 +23,9 @@ import org.jspecify.annotations.Nullable;
 @EqualsAndHashCode(callSuper = true)
 public final class ModelParameters extends CliParameters {
 
+    private static final String ARG_MMPROJ_DEVICE = "--mmproj-device";
+    private static final String MMPROJ_DEVICE_NONE = "none";
+
     private static final String ARG_FIT = "--fit";
     static final String ARG_POOLING = "--pooling";
     /** CLI value enabling {@code --fit} (automatic device-memory fitting). */
@@ -1420,14 +1423,21 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMmprojDevice(String device) {
-        parameters.put("--mmproj-device", device);
-        // --mmproj-device and --{no-,}mmproj-offload write the same upstream field
-        // (common_params::mmproj_use_gpu), so upstream resolves a clash by argv order. Our argv is
-        // rendered from a HashMap, where that order is unspecified -- so the pair must never both be
-        // present. setMmprojOffload clears this key in turn, making the rule simply "the last of the
-        // two calls wins".
+        parameters.put(ARG_MMPROJ_DEVICE, device);
+        // --mmproj-device and --{no-,}mmproj-offload both write common_params::mmproj_use_gpu, so a
+        // clash is resolved by argv order -- and ours is rendered from a HashMap, where that order is
+        // unspecified. Clear only the genuinely conflicting combinations:
+        //
+        //   named device + --no-mmproj-offload -> (true,dev) vs (false,dev): ORDER MATTERS, clear.
+        //   named device + --mmproj-offload    -> (true,dev) either way:     safe, keep both.
+        //   "none"       + --mmproj-offload    -> (true,null) vs (false,null): ORDER MATTERS, clear.
+        //
+        // Clearing --mmproj-offload unconditionally would throw away a legitimate multi-GPU pin to
+        // set a field that already defaults to true.
         clearFlag(ModelFlag.NO_MMPROJ_OFFLOAD);
-        clearFlag(ModelFlag.MMPROJ_OFFLOAD);
+        if (MMPROJ_DEVICE_NONE.equals(device)) {
+            clearFlag(ModelFlag.MMPROJ_OFFLOAD);
+        }
         return this;
     }
 
@@ -1449,13 +1459,22 @@ public final class ModelParameters extends CliParameters {
      * time. Applies only when a projector is loaded ({@link #setMmproj(String)}) and the request
      * carries media &mdash; it is read once, when the projector is initialised.</p>
      *
-     * @param fps frames per second to sample from the video; must be positive
+     * <p><strong>Any value {@code <= 0} is upstream's sentinel for "sample at the video's own native
+     * frame rate"</strong>, not an error &mdash; {@code mtmd-helper.h} documents the field as
+     * "desired output fps; &lt;= 0 means use the video's native fps", and the decoder resolves it as
+     * {@code fps_target = arg > 0 ? arg : orig_fps}. Because the target is fixed when the projector
+     * loads, long before any clip is attached, the sentinel is the only way to say "match whatever
+     * this video runs at"; leaving the value unset selects the fixed 4.0 default instead.</p>
+     *
+     * @param fps frames per second to sample from the video, or any value {@code <= 0} to sample at
+     *     the video's native frame rate; must be finite
      * @return this builder
-     * @throws IllegalArgumentException if {@code fps} is not positive
+     * @throws IllegalArgumentException if {@code fps} is {@code NaN} or infinite
      */
     public ModelParameters setVideoFps(float fps) {
-        if (!(fps > 0.0f)) {
-            throw new IllegalArgumentException("Invalid video-fps value: " + fps + " (must be > 0)");
+        if (!Float.isFinite(fps)) {
+            throw new IllegalArgumentException(
+                    "Invalid video-fps value: " + fps + " (must be finite; <= 0 selects the video's native fps)");
         }
         return putScalar("--video-fps", fps);
     }
@@ -1466,12 +1485,19 @@ public final class ModelParameters extends CliParameters {
      *
      * @param intervalMillis milliseconds between timestamps; must not be negative
      * @return this builder
-     * @throws IllegalArgumentException if {@code intervalMillis} is negative
+     * @throws IllegalArgumentException if {@code intervalMillis} is negative or exceeds
+     *     {@link Integer#MAX_VALUE}
      */
     public ModelParameters setVideoTimestampInterval(long intervalMillis) {
         if (intervalMillis < 0) {
             throw new IllegalArgumentException(
                     "Invalid video-timestamp-interval value: " + intervalMillis + " (must be >= 0)");
+        }
+        if (intervalMillis > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Invalid video-timestamp-interval value: " + intervalMillis
+                    + " (must be <= " + Integer.MAX_VALUE
+                    + "; llama.cpp parses --video-timestamp-interval with std::stoi although the field is int64_t,"
+                    + " so a larger value aborts the whole argv parse with an unrelated message)");
         }
         return putScalar("--video-timestamp-interval", intervalMillis);
     }
@@ -1497,10 +1523,11 @@ public final class ModelParameters extends CliParameters {
      * Enable or disable GPU offload for the multimodal projector. This is independent of
      * {@link #setGpuLayers(int)} because upstream enables projector offload by default.
      *
-     * <p>Clears any device previously named by {@link #setMmprojDevice(String)}: both write
-     * upstream's single {@code mmproj_use_gpu} field, so only one of them may appear in the
-     * rendered argv. Between the two, the last call wins &mdash; call {@code setMmprojDevice}
-     * afterwards to pin a device again.</p>
+     * <p>Both this and {@link #setMmprojDevice(String)} write upstream's single
+     * {@code mmproj_use_gpu} field, so a combination whose meaning would depend on argv order is
+     * not allowed to survive: disabling offload clears a previously named device, and enabling it
+     * clears only the {@code "none"} sentinel. Enabling offload alongside a real device name is
+     * kept, because both orderings resolve to the same state.</p>
      *
      * @param enabled {@code true} to offload the projector, {@code false} to keep it on CPU
      * @return this builder
@@ -1508,9 +1535,13 @@ public final class ModelParameters extends CliParameters {
     public ModelParameters setMmprojOffload(boolean enabled) {
         setFlag(enabled ? ModelFlag.MMPROJ_OFFLOAD : ModelFlag.NO_MMPROJ_OFFLOAD);
         clearFlag(enabled ? ModelFlag.NO_MMPROJ_OFFLOAD : ModelFlag.MMPROJ_OFFLOAD);
-        // Also drop any --mmproj-device: it writes the same upstream field, and with a HashMap-
-        // rendered argv the winner between the two would be hash order. See setMmprojDevice.
-        parameters.remove("--mmproj-device");
+        // Keep a previously named device only where the pair resolves identically in either argv
+        // order -- that needs enabled == true AND a real device name. "none" sets mmproj_use_gpu
+        // false and so contradicts --mmproj-offload, and --no-mmproj-offload contradicts any device;
+        // in those cases the last call wins. See setMmprojDevice for the full table.
+        if (!enabled || MMPROJ_DEVICE_NONE.equals(parameters.get(ARG_MMPROJ_DEVICE))) {
+            parameters.remove(ARG_MMPROJ_DEVICE);
+        }
         return this;
     }
 

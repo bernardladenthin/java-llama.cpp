@@ -443,6 +443,65 @@ the load-time failure class is already covered, and a slow smoke tends to get ma
 **Not yet observed green in CI** — the job and the two sibling-repo smokes landed in one change set
 and have only run locally so far.
 
+### Test-coverage debt found during the b10649 review (PR #403)
+
+Each item below was verified against pristine upstream tags and is real, but none is a regression
+introduced by the version bump — they were deferred to keep that PR landable.
+
+- **`ModelParameters` emits five CLI flags the server arg parser rejects, so any caller of them
+  cannot load a model.** `--dump-kv-cache`, `--hf-repo-v` and `--hf-file-v` no longer exist anywhere
+  in llama.cpp (absent at both b10456 and b10649); `--grp-attn-n` and `--grp-attn-w` still exist but
+  are `set_examples({LLAMA_EXAMPLE_COMPLETION, ...})`, so `add_opt` never registers them for
+  `LLAMA_EXAMPLE_SERVER` — the example jllama parses with. An unregistered flag is not ignored:
+  `arg.cpp` throws, `common_params_parse` returns false, and `load_model_impl` throws
+  `LlamaException("Failed to parse model parameters")`. Four existing tests pin the dead literals and
+  would pass forever. Fix: deprecate the five members the way this PR handled
+  `withTfsZ`/`withPenalizeNl` (keep source compatibility, never write the map), and add a hermetic
+  `jllama_test` contract test that walks `common_params_parser_init(params, LLAMA_EXAMPLE_SERVER)`'s
+  `ctx.options` (upstream's own `test-arg-parser` pattern; the symbols already link into
+  `jllama_test`) and asserts every flag `ModelParameters`/`ModelFlag` can emit is in that set,
+  excluding only `--vocab-only`, which `strip_flag_from_argv` removes on purpose. A grep-based sweep
+  is **not** sufficient — it is structurally blind to example scoping, which is exactly how
+  `--grp-attn-w` hides.
+
+- **`acquire_jllama_context_impl` / `release_jllama_context_impl` / `jllama_context_guard` have no
+  model-free unit guard.** These three (`jni_helpers.hpp`) are the whole `close()`-vs-inference
+  use-after-free defence, and grep finds zero references across all seven `test_*.cpp` files, while
+  their sibling `get_jllama_context_impl` has three tests. A dropped `fetch_add`, or a guard whose
+  destructor stops calling release, produces a use-after-free during `close()` or a `close()` that
+  hangs forever. `LlamaModelTest#testCloseDuringInference` covers the mechanism end to end but only
+  bluntly. They are absent from `jllama_test` only because they are `inline` and never odr-used
+  there: `g_ctx_mutex` is `extern` in the header and defined in `jllama.cpp`, which `jllama_test`
+  does not compile — a test-local definition at global scope unblocks it.
+
+- **`OSInfo`: the `archMapping` alias branch is untested.** `getArchName()`'s map lookup has no
+  assertion anywhere — the two test call sites either take the override early-return or only assert
+  non-empty — so a lost `amd64 -> x86_64` entry would send `LlamaLoader` to a resource directory
+  that does not exist. Cheap to close: set `os.arch`, assert the non-identity aliases only (identity
+  entries such as `s390x` are behaviourally redundant with the `\W`-stripping fallback).
+
+- **`LlamaTrainer`'s end-to-end path runs on no CI platform.** `LlamaTrainerIntegrationTest`
+  self-skips everywhere: `net.ladenthin.llama.train.model` is set by no job and its model is in no
+  `.github/models.csv` row, so `validate-models.{sh,bat}` does not treat it as required. The C++ half
+  is now mitigated (`test_tts_params.cpp`'s `TrainParams` + `ResolveCpuParams` suites), but nothing
+  exercises the Java → JNI → native trainer round trip. Adding a small training model to `models.csv`
+  plus the matching property to the Java test jobs would close it.
+
+- **`LlamaLoader`'s jar-extraction internals need synthetic jar fixtures.** `readBackendManifest`,
+  `tryLoadBackend`, `extractFile`, `moveIntoPlace`, `cleanPath` and `hasNativeLib` are named in no
+  test; `BackendManifestLoadTest` and `LlamaLoaderTest` drive the class only from outside via system
+  properties. Covering the multi-backend fat-jar path (per-backend temp subdir extraction,
+  manifest-extras-first ordering, `UnsatisfiedLinkError` fallback to the next backend and then to the
+  default CPU natives) means building jars carrying a `jllama-backends.txt` and dummy payloads.
+
+- **`Java8CompatibilityHelper` is mostly dead code — decide delete vs. test.** Six of its seven
+  public methods have zero call sites repo-wide; the only live one is
+  `toString(ByteArrayOutputStream, Charset)`, used once in `ProcessRunner`. Writing tests for the
+  rest would pin dead code.
+
+- **`ContentPart.videoFile(...)` — see the video-input entry above** for the wire shape upstream
+  expects (`input_video`, raw base64, not a `data:` URI).
+
 ## Open — cross-cutting (slice for this repo)
 
 - **jqwik pin policy** — see [`../workspace/policies/jqwik-prompt-injection.md`](../workspace/policies/jqwik-prompt-injection.md). `jqwik.version ≤ 1.9.3` is mandatory.

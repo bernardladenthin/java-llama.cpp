@@ -468,6 +468,25 @@ TEST(ParsePositiveIntConfig, ErrorMessage_ContainsKeyName) {
     }
 }
 
+TEST(ParsePositiveIntConfig, FractionalValue_ThrowsInvalidArgument) {
+    // Pins the `raw != std::floor(raw)` term: a non-integral value must be rejected rather than
+    // silently truncated by static_cast<int>.
+    EXPECT_THROW((void)parse_positive_int_config({{"n_threads", 1.5}}, "n_threads"), std::invalid_argument);
+}
+
+TEST(ParsePositiveIntConfig, AboveIntMax_ThrowsInvalidArgument) {
+    // Pins the upper-bound term. 3e9 is whole-numbered, so the std::floor term cannot catch it;
+    // without this bound static_cast<int>(3e9) is undefined behaviour.
+    EXPECT_THROW((void)parse_positive_int_config({{"n_threads", 3000000000.0}}, "n_threads"), std::invalid_argument);
+}
+
+TEST(ParsePositiveIntConfig, ExactlyIntMax_IsAccepted) {
+    // Boundary: INT_MAX itself is valid, so the guard must stay `>` and never become `>=`.
+    auto v = parse_positive_int_config({{"n_threads", 2147483647}}, "n_threads");
+    ASSERT_TRUE(v.has_value());
+    EXPECT_EQ(*v, 2147483647);
+}
+
 // ============================================================
 // wrap_stream_chunk
 // ============================================================

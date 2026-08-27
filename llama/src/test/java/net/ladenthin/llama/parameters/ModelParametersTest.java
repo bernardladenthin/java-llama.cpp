@@ -520,41 +520,91 @@ public class ModelParametersTest {
     }
 
     @Test
-    public void testVideoFpsRejectsNonPositiveValues() {
-        // Upstream parses this with std::stof and never validates it; a zero or negative target
-        // frame rate reaches the decoder, so reject it here where the message can name the flag.
-        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoFps(0.0f));
-        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoFps(-1.0f));
+    public void testVideoFpsNonPositiveSelectsUpstreamNativeFpsSentinel() {
+        // mtmd-helper.h documents fps_target as "<= 0 means use the video's native fps", and the
+        // decoder resolves it as `fps_target = arg > 0 ? arg : orig_fps`. Rejecting it here would
+        // delete the only way to say "match this clip's own rate" -- the target is fixed when the
+        // projector loads, long before a clip is attached. Same rule as --mmproj-device "none": an
+        // upstream sentinel is passed through verbatim.
+        assertThat(new ModelParameters().setVideoFps(0.0f).parameters.get("--video-fps"), is("0.0"));
+        assertThat(new ModelParameters().setVideoFps(-1.0f).parameters.get("--video-fps"), is("-1.0"));
+    }
+
+    @Test
+    public void testVideoFpsRejectsNonFiniteValues() {
+        // Infinity survives std::stof and passes the decoder's `> 0` test, then reaches ffmpeg as
+        // the filter string "fps=inf". NaN takes the native-fps branch harmlessly but is always a
+        // caller bug.
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoFps(Float.NaN));
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoFps(Float.POSITIVE_INFINITY));
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoFps(Float.NEGATIVE_INFINITY));
     }
 
     @Test
     public void testVideoTimestampIntervalRejectsNegativeValues() {
         assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoTimestampInterval(-1L));
-        // Zero is legal: it means "a timestamp on every frame".
+        // Zero is legal and is upstream's "no timestamps" sentinel (mtmd-helper.h: "<= 0 means no
+        // timestamp"); the decoder gates emission on `timestamp_interval_ms > 0`. Negative is
+        // behaviourally identical upstream, so refusing it costs nothing and keeps the API honest.
         ModelParameters p = new ModelParameters().setVideoTimestampInterval(0L);
         assertThat(p.parameters.get("--video-timestamp-interval"), is("0"));
     }
 
     @Test
-    public void testMmprojDeviceAndOffloadClearEachOtherInBothDirections() {
-        // Both write upstream's single mmproj_use_gpu field, and our argv is rendered from a HashMap
-        // whose iteration order is unspecified -- so if both keys were present the winner would be
-        // hash order. The contract is "the last of the two calls wins".
+    public void testVideoTimestampIntervalRejectsValuesAboveIntMax() {
+        // The upstream field is int64_t but the flag is registered with an int handler, dispatched
+        // through std::stoi -- so a larger value throws out_of_range, common_params_parse returns
+        // false, and the caller sees only "Failed to parse model parameters", naming neither the
+        // flag nor the reason.
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new ModelParameters().setVideoTimestampInterval(Integer.MAX_VALUE + 1L));
+        // INT_MAX itself is the largest value std::stoi accepts, so it must still render; without
+        // this the bound could be tightened to >= and still pass.
+        ModelParameters p = new ModelParameters().setVideoTimestampInterval(Integer.MAX_VALUE);
+        assertThat(p.parameters.get("--video-timestamp-interval"), is("2147483647"));
+    }
+
+    @Test
+    public void testMmprojDeviceClearsOnlyTheContradictoryOffloadFlag() {
+        // --mmproj-device <named> sets (use_gpu=true, device=named); --no-mmproj-offload sets
+        // use_gpu=false. Together the result depends on argv order, and ours is HashMap-rendered,
+        // so the flag must go.
         ModelParameters deviceLast =
                 new ModelParameters().setMmprojOffload(false).setMmprojDevice("CUDA1");
         assertThat(deviceLast.parameters.get("--mmproj-device"), is("CUDA1"));
         assertThat(deviceLast.parameters, not(hasKey("--no-mmproj-offload")));
-        assertThat(deviceLast.parameters, not(hasKey("--mmproj-offload")));
 
-        ModelParameters offloadLast =
+        // ... but --mmproj-offload agrees with a named device: both orders give (true, CUDA1), so
+        // dropping either would discard a real multi-GPU pin for no reason.
+        ModelParameters agreeing = new ModelParameters().setMmprojOffload(true).setMmprojDevice("CUDA1");
+        assertThat(agreeing.parameters.get("--mmproj-device"), is("CUDA1"));
+        assertThat(agreeing.parameters, hasKey("--mmproj-offload"));
+
+        // "none" is the exception: it sets use_gpu=false, so it does contradict --mmproj-offload.
+        ModelParameters none = new ModelParameters().setMmprojOffload(true).setMmprojDevice("none");
+        assertThat(none.parameters.get("--mmproj-device"), is("none"));
+        assertThat(none.parameters, not(hasKey("--mmproj-offload")));
+    }
+
+    @Test
+    public void testMmprojOffloadClearsOnlyAContradictoryDevice() {
+        // Disabling offload contradicts any device name -> last call wins, device goes.
+        ModelParameters disabled =
                 new ModelParameters().setMmprojDevice("CUDA1").setMmprojOffload(false);
-        assertThat(offloadLast.parameters, hasKey("--no-mmproj-offload"));
-        assertThat(offloadLast.parameters, not(hasKey("--mmproj-device")));
+        assertThat(disabled.parameters, hasKey("--no-mmproj-offload"));
+        assertThat(disabled.parameters, not(hasKey("--mmproj-device")));
 
-        ModelParameters enabledLast =
-                new ModelParameters().setMmprojDevice("CUDA1").setMmprojOffload(true);
-        assertThat(enabledLast.parameters, hasKey("--mmproj-offload"));
-        assertThat(enabledLast.parameters, not(hasKey("--mmproj-device")));
+        // Enabling it does NOT: (true, CUDA1) either way, so the pin survives.
+        ModelParameters enabled = new ModelParameters().setMmprojDevice("CUDA1").setMmprojOffload(true);
+        assertThat(enabled.parameters, hasKey("--mmproj-offload"));
+        assertThat(enabled.parameters.get("--mmproj-device"), is("CUDA1"));
+
+        // Except against "none", which means use_gpu=false.
+        ModelParameters noneThenEnable =
+                new ModelParameters().setMmprojDevice("none").setMmprojOffload(true);
+        assertThat(noneThenEnable.parameters, hasKey("--mmproj-offload"));
+        assertThat(noneThenEnable.parameters, not(hasKey("--mmproj-device")));
     }
 
     @Test

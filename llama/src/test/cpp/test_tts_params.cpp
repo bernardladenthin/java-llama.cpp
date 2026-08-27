@@ -211,3 +211,43 @@ TEST(TrainParams, EpochsBelowOneAreClampedSoTheOptimizerRunsAtLeastOnce) {
 
     EXPECT_EQ(jllama_train::build_train_params(cfg).lr.epochs, 1u);
 }
+
+namespace {
+
+// Every value differs from the matching common_params / lr_opt default (n_ctx 0, n_gpu_layers -1,
+// val_split 0.05f, lr0 1e-5, lr_min -1, decay_epochs -1, wd 0), so a deleted assignment is
+// observable. minimal_train_config()'s lr fields are byte-identical to the lr_opt defaults, which is
+// why it cannot guard them itself.
+//
+// epochs (4) MUST stay above decay_epochs (2.5): lr_opt::init() overwrites decay_epochs with epochs
+// unless 0 < decay_epochs < epochs, which would both break the decay_epochs assertion and make a
+// deleted decay_epochs assignment unobservable.
+jllama_train::finetune_config distinctive_train_config() {
+    jllama_train::finetune_config cfg = minimal_train_config();
+    cfg.epochs = 4;
+    cfg.learning_rate = 3e-4f;
+    cfg.lr_min = 7e-6f; // > 0 and < lr0 -- the only case in which lr_opt::init() does anything
+    cfg.decay_epochs = 2.5f;
+    cfg.weight_decay = 0.125f;
+    cfg.n_ctx = 1024;
+    cfg.n_gpu_layers = 5;
+    cfg.val_split = 0.25f;
+    return cfg;
+}
+
+} // namespace
+
+// The seven cfg fields the other TrainParams tests never look at. Deleting any one of the matching
+// assignments in build_train_params leaves every other test in this file green.
+TEST(TrainParams, MapsTheContextAndScheduleFields) {
+    const common_params params = jllama_train::build_train_params(distinctive_train_config());
+
+    EXPECT_EQ(params.n_ctx, 1024);
+    EXPECT_EQ(params.n_gpu_layers, 5);
+    EXPECT_FLOAT_EQ(params.val_split, 0.25f);
+    EXPECT_FLOAT_EQ(params.lr.lr0, 3e-4f);
+    EXPECT_FLOAT_EQ(params.lr.lr_min, 7e-6f);
+    EXPECT_FLOAT_EQ(params.lr.wd, 0.125f);
+    // Survives init() only because epochs (4) > decay_epochs (2.5) -- see the fixture comment.
+    EXPECT_FLOAT_EQ(params.lr.decay_epochs, 2.5f);
+}

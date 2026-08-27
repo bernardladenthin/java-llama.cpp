@@ -67,7 +67,34 @@ class TrainingParametersTest {
         assertThat(node.get("n_batch").asInt(), is(256));
         assertThat(node.get("n_ubatch").asInt(), is(64));
         assertThat(node.get("training_file").asText(), is("corpus.txt"));
+        assertThat(node.get("val_split").floatValue(), is(0.1f));
         // training_text is omitted when a corpus file is given.
         assertThat(node.has("training_text"), is(false));
+    }
+
+    /**
+     * The LR-schedule and regularization keys. {@code train_engine.cpp} reads these with fallbacks
+     * that are byte-identical to this class's own defaults, so a renamed key does not fail loudly --
+     * it silently reverts the fine-tune to a schedule the caller never chose. The values below are
+     * therefore deliberately non-default and mutually distinct, so both a key rename and a
+     * copy-paste value swap fail this test.
+     */
+    @Test
+    void learningScheduleKeysSerialize() throws Exception {
+        TrainingParameters parameters = TrainingParameters.builder()
+                .modelPath(Paths.get("base.gguf"))
+                .trainingText("hello world")
+                .outputPath(Paths.get("tuned.gguf"))
+                .lrMin(1e-6f)
+                .decayEpochs(3.0f)
+                .weightDecay(0.01f)
+                .valSplit(0.2f)
+                .build();
+
+        JsonNode node = json(parameters);
+        assertThat(node.get("lr_min").floatValue(), is(1e-6f));
+        assertThat(node.get("decay_epochs").floatValue(), is(3.0f));
+        assertThat(node.get("weight_decay").floatValue(), is(0.01f));
+        assertThat(node.get("val_split").floatValue(), is(0.2f));
     }
 }
