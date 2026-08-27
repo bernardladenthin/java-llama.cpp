@@ -877,6 +877,49 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Keep the Mixture-of-Experts weights of the first {@code n} layers on the CPU.
+     *
+     * <p>The companion to {@link #setGpuLayers(int)} for VRAM-constrained hosts running a MoE model.
+     * Where {@code setGpuLayers} moves whole layers, this moves only the <em>expert</em> weights —
+     * which dominate a MoE model's size — so attention and the rest of each layer stay on the GPU.
+     * That usually fits a far larger model in the same VRAM at a much smaller speed cost than
+     * reducing the layer count would. Upstream {@code --n-cpu-moe} / {@code -ncmoe}, added in
+     * llama.cpp b10649; use {@link #setCpuFfnLayers(int)} for a dense model.</p>
+     *
+     * @param layers the number of leading layers whose MoE expert weights stay on the CPU
+     * @return this builder
+     * @throws IllegalArgumentException if {@code layers} is negative
+     */
+    public ModelParameters setCpuMoeLayers(int layers) {
+        if (layers < 0) {
+            throw new IllegalArgumentException(
+                    "Invalid n-cpu-moe value: " + layers + " (must be >= 0; 0 = keep all experts on the GPU)");
+        }
+        return putScalar("--n-cpu-moe", layers);
+    }
+
+    /**
+     * Keep the dense FFN weights of the first {@code n} layers on the CPU.
+     *
+     * <p>The dense-model counterpart of {@link #setCpuMoeLayers(int)}: it offloads the feed-forward
+     * weights rather than the MoE experts, trading a little speed for VRAM headroom without giving
+     * up whole layers. Upstream {@code --n-cpu-ffn} / {@code -ncffn}, added in llama.cpp b10649.
+     * On a MoE model use {@link #setCpuMoeLayers(int)} instead — this flag does not touch expert
+     * weights, so it frees very little there.</p>
+     *
+     * @param layers the number of leading layers whose dense FFN weights stay on the CPU
+     * @return this builder
+     * @throws IllegalArgumentException if {@code layers} is negative
+     */
+    public ModelParameters setCpuFfnLayers(int layers) {
+        if (layers < 0) {
+            throw new IllegalArgumentException(
+                    "Invalid n-cpu-ffn value: " + layers + " (must be >= 0; 0 = keep all FFN weights on the GPU)");
+        }
+        return putScalar("--n-cpu-ffn", layers);
+    }
+
+    /**
      * Set the number of layers to store in VRAM.
      *
      * @param gpuLayers the number of model layers to store in VRAM

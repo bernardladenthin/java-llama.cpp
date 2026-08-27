@@ -15,6 +15,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 > has a row per upgrade range and stays authoritative for the per-range detail.
 
 ### Added
+- **`ModelParameters.setCpuMoeLayers(int)` / `setCpuFfnLayers(int)`** — keep the first N layers'
+  Mixture-of-Experts weights, or dense FFN weights, on the CPU (upstream `--n-cpu-moe` / `-ncmoe` and
+  `--n-cpu-ffn` / `-ncffn`, llama.cpp b10649). The companions to `setGpuLayers`: where that moves whole
+  layers, these move only the weight class that dominates a model's size, usually fitting a much larger
+  model into the same VRAM at a smaller speed cost. `--n-cpu-moe` had never been exposed either.
 - **`ServerMetrics.getWindowPromptProcessingMillis()` / `getWindowTokenGenerationMillis()` /
   `getWindowTimings()`** — typed access to the current-window timing keys `t_prompt_processing` and
   `t_tokens_generation`. Both were always emitted; only the cumulative `_total` variants had accessors.
@@ -100,6 +105,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
     the merge divides upstream's microseconds. `ServerMetrics` reads them as doubles; a consumer
     parsing the raw JSON with an integer parser sees a type change.
 
+- Upgraded llama.cpp from **b10644 to b10649**. The first range in this bump to break the project's own
+  compile: upstream threaded a new `mtmd_helper_init_opt` (video-decode settings) through every helper
+  that can ingest media, changing the signature of `mtmd_helper_bitmap_init_from_file`,
+  `tokenize_input_prompts` and `format_prompt_rerank`. Four call sites were adapted — all of them pass
+  `mctx = nullptr` or handle audio, so each now passes upstream's own `mtmd_helper_init_opt_default()`.
+  The wire contract is unchanged (68 request fields, 23 bounds and 304 response keys identical across
+  the range; zero CLI flags removed or renamed), and all eight local patches apply unchanged even though
+  six patch-target files were touched.
+  Of the 7 new upstream flags, the two CPU-offload ones are now exposed (see Added). The two
+  `--spec-synth-*` flags are not: upstream marks them "benchmarking only" — they synthesise fake
+  acceptance probabilities to measure llama.cpp's own speculative harness. The three `--video-*` flags
+  are not either: `ContentPart` has no video input, so they would be inert knobs. Both decisions and
+  what a real video-input feature would require are recorded in `TODO.md`.
 - Upgraded llama.cpp from **b10639 to b10644**. No project-source change, and the only file on the
   priority API-review list that the range touches is `include/llama.h`, whose entire diff is two
   constants: `LLAMA_SESSION_VERSION` 9 → 10 and `LLAMA_STATE_SEQ_VERSION` 2 → 3. They follow from a new

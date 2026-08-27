@@ -92,7 +92,11 @@ bool engine_synthesize(tts_engine *engine, const std::string &text, const std::s
 
     mtmd::bitmap_ptr speaker_bitmap;
     if (!speaker_reference_path.empty()) {
-        auto wrapper = mtmd_helper_bitmap_init_from_file(engine->mctx.get(), speaker_reference_path.c_str(), false);
+        // b10649 added a fourth `mtmd_helper_init_opt` parameter carrying the video-decode settings
+        // (fps target, ffmpeg binary dir, timestamp interval). None of it applies to a speaker
+        // reference clip, which is audio, so pass upstream's own defaults rather than inventing values.
+        auto wrapper = mtmd_helper_bitmap_init_from_file(engine->mctx.get(), speaker_reference_path.c_str(), false,
+                                                         mtmd_helper_init_opt_default());
         if (!wrapper.bitmap) {
             common_sampler_free(smpl);
             err = "failed to load speaker reference audio: " + speaker_reference_path;

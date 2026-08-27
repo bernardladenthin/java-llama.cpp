@@ -246,7 +246,8 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
                                      const std::vector<llama_logit_bias> &logit_bias_eog, const json &data,
                                      bool has_mtmd, std::vector<raw_buffer> files = {}) {
     if (!configure_multimodal_task_impl(task, has_mtmd, data, std::move(files))) {
-        auto tokenized_prompts = tokenize_input_prompts(jctx->vocab, nullptr, data.at("prompt"), true, true);
+        auto tokenized_prompts =
+            tokenize_input_prompts(jctx->vocab, nullptr, data.at("prompt"), true, true, mtmd_helper_init_opt_default());
         if (!tokenized_prompts.empty()) {
             task.tokens = std::move(tokenized_prompts[0]);
         }
@@ -1185,9 +1186,11 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleRerank(JNIEn
     std::vector<server_task> tasks;
     tasks.reserve(document_vector.size());
     for (size_t i = 0; i < document_vector.size(); i++) {
-        tasks.push_back(build_indexed_token_task(
-            rd, SERVER_TASK_TYPE_RERANK, format_prompt_rerank(model, jctx->vocab, nullptr, prompt, document_vector[i]),
-            static_cast<int>(i), TASK_RESPONSE_TYPE_NONE));
+        tasks.push_back(
+            build_indexed_token_task(rd, SERVER_TASK_TYPE_RERANK,
+                                     format_prompt_rerank(model, jctx->vocab, nullptr, prompt, document_vector[i],
+                                                          mtmd_helper_init_opt_default()),
+                                     static_cast<int>(i), TASK_RESPONSE_TYPE_NONE));
     }
     rd.post_tasks(std::move(tasks));
 
@@ -1501,7 +1504,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleInfill(JNIEn
     std::string prompt = json_value(data, "prompt", std::string());
     try {
         std::vector<server_tokens> tokenized_prompts =
-            tokenize_input_prompts(jctx->vocab, nullptr, prompt, false, true);
+            tokenize_input_prompts(jctx->vocab, nullptr, prompt, false, true, mtmd_helper_init_opt_default());
 
         data["prompt"] =
             format_prompt_infill(jctx->vocab, data.at("input_prefix"), data.at("input_suffix"), data.at("input_extra"),
@@ -1554,7 +1557,8 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleEmbeddings(J
 
     std::vector<server_tokens> tokenized_prompts;
     try {
-        tokenized_prompts = tokenize_input_prompts(jctx->vocab, nullptr, prompt, true, true);
+        tokenized_prompts =
+            tokenize_input_prompts(jctx->vocab, nullptr, prompt, true, true, mtmd_helper_init_opt_default());
     } catch (const std::exception &e) {
         env->ThrowNew(c_llama_error, e.what());
         return nullptr;

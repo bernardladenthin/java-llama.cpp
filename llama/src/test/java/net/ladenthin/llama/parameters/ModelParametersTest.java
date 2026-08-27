@@ -84,6 +84,46 @@ public class ModelParametersTest {
     }
 
     // -------------------------------------------------------------------------
+    // setCpuMoeLayers / setCpuFfnLayers — the CPU-offload pair added in llama.cpp b10649
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testSetCpuMoeLayersRendersTheUpstreamFlag() {
+        ModelParameters p = new ModelParameters().setCpuMoeLayers(12);
+        assertThat(p.parameters.get("--n-cpu-moe"), is("12"));
+    }
+
+    @Test
+    public void testSetCpuFfnLayersRendersTheUpstreamFlag() {
+        ModelParameters p = new ModelParameters().setCpuFfnLayers(8);
+        assertThat(p.parameters.get("--n-cpu-ffn"), is("8"));
+    }
+
+    @Test
+    public void testCpuOffloadLayersAcceptZeroMeaningKeepEverythingOnTheGpu() {
+        ModelParameters p = new ModelParameters().setCpuMoeLayers(0).setCpuFfnLayers(0);
+        assertThat(p.parameters.get("--n-cpu-moe"), is("0"));
+        assertThat(p.parameters.get("--n-cpu-ffn"), is("0"));
+    }
+
+    @Test
+    public void testCpuOffloadLayersRejectNegative() {
+        // Upstream throws invalid_argument on a negative value, which would surface as a model-load
+        // failure with no indication of the cause; reject it here where the message can name it.
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setCpuMoeLayers(-1));
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setCpuFfnLayers(-1));
+    }
+
+    @Test
+    public void testCpuOffloadLayersAreIndependentOfEachOther() {
+        // They target different weight sets (MoE experts vs dense FFN) and write different flags, so
+        // setting one must not disturb the other -- unlike the mmproj device/offload pair.
+        ModelParameters p = new ModelParameters().setCpuMoeLayers(4).setCpuFfnLayers(9);
+        assertThat(p.parameters.get("--n-cpu-moe"), is("4"));
+        assertThat(p.parameters.get("--n-cpu-ffn"), is("9"));
+    }
+
+    // -------------------------------------------------------------------------
     // setRepeatLastN — validation (>= 0)
     // -------------------------------------------------------------------------
 
