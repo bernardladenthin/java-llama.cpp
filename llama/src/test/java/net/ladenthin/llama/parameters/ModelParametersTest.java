@@ -25,6 +25,7 @@ import net.ladenthin.llama.args.NumaStrategy;
 import net.ladenthin.llama.args.PoolingType;
 import net.ladenthin.llama.args.RopeScalingType;
 import net.ladenthin.llama.args.Sampler;
+import net.ladenthin.llama.args.TensorReadLazyMode;
 import org.junit.jupiter.api.Test;
 
 @ClaudeGenerated(
@@ -700,5 +701,45 @@ public class ModelParametersTest {
         ModelParameters p = new ModelParameters().setClearIdle(false);
         assertThat(p.parameters, hasKey("--no-cache-idle-slots"));
         assertThat(p.parameters, not(hasKey("--cache-idle-slots")));
+    }
+
+    // -------------------------------------------------------------------------
+    // setKvUnifiedPerSlot / setTensorReadLazy (llama.cpp b10679)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testSetKvUnifiedPerSlot() {
+        ModelParameters p = new ModelParameters().setKvUnifiedPerSlot(4096);
+        assertThat(p.parameters.get("--kv-unified-per-slot"), is("4096"));
+    }
+
+    @Test
+    public void testSetKvUnifiedPerSlotZeroThrows() {
+        IllegalArgumentException ex =
+                assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setKvUnifiedPerSlot(0));
+        assertThat(ex.getMessage(), containsString("kv-unified-per-slot"));
+    }
+
+    @Test
+    public void testSetKvUnifiedPerSlotNegativeThrows() {
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setKvUnifiedPerSlot(-1));
+    }
+
+    @Test
+    public void testSetTensorReadLazyOff() {
+        ModelParameters p = new ModelParameters().setTensorReadLazy(TensorReadLazyMode.OFF);
+        assertThat(p.parameters.get("--tensor-read-lazy"), is("off"));
+    }
+
+    @Test
+    public void testSetTensorReadLazyAuto() {
+        ModelParameters p = new ModelParameters().setTensorReadLazy(TensorReadLazyMode.AUTO);
+        assertThat(p.parameters.get("--tensor-read-lazy"), is("auto"));
+    }
+
+    @Test
+    public void testSetTensorReadLazyOn() {
+        ModelParameters p = new ModelParameters().setTensorReadLazy(TensorReadLazyMode.ON);
+        assertThat(p.parameters.get("--tensor-read-lazy"), is("on"));
     }
 }

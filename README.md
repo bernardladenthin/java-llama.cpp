@@ -11,7 +11,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b10649](https://img.shields.io/badge/llama.cpp-%23b10649-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b10649)  
+[![llama.cpp b10679](https://img.shields.io/badge/llama.cpp-%23b10679-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b10679)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.0%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -495,10 +495,22 @@ device may be named; the literal `"none"` keeps the projector on the CPU. `OpenA
 accepts the same flag as `-mmdev`/`--mmproj-device`, and `NativeServer` forwards it verbatim like
 every other llama-server flag.
 
-`setMmprojDevice(...)` and `setMmprojOffload(...)` are mutually exclusive: upstream writes both onto
-the single `mmproj_use_gpu` field, so only one may appear in the rendered argv and **the last of the
-two calls wins** — each clears the other. Pick one; if you need a device after disabling offload,
-call `setMmprojDevice` last.
+`setMmprojDevice(...)` and `setMmprojOffload(...)` write the **same** upstream field
+(`common_params::mmproj_use_gpu`), so where they disagree the outcome would depend on argv order —
+and the rendered argv comes from a `HashMap`, whose order is unspecified. The builder therefore
+resolves the two genuinely ambiguous combinations by dropping the earlier call, and leaves the rest
+alone:
+
+| Combination | Resolves to | Builder behaviour |
+|---|---|---|
+| named device + `setMmprojOffload(true)` | `(use_gpu=true, device)` in either order | both kept — no clash |
+| named device + `setMmprojOffload(false)` | order-dependent | **last call wins** |
+| `"none"` + `setMmprojOffload(true)` | order-dependent | **last call wins** |
+| `"none"` + `setMmprojOffload(false)` | `(use_gpu=false)` in either order | both kept — no clash |
+
+So a multi-GPU projector pin survives an explicit `setMmprojOffload(true)`; only a call that would
+actually contradict the other is dropped. If you need a device after disabling offload, call
+`setMmprojDevice` last.
 
 **Video input — decode settings only, so far.** llama.cpp b10649 added a video path to `mtmd`, and it
 is compiled into the shipped library (`MTMD_VIDEO` is on by default). Its decode settings are exposed

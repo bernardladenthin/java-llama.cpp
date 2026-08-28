@@ -141,7 +141,8 @@ same crashed test.
   (`ca60947`), which makes the invalid branch honour leniency exactly as the incomplete branch does;
   strict mode is unchanged. Guarded by the `ContentOnlyParseUtf8` tests in `test_utils.cpp`, which —
   unlike the upstream test the patch also adds — run in CI on every platform. Upstream-submittable;
-  re-checked at b10649 and upstream has not fixed it, so the patch stays.
+  re-checked at b10679 — the `until` parser's `INVALID` branch in pristine
+  `b10679:common/peg-parser.cpp` still returns `FAIL` with no `is_lenient()` guard — so the patch stays.
 
 - **[ANSWERED] Re-check the full suite once the TTS crash is fixed.** Done: Ubuntu on `999034b`
   ran **1689 tests, 3 failures, 1 error, 2 skipped**. Exactly one item was new — the router entry

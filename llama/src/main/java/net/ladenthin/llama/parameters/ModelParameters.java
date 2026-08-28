@@ -1618,6 +1618,53 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Cap the context each parallel slot may use, independently of the shared KV pool
+     * ({@code --kv-unified-per-slot}, llama.cpp b10679).
+     *
+     * <p>Two distinct effects, both worth knowing:</p>
+     * <ul>
+     *   <li>It <strong>caps</strong> each slot's context at this value (the effective per-slot
+     *       context becomes {@code min(pool capacity, this, the model's training context)}).</li>
+     *   <li>Upstream can additionally <strong>size the shared KV pool</strong> to
+     *       {@code n_parallel * this} when the context size is left unset — but that half lives in
+     *       {@code llama_server()}, so it applies only to the full
+     *       {@link net.ladenthin.llama.server.NativeServer} server mode, <em>not</em> to a model
+     *       loaded through this builder. Here only the cap applies; size the pool yourself with
+     *       {@link #setCtxSize(int)}.</li>
+     * </ul>
+     *
+     * <p>A value above the pool's per-slot capacity can never bind, and upstream logs a warning
+     * saying so rather than failing.</p>
+     *
+     * @param contextPerSlot the per-slot context cap in tokens; must be positive
+     * @return this builder
+     * @throws IllegalArgumentException if {@code contextPerSlot} is not positive
+     */
+    public ModelParameters setKvUnifiedPerSlot(int contextPerSlot) {
+        if (contextPerSlot <= 0) {
+            throw new IllegalArgumentException("Invalid kv-unified-per-slot value: " + contextPerSlot
+                    + " (must be > 0; upstream treats 0 as unset, which is the default)");
+        }
+        return putScalar("--kv-unified-per-slot", contextPerSlot);
+    }
+
+    /**
+     * Control on-demand reading of tensors the model architecture marks as lazy-loadable, such as
+     * per-layer embeddings ({@code --tensor-read-lazy}, llama.cpp b10679).
+     *
+     * <p>Trades resident memory for disk reads during inference. <strong>Requires mmap</strong>, so
+     * it has no effect on a model loaded with mmap disabled. Upstream's default is
+     * {@link TensorReadLazyMode#AUTO}, which applies on-demand reading only to marked tensors above
+     * 4&nbsp;GiB.</p>
+     *
+     * @param mode the lazy-read mode
+     * @return this builder
+     */
+    public ModelParameters setTensorReadLazy(TensorReadLazyMode mode) {
+        return putEnum("--tensor-read-lazy", mode);
+    }
+
+    /**
      * Set the maximum RAM cache size in MiB used to store saved slot KV state.
      * <p>
      * Set to {@code -1} for no limit, {@code 0} to disable (default: 8192 MiB).

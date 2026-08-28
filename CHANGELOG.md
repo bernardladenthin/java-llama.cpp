@@ -28,6 +28,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   to `process_mtmd_prompt`, and video decoding is compiled into the shipped library (`MTMD_VIDEO`
   defaults on). `setVideoFfmpegDir` is the significant one — upstream otherwise looks `ffmpeg` and
   `ffprobe` up on `PATH`, which a JVM process often does not have them on.
+- **`ModelParameters.setKvUnifiedPerSlot(int)`** — caps the context each parallel slot may use
+  (upstream `--kv-unified-per-slot`, new in llama.cpp b10679). The cap reaches this binding's
+  completion path through `server_context_meta::slot_n_ctx`, so it also moves where the
+  `repeat_last_n` / `dry_penalty_last_n` sentinels expand to. Upstream's second effect — sizing the
+  shared KV pool to `n_parallel * N` when no context size is given — lives in `llama_server()` and
+  therefore applies to `NativeServer` only, not to a model loaded from `ModelParameters`; the
+  Javadoc says so.
+- **`ModelParameters.setTensorReadLazy(TensorReadLazyMode)`** and the new
+  **`net.ladenthin.llama.args.TensorReadLazyMode`** enum (`OFF` / `AUTO` / `ON`) — on-demand reading
+  of tensors the model architecture marks as lazy-loadable, such as per-layer embeddings (upstream
+  `--tensor-read-lazy`, new in llama.cpp b10679, mapping to `llama_lazy_mode`). Trades resident
+  memory for disk reads and requires mmap. It reaches the plain `LlamaModel` load path too, because
+  `common_model_params_to_llama` copies `lazy_mode` into `llama_model_params`.
 - **`ServerMetrics.getWindowPromptProcessingMillis()` / `getWindowTokenGenerationMillis()` /
   `getWindowTimings()`** — typed access to the current-window timing keys `t_prompt_processing` and
   `t_tokens_generation`. Both were always emitted; only the cumulative `_total` variants had accessors.
@@ -119,6 +132,26 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
     the merge divides upstream's microseconds. `ServerMetrics` reads them as doubles; a consumer
     parsing the raw JSON with an integer parser sees a type change.
 
+- Upgraded llama.cpp from **b10649 to b10679**. No project-source change: every `tools/server/*.h`
+  header, `server-schema.cpp`, `server-task.cpp`, `server-common.cpp`, `common/chat.h` and
+  `tools/mtmd/mtmd-helper.h` are byte-identical across the range (compared by blob SHA), so the
+  request-field set, its bounds and the emitted response keys cannot have moved and the three
+  mechanical contract checks are moot. The whole in-scope delta is 172 changed lines over 8 files —
+  the rest of the 159-file range is `tools/ui` (rebuilt from `GIT_TAG` by CI) and backend internals.
+  Two additive upstream features are new and both are now exposed (see Added):
+  `--kv-unified-per-slot` and `--tensor-read-lazy` / `llama_lazy_mode`. Three patch-target files were
+  touched (`common/arg.cpp`, `tools/server/server-context.cpp`, `tools/server/server.cpp`) and all
+  eight patches still apply with zero fuzz; patch `0007`'s invariant holds because the new
+  KV-pool-sizing block in `llama_server()` sits before the extracted route table, not inside it.
+  `llama_model_quantize_params` gained `max_buf_size`, which needs no adaptation because
+  `LlamaQuantizer` builds its params from `llama_model_quantize_default_params()`. Upstream's private
+  `get_slot_n_ctx()` → `n_ctx_slot()` rename is invisible here — the project reads the value through
+  the unchanged `server_context_meta::slot_n_ctx`.
+  Patch `0001` shrank from 37 to 36 files: upstream rewrote `tests/test-save-load-state.cpp`'s
+  `main()` to build its own filtered argv, so by the patch's own rule that call site now wants
+  `common_params_parse` and no longer the `_main()` flip. The patch itself is still required —
+  `common_params_parse` at b10679 still carries the count-guarded `GetCommandLineW` override and
+  `common_params_parse_main` does not exist upstream.
 - Upgraded llama.cpp from **b10644 to b10649**. The first range in this bump to break the project's own
   compile: upstream threaded a new `mtmd_helper_init_opt` (video-decode settings) through every helper
   that can ingest media, changing the signature of `mtmd_helper_bitmap_init_from_file`,
