@@ -66,6 +66,13 @@ env:
 # Giving every non-PR run its own group (via the unique run_id) means such a run is
 # never queued behind a sibling and therefore can never be cancelled, while PR runs
 # still share a group per ref and supersede each other as intended.
+#
+# One-time effect when this expression changes: GitHub reads `concurrency` from the
+# workflow file at each run's own ref, so a run started before the change sits in the
+# old group and a run started after it sits in the new one. They are different groups,
+# so the new push does NOT supersede the in-flight old run -- exactly once, on the
+# commit that lands this. It self-heals from the next push on. Expect the same overlap
+# when porting this to a sibling repo; it is not a sign the expression is wrong.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
