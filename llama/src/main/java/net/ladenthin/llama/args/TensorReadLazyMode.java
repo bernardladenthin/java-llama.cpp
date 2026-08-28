@@ -9,7 +9,7 @@ package net.ladenthin.llama.args;
  * embeddings.
  *
  * <p>The string constants are the exact values accepted by llama.cpp's {@code --tensor-read-lazy}
- * CLI argument (added in b10679), and map 1-to-1 to the {@code llama_lazy_mode} enum in
+ * CLI argument (added in b10653), and map 1-to-1 to the {@code llama_lazy_mode} enum in
  * {@code include/llama.h}. Reading rows on demand keeps a large marked tensor out of resident
  * memory at the cost of disk reads during inference; it <strong>requires mmap</strong>, so it has
  * no effect when the model is loaded with mmap disabled.

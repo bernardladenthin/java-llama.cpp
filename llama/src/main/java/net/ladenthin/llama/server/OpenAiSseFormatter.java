@@ -186,6 +186,12 @@ final class OpenAiSseFormatter {
      * {@code default_generation_settings.n_ctx} from here to size their context window, and newer clients
      * read the {@code modalities} block to gate image input.
      *
+     * <p>All three modality keys upstream emits are present, so a client that gates on
+     * {@code modalities.video} sees an explicit {@code false} rather than a missing key.
+     * {@code audio} and {@code video} are hard-coded {@code false} because this server exposes no
+     * configuration for them &mdash; {@link OpenAiServerConfig} carries only
+     * {@code supportsVision}.</p>
+     *
      * @param modelId the served model id
      * @param nCtx the advertised context length
      * @param vision whether image input is supported
@@ -202,6 +208,7 @@ final class OpenAiSseFormatter {
         ObjectNode modalities = root.putObject("modalities");
         modalities.put("vision", vision);
         modalities.put("audio", false);
+        modalities.put("video", false);
         return root.toString();
     }
 }

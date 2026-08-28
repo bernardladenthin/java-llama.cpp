@@ -495,6 +495,19 @@ index a3b2a8b0f..80d6a3ff6 100644
          return 1;
      }
  
+diff --git a/tools/tokenize/tokenize.cpp b/tools/tokenize/tokenize.cpp
+index 77b33c4a4..834a410c9 100644
+--- a/tools/tokenize/tokenize.cpp
++++ b/tools/tokenize/tokenize.cpp
+@@ -99,7 +99,7 @@ int main(int argc, char ** argv) {
+ 
+     common_init();
+ 
+-    if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_TOKENIZE, print_usage)) {
++    if (!common_params_parse_main(argc, argv, params, LLAMA_EXAMPLE_TOKENIZE, print_usage)) {
+         return 1;
+     }
+ 
 diff --git a/tools/tts/tts.cpp b/tools/tts/tts.cpp
 index 2a1bdccc9..3bd25a246 100644
 --- a/tools/tts/tts.cpp

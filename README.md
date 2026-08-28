@@ -512,8 +512,11 @@ So a multi-GPU projector pin survives an explicit `setMmprojOffload(true)`; only
 actually contradict the other is dropped. If you need a device after disabling offload, call
 `setMmprojDevice` last.
 
-**Video input — decode settings only, so far.** llama.cpp b10649 added a video path to `mtmd`, and it
-is compiled into the shipped library (`MTMD_VIDEO` is on by default). Its decode settings are exposed
+**Video input — decode settings only, so far.** `mtmd` has carried a video path since llama.cpp
+**b9562** (#24269); **b10647** (#24318) added the `--video-*` CLI flags and the
+`mtmd_helper_init_opt` plumbing that surfaces them. It is compiled into the shipped desktop library
+(`MTMD_VIDEO` is on by default, gated on `LLAMA_SUBPROCESS`, which upstream force-disables on
+Android and iOS). Its decode settings are exposed
 as `setVideoFps(float)`, `setVideoTimestampInterval(long)` and `setVideoFfmpegDir(String)`. The last
 one matters most in a JVM: upstream shells out to `ffmpeg`/`ffprobe` and resolves them from `PATH`,
 which an application server, an Android app or a JAR-only container frequently does not have them on —

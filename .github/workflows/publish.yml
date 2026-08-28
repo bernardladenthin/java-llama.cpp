@@ -56,10 +56,18 @@ env:
 #
 # cancel-in-progress is deliberately scoped to pull_request ONLY. A push to main or
 # to a v* tag is a release path: cancelling one midway could leave a partially
-# published set of artifacts, so those always run to completion even if another push
-# lands behind them.
+# published set of artifacts.
+#
+# cancel-in-progress: false is NOT sufficient on its own to protect a release run.
+# GitHub cancels a *pending* run whenever a newer run joins the same group behind an
+# in-progress one -- that rule is independent of cancel-in-progress. So with a plain
+# `workflow-ref` group, a queued `publish_to_central` dispatch on main could be
+# silently dropped by a later push to main, both sharing `Publish-refs/heads/main`.
+# Giving every non-PR run its own group (via the unique run_id) means such a run is
+# never queued behind a sibling and therefore can never be cancelled, while PR runs
+# still share a group per ref and supersede each other as intended.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

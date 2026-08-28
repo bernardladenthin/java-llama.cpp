@@ -586,6 +586,14 @@ public class ModelParametersTest {
         ModelParameters none = new ModelParameters().setMmprojOffload(true).setMmprojDevice("none");
         assertThat(none.parameters.get("--mmproj-device"), is("none"));
         assertThat(none.parameters, not(hasKey("--mmproj-offload")));
+
+        // ... but "none" AGREES with --no-mmproj-offload: (false, null) in either order. This is the
+        // fourth combination, and it must survive -- exactly one flag is contradicted by each device
+        // value, never both.
+        ModelParameters noneAgreeing =
+                new ModelParameters().setMmprojOffload(false).setMmprojDevice("none");
+        assertThat(noneAgreeing.parameters.get("--mmproj-device"), is("none"));
+        assertThat(noneAgreeing.parameters, hasKey("--no-mmproj-offload"));
     }
 
     @Test

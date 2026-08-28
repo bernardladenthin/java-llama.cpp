@@ -134,5 +134,9 @@ public class OpenAiSseFormatterTest {
         assertThat(root.path("model_alias").asText(), is("local"));
         assertThat(root.path("modalities").path("vision").asBoolean(), is(true));
         assertThat(root.path("modalities").path("audio").asBoolean(), is(false));
+        // All three keys upstream emits must be present: a missing key and an explicit false are not
+        // the same thing to a client that checks for the field before trusting the value.
+        assertThat(root.path("modalities").has("video"), is(true));
+        assertThat(root.path("modalities").path("video").asBoolean(), is(false));
     }
 }

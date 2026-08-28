@@ -680,9 +680,10 @@ public final class InferenceParameters extends JsonParameters {
      * Returns a new request with the chat-template flag replaced.
      *
      * <p><strong>Ignored by the server.</strong> Jinja templating is a <em>launch-time</em> setting,
-     * not a per-request one: {@code common_params::use_jinja} is set only by the {@code --jinja} /
-     * {@code --no-jinja} arguments, and the string {@code "use_jinja"} appears nowhere in
-     * {@code common/} or {@code tools/server/} as a request key on the pinned build. The request
+     * not a per-request one. {@code common_params::use_jinja} is set at parse time &mdash; by
+     * {@code --jinja} / {@code --no-jinja}, by the per-example defaults, and by the
+     * {@code --gpt-oss-*-default} presets &mdash; and the string {@code "use_jinja"} appears nowhere
+     * in {@code common/} or {@code tools/server/} as a <em>request</em> key on the pinned build. The request
      * schema silently discards unknown fields, so this neither enables nor disables anything.
      * Use {@link net.ladenthin.llama.parameters.ModelParameters#enableJinja()} when loading the
      * model instead. Retained only so existing call sites keep compiling; it will be removed in a

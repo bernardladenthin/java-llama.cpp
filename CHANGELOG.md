@@ -19,26 +19,26 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   Mixture-of-Experts weights, or dense FFN weights, on the CPU (upstream `--n-cpu-moe` / `-ncmoe` and
   `--n-cpu-ffn` / `-ncffn`). The companions to `setGpuLayers`: where that moves whole layers, these move
   only the weight class that dominates a model's size, usually fitting a much larger model into the same
-  VRAM at a smaller speed cost. Only `--n-cpu-ffn` is new in llama.cpp b10649; `--n-cpu-moe` has existed
+  VRAM at a smaller speed cost. Only `--n-cpu-ffn` is new (llama.cpp b10645); `--n-cpu-moe` has existed
   upstream since b6089 but had never been exposed here.
 - **`ModelParameters.setVideoFps(float)` / `setVideoTimestampInterval(long)` / `setVideoFfmpegDir(String)`**
-  — the video-decoding knobs upstream added in llama.cpp b10649 (`--video-fps`,
+  — the video-decoding knobs upstream added in llama.cpp b10647 (`--video-fps`,
   `--video-timestamp-interval`, `--video-ffmpeg-dir`). They apply to any media attached to a request
   once a projector is loaded: `server_context` copies them into the `mtmd_helper_init_opt` it passes
   to `process_mtmd_prompt`, and video decoding is compiled into the shipped library (`MTMD_VIDEO`
   defaults on). `setVideoFfmpegDir` is the significant one — upstream otherwise looks `ffmpeg` and
   `ffprobe` up on `PATH`, which a JVM process often does not have them on.
 - **`ModelParameters.setKvUnifiedPerSlot(int)`** — caps the context each parallel slot may use
-  (upstream `--kv-unified-per-slot`, new in llama.cpp b10679). The cap reaches this binding's
-  completion path through `server_context_meta::slot_n_ctx`, so it also moves where the
-  `repeat_last_n` / `dry_penalty_last_n` sentinels expand to. Upstream's second effect — sizing the
+  (upstream `--kv-unified-per-slot`, new in llama.cpp b10662). The cap reaches this binding through
+  `server_context_meta::slot_n_ctx`: it becomes every `slot.n_ctx` and is the context budget passed to
+  `format_prompt_infill`. Upstream's second effect — sizing the
   shared KV pool to `n_parallel * N` when no context size is given — lives in `llama_server()` and
   therefore applies to `NativeServer` only, not to a model loaded from `ModelParameters`; the
   Javadoc says so.
 - **`ModelParameters.setTensorReadLazy(TensorReadLazyMode)`** and the new
   **`net.ladenthin.llama.args.TensorReadLazyMode`** enum (`OFF` / `AUTO` / `ON`) — on-demand reading
   of tensors the model architecture marks as lazy-loadable, such as per-layer embeddings (upstream
-  `--tensor-read-lazy`, new in llama.cpp b10679, mapping to `llama_lazy_mode`). Trades resident
+  `--tensor-read-lazy`, new in llama.cpp b10653, mapping to `llama_lazy_mode`). Trades resident
   memory for disk reads and requires mmap. It reaches the plain `LlamaModel` load path too, because
   `common_model_params_to_llama` copies `lazy_mode` into `llama_model_params`.
 - **`ServerMetrics.getWindowPromptProcessingMillis()` / `getWindowTokenGenerationMillis()` /
@@ -117,13 +117,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   emitted response keys are identical at both ends of the range, and `libjllama` links with zero
   undefined upstream symbols. The audit did surface documentation and coverage gaps, fixed here:
   - The `-1` context-size sentinel was dropped upstream at **b10273** (#26524), not b10275 — corrected
-    in 4 Javadoc blocks, 4 exception messages and every doc that cited it. `b10275` remains correct
-    for the unrelated `server-schema.h` signature break.
+    in 4 Javadoc blocks, 4 exception messages and every doc that cited it. The `server-schema.h`
+    signature break is **the same** upstream commit, not an unrelated one: #26524 at b10273 dropped
+    `eval_llama_cmpl_schema`'s `n_ctx_slot` parameter in the same change that removed the sentinel
+    (`git diff b10273 b10275 -- tools/server/server-schema.h` is empty).
   - `LlamaModel.saveSlot`/`restoreSlot` now document that the on-disk format is version-locked to the
     linked llama.cpp build, and that a mismatch surfaces as upstream's misleading
     `"No available space in KV cache or invalid slot save file"`.
   - `getMetrics()` documents that the merged payload is not an atomic snapshot and that it defers
-    idle-sleep, which upstream's own `/metrics` stopped doing at b10644.
+    idle-sleep, which upstream's own `/metrics` stopped doing at b10519 (#27376, which introduced
+    `task_resets_idle_timer`). It cannot have been b10644: `git diff --name-only b10639 b10644 --
+    tools/server/` is empty.
   - **`--tools get_datetime` no longer starts.** Upstream deleted that built-in tool in this range and
     an unknown name is fatal (`server_tools::setup` throws), so a `NativeServer` command line carrying
     it now fails at startup. Same block: `server_tool::type()` reports `"server"` instead of
@@ -132,12 +136,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
     the merge divides upstream's microseconds. `ServerMetrics` reads them as doubles; a consumer
     parsing the raw JSON with an integer parser sees a type change.
 
-- Upgraded llama.cpp from **b10649 to b10679**. No project-source change: every `tools/server/*.h`
-  header, `server-schema.cpp`, `server-task.cpp`, `server-common.cpp`, `common/chat.h` and
-  `tools/mtmd/mtmd-helper.h` are byte-identical across the range (compared by blob SHA), so the
-  request-field set, its bounds and the emitted response keys cannot have moved and the three
-  mechanical contract checks are moot. The whole in-scope delta is 172 changed lines over 8 files —
-  the rest of the 159-file range is `tools/ui` (rebuilt from `GIT_TAG` by CI) and backend internals.
+- Upgraded llama.cpp from **b10649 to b10679**. No project-source change: all twelve
+  `tools/server/*.h` headers, `server-schema.cpp`, `server-task.cpp`, `server-common.cpp`,
+  `common/chat.h` and `tools/mtmd/mtmd-helper.h` are byte-identical across the range (compared by blob
+  SHA), so the request-field set, its bounds and the emitted response keys cannot have moved and the
+  three mechanical contract checks are moot. The whole in-scope delta is 8 files, 172 insertions and
+  15 deletions — the rest of the 159-file range is `tools/ui` (rebuilt from `GIT_TAG` by CI), the ggml
+  backends, and `conversion/`, `gguf-py/`, `tests/`, `.github/`, `docs/`, `scripts/` and the standalone
+  `tools/` binaries, none of which this project compiles.
   Two additive upstream features are new and both are now exposed (see Added):
   `--kv-unified-per-slot` and `--tensor-read-lazy` / `llama_lazy_mode`. Three patch-target files were
   touched (`common/arg.cpp`, `tools/server/server-context.cpp`, `tools/server/server.cpp`) and all
@@ -157,9 +163,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   that can ingest media, changing the signature of `mtmd_helper_bitmap_init_from_file`,
   `tokenize_input_prompts` and `format_prompt_rerank`. Four call sites were adapted — all of them pass
   `mctx = nullptr` or handle audio, so each now passes upstream's own `mtmd_helper_init_opt_default()`.
-  The wire contract is unchanged (68 request fields, 23 bounds and 286 response keys identical across
-  the range over the six compiled server TUs; zero CLI flags removed or renamed), and all eight local
-  patches apply unchanged even though six patch-target files were touched.
+  The wire contract is unchanged: 68 request fields and 23 bounds identical across the range, and
+  the emitted response-key set identical for every server TU the project compiles (the exact key count
+  depends on which TUs are swept — the load-bearing half is that it does not move). Zero CLI flags were
+  removed or renamed, and all eight local patches apply unchanged even though six patch-target files
+  were touched.
   Of the 6 new upstream flags, four are now exposed (see Added): `--n-cpu-ffn` and the three
   `--video-*` knobs. `--n-cpu-moe` is exposed alongside them but is not new — it has existed upstream
   since b6089 and had simply never been surfaced here. The two `--spec-synth-*` flags stay unexposed:
@@ -193,7 +201,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   clamp for warp sizes > 64 (#27726). Neither range touches `common/`, `include/llama.h`,
   `tools/server/` or `tools/mtmd/`, so no request field, no bound and no response key can have
   moved. All seven local patches apply unchanged.
-- Upgraded llama.cpp from **b10618 to b10631**. No project-source change: the only edits in the
+- Upgraded llama.cpp from **b10618 to b10631**. No project-source change. The only **project-relevant** edits in the
   range are a narrowing input validation in `oaicompat_chat_params_parse` (continuing a final
   assistant message that carries `tool_calls` now throws), a Qwen3-Coder-only grammar refinement
   in `common_chat_params_init_qwen3_coder`, a cosmetic `LLAMA_VERSION_MINOR` bump, and the WebUI.
@@ -279,7 +287,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `getMetrics()` assertions above never failed. Test paths now resolve against either layout.
   `llama-langchain4j` had the identical defect.
 - **`RouterClient.awaitModelLoaded` misdiagnosed hidden router models.** A cache model deduplicated by a
-  preset with `dedup-cache-models` (b10507, #27346) is omitted from `GET /models` although it still loads and
+  preset with `dedup-cache-models` (b10505, #27346) is omitted from `GET /models` although it still loads and
   serves by name; the error now names that cause instead of sending callers to re-check `--models-dir`.
 - **CVE-2026-49844** (GHSA-qv9r-c865-cp47, moderate): `org.apache.logging.log4j:log4j-api`
   2.25.3 arrives as a **test-scope** transitive of `io.github.hakky54:logcaptor` 2.12.6, and

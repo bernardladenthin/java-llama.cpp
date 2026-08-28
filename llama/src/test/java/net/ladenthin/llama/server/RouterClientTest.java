@@ -219,7 +219,7 @@ public class RouterClientTest {
 
     @Test
     public void unlistedModelMessageNamesTheHiddenCacheModelCause() {
-        // A model hidden by a preset with dedup-cache-models (upstream #27346, b10507) never shows
+        // A model hidden by a preset with dedup-cache-models (upstream #27346, b10505) never shows
         // up in GET /models even though it loads and serves, so the message must not send the
         // caller off to double-check --models-dir alone.
         modelsBody.set("{\"data\":[]}");

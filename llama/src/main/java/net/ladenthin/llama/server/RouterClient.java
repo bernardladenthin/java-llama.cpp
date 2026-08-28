@@ -183,7 +183,7 @@ public final class RouterClient {
      * elapses. Fails fast (instead of running out the timeout) when the router does not list
      * the model or marks it failed.
      *
-     * <p><strong>Hidden models cannot be awaited here.</strong> Since llama.cpp b10507 (upstream
+     * <p><strong>Hidden models cannot be awaited here.</strong> Since llama.cpp b10505 (upstream
      * #27346) the router omits a cache model from {@code GET /models} when a preset with
      * {@code dedup-cache-models} already covers the same file &mdash; upstream's own comment is
      * "hidden from GET /models, but still accept if requested". Such a model loads and serves

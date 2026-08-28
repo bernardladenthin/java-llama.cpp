@@ -298,10 +298,13 @@ upstream PR #22393 — it drops automatically when that merges.)
 
 These are JNI plumbing items for upstream API additions. Policy: add only after a real user request — they are mostly relevant to specific model families or specialized workflows.
 
-- **Video input (`ContentPart.videoFile(...)`).** llama.cpp **b10649** added an end-to-end video path
-  to `mtmd`: `mtmd_helper_video_init_params` (fps target, ffmpeg binary directory, timestamp
-  interval), a fourth `mtmd_helper_init_opt` parameter on the bitmap/tokenize helpers, and the CLI
-  flags `--video-fps`, `--video-timestamp-interval`, `--video-ffmpeg-dir`.
+- **Video input (`ContentPart.videoFile(...)`).** `mtmd` has had an end-to-end video path since
+  llama.cpp **b9562** (#24269) — `mtmd_helper_video_init_params` was already present at the previous
+  pin, b10456. What **b10647** (#24318, commit `f29551215`) added is the surfacing: a fourth
+  `mtmd_helper_init_opt` parameter on the bitmap/tokenize helpers and the CLI flags `--video-fps`,
+  `--video-timestamp-interval`, `--video-ffmpeg-dir`. Older notes cite b10649 for all of it because
+  that was the *bump step* that carried it; b10647 is the tag that introduced it, and the video path
+  itself is older still.
 
   **The three flags are now exposed** as `ModelParameters.setVideoFps` /
   `setVideoTimestampInterval` / `setVideoFfmpegDir`. They were initially refused at the b10649 bump
@@ -443,6 +446,50 @@ the load-time failure class is already covered, and a slow smoke tends to get ma
 
 **Not yet observed green in CI** — the job and the two sibling-repo smokes landed in one change set
 and have only run locally so far.
+
+### Release/build robustness gaps found by the b10679 audit (PR #403)
+
+Both are **pre-existing** and orthogonal to a version bump, so they were recorded rather than folded
+into that PR.
+
+- **Two `all-*-aarch64` fat jars are attached to releases with no smoke job.**
+  `.github/package-fatjars.sh` emits four OS/arch fat jars (`linux-x86-64`, `linux-aarch64`,
+  `windows-x86-64`, `windows-aarch64`), all uploaded as `llama-fatjars` and attached by
+  `github-release-signed` / `github-snapshot`. Only the two **x86-64** ones are smoked
+  (`smoke-fatjar-linux`, `smoke-fatjar-windows`); grepping `publish.yml` for `all-linux-aarch64` or
+  `all-windows-aarch64` returns nothing, so neither is ever downloaded or launched.
+
+  That directly violates the cross-repo rule in
+  [`../workspace/policies/fat-jar-release-assets.md`](../workspace/policies/fat-jar-release-assets.md)
+  — *"No release asset is attached that CI has not run"* — which exists because a corrupt macOS dylib
+  shipped in three releases under a fully green pipeline. The fix is cheap: the workflow **already**
+  uses the free ARM runners elsewhere (`ubuntu-24.04-arm` for the aarch64 CPU and Vulkan builds,
+  `windows-11-arm` for the Windows arm64 build), so `smoke-fatjar-linux-aarch64` and
+  `smoke-fatjar-windows-arm64` can mirror the existing smoke jobs and join both publish jobs'
+  `needs:`. Not done in the bump PR because it widens a version bump into CI work and would gate that
+  PR on a pre-existing defect if either jar turns out to be broken.
+
+- **The patch applier silently accepts a partially-reverted source tree.** The stamp file records the
+  checked-out llama.cpp commit plus each patch's SHA-256 — **nothing about the resulting file
+  contents**. Reverting one patched file after a successful apply leaves the stamp valid and the tree
+  still dirty (the other patched files are still modified), so the dirty-tree branch reports
+  "already applied — skipping", exits 0, and the build compiles unpatched code. Reproduction:
+
+  ```bash
+  # with the tree fully patched and the stamp written:
+  git -C <llama.cpp-src> checkout -- common/peg-parser.cpp     # drops patch 0011's fix
+  cmake -DPATCH_DIR=... -DLLAMA_SRC=... -P llama/cmake/apply-llama-patches.cmake
+  # -> "8 patch(es) already applied — skipping", exit 0, patch NOT restored
+  ```
+
+  Every other path is correctly fail-loud (committed-patch state, stamp/HEAD mismatch on a dirty tree,
+  and a non-git-worktree re-run all exit 1). The fix is a content oracle in the manifest — cheapest is
+  to append `git -C <src> diff --no-color | sha256`, or per-patched-file blob hashes — so a reverted or
+  hand-edited file invalidates the stamp. **CI is unaffected** (every job configures into a fresh build
+  directory); this only bites a local reconfigure, which is why it was not rushed. Note the stamp
+  format change will make every existing local build dir abort with the applier's
+  "configure into a fresh build directory" message — that is the designed fail-loud path, not a
+  regression.
 
 ### Test-coverage debt found during the b10649 review (PR #403)
 

@@ -1861,7 +1861,7 @@ TEST(CmplFinalChatStream, IncludeUsageTrue_TrailingChunkHasEmptyChoicesAndUsage)
 //   Called with nullptr vocab when the JSON does not exercise
 //   grammar/preserved_tokens tokenisation.  Tests verify:
 //     - simple field round-trip (temperature, seed, n_predict)
-//     - repeat_last_n/dry_penalty_last_n reject negative values (b10275 dropped the -1=ctx-size
+//     - repeat_last_n/dry_penalty_last_n reject negative values (b10273 dropped the -1=ctx-size
 //       sentinel; the hard lower limit moved from -1 to 0)
 //     - dry_base < 1.0 is reset to default
 //     - n_discard negative throws std::invalid_argument (b9739: range-checked, no longer clamped)
@@ -1904,13 +1904,13 @@ TEST(ParamsFromJsonCmpl, SsePingInterval_Absent_InheritsServerSetting) {
     EXPECT_EQ(parse_params({}).sse_ping_interval, defaults.sse_ping_interval);
 }
 
-// b10275: the -1=ctx-size sentinel was dropped from repeat_last_n; the hard lower limit is now 0,
+// b10273: the -1=ctx-size sentinel was dropped from repeat_last_n; the hard lower limit is now 0,
 // so a request-supplied -1 is out of range and throws instead of expanding to the slot context size.
 TEST(ParamsFromJsonCmpl, RepeatLastN_MinusOne_Throws) {
     EXPECT_THROW(parse_params({{"repeat_last_n", -1}}), std::invalid_argument);
 }
 
-// b10275: same sentinel removal for dry_penalty_last_n.
+// b10273: same sentinel removal for dry_penalty_last_n.
 TEST(ParamsFromJsonCmpl, DryPenaltyLastN_MinusOne_Throws) {
     EXPECT_THROW(parse_params({{"dry_penalty_last_n", -1}}), std::invalid_argument);
 }

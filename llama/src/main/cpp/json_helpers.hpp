@@ -251,8 +251,11 @@
 // `slots` — so every existing consumer keeps working.  The speculative counters
 // deliberately keep upstream's own historical spelling (`n_draft_verif_steps_total`,
 // `n_accepted_per_pos_total`), not a tidied-up one, so the payload stays a faithful
-// reproduction.  Only `n_prompt_tokens_cached_total` is genuinely new: `n_prompt_cached`
-// did not exist in the struct before b10408 and has no Prometheus counterpart either.
+// reproduction.  `n_prompt_tokens_cached_total` is the one key with no pre-b10408 JSON
+// ancestor: `n_prompt_cached` did not exist in the struct before b10408.  It is not
+// invisible upstream, though -- `to_metrics()` has emitted it as the Prometheus counter
+// `llamacpp:prompt_tokens_cached_total` since the same commit; what it lacked was a JSON
+// representation.
 //
 // Durations are microseconds upstream and milliseconds here, matching what the
 // pre-b10408 payload used.

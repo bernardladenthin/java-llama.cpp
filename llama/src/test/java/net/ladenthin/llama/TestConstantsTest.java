@@ -153,8 +153,11 @@ public class TestConstantsTest {
 
     /**
      * Finds every {@code System.getProperty(...)} / {@code System.getenv(...)} call in {@code source}
-     * whose own argument list names a {@code net.ladenthin.llama.*} property, either as a literal or
-     * through a {@code PROP_*} constant.
+     * whose own argument list names a {@code net.ladenthin.llama.*} property, in any of the three
+     * forms this repo actually writes: a bare literal, a {@code TestConstants.PROP_*} constant, or a
+     * concatenation onto {@code LlamaSystemProperties.PREFIX}. The last one was added after an audit
+     * showed a raw {@code System.getProperty(LlamaSystemProperties.PREFIX + ".tts.model")} slipping
+     * past the first two &mdash; a guard against silent skipping that itself silently passed.
      *
      * @param file the file being scanned, used only to label a finding
      * @param source the file's full text
@@ -185,7 +188,9 @@ public class TestConstantsTest {
                     end++;
                 }
                 String arguments = source.substring(open, Math.min(end + 1, source.length()));
-                if (arguments.contains("net.ladenthin.llama") || arguments.contains("PROP_")) {
+                if (arguments.contains("net.ladenthin.llama")
+                        || arguments.contains("PROP_")
+                        || arguments.contains("LlamaSystemProperties.PREFIX")) {
                     found.add(file + "  "
                             + source.substring(start, Math.min(end + 1, source.length()))
                                     .replaceAll("\\s+", " "));

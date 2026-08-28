@@ -897,7 +897,7 @@ public final class ModelParameters extends CliParameters {
     public ModelParameters setCpuMoeLayers(int layers) {
         if (layers < 0) {
             throw new IllegalArgumentException(
-                    "Invalid n-cpu-moe value: " + layers + " (must be >= 0; 0 = keep all experts on the GPU)");
+                    "Invalid n-cpu-moe value: " + layers + " (must be >= 0; 0 = force no experts to the CPU)");
         }
         return putScalar("--n-cpu-moe", layers);
     }
@@ -907,7 +907,7 @@ public final class ModelParameters extends CliParameters {
      *
      * <p>The dense-model counterpart of {@link #setCpuMoeLayers(int)}: it offloads the feed-forward
      * weights rather than the MoE experts, trading a little speed for VRAM headroom without giving
-     * up whole layers. Upstream {@code --n-cpu-ffn} / {@code -ncffn}, added in llama.cpp b10649.
+     * up whole layers. Upstream {@code --n-cpu-ffn} / {@code -ncffn}, added in llama.cpp b10645.
      * On a MoE model use {@link #setCpuMoeLayers(int)} instead — this flag does not touch expert
      * weights, so it frees very little there.</p>
      *
@@ -1429,14 +1429,17 @@ public final class ModelParameters extends CliParameters {
         // unspecified. Clear only the genuinely conflicting combinations:
         //
         //   named device + --no-mmproj-offload -> (true,dev) vs (false,dev): ORDER MATTERS, clear.
-        //   named device + --mmproj-offload    -> (true,dev) either way:     safe, keep both.
+        //   named device + --mmproj-offload    -> (true,dev) either way:       safe, keep both.
         //   "none"       + --mmproj-offload    -> (true,null) vs (false,null): ORDER MATTERS, clear.
+        //   "none"       + --no-mmproj-offload -> (false,null) either way:     safe, keep both.
         //
-        // Clearing --mmproj-offload unconditionally would throw away a legitimate multi-GPU pin to
-        // set a field that already defaults to true.
-        clearFlag(ModelFlag.NO_MMPROJ_OFFLOAD);
+        // So exactly one flag is contradicted by each device value, and never both: clearing
+        // unconditionally would throw away a legitimate multi-GPU pin (or a deliberate
+        // --no-mmproj-offload) to set a field the other argument already agrees on.
         if (MMPROJ_DEVICE_NONE.equals(device)) {
             clearFlag(ModelFlag.MMPROJ_OFFLOAD);
+        } else {
+            clearFlag(ModelFlag.NO_MMPROJ_OFFLOAD);
         }
         return this;
     }
@@ -1452,7 +1455,7 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Target frame rate at which an attached video is sampled (upstream {@code --video-fps},
-     * llama.cpp b10649; default 4.0).
+     * llama.cpp b10647; default 4.0).
      *
      * <p>Video frames are decoded through ffmpeg and fed to the projector as images, so this is the
      * main cost/detail dial: doubling it doubles the frames, the tokens they occupy and the decode
@@ -1481,9 +1484,14 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Interval between the text timestamps interleaved into a decoded video (upstream
-     * {@code --video-timestamp-interval}, llama.cpp b10649; default 5000&nbsp;ms).
+     * {@code --video-timestamp-interval}, llama.cpp b10647; default 5000&nbsp;ms).
      *
-     * @param intervalMillis milliseconds between timestamps; must not be negative
+     * <p>{@code 0} disables timestamps entirely &mdash; upstream emits one only while
+     * {@code timestamp_interval_ms > 0}. Unlike {@link #setVideoFps(float)}, nothing is lost by
+     * rejecting negatives here: every negative value reaches the same native state as {@code 0}.</p>
+     *
+     * @param intervalMillis milliseconds between timestamps, or {@code 0} for no timestamps;
+     *     must not be negative
      * @return this builder
      * @throws IllegalArgumentException if {@code intervalMillis} is negative or exceeds
      *     {@link Integer#MAX_VALUE}
@@ -1504,7 +1512,7 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Directory holding the {@code ffmpeg} and {@code ffprobe} binaries used to decode video
-     * (upstream {@code --video-ffmpeg-dir}, llama.cpp b10649).
+     * (upstream {@code --video-ffmpeg-dir}, llama.cpp b10647).
      *
      * <p>This matters more here than it does for the standalone server: llama.cpp looks the binaries
      * up on {@code PATH} by default, and a JVM process &mdash; an application server, an Android app,
@@ -1619,7 +1627,7 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Cap the context each parallel slot may use, independently of the shared KV pool
-     * ({@code --kv-unified-per-slot}, llama.cpp b10679).
+     * ({@code --kv-unified-per-slot}, llama.cpp b10662).
      *
      * <p>Two distinct effects, both worth knowing:</p>
      * <ul>
@@ -1650,7 +1658,7 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Control on-demand reading of tensors the model architecture marks as lazy-loadable, such as
-     * per-layer embeddings ({@code --tensor-read-lazy}, llama.cpp b10679).
+     * per-layer embeddings ({@code --tensor-read-lazy}, llama.cpp b10653).
      *
      * <p>Trades resident memory for disk reads during inference. <strong>Requires mmap</strong>, so
      * it has no effect on a model loaded with mmap disabled. Upstream's default is
