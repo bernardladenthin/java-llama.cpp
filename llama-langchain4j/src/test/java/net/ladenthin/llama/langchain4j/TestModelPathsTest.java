@@ -151,7 +151,9 @@ class TestModelPathsTest {
                     end++;
                 }
                 String arguments = source.substring(open, Math.min(end + 1, source.length()));
-                if (arguments.contains("net.ladenthin.llama") || arguments.contains("PROP_")) {
+                if (arguments.contains("net.ladenthin.llama")
+                        || arguments.contains("PROP_")
+                        || arguments.contains("LlamaSystemProperties.PREFIX")) {
                     found.add(file + "  " + source.substring(start, Math.min(end + 1, source.length()))
                             .replaceAll("\\s+", " "));
                 }

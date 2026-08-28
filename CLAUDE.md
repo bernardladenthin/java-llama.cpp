@@ -1359,7 +1359,11 @@ shared GGUF cache is restored to `<workspace>/models/` and every model path — 
 constants and the `-Dnet.ladenthin.llama.*` properties alike — is stated relative as `models/…`.
 Those therefore resolved to `<workspace>/llama/models/…`, which does not exist: **every**
 model-gated class aborted in its `@BeforeAll` `Assumptions.assumeTrue(file.exists())` and reported
-as *skipped* while the job still went green, on every `test-java-*` job. It is why several stale
+as *nothing at all* while the job still went green, on every `test-java-*` job. Note the precise
+shape, because it defeats the obvious guard: a class-level `@BeforeAll` assumption makes Surefire
+record `tests="0" errors="0" skipped="0"` — the class contributes **no** test entries, so a check of
+the form "did this run skip anything?" is blind to it. The only thing that catches it directly is a
+floor on the number of tests actually executed (see `TODO.md`). It is why several stale
 assertions (e.g. `LlamaModelTest#testGetMetrics` against a payload shape upstream had dropped at
 b10408) never failed in CI. The fix is **`TestConstants.resolveModelPath` /
 `resolveModelProperty`**, which accept either layout — module-relative first, then the reactor root
@@ -1643,7 +1647,8 @@ See [`../workspace/policies/pit-mutation-testing.md`](../workspace/policies/pit-
 Run PIT with the lifecycle prefix — `mvn test-compile org.pitest:pitest-maven:mutationCoverage`
 (from the repo root add `-f llama/pom.xml`). The gate is **hermetic** — no model or audio fixture
 needed: `ContentPartTest`'s `@TempDir` tests cover `value.ContentPart.audioFile(Path)` (verified
-304/304, 0 NO_COVERAGE in a fixture-less sandbox; the former audio-fixture gotcha is resolved).
+318/318 killed, 0 NO_COVERAGE, test strength 100% in a fixture-less sandbox; the former
+audio-fixture gotcha is resolved).
 **`net.ladenthin.llama.value.*` is a target at `mutationThreshold` 100**, so a new getter on a
 `value` type needs its own test or the gate reds — the `ServerMetrics` counters added for the
 `getMetrics()` merge are covered by `ServerMetricsTest`.

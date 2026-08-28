@@ -447,6 +447,43 @@ the load-time failure class is already covered, and a slow smoke tends to get ma
 **Not yet observed green in CI** — the job and the two sibling-repo smokes landed in one change set
 and have only run locally so far.
 
+### Test-coverage gaps found by the b10679 mutation audit (PR #403)
+
+A mutation pass over the branch applied 27 mutations and 26 went red on the test that claims them,
+so no test here passes with its subject deleted. What it did find is code with **no runnable guard**.
+Two of the three were closed in that PR (a model-free `jsonSchemaToGrammar` test in
+`NativeLibraryLoadSmokeTest`, and `IdleSleepWakeIntegrationTest` for the `wake_and_post` path);
+these are what remains.
+
+- **`patches/0010` has no guard that runs on a model-free host.** Reverting the patch's
+  `(int)` cast in the fetched `tools/server/server-context.cpp` leaves `ctest` at a clean **520/520** —
+  the always-run `C++ Tests` job cannot see the regression at all. The only guard is
+  `NativeServerAttachIntegrationTest.models_reportNumericVocabType`, which is model-gated; it *does*
+  run on all six CI Java jobs (the full model set is downloaded there), so this is a coverage gap
+  rather than a shipping risk today. It becomes one the moment a platform stops downloading models.
+  `CommonJsonEnumTrap` in `test_json_helpers.cpp` cannot help — it builds its own JSON literals and
+  calls no project code. A direct unit test is impossible as things stand: `get_res_model_info` is
+  `static` inside `server-context.cpp` and unreachable from `jllama_test`. Cheapest real fix is a
+  CI assertion in the `C++ Tests` job that the patch is present in the fetched tree
+  (`grep -c '(int) meta.model_vocab_type'` plus a non-empty `git -C _deps/llama.cpp-src diff`).
+
+- **`TestConstantsTest.theShippedModelConstantsGoThroughTheResolver` is vacuous when the fixture is
+  absent.** Mutating `MODEL_PATH = resolveModelPath("models/…")` to the bare literal leaves the test
+  green with `models/` empty, and only goes red once the GGUF actually exists. In CI that is the
+  normal case (`validate-models.sh` hard-fails first), so residual risk is low — but the two
+  `src/test/resources/...` constants resolve from the module basedir either way, so their wrapper is
+  undetectable **even in CI**. Fix: assert the wiring structurally rather than by value — reflect
+  over the `String` constants and require each `models/…`-shaped one to equal
+  `resolveModelPath(literal)` against a `@TempDir` fixture planted at the reactor root, so the
+  assertion does not depend on a real model being present.
+
+- **Nothing asserts a floor on the number of tests actually executed.** A class-level `@BeforeAll`
+  assumption makes Surefire record `tests="0" errors="0" skipped="0"` — the class contributes no
+  entries at all, so "did the run skip anything?" is structurally blind to it. This is exactly how
+  the model-gated suite stayed silently muted for months. Summing `tests=` across
+  `target/surefire-reports/TEST-*.xml` in each `test-java-*` job and failing below a pinned minimum
+  is the one check that would have caught it directly, and it is cheap.
+
 ### Release/build robustness gaps found by the b10679 audit (PR #403)
 
 Both are **pre-existing** and orthogonal to a version bump, so they were recorded rather than folded

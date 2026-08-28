@@ -123,4 +123,36 @@ class NativeLibraryLoadSmokeTest {
                         + "LlamaException; an UnsatisfiedLinkError here means quantizeNative lost its "
                         + "extern \"C\" linkage and is exported under a C++-mangled name");
     }
+
+    /**
+     * {@link LlamaModel#jsonSchemaToGrammar(String)} needs no model, so it belongs in the model-free
+     * suite.
+     *
+     * <p>Its only assertions used to live in {@code LlamaModelTest}, whose {@code @BeforeAll} gates
+     * the entire class on a GGUF being present &mdash; so on a host without models the class runs
+     * <em>zero</em> tests and the native call is never made. That mattered concretely during this
+     * bump: the b10585 {@code common_json} switch changed this method's native implementation from
+     * {@code nlohmann::ordered_json::parse} to {@code json::parse}, a hard compile error that a
+     * green build hid nothing of &mdash; but any future runtime regression on the same path would
+     * have had no runnable guard wherever models are absent.
+     *
+     * <p>Both directions are asserted, because they fail differently: a valid schema must cross JNI
+     * and come back with a non-empty grammar, and a malformed one must surface as a catchable
+     * {@link LlamaException} rather than letting a C++ {@code json::parse} exception escape across
+     * the JNI boundary and abort the JVM (the PR #258 exception-boundary fix).
+     */
+    @Test
+    void jsonSchemaToGrammarWorksWithoutAModel() {
+        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping grammar check");
+
+        String grammar =
+                LlamaModel.jsonSchemaToGrammar("{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"string\"}}}");
+        assertNotNull(grammar, "jsonSchemaToGrammar must return a grammar for a valid schema");
+        assertTrue(grammar.contains("root ::="), "a GBNF grammar must define a root rule; got: " + grammar);
+
+        assertThrows(
+                LlamaException.class,
+                () -> LlamaModel.jsonSchemaToGrammar("{ this is not valid json"),
+                "a malformed schema must surface as LlamaException, not abort the JVM");
+    }
 }
