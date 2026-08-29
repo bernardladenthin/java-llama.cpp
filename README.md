@@ -128,7 +128,7 @@ Access this library via Maven (released versions on Maven Central):
 <dependency>
     <groupId>net.ladenthin</groupId>
     <artifactId>llama</artifactId>
-    <version>5.0.6</version>
+    <version>5.1.0</version>
 </dependency>
 ```
 
@@ -218,7 +218,7 @@ there. Pick **at most one** classifier (they are mutually exclusive):
 <dependency>
     <groupId>net.ladenthin</groupId>
     <artifactId>llama</artifactId>
-    <version>5.0.6</version>
+    <version>5.1.0</version>
 </dependency>
 
 <!-- GPU / accelerator or alternate-CPU build: add the <classifier> from the
@@ -226,7 +226,7 @@ there. Pick **at most one** classifier (they are mutually exclusive):
 <dependency>
     <groupId>net.ladenthin</groupId>
     <artifactId>llama</artifactId>
-    <version>5.0.6</version>
+    <version>5.1.0</version>
     <classifier>cuda13-linux-x86-64</classifier>
 </dependency>
 ```
@@ -994,7 +994,7 @@ forcing that floor on every core consumer. It ships and versions in lockstep wit
 <dependency>
     <groupId>net.ladenthin</groupId>
     <artifactId>llama-langchain4j</artifactId>
-    <version>5.0.6</version>
+    <version>5.1.0</version>
 </dependency>
 ```
 
@@ -1154,12 +1154,12 @@ One dependency line in Android Studio — no submodule, no NDK build, no manual 
 
 ```kotlin
 dependencies {
-    implementation("net.ladenthin:llama-android:5.0.6")
+    implementation("net.ladenthin:llama-android:5.1.0")
     // or, for Qualcomm Adreno GPUs (device must provide an OpenCL ICD):
-    // implementation("net.ladenthin:llama-android-opencl:5.0.6")
+    // implementation("net.ladenthin:llama-android-opencl:5.1.0")
 
     // optional Kotlin coroutines facade (Flow streaming + suspend wrappers):
-    implementation("net.ladenthin:llama-kotlin:5.0.6")
+    implementation("net.ladenthin:llama-kotlin:5.1.0")
 }
 ```
 

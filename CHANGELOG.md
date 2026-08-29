@@ -9,6 +9,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+## [5.1.0] - 2026-08-29
+
 > The entries below also cover the **b9917 → b10456** window (PRs #341–#394), which went unrecorded
 > here while it happened; they were reconstructed from the git history and from
 > [`docs/history/llama-cpp-breaking-changes.md`](docs/history/llama-cpp-breaking-changes.md), which
@@ -520,7 +522,8 @@ Releases `1.1.1` through `4.2.0` were authored by [@kherud](https://github.com/k
 
 For an architecture-level diff between the pre-fork baseline (`49be664`) and the first 5.0.0 candidate (`24918e4`), see [`docs/history/49be664_24918e4.md`](docs/history/49be664_24918e4.md). For the server-fork-deletion refactor that culminated in 5.0.0, see [`docs/history/REFACTORING.md`](docs/history/REFACTORING.md). For the chat-completion integration that landed in 5.0.0, see [`docs/history/CHAT_INTEGRATION_SUMMARY.md`](docs/history/CHAT_INTEGRATION_SUMMARY.md).
 
-[Unreleased]: https://github.com/bernardladenthin/java-llama.cpp/compare/v5.0.6...HEAD
+[Unreleased]: https://github.com/bernardladenthin/java-llama.cpp/compare/v5.1.0...HEAD
+[5.1.0]: https://github.com/bernardladenthin/java-llama.cpp/compare/v5.0.6...v5.1.0
 [5.0.6]: https://github.com/bernardladenthin/java-llama.cpp/compare/v5.0.5...v5.0.6
 [5.0.5]: https://github.com/bernardladenthin/java-llama.cpp/compare/v5.0.4...v5.0.5
 [5.0.4]: https://github.com/bernardladenthin/java-llama.cpp/compare/v5.0.3...v5.0.4

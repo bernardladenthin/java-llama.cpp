@@ -13,9 +13,9 @@ ProGuard rules.
 ```kotlin
 // build.gradle.kts of your app — that's all.
 dependencies {
-    implementation("net.ladenthin:llama-android:5.0.6")
+    implementation("net.ladenthin:llama-android:5.1.0")
     // or, for Qualcomm Adreno GPUs (device must provide an OpenCL ICD):
-    // implementation("net.ladenthin:llama-android-opencl:5.0.6")
+    // implementation("net.ladenthin:llama-android-opencl:5.1.0")
 }
 ```
 
