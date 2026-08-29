@@ -88,6 +88,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   as Prometheus text; they now arrive in the JSON payload.
 
 ### Changed
+- **Upgraded the pinned llama.cpp from b10679 to b10682.** No project-source change, and the range
+  cannot require one: the whole delta is ten files (575 insertions / 59 deletions, 53 KB) confined to
+  `ggml/src/` backend implementations — Metal flash-attention vec tunings for M1 Max
+  ([ggml-org/llama.cpp#27932](https://github.com/ggml-org/llama.cpp/pull/27932)) and a Vulkan
+  `mul_mat_id` change that pads K rather than N
+  ([ggml-org/llama.cpp#27925](https://github.com/ggml-org/llama.cpp/pull/27925)) — plus the Snapdragon
+  Windows SDK scripts ([ggml-org/llama.cpp#27903](https://github.com/ggml-org/llama.cpp/pull/27903)),
+  documentation, and one upstream test that this project never compiles. Nothing under `common/`,
+  `include/`, `tools/server/`, `tools/mtmd/` or `ggml/include/` moved, and the 42 files the eight
+  local patches touch have an empty intersection with the changed-file list, so all eight apply
+  unchanged. The Metal and Vulkan classifier artifacts pick the backend work up by rebuilding.
 - **Deprecated `InferenceParameters.withTfsZ`, `withPenalizeNl` and both `withPenaltyPrompt` overloads.**
   `tfs_z`, `penalize_nl` and `penalty_prompt` appear nowhere in upstream `common/` or `tools/server/`
   at the pinned build, and the request schema discards unknown fields rather than rejecting them — so
