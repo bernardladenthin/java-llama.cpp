@@ -75,6 +75,15 @@ class NativeLibraryLoadSmokeTest {
      * llama.cpp Version" checklist warns about (a {@code GIT_TAG} bump that forgets the constant).
      * {@code llama_build_info()} returns {@code "b<number>-<commit>"}, so it must start with the
      * pinned tag followed by {@code '-'}.
+     *
+     * <p><strong>A stale local build fails this too, and is not a drift.</strong>
+     * {@link LlamaCppVersion#LLAMA_CPP_VERSION} is a {@code static final String} constant, so javac
+     * inlines its value into every referencing class &mdash; including this one. After a version
+     * bump, an incremental {@code mvn test} recompiles the changed constant but not this test class
+     * (its own source did not change), so the assertion compares the freshly linked native tag
+     * against the <em>previous</em> literal baked into the test bytecode. The give-away is that the
+     * build-info in the message is the tag you just bumped <em>to</em>. Fix with
+     * {@code mvn -pl llama clean test}; CI always builds from a clean checkout and cannot hit it.
      */
     @Test
     void nativeBuildInfoMatchesPinnedVersionConstant() {
@@ -84,8 +93,14 @@ class NativeLibraryLoadSmokeTest {
         assertTrue(
                 buildInfo.startsWith(LlamaCppVersion.LLAMA_CPP_VERSION + "-"),
                 "Linked build-info \"" + buildInfo + "\" must start with the pinned tag \""
-                        + LlamaCppVersion.LLAMA_CPP_VERSION + "-\"; if this fails, GIT_TAG in "
-                        + "llama/CMakeLists.txt and LlamaCppVersion.LLAMA_CPP_VERSION have drifted apart");
+                        + LlamaCppVersion.LLAMA_CPP_VERSION + "-\". Two different causes produce this, "
+                        + "and only the first is a real defect: (1) GIT_TAG in llama/CMakeLists.txt and "
+                        + "LlamaCppVersion.LLAMA_CPP_VERSION have drifted apart; or (2) this is a stale "
+                        + "local build. LLAMA_CPP_VERSION is a compile-time constant, so javac inlines "
+                        + "its value into THIS test class -- an incremental build after a version bump "
+                        + "leaves the old literal here while the native library is already the new tag. "
+                        + "If the tag shown above is the one you just bumped to, it is cause (2): run "
+                        + "`mvn -pl llama clean test`. CI always builds clean and never hits it.");
     }
 
     /**
