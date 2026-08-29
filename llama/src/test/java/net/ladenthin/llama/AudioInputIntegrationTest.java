@@ -48,9 +48,10 @@ public class AudioInputIntegrationTest {
 
     @BeforeAll
     public static void setup() {
-        String modelPath = System.getProperty(TestConstants.PROP_AUDIO_MODEL_PATH);
-        String mmprojPath = System.getProperty(TestConstants.PROP_AUDIO_MMPROJ_PATH);
-        audioPath = System.getProperty(TestConstants.PROP_AUDIO_PATH, TestConstants.DEFAULT_AUDIO_INPUT_PATH);
+        String modelPath = TestConstants.resolveModelProperty(TestConstants.PROP_AUDIO_MODEL_PATH);
+        String mmprojPath = TestConstants.resolveModelProperty(TestConstants.PROP_AUDIO_MMPROJ_PATH);
+        audioPath = TestConstants.resolveModelProperty(
+                TestConstants.PROP_AUDIO_PATH, TestConstants.DEFAULT_AUDIO_INPUT_PATH);
 
         Assumptions.assumeTrue(
                 modelPath != null && !modelPath.isEmpty(),

@@ -14,7 +14,6 @@ import dev.langchain4j.data.segment.TextSegment;
 import dev.langchain4j.model.output.Response;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.List;
 import net.ladenthin.llama.LlamaModel;
@@ -32,9 +31,8 @@ import org.junit.jupiter.api.Test;
 class JllamaEmbeddingModelIntegrationTest {
 
     private static Path modelPath() {
-        String path = System.getProperty("net.ladenthin.llama.langchain4j.embedding.model");
-        Assumptions.assumeTrue(path != null && !path.isEmpty(), "embedding model path property not set");
-        Path resolved = Paths.get(path);
+        Path resolved = TestModelPaths.fromProperty("net.ladenthin.llama.langchain4j.embedding.model");
+        Assumptions.assumeTrue(resolved != null, "embedding model path property not set");
         Assumptions.assumeTrue(Files.exists(resolved), "embedding model file not present: " + resolved);
         return resolved;
     }

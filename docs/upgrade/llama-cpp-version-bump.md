@@ -110,34 +110,74 @@ Once you have the `b<cur> -> b<next>` step, apply it exactly as
 Concretely:
 
 1. **Edit the pin — four files:**
-   - `llama/CMakeLists.txt` — the `GIT_TAG b<cur>` line **and** the `-DLLAMA_TAG=b<cur>` used by the
-     WebUI/TTS extraction (both must move together).
-   - `README.md` — the llama.cpp badge and link (version appears twice).
+   - `llama/CMakeLists.txt` — the `GIT_TAG b<cur>` line. (It is the only `b<nnnn>` tag in this file — the other two `GIT_TAG` lines pin nlohmann/json `v3.12.0` and GoogleTest `v1.17.0` and must NOT move with a llama.cpp bump. The
+     `-DLLAMA_TAG=b<cur>` that once fed the build-time TTS extraction was removed with the
+     Qwen3-TTS rework, and the WebUI auto-follows `GIT_TAG` in CI.)
+   - `README.md` — the llama.cpp badge and link (the tag appears three times, all on one line: the
+     badge alt text, the badge URL and the release link).
    - `CLAUDE.md` — the "Current llama.cpp pinned version" line (and any build-example `b<nnnn>`).
    - `llama/src/main/java/net/ladenthin/llama/value/LlamaCppVersion.java` — the `LLAMA_CPP_VERSION`
      constant (the pure-Java pin consumers read for a version badge/log line). It mirrors `GIT_TAG`;
      if you forget it, `NativeLibraryLoadSmokeTest.nativeBuildInfoMatchesPinnedVersionConstant` fails
      the build (it cross-checks the constant against `LlamaModel.getLlamaCppBuildInfo()`, which reads
      llama.cpp's own linked-in `build-info`).
-2. **Re-verify `patches/`** — a clean configure re-runs the fail-loud `PATCH_COMMAND`, so every patch
-   `0001`–`0006` must still apply. Use a **fresh** build dir (a stale one re-applies over an
-   already-patched tree and reports a false "does not apply"):
+
+     > **Local-only gotcha: that guard can report a *false* drift after a bump.**
+     > `LLAMA_CPP_VERSION` is a `public static final String`, i.e. a **compile-time constant**, so
+     > javac inlines its value into every *referencing* class — including
+     > `NativeLibraryLoadSmokeTest`. Recompiling `LlamaCppVersion.java` alone therefore does **not**
+     > update the copy baked into the already-compiled test class, and Maven's incremental
+     > compilation cannot see the dependency (constant inlining is invisible to its change
+     > analysis). The symptom is a failure that looks alarming but is pure staleness, e.g.
+     > `Linked build-info "b10639-…" must start with the pinned tag "b10636-"` when both the source
+     > and `target/classes` already say `b10639`. Run **`mvn clean test`** (not a bare `mvn test`)
+     > when re-running this check locally after a bump. CI is immune — it always builds from a clean
+     > checkout.
+2. **Re-verify `patches/`** — a clean configure re-runs the fail-loud `PATCH_COMMAND`, so **every
+   `*.patch` in `llama/patches/`** must still apply. Do not maintain a list of them here or anywhere
+   else: `apply-llama-patches.cmake` `file(GLOB)`s the directory and applies them in filename order,
+   so an enumeration can only go stale (it did, one commit after being written). Use a **fresh**
+   build dir: the applier's stamp file pins the patch set to the *checked-out llama.cpp commit*, so
+   after a `GIT_TAG` change an existing build dir is exactly the case it refuses to guess at — it
+   aborts and tells you to configure fresh, which is what actually re-runs the patches against the
+   new source:
    ```bash
    cd llama && mvn -q compile          # generates the OSInfo class CMake's OS-detection needs
    rm -rf build && cmake -B build       # fail-loud: aborts here if any patch no longer applies
    ```
    If a patch no longer applies, refresh its diff against the new source and recommit it.
-3. **Append the history rows** — add a pair of rows to
+3. **Check the server contract mechanically when the chunk touches `tools/server/`.** A header diff
+   only shows signature changes; it cannot see a *contract* change behind a stable signature. Two
+   breaks of that class already shipped — `getMetrics()`'s payload shape (b10408/b10519) and the
+   removal of the `-1` = context-size sentinel for `repeat_last_n`/`dry_penalty_last_n` (b10273) —
+   and neither was visible to the build. Diff these three sets between the two tags; anything that
+   changes has to be traced to the Java layer, not just to the C++ tests:
+   ```bash
+   # request-field set
+   git show b<from>:tools/server/server-schema.cpp | grep -oE 'field_[a-z_]+\("[a-z_0-9]+"' | sort -u
+   # request-field bounds
+   git show b<from>:tools/server/server-schema.cpp | tr '\n' ' ' \
+     | grep -oE 'field_[a-z]+[^(]*\("[a-z_0-9]+"[^;]*?set_(hard_)?limits\([^)]*\)' | sort -u
+   # response keys
+   # response keys -- BOTH emit forms: brace-init AND res["k"] = ...; the b10585 migration
+   # moved `timings`/`prompt_progress` between the two, so a single-form grep reports
+   # false removals and would silently miss a new operator[] key.
+   git show b<from>:tools/server/server-task.cpp | { grep -oE '\{ *"[A-Za-z_0-9.]+" *,'; \
+     git show b<from>:tools/server/server-task.cpp | grep -oE '\[ *"[A-Za-z_0-9.]+" *\] *='; } | sort -u
+   ```
+   Repeat with `b<to>` and `comm -13` / `comm -23` the two outputs.
+
+4. **Append the history rows** — add a pair of rows to
    [`../history/llama-cpp-breaking-changes.md`](../history/llama-cpp-breaking-changes.md) covering the
    `b<cur> -> b<next>` range (what broke / what was new; "no source change" is a valid row).
-4. **Commit + push** on the working branch (do not open a new PR if one already tracks the branch):
+5. **Commit + push** on the working branch (do not open a new PR if one already tracks the branch):
    ```bash
    git add llama/CMakeLists.txt README.md CLAUDE.md docs/history/llama-cpp-breaking-changes.md \
            llama/src/main/java/net/ladenthin/llama/value/LlamaCppVersion.java
    git commit -m "Upgrade llama.cpp from b<cur> to b<next>"
    git push -u origin <your-branch>
    ```
-5. **Re-run the helper** for the next chunk. Repeat until it reports the **final chunk** (target
+6. **Re-run the helper** for the next chunk. Repeat until it reports the **final chunk** (target
    reached).
 
 CI builds every native classifier from the new pin; the full model-backed Java + C++ suites gate the

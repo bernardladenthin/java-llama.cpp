@@ -52,8 +52,8 @@ public class OpenAiServerToolCallingIntegrationTest extends OpenAiServerTestSupp
 
     @BeforeAll
     public static void setup() throws IOException {
-        String modelPath =
-                System.getProperty(TestConstants.PROP_TOOL_MODEL_PATH, TestConstants.DEFAULT_TOOL_MODEL_PATH);
+        String modelPath = TestConstants.resolveModelProperty(
+                TestConstants.PROP_TOOL_MODEL_PATH, TestConstants.DEFAULT_TOOL_MODEL_PATH);
         Assumptions.assumeTrue(
                 new File(modelPath).exists(),
                 "Tool-calling model (Qwen2.5-1.5B) not found, skipping server tool-calling test: " + modelPath);

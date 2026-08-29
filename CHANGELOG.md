@@ -9,15 +9,310 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+> The entries below also cover the **b9917 → b10456** window (PRs #341–#394), which went unrecorded
+> here while it happened; they were reconstructed from the git history and from
+> [`docs/history/llama-cpp-breaking-changes.md`](docs/history/llama-cpp-breaking-changes.md), which
+> has a row per upgrade range and stays authoritative for the per-range detail.
+
+### Fixed
+- **JVM crash (SIGSEGV) on the first request after an idle-sleep window.** With
+  `--sleep-idle-seconds` set, upstream's `handle_sleeping_state(true)` calls `destroy()`, which frees
+  the model and context and nulls `ctx_tgt`/`model_tgt`. Two things in the JNI layer assumed they
+  outlived that: `server_context::get_meta()`, read on every request before the task is posted, and
+  the `jctx->vocab` pointer captured once after the initial load — dangling after the reload replaces
+  the model. The first was a null dereference that aborted the JVM at `llama_context::get_model()`;
+  the second a use-after-free on every tokenize/detokenize/rerank path. Both now go through a single
+  `wake_server()` choke point that waits out the sleep and re-reads the vocab, called from every entry
+  point that touches the model. The earlier `wake_and_post()` fix was necessary but not sufficient:
+  it woke at *post* time, and these reads happen before the post.
+  Fixing that exposed a third, latent defect in our own `patches/0002`: it guarded upstream's
+  progress-callback install on `== nullptr`, but `load_progress_text` is a **local** of
+  `load_model()` whose address upstream re-assigns on every call. On resume the guard saw our own
+  callback from the first load, skipped the re-assignment, and left `user_data` pointing into a dead
+  stack frame — a second SIGSEGV, this time inside `load_progress_callback()`. The guard now also
+  accepts its own callback, so our `user_data` is refreshed on every load while a caller-supplied
+  callback still survives.
+- **`ModelParameters.setSleepIdleSeconds`** now rejects `0` and values below `-1`, which upstream's
+  own handler throws on. Emitting them aborted the whole argv parse and surfaced only as
+  `"Failed to parse model parameters"`, naming neither the flag nor the reason. Its Javadoc also said
+  the server "shuts down" after the idle window; it does not — it releases the model and reloads it on
+  the next request.
+
 ### Added
+- **`ModelParameters.setCpuMoeLayers(int)` / `setCpuFfnLayers(int)`** — keep the first N layers'
+  Mixture-of-Experts weights, or dense FFN weights, on the CPU (upstream `--n-cpu-moe` / `-ncmoe` and
+  `--n-cpu-ffn` / `-ncffn`). The companions to `setGpuLayers`: where that moves whole layers, these move
+  only the weight class that dominates a model's size, usually fitting a much larger model into the same
+  VRAM at a smaller speed cost. Only `--n-cpu-ffn` is new (llama.cpp b10645); `--n-cpu-moe` has existed
+  upstream since b6089 but had never been exposed here.
+- **`ModelParameters.setVideoFps(float)` / `setVideoTimestampInterval(long)` / `setVideoFfmpegDir(String)`**
+  — the video-decoding knobs upstream added in llama.cpp b10647 (`--video-fps`,
+  `--video-timestamp-interval`, `--video-ffmpeg-dir`). They apply to any media attached to a request
+  once a projector is loaded: `server_context` copies them into the `mtmd_helper_init_opt` it passes
+  to `process_mtmd_prompt`, and video decoding is compiled into the shipped library (`MTMD_VIDEO`
+  defaults on). `setVideoFfmpegDir` is the significant one — upstream otherwise looks `ffmpeg` and
+  `ffprobe` up on `PATH`, which a JVM process often does not have them on.
+- **`ModelParameters.setKvUnifiedPerSlot(int)`** — caps the context each parallel slot may use
+  (upstream `--kv-unified-per-slot`, new in llama.cpp b10662). The cap reaches this binding through
+  `server_context_meta::slot_n_ctx`: it becomes every `slot.n_ctx` and is the context budget passed to
+  `format_prompt_infill`. Upstream's second effect — sizing the
+  shared KV pool to `n_parallel * N` when no context size is given — lives in `llama_server()` and
+  therefore applies to `NativeServer` only, not to a model loaded from `ModelParameters`; the
+  Javadoc says so.
+- **`ModelParameters.setTensorReadLazy(TensorReadLazyMode)`** and the new
+  **`net.ladenthin.llama.args.TensorReadLazyMode`** enum (`OFF` / `AUTO` / `ON`) — on-demand reading
+  of tensors the model architecture marks as lazy-loadable, such as per-layer embeddings (upstream
+  `--tensor-read-lazy`, new in llama.cpp b10653, mapping to `llama_lazy_mode`). Trades resident
+  memory for disk reads and requires mmap. It reaches the plain `LlamaModel` load path too, because
+  `common_model_params_to_llama` copies `lazy_mode` into `llama_model_params`.
+- **`ServerMetrics.getWindowPromptProcessingMillis()` / `getWindowTokenGenerationMillis()` /
+  `getWindowTimings()`** — typed access to the current-window timing keys `t_prompt_processing` and
+  `t_tokens_generation`. Both were always emitted; only the cumulative `_total` variants had accessors.
+- **`ModelMeta.supportsVideo()`**, and `getModelMeta()` now emits `modalities.video`. Upstream has
+  tracked `has_inp_video` on `server_context_meta` for releases and emits all three modalities from its
+  own `/props`; this binding emitted only vision and audio, so feature detection concluded no model
+  ever accepts video.
 - `QuantizationType.Q2_0` — maps the new upstream `LLAMA_FTYPE_MOSTLY_Q2_0` (llama.cpp b9916) for `LlamaQuantizer`.
+- **Voice cloning and language selection for `TextToSpeech`**: `synthesize(String text, String speakerReferenceAudioPath, String language, int maxFrames, int topK, int seed)` — a speaker-reference clip makes the model imitate that voice. Part of the Qwen3-TTS rework (see Changed).
+- **`ModelParameters.setMmprojDevice(String)`** — places the multimodal projector on a device of its own
+  (llama.cpp `--mmproj-device`, added upstream in b10541), independently of `setDevices(...)`. Exactly one
+  device may be named; the literal `"none"` keeps the projector on the CPU. `OpenAiCompatServer`'s CLI
+  accepts the same flag as `-mmdev`/`--mmproj-device`; `NativeServer` already forwarded it verbatim.
+- **`RouterClient` API-key constructors** (`RouterClient(int, String)`, `RouterClient(String, int, String)`) —
+  send `Authorization: Bearer <key>`, which a router started with `--api-key` requires for *every* call:
+  `/models/load` and `/models/unload` were always gated, and since b10519 (upstream #26347) the listing
+  endpoints are too. An empty key behaves like none, and `toString()` never prints it.
+- **`ServerMetrics` cache and speculative-decoding counters** — `getCumulativeCachedPromptTokens()`,
+  `getDraftTokensTotal()`, `getDraftAcceptedTotal()`, `getDraftVerifyStepsTotal()`,
+  `getDraftAcceptedPerPosition()` and the derived `getDraftAcceptanceRate()`. Upstream exposes these only
+  as Prometheus text; they now arrive in the JSON payload.
 
 ### Changed
+- **Deprecated `InferenceParameters.withTfsZ`, `withPenalizeNl` and both `withPenaltyPrompt` overloads.**
+  `tfs_z`, `penalize_nl` and `penalty_prompt` appear nowhere in upstream `common/` or `tools/server/`
+  at the pinned build, and the request schema discards unknown fields rather than rejecting them — so
+  these have been silently doing nothing. Kept compiling for now; they will be removed.
+- `ModelParameters.setMmprojDevice` and `setMmprojOffload` now clear each other. Both write upstream's
+  single `mmproj_use_gpu` field, and the rendered argv comes out of a `HashMap`, so leaving both present
+  left the winner to hash order. Clearing in only one direction still lost the race whenever
+  `setMmprojOffload` was called second; the contract is now simply "the last of the two calls wins".
+- **Deprecated `InferenceParameters.withUseChatTemplate` and `withChatTemplate`.** Both are load-time
+  settings upstream, not per-request ones: `common_params::use_jinja` is set only by `--jinja` /
+  `--no-jinja`, and the only `"chat_template"` string in upstream `common/` or `tools/server/` is the one
+  the server *emits* from `/props`. Neither key is ever read from a request body, so both calls were
+  silently doing nothing — including at three call sites in this library that used
+  `withUseChatTemplate(true)` to "enable jinja for tools", which those calls could not do. Use
+  `ModelParameters.enableJinja()` / `setChatTemplate(String)` instead. Tool calling was unaffected in
+  practice only because upstream defaults `use_jinja` to true.
 - `ch.qos.logback:logback-classic` bumped 1.6.2 → 1.6.3 (test/runtime binding only).
 - CI actions bumped to latest: `actions/setup-java` v5 → v6.
 - Upgraded llama.cpp from **b9894 to b9917** (all eight local patches re-verified across the range).
+- **BREAKING — `TextToSpeech` was reworked onto Qwen3-TTS** (llama.cpp **b10270**, upstream #26254, which
+  upstream itself labels a breaking change). llama.cpp deleted the OuteTTS pipeline outright:
+  `tools/tts/tts.cpp` shrank from ~1450 to 205 lines and `mtmd_gen_audio_type` has only
+  `NONE`/`QWEN3TTS`, so there is no OuteTTS code path left anywhere upstream and no compatibility shim
+  was possible. The two-argument constructor keeps its **signature** but changes **meaning**:
+  `(ttcModelPath, vocoderModelPath)` → `(modelPath, mmprojPath)`, i.e. a Qwen3-TTS backbone plus the
+  mmproj that bundles speaker encoder, code predictor and code2wav decoder — an OuteTTS + WavTokenizer
+  pair no longer works and fails at load, not at compile time. `synthesize`'s `maxCodeTokens` parameter
+  became `maxFrames`, and the single-argument overload's default dropped 4096 → 512.
+- **BREAKING — `-1` is no longer accepted for the repetition-penalty windows** (llama.cpp **b10273**).
+  `repeat_last_n` and `dry_penalty_last_n` used to take `-1` for "the whole context"; upstream removed
+  the sentinel, moving the request schema's hard limits to `[0, INT32_MAX]` and making
+  `common_params_parse` throw on a negative value. `ModelParameters.setRepeatLastN` /
+  `setDryPenaltyLastN` and `InferenceParameters.withRepeatLastN` / `withDryPenaltyLastN` had kept
+  advertising and accepting `-1`, so the value reached llama.cpp and failed there — at model load for
+  the launch flags, as a rejected request for the per-request withers. All four now reject a negative
+  value with a message naming the change; pass the context size explicitly for the old behaviour.
+  (Verified exhaustively: these are the **only** two request-field limits that moved in the whole
+  b9994 → b10618 range.)
+- Upgraded llama.cpp from **b9917 to b10456** across PRs #341–#394. Local patches `0005` (b9981) and
+  `0004` (b9982) were dropped after upstream merged equivalent — and broader — fixes, and `0009`
+  (`subprocess.h` old-glibc build break) was dropped at b10280 once upstream vendored the same fix.
+- `server-mcp.cpp` is compiled into `libjllama` (llama.cpp **b10154** added upstream MCP-server
+  support; `server.cpp` and `server-tools.cpp` reference `server_mcp`, so omitting it is latent on
+  Linux but a hard link error on macOS/ld64 and Windows/MSVC). The `subprocess.h` `addchdir_np` use is
+  guarded for old glibc in the same change.
+- Android/Gradle toolchain: Gradle pins moved 8.14.3 → 9.6.1 and the dockcross cross-compile images
+  were bumped, alongside the AGP/Compose pin updates the Android builds needed.
+- **Post-upgrade audit of the whole b10456→b10644 range** — three independent sweeps over the
+  upstream diff (completeness, adaptation correctness, test integrity) against the files the binding
+  actually consumes. No missed adaptation was found: the request-field set, their bounds and the
+  emitted response keys are identical at both ends of the range, and `libjllama` links with zero
+  undefined upstream symbols. The audit did surface documentation and coverage gaps, fixed here:
+  - The `-1` context-size sentinel was dropped upstream at **b10273** (#26524), not b10275 — corrected
+    in 4 Javadoc blocks, 4 exception messages and every doc that cited it. The `server-schema.h`
+    signature break is **the same** upstream commit, not an unrelated one: #26524 at b10273 dropped
+    `eval_llama_cmpl_schema`'s `n_ctx_slot` parameter in the same change that removed the sentinel
+    (`git diff b10273 b10275 -- tools/server/server-schema.h` is empty).
+  - `LlamaModel.saveSlot`/`restoreSlot` now document that the on-disk format is version-locked to the
+    linked llama.cpp build, and that a mismatch surfaces as upstream's misleading
+    `"No available space in KV cache or invalid slot save file"`.
+  - `getMetrics()` documents that the merged payload is not an atomic snapshot and that it defers
+    idle-sleep, which upstream's own `/metrics` stopped doing at b10519 (#27376, which introduced
+    `task_resets_idle_timer`). It cannot have been b10644: `git diff --name-only b10639 b10644 --
+    tools/server/` is empty.
+  - **`--tools get_datetime` no longer starts.** Upstream deleted that built-in tool in this range and
+    an unknown name is fatal (`server_tools::setup` throws), so a `NativeServer` command line carrying
+    it now fails at startup. Same block: `server_tool::type()` reports `"server"` instead of
+    `"builtin"`, changing the `/tools` payload in full `NativeServer` mode.
+  - The four `t_*` keys in `getMetrics()` are now fractional rather than whole milliseconds, because
+    the merge divides upstream's microseconds. `ServerMetrics` reads them as doubles; a consumer
+    parsing the raw JSON with an integer parser sees a type change.
+
+- Upgraded llama.cpp from **b10649 to b10679**. No project-source change: all twelve
+  `tools/server/*.h` headers, `server-schema.cpp`, `server-task.cpp`, `server-common.cpp`,
+  `common/chat.h` and `tools/mtmd/mtmd-helper.h` are byte-identical across the range (compared by blob
+  SHA), so the request-field set, its bounds and the emitted response keys cannot have moved and the
+  three mechanical contract checks are moot. The whole in-scope delta is 8 files, 172 insertions and
+  15 deletions — the rest of the 159-file range is `tools/ui` (rebuilt from `GIT_TAG` by CI), the ggml
+  backends, and `conversion/`, `gguf-py/`, `tests/`, `.github/`, `docs/`, `scripts/` and the standalone
+  `tools/` binaries, none of which this project compiles.
+  Two additive upstream features are new and both are now exposed (see Added):
+  `--kv-unified-per-slot` and `--tensor-read-lazy` / `llama_lazy_mode`. Three patch-target files were
+  touched (`common/arg.cpp`, `tools/server/server-context.cpp`, `tools/server/server.cpp`) and all
+  eight patches still apply with zero fuzz; patch `0007`'s invariant holds because the new
+  KV-pool-sizing block in `llama_server()` sits before the extracted route table, not inside it.
+  `llama_model_quantize_params` gained `max_buf_size`, which needs no adaptation because
+  `LlamaQuantizer` builds its params from `llama_model_quantize_default_params()`. Upstream's private
+  `get_slot_n_ctx()` → `n_ctx_slot()` rename is invisible here — the project reads the value through
+  the unchanged `server_context_meta::slot_n_ctx`.
+  Patch `0001` shrank from 37 to 36 files: upstream rewrote `tests/test-save-load-state.cpp`'s
+  `main()` to build its own filtered argv, so by the patch's own rule that call site now wants
+  `common_params_parse` and no longer the `_main()` flip. The patch itself is still required —
+  `common_params_parse` at b10679 still carries the count-guarded `GetCommandLineW` override and
+  `common_params_parse_main` does not exist upstream.
+- Upgraded llama.cpp from **b10644 to b10649**. The first range in this bump to break the project's own
+  compile: upstream threaded a new `mtmd_helper_init_opt` (video-decode settings) through every helper
+  that can ingest media, changing the signature of `mtmd_helper_bitmap_init_from_file`,
+  `tokenize_input_prompts` and `format_prompt_rerank`. Four call sites were adapted — all of them pass
+  `mctx = nullptr` or handle audio, so each now passes upstream's own `mtmd_helper_init_opt_default()`.
+  The wire contract is unchanged: 68 request fields and 23 bounds identical across the range, and
+  the emitted response-key set identical for every server TU the project compiles (the exact key count
+  depends on which TUs are swept — the load-bearing half is that it does not move). Zero CLI flags were
+  removed or renamed, and all eight local patches apply unchanged even though six patch-target files
+  were touched.
+  Of the 6 new upstream flags, four are now exposed (see Added): `--n-cpu-ffn` and the three
+  `--video-*` knobs. `--n-cpu-moe` is exposed alongside them but is not new — it has existed upstream
+  since b6089 and had simply never been surfaced here. The two `--spec-synth-*` flags stay unexposed:
+  upstream marks them "benchmarking only" — they synthesise fake acceptance probabilities to measure
+  llama.cpp's own speculative harness. The `--video-*` trio was initially refused as inert without a
+  `ContentPart` video factory; a follow-up audit showed that was wrong on both counts (they reach the
+  task path this binding drives, and `MTMD_VIDEO` is compiled into the shipped library), so they are
+  exposed. The content part itself — upstream's `input_video`, which takes raw base64 rather than a
+  `data:` URI — remains in `TODO.md`.
+- Upgraded llama.cpp from **b10639 to b10644**. No project-source change, and the only file on the
+  priority API-review list that the range touches is `include/llama.h`, whose entire diff is two
+  constants: `LLAMA_SESSION_VERSION` 9 → 10 and `LLAMA_STATE_SEQ_VERSION` 2 → 3. They follow from a new
+  `tok` field on `llama_kv_cell_ext` (n-gram input embeddings) that has to survive a state save/restore.
+  Everything else is the Snapdragon/Hexagon backend rework, a one-line fix in the nanbeige model graph,
+  and the WebUI. Nothing under `common/`, `tools/server/` or `tools/mtmd/` changed, so no request field,
+  no bound and no response key can have moved, and all eight local patches apply unchanged.
+  **One consumer-visible consequence:** the version bumps are a *state-file format* break. A slot state
+  saved by an earlier build — via the public `LlamaModel.saveSlot(int, String)`, or the server's
+  `/slots/{id}?action=save` — is rejected by `LlamaModel.restoreSlot` after this upgrade and has to be
+  regenerated. No Java or native signature changed. The rejection is graceful but its message is
+  upstream's misleading `"No available space in KV cache or invalid slot save file"`, which does not
+  name the version mismatch; `saveSlot`'s Javadoc now spells this out. Slot state files are a cache to
+  regenerate on upgrade, not durable storage. The in-memory `Session` snapshot/fork feature is
+  unaffected — it never writes a file.
+- Upgraded llama.cpp from **b10631 to b10639**, in two reviewed steps. Neither range changes any
+  project source. b10631→b10636 is ggml-cuda quantised-matmul configs for Pascal, ggml-metal
+  SSM/Mamba kernels, an upstream `LLAMA_BUILD_UI` default flip that is inert here (this project
+  compiles its own `webui-generated/ui.cpp`), and the WebUI. b10636→b10639 is the RPC backend's
+  event/async APIs (#18626, protocol 5.1 → 6.0 — `GGML_RPC` is never enabled in this project, so
+  `ggml-rpc.cpp` is not compiled) plus Vulkan `cross_entropy_loss` kernels (#27216) and a warptile
+  clamp for warp sizes > 64 (#27726). Neither range touches `common/`, `include/llama.h`,
+  `tools/server/` or `tools/mtmd/`, so no request field, no bound and no response key can have
+  moved. All seven local patches apply unchanged.
+- Upgraded llama.cpp from **b10618 to b10631**. No project-source change. The only **project-relevant** edits in the
+  range are a narrowing input validation in `oaicompat_chat_params_parse` (continuing a final
+  assistant message that carries `tool_calls` now throws), a Qwen3-Coder-only grammar refinement
+  in `common_chat_params_init_qwen3_coder`, a cosmetic `LLAMA_VERSION_MINOR` bump, and the WebUI.
+  `server-schema.cpp`, `server-task.cpp`, `server-context.cpp`, the `tools/server/*.h` headers,
+  `common/common.h`, `include/llama.h` and `mtmd-helper.h` are byte-identical across the range, so
+  neither the request-field set and its bounds nor the emitted response keys can have moved. All
+  seven local patches re-verified against a clean b10631 checkout; C++ suite 499/499.
+- Upgraded llama.cpp from **b10456 to b10618**, in 25 reviewed steps. Patch `0007` refreshed (upstream
+  #26347 deleted comments inside its removal block, breaking `git apply` at every tag from b10519 on) and
+  a new patch `0010` carries a one-line upstream fix: `GET /models` emitted `vocab_type` as a JSON boolean
+  after the `common_json` switch (#27511), because an unscoped enum binds to the `bool` constructor.
+  The project's own C++ moved to `common_json` in the same range.
+- **`apply-llama-patches.cmake` is now genuinely idempotent**, via a stamp file (llama.cpp commit plus each
+  patch's SHA-256) gated on git's clean/dirty state. Reconfiguring an existing build directory is a no-op
+  instead of aborting with a misleading "does not apply cleanly"; a real mismatch fails with an accurate
+  message. A source tree supplied via `-DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP` that is not a git work tree
+  keeps the previous per-patch behaviour.
+- `ServerMetrics.getStartTimestamp()` is documented correctly: `t_start` is a monotonic-clock **microsecond**
+  reading (`ggml_time_us()`), not milliseconds since the epoch. The value is unchanged.
 
 ### Fixed
+- **With `setSleepIdleSeconds(> 0)`, the model became permanently unusable after the first idle
+  period.** Once llama.cpp's task queue enters its sleeping state, posting a task does not leave it:
+  `server_queue::post()` only notifies the condition variable, whose sleeping predicate tests
+  `req_stop_sleeping`, so the loop woke, re-tested, and went straight back to sleep with the task
+  still queued. Upstream performs the wake on the caller's behalf in `server_res_generator`'s
+  constructor (`wait_until_no_sleep()`), but only for readers built through `create_response()`;
+  this binding builds its readers with the CLI-facing `get_response_reader()`, which does not, and
+  nothing in the JNI layer called `wait_until_no_sleep()` at all. Every subsequent call then either
+  blocked until `close()` (completions, embeddings, rerank, infill) or threw `"No result"`
+  (`getMetrics`, LoRA and slot operations), for the lifetime of the process. All six post sites now
+  wake the queue first. Idle-sleep is off by default (`-1`), so a default configuration was never
+  affected.
+- **A single malformed UTF-8 byte in a model's output turned a finished generation into an HTTP 500.**
+  The server parses *every* completion through `common_chat_parse()`; with no chat parser configured
+  (plain `/completion`) that is llama.cpp's content-only fallback, whose scan tolerates an incomplete
+  trailing UTF-8 sequence in lenient mode — which is the only mode the chat parser ever uses — but
+  rejected an *invalid* byte outright. The request then failed with `"The model produced output that
+  does not match the expected Content-only format"` even though generation had completed normally.
+  Carried as local patch `0011`, which makes the invalid-byte branch respect leniency the same way
+  (keeping the text up to the bad byte); strict-mode parsing is unchanged. Upstream-submittable.
+- **`TextToSpeech` crashed the JVM on every platform when loading a model.** A hand-built
+  `common_params` never passes through `common_params_parse`, and `common/arg.cpp` is upstream's
+  only caller of `postprocess_cpu_params` — `common_init_from_params` does not call it. So
+  `cpuparams_batch.n_threads` kept its `-1` default, `common_threadpools::init` created a second
+  threadpool with -1 threads, and `ggml_threadpool_new` sized its worker array as
+  `sizeof(ggml_compute_state) * -1` — a huge `size_t`, so the allocation returned `NULL` and the
+  unchecked `memset` that follows it faulted at address 0. `tts_engine.cpp` and `train_engine.cpp` now mirror `arg.cpp`'s two
+  calls; the `LlamaModel` paths were never affected because their params are parsed. Guarded by
+  five model-free C++ tests over the extracted `build_tts_params`.
+- **`LlamaQuantizer` never worked in any published jar — every call threw `UnsatisfiedLinkError`.**
+  The `extern "C"` declarations that give the JNI entry points C linkage come from the
+  javac-generated `jllama.h`, which covers **only** `LlamaModel`; a JNI function for any other class
+  has to declare its own (as `train_engine.cpp` and `native_server.cpp` do).
+  `Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative` did not, so it was exported under its
+  C++-mangled name and the JVM could never resolve it — on every platform, not just the two Windows
+  jobs that reported it. The only coverage was `QuantizerIntegrationTest`, which gates on a GGUF and
+  so skipped in CI for as long as the model paths resolved to the wrong directory. Fixed, and guarded
+  model-free by `NativeLibraryLoadSmokeTest.quantizerNativeEntryPointResolves` so a future entry point
+  that forgets `extern "C"` fails a test that runs wherever the library exists.
+- **The macOS arm64 native library shipped corrupt in 5.0.6 and in several 5.0.7 snapshots.** All three
+  macOS arm64 build jobs uploaded their dylib under a `*-libraries` artifact name, and the packaging
+  job collects those with one globbed download — so three builds landed on the same
+  `Mac/aarch64/libjllama.dylib` and the survivor could be a byte-level hybrid of two of them rather
+  than either input. Its ad-hoc signature then no longer matched its own `__TEXT` pages (66/4078 and
+  1141/4097 code pages failed their stored hashes) and macOS **SIGKILLed every process that loaded
+  it**. Fixed by naming the test-only variants outside the glob and selecting the shipped variant by
+  an explicit download step (thanks to **@linking12**, #388), plus two guards so it cannot recur:
+  `merge-native-artifacts.sh` fails the build when any relative path is claimed by more than one
+  artifact — checked *before* the merge, since a collision leaves exactly one file behind and is
+  invisible afterwards — and the new `smoke-fatjar-macos` job runs `codesign --verify --strict` and a
+  real JVM load of the dylib extracted from the **packaged** fat jar (#390).
+- **`LlamaModel.getMetrics()` returned the wrong shape.** Upstream reduced the payload to a bare slot array
+  at b10408 (#26920) and split the task in two at b10519 (#27376), so the counter getters on
+  `value.ServerMetrics`, `LlamaModelTest#testGetMetrics` and `OpenAiCompatServer`'s metrics routes had all
+  been reading keys that no longer existed. The JNI layer now posts both tasks and merges them, restoring the
+  documented object rather than following upstream's transport split.
+- **`GET /slots` answered HTTP 200 with a zero-length body** whenever the metrics payload carried no `slots`
+  key (`MissingNode.toString()` is `""`). It now always answers with a JSON array.
+- **Model-gated Java tests silently self-skipped in CI.** Surefire's working directory is the module basedir
+  while the shared GGUF cache is restored to the reactor root, so every `models/…` path resolved to nothing,
+  every such class aborted in its `@BeforeAll`, and the job still reported success — which is why the stale
+  `getMetrics()` assertions above never failed. Test paths now resolve against either layout.
+  `llama-langchain4j` had the identical defect.
+- **`RouterClient.awaitModelLoaded` misdiagnosed hidden router models.** A cache model deduplicated by a
+  preset with `dedup-cache-models` (b10505, #27346) is omitted from `GET /models` although it still loads and
+  serves by name; the error now names that cause instead of sending callers to re-check `--models-dir`.
 - **CVE-2026-49844** (GHSA-qv9r-c865-cp47, moderate): `org.apache.logging.log4j:log4j-api`
   2.25.3 arrives as a **test-scope** transitive of `io.github.hakky54:logcaptor` 2.12.6, and
   Dependabot could not update it on its own. Pinned `log4j-api` **and** `log4j-to-slf4j` to

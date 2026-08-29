@@ -8,8 +8,9 @@
 // json_helpers.hpp — Pure JSON transformation helpers.
 //
 // Every function in this file is pure data transformation:
-//   - input:  nlohmann::json values, server_task_result_ptr, or plain C++ types
-//   - output: nlohmann::json, std::vector, std::optional, or plain C++ types
+//   - input:  `json` values (the upstream alias — `common_json` since llama.cpp b10585,
+//             `nlohmann::ordered_json` before it), server_task_result_ptr, or plain C++ types
+//   - output: `json`, std::vector, std::optional, or plain C++ types
 //   - zero JNI calls (no JNIEnv*, jclass, jstring, …)
 //   - zero llama state (no llama_context*, llama_vocab*, server_context*)
 //
@@ -33,8 +34,7 @@
 //   7.  parse_slot_prompt_similarity    — used by nothing above it
 //   8.  parse_positive_int_config       — used by nothing above it
 //   9.  wrap_stream_chunk               — used by nothing above it
-
-#include "nlohmann/json.hpp"
+//  10.  server_metrics_to_json          — used by nothing above it
 
 #include <cmath>
 #include <optional>
@@ -228,5 +228,75 @@
     json out;
     out["data"] = std::move(payload);
     out["stop"] = stop;
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// server_metrics_to_json
+//
+// Merges the two halves of the server-introspection payload back into the one
+// object LlamaModel.getMetrics() has always returned.
+//
+// Until llama.cpp b10408 (upstream #26920) a single SERVER_TASK_TYPE_METRICS
+// task produced that object.  b10408 reduced its to_json() to the slot array,
+// and b10519 (#27376) split the task in two: METRICS now carries only the
+// counters (rendered as Prometheus text by to_metrics(); its to_json() is
+// unused and returns JSON null) and SERVER_TASK_TYPE_SLOT_GET carries the slot
+// array plus the idle-slot count.  Rather than let the Java contract follow
+// upstream's transport split, the JNI layer posts both tasks and rebuilds the
+// object here.
+//
+// Key names are the pre-b10408 ones — `idle`, `processing`, `deferred`,
+// `t_start`, the `n_*`/`t_*` counter pairs, the speculative-decoding tallies and
+// `slots` — so every existing consumer keeps working.  The speculative counters
+// deliberately keep upstream's own historical spelling (`n_draft_verif_steps_total`,
+// `n_accepted_per_pos_total`), not a tidied-up one, so the payload stays a faithful
+// reproduction.  `n_prompt_tokens_cached_total` is the one key with no pre-b10408 JSON
+// ancestor: `n_prompt_cached` did not exist in the struct before b10408.  It is not
+// invisible upstream, though -- `to_metrics()` has emitted it as the Prometheus counter
+// `llamacpp:prompt_tokens_cached_total` since the same commit; what it lacked was a JSON
+// representation.
+//
+// Durations are microseconds upstream and milliseconds here, matching what the
+// pre-b10408 payload used.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline json server_metrics_to_json(const server_task_result_metrics &metrics_result,
+                                                 const server_task_result_slots &slots_result) {
+    const server_metrics &m = metrics_result.metrics;
+
+    // Microseconds -> milliseconds, as a double so sub-millisecond timings survive.
+    const auto to_ms = [](uint64_t time_us) { return static_cast<double>(time_us) / 1000.0; };
+
+    json out;
+    out["idle"] = slots_result.n_idle_slots;
+    out["processing"] = metrics_result.n_processing_slots;
+    out["deferred"] = metrics_result.n_tasks_deferred;
+    out["t_start"] = m.t_start;
+
+    // Cumulative since server start.
+    out["n_prompt_tokens_processed_total"] = m.prompt.count;
+    out["t_prompt_processing_total"] = to_ms(m.prompt.time);
+    out["n_tokens_predicted_total"] = m.predict.count;
+    out["t_tokens_generation_total"] = to_ms(m.predict.time);
+    out["n_decode_total"] = m.n_decode;
+    out["n_busy_slots_total"] = m.n_busy_slots;
+    out["n_tokens_max"] = m.n_tokens_max;
+
+    // Current measurement window: reset by an HTTP /metrics scrape, never by this call
+    // (the JNI task leaves server_task::metrics_reset_bucket at its default false).
+    out["n_prompt_tokens_processed"] = m.prompt_bucket.count;
+    out["t_prompt_processing"] = to_ms(m.prompt_bucket.time);
+    out["n_tokens_predicted"] = m.predict_bucket.count;
+    out["t_tokens_generation"] = to_ms(m.predict_bucket.time);
+
+    // Cache counter (new since b10408) plus the speculative-decoding tallies, which the
+    // pre-b10408 payload already carried under exactly these names.
+    out["n_prompt_tokens_cached_total"] = m.n_prompt_cached;
+    out["n_draft_tokens_total"] = m.n_draft_tokens;
+    out["n_draft_accepted_total"] = m.n_draft_accepted;
+    out["n_draft_verif_steps_total"] = m.n_draft_verif_steps;
+    out["n_accepted_per_pos_total"] = m.n_accepted_per_pos;
+
+    out["slots"] = slots_result.slots_data;
     return out;
 }

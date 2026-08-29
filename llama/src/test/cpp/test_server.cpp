@@ -15,7 +15,8 @@
 //   - server_task_result_embd         — oaicompat vs non-oaicompat shapes
 //   - format_error_response           — all 7 error types → correct HTTP code + type string
 //   - server_task::need_embd/logits   — routing helpers
-//   - server_task_result_metrics      — slot count + token count fields
+//   - server_task_result_metrics      — cumulative token/slot counters (/metrics)
+//   - server_task_result_slots        — the /slots array payload
 //   - server_task_result_slot_*       — save/load/erase JSON shapes
 
 #include <gtest/gtest.h>
@@ -750,19 +751,25 @@ TEST(ServerTaskNTokens, PopulatedTokens_ReturnsCount) {
 }
 
 // ============================================================
-// server_task_result_metrics::to_json / ::to_metrics
+// server_task_result_metrics::to_metrics / server_task_result_slots::to_json
 //   Pure struct → JSON / Prometheus text; no model needed.
 //
-//   b10408 (upstream #26920) split this result in two: to_json() now serves
-//   /slots and returns the slot array verbatim, while the cumulative counters
-//   moved into an embedded server_metrics and are rendered as Prometheus
-//   exposition text by the new to_metrics() for /metrics.
+//   b10408 (upstream #26920) split the old single result in two: to_json()
+//   served /slots and returned the slot array verbatim, while the cumulative
+//   counters moved into an embedded server_metrics rendered as Prometheus
+//   exposition text by to_metrics() for /metrics.
+//
+//   b10519 (upstream #27376, "allow access /metrics during sleep") split the
+//   *type* in two as well: server_task_result_metrics keeps only the counters
+//   (n_processing_slots / n_tasks_deferred / metrics) and its to_json() is now
+//   an unused empty object, while the /slots payload (n_idle_slots +
+//   slots_data) moved to the new server_task_result_slots, produced by the new
+//   SERVER_TASK_TYPE_SLOT_GET task.
 // ============================================================
 
 namespace {
 server_task_result_metrics make_metrics() {
     server_task_result_metrics m;
-    m.n_idle_slots = 2;
     m.n_processing_slots = 1;
     m.n_tasks_deferred = 3;
     m.metrics.t_start = 1234567890LL;
@@ -797,13 +804,32 @@ double prometheus_value(const std::string &text, const std::string &name) {
 }
 } // namespace
 
-TEST(ServerTaskResultMetrics, ToJson_ReturnsSlotsArrayVerbatim) {
-    server_task_result_metrics m = make_metrics();
-    m.slots_data = json::array({{{"id", 0}}, {{"id", 1}}});
+TEST(ServerTaskResultSlots, ToJson_ReturnsSlotsArrayVerbatim) {
+    server_task_result_slots m;
+    m.n_idle_slots = 2;
+    m.slots_data = json::array({json::object({{"id", 0}}), json::object({{"id", 1}})});
     const json j = m.to_json();
     ASSERT_TRUE(j.is_array());
     EXPECT_EQ(j.size(), 2u);
     EXPECT_EQ(j.at(0).at("id").get<int>(), 0);
+}
+
+TEST(ServerTaskResultSlots, ToJson_EmptyByDefault) {
+    server_task_result_slots m;
+    const json j = m.to_json();
+    ASSERT_TRUE(j.is_array());
+    EXPECT_EQ(j.size(), 0u);
+    EXPECT_EQ(m.n_idle_slots, 0);
+}
+
+TEST(ServerTaskResultMetrics, ToJson_UnusedAndEmpty) {
+    // /metrics renders Prometheus text via to_metrics(); to_json() is not used any more and
+    // since b10519 just returns `json{}` — which selects the default constructor, i.e. JSON
+    // null rather than an empty object (true for nlohmann and for common_json alike). Assert
+    // only what upstream promises: it carries nothing.
+    server_task_result_metrics m = make_metrics();
+    const json j = m.to_json();
+    EXPECT_TRUE(j.empty());
 }
 
 TEST(ServerTaskResultMetrics, ToMetrics_SlotGauges) {
@@ -1835,7 +1861,7 @@ TEST(CmplFinalChatStream, IncludeUsageTrue_TrailingChunkHasEmptyChoicesAndUsage)
 //   Called with nullptr vocab when the JSON does not exercise
 //   grammar/preserved_tokens tokenisation.  Tests verify:
 //     - simple field round-trip (temperature, seed, n_predict)
-//     - repeat_last_n/dry_penalty_last_n reject negative values (b10275 dropped the -1=ctx-size
+//     - repeat_last_n/dry_penalty_last_n reject negative values (b10273 dropped the -1=ctx-size
 //       sentinel; the hard lower limit moved from -1 to 0)
 //     - dry_base < 1.0 is reset to default
 //     - n_discard negative throws std::invalid_argument (b9739: range-checked, no longer clamped)
@@ -1878,13 +1904,13 @@ TEST(ParamsFromJsonCmpl, SsePingInterval_Absent_InheritsServerSetting) {
     EXPECT_EQ(parse_params({}).sse_ping_interval, defaults.sse_ping_interval);
 }
 
-// b10275: the -1=ctx-size sentinel was dropped from repeat_last_n; the hard lower limit is now 0,
+// b10273: the -1=ctx-size sentinel was dropped from repeat_last_n; the hard lower limit is now 0,
 // so a request-supplied -1 is out of range and throws instead of expanding to the slot context size.
 TEST(ParamsFromJsonCmpl, RepeatLastN_MinusOne_Throws) {
     EXPECT_THROW(parse_params({{"repeat_last_n", -1}}), std::invalid_argument);
 }
 
-// b10275: same sentinel removal for dry_penalty_last_n.
+// b10273: same sentinel removal for dry_penalty_last_n.
 TEST(ParamsFromJsonCmpl, DryPenaltyLastN_MinusOne_Throws) {
     EXPECT_THROW(parse_params({{"dry_penalty_last_n", -1}}), std::invalid_argument);
 }
@@ -1937,7 +1963,7 @@ TEST(ParamsFromJsonCmpl, DryPenaltyLastN_Positive_RoundTrip) {
 
 TEST(ParamsFromJsonCmpl, DrySequenceBreakers_NonEmpty_RoundTrip) {
     // mirrors the llama.cpp default list that withDrySequenceBreakers forwards verbatim
-    const auto p = parse_params({{"dry_sequence_breakers", {"\n", ":", "\"", "*"}}});
+    const auto p = parse_params({{"dry_sequence_breakers", json::array({"\n", ":", "\"", "*"})}});
     ASSERT_EQ(p.sampling.dry_sequence_breakers.size(), 4u);
     EXPECT_EQ(p.sampling.dry_sequence_breakers[0], "\n");
     EXPECT_EQ(p.sampling.dry_sequence_breakers[1], ":");
@@ -1977,7 +2003,7 @@ TEST(ParamsFromJsonCmpl, NCmpl_AliasedFromN) {
 // ============================================================
 
 TEST(ParamsFromJsonCmpl, Samplers_CanonicalNames_Parsed) {
-    const auto p = parse_params({{"samplers", {"top_k", "top_p", "min_p", "temperature"}}});
+    const auto p = parse_params({{"samplers", json::array({"top_k", "top_p", "min_p", "temperature"})}});
     ASSERT_EQ(p.sampling.samplers.size(), 4u);
     EXPECT_EQ(p.sampling.samplers[0], COMMON_SAMPLER_TYPE_TOP_K);
     EXPECT_EQ(p.sampling.samplers[1], COMMON_SAMPLER_TYPE_TOP_P);
@@ -1987,14 +2013,14 @@ TEST(ParamsFromJsonCmpl, Samplers_CanonicalNames_Parsed) {
 
 TEST(ParamsFromJsonCmpl, Samplers_KebabCaseAlias_NowAccepted) {
     // "top-k" / "min-p" alt names were rejected by the server before b9553.
-    const auto p = parse_params({{"samplers", {"top-k", "min-p"}}});
+    const auto p = parse_params({{"samplers", json::array({"top-k", "min-p"})}});
     ASSERT_EQ(p.sampling.samplers.size(), 2u);
     EXPECT_EQ(p.sampling.samplers[0], COMMON_SAMPLER_TYPE_TOP_K);
     EXPECT_EQ(p.sampling.samplers[1], COMMON_SAMPLER_TYPE_MIN_P);
 }
 
 TEST(ParamsFromJsonCmpl, Samplers_CaseInsensitive) {
-    const auto p = parse_params({{"samplers", {"TOP_K", "Temperature", "Min-P"}}});
+    const auto p = parse_params({{"samplers", json::array({"TOP_K", "Temperature", "Min-P"})}});
     ASSERT_EQ(p.sampling.samplers.size(), 3u);
     EXPECT_EQ(p.sampling.samplers[0], COMMON_SAMPLER_TYPE_TOP_K);
     EXPECT_EQ(p.sampling.samplers[1], COMMON_SAMPLER_TYPE_TEMPERATURE);
@@ -2003,7 +2029,7 @@ TEST(ParamsFromJsonCmpl, Samplers_CaseInsensitive) {
 
 TEST(ParamsFromJsonCmpl, Samplers_MiscAliases_Parsed) {
     // "nucleus" -> top_p, "temp" -> temperature, "typ" -> typical_p
-    const auto p = parse_params({{"samplers", {"nucleus", "temp", "typ"}}});
+    const auto p = parse_params({{"samplers", json::array({"nucleus", "temp", "typ"})}});
     ASSERT_EQ(p.sampling.samplers.size(), 3u);
     EXPECT_EQ(p.sampling.samplers[0], COMMON_SAMPLER_TYPE_TOP_P);
     EXPECT_EQ(p.sampling.samplers[1], COMMON_SAMPLER_TYPE_TEMPERATURE);
@@ -2012,7 +2038,7 @@ TEST(ParamsFromJsonCmpl, Samplers_MiscAliases_Parsed) {
 
 TEST(ParamsFromJsonCmpl, Samplers_UnknownName_SkippedNotError) {
     // unknown names are warned and skipped, not a hard error.
-    const auto p = parse_params({{"samplers", {"top_k", "definitely_not_a_sampler"}}});
+    const auto p = parse_params({{"samplers", json::array({"top_k", "definitely_not_a_sampler"})}});
     ASSERT_EQ(p.sampling.samplers.size(), 1u);
     EXPECT_EQ(p.sampling.samplers[0], COMMON_SAMPLER_TYPE_TOP_K);
 }

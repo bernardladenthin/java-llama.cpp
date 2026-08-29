@@ -91,14 +91,15 @@ public class MultimodalIntegrationTest {
 
     @BeforeAll
     public static void setup() {
-        modelPath = System.getProperty(TestConstants.PROP_VISION_MODEL_PATH);
-        mmprojPath = System.getProperty(TestConstants.PROP_VISION_MMPROJ_PATH);
+        modelPath = TestConstants.resolveModelProperty(TestConstants.PROP_VISION_MODEL_PATH);
+        mmprojPath = TestConstants.resolveModelProperty(TestConstants.PROP_VISION_MMPROJ_PATH);
         // Image path falls back to the committed test resource when the
         // -D property is unset, so the test works on local dev checkouts
         // without any extra wiring. The model / mmproj remain externally
         // staged because their combined size (~600 MB) is too large to
         // commit.
-        imagePath = System.getProperty(TestConstants.PROP_VISION_IMAGE_PATH, TestConstants.DEFAULT_VISION_IMAGE_PATH);
+        imagePath = TestConstants.resolveModelProperty(
+                TestConstants.PROP_VISION_IMAGE_PATH, TestConstants.DEFAULT_VISION_IMAGE_PATH);
 
         Assumptions.assumeTrue(
                 modelPath != null && !modelPath.isEmpty(),
@@ -124,6 +125,14 @@ public class MultimodalIntegrationTest {
         }
         model = new LlamaModel(parameters);
         assertTrue(model.getModelMeta().supportsVision(), "loaded model + mmproj must advertise vision input");
+        // The native side must emit all three modality keys. ModelMetaTest feeds ModelMeta its own
+        // JSON, so nothing there would notice getModelMetaJson() dropping one; this is the only
+        // place the real emitter is observed. Presence, not value -- whether this particular model
+        // accepts video is the model's business.
+        JsonNode modalities = model.getModelMeta().asJson().path("modalities");
+        for (String key : new String[] {"vision", "audio", "video"}) {
+            assertTrue(modalities.has(key), "getModelMetaJson() must emit modalities." + key + ": " + modalities);
+        }
     }
 
     @AfterAll

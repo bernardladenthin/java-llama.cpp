@@ -10,7 +10,6 @@
 #include "json-schema-to-grammar.h"
 #include "llama.h"
 #include "log.h"
-#include "nlohmann/json.hpp"
 #include "server-context.h"
 #include "server-queue.h"
 #include "server-task.h"
@@ -225,14 +224,65 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
 }
 
 /**
+ * Wake the server from the idle-sleep state and re-sync the state this layer caches from the model.
+ *
+ * Upstream's `handle_sleeping_state(true)` calls `destroy()`, which frees the model and context and
+ * sets `ctx_tgt`/`model_tgt` to nullptr; resuming calls `load_model()` again, producing a *new*
+ * model. Two consequences for this layer, and both crashed or corrupted before this helper existed:
+ *
+ *  1. `server_context::get_meta()` dereferences `ctx_tgt`/`model_tgt`, so calling it while asleep is
+ *     a null dereference. Upstream's header says as much of the sibling accessor: "get the
+ *     underlaying llama_context, can return nullptr if sleeping". This crashed the JVM with SIGSEGV
+ *     at `llama_context::get_model()` on all six CI platforms the first time a request followed an
+ *     idle window.
+ *  2. `jctx->vocab` is captured once after the initial load. The reload replaces the model, so the
+ *     cached pointer dangles -- use-after-free on every tokenize/detokenize/rerank path. (The field's
+ *     comment used to say "valid for the lifetime of this context"; that holds only while idle sleep
+ *     is off, which is the default.)
+ *
+ * `wake_and_post()` below is NOT sufficient for either: every dispatch site reads `get_meta()` and
+ * tokenizes *before* it posts, so the wake has to happen earlier than the post. Upstream sidesteps
+ * the whole question by caching meta once after load (`server_routes::update_meta`) and serving
+ * cached `/props` and `/models` while asleep; this layer reads live state per request, so it must
+ * wake first and then refresh.
+ *
+ * Call this at the top of every entry point that touches the model. It is a no-op when sleeping is
+ * off (the default, `-1`), and in vocab-only mode, which owns its own model and never has a server.
+ *
+ * The temporary reader exists only to reach `queue_tasks` -- `server_context` exposes the queue no
+ * other way. It is cheap: the constructor stores two references and an int, and the destructor's
+ * `stop()` is a no-op while `id_tasks` is empty.
+ *
+ * Teardown ordering: a caller parked in `wait_until_no_sleep()` when the queue terminates is never
+ * released (see `wake_and_post` below). That is safe only because every caller of this helper runs
+ * inside a `jllama_context_guard`, and `Java_..._delete` waits for `users == 0` before `terminate()`.
+ * Do not call this from the teardown path.
+ */
+static void wake_server(jllama_context *jctx) {
+    if (jctx->vocab_only) {
+        return; // no server_context in vocab-only mode; the model is owned directly and never sleeps
+    }
+    server_response_reader rd = jctx->server.get_response_reader();
+    rd.queue_tasks.wait_until_no_sleep();
+    // Re-read the vocab: a sleep/resume cycle replaced the model this pointer came from.
+    jctx->vocab = llama_model_get_vocab(llama_get_model(jctx->server.get_llama_context()));
+}
+
+/** Wake the server (see {@link wake_server}) and return its metadata, read after the wake. */
+[[nodiscard]] static server_context_meta wake_and_get_meta(jllama_context *jctx) {
+    wake_server(jctx);
+    return jctx->server.get_meta();
+}
+
+/**
  * Parse the OAI chat-completion body through oaicompat_chat_params_parse and
  * write the result into `out`, preserving decoded media in `files`. Returns
  * true on success; on failure throws and returns false.
  */
-[[nodiscard]] static bool parse_oai_chat_params(JNIEnv *env, server_context *ctx_server, json &body, json &out,
+[[nodiscard]] static bool parse_oai_chat_params(JNIEnv *env, jllama_context *jctx, json &body, json &out,
                                                 std::vector<raw_buffer> &files) {
     try {
-        auto meta = ctx_server->get_meta();
+        auto meta = wake_and_get_meta(jctx);
         out = oaicompat_chat_params_parse(body, meta.chat_params, files);
         return true;
     } catch (const std::exception &e) {
@@ -247,7 +297,8 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
                                      const std::vector<llama_logit_bias> &logit_bias_eog, const json &data,
                                      bool has_mtmd, std::vector<raw_buffer> files = {}) {
     if (!configure_multimodal_task_impl(task, has_mtmd, data, std::move(files))) {
-        auto tokenized_prompts = tokenize_input_prompts(jctx->vocab, nullptr, data.at("prompt"), true, true);
+        auto tokenized_prompts =
+            tokenize_input_prompts(jctx->vocab, nullptr, data.at("prompt"), true, true, mtmd_helper_init_opt_default());
         if (!tokenized_prompts.empty()) {
             task.tokens = std::move(tokenized_prompts[0]);
         }
@@ -256,11 +307,46 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
     configure_task_slot_impl(task, data);
 }
 
+// Wake the queue before posting, then post.
+//
+// With ModelParameters.setSleepIdleSeconds(> 0) the queue enters a sleeping state after the
+// configured idle period, and server_queue::post() does NOT leave it: post() only calls
+// condition_tasks.notify_one(), while the sleeping wait predicate is
+// `(!running || req_stop_sleeping)`. The loop wakes, re-tests, and goes straight back to
+// sleep with the task still queued. Only wait_until_no_sleep() sets req_stop_sleeping.
+//
+// Upstream does this wake for the caller: server_res_generator's constructor calls
+// queue_tasks.wait_until_no_sleep() for every route built with create_response(). Exactly
+// four routes opt out via create_response(true) -- health, metrics, props and models -- and
+// each answers from cache instead of waiting. This layer builds its readers with
+// server_context::get_response_reader(), the CLI-facing accessor, which performs no wake --
+// so the wake has to happen here or not at all.
+//
+// Used at every post site in this file. Sleeping is off by default (-1), in which case
+// wait_until_no_sleep() sees a non-sleeping queue and returns immediately.
+//
+// Ordering invariant this depends on: wait_until_no_sleep() blocks until the worker loop clears
+// `sleeping`, and upstream's loop leaves that flag SET when it exits on !running -- it breaks out
+// of the sleep block before the `sleeping = false; notify_all();` pair. So a caller parked here
+// when the queue is terminated is never released. It is safe only because every entry point holds
+// a jllama_context_guard user reference and Java_..._delete waits for users == 0 BEFORE calling
+// terminate(), so the loop is always alive to service this wait. Do not reorder that teardown to
+// terminate first.
+static void wake_and_post(server_response_reader &rd, server_task &&task, bool front = false) {
+    rd.queue_tasks.wait_until_no_sleep();
+    rd.post_task(std::move(task), front);
+}
+
+static void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks) {
+    rd.queue_tasks.wait_until_no_sleep();
+    rd.post_tasks(std::move(tasks));
+}
+
 [[nodiscard]] static jint dispatch_streaming_completion(JNIEnv *env, jllama_context *jctx, const json &data,
                                                         server_task_type task_type, task_response_type res_type,
                                                         std::vector<raw_buffer> files = {}) {
     server_context *ctx_server = &jctx->server;
-    auto meta = ctx_server->get_meta();
+    auto meta = wake_and_get_meta(jctx);
     auto *rd = new server_response_reader(ctx_server->get_response_reader());
     int tid = rd->get_new_id();
     try {
@@ -268,7 +354,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
         task.id = tid;
         populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
         task.params.res_type = res_type;
-        rd->post_task(std::move(task));
+        wake_and_post(*rd, std::move(task));
     } catch (const std::exception &e) {
         delete rd;
         throw_invalid_request(env, e);
@@ -290,7 +376,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
                                                           server_task_type task_type, task_response_type res_type,
                                                           std::vector<raw_buffer> files = {}) {
     server_context *ctx_server = &jctx->server;
-    auto meta = ctx_server->get_meta();
+    auto meta = wake_and_get_meta(jctx);
     auto rd = ctx_server->get_response_reader();
     server_task task(task_type);
     task.id = rd.get_new_id();
@@ -301,7 +387,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
         return nullptr;
     }
     task.params.res_type = res_type;
-    rd.post_task(std::move(task));
+    wake_and_post(rd, std::move(task));
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     if (!batch_ok_or_throw(env, br))
         return nullptr;
@@ -347,23 +433,45 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
     return task;
 }
 
-// Post a single pre-built task, wait for its result, and return JSON as a jstring.
+// Post a single pre-built task and wait for its result.  Returns nullptr after
+// throwing via JNI when the task failed; callers must return immediately then.
 // The task's id field is assigned here; callers must not set it beforehand.
-[[nodiscard]] static jstring dispatch_one_shot_task(JNIEnv *env, server_context *ctx_server, server_task task) {
-    auto rd = ctx_server->get_response_reader();
+//
+// Posted high-priority (front of the queue), like upstream does for its own
+// introspection endpoints, and waited on with the same `closing` predicate every other
+// wait site in this file uses, so close() can unblock a pending call.
+//
+// wake_and_post() has already left any idle-sleep state, so the task is guaranteed to be
+// seen by a running loop. The is_sleeping() disjunct below is only a backstop for the
+// narrow window in which the queue could fall asleep again between the wake and this wait
+// -- it takes a full idle period (>= 1s) of quiet to re-enter, so it needs the calling
+// thread to be descheduled for longer than that. Should it ever happen, the result is a
+// thrown "No result" rather than a block until close(); upstream's /metrics handler adds
+// the same is_sleeping() guard for the same reason ("a task posted right before sleeping
+// is never processed, do not wait for it"), differing only in that it can fall back to a
+// cached response where this has nothing to fall back to.
+[[nodiscard]] static server_task_result_ptr post_and_wait(JNIEnv *env, jllama_context *jctx, server_task task) {
+    auto rd = jctx->server.get_response_reader();
     task.id = rd.get_new_id();
-    rd.post_task(std::move(task));
-    auto result = rd.next([] { return false; });
+    wake_and_post(rd, std::move(task), true);
+    auto result = rd.next([jctx, &rd] { return jctx->closing.load() || rd.queue_tasks.is_sleeping(); });
     if (!result_ok_or_throw(env, result))
+        return nullptr;
+    return result;
+}
+
+// Post a single pre-built task, wait for its result, and return JSON as a jstring.
+[[nodiscard]] static jstring dispatch_one_shot_task(JNIEnv *env, jllama_context *jctx, server_task task) {
+    auto result = post_and_wait(env, jctx, std::move(task));
+    if (!result)
         return nullptr;
     return json_to_jstring(env, result->to_json());
 }
 
 // Post a single slot file task (SAVE or RESTORE), wait for its result, and
 // return the result JSON as a jstring.
-[[nodiscard]] static jstring exec_slot_file_task(JNIEnv *env, server_context *ctx_server, jint slotId,
-                                                 jstring jfilename, server_task_type task_type,
-                                                 const char *empty_filename_error) {
+[[nodiscard]] static jstring exec_slot_file_task(JNIEnv *env, jllama_context *jctx, jint slotId, jstring jfilename,
+                                                 server_task_type task_type, const char *empty_filename_error) {
     const std::string filename = jfilename != nullptr ? parse_jstring(env, jfilename) : "";
     if (filename.empty()) {
         env->ThrowNew(c_llama_error, empty_filename_error);
@@ -373,7 +481,7 @@ static void populate_completion_task(server_task &task, jllama_context *jctx,
     task.slot_action.id_slot = slotId;
     task.slot_action.filename = filename;
     task.slot_action.filepath = filename;
-    return dispatch_one_shot_task(env, ctx_server, std::move(task));
+    return dispatch_one_shot_task(env, jctx, std::move(task));
 }
 
 char **parse_string_array(JNIEnv *env, const jobjectArray string_array, const jsize length) {
@@ -850,6 +958,8 @@ static void load_model_impl(JNIEnv *env, jobject obj, jobjectArray jparams, jobj
     LOG_INF("%s: model loaded\n", __func__);
 
     {
+        // Direct get_meta() is correct here and must NOT go through wake_and_get_meta(): this runs on
+        // the load path, where the model is freshly loaded and the server cannot be asleep.
         auto meta = jctx->server.get_meta();
         LOG_INF("%s: chat template, chat_template: %s, example_format: '%s'\n", __func__,
                 common_chat_templates_source(meta.chat_params.tmpls.get()).c_str(),
@@ -906,13 +1016,15 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_getModelMetaJson(J
     REQUIRE_SERVER_CONTEXT(nullptr);
     if (jctx->vocab_only) {
         json meta = {
-            {"vocab_type", llama_vocab_type(jctx->vocab)},
+            // static_cast: an unscoped enum binds to common_json_value(bool) and would serialise
+            // as true/false — see the "vocab_type" note in docs/history/llama-cpp-breaking-changes.md
+            {"vocab_type", static_cast<int>(llama_vocab_type(jctx->vocab))},
             {"n_vocab", llama_vocab_n_tokens(jctx->vocab)},
             {"special_tokens", special_tokens_json(jctx->vocab)},
         };
         return json_to_jstring(env, meta);
     }
-    auto m = ctx_server->get_meta();
+    auto m = wake_and_get_meta(jctx);
     // Read general.architecture from GGUF metadata via the llama C API. Size the buffer
     // dynamically: llama_model_meta_val_str returns the required length when given a null/0
     // buffer, so a long architecture name is never silently truncated. A char vector (not a
@@ -929,13 +1041,17 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_getModelMetaJson(J
         }
     }
     json j = {
-        {"vocab_type", m.model_vocab_type},
+        // static_cast: see the vocab_only branch above — an unscoped enum would become a boolean
+        {"vocab_type", static_cast<int>(m.model_vocab_type)},
         {"n_vocab", m.model_vocab_n_tokens},
         {"n_ctx_train", m.model_n_ctx_train},
         {"n_embd", m.model_n_embd_inp},
         {"n_params", m.model_n_params},
         {"size", m.model_size},
-        {"modalities", {{"vision", m.has_inp_image}, {"audio", m.has_inp_audio}}},
+        // All three modalities upstream tracks. `video` was omitted here while server_context_meta
+        // has carried it for releases, and upstream's own /props emits all three -- a consumer
+        // feature-detecting from getModelMeta() would have concluded no model ever accepts video.
+        {"modalities", {{"vision", m.has_inp_image}, {"audio", m.has_inp_audio}, {"video", m.has_inp_video}}},
         {"name", m.model_name},
         {"architecture", arch},
         {"ftype", m.model_ftype},
@@ -1093,6 +1209,9 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_receiveChatComplet
 JNIEXPORT jfloatArray JNICALL Java_net_ladenthin_llama_LlamaModel_embed(JNIEnv *env, jobject obj, jstring jprompt) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
+    // Idle sleep frees the model and invalidates the cached vocab; wake and re-sync first.
+    wake_server(jctx);
+
     if (!require_embedding_support(env, jctx->params.embedding, c_llama_error)) {
         return nullptr;
     }
@@ -1112,7 +1231,7 @@ JNIEXPORT jfloatArray JNICALL Java_net_ladenthin_llama_LlamaModel_embed(JNIEnv *
     task.id = rd.get_new_id();
     task.tokens = server_tokens(tokens, false);
     task.index = 0;
-    rd.post_task(std::move(task));
+    wake_and_post(rd, std::move(task));
 
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     if (!batch_ok_or_throw(env, br))
@@ -1138,7 +1257,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleRerank(JNIEn
     REQUIRE_SERVER_CONTEXT(nullptr);
 
     {
-        auto meta = ctx_server->get_meta();
+        auto meta = wake_and_get_meta(jctx);
         if (!jctx->params.embedding || meta.pooling_type != LLAMA_POOLING_TYPE_RANK) {
             env->ThrowNew(
                 c_llama_error,
@@ -1159,11 +1278,13 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleRerank(JNIEn
     std::vector<server_task> tasks;
     tasks.reserve(document_vector.size());
     for (size_t i = 0; i < document_vector.size(); i++) {
-        tasks.push_back(build_indexed_token_task(
-            rd, SERVER_TASK_TYPE_RERANK, format_prompt_rerank(model, jctx->vocab, nullptr, prompt, document_vector[i]),
-            static_cast<int>(i), TASK_RESPONSE_TYPE_NONE));
+        tasks.push_back(
+            build_indexed_token_task(rd, SERVER_TASK_TYPE_RERANK,
+                                     format_prompt_rerank(model, jctx->vocab, nullptr, prompt, document_vector[i],
+                                                          mtmd_helper_init_opt_default()),
+                                     static_cast<int>(i), TASK_RESPONSE_TYPE_NONE));
     }
-    rd.post_tasks(std::move(tasks));
+    wake_and_post(rd, std::move(tasks));
 
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     if (!batch_ok_or_throw(env, br))
@@ -1189,7 +1310,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_applyTemplate(JNIE
 
     json templateData;
     std::vector<raw_buffer> files;
-    if (!parse_oai_chat_params(env, ctx_server, data, templateData, files))
+    if (!parse_oai_chat_params(env, jctx, data, templateData, files))
         return nullptr;
 
     if (!templateData.contains("prompt") || !templateData.at("prompt").is_string()) {
@@ -1210,7 +1331,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleChatCompleti
     }
     json data;
     std::vector<raw_buffer> files;
-    if (!parse_oai_chat_params(env, ctx_server, body, data, files))
+    if (!parse_oai_chat_params(env, jctx, body, data, files))
         return nullptr;
 
     return dispatch_blocking_completion(env, jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CHAT,
@@ -1228,7 +1349,7 @@ JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestChatCompletion
     // Chat template already applied by parse_oai_chat_params; no OAI wrapping on the streaming path.
     json data;
     std::vector<raw_buffer> files;
-    if (!parse_oai_chat_params(env, ctx_server, body, data, files))
+    if (!parse_oai_chat_params(env, jctx, body, data, files))
         return 0;
 
     return dispatch_streaming_completion(env, jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_NONE,
@@ -1250,7 +1371,7 @@ JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestChatCompletion
     }
     json data;
     std::vector<raw_buffer> files;
-    if (!parse_oai_chat_params(env, ctx_server, body, data, files))
+    if (!parse_oai_chat_params(env, jctx, body, data, files))
         return 0;
 
     return dispatch_streaming_completion(env, jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CHAT,
@@ -1259,6 +1380,9 @@ JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestChatCompletion
 
 JNIEXPORT jintArray JNICALL Java_net_ladenthin_llama_LlamaModel_encode(JNIEnv *env, jobject obj, jstring jprompt) {
     REQUIRE_SERVER_CONTEXT(nullptr);
+
+    // Idle sleep frees the model and invalidates the cached vocab; wake and re-sync first.
+    wake_server(jctx);
 
     const std::string c_prompt = parse_jstring(env, jprompt);
     try {
@@ -1281,6 +1405,9 @@ static std::string detokenize(jllama_context *jctx, const std::vector<llama_toke
 JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_LlamaModel_decodeBytes(JNIEnv *env, jobject obj,
                                                                              jintArray java_tokens) {
     REQUIRE_SERVER_CONTEXT(nullptr);
+
+    // Idle sleep frees the model and invalidates the cached vocab; wake and re-sync first.
+    wake_server(jctx);
 
     const auto tokens = jint_array_to_tokens_impl(env, java_tokens);
     return parse_jbytes(env, detokenize(jctx, tokens));
@@ -1401,7 +1528,7 @@ JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_LlamaModel_jsonSchemaToGra
                                                                                           jstring j_schema) {
     try {
         const std::string c_schema = parse_jstring(env, j_schema);
-        nlohmann::ordered_json c_schema_json = nlohmann::ordered_json::parse(c_schema);
+        const json c_schema_json = json::parse(c_schema);
         const std::string c_grammar = json_schema_to_grammar(c_schema_json);
         return parse_jbytes(env, c_grammar);
     } catch (const std::exception &e) {
@@ -1452,7 +1579,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleInfill(JNIEn
 
     // Check FIM token support via server_context_meta (populated from the
     // same llama_vocab_fim_* calls inside server-context).
-    auto meta = ctx_server->get_meta();
+    auto meta = wake_and_get_meta(jctx);
     if (meta.fim_pre_token == LLAMA_TOKEN_NULL || meta.fim_sub_token == LLAMA_TOKEN_NULL ||
         meta.fim_mid_token == LLAMA_TOKEN_NULL) {
         env->ThrowNew(c_llama_error, "Model does not support fill-in-the-middle infill");
@@ -1475,7 +1602,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleInfill(JNIEn
     std::string prompt = json_value(data, "prompt", std::string());
     try {
         std::vector<server_tokens> tokenized_prompts =
-            tokenize_input_prompts(jctx->vocab, nullptr, prompt, false, true);
+            tokenize_input_prompts(jctx->vocab, nullptr, prompt, false, true, mtmd_helper_init_opt_default());
 
         data["prompt"] =
             format_prompt_infill(jctx->vocab, data.at("input_prefix"), data.at("input_suffix"), data.at("input_extra"),
@@ -1500,7 +1627,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleEmbeddings(J
     task_response_type res_type = joaiCompat ? TASK_RESPONSE_TYPE_OAI_EMBD : TASK_RESPONSE_TYPE_NONE;
 
     {
-        auto meta = ctx_server->get_meta();
+        auto meta = wake_and_get_meta(jctx);
         if (res_type != TASK_RESPONSE_TYPE_NONE && meta.pooling_type == LLAMA_POOLING_TYPE_NONE) {
             env->ThrowNew(c_llama_error,
                           "Pooling type 'none' is not OAI compatible. Please use a different pooling type");
@@ -1528,7 +1655,8 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleEmbeddings(J
 
     std::vector<server_tokens> tokenized_prompts;
     try {
-        tokenized_prompts = tokenize_input_prompts(jctx->vocab, nullptr, prompt, true, true);
+        tokenized_prompts =
+            tokenize_input_prompts(jctx->vocab, nullptr, prompt, true, true, mtmd_helper_init_opt_default());
     } catch (const std::exception &e) {
         env->ThrowNew(c_llama_error, e.what());
         return nullptr;
@@ -1549,7 +1677,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleEmbeddings(J
                                                  server_tokens(tokenized_prompts[i].get_tokens(), false),
                                                  static_cast<int>(i), res_type));
     }
-    rd.post_tasks(std::move(tasks));
+    wake_and_post(rd, std::move(tasks));
 
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     if (!batch_ok_or_throw(env, br))
@@ -1575,6 +1703,9 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleTokenize(JNI
                                                                              jboolean jaddSpecial,
                                                                              jboolean jwithPieces) {
     REQUIRE_SERVER_CONTEXT(nullptr);
+
+    // Idle sleep frees the model and invalidates the cached vocab; wake and re-sync first.
+    wake_server(jctx);
 
     const std::string content = parse_jstring(env, jcontent);
     const bool add_special = jaddSpecial;
@@ -1614,6 +1745,9 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleDetokenize(J
                                                                                jintArray jtokens) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
+    // Idle sleep frees the model and invalidates the cached vocab; wake and re-sync first.
+    wake_server(jctx);
+
     const auto tokens = jint_array_to_tokens_impl(env, jtokens);
     return json_to_jstring(env, format_detokenized_response(detokenize(jctx, tokens)));
 }
@@ -1623,18 +1757,37 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleSlotAction(J
     REQUIRE_SERVER_CONTEXT(nullptr);
 
     switch (action) {
-    case 0: // LIST — get slot info via metrics task
-        return dispatch_one_shot_task(env, ctx_server, server_task(SERVER_TASK_TYPE_METRICS));
+    case 0: { // LIST — the full server-introspection payload
+        // b10408 (upstream #26920) reduced server_task_result_metrics::to_json() to the slot array
+        // and b10519 (#27376) split the task in two: METRICS keeps only the counters (its to_json()
+        // is unused and returns JSON null; to_metrics() renders them as Prometheus text) and
+        // SERVER_TASK_TYPE_SLOT_GET carries the slot array plus the idle-slot count.  Post both and
+        // merge them so getMetrics() keeps returning the single documented object.
+        auto metrics_result = post_and_wait(env, jctx, server_task(SERVER_TASK_TYPE_METRICS));
+        if (!metrics_result)
+            return nullptr;
+        auto slots_result = post_and_wait(env, jctx, server_task(SERVER_TASK_TYPE_SLOT_GET));
+        if (!slots_result)
+            return nullptr;
+
+        const auto *metrics = dynamic_cast<const server_task_result_metrics *>(metrics_result.get());
+        const auto *slots = dynamic_cast<const server_task_result_slots *>(slots_result.get());
+        if (metrics == nullptr || slots == nullptr) {
+            env->ThrowNew(c_llama_error, "Unexpected result type for server metrics");
+            return nullptr;
+        }
+        return json_to_jstring(env, server_metrics_to_json(*metrics, *slots));
+    }
     case 1: // SAVE
-        return exec_slot_file_task(env, ctx_server, slotId, jfilename, SERVER_TASK_TYPE_SLOT_SAVE,
+        return exec_slot_file_task(env, jctx, slotId, jfilename, SERVER_TASK_TYPE_SLOT_SAVE,
                                    "Filename is required for slot save");
     case 2: // RESTORE
-        return exec_slot_file_task(env, ctx_server, slotId, jfilename, SERVER_TASK_TYPE_SLOT_RESTORE,
+        return exec_slot_file_task(env, jctx, slotId, jfilename, SERVER_TASK_TYPE_SLOT_RESTORE,
                                    "Filename is required for slot restore");
     case 3: { // ERASE
         server_task task(SERVER_TASK_TYPE_SLOT_ERASE);
         task.slot_action.id_slot = slotId;
-        return dispatch_one_shot_task(env, ctx_server, std::move(task));
+        return dispatch_one_shot_task(env, jctx, std::move(task));
     }
     default:
         env->ThrowNew(c_llama_error, "Invalid slot action");
@@ -1645,7 +1798,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleSlotAction(J
 JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_getLoraAdaptersJson(JNIEnv *env, jobject obj) {
     REQUIRE_SERVER_CONTEXT(nullptr);
 
-    return dispatch_one_shot_task(env, ctx_server, server_task(SERVER_TASK_TYPE_GET_LORA));
+    return dispatch_one_shot_task(env, jctx, server_task(SERVER_TASK_TYPE_GET_LORA));
 }
 
 JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_setLoraAdaptersJson(JNIEnv *env, jobject obj,
@@ -1663,12 +1816,16 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_setLoraAdaptersJso
     }
     server_task task(SERVER_TASK_TYPE_SET_LORA);
     task.set_lora = parse_lora_request(data);
-    return dispatch_one_shot_task(env, ctx_server, std::move(task));
+    return dispatch_one_shot_task(env, jctx, std::move(task));
 }
 
-JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative(JNIEnv *env, jclass, jstring jinput,
-                                                                              jstring joutput, jint ftype, jint nthread,
-                                                                              jboolean allowRequantize) {
+// LlamaQuantizer is not part of the javac-generated jllama.h (that header only covers LlamaModel),
+// so nothing else gives this definition C linkage and it would be exported under its C++-mangled
+// name -- which the JVM cannot resolve, failing every call with UnsatisfiedLinkError on every
+// platform. Same reason train_engine.cpp marks LlamaTrainer_finetuneNative and native_server.cpp
+// wraps the NativeServer entry points in an extern "C" block.
+extern "C" JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaQuantizer_quantizeNative(
+    JNIEnv *env, jclass, jstring jinput, jstring joutput, jint ftype, jint nthread, jboolean allowRequantize) {
     try {
         const std::string input_path = parse_jstring(env, jinput);
         const std::string output_path = parse_jstring(env, joutput);

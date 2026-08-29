@@ -644,11 +644,13 @@ TEST(JsonValue, BoolValue) {
 // json_is_array_of_numbers / json_is_array_of_mixed
 // ============================================================
 
-TEST(JsonArrayChecks, ArrayOfIntegers_IsNumbers) { EXPECT_TRUE(json_is_array_of_numbers(json{1, 2, 3})); }
+TEST(JsonArrayChecks, ArrayOfIntegers_IsNumbers) { EXPECT_TRUE(json_is_array_of_numbers(json::array({1, 2, 3}))); }
 
 TEST(JsonArrayChecks, EmptyArray_IsNumbers) { EXPECT_TRUE(json_is_array_of_numbers(json::array())); }
 
-TEST(JsonArrayChecks, ArrayWithString_NotNumbers) { EXPECT_FALSE(json_is_array_of_numbers(json{1, "hello", 3})); }
+TEST(JsonArrayChecks, ArrayWithString_NotNumbers) {
+    EXPECT_FALSE(json_is_array_of_numbers(json::array({1, "hello", 3})));
+}
 
 TEST(JsonArrayChecks, NonArray_NotNumbers) {
     EXPECT_FALSE(json_is_array_of_numbers(json("just a string")));
@@ -656,12 +658,16 @@ TEST(JsonArrayChecks, NonArray_NotNumbers) {
 }
 
 TEST(JsonArrayChecks, MixedNumbersAndStrings_IsMixed) {
-    EXPECT_TRUE(json_is_array_of_mixed_numbers_strings(json{1, "hello", 3}));
+    EXPECT_TRUE(json_is_array_of_mixed_numbers_strings(json::array({1, "hello", 3})));
 }
 
-TEST(JsonArrayChecks, OnlyNumbers_NotMixed) { EXPECT_FALSE(json_is_array_of_mixed_numbers_strings(json{1, 2, 3})); }
+TEST(JsonArrayChecks, OnlyNumbers_NotMixed) {
+    EXPECT_FALSE(json_is_array_of_mixed_numbers_strings(json::array({1, 2, 3})));
+}
 
-TEST(JsonArrayChecks, OnlyStrings_NotMixed) { EXPECT_FALSE(json_is_array_of_mixed_numbers_strings(json{"a", "b"})); }
+TEST(JsonArrayChecks, OnlyStrings_NotMixed) {
+    EXPECT_FALSE(json_is_array_of_mixed_numbers_strings(json::array({"a", "b"})));
+}
 
 TEST(JsonArrayChecks, EmptyArray_NotMixed) { EXPECT_FALSE(json_is_array_of_mixed_numbers_strings(json::array())); }
 
@@ -671,11 +677,11 @@ TEST(JsonArrayChecks, EmptyArray_NotMixed) { EXPECT_FALSE(json_is_array_of_mixed
 //   non-array value.
 
 TEST(JsonArrayChecks, ArrayWithNumber_ContainsNumbers) {
-    EXPECT_TRUE(json_is_array_and_contains_numbers(json{1, "hello"}));
+    EXPECT_TRUE(json_is_array_and_contains_numbers(json::array({1, "hello"})));
 }
 
 TEST(JsonArrayChecks, ArrayOnlyStrings_NotContainsNumbers) {
-    EXPECT_FALSE(json_is_array_and_contains_numbers(json{"a", "b"}));
+    EXPECT_FALSE(json_is_array_and_contains_numbers(json::array({"a", "b"})));
 }
 
 TEST(JsonArrayChecks, EmptyArray_NotContainsNumbers) {
@@ -1427,4 +1433,69 @@ TEST(FormatAnthropicSse, Array_EachElementDispatchedCorrectly) {
     EXPECT_NE(s.find("event: ping"), std::string::npos);
     // second element is bare
     EXPECT_EQ(s.find("event: bare"), std::string::npos);
+}
+
+// ============================================================
+// common_chat_parse — the content-only path over malformed UTF-8
+//
+//   Guards patches/0011. The server parses *every* completion through
+//   common_chat_parse(); with no chat parser configured that is the
+//   content-only fallback (`content(rest()) + end()`), whose scan is
+//   common_peg_until_parser. Upstream lets that scan tolerate an
+//   INCOMPLETE trailing UTF-8 sequence in lenient mode (and
+//   common_chat_peg_parse always parses leniently) but hard-fails on an
+//   INVALID byte, which turns a generation that finished normally into
+//   an HTTP 500 — "The model produced output that does not match the
+//   expected Content-only format" — for output the model really did
+//   produce. The patch makes the INVALID branch respect leniency the
+//   same way, keeping the text up to the bad byte.
+//
+//   These tests are the runnable half of that guard: if a llama.cpp bump
+//   drops the patch, or upstream reverts to failing, they go red here
+//   rather than in a model-backed Java integration test on one platform.
+// ============================================================
+
+namespace {
+
+// Parse `raw` exactly the way the server parses a finished completion with no
+// chat parser configured: default params (format = content-only, empty parser),
+// is_partial = false.
+std::string parse_content_only(const std::string &raw) {
+    const common_chat_parser_params params;
+    return common_chat_parse(raw, /*is_partial=*/false, params).content;
+}
+
+} // namespace
+
+TEST(ContentOnlyParseUtf8, ValidMultiByteContent_SurvivesByteForByte) {
+    const std::string in = "Hello \xE4\xB8\x96\xE7\x95\x8C \xF0\x9F\x98\x80!";
+    EXPECT_EQ(parse_content_only(in), in);
+}
+
+TEST(ContentOnlyParseUtf8, LoneContinuationByte_DoesNotThrow) {
+    // The failure that reached CI: a stray continuation byte in the middle of
+    // the generated text made the whole request 500.
+    std::string content;
+    EXPECT_NO_THROW(content = parse_content_only(std::string("Hello\x80World")));
+    EXPECT_EQ(content, "Hello");
+}
+
+TEST(ContentOnlyParseUtf8, TruncatedSequenceFollowedByMoreBytes_DoesNotThrow) {
+    std::string content;
+    EXPECT_NO_THROW(content = parse_content_only(std::string("ab\xE4\xB8") + "cd"));
+    EXPECT_EQ(content, "ab");
+}
+
+TEST(ContentOnlyParseUtf8, InvalidLeadByte_DoesNotThrow) {
+    std::string content;
+    EXPECT_NO_THROW(content = parse_content_only(std::string("abc\xFF") + "d"));
+    EXPECT_EQ(content, "abc");
+}
+
+TEST(ContentOnlyParseUtf8, IncompleteTrailingSequence_DoesNotThrow) {
+    // Upstream already tolerated this one; pinned so the two malformed-UTF-8
+    // branches cannot drift apart again.
+    std::string content;
+    EXPECT_NO_THROW(content = parse_content_only(std::string("abc\xE2\x82")));
+    EXPECT_EQ(content, "abc");
 }

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b10456**
+Current llama.cpp pinned version: **b10679**
 
 ## Upgrading CUDA Version
 
@@ -490,7 +490,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network; embed.cpp is plain C++17 (no npm)
-git clone --depth 1 --branch b10456 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b10679 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build \
   && ( cd dist && find . -type f -not -path './_gzip/*' \
        | while read -r f; do mkdir -p "_gzip/$(dirname "$f")"; gzip -9 -c "$f" > "_gzip/$f"; done ) \
@@ -530,7 +530,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b10456`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b10679`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -641,9 +641,20 @@ The fetched llama.cpp source is patched before it compiles, via a generic mechan
   ordered. Each must be a `git apply`-compatible unified diff with paths relative to the llama.cpp
   source root (`a/common/arg.cpp` / `b/common/arg.cpp`, i.e. `-p1`).
 - **`llama/cmake/apply-llama-patches.cmake`** — the applier. Cross-platform (`cmake -P`, so identical on
-  Linux/macOS/Windows), **idempotent** (`git apply --reverse --check` skips already-applied patches
-  so a reconfigure never double-applies) and **fail-loud** (a patch that no longer applies aborts
-  the configure — a stale patch can't be silently dropped from a release build).
+  Linux/macOS/Windows), **idempotent** and **fail-loud** (a patch that no longer applies aborts the
+  configure — a stale patch can't be silently dropped from a release build). Idempotency comes from
+  a **stamp file** (`<llama.cpp-src>/.jllama-patches-applied`, recording the checked-out llama.cpp
+  commit plus each patch's SHA-256) combined with git's clean/dirty state, not from per-patch
+  probing: a **clean** source tree means nothing is applied yet (fresh fetch, or a re-checkout after
+  a version bump) so everything is applied forward and the stamp written; a **dirty** tree is
+  already patched, and the reconfigure is a no-op when the stamp matches this exact commit + patch
+  set, or aborts with a "configure into a fresh build directory" message when it does not.
+  A per-patch `git apply --reverse --check` cannot do this — `--check` never mutates the tree, so an
+  earlier patch whose region a later one rewrote (`0001` vs `0006`/`0007` in
+  `tools/server/server.cpp`) always reverse-checks as "not applied", and the forward re-apply then
+  aborted every reconfigure of an existing build dir with a misleading "does not apply cleanly".
+  A source tree supplied via `-DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<path>` that is not a git work
+  tree has neither oracle and falls back to the old per-patch path (same caveat as before).
 - **`llama/CMakeLists.txt`** — wired as the llama.cpp `FetchContent_Declare(... PATCH_COMMAND ...)`, so it
   runs for **every** C++ build (all CI jobs *and* local `cmake -B build`) from one place — no
   per-build-step plumbing.
@@ -656,11 +667,13 @@ Current patches:
 
 | Patch | Fixes |
 |-------|-------|
-| `0001-win32-arg-parse-embed-guard.patch` | Windows JNI regression from llama.cpp **#24779** (introduced b9739): on Windows `common_params_parse` re-derived argv from the **process** command line (`GetCommandLineW`) and adopted it, so an embedded/JNI caller (`java.exe`) lost its `--model …` args → "Failed to parse model parameters". b9789 narrowed the unconditional override to a **count-guard** (`if (static_cast<int>(utf8.buf.size()) == argc) { argv = utf8.ptrs.data(); }`), but that is exactly the variant the project already found breaks its Windows server-integration tests (when the embedded argv length coincides with `java.exe`'s). The patch carries the **complete upstream change** (so it can be submitted to llama.cpp verbatim and then dropped here): **(1)** `common_params_parse` parses **exactly the argv it is given** (no `GetCommandLineW` magic) and a new `common_params_parse_main()` wrapper holds the UTF-8 recovery for the standalone tools' `main()` (`common/arg.{cpp,h}`); **(2)** the **~34 standalone `main()` call sites** (every `common_params_parse(argc, argv, …)` across `tools/*`, `examples/*` and the `tests/*` programs) flip to `common_params_parse_main()`; **(3)** a `tests/test-arg-parser.cpp` regression case pins that `common_params_parse` honors a caller-supplied argv. The embedded caller (`jllama.cpp`) keeps calling `common_params_parse` and is never overridden. **Our subproject build compiles only the `arg.{cpp,h}` core** — `LLAMA_BUILD_TOOLS`/`LLAMA_BUILD_TESTS` are OFF for a FetchContent subproject — so the flips + test are applied-but-not-compiled here; they were validated via a one-off `-DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_TESTS=ON` build (the new test compiles and its asserts pass; `test-arg-parser`'s only red there is the live `ggml.ai` download check, which is sandbox-network, not the patch). Because it spans **37 files** it must be refreshed on every llama.cpp bump (the applier fails loud). The upstream-facing write-up, including a standalone reproducer that makes llama.cpp's own `test-arg-parser` fail on unmodified `master`, lives in [docs/upstream-investigation-win32-argv-substitution.md](docs/upstream-investigation-win32-argv-substitution.md). **Reported upstream as [ggml-org/llama.cpp#26416](https://github.com/ggml-org/llama.cpp/issues/26416)** (2026-08-01, label `bug-unconfirmed`, first bad commit `508a475`); the issue asks which of the two directions the maintainers prefer before a PR is opened, so this patch stays downstream until they answer. |
-| `0002-server-preserve-caller-load-progress-callback.patch` | Load-progress-callback regression introduced in llama.cpp **b9789**: `server_context::load_model` (`tools/server/server-context.cpp`) now **unconditionally** installs the server's own load-progress reporter on `params_base.load_progress_callback` immediately before `common_init_from_params`, clobbering any callback the embedding caller already set. libjllama's `LoadProgressCallback` feature wires `common_params.load_progress_callback` to a JNI trampoline *before* calling `load_model`, so the bump silently killed it — `LoadProgressCallbackTest` saw zero progress updates and the abort-on-`false` path never threw. The patch guards the assignment with `if (params_base.load_progress_callback == nullptr)`, so the server installs its own reporter **only when the caller hasn't** — a caller-supplied callback survives and fires during load. Standalone `llama-server` (no caller callback, so the field is null) is unaffected. Same JNI-vs-standalone divergence class as `0001`. |
+| `0001-win32-arg-parse-embed-guard.patch` | Windows JNI regression from llama.cpp **#24779** (introduced b9739): on Windows `common_params_parse` re-derived argv from the **process** command line (`GetCommandLineW`) and adopted it, so an embedded/JNI caller (`java.exe`) lost its `--model …` args → "Failed to parse model parameters". b9789 narrowed the unconditional override to a **count-guard** (`if (static_cast<int>(utf8.buf.size()) == argc) { argv = utf8.ptrs.data(); }`), but that is exactly the variant the project already found breaks its Windows server-integration tests (when the embedded argv length coincides with `java.exe`'s). The patch carries the **complete upstream change** (so it can be submitted to llama.cpp verbatim and then dropped here): **(1)** `common_params_parse` parses **exactly the argv it is given** (no `GetCommandLineW` magic) and a new `common_params_parse_main()` wrapper holds the UTF-8 recovery for the standalone tools' `main()` (`common/arg.{cpp,h}`); **(2)** the **~34 standalone `main()` call sites** (every `common_params_parse(argc, argv, …)` across `tools/*`, `examples/*` and the `tests/*` programs) flip to `common_params_parse_main()`; **(3)** a `tests/test-arg-parser.cpp` regression case pins that `common_params_parse` honors a caller-supplied argv. The embedded caller (`jllama.cpp`) keeps calling `common_params_parse` and is never overridden. **Our subproject build compiles only the `arg.{cpp,h}` core** — `LLAMA_BUILD_TOOLS`/`LLAMA_BUILD_TESTS` are OFF for a FetchContent subproject — so the flips + test are applied-but-not-compiled here; they were validated via a one-off `-DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_TESTS=ON` build (the new test compiles and its asserts pass; `test-arg-parser`'s only red there is the live `ggml.ai` download check, which is sandbox-network, not the patch). Because it spans **36 files** it must be refreshed on every llama.cpp bump (the applier fails loud). **Refreshed at the b10679 bump:** upstream rewrote `tests/test-save-load-state.cpp`'s `main()` to take a `--models DIR` option, which it strips itself into a `filtered_argv` before calling `common_params_parse(fargc, filtered_argv.data(), …)`. That call site therefore stopped qualifying for the `_main()` flip — by this patch's own rule a caller that builds its own argv must use `common_params_parse` directly, so its argv is kept — and the hunk was **dropped** rather than refreshed (37 → 36 files). Caveat for whoever submits this upstream: that `main()` now filters a possibly-mojibake Windows argv *before* any UTF-8 recovery, so the fully correct upstream form there is recover-then-filter, not a one-line flip. It is out of scope for the downstream carry because `LLAMA_BUILD_TESTS` is OFF here, so the file is never compiled. **Still required at b10679, verified rather than assumed:** `common_params_parse` in pristine `b10679:common/arg.cpp` still carries the `#ifdef _WIN32` count-guarded `argv = utf8.ptrs.data()` override, and `common_params_parse_main` appears nowhere in `b10679:common/arg.h` — upstream has not adopted the fix. The upstream-facing write-up, including a standalone reproducer that makes llama.cpp's own `test-arg-parser` fail on unmodified `master`, lives in [docs/upstream-investigation-win32-argv-substitution.md](docs/upstream-investigation-win32-argv-substitution.md). **Reported upstream as [ggml-org/llama.cpp#26416](https://github.com/ggml-org/llama.cpp/issues/26416)** (2026-08-01, label `bug-unconfirmed`, first bad commit `508a475`); the issue asks which of the two directions the maintainers prefer before a PR is opened, so this patch stays downstream until they answer. |
+| `0002-server-preserve-caller-load-progress-callback.patch` | Load-progress-callback regression introduced in llama.cpp **b9789**: `server_context::load_model` (`tools/server/server-context.cpp`) now **unconditionally** installs the server's own load-progress reporter on `params_base.load_progress_callback` immediately before `common_init_from_params`, clobbering any callback the embedding caller already set. libjllama's `LoadProgressCallback` feature wires `common_params.load_progress_callback` to a JNI trampoline *before* calling `load_model`, so the bump silently killed it — `LoadProgressCallbackTest` saw zero progress updates and the abort-on-`false` path never threw. The patch guards the assignment with `if (params_base.load_progress_callback == nullptr)`, so the server installs its own reporter **only when the caller hasn't** — a caller-supplied callback survives and fires during load. Standalone `llama-server` (no caller callback, so the field is null) is unaffected. Same JNI-vs-standalone divergence class as `0001`. **The guard is `== nullptr || == load_progress_callback`, and the second disjunct must never be dropped:** `load_progress_text` is a **local** of `load_model()`, and upstream re-assigns both fields on every call so the `user_data` always points at the current frame. `load_model()` runs a **second** time when resuming from the sleeping state (`--sleep-idle-seconds`), and by then `params_base` holds *our own* callback from the first load — a bare nullptr check skips the re-assignment and leaves `user_data` pointing into a **dead stack frame**, which segfaults inside `load_progress_callback()` on the first request after an idle window. That was a latent defect in this patch from the day it was written; only a second `load_model()` can reach it, and nothing exercised sleep until `IdleSleepWakeIntegrationTest` was added. |
 | `0003-pr22393-server-add-slot-prompt-similarity-getter-setter.patch` | **Upstream-PR carry** of [ggml-org/llama.cpp#22393](https://github.com/ggml-org/llama.cpp/pull/22393) ("server : add slot_prompt_similarity getter/setter"). Purely additive: adds `server_context::get_slot_prompt_similarity()` / `set_slot_prompt_similarity(float)` (`tools/server/server-context.{cpp,h}`) so an embedding/JNI caller can query and tune the slot-selection threshold at runtime without reloading the model. Verbatim copy of the PR, which **upstream closed without merging** (rejected as exposing unsafe internal state — see the patch header). Carried permanently; it will not be droppable via a version bump. |
-| `0007-server-attach-http-frontend.patch` | **Adds `llama_server_attach(argc, argv, server_context&)`** so the `NativeServer` *attach mode* can serve an **already-loaded `LlamaModel`** over the upstream HTTP frontend — no second model load, no `start_loop()`; the LlamaModel's worker keeps driving the shared `server_context` and the HTTP routes post tasks to its queue (the queue is the synchronization point). Mechanically: (1) extracts the **pure core route table** (`health` … `slots`) out of `llama_server()` into `static void llama_server_register_common_routes(ctx_http, routes)` (shared, so the two entry points cannot drift on the core endpoint set). **Scope note (narrowed at the b10154 bump):** the helper deliberately carries **only** the stable, state-independent route table — **not** the resumable-streaming routes (their handlers differ between router / non-router), the GCP-compat shim, or the experimental **CORS-proxy / MCP-server / built-in-tools** wiring. b10154 (upstream MCP-server support) moved the streaming routes into the middle of that block and coupled tools/CORS to a per-call `server_mcp mcp_mgr` lifecycle, so the earlier contiguous "route-table + CORS-proxy + tools" extraction is no longer possible; `llama_server()` keeps all of that inline, **byte-identical to upstream b10154** (only the route-table block is factored out). (2) adds `llama_server_attach`, which parses only the HTTP-side argv via `common_params_parse`, starts the stream-session GC + `server_http_context`, registers the common route table, the **non-router** resumable-streaming handlers (upstream b10154 paths `/v1/stream` GET/DEL + `/v1/streams/lookup` POST), the GCP-compat shim, and **403 "disabled" stubs for `/cors-proxy` + `/tools`** (attach mode does not wire the experimental CORS-proxy / MCP / built-in-tools host — those belong to a full `llama-server`, not an embedded model), marks ready immediately (model already loaded), and blocks on the HTTP thread until `llama_server_request_shutdown()` — never calling `common_init()`, backend init, `ctx_server.terminate()` or `llama_backend_free()` (the embedding caller owns those). Applies after `0001`+`0006` (same file); closes the "NativeServer — reuse an already-loaded LlamaModel" TODO. Upstream-submittable ("server: let embedding callers attach the HTTP frontend to an existing server_context"). |
+| `0007-server-attach-http-frontend.patch` | **Adds `llama_server_attach(argc, argv, server_context&)`** so the `NativeServer` *attach mode* can serve an **already-loaded `LlamaModel`** over the upstream HTTP frontend — no second model load, no `start_loop()`; the LlamaModel's worker keeps driving the shared `server_context` and the HTTP routes post tasks to its queue (the queue is the synchronization point). Mechanically: (1) extracts the **pure core route table** (`health` … `slots`) out of `llama_server()` into `static void llama_server_register_common_routes(ctx_http, routes)` (shared, so the two entry points cannot drift on the core endpoint set). **Scope note (narrowed at the b10154 bump):** the helper deliberately carries **only** the stable, state-independent route table — **not** the resumable-streaming routes (their handlers differ between router / non-router), the GCP-compat shim, or the experimental **CORS-proxy / MCP-server / built-in-tools** wiring. b10154 (upstream MCP-server support) moved the streaming routes into the middle of that block and coupled tools/CORS to a per-call `server_mcp mcp_mgr` lifecycle, so the earlier contiguous "route-table + CORS-proxy + tools" extraction is no longer possible; `llama_server()` keeps all of that inline, **byte-identical to upstream b10154** (only the route-table block is factored out). (2) adds `llama_server_attach`, which parses only the HTTP-side argv via `common_params_parse`, starts the stream-session GC + `server_http_context`, registers the common route table, the **non-router** resumable-streaming handlers (upstream b10154 paths `/v1/stream` GET/DEL + `/v1/streams/lookup` POST), the GCP-compat shim, and **403 "disabled" stubs for `/cors-proxy` + `/tools`** (attach mode does not wire the experimental CORS-proxy / MCP / built-in-tools host — those belong to a full `llama-server`, not an embedded model), marks ready immediately (model already loaded), and blocks on the HTTP thread until `llama_server_request_shutdown()` — never calling `common_init()`, backend init, `ctx_server.terminate()` or `llama_backend_free()` (the embedding caller owns those). Applies after `0001`+`0006` (same file); closes the "NativeServer — reuse an already-loaded LlamaModel" TODO. Upstream-submittable ("server: let embedding callers attach the HTTP frontend to an existing server_context"). **Refreshed at the b10519 bump:** upstream #26347 dropped the API key from the `/models` + `/v1/models` public-endpoint set and deleted the two trailing `// public endpoint (no API key check)` comments on those route registrations. Those two lines sit inside this patch's route-table removal block, so `git apply` failed ("patch does not apply", `server.cpp:258`) at **every** tag from b10519 on; the fix was to drop the now-wrong comment from all four affected lines (2 on the `-` side, 2 in the extracted helper on the `+` side), keeping the helper byte-identical to the block it replaces. **This is the invariant to re-check on every bump:** the `+` side of `llama_server_register_common_routes()` must stay a verbatim copy of the route table it factors out of `llama_server()`. |
 | `0008-server-models-worker-cmd-override.patch` | **Makes router mode usable in-JVM.** The router (`server-models.cpp`) spawns each model worker by re-executing its own binary (`get_server_exec_path()` = `/proc/self/exe` & friends) — inside a JVM that binary is `java`, not a llama-server, so embedded router workers could never start. The patch adds env `LLAMA_SERVER_WORKER_CMD` (whitespace-split; read in `server_model_meta::update_args`) which replaces only the leading binary-path token of the rendered worker args, letting an embedding host relaunch workers through its own bootstrap — e.g. `java -cp app.jar net.ladenthin.llama.server.NativeServer` (each worker is then a fresh JVM running the classic single-model `NativeServer`). Exposed in Java as `NativeServer.setWorkerCommand(String...)` (JNI `setenv`); exercised by `RouterModeIntegrationTest` (Linux CI). Upstream-submittable (also useful for containerized/wrapped deployments). |
+| `0010-server-cast-vocab-type-for-common-json.patch` | **Upstream regression from the b10585 `common_json` switch (#27511), one line.** `get_res_model_info()` (`tools/server/server-context.cpp`) builds the `GET /models` + `GET /v1/models` payload and emits `{"vocab_type", meta.model_vocab_type}` — an **unscoped enum**. `common_json_value`'s integral constructor template is `std::is_integral`-gated, which *excludes* enums, so the value binds to `common_json_value(bool)` and serialises as `true`/`false` instead of the numeric vocab type. It was correct while the alias was `nlohmann::ordered_json` (nlohmann serialises an enum as an integer), so upstream regressed it silently when they flipped the alias. The project ships this: `server-context.cpp` is compiled into `libjllama` and both routes are served by `NativeServer` — the default fat-jar `Main-Class` — in full **and** attach mode (`patches/0007`'s common route table registers them). The patch casts the value to `int` at the emit site, mirroring what `jllama.cpp` does for its own two `"vocab_type"` sites. Upstream-submittable; **not yet filed upstream**. Applies after `0002`/`0003` (same file) — numbered `0010` because `0009` is burned: it names the subprocess.h patch dropped at the b10280 bump (see the note below this table), and reusing the number would make that note read as if it were about this patch. **On every bump, check whether upstream cast the value themselves; if they did, DROP this patch rather than refreshing it** — the fail-loud applier only detects "does not apply", never "upstream already fixed this", and no test can catch a redundant carry here because `get_res_model_info` is `static` inside `server-context.cpp` and unreachable from `jllama_test`. See the `CommonJsonEnumTrap` tests in `test_json_helpers.cpp` for the mechanism the cast defends against. |
+| `0011-peg-parser-lenient-invalid-utf8.patch` | **A model that emits one malformed UTF-8 byte turns a finished generation into an HTTP 500.** The server parses *every* completion through `common_chat_parse()`; with no chat parser configured (plain `/completion`) that is the content-only fallback `content(rest()) + end()`, whose scan is `common_peg_until_parser` (`common/peg-parser.cpp`). `common_chat_peg_parse()` always parses in **lenient** mode, and that scan tolerates an `INCOMPLETE` trailing UTF-8 sequence by keeping the text before it — but the `INVALID` branch right below it returns `FAIL` unconditionally, ignoring leniency. One stray byte anywhere in the generated text therefore throws `"The model produced output that does not match the expected Content-only format"` and the request 500s even though generation completed normally (`stop processing: n_tokens = 4, truncated = 0`). The patch makes the `INVALID` branch respect `ctx.is_lenient()` exactly like the `INCOMPLETE` branch — keep the text up to the malformed byte — and adds an upstream `tests/peg-parser/test-unicode.cpp` case pinning both the lenient and the still-failing strict behavior. **Strict mode is unchanged**, which is what keeps upstream's own tests green: `tests/peg-parser/test-unicode.cpp` *does* assert `FAIL` on invalid UTF-8 through the *until* parser (a `malformed UTF-8` block with three `p.until("</tag>")` cases), but each builds a bare `common_peg_parse_context` with no `COMMON_PEG_PARSE_FLAG_LENIENT`, so the lenient-only change cannot reach them. This patch adds its case inside that same block. Found by `NativeServerAttachIntegrationTest.completion_overHttp_served`, which 500s on all six Java CI platforms. Upstream-submittable; **not yet filed upstream**. Touches only `common/peg-parser.cpp` + that test, which no other patch touches, so it is independent of `0001`/`0006`/`0007`. Runnable guard: the `ContentOnlyParseUtf8` tests in `src/test/cpp/test_utils.cpp` — unlike the upstream test they are compiled and run in CI on every platform, so a bump that drops this patch reds `C++ Tests` instead of one Java job. |
 | `0006-server-embed-native-server-jni.patch` | **Makes `server.cpp`'s `llama_server` embeddable in the JVM** so the `NativeServer` JNI bridge can run the full upstream HTTP server (WebUI included) inside `libjllama` — see "Two server modes" below. b9870 already exposes `int llama_server(int, char**)` (non-static; no `main` in the file), so the patch only adds embedded-mode support: (1) a `g_llama_server_embedded` flag + `llama_server_set_embedded()` / `llama_server_request_shutdown()` (declared in the committed `src/main/cpp/native_server_bridge.h`); (2) skips installing the process-wide SIGINT/SIGTERM handlers when embedded (they would hijack the JVM's); (3) in embedded mode parses the **forwarded** argv via `common_params_parse` instead of `common_params_parse_main` (whose `GetCommandLineW` recovery would pick up `java.exe`'s command line — the same Windows class of bug `0001` fixes). `llama_server_request_shutdown()` mirrors the SIGTERM path (invokes the installed `shutdown_handler` → `ctx_server.terminate()` unblocks `start_loop()`), giving JNI an out-of-band stop since `ctx_server` is loop-local. Applies **after `0001`** (which flips this call site to `common_params_parse_main`), so its context is the post-`0001` tree; regenerate against `0001`+source on a bump. Only touches `tools/server/server.cpp`. |
 
 **`0009` was dropped at the b10280 bump.** Upstream merged
@@ -741,8 +754,9 @@ edit/verify/commit loop below. Use it for any non-trivial bump; the steps here a
 
 To change the llama.cpp version, update the following **four** files (and re-verify `patches/`):
 
-1. **llama/CMakeLists.txt** — the `GIT_TAG` line for llama.cpp: `GIT_TAG        b8831` (and the
-   cosmetic `-DLLAMA_TAG=b8831` a few lines below, passed to the TTS generator — keep them equal)
+1. **llama/CMakeLists.txt** — the `GIT_TAG` line for llama.cpp: `GIT_TAG        b8831`. (There is
+   no second tag to keep in sync any more: the cosmetic `-DLLAMA_TAG=` that fed the old build-time
+   TTS extraction went away with the Qwen3-TTS rework — see "Qwen3-TTS via `mtmd_helper::gen_audio`".)
 2. **README.md** — the badge and link line with the version number
 3. **CLAUDE.md** — the "Current llama.cpp pinned version" line
 4. **llama/src/main/java/net/ladenthin/llama/value/LlamaCppVersion.java** — the
@@ -754,7 +768,7 @@ To change the llama.cpp version, update the following **four** files (and re-ver
 
 Example: To upgrade from b8808 to b8831:
 ```bash
-# Edit llama/CMakeLists.txt: change GIT_TAG b8808 to b8831 (and the -DLLAMA_TAG line)
+# Edit llama/CMakeLists.txt: change GIT_TAG b8808 to b8831
 # Edit README.md: change b8808 to b8831 (in both badge and link)
 # Edit CLAUDE.md: change b8808 to b8831
 # Edit LlamaCppVersion.java: change LLAMA_CPP_VERSION "b8808" to "b8831"
@@ -815,9 +829,33 @@ jllama.cpp / server.hpp / utils.hpp
 
 **Priority-ordered review list for upgrade diffs** (highest break risk first)
 
-The top 8 rows cover all known API-level breaking changes from b5022 → b8831.
-For future upgrades, provide diffs for at least these 8 files rather than the full patch.
-Also review the project `CMakeLists.txt` for build-system-level breaks (e.g. renamed link targets, new required headers) — those are not visible in header file diffs alone.
+The rows below cover the known **compile/link-level** breaks from b5022 to the current pin; start any
+upgrade review with them rather than the full patch. Also review the project `CMakeLists.txt` for
+build-system-level breaks (e.g. renamed link targets, new required headers) — those are not visible in
+header file diffs alone.
+
+**Two failure classes this list does NOT catch, both of which have bitten the project:**
+
+1. **A same-repo header the project includes directly but that is not reachable through the
+   dependency graph above.** `tools/server/server-schema.h` broke a full build at b10273 while sitting
+   outside this table; it is in it now, and the `tools/server/*.h` rule in its row generalises that.
+2. **A silent *contract* change behind an unchanged signature.** b10408 reduced
+   `server_task_result_metrics::to_json()` to a bare slot array and b10519 split the task; no
+   signature moved, every chunk compiled and linked clean, and `LlamaModel.getMetrics()` quietly
+   returned the wrong shape for hundreds of builds. The same class hit `repeat_last_n` /
+   `dry_penalty_last_n` at b10273, where only a *value range* moved. Two cheap mechanical checks catch
+   these where a header diff cannot — run them on any bump that touches `tools/server/`:
+
+```bash
+# request-field set + their bounds, old tag vs new
+git show <old>:tools/server/server-schema.cpp | grep -oE 'field_[a-z_]+\("[a-z_0-9]+"' | sort -u
+git show <old>:tools/server/server-schema.cpp | tr '\n' ' ' \
+  | grep -oE 'field_[a-z]+[^(]*\("[a-z_0-9]+"[^;]*?set_(hard_)?limits\([^)]*\)'
+# response keys emitted by the result types
+# response keys -- both emit forms; a single-form grep misses res["k"] = ... entirely
+git show <old>:tools/server/server-task.cpp | { grep -oE '\{ *"[A-Za-z_0-9.]+" *,'; \
+  git show <old>:tools/server/server-task.cpp | grep -oE '\[ *"[A-Za-z_0-9.]+" *\] *='; } | sort -u
+```
 
 | File | What to watch for |
 |------|-------------------|
@@ -1120,30 +1158,57 @@ If the local check passes (`BUILD SUCCESS`), the `mvn package` job in
 - **`server` package — OpenAI-compatible HTTP endpoint (a single implementation).**
   - `server.OpenAiCompatServer` — built only on the JDK's `com.sun.net.httpserver` (no new dependency), embeddable and runnable via `java -cp <jar> net.ladenthin.llama.server.OpenAiCompatServer …` (the fat-jar default `Main-Class` is now `NativeServer` — see "Two server modes"). Serves `POST /v1/chat/completions` (streaming via SSE + non-streaming), `POST /v1/completions`, `POST /v1/embeddings`, `POST /v1/rerank`, `POST /infill`, `GET /v1/models` and `GET /health` (every route is also reachable without the `/v1` prefix), so editors that speak the OpenAI protocol (e.g. VS Code Copilot "Custom Endpoint", Cline, Roo Code, Continue) can drive a local model. Streaming chat uses the native OAI chunk path (`LlamaModel.streamChatCompletion` → `requestChatCompletionStream` / `receiveChatCompletionChunk` + the C++ `wrap_stream_chunk` helper), preserving `delta.tool_calls`; completions/embeddings/infill forward verbatim to the matching `LlamaModel.handle*`; rerank reshapes `handleRerank` into the OAI `results`/`data` shape. The chat mapper forwards `stream_options` and `response_format` and defaults `cache_prompt=true`; a CORS `Filter` answers `OPTIONS` preflights; `OpenAiSseFormatter.ensureUsageCachedTokens` guarantees `usage.prompt_tokens_details.cached_tokens` on the streamed usage chunk (Copilot crash fix, microsoft/vscode #273482). **Agentic tool-calling is the primary target**; a C++ guard (`test_server.cpp`) pins `tool_calls.function.arguments` as a JSON string (llama.cpp #20198).
   - **Alternative protocol surfaces** (pure translation over the OpenAI chat core — no second inference path; each reconstructs streamed tool calls via `ToolCallDeltaAccumulator`): **Ollama-native** (`GET /api/version`, `/api/tags`, `POST /api/show`, `/api/chat` with NDJSON streaming, `/api/generate` prompt-completion/FIM — `OllamaApiSupport`; `/api/show` advertises tools/insert/vision capabilities + context length for Copilot's Ollama provider), **Anthropic Messages** (`POST /v1/messages`, SSE event stream — `AnthropicApiSupport` + `AnthropicStreamTranslator`), and **OpenAI Responses** (`POST /v1/responses`, SSE event stream — `ResponsesApiSupport` + `ResponsesStreamTranslator`). The llama.cpp-native `GET /props` (context length + `modalities`) is served via `OpenAiSseFormatter.propsJson` for autocomplete clients that size their context from it.
-  - Supporting classes: `OpenAiServerConfig` (builder; optional bearer auth; binds `127.0.0.1`; `corsAllowOrigin`; `supportsVision`), `OpenAiServerCli` (testable CLI arg parser → `ModelParameters` + `OpenAiServerConfig`; flags incl. `--mmproj`/`--embedding`/`--reranking`), `OpenAiRequestMapper` (OAI chat request → `InferenceParameters`), `OpenAiSseFormatter` (SSE/models/error JSON + usage normalization), `OaiRerankSupport` (pure rerank request/response shaping), and the model-free test seam `OpenAiBackend`/`ChunkSink` + `LlamaModelBackend`. The streaming envelope is parsed by `json.ChatStreamChunkParser`.
+  - Supporting classes: `OpenAiServerConfig` (builder; optional bearer auth; binds `127.0.0.1`; `corsAllowOrigin`; `supportsVision`), `OpenAiServerCli` (testable CLI arg parser → `ModelParameters` + `OpenAiServerConfig`; flags incl. `--mmproj`/`-mmdev,--mmproj-device`/`--embedding`/`--reranking`), `OpenAiRequestMapper` (OAI chat request → `InferenceParameters`), `OpenAiSseFormatter` (SSE/models/error JSON + usage normalization), `OaiRerankSupport` (pure rerank request/response shaping), and the model-free test seam `OpenAiBackend`/`ChunkSink` + `LlamaModelBackend`. The streaming envelope is parsed by `json.ChatStreamChunkParser`.
   - The `server` package is a dedicated top layer in the ArchUnit `layeredArchitecture` rule (the only layer allowed to access the root `Api`); `noInternalJdkImports` carries an explicit exception for the supported `com.sun.net.httpserver` (the exported `jdk.httpserver` module, which `module-info.java` `requires`). See README "OpenAI-compatible HTTP server".
 
 **Native layer** (`src/main/cpp/`):
-- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp. ~1,650 lines; 34 native methods (30 `LlamaModel` + 3 `TextToSpeech` + 1 `LlamaQuantizer`).
+- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp. ~1,900 lines; 34 native methods (30 `LlamaModel` + 3 `TextToSpeech` + 1 `LlamaQuantizer`) plus `JNI_OnLoad`/`JNI_OnUnload`.
 - `utils.hpp` — Helper utilities (format helpers, argv stripping, token-piece serialisation).
 - `json_helpers.hpp` — Pure JSON transformation helpers (no JNI, no llama state). Independently unit-testable.
 - `jni_helpers.hpp` — JNI bridge helpers (handle management + server orchestration). Includes `json_helpers.hpp`.
-- Uses `nlohmann/json` for JSON deserialization of parameters.
-- The upstream server library (`server-context.cpp`, `server-queue.cpp`, `server-task.cpp`, `server-schema.cpp`, `server-models.cpp`, and — since b9829 — `server-stream.cpp`) is compiled directly into `jllama` via CMake — there is no hand-ported `server.hpp` fork. **`server-stream.cpp` is mandatory, not optional:** it defines the resumable-streaming SSE replay buffer (`g_stream_sessions`, `stream_session_attach_pipe`, `stream_aware_should_stop`, `stream_conv_id_from_headers`, the `stream_pipe_*` types) that `server-context.cpp` / `server-http.cpp` / `server-models.cpp` now `#include "server-stream.h"` and call, so omitting it fails the link with undefined references. It is platform-neutral (threads + std mutex/condvar, no `subprocess.h`/`posix_spawn_*`), so it builds on Android too and sits outside the `server-models.cpp` Android guard. `jllama` wires its own JNI routes and never calls `g_stream_sessions.start_gc()` (only the excluded standalone `server.cpp` `main()` does), so its GC thread stays dormant. **Phase 2:** the upstream HTTP transport (`tools/server/server-http.cpp`) and its `cpp-httplib` backend (`vendor/cpp-httplib/httplib.cpp`) are now compiled into `jllama` too, so the OpenAI-compatible server can be driven natively from JNI *inside* `libjllama` — no separate `llama-server` executable (a JNI shared library loads anywhere a JVM runs, which a standalone binary does not). `server-http.cpp` does `#include "ui.h"` (the WebUI asset table that `tools/ui`/`llama-ui` normally generates); since the Svelte WebUI is not shipped, `src/main/cpp/webui_stub/ui.h` supplies the upstream **empty-asset** interface and leaves `LLAMA_UI_HAS_ASSETS` undefined (all static-asset-serving blocks compile out). `<cpp-httplib/httplib.h>` already resolves via `llama-common`'s `vendor/` include dir (same nlohmann/json 3.12.0 as the FetchContent copy). No SSL: `CPPHTTPLIB_OPENSSL_SUPPORT` is left undefined (plain-HTTP; bind localhost / front with a TLS proxy). **`server.cpp`, `server-tools.cpp` and `server-mcp.cpp` are now compiled in too** (on non-Android — they pull in `subprocess.h`/`posix_spawn_*`, so they share `server-models.cpp`'s Android guard): b9870 exposes `server.cpp`'s entry as `int llama_server(int, char**)` (no `main` in the file), and `patches/0006` makes it embeddable (no process signal handlers, forwarded-argv parse, out-of-band shutdown). **`server-mcp.cpp` is new in b10154** (upstream MCP-server support): both `server.cpp` (`llama_server`'s `mcp_mgr` lifecycle) and `server-tools.cpp` (`tools.setup(..., mcp_mgr)` / `server_mcp::call_tool`) reference `server_mcp`, so it **must** be in the `target_sources` list or the link fails with undefined `server_mcp::{start,shutdown,call_tool,list_tools,~server_mcp}` — **latent on Linux** (a shared object tolerates undefined symbols) but a **hard link error on macOS/ld64 and Windows/MSVC**. It is compiled only into `jllama`, not `jllama_test` (which links neither `server.cpp` nor `server-tools.cpp`). The `NativeServer` JNI bridge (`src/main/cpp/native_server.cpp`) calls `llama_server` on a worker thread, so the **full** upstream server — WebUI and all — runs inside `libjllama`. See "Two server modes" below.
+- **The `json` alias is upstream's `common_json`, not `nlohmann::ordered_json` (since llama.cpp b10585, upstream #27511).** `tools/server/server-common.h` now says `using json = common_json;` — a deliberately small pimpl wrapper (`common/json.{h,cpp}`, compiled into `llama-common`) around the vendored nlohmann copy. Two traps this cost the project once, both of which **compile silently**:
+  1. **An unscoped enum becomes a JSON boolean.** `common_json_value`'s integral constructor template is `std::is_integral`-gated, which excludes enums, so an enum binds to `common_json_value(bool)`. Always `static_cast<int>(...)` an enum before putting it in JSON — `jllama.cpp`'s two `"vocab_type"` sites do, and `patches/0010` does the same for upstream's own `/models` handler. Guards: `test_json_helpers.cpp`'s `CommonJsonEnumTrap` pair pins the mechanism and **does** run in CI; `LlamaModelTest`'s `isIntegralNumber()` assertion pins the real wire value and now runs in CI too (the model-gated suite no longer self-skips — see "CI model policy" below).
+  2. **`common_json` converts to `std::string` implicitly**, so it binds happily to a `const nlohmann::json &` parameter (via nlohmann's string-constructible converting constructor) and then throws `json::type_error 302` at runtime. Never declare a project helper as taking `nlohmann::json` when callers pass the `json` alias — `require_json_field_impl` is a template for exactly this reason.
+  Other differences to know: no `get_ref`/`array_t`/`type_name()`; a braced list in *value* position does not build an array (write `json::array({...})`); `at(key)` needs an explicit `.get<T>()`; errors are `common_json_error`; and `get<T>()` is limited to the types explicitly specialised in `common/json.cpp`. `log_helpers.hpp` and `train_engine.cpp` keep their own `nlohmann::json` alias — they never touch the server's `json`.
+- Uses `nlohmann/json` for JSON deserialization of parameters in the two files named above; everything on the server path uses `common_json`.
+- The upstream server library (`server-context.cpp`, `server-queue.cpp`, `server-task.cpp`, `server-schema.cpp`, `server-models.cpp`, and — since b9829 — `server-stream.cpp`) is compiled directly into `jllama` via CMake — there is no hand-ported `server.hpp` fork. **`server-stream.cpp` is mandatory, not optional:** it defines the resumable-streaming SSE replay buffer (`g_stream_sessions`, `stream_session_attach_pipe`, `stream_aware_should_stop`, `stream_conv_id_from_headers`, the `stream_pipe_*` types) that `server-context.cpp` / `server-http.cpp` / `server-models.cpp` now `#include "server-stream.h"` and call, so omitting it fails the link with undefined references. It is platform-neutral (threads + std mutex/condvar, no `subprocess.h`/`posix_spawn_*`), so it builds on Android too and sits outside the `server-models.cpp` Android guard. `jllama` wires its own JNI routes and never calls `g_stream_sessions.start_gc()` (only the excluded standalone `server.cpp` `main()` does), so its GC thread stays dormant. **Phase 2:** the upstream HTTP transport (`tools/server/server-http.cpp`) and its `cpp-httplib` backend (`vendor/cpp-httplib/httplib.cpp`) are now compiled into `jllama` too, so the OpenAI-compatible server can be driven natively from JNI *inside* `libjllama` — no separate `llama-server` executable (a JNI shared library loads anywhere a JVM runs, which a standalone binary does not). `server-http.cpp` does `#include "ui.h"` (the WebUI asset table that `tools/ui`/`llama-ui` normally generates); since the Svelte WebUI is not shipped, `src/main/cpp/webui_stub/ui.h` supplies the upstream **empty-asset** interface and leaves `LLAMA_UI_HAS_ASSETS` undefined (all static-asset-serving blocks compile out). `<cpp-httplib/httplib.h>` already resolves through `llama-common` — since upstream #27304 (b10488) not from a `PUBLIC ../vendor` include dir of its own but transitively, via the `vendor::nlohmann` / `vendor::sheredom` INTERFACE targets it links PUBLIC, each of which exports the `vendor/` root (same nlohmann/json 3.12.0 as the FetchContent copy). No SSL: `CPPHTTPLIB_OPENSSL_SUPPORT` is left undefined (plain-HTTP; bind localhost / front with a TLS proxy). **`server.cpp`, `server-tools.cpp` and `server-mcp.cpp` are now compiled in too** (on non-Android — they pull in `subprocess.h`/`posix_spawn_*`, so they share `server-models.cpp`'s Android guard): b9870 exposes `server.cpp`'s entry as `int llama_server(int, char**)` (no `main` in the file), and `patches/0006` makes it embeddable (no process signal handlers, forwarded-argv parse, out-of-band shutdown). **`server-mcp.cpp` is new in b10154** (upstream MCP-server support): both `server.cpp` (`llama_server`'s `mcp_mgr` lifecycle) and `server-tools.cpp` (`tools.setup(..., mcp_mgr)` / `server_mcp::call_tool`) reference `server_mcp`, so it **must** be in the `target_sources` list or the link fails with undefined `server_mcp::{start,shutdown,call_tool,list_tools,~server_mcp}` — **latent on Linux** (a shared object tolerates undefined symbols) but a **hard link error on macOS/ld64 and Windows/MSVC**. It is compiled only into `jllama`, not `jllama_test` (which links neither `server.cpp` nor `server-tools.cpp`). The `NativeServer` JNI bridge (`src/main/cpp/native_server.cpp`) calls `llama_server` on a worker thread, so the **full** upstream server — WebUI and all — runs inside `libjllama`. See "Two server modes" below.
 
 ### Two server modes (`OpenAiCompatServer` vs `NativeServer`)
 
 The library exposes **two** ways to serve a model over HTTP, on two different transports. The fat jar's `Main-Class` is `server.ServerLauncher`, a tiny dispatcher: it runs `OpenAiCompatServer` when `--jllama-openai-compat` is present (that marker is stripped, the rest forwarded) and the default `NativeServer` otherwise. Both mains are also runnable directly by class name via `java -cp`. The two modes:
 
 1. **`server.OpenAiCompatServer` (Java transport).** OpenAI/Ollama/Anthropic-compatible JSON API on the JDK's `com.sun.net.httpserver`, driving the compiled server *core* over JNI. Embeddable, no extra dependency, and it can share/reuse a `LlamaModel`. It serves **no** static assets — its `/` route is a 404, so **no WebUI**. It has its own `main` (run via `java -cp <jar> net.ladenthin.llama.server.OpenAiCompatServer …`); its CLI (`OpenAiServerCli`) maps a curated flag subset (`-m/-c/-b/-ub/-ngl/-t/-tb/-ctk/-ctv/--jinja/--chat-template-kwargs/--host/--port/--parallel/--mmproj/--api-key/--embedding/--reranking`).
-2. **`server.NativeServer` (native transport) — the default fat-jar server (when `--jllama-openai-compat` is absent).** Runs the **full upstream `llama_server`** (via `patches/0006` + `native_server.cpp`) inside `libjllama`, forwarding the raw llama-server argv verbatim — so **every** llama-server flag works and the **embedded WebUI is served** (when the assets are compiled in; CI's released jars have them, local `cmake` builds use the empty-asset stub). With the classic constructor it is an **independent lifecycle** (loads its own model from the argv, like `llama-server.exe`; owns the process's llama backend + stderr logging while running); the **attach constructor** (`NativeServer(LlamaModel, String...)`, via `patches/0007`'s `llama_server_attach`) instead serves an **already-loaded `LlamaModel`** — one copy of the weights, the model's worker keeps driving inference, the HTTP routes post to its queue; caller closes the server before the model. **Router mode** (start without a model argument: `--models-dir`, `GET/POST /models`, per-request model selection) works in-JVM after `NativeServer.setWorkerCommand(...)` redirects the worker spawn to a fresh JVM (`patches/0008` — upstream re-execs its own binary, which in a JVM is `java`); the typed `server.RouterClient` (+ `value.RouterModel`, `json.RouterModelsResponseParser`) wraps the model-management endpoints (list/load/unload/await-loaded with fail-fast on failed workers) so callers don't hand-roll HTTP+JSON. Either way it is **single-instance per process** (upstream keeps shutdown state in file-scope globals) and **not available on Android** (the `subprocess.h` guard). `libjllama` loading anywhere a JVM runs is what makes this "no separate `llama-server.exe`" possible.
+2. **`server.NativeServer` (native transport) — the default fat-jar server (when `--jllama-openai-compat` is absent).** Runs the **full upstream `llama_server`** (via `patches/0006` + `native_server.cpp`) inside `libjllama`, forwarding the raw llama-server argv verbatim — so **every** llama-server flag works and the **embedded WebUI is served** (when the assets are compiled in; CI's released jars have them, local `cmake` builds use the empty-asset stub). With the classic constructor it is an **independent lifecycle** (loads its own model from the argv, like `llama-server.exe`; owns the process's llama backend + stderr logging while running); the **attach constructor** (`NativeServer(LlamaModel, String...)`, via `patches/0007`'s `llama_server_attach`) instead serves an **already-loaded `LlamaModel`** — one copy of the weights, the model's worker keeps driving inference, the HTTP routes post to its queue; caller closes the server before the model. **Router mode** (start without a model argument: `--models-dir`, `GET/POST /models`, per-request model selection) works in-JVM after `NativeServer.setWorkerCommand(...)` redirects the worker spawn to a fresh JVM (`patches/0008` — upstream re-execs its own binary, which in a JVM is `java`); the typed `server.RouterClient` (+ `value.RouterModel`, `json.RouterModelsResponseParser`) wraps the model-management endpoints (list/load/unload/await-loaded with fail-fast on failed workers) so callers don't hand-roll HTTP+JSON, and its `apiKey` constructors send `Authorization: Bearer <key>` — required for **every** one of those calls against a router started with `--api-key` since b10519 (#26347 dropped `/models` + `/v1/models` from the public-endpoint set; `/models/load` and `/models/unload` were always gated). `awaitModelLoaded` cannot observe a model hidden by a preset with `dedup-cache-models` (b10505/#27346 omits it from `GET /models` although it still loads and serves by name), so its "not listed" message names that cause explicitly; such a model is reached by issuing the request directly instead. Either way it is **single-instance per process** (upstream keeps shutdown state in file-scope globals) and **not available on Android** (the `subprocess.h` guard). `libjllama` loading anywhere a JVM runs is what makes this "no separate `llama-server.exe`" possible.
+
+### `getMetrics()` — one object rebuilt from two upstream tasks
+
+`LlamaModel.getMetrics()` / `getMetricsTyped()` return the single server-introspection object the
+Java side has always documented: `idle` / `processing` / `deferred` / `t_start`, the cumulative and
+current-window `n_*` / `t_*` counter pairs, and a `slots` array. Upstream stopped emitting that in
+one piece — **b10408** (#26920) reduced `server_task_result_metrics::to_json()` to the slot array,
+and **b10519** (#27376) split the task in two: `SERVER_TASK_TYPE_METRICS` keeps only the counters
+(its `to_json()` is unused and returns JSON null; `to_metrics()` renders them as Prometheus text)
+while `SERVER_TASK_TYPE_SLOT_GET` carries the slot array plus the idle-slot count.
+
+`handleSlotAction(0, …)` therefore posts **both** tasks and merges the results through the pure
+helper `server_metrics_to_json` (`json_helpers.hpp`, unit-tested in `test_json_helpers.cpp`), rather
+than letting the Java contract follow upstream's transport split. Durations are converted from
+upstream microseconds to the milliseconds the payload has always used. The merge also surfaces the
+counters upstream added since — `n_prompt_tokens_cached_total` and the speculative-decoding tallies
+(`n_draft_tokens_total`, `n_draft_accepted_total`, `n_draft_verif_steps_total`,
+`n_accepted_per_pos_total` — upstream's own spellings, kept verbatim) — which upstream emits only
+as Prometheus counters from `to_metrics()`, with no JSON representation at all; `value.ServerMetrics` exposes them with typed getters (plus a derived
+`getDraftAcceptanceRate()`). No second JNI entry point and no Prometheus-text parser were needed.
+
+The metrics task is posted with `server_task::metrics_reset_bucket` left at its default `false`, so
+`getMetrics()` never resets the current-measurement window; only an HTTP `/metrics` scrape does.
 
 ### Native Helper Architecture
 
 The project C++ helpers follow a strict semantic split:
 
 **`json_helpers.hpp`** — Pure data transforms.
-- Input: `nlohmann::json`, `server_task_result_ptr`, plain C++ types.
+- Input: the `json` alias (upstream `common_json` since b10585), `server_task_result_ptr`, plain C++ types.
 - Output: `json`, `std::vector`, `std::optional`, plain C++ types.
 - Zero JNI calls (`JNIEnv*` never appears).
 - Zero llama state (`llama_context*`, `llama_vocab*`, `server_context*` never appear).
@@ -1153,7 +1218,8 @@ The project C++ helpers follow a strict semantic split:
 
 Functions: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`,
 `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`,
-`parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk`.
+`parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk`,
+`server_metrics_to_json`.
 
 **`log_helpers.hpp`** — Pure log-formatting transforms.
 - Input: `ggml_log_level`, message text (`const char*`), an explicit `std::time_t` timestamp.
@@ -1173,7 +1239,7 @@ Functions: `log_level_name`, `format_log_as_json`.
   worker thread, cached `vocab`, saved `params`, and a `readers` map for streaming tasks.
 - `get_jllama_context_impl` — reads Java `ctx` handle, returns the `jllama_context*` wrapper.
   Does NOT throw on zero handle (valid no-op for destructor-style calls).
-- `require_json_field_impl` — throws `"<field> is required"` if key is absent.
+- `require_json_field_impl` — throws `"<field> is required"` if key is absent. **Templated on the JSON type on purpose**: a plain `const nlohmann::json &` parameter still accepts a `common_json` (through its `operator std::string()`) and turns the presence check into a runtime `type_error 302`.
 - `jint_array_to_tokens_impl` — reads a Java `int[]` into `std::vector<int32_t>`.
 
 *Layer B* (requires upstream server headers in the TU before `jni_helpers.hpp`): orchestration.
@@ -1285,11 +1351,38 @@ model + mmproj, and the Qwen3-TTS backbone + mmproj (`ggml-org/Qwen3-TTS-12Hz-1.
 smallest available quants: `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf` backbone +
 `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf` mmproj — no smaller mmproj quant is published), with
 their `-Dnet.ladenthin.llama.*` properties set, so `LlamaEmbeddingsTest`, `MultimodalIntegrationTest`,
-and `TtsIntegrationTest` **run on every platform** rather than self-skipping. `validate-models.{sh,bat}`
+and `TtsIntegrationTest` are **intended** to run on every platform rather than self-skipping.
+
+**How the paths resolve (this was silently broken until it was fixed after the b10618 bump).**
+Surefire's working directory defaults to the **module** basedir (`<workspace>/llama`), while the
+shared GGUF cache is restored to `<workspace>/models/` and every model path — the `TestConstants`
+constants and the `-Dnet.ladenthin.llama.*` properties alike — is stated relative as `models/…`.
+Those therefore resolved to `<workspace>/llama/models/…`, which does not exist: **every**
+model-gated class aborted in its `@BeforeAll` `Assumptions.assumeTrue(file.exists())` and reported
+as *nothing at all* while the job still went green, on every `test-java-*` job. Note the precise
+shape, because it defeats the obvious guard: a class-level `@BeforeAll` assumption makes Surefire
+record `tests="0" errors="0" skipped="0"` — the class contributes **no** test entries, so a check of
+the form "did this run skip anything?" is blind to it. The only thing that catches it directly is a
+floor on the number of tests actually executed (see `TODO.md`). It is why several stale
+assertions (e.g. `LlamaModelTest#testGetMetrics` against a payload shape upstream had dropped at
+b10408) never failed in CI. The fix is **`TestConstants.resolveModelPath` /
+`resolveModelProperty`**, which accept either layout — module-relative first, then the reactor root
+— so a developer with models under `llama/models/` and CI with them at the workspace root both
+work, with no workflow change. Every `TestConstants` path constant is routed through it, as is
+every `-Dnet.ladenthin.llama.*` fixture property; `TestConstantsTest` pins both the resolver and
+the wiring (a future edit that drops the wrapper from a constant fails that test rather than
+silently re-muting the suite). `llama-langchain4j` had the identical defect and carries the same
+resolver as `TestModelPaths` (test classes are not shared between modules).
+
+`validate-models.{sh,bat}`
 treats all of these as **required** (a missing model hard-fails the job before tests run, so a
-download regression can never silently downgrade to a skip). Only the audio-input model
-(`AudioInputIntegrationTest`) still self-skips — the prompt clip is committed
-(`src/test/resources/audios/sample.wav`) but the audio model + mmproj have no CI download.
+download regression can never silently downgrade to a skip). **Two** classes still self-skip on
+every platform, both because their model is outside the manifest: `AudioInputIntegrationTest` — the
+prompt clip is committed (`src/test/resources/audios/sample.wav`) but the audio model + mmproj have
+no CI download — and `LlamaTrainerIntegrationTest`, whose `net.ladenthin.llama.train.model` property
+is set by no job and whose model is in no `models.csv` row. The trainer one matters more than it
+looks: `train_engine.cpp` carries the same `postprocess_cpu_params` pair as `tts_params.hpp`, so the
+JVM-abort class of bug documented under "Qwen3-TTS" can regress there with no runnable guard.
 The model set has a **single source of truth: `.github/models.csv`** (one `filename,url` row per
 model; `#` comments). Everything derives from it: the **`download-models`** job (ubuntu,
 `needs: startgate`) is the only place models are fetched from HuggingFace (one manifest-driven
@@ -1346,18 +1439,19 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 | File | Tests | Scope |
 |------|-------|-------|
-| `src/test/cpp/test_utils.cpp` | 162 | Upstream helpers: `server_tokens`, `server_grammar_trigger`, `gen_tool_call_id`, `json_value`, `json_get_nested_values`, UTF-8 helpers, `format_response_rerank`, `format_embeddings_response_oaicompat`, `oaicompat_completion_params_parse`, `oaicompat_chat_params_parse`, `are_lora_equal`, `strip_flag_from_argv`, `token_piece_value`, `json_is_array_and_contains_numbers`, `format_oai_sse`, `format_oai_resp_sse`, `format_anthropic_sse`, `parse_lora_request` |
-| `src/test/cpp/test_server.cpp` | 204 | Upstream result types: `server_slot_stats` (the `timings` JSON payload; replaced `result_timings` in b10408), `task_params::to_json()` (incl. `dry_sequence_breakers`, `preserved_tokens`, `timings_per_token`), `completion_token_output`, `server_task_result_cmpl_partial` (non-oaicompat + `to_json_oaicompat` + logprobs + `to_json_oaicompat_chat` + `to_json_anthropic` + dispatcher), `server_task_result_cmpl_final` (non-oaicompat + `to_json_oaicompat` + `to_json_oaicompat_chat` + `to_json_oaicompat_chat_stream` + `to_json_anthropic` + `to_json_anthropic_stream` + tool_calls + dispatcher), `server_task_result_embd`, `server_task_result_rerank`, `server_task_result_metrics` (`to_json()` = the `/slots` array + `to_metrics()` = the `/metrics` Prometheus text), `server_task_result_slot_save_load`, `server_task_result_slot_erase`, `server_task_result_apply_lora`, `server_task_result_get_lora`, `server_task_result_error`, `format_error_response`, `server_task::need_sampling()`, `server_task::n_tokens()`, `server_schema::eval_llama_cmpl_schema()` (parsing pipeline + grammar routing + error paths + per-request `dry_*` and `sse_ping_interval` field round-trips incl. hard-limit + server-default inheritance), `response_fields` projection |
-| `src/test/cpp/test_json_helpers.cpp` | 50 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json` (incl. missing/out-of-range `index` rejection), `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk` |
+| `src/test/cpp/test_utils.cpp` | 167 | Upstream helpers: `server_tokens`, `server_grammar_trigger`, `gen_tool_call_id`, `json_value`, `json_get_nested_values`, UTF-8 helpers, `format_response_rerank`, `format_embeddings_response_oaicompat`, `oaicompat_completion_params_parse`, `oaicompat_chat_params_parse`, `are_lora_equal`, `strip_flag_from_argv`, `token_piece_value`, `json_is_array_and_contains_numbers`, `format_oai_sse`, `format_oai_resp_sse`, `format_anthropic_sse`, `parse_lora_request`, `common_chat_parse` over malformed UTF-8 (the `ContentOnlyParseUtf8` guard for `patches/0011`) |
+| `src/test/cpp/test_server.cpp` | 206 | Upstream result types: `server_slot_stats` (the `timings` JSON payload; replaced `result_timings` in b10408), `task_params::to_json()` (incl. `dry_sequence_breakers`, `preserved_tokens`, `timings_per_token`), `completion_token_output`, `server_task_result_cmpl_partial` (non-oaicompat + `to_json_oaicompat` + logprobs + `to_json_oaicompat_chat` + `to_json_anthropic` + dispatcher), `server_task_result_cmpl_final` (non-oaicompat + `to_json_oaicompat` + `to_json_oaicompat_chat` + `to_json_oaicompat_chat_stream` + `to_json_anthropic` + `to_json_anthropic_stream` + tool_calls + dispatcher), `server_task_result_embd`, `server_task_result_rerank`, `server_task_result_metrics` (`to_metrics()` = the `/metrics` Prometheus exposition text; its `to_json()` has been unused since b10519 and returns `json{}` = JSON null), `server_task_result_slots` (`to_json()` = the `/slots` array, fed by the b10519 `SERVER_TASK_TYPE_SLOT_GET` task), `server_task_result_slot_save_load`, `server_task_result_slot_erase`, `server_task_result_apply_lora`, `server_task_result_get_lora`, `server_task_result_error`, `format_error_response`, `server_task::need_sampling()`, `server_task::n_tokens()`, `server_schema::eval_llama_cmpl_schema()` (parsing pipeline + grammar routing + error paths + per-request `dry_*` and `sse_ping_interval` field round-trips incl. hard-limit + server-default inheritance), `response_fields` projection |
+| `src/test/cpp/test_json_helpers.cpp` | 63 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json` (incl. missing/out-of-range `index` rejection), `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk`, `server_metrics_to_json` |
 | `src/test/cpp/test_log_helpers.cpp` | 13 | All functions in `log_helpers.hpp`: `log_level_name`, `format_log_as_json` |
-| `src/test/cpp/test_jni_helpers.cpp` | 54 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock (incl. the `utf8_to_jstring_impl` byte-array string path: emoji byte-preservation, truncated-UTF-8 replace-not-throw) |
-| `src/test/cpp/test_tts_wav.cpp` | 2 | The in-memory WAV writer `pcm_to_wav16_bytes` in `tts_wav.hpp` (WAV header/payload + little-endian clamping) — our own code, not upstream. The Qwen3-TTS pipeline it pairs with (`mtmd_helper::gen_audio`) is entirely upstream-owned (no project-side DSP to unit-test here) and covered end-to-end by the Java `TtsIntegrationTest`. |
+| `src/test/cpp/test_jni_helpers.cpp` | 56 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock (incl. the `utf8_to_jstring_impl` byte-array string path: emoji byte-preservation, truncated-UTF-8 replace-not-throw) |
+| `src/test/cpp/test_tts_wav.cpp` | 2 | The in-memory WAV writer `pcm_to_wav16_bytes` in `tts_wav.hpp` (WAV header/payload + little-endian clamping) — our own code, not upstream. The Qwen3-TTS pipeline it pairs with (`mtmd_helper::gen_audio`) is entirely upstream-owned (no project-side DSP to unit-test here). The load path is additionally covered by `test_tts_params.cpp` (3 tests over `tts_params.hpp`'s `build_tts_params`, plus 2 pinning the upstream `-1` default it depends on), which pins the CPU-thread resolution whose absence used to crash the JVM on every platform — see the `TODO.md` entry for the mechanism. End-to-end coverage is `TtsIntegrationTest`, which is model-gated. |
+| `src/test/cpp/test_tts_params.cpp` | 13 | The **three** builders every hand-assembled `common_params` goes through: `build_tts_params` (`tts_params.hpp`), `build_train_params` (`train_params.hpp`) and the shared `jllama::resolve_cpu_params` (`cpu_params.hpp`). Each builder is guarded separately on purpose — testing the resolver alone does **not** cover its call sites, because `train_engine.cpp` is compiled into `jllama` only, never into `jllama_test`, and `LlamaTrainerIntegrationTest` is gated on `net.ladenthin.llama.train.model`, which no CI job sets. Without these the JVM-abort bug could regress in the trainer on every platform, unseen. |
 
-**Current total: 485 tests (all passing).**
+**Current total: 520 tests (all passing).**
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b10456`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b10679`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.17.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
@@ -1462,26 +1556,33 @@ EXPECT_TRUE(j.contains("timings"));
 
 **3. Parameter parsing (`eval_llama_cmpl_schema`) without a model**
 
-`server_schema::eval_llama_cmpl_schema(vocab, params_base, n_ctx_slot, logit_bias_eog, data)`
+`server_schema::eval_llama_cmpl_schema(vocab, params_base, logit_bias_eog, data)`
 can be called with `nullptr` vocab **if the JSON does not trigger grammar/preserved_tokens
 tokenisation** (those are the only vocab-dependent paths).  This lets us test the full
-parsing pipeline including error throws:
+parsing pipeline including error throws.  **It takes four arguments** — the `n_ctx_slot`
+parameter was dropped at b10275; a five-argument call has not compiled since.  `test_server.cpp`
+wraps it in a `parse_params` helper, which is the form to copy:
 
 ```cpp
-common_params          params_base;
-std::vector<llama_logit_bias> no_bias;
-const int n_ctx = 512;
+namespace {
+task_params parse_params(const json &data) {
+    common_params params_base;
+    std::vector<llama_logit_bias> no_bias;
+    return server_schema::eval_llama_cmpl_schema(nullptr, params_base, no_bias, data);
+}
+} // namespace
 
-// test: repeat_last_n=-1 is expanded to n_ctx_slot
-json data = {{"repeat_last_n", -1}};
-auto p = server_schema::eval_llama_cmpl_schema(nullptr, params_base, n_ctx, no_bias, data);
-EXPECT_EQ(p.sampling.penalty_last_n, n_ctx);
+// test: a value inside the hard limits round-trips
+EXPECT_EQ(parse_params({{"sse_ping_interval", 5}}).sse_ping_interval, 5);
 
-// test: invalid value throws std::runtime_error
-json bad = {{"dry_sequence_breakers", json::array()}};  // empty → error
-EXPECT_THROW(server_schema::eval_llama_cmpl_schema(nullptr, params_base, n_ctx, no_bias, bad),
-             std::runtime_error);
+// test: out-of-range and malformed values throw std::invalid_argument
+EXPECT_THROW(parse_params({{"repeat_last_n", -1}}), std::invalid_argument);
+EXPECT_THROW(parse_params({{"dry_sequence_breakers", json::array()}}), std::invalid_argument);
 ```
+
+Note what the second line pins: `repeat_last_n` and `dry_penalty_last_n` carry
+`set_hard_limits(0, INT32_MAX)` since **b10273**, so `-1` is simply out of range.  It does
+**not** expand to the slot context size any more — an older version of this section said it did.
 
 **4. Array-returning formatters**
 
@@ -1546,8 +1647,11 @@ See [`../workspace/policies/pit-mutation-testing.md`](../workspace/policies/pit-
 Run PIT with the lifecycle prefix — `mvn test-compile org.pitest:pitest-maven:mutationCoverage`
 (from the repo root add `-f llama/pom.xml`). The gate is **hermetic** — no model or audio fixture
 needed: `ContentPartTest`'s `@TempDir` tests cover `value.ContentPart.audioFile(Path)` (verified
-295/295, 0 NO_COVERAGE in a fixture-less sandbox; the former audio-fixture gotcha is resolved,
-see `TODO.md`).
+318/318 killed, 0 NO_COVERAGE, test strength 100% in a fixture-less sandbox; the former
+audio-fixture gotcha is resolved).
+**`net.ladenthin.llama.value.*` is a target at `mutationThreshold` 100**, so a new getter on a
+`value` type needs its own test or the gate reds — the `ServerMetrics` counters added for the
+`getMetrics()` merge are covered by `ServerMetricsTest`.
 
 ## JPMS Module Descriptor
 

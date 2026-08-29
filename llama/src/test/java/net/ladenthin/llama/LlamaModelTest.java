@@ -7,6 +7,7 @@ package net.ladenthin.llama;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -63,8 +64,7 @@ public class LlamaModelTest {
     @BeforeAll
     public static void setup() {
         Assumptions.assumeTrue(
-                new java.io.File("models/codellama-7b.Q2_K.gguf").exists(),
-                "Model file not found, skipping LlamaModelTest");
+                new java.io.File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping LlamaModelTest");
         //		LlamaModel.setLogger(LogFormat.TEXT, (level, msg) -> System.out.println(level + ": " + msg));
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         model = new LlamaModel(new ModelParameters()
@@ -129,7 +129,7 @@ public class LlamaModelTest {
      * <p>With greedy decoding ({@code withTopK(1)}) and a fixed seed, two completions of the same
      * prompt are byte-identical unless something changes the sampler. The prompt is saturated with a
      * repeated multi-token n-gram, so enabling DRY with a strong multiplier and a short allowed length
-     * ({@code dry_penalty_last_n = -1} scans the whole context) penalizes the next token that would
+     * ({@code dry_penalty_last_n} is set to the full context size) penalizes the next token that would
      * extend that n-gram &mdash; forcing the DRY run to diverge from the baseline. This exercises the
      * full Java &rarr; JSON &rarr; native path for {@code withDryMultiplier} / {@code withDryBase} /
      * {@code withDryAllowedLength} / {@code withDryPenaltyLastN} end to end; the per-field JSON
@@ -152,7 +152,9 @@ public class LlamaModelTest {
                 .withDryMultiplier(4.0f)
                 .withDryBase(1.75f)
                 .withDryAllowedLength(2)
-                .withDryPenaltyLastN(-1);
+                // The whole context: llama.cpp b10273 dropped -1 as the "scan everything" sentinel,
+                // so the window is stated explicitly and must match the ctx size set in setup().
+                .withDryPenaltyLastN(128);
 
         String baselineOutput = model.complete(baseline);
         String dryOutput = model.complete(withDry);
@@ -351,8 +353,7 @@ public class LlamaModelTest {
      */
     @Test
     public void testCloseDuringInference() throws Exception {
-        Assumptions.assumeTrue(
-                new java.io.File("models/codellama-7b.Q2_K.gguf").exists(), "Model file not found, skipping");
+        Assumptions.assumeTrue(new java.io.File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
         try (LlamaModel localModel = new LlamaModel(new ModelParameters()
                 .setCtxSize(128)
@@ -1217,8 +1218,66 @@ public class LlamaModelTest {
     public void testGetMetrics() {
         String metrics = model.getMetrics();
         assertNotNull(metrics);
-        assertTrue(metrics.contains("\"slots\""), "Metrics should contain slots data");
-        assertTrue(metrics.contains("\"idle\""), "Metrics should contain idle count");
+
+        // Assert the parsed shape, not substrings. Upstream reduced the metrics payload to a bare
+        // slot array at b10408 and split the task in two at b10519; the JNI layer merges the halves
+        // back into this object. A substring check on "slots"/"idle" is satisfied by the slot
+        // entries themselves, so only structural assertions can see that drift.
+        JsonNode root = model.getMetricsTyped().asJson();
+        assertTrue(root.isObject(), "Metrics must be an object, not a bare slot array: " + metrics);
+        assertTrue(root.path("slots").isArray(), "Metrics must carry a slots array: " + metrics);
+        // Every integral counter server_metrics_to_json emits. The full set matters: the C++ suite
+        // pins the helper's key names and ServerMetricsTest pins the Java getters' names, but this
+        // is the ONLY place the two are compared. Assert a subset and a rename on one side alone
+        // still ships — the getter then silently returns its default forever, which is exactly how
+        // the b10408 payload regression survived hundreds of builds.
+        for (String counter : new String[] {
+            "idle",
+            "processing",
+            "deferred",
+            "n_decode_total",
+            "n_busy_slots_total",
+            "n_tokens_max",
+            "n_prompt_tokens_processed",
+            "n_prompt_tokens_processed_total",
+            "n_tokens_predicted",
+            "n_tokens_predicted_total",
+            "n_prompt_tokens_cached_total",
+            "n_draft_tokens_total",
+            "n_draft_accepted_total",
+            "n_draft_verif_steps_total"
+        }) {
+            assertTrue(
+                    root.path(counter).isIntegralNumber(),
+                    "Counter " + counter + " must be an integer, not "
+                            + root.path(counter).getNodeType() + ": " + metrics);
+        }
+        // The timing keys are fractional milliseconds since the merge divides upstream's
+        // microseconds by 1000.0 — isNumber(), not isIntegralNumber().
+        for (String timing : new String[] {
+            "t_start",
+            "t_prompt_processing",
+            "t_prompt_processing_total",
+            "t_tokens_generation",
+            "t_tokens_generation_total"
+        }) {
+            assertTrue(
+                    root.path(timing).isNumber(),
+                    "Timing " + timing + " must be numeric, not "
+                            + root.path(timing).getNodeType() + ": " + metrics);
+        }
+        // Speculative-decoding acceptance histogram: present even with no draft model, as an
+        // empty array rather than a missing key.
+        assertTrue(
+                root.path("n_accepted_per_pos_total").isArray(),
+                "n_accepted_per_pos_total must be an array: " + metrics);
+        // A loaded model always has at least one slot, and the idle count is drawn from that same
+        // set — an exact equality would be flaky if a prior test left a slot mid-flight, so bound it
+        // instead of pinning it.
+        int slotCount = root.path("slots").size();
+        assertTrue(slotCount > 0, "a loaded model must report at least one slot: " + metrics);
+        int idle = model.getMetricsTyped().getIdleSlots();
+        assertTrue(idle >= 0 && idle <= slotCount, "idle slots out of range 0.." + slotCount + ": " + metrics);
     }
 
     @Test
@@ -1291,6 +1350,13 @@ public class LlamaModelTest {
         // Dynamic access via the underlying JsonNode
         assertTrue(meta.asJson().has("modalities"), "modalities field must be present");
         assertTrue(meta.asJson().has("vocab_type"), "vocab_type field must be present");
+        // vocab_type is an unscoped C enum on the native side. Since llama.cpp b10585 the upstream
+        // `json` alias is common_json, whose value ctors do not cover enums — an uncast enum binds
+        // to the bool ctor and arrives here as true/false, which getVocabType()'s asInt(0) would
+        // silently read as 1 for every non-SPM model. Pin the wire type, not just the key.
+        assertTrue(
+                meta.asJson().path("vocab_type").isIntegralNumber(),
+                "vocab_type must arrive as an integer, not a boolean");
 
         // Architecture and name from GGUF general.* metadata
         String architecture = meta.getArchitecture();

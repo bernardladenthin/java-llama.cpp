@@ -96,9 +96,11 @@ public class OpenAiCompatServerIntegrationTest extends OpenAiServerTestSupport {
 
     @Test
     public void toolRequestRoundTripsThroughTheJinjaPath() throws IOException {
-        // Forwards an OpenAI tools array; the mapper enables use_jinja so the native parser applies
-        // Qwen3's tool-aware template. We assert the request is accepted and returns a structurally
-        // valid OpenAI message (content and/or tool_calls) — not that this tiny model elects to call.
+        // Forwards an OpenAI tools array. Jinja rendering (which is what lets the native parser
+        // apply Qwen3's tool-aware template) comes from how the model was loaded, not from the
+        // request -- upstream reads no "use_jinja" request key. We assert the request is accepted
+        // and returns a structurally valid OpenAI message (content and/or tool_calls) — not that
+        // this tiny model elects to call.
         String body = "{\"model\":\"" + MODEL_ID + "\",\"max_tokens\":48,"
                 + "\"messages\":[{\"role\":\"user\",\"content\":\"What is the weather in Paris?\"}],"
                 + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"get_weather\","

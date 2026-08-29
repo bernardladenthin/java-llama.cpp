@@ -92,7 +92,6 @@ public final class InferenceParameters extends JsonParameters {
     private static final String PARAM_STOP = "stop";
     private static final String PARAM_SAMPLERS = "samplers";
     private static final String PARAM_STREAM = "stream";
-    private static final String PARAM_USE_CHAT_TEMPLATE = "use_chat_template";
     private static final String PARAM_CHAT_TEMPLATE = "chat_template";
     private static final String PARAM_USE_JINJA = "use_jinja";
     private static final String PARAM_CHAT_TEMPLATE_KWARGS = "chat_template_kwargs";
@@ -296,9 +295,17 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with tail-free sampling z replaced (default: 1.0, 1.0 = disabled).
      *
+     * <p><strong>Ignored by the server.</strong> Upstream llama.cpp no longer reads this field — {@code tfs_z}
+     * appears nowhere in {@code common/} or {@code tools/server/} as of the pinned build, and the request
+     * schema silently discards unknown fields rather than rejecting them, so setting it has no effect on
+     * generation. Retained only so existing call sites keep compiling; it will be removed in a future
+     * release.</p>
+     *
      * @param tfsZ tail-free sampling parameter z (1.0 = disabled)
      * @return a new instance; this instance is unchanged
+     * @deprecated upstream removed tail-free sampling; the value is discarded by the server
      */
+    @Deprecated
     public InferenceParameters withTfsZ(float tfsZ) {
         return withScalar(PARAM_TFS_Z, tfsZ);
     }
@@ -344,12 +351,22 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the repetition-penalty window replaced (default: 64, 0 = disabled, -1 = ctx_size).
+     * Returns a new request with the repetition-penalty window replaced (default: 64, 0 = disabled).
      *
-     * @param repeatLastN window size (0 = disabled, -1 = ctx_size)
+     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10273</strong> (upstream #26524);
+     * the request schema's hard limits are now {@code [0, INT32_MAX]}, so {@code -1} makes the server
+     * reject the whole request. It is rejected here instead, so the failure names the cause rather
+     * than arriving as a generic parameter error.</p>
+     *
+     * @param repeatLastN window size (0 = disabled)
      * @return a new instance; this instance is unchanged
+     * @throws IllegalArgumentException if {@code repeatLastN} is negative
      */
     public InferenceParameters withRepeatLastN(int repeatLastN) {
+        if (repeatLastN < 0) {
+            throw new IllegalArgumentException("Invalid repeat_last_n value: " + repeatLastN
+                    + " (must be >= 0; 0 = disabled. llama.cpp b10273 dropped -1 = ctx_size)");
+        }
         return withScalar(PARAM_REPEAT_LAST_N, repeatLastN);
     }
 
@@ -420,9 +437,17 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with the newline-penalty flag replaced.
      *
+     * <p><strong>Ignored by the server.</strong> Upstream llama.cpp no longer reads this field — {@code penalize_nl}
+     * appears nowhere in {@code common/} or {@code tools/server/} as of the pinned build, and the request
+     * schema silently discards unknown fields rather than rejecting them, so setting it has no effect on
+     * generation. Retained only so existing call sites keep compiling; it will be removed in a future
+     * release.</p>
+     *
      * @param penalizeNl whether to penalize newline tokens
      * @return a new instance; this instance is unchanged
+     * @deprecated upstream removed the newline penalty; the value is discarded by the server
      */
+    @Deprecated
     public InferenceParameters withPenalizeNl(boolean penalizeNl) {
         return withScalar(PARAM_PENALIZE_NL, penalizeNl);
     }
@@ -518,9 +543,17 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with the repetition-penalty prompt-portion override replaced.
      *
+     * <p><strong>Ignored by the server.</strong> Upstream llama.cpp no longer reads this field — {@code penalty_prompt}
+     * appears nowhere in {@code common/} or {@code tools/server/} as of the pinned build, and the request
+     * schema silently discards unknown fields rather than rejecting them, so setting it has no effect on
+     * generation. Retained only so existing call sites keep compiling; it will be removed in a future
+     * release.</p>
+     *
      * @param penaltyPrompt the string portion of the prompt to penalize; {@code null} clears
      * @return a new instance; this instance is unchanged
+     * @deprecated upstream removed the penalty-prompt override; the value is discarded by the server
      */
+    @Deprecated
     public InferenceParameters withPenaltyPrompt(@Nullable String penaltyPrompt) {
         return withOptionalJson(PARAM_PENALTY_PROMPT, penaltyPrompt);
     }
@@ -529,9 +562,13 @@ public final class InferenceParameters extends JsonParameters {
      * Returns a new request with the repetition-penalty prompt-portion override replaced
      * (token-id form). Empty input is a no-op (returns {@code this}).
      *
+     * <p><strong>Ignored by the server</strong> — see {@link #withPenaltyPrompt(String)}.</p>
+     *
      * @param tokens token ids of the prompt portion to penalize
      * @return a new instance with the array set, or {@code this} if {@code tokens} is empty
+     * @deprecated upstream removed the penalty-prompt override; the value is discarded by the server
      */
+    @Deprecated
     public InferenceParameters withPenaltyPrompt(int... tokens) {
         if (tokens.length == 0) {
             return this;
@@ -642,9 +679,22 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with the chat-template flag replaced.
      *
+     * <p><strong>Ignored by the server.</strong> Jinja templating is a <em>launch-time</em> setting,
+     * not a per-request one. {@code common_params::use_jinja} is set at parse time &mdash; by
+     * {@code --jinja} / {@code --no-jinja}, by the per-example defaults, and by the
+     * {@code --gpt-oss-*-default} presets &mdash; and the string {@code "use_jinja"} appears nowhere
+     * in {@code common/} or {@code tools/server/} as a <em>request</em> key on the pinned build. The request
+     * schema silently discards unknown fields, so this neither enables nor disables anything.
+     * Use {@link net.ladenthin.llama.parameters.ModelParameters#enableJinja()} when loading the
+     * model instead. Retained only so existing call sites keep compiling; it will be removed in a
+     * future release.</p>
+     *
      * @param useChatTemplate whether to apply a chat template
      * @return a new instance; this instance is unchanged
+     * @deprecated jinja is a load-time option; the request field is discarded by the server. Use
+     *     {@link net.ladenthin.llama.parameters.ModelParameters#enableJinja()}
      */
+    @Deprecated
     public InferenceParameters withUseChatTemplate(boolean useChatTemplate) {
         return withScalar(PARAM_USE_JINJA, useChatTemplate);
     }
@@ -652,9 +702,21 @@ public final class InferenceParameters extends JsonParameters {
     /**
      * Returns a new request with the chat-template string replaced.
      *
+     * <p><strong>Ignored by the server.</strong> The chat template is chosen when the model is
+     * loaded, not per request: on the pinned build the only {@code "chat_template"} string in
+     * {@code common/} or {@code tools/server/} is the one the server <em>emits</em> in its
+     * {@code /props} response, and nothing reads it from a request body. The request schema
+     * silently discards unknown fields, so a template passed here is never applied. Use
+     * {@link net.ladenthin.llama.parameters.ModelParameters#setChatTemplate(String)} instead.
+     * Retained only so existing call sites keep compiling; it will be removed in a future
+     * release.</p>
+     *
      * @param chatTemplate the Jinja-style chat template to use; {@code null} clears
      * @return a new instance; this instance is unchanged
+     * @deprecated the chat template is a load-time option; the request field is discarded by the
+     *     server. Use {@link net.ladenthin.llama.parameters.ModelParameters#setChatTemplate(String)}
      */
+    @Deprecated
     public InferenceParameters withChatTemplate(@Nullable String chatTemplate) {
         return withOptionalJson(PARAM_CHAT_TEMPLATE, chatTemplate);
     }
@@ -791,19 +853,23 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the per-request DRY penalty window replaced (default: -1, -1 = context
-     * size, 0 = disabled). Only takes effect when {@link #withDryMultiplier(float)} is non-zero.
-     * Per-request mirror of {@link ModelParameters#setDryPenaltyLastN(int)} (the
-     * {@code --dry-penalty-last-n} launch flag); values below {@code -1} are rejected.
+     * Returns a new request with the per-request DRY penalty window replaced (default: 64, 0 = disabled). Only takes
+     * effect when {@link #withDryMultiplier(float)} is non-zero. Per-request mirror of
+     * {@link ModelParameters#setDryPenaltyLastN(int)} (the {@code --dry-penalty-last-n} launch flag).
      *
-     * @param dryPenaltyLastN the DRY penalty window (-1 = context size, 0 = disabled)
+     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10273</strong> (upstream #26524);
+     * the request schema's hard limits are now {@code [0, INT32_MAX]}, so {@code -1} makes the server
+     * reject the whole request. It is rejected here instead, so the failure names the cause rather
+     * than arriving as a generic parameter error.</p>
+     *
+     * @param dryPenaltyLastN the DRY penalty window (0 = disabled)
      * @return a new instance; this instance is unchanged
-     * @throws IllegalArgumentException if {@code dryPenaltyLastN} is less than {@code -1}
+     * @throws IllegalArgumentException if {@code dryPenaltyLastN} is negative
      */
     public InferenceParameters withDryPenaltyLastN(int dryPenaltyLastN) {
-        if (dryPenaltyLastN < -1) {
+        if (dryPenaltyLastN < 0) {
             throw new IllegalArgumentException("Invalid dry_penalty_last_n value: " + dryPenaltyLastN
-                    + " (must be >= -1; -1 = context size, 0 = disabled)");
+                    + " (must be >= 0; 0 = disabled. llama.cpp b10273 dropped -1 = context size)");
         }
         return withScalar(PARAM_DRY_PENALTY_LAST_N, dryPenaltyLastN);
     }

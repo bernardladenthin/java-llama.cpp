@@ -21,6 +21,7 @@
 //   parse_slot_prompt_similarity
 //   parse_positive_int_config
 //   wrap_stream_chunk
+//   server_metrics_to_json
 
 #include <gtest/gtest.h>
 
@@ -347,12 +348,37 @@ TEST(ExtractEmbeddingPrompt, EmptyBody_ThrowsInvalidArgument) {
 
 TEST(ExtractEmbeddingPrompt, ArrayPrompt_ReturnedAsIs) {
     bool flag = false;
-    json prompt = extract_embedding_prompt({{"input", {"sentence one", "sentence two"}}}, flag);
+    json prompt = extract_embedding_prompt({{"input", json::array({"sentence one", "sentence two"})}}, flag);
     ASSERT_TRUE(prompt.is_array());
     ASSERT_EQ(prompt.size(), 2u);
     EXPECT_EQ(prompt[0], "sentence one");
     EXPECT_EQ(prompt[1], "sentence two");
     EXPECT_FALSE(flag);
+}
+
+// ============================================================
+// common_json enum trap (llama.cpp b10585, upstream #27511)
+//
+//   The upstream `json` alias is `common_json`, whose value constructors cover
+//   bool / integral / floating-point / string / container — but the integral one
+//   is `std::is_integral`-gated, and an *enum* is not integral.  An unscoped enum
+//   therefore binds to `common_json_value(bool)` and silently serialises as
+//   true/false.  Project code must cast enum values to `int` before putting them
+//   in JSON; `jllama.cpp`'s two "vocab_type" emit sites do exactly that, and
+//   `ModelMeta.getVocabType()` reads the result with Jackson's `asInt(0)`.
+// ============================================================
+
+TEST(CommonJsonEnumTrap, UncastEnumBecomesBoolean) {
+    // documents the trap this guard exists for (tripwire: if upstream ever adds an
+    // enum constructor, this flips and the cast convention can be revisited)
+    const json j = json::object({{"vocab_type", LLAMA_VOCAB_TYPE_WPM}});
+    EXPECT_TRUE(j.at("vocab_type").is_boolean());
+}
+
+TEST(CommonJsonEnumTrap, ExplicitIntCastKeepsTheNumericValue) {
+    const json j = json::object({{"vocab_type", static_cast<int>(LLAMA_VOCAB_TYPE_WPM)}});
+    EXPECT_TRUE(j.at("vocab_type").is_number_integer());
+    EXPECT_EQ(j.at("vocab_type").get<int>(), static_cast<int>(LLAMA_VOCAB_TYPE_WPM));
 }
 
 // ============================================================
@@ -442,6 +468,25 @@ TEST(ParsePositiveIntConfig, ErrorMessage_ContainsKeyName) {
     }
 }
 
+TEST(ParsePositiveIntConfig, FractionalValue_ThrowsInvalidArgument) {
+    // Pins the `raw != std::floor(raw)` term: a non-integral value must be rejected rather than
+    // silently truncated by static_cast<int>.
+    EXPECT_THROW((void)parse_positive_int_config({{"n_threads", 1.5}}, "n_threads"), std::invalid_argument);
+}
+
+TEST(ParsePositiveIntConfig, AboveIntMax_ThrowsInvalidArgument) {
+    // Pins the upper-bound term. 3e9 is whole-numbered, so the std::floor term cannot catch it;
+    // without this bound static_cast<int>(3e9) is undefined behaviour.
+    EXPECT_THROW((void)parse_positive_int_config({{"n_threads", 3000000000.0}}, "n_threads"), std::invalid_argument);
+}
+
+TEST(ParsePositiveIntConfig, ExactlyIntMax_IsAccepted) {
+    // Boundary: INT_MAX itself is valid, so the guard must stay `>` and never become `>=`.
+    auto v = parse_positive_int_config({{"n_threads", 2147483647}}, "n_threads");
+    ASSERT_TRUE(v.has_value());
+    EXPECT_EQ(*v, 2147483647);
+}
+
 // ============================================================
 // wrap_stream_chunk
 // ============================================================
@@ -480,4 +525,121 @@ TEST(WrapStreamChunk, ExactlyTwoKeys) {
     EXPECT_EQ(out.size(), 2u);
     EXPECT_TRUE(out.contains("data"));
     EXPECT_TRUE(out.contains("stop"));
+}
+
+// ============================================================
+// server_metrics_to_json
+// ============================================================
+
+namespace {
+
+// Two halves of the server-introspection payload, filled with distinguishable values so a
+// mis-wired field is visible in the assertion rather than colliding with a neighbour.
+server_task_result_metrics make_metrics_half() {
+    server_task_result_metrics m;
+    m.n_processing_slots = 3;
+    m.n_tasks_deferred = 4;
+    m.metrics.t_start = 1234567890;
+    m.metrics.prompt.count = 100;
+    m.metrics.prompt.time = 2000000; // 2 s in us -> 2000 ms
+    m.metrics.predict.count = 200;
+    m.metrics.predict.time = 500000; // 0.5 s in us -> 500 ms
+    m.metrics.prompt_bucket.count = 10;
+    m.metrics.prompt_bucket.time = 1500; // 1.5 ms
+    m.metrics.predict_bucket.count = 20;
+    m.metrics.predict_bucket.time = 250; // 0.25 ms
+    m.metrics.n_decode = 42;
+    m.metrics.n_busy_slots = 84;
+    m.metrics.n_tokens_max = 512;
+    m.metrics.n_prompt_cached = 77;
+    m.metrics.n_draft_tokens = 30;
+    m.metrics.n_draft_accepted = 21;
+    m.metrics.n_draft_verif_steps = 7;
+    m.metrics.n_accepted_per_pos = {5, 3, 1};
+    return m;
+}
+
+server_task_result_slots make_slots_half() {
+    server_task_result_slots s;
+    s.n_idle_slots = 2;
+    s.slots_data = json::array({json::object({{"id", 0}}), json::object({{"id", 1}})});
+    return s;
+}
+
+} // namespace
+
+TEST(ServerMetricsToJson, MergesSlotCountsFromBothHalves) {
+    const json j = server_metrics_to_json(make_metrics_half(), make_slots_half());
+    // `idle` comes from the SLOT_GET half, `processing`/`deferred` from the METRICS half.
+    EXPECT_EQ(j.at("idle").get<int>(), 2);
+    EXPECT_EQ(j.at("processing").get<int>(), 3);
+    EXPECT_EQ(j.at("deferred").get<int>(), 4);
+}
+
+TEST(ServerMetricsToJson, CarriesCumulativeCounters) {
+    const json j = server_metrics_to_json(make_metrics_half(), make_slots_half());
+    EXPECT_EQ(j.at("t_start").get<int64_t>(), 1234567890);
+    EXPECT_EQ(j.at("n_prompt_tokens_processed_total").get<int64_t>(), 100);
+    EXPECT_EQ(j.at("n_tokens_predicted_total").get<int64_t>(), 200);
+    EXPECT_EQ(j.at("n_decode_total").get<int64_t>(), 42);
+    EXPECT_EQ(j.at("n_busy_slots_total").get<int64_t>(), 84);
+    EXPECT_EQ(j.at("n_tokens_max").get<int64_t>(), 512);
+}
+
+TEST(ServerMetricsToJson, ConvertsDurationsFromMicrosecondsToMilliseconds) {
+    const json j = server_metrics_to_json(make_metrics_half(), make_slots_half());
+    EXPECT_DOUBLE_EQ(j.at("t_prompt_processing_total").get<double>(), 2000.0);
+    EXPECT_DOUBLE_EQ(j.at("t_tokens_generation_total").get<double>(), 500.0);
+    // Sub-millisecond bucket timings must survive as fractions, not truncate to zero.
+    EXPECT_DOUBLE_EQ(j.at("t_prompt_processing").get<double>(), 1.5);
+    EXPECT_DOUBLE_EQ(j.at("t_tokens_generation").get<double>(), 0.25);
+}
+
+TEST(ServerMetricsToJson, CarriesCurrentWindowCounters) {
+    const json j = server_metrics_to_json(make_metrics_half(), make_slots_half());
+    EXPECT_EQ(j.at("n_prompt_tokens_processed").get<int64_t>(), 10);
+    EXPECT_EQ(j.at("n_tokens_predicted").get<int64_t>(), 20);
+}
+
+TEST(ServerMetricsToJson, CarriesCacheAndSpeculativeDecodingCounters) {
+    const json j = server_metrics_to_json(make_metrics_half(), make_slots_half());
+    EXPECT_EQ(j.at("n_prompt_tokens_cached_total").get<int64_t>(), 77);
+    EXPECT_EQ(j.at("n_draft_tokens_total").get<int64_t>(), 30);
+    EXPECT_EQ(j.at("n_draft_accepted_total").get<int64_t>(), 21);
+    EXPECT_EQ(j.at("n_draft_verif_steps_total").get<int64_t>(), 7);
+    const json per_pos = j.at("n_accepted_per_pos_total");
+    ASSERT_TRUE(per_pos.is_array());
+    ASSERT_EQ(per_pos.size(), 3u);
+    EXPECT_EQ(per_pos.at(0).get<int64_t>(), 5);
+    EXPECT_EQ(per_pos.at(2).get<int64_t>(), 1);
+}
+
+TEST(ServerMetricsToJson, EmbedsTheSlotArrayVerbatimUnderSlots) {
+    const json j = server_metrics_to_json(make_metrics_half(), make_slots_half());
+    const json slots = j.at("slots");
+    ASSERT_TRUE(slots.is_array());
+    ASSERT_EQ(slots.size(), 2u);
+    EXPECT_EQ(slots.at(1).at("id").get<int>(), 1);
+}
+
+TEST(ServerMetricsToJson, DefaultConstructedHalvesProduceZeroesAndAnEmptySlotArray) {
+    const json j = server_metrics_to_json(server_task_result_metrics{}, server_task_result_slots{});
+    EXPECT_EQ(j.at("idle").get<int>(), 0);
+    EXPECT_EQ(j.at("processing").get<int>(), 0);
+    EXPECT_EQ(j.at("n_decode_total").get<int64_t>(), 0);
+    EXPECT_DOUBLE_EQ(j.at("t_prompt_processing_total").get<double>(), 0.0);
+    ASSERT_TRUE(j.at("slots").is_array());
+    EXPECT_EQ(j.at("slots").size(), 0u);
+    EXPECT_TRUE(j.at("n_accepted_per_pos_total").is_array());
+}
+
+TEST(ServerMetricsToJson, CountersAreNumbersNotBooleans) {
+    // common_json binds an unscoped enum — and anything else that is not std::is_integral —
+    // to its bool constructor.  Every counter here must arrive as a number.
+    const json j = server_metrics_to_json(make_metrics_half(), make_slots_half());
+    for (const char *key : {"idle", "processing", "deferred", "t_start", "n_decode_total", "n_busy_slots_total",
+                            "n_prompt_tokens_cached_total"}) {
+        EXPECT_FALSE(j.at(key).is_boolean()) << "key serialised as a boolean: " << key;
+        EXPECT_TRUE(j.at(key).is_number()) << "key is not a number: " << key;
+    }
 }

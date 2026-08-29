@@ -5,7 +5,7 @@
 
 #pragma once
 
-// server-common.h provides: JSON_ASSERT, json, raw_buffer, json_value<T>,
+// server-common.h provides: json (= common_json since b10585), raw_buffer, json_value<T>,
 // server_grammar_trigger, server_tokens, error_type, SRV_* macros,
 // and many utility function declarations (implemented in server-common.cpp).
 #include "server-common.h"
@@ -36,7 +36,6 @@
 // JSON array.  The raw bytes are preserved exactly — no UTF-8 truncation.
 static json str_to_bytes(const std::string &str) {
     json bytes = json::array();
-    bytes.get_ref<json::array_t &>().reserve(str.size());
     for (unsigned char c : str) {
         bytes.push_back(static_cast<int>(c));
     }

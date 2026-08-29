@@ -47,6 +47,36 @@ env:
   # directory for licensing). No download step is needed; CI just points
   # mvn test at the committed path.
   VISION_IMAGE_PATH: "llama/src/test/resources/images/test-image.jpg"
+# Supersede an in-flight run when a PR branch is pushed again.
+#
+# Without this every push starts a full parallel pipeline and the older ones keep
+# draining -- four were live at once during one session, which makes "what is CI
+# saying right now" genuinely ambiguous and wastes a lot of runner time on results
+# nobody will read.
+#
+# cancel-in-progress is deliberately scoped to pull_request ONLY. A push to main or
+# to a v* tag is a release path: cancelling one midway could leave a partially
+# published set of artifacts.
+#
+# cancel-in-progress: false is NOT sufficient on its own to protect a release run.
+# GitHub cancels a *pending* run whenever a newer run joins the same group behind an
+# in-progress one -- that rule is independent of cancel-in-progress. So with a plain
+# `workflow-ref` group, a queued `publish_to_central` dispatch on main could be
+# silently dropped by a later push to main, both sharing `Publish-refs/heads/main`.
+# Giving every non-PR run its own group (via the unique run_id) means such a run is
+# never queued behind a sibling and therefore can never be cancelled, while PR runs
+# still share a group per ref and supersede each other as intended.
+#
+# One-time effect when this expression changes: GitHub reads `concurrency` from the
+# workflow file at each run's own ref, so a run started before the change sits in the
+# old group and a run started after it sits in the new one. They are different groups,
+# so the new push does NOT supersede the in-flight old run -- exactly once, on the
+# commit that lands this. It self-heals from the next push on. Expect the same overlap
+# when porting this to a sibling repo; it is not a sign the expression is wrong.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 jobs:
@@ -441,6 +471,52 @@ jobs:
           -Dnet.ladenthin.llama.langchain4j.embedding.model=models/${NOMIC_EMBED_MODEL_NAME}
           -Dnet.ladenthin.llama.langchain4j.rerank.model=models/${RERANKING_MODEL_NAME}
           -Dnet.ladenthin.llama.langchain4j.tool.model=models/${TOOL_MODEL_NAME}
+
+      # This job is model-backed and crosses JNI, so a forked test JVM here can abort exactly the
+      # way the six test-java-* jobs can -- but it had neither of their diagnostics. Same step and
+      # same path set as those, scoped to this module. See
+      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      - name: Print crash logs (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          found=0
+          for f in llama-langchain4j/hs_err_pid*.log; do
+            found=1
+            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
+            sed -n '1,200p' "$f"
+          done
+          for f in llama-langchain4j/target/surefire-reports/*.dumpstream llama-langchain4j/target/surefire-reports/*.dump; do
+            found=1
+            echo "===== $f ====="
+            cat "$f"
+          done
+          if [ "$found" = 0 ]; then
+            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
+            echo
+            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
+            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
+            echo "crash log. Read the surefire output above for the real cause."
+            echo
+            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
+            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
+            echo "test results. In that case the abort bypassed the JVM error handler (a native"
+            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
+          fi
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: error-log-langchain4j-integration
+          path: |
+            ${{ github.workspace }}/llama-langchain4j/hs_err_pid*.log
+            ${{ github.workspace }}/core.*
+            ${{ github.workspace }}/llama-langchain4j/*.hprof
+            ${{ github.workspace }}/llama-langchain4j/target/surefire-reports/*.dump
+            ${{ github.workspace }}/llama-langchain4j/target/surefire-reports/*.dumpstream
+            ${{ github.workspace }}/llama-langchain4j/target/surefire-reports/*.txt
+            ${{ github.workspace }}/llama-langchain4j/target/surefire-reports/TEST-*.xml
+          if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
   # Build the llama.cpp WebUI ONCE, from the same pinned tag CMakeLists.txt fetches,
@@ -2271,6 +2347,40 @@ jobs:
       - name: Memory after tests
         if: always()
         run: free -h
+      # A forked test JVM that aborts leaves an hs_err_pid log and a surefire
+      # dumpstream -- both otherwise ONLY inside the artifact uploaded below,
+      # which is unreachable from anywhere that cannot fetch from Azure Blob
+      # (a phone, a restricted network, an agent sandbox). Echo them here so the
+      # aborting frame is readable from the run page itself. See
+      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      - name: Print crash logs (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          found=0
+          for f in llama/hs_err_pid*.log; do
+            found=1
+            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
+            sed -n '1,200p' "$f"
+          done
+          for f in llama/target/surefire-reports/*.dumpstream llama/target/surefire-reports/*.dump; do
+            found=1
+            echo "===== $f ====="
+            cat "$f"
+          done
+          if [ "$found" = 0 ]; then
+            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
+            echo
+            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
+            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
+            echo "crash log. Read the surefire output above for the real cause."
+            echo
+            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
+            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
+            echo "test results. In that case the abort bypassed the JVM error handler (a native"
+            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
+          fi
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -2370,6 +2480,40 @@ jobs:
       - name: Memory after tests
         if: always()
         run: vm_stat && sysctl hw.memsize hw.physmem
+      # A forked test JVM that aborts leaves an hs_err_pid log and a surefire
+      # dumpstream -- both otherwise ONLY inside the artifact uploaded below,
+      # which is unreachable from anywhere that cannot fetch from Azure Blob
+      # (a phone, a restricted network, an agent sandbox). Echo them here so the
+      # aborting frame is readable from the run page itself. See
+      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      - name: Print crash logs (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          found=0
+          for f in llama/hs_err_pid*.log; do
+            found=1
+            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
+            sed -n '1,200p' "$f"
+          done
+          for f in llama/target/surefire-reports/*.dumpstream llama/target/surefire-reports/*.dump; do
+            found=1
+            echo "===== $f ====="
+            cat "$f"
+          done
+          if [ "$found" = 0 ]; then
+            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
+            echo
+            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
+            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
+            echo "crash log. Read the surefire output above for the real cause."
+            echo
+            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
+            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
+            echo "test results. In that case the abort bypassed the JVM error handler (a native"
+            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
+          fi
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -2439,6 +2583,40 @@ jobs:
       - name: Memory after tests
         if: always()
         run: vm_stat && sysctl hw.memsize hw.physmem
+      # A forked test JVM that aborts leaves an hs_err_pid log and a surefire
+      # dumpstream -- both otherwise ONLY inside the artifact uploaded below,
+      # which is unreachable from anywhere that cannot fetch from Azure Blob
+      # (a phone, a restricted network, an agent sandbox). Echo them here so the
+      # aborting frame is readable from the run page itself. See
+      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      - name: Print crash logs (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          found=0
+          for f in llama/hs_err_pid*.log; do
+            found=1
+            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
+            sed -n '1,200p' "$f"
+          done
+          for f in llama/target/surefire-reports/*.dumpstream llama/target/surefire-reports/*.dump; do
+            found=1
+            echo "===== $f ====="
+            cat "$f"
+          done
+          if [ "$found" = 0 ]; then
+            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
+            echo
+            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
+            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
+            echo "crash log. Read the surefire output above for the real cause."
+            echo
+            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
+            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
+            echo "test results. In that case the abort bypassed the JVM error handler (a native"
+            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
+          fi
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -2508,6 +2686,40 @@ jobs:
       - name: Memory after tests
         if: always()
         run: vm_stat && sysctl hw.memsize hw.physmem
+      # A forked test JVM that aborts leaves an hs_err_pid log and a surefire
+      # dumpstream -- both otherwise ONLY inside the artifact uploaded below,
+      # which is unreachable from anywhere that cannot fetch from Azure Blob
+      # (a phone, a restricted network, an agent sandbox). Echo them here so the
+      # aborting frame is readable from the run page itself. See
+      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      - name: Print crash logs (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          found=0
+          for f in llama/hs_err_pid*.log; do
+            found=1
+            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
+            sed -n '1,200p' "$f"
+          done
+          for f in llama/target/surefire-reports/*.dumpstream llama/target/surefire-reports/*.dump; do
+            found=1
+            echo "===== $f ====="
+            cat "$f"
+          done
+          if [ "$found" = 0 ]; then
+            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
+            echo
+            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
+            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
+            echo "crash log. Read the surefire output above for the real cause."
+            echo
+            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
+            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
+            echo "test results. In that case the abort bypassed the JVM error handler (a native"
+            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
+          fi
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -2596,6 +2808,40 @@ jobs:
         if: always()
         run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
         shell: pwsh
+      # A forked test JVM that aborts leaves an hs_err_pid log and a surefire
+      # dumpstream -- both otherwise ONLY inside the artifact uploaded below,
+      # which is unreachable from anywhere that cannot fetch from Azure Blob
+      # (a phone, a restricted network, an agent sandbox). Echo them here so the
+      # aborting frame is readable from the run page itself. See
+      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      - name: Print crash logs (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          found=0
+          for f in llama/hs_err_pid*.log; do
+            found=1
+            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
+            sed -n '1,200p' "$f"
+          done
+          for f in llama/target/surefire-reports/*.dumpstream llama/target/surefire-reports/*.dump; do
+            found=1
+            echo "===== $f ====="
+            cat "$f"
+          done
+          if [ "$found" = 0 ]; then
+            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
+            echo
+            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
+            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
+            echo "crash log. Read the surefire output above for the real cause."
+            echo
+            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
+            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
+            echo "test results. In that case the abort bypassed the JVM error handler (a native"
+            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
+          fi
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -2690,6 +2936,40 @@ jobs:
         if: always()
         run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
         shell: pwsh
+      # A forked test JVM that aborts leaves an hs_err_pid log and a surefire
+      # dumpstream -- both otherwise ONLY inside the artifact uploaded below,
+      # which is unreachable from anywhere that cannot fetch from Azure Blob
+      # (a phone, a restricted network, an agent sandbox). Echo them here so the
+      # aborting frame is readable from the run page itself. See
+      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      - name: Print crash logs (on failure)
+        if: failure()
+        shell: bash
+        run: |
+          shopt -s nullglob
+          found=0
+          for f in llama/hs_err_pid*.log; do
+            found=1
+            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
+            sed -n '1,200p' "$f"
+          done
+          for f in llama/target/surefire-reports/*.dumpstream llama/target/surefire-reports/*.dump; do
+            found=1
+            echo "===== $f ====="
+            cat "$f"
+          done
+          if [ "$found" = 0 ]; then
+            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
+            echo
+            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
+            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
+            echo "crash log. Read the surefire output above for the real cause."
+            echo
+            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
+            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
+            echo "test results. In that case the abort bypassed the JVM error handler (a native"
+            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
+          fi
       - if: failure()
         uses: actions/upload-artifact@v7
         with:

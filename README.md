@@ -11,7 +11,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b10456](https://img.shields.io/badge/llama.cpp-%23b10456-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b10456)  
+[![llama.cpp b10679](https://img.shields.io/badge/llama.cpp-%23b10679-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b10679)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.0%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -489,6 +489,45 @@ OpenAI-compatible `/v1/chat/completions` server. For a strictly CPU-only run, us
 `setDevices("none").setMmprojOffload(false)` in addition to `setGpuLayers(0)`; projector offload
 has its own upstream default.
 
+On a multi-GPU host the projector can be placed independently of the weights with
+`setMmprojDevice("CUDA1")` (llama.cpp `--mmproj-device`, added upstream in b10541). Exactly one
+device may be named; the literal `"none"` keeps the projector on the CPU. `OpenAiCompatServer`'s CLI
+accepts the same flag as `-mmdev`/`--mmproj-device`, and `NativeServer` forwards it verbatim like
+every other llama-server flag.
+
+`setMmprojDevice(...)` and `setMmprojOffload(...)` write the **same** upstream field
+(`common_params::mmproj_use_gpu`), so where they disagree the outcome would depend on argv order —
+and the rendered argv comes from a `HashMap`, whose order is unspecified. The builder therefore
+resolves the two genuinely ambiguous combinations by dropping the earlier call, and leaves the rest
+alone:
+
+| Combination | Resolves to | Builder behaviour |
+|---|---|---|
+| named device + `setMmprojOffload(true)` | `(use_gpu=true, device)` in either order | both kept — no clash |
+| named device + `setMmprojOffload(false)` | order-dependent | **last call wins** |
+| `"none"` + `setMmprojOffload(true)` | order-dependent | **last call wins** |
+| `"none"` + `setMmprojOffload(false)` | `(use_gpu=false)` in either order | both kept — no clash |
+
+So a multi-GPU projector pin survives an explicit `setMmprojOffload(true)`; only a call that would
+actually contradict the other is dropped. If you need a device after disabling offload, call
+`setMmprojDevice` last.
+
+**Video input — decode settings only, so far.** `mtmd` has carried a video path since llama.cpp
+**b9562** (#24269); **b10647** (#24318) added the `--video-*` CLI flags and the
+`mtmd_helper_init_opt` plumbing that surfaces them. It is compiled into the shipped desktop library
+(`MTMD_VIDEO` is on by default, gated on `LLAMA_SUBPROCESS`, which upstream force-disables on
+Android and iOS). Its decode settings are exposed
+as `setVideoFps(float)`, `setVideoTimestampInterval(long)` and `setVideoFfmpegDir(String)`. The last
+one matters most in a JVM: upstream shells out to `ffmpeg`/`ffprobe` and resolves them from `PATH`,
+which an application server, an Android app or a JAR-only container frequently does not have them on —
+naming the directory is then the only way for video to work at all.
+
+What is **not** here yet is the content part: upstream's wire type for a video is
+`{"type":"input_video","input_video":{"data":"<base64>"}}` (raw base64, not a `data:` URI, unlike
+`image_url`), gated server-side on `mtmd_helper_support_video`. `ContentPart` has no `videoFile(...)`
+factory emitting that shape, so these knobs currently configure a path this API cannot yet feed
+directly. Tracked in `TODO.md`.
+
 **Audio input** works identically — load an audio-capable model (Ultravox, Qwen2.5-Omni, …) with its
 audio `--mmproj` and add a `ContentPart.audioFile(...)` (or `inputAudio(bytes, "wav"|"mp3")`) part. It
 serializes to the OpenAI `input_audio` content part and routes through the same `mtmd` pipeline:
@@ -694,7 +733,11 @@ request, so generation and `save`/`restore` operate on the same KV state.
 Typed results expose logical prompt, generated, cached prompt, and evaluated prompt counts through
 `Usage`. Per-request timing also remains available through `Timings.getCacheN()`.
 `LlamaModel.getMetricsTyped().getSlotMetrics()` reports each slot's logical, processed, cached,
-decoded, and remaining token counts.
+decoded, and remaining token counts, and the same `ServerMetrics` view carries the server-wide
+lifetime counters — including cached prompt tokens (`getCumulativeCachedPromptTokens()`) and the
+speculative-decoding tallies (`getDraftTokensTotal()`, `getDraftAcceptedTotal()`,
+`getDraftVerifyStepsTotal()`, `getDraftAcceptedPerPosition()`, plus the derived
+`getDraftAcceptanceRate()`), which upstream otherwise exposes only as Prometheus text.
 
 The embedded HTTP server exposes the same native JSON at authenticated `GET /metrics`, with the slot
 array alone at `GET /slots`. OpenAI responses preserve
@@ -779,7 +822,7 @@ java -cp target/llama-<version>.jar net.ladenthin.llama.server.OpenAiCompatServe
 Run with `--help` for the full option list (`-m/--model`, `--host`, `-p/--port`, `-c/--ctx-size`,
 `-b/--batch-size`, `-ub/--ubatch-size`, `-ngl/--n-gpu-layers`, `-t/--threads`, `-tb/--threads-batch`,
 `-ctk/--cache-type-k`, `-ctv/--cache-type-v`, `--jinja`, `--chat-template-kwargs`, `--parallel`,
-`--model-id`, `--api-key`, `--mmproj`, `--embedding`, `--reranking`). The tuning flags mirror
+`--model-id`, `--api-key`, `--mmproj`, `-mmdev/--mmproj-device`, `--embedding`, `--reranking`). The tuning flags mirror
 llama.cpp's server, so an invocation like
 `--jinja --chat-template-kwargs '{"reasoning_effort":"low"}' -ctk q8_0 -ctv q8_0 -b 4096 -ub 2048`
 works directly.
@@ -922,6 +965,21 @@ client.unloadModel("Qwen3-0.6B-Q4_K_M");                 // POST /models/unload
 (`UNLOADED`/`LOADING`/`LOADED`/`SLEEPING`/`DOWNLOADING`/`DOWNLOADED`), and the router's
 failed-worker marker. Chat requests then select a model per request via the standard
 `"model"` field on `POST /v1/chat/completions`.
+
+Against a router started with `--api-key`, pass the key — it is sent as
+`Authorization: Bearer <key>` on every call. All of them need it: `/models/load` and
+`/models/unload` were always gated, and since llama.cpp b10519 the listing endpoints are too.
+
+```java
+RouterClient client = new RouterClient(8080, System.getenv("LLAMA_API_KEY"));
+// or, for a remote router: new RouterClient("router.internal", 8080, key)
+```
+
+> [!NOTE]
+> `awaitModelLoaded` waits by polling `GET /models`, so it cannot observe a model the router
+> deliberately hides from that listing — a cache model deduplicated by a preset with
+> `dedup-cache-models` still loads and still serves by name, but never appears. For those, skip the
+> await and issue the request directly; with autoload the router waits for the worker itself.
 
 ### LangChain4j integration
 

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.List;
 import net.ladenthin.llama.ClaudeGenerated;
 import org.junit.jupiter.api.Test;
 
@@ -29,6 +30,11 @@ public class ServerMetricsTest {
             + "\"n_prompt_tokens_processed\":10,\"t_prompt_processing\":5,"
             + "\"n_tokens_predicted\":20,\"t_tokens_generation\":8,"
             + "\"n_decode_total\":300,\"n_busy_slots_total\":4,\"n_tokens_max\":4096,"
+            // Counters that only became reachable as JSON once the JNI layer started merging the
+            // METRICS and SLOT_GET halves back together (upstream split them at b10408/b10519).
+            + "\"n_prompt_tokens_cached_total\":700,\"n_draft_tokens_total\":40,"
+            + "\"n_draft_accepted_total\":30,\"n_draft_verif_steps_total\":12,"
+            + "\"n_accepted_per_pos_total\":[20,8,2],"
             // next_token is an ARRAY of one object — this mirrors llama.cpp's server_slot::to_json
             // at b9739, not a bare object; SlotMetrics must unwrap next_token[0].
             + "\"slots\":[{\"id\":0,\"n_ctx\":4096,\"is_processing\":true,"
@@ -165,5 +171,86 @@ public class ServerMetricsTest {
         ServerMetrics m = parse(SAMPLE);
         // Assert content (not just non-null) so the empty-string return mutant on toString is killed.
         assertTrue(m.toString().contains("idle"));
+    }
+
+    @Test
+    public void cachedPromptTokenTotalIsSeparateFromTheProcessedTotal() throws Exception {
+        ServerMetrics m = parse(SAMPLE);
+        assertEquals(700L, m.getCumulativeCachedPromptTokens());
+        // The processed total counts only tokens actually evaluated, so the two must not alias.
+        assertEquals(100L, m.getCumulativeProcessedPromptTokens());
+    }
+
+    @Test
+    public void speculativeDecodingCounters() throws Exception {
+        ServerMetrics m = parse(SAMPLE);
+        assertEquals(40L, m.getDraftTokensTotal());
+        assertEquals(30L, m.getDraftAcceptedTotal());
+        assertEquals(12L, m.getDraftVerifyStepsTotal());
+        assertEquals(0.75, m.getDraftAcceptanceRate(), 1e-9);
+    }
+
+    @Test
+    public void draftAcceptanceRateIsZeroWhenNothingWasDrafted() throws Exception {
+        // Pins the drafted > 0L guard: without it this divides by zero and yields NaN.
+        ServerMetrics m = parse("{\"n_draft_accepted_total\":5,\"n_draft_tokens_total\":0}");
+        assertEquals(0.0, m.getDraftAcceptanceRate(), 1e-9);
+    }
+
+    @Test
+    public void draftAcceptedPerPositionIsExposedInOrder() throws Exception {
+        List<Long> perPos = parse(SAMPLE).getDraftAcceptedPerPosition();
+        assertEquals(3, perPos.size());
+        assertEquals(20L, perPos.get(0).longValue());
+        assertEquals(8L, perPos.get(1).longValue());
+        assertEquals(2L, perPos.get(2).longValue());
+    }
+
+    @Test
+    public void draftAcceptedPerPositionIsEmptyWhenAbsentOrNotAnArray() throws Exception {
+        assertTrue(parse("{}").getDraftAcceptedPerPosition().isEmpty());
+        assertTrue(parse("{\"n_accepted_per_pos_total\":7}")
+                .getDraftAcceptedPerPosition()
+                .isEmpty());
+    }
+
+    @Test
+    public void newCountersDefaultToZeroWhenAbsent() throws Exception {
+        ServerMetrics m = parse("{}");
+        assertEquals(0L, m.getCumulativeCachedPromptTokens());
+        assertEquals(0L, m.getDraftTokensTotal());
+        assertEquals(0L, m.getDraftAcceptedTotal());
+        assertEquals(0L, m.getDraftVerifyStepsTotal());
+    }
+
+    @Test
+    public void windowTimingsReadTheWindowKeysNotTheTotals() throws Exception {
+        // The fixture deliberately gives the window and the total different values, so a getter
+        // wired to the wrong half is visible rather than coincidentally equal.
+        ServerMetrics m = parse(SAMPLE);
+        assertEquals(5.0, m.getWindowPromptProcessingMillis(), 1e-9);
+        assertEquals(8.0, m.getWindowTokenGenerationMillis(), 1e-9);
+    }
+
+    @Test
+    public void windowTimingsDeriveRatesFromTheWindowCounts() throws Exception {
+        ServerMetrics m = parse(SAMPLE);
+        Timings t = m.getWindowTimings();
+        assertEquals(10L, t.getPromptN());
+        assertEquals(5.0, t.getPromptMs(), 1e-9);
+        assertEquals(10 * 1000.0 / 5.0, t.getPromptPerSecond(), 1e-9);
+        assertEquals(20L, t.getPredictedN());
+        assertEquals(8.0, t.getPredictedMs(), 1e-9);
+        assertEquals(20 * 1000.0 / 8.0, t.getPredictedPerSecond(), 1e-9);
+    }
+
+    @Test
+    public void windowTimingsAreZeroRatherThanInfiniteWhenNothingRanYet() throws Exception {
+        ServerMetrics m = parse("{}");
+        assertEquals(0.0, m.getWindowPromptProcessingMillis(), 1e-9);
+        assertEquals(0.0, m.getWindowTokenGenerationMillis(), 1e-9);
+        Timings t = m.getWindowTimings();
+        assertEquals(0.0, t.getPromptPerSecond(), 1e-9);
+        assertEquals(0.0, t.getPredictedPerSecond(), 1e-9);
     }
 }

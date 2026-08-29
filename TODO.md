@@ -13,6 +13,186 @@ cross-cutting initiative.
 
 ## Open — jllama-specific
 
+### Model-backed tests that the CI-skip fix newly exposed (b10618 PR #403)
+
+Making the model-gated suite actually run in CI (`TestConstants.resolveModelPath`, see the Done
+section) turned a green-but-silent pipeline into a red-and-honest one. Everything below was already
+broken before this PR; none of it was visible while every model-gated class self-skipped. Two items
+were fixed in this PR, four are open.
+
+**How to read the CI evidence.** Surefire runs classes in filesystem order, which differs per OS, and
+`TtsIntegrationTest` kills the fork. On Linux/macOS it lands early (Ubuntu got through only **85**
+tests), so those jobs report *nothing but* the crash. The two Windows jobs happen to run it last and
+therefore reach **1461** tests — they are the only jobs whose failure list is complete. Do not read a
+short Linux failure list as "Linux is healthier".
+
+**Confirmed platform-independent (macOS 14, head `7be24a6`).** That job reached **517** tests before
+the crash and reproduced `SessionForkRewindIntegrationTest` (both cases) and
+`NativeServerAttachIntegrationTest` **identically** — same assertions, same messages. So these are
+not a Windows quirk. Its exit code was **141 (SIGPIPE)** rather than Ubuntu's 134 (SIGABRT), on the
+same crashed test.
+
+- **[FIXED — confirmed in CI] `TtsIntegrationTest` aborted the JVM natively on all 6 test
+  platforms.** **Root cause: our own hand-built `common_params`.**
+  `common_cpu_params::n_threads` defaults to **-1**, and `postprocess_cpu_params` — the function
+  that resolves it — is called **only** from `common/arg.cpp`, i.e. only for params that came
+  through `common_params_parse`. `common_init_from_params` does not call it. `tts_engine.cpp`
+  assembled `common_params` by hand and set only `cpuparams.n_threads`, so `cpuparams_batch`
+  stayed at -1; `common_threadpools::init` then saw a mismatch between the two and built a
+  *second* threadpool with **-1 threads**. `ggml_threadpool_new` sizes its worker array as
+  `sizeof(struct ggml_compute_state) * tpp->n_threads`, which for -1 wraps to a huge `size_t`;
+  `ggml_aligned_malloc` returns `NULL` (after logging *"insufficient memory"*) and the next line
+  is an unchecked `memset(workers, 0, workers_size)` — the `bzero`-at-address-0 seen on every
+  platform.
+  Fixed by mirroring `arg.cpp`'s two calls, including the `role_model` argument that makes the
+  batch pool inherit rather than resolve independently. `train_engine.cpp` had the same latent
+  defect (it set *neither* count, so both stayed -1 — they matched, so it built one pool with
+  -1 threads instead of two) and got the same fix. `jllama.cpp` / `jni_helpers.hpp` are safe:
+  their params come from `common_params_parse`, so `arg.cpp` resolves them.
+  Guarded by 5 new model-free C++ tests (`test_tts_params.cpp`, suite 499 → **504**), verified
+  by negative control: removing the two calls turns `TtsParams.ResolvesBothCpuThreadCounts` red
+  with `actual: -1 vs 0`. The builder was extracted to `tts_params.hpp` so the test exercises
+  the *real* production path rather than a copy that could drift.
+
+  **CI confirmation** (Ubuntu, run 32950691947 on `999034b`): **1689 tests ran** where the fork
+  previously died at 85, and the crash-print step found **no `hs_err_pid*.log` at all**. The only
+  thing it printed was the router worker's stderr (see the router entry below).
+
+  **How it was localised** (kept because the method generalises, not because the bug is still
+  open). The crash log became readable in the job log itself with `cfda4a9` (the section-3.1 print
+  step), and that is what produced everything below. The abort is a **null-pointer dereference
+  while zeroing a buffer during the TTS model load**, identically on two OS families:
+
+  | | Linux x86-64 (run 32941522341) | macOS 15 arm64 (same run) |
+  |---|---|---|
+  | signal | `SIGSEGV`, `si_code 1 (SEGV_MAPERR)`, `si_addr 0x0` | `SIGSEGV` |
+  | frame | `C [libc.so.6+0x1896ca]` | `C [libsystem_platform.dylib+0x2fb0] __bzero+0x20` |
+  | registers | `RDI=0`, `RSI=0` | — |
+
+  On x86-64 SysV `memset(void *s, int c, size_t n)` passes `s` in RDI and `c` in RSI, so
+  `RDI=0, RSI=0` is `memset(NULL, 0, n)` — the same call macOS names outright as `bzero`. The Java
+  frames are `TextToSpeech.loadNative` -> `TextToSpeech.<init>` ->
+  `TtsIntegrationTest.synthesizesWellFormedWav`, on the `main` thread in `_thread_in_native`,
+  after ~258 s (Linux) / ~288-300 s (macOS) of **total JVM elapsed time** -- that is time since the
+  fork started and ran the rest of the suite, NOT time spent inside the load, so it says nothing
+  about how far the load got.
+
+  Ruled out already, do not re-investigate: (1) a JNI signature mismatch of the kind that broke
+  `LlamaQuantizer` — `loadNative` is `(String, String, int, int) -> long` on both the Java and the
+  C++ side, verified; (2) `parse_jstring` — it guards a null `jstring`, a pending exception and a
+  null byte array, returning an empty string in each case; (3) the obvious null checks in
+  `tts_engine.cpp`'s load, which do test `model` / `ctx` / `mctx` and return `nullptr` with a
+  message. The faulting allocation is therefore *inside* the load, before those checks are reached.
+
+  **The macOS 15 Metal job resolved the native stack, and it is exactly two frames:**
+  `__bzero+0x20` called from `libjllama.dylib` `Java_..._TextToSpeech_loadNative+0x60`. Do NOT read
+  that as "the bug is in `loadNative`". Disassembling the shipped Linux library shows `loadNative`
+  contains **no** `memset`/`bzero` at all — its only calls are `parse_jstring`, `engine_init` (via
+  the PLT, so not inlined), `operator delete` and `__stack_chk_fail`. The JVM's frame-pointer
+  walker dropped the intermediate frames, leaving only the outermost and innermost. The fault is
+  therefore under `engine_init` — in `common_init_from_params` or the mtmd/mmproj init — not in the
+  JNI wrapper. (That much held up: it is in `common_init_from_params`, via
+  `common_threadpools::init`.) (Symbol attribution itself *is* trustworthy here: the library exports 12 529 symbols,
+  the whole llama/common layer included, so a PC inside `common_init_from_params` would have been
+  named as such. What is unreliable is the *depth* of the walk, not the naming.)
+
+  The shape of the guess at that point — *an allocation that returns null and is then zeroed
+  unchecked* — was right; the attribution was not. It was blamed on host memory pressure (the
+  macOS runner has **7 GB RAM / 3 cores** against Linux's 15 GB / 4) and on the `mmproj` being the
+  largest new buffer in the path. Neither is involved: the request is for
+  `sizeof(struct ggml_compute_state) * (size_t) -1` bytes, which no allocator can satisfy on any
+  host with any amount of RAM free. That both hosts failed identically was the clue that memory
+  pressure could not be the explanation.
+
+  Superseded note (kept because the reasoning was cited earlier): it was NOT certain an `hs_err`
+  existed at all — `if-no-files-found: warn` and Windows' exit code 1 left that open. It does
+  exist, on both platforms checked.
+
+- **[SUPERSEDED — see the entry above] `TtsIntegrationTest` aborts the JVM natively on all 6 test platforms.**
+  Ubuntu exit 134 (SIGABRT); macOS 14 Metal, macOS 15 Metal, macOS 15 no-Metal; Windows Ninja and
+  Windows MSVC exit 1. Not an OOM (Linux had ~14 GiB free, Windows ~12.3 GiB of 16 GiB). Not caused by
+  the bump: `git log b10456..b10618 -- tools/mtmd/mtmd-helper.{cpp,h}` contains only video/webp/
+  mergeable/sha256/cmake commits, and grepping that diff for `gen_audio|step_gen|step_prompt|
+  get_output|GGML_ASSERT|GGML_ABORT|throw` yields zero hits. It is a latent defect in
+  `tts_engine.cpp`'s drive of `mtmd_helper::gen_audio`, exposed the first time the test ran.
+  Next step: read `hs_err_pid*.log` from artifact `windows-output` (ID 9583568326) or
+  `error-log-macos-14-metal` (ID 9583085009) of run 32899147975 for the aborting frame. Because it
+  takes the whole fork down it also truncates every job's test run, so it blocks seeing the rest of
+  the suite and should be fixed first.
+
+- **[FIXED in this PR] `SessionForkRewindIntegrationTest` — empty reply after a slot restore.**
+  `rewindRestoresTranscriptAndConversationContinues` and
+  `forkCreatesIndependentSessionWithSameTranscript` failed `assertThat(reply.isEmpty(), is(false))`
+  after `rewind()` / `fork()`. The diagnosis above was right that it is not a bump regression, but
+  wrong that it is the KV restore: the model is Qwen3-0.6B, a **reasoning** model, and the tests'
+  token budget was being spent entirely inside `<think>`, so generation completed normally and
+  returned no assistant *content*. Fixed in `cc67ea7` by budgeting past the thinking block. The same
+  root cause resurfaced later in `llama-langchain4j` (`dd07b0e`), where both chat tests now share a
+  `MAX_OUTPUT_TOKENS = 1500` matching `ReasoningBudgetTest`'s `N_PREDICT`. Green on all six Java
+  platforms in run 33111759140.
+
+- **[FIXED in this PR] `NativeServerAttachIntegrationTest.completion_overHttp_served` — HTTP 500.**
+  `{"error":{"code":500,"message":"The model produced output that does not match the expected
+  Content-only format"}}`. Correctly identified above as long-standing upstream behaviour rather than
+  a bump regression. Root cause: `common_peg_until_parser` (`common/peg-parser.cpp`) tolerates an
+  **incomplete** trailing UTF-8 sequence in lenient mode — the only mode `common_chat_peg_parse` ever
+  uses — but its **invalid**-byte branch returned `FAIL` unconditionally, so a single malformed byte
+  anywhere in the output turned a *finished* generation into a 500. Fixed by local patch `0011`
+  (`ca60947`), which makes the invalid branch honour leniency exactly as the incomplete branch does;
+  strict mode is unchanged. Guarded by the `ContentOnlyParseUtf8` tests in `test_utils.cpp`, which —
+  unlike the upstream test the patch also adds — run in CI on every platform. Upstream-submittable;
+  re-checked at b10679 — the `until` parser's `INVALID` branch in pristine
+  `b10679:common/peg-parser.cpp` still returns `FAIL` with no `is_lenient()` guard — so the patch stays.
+
+- **[ANSWERED] Re-check the full suite once the TTS crash is fixed.** Done: Ubuntu on `999034b`
+  ran **1689 tests, 3 failures, 1 error, 2 skipped**. Exactly one item was new — the router entry
+  below — and the other three are the already-recorded `SessionForkRewind` pair and
+  `NativeServerAttach`. So the earlier Windows list was a lower bound by one item, not by many.
+
+- **[FIXED in this PR] `RouterModeIntegrationTest.setup:114` — the worker JVM could not load its
+  own main class.** `IllegalState: Router worker for model 'Qwen3-0.6B-Q4_K_M' failed with exit
+  code 1`; the worker's stderr (visible only because of the section-3.1 print step, in the surefire
+  `.dumpstream`) said `Could not find or load main class net.ladenthin.llama.server.NativeServer`.
+  Not a bump regression and not a router defect: `target/classes` carries a `module-info.class`, so
+  **Surefire auto-detects a named module and runs the main classes on the module path** —
+  `java.class.path` then holds only `target/test-classes` plus the dependency jars. The test built
+  the worker command from that property alone, so the spawned JVM had neither `NativeServer` nor the
+  packaged native library. It had never surfaced because the test self-skipped in CI for as long as
+  the model paths resolved to the wrong directory (the `TestConstants.resolveModelPath` fix in this
+  PR is what made it run). Fixed by deriving the main-classes root from
+  `NativeServer.class.getProtectionDomain().getCodeSource()`, which is correct in either mode and
+  for a directory or a jar alike. Reproduced and verified locally without a model: with the old
+  classpath the worker exits 1 on `ClassNotFoundException`; with the fix it loads `libjllama.so` and
+  reaches llama-server's own argument parser.
+
+  Note for later: the project sets no `<useModulePath>false</useModulePath>` (srcmorph does, and its
+  pom explains why classpath mode is the representative test environment). Flipping it would remove
+  this whole class of surprise, but it changes how all 1689 tests run and does not belong in a
+  version-bump PR.
+
+- **[FIXED in this PR] `LlamaQuantizer.quantizeNative` had C++ linkage — the whole class was
+  unusable in every published jar.** `QuantizerIntegrationTest` failed all 3 tests with
+  `UnsatisfiedLinkError: 'void net.ladenthin.llama.LlamaQuantizer.quantizeNative(...)'`. Cause: the
+  C-linkage declarations come from the javac-generated `jllama.h`, which covers **only**
+  `LlamaModel`; every other class's JNI function must say `extern "C"` itself (`train_engine.cpp` and
+  `native_server.cpp` do). `quantizeNative` did not, so it was exported as
+  `_Z54Java_net_ladenthin_llama_LlamaQuantizer_quantizeNativeP7JNIEnv_...` and the JVM could never
+  resolve it. Reproduced on Linux with `nm -D`, so it was never Windows-specific — the public
+  `LlamaQuantizer` API has never worked. Fixed, and guarded model-free by
+  `NativeLibraryLoadSmokeTest.quantizerNativeEntryPointResolves` (`nm -D` on the rebuilt lib now shows
+  zero mangled `Java_*` exports). **Confirmed on a second toolchain:** at `7be24a6` the macOS 14 job
+  ran `QuantizerIntegrationTest` at *3 tests, 0 failures, 0 errors* with no `UnsatisfiedLinkError`
+  anywhere in the run — the same 3 tests that were 2 failures + 1 error before the fix. Worth having,
+  since symbol export and mangling differ between ELF/gcc and Mach-O/clang.
+
+- **[FIXED in this PR] `JsonEndpointParametersTest.testDryMultiplierAccepted` sent
+  `dry_penalty_last_n: -1`.** The one genuine b10456→b10618 regression in the list: b10273 gave the
+  field hard limits `[0, INT32_MAX]` (0 = disabled) and dropped the old "-1 = context size" sentinel,
+  so the request now 400s. The `InferenceParameters` / `ModelParameters` setters were already fixed in
+  this PR; this test builds raw JSON and bypassed them. A repo-wide sweep confirms it was the only
+  remaining `-1` on either de-sentinelled field.
+
+
 ### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
 
 Left over from the 2026-06-20 code audit (18/18 findings fixed in PRs #258/#260, regression tests in
@@ -34,8 +214,9 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
 - **Future *output* modalities (audio / image) — design note, not yet actionable.** llama.cpp's server
   produces text (plus embeddings/rerank) only; the integration points are isolated (a new
   `OpenAiBackend.stream*` primitive + `OpenAiSseFormatter.*Chunk` per modality). Two future hooks:
-  OuteTTS behind an `/v1/audio/speech`-style route; proxying image/audio generation to an external
-  model. Keep chunk formatters modality-neutral.
+  the existing `TextToSpeech` (Qwen3-TTS since llama.cpp b10270 — OuteTTS no longer exists upstream)
+  behind an `/v1/audio/speech`-style route; proxying image/audio generation to an external model.
+  Keep chunk formatters modality-neutral.
 - **Incremental tool-call streaming on the alternative surfaces.** Ollama/Anthropic/Responses emit each
   tool call whole at end-of-stream (`ToolCallDeltaAccumulator`); revisit only if a client needs
   incremental `input_json_delta` / `function_call_arguments.delta` fidelity.
@@ -116,6 +297,50 @@ upstream PR #22393 — it drops automatically when that merges.)
 ### llama.cpp upstream feature exposure (queued, deferred by policy)
 
 These are JNI plumbing items for upstream API additions. Policy: add only after a real user request — they are mostly relevant to specific model families or specialized workflows.
+
+- **Video input (`ContentPart.videoFile(...)`).** `mtmd` has had an end-to-end video path since
+  llama.cpp **b9562** (#24269) — `mtmd_helper_video_init_params` was already present at the previous
+  pin, b10456. What **b10647** (#24318, commit `f29551215`) added is the surfacing: a fourth
+  `mtmd_helper_init_opt` parameter on the bitmap/tokenize helpers and the CLI flags `--video-fps`,
+  `--video-timestamp-interval`, `--video-ffmpeg-dir`. Older notes cite b10649 for all of it because
+  that was the *bump step* that carried it; b10647 is the tag that introduced it, and the video path
+  itself is older still.
+
+  **The three flags are now exposed** as `ModelParameters.setVideoFps` /
+  `setVideoTimestampInterval` / `setVideoFfmpegDir`. They were initially refused at the b10649 bump
+  as "inert without a way to submit a video"; a later audit showed that reasoning was wrong on two
+  counts. First, they are not inert: `server_context::load_model` copies them into its own
+  `init_opt` when the projector loads, and that `init_opt` is what `server-context.cpp` passes to
+  `process_mtmd_prompt` on the task path this binding uses — so they take effect for any media the
+  caller attaches. Second, video decoding is genuinely compiled in: `MTMD_VIDEO` defaults to `ON`
+  (it needs only `LLAMA_SUBPROCESS`, also `ON`), and the shipped `libjllama.so` carries the ffmpeg
+  invocation strings. `setVideoFfmpegDir` is the one that matters most, because upstream otherwise
+  looks the binaries up on `PATH`, which a JVM process frequently does not have them on.
+
+  What is still missing is the content part. Upstream's wire type is
+  `{"type":"input_video","input_video":{"data":"<base64>"}}`, handled in
+  `oaicompat_chat_params_parse` and gated on `allow_video = mtmd_helper_support_video(mctx)`. Note it
+  calls `handle_media(..., accept_base64_uri = false)`, i.e. **raw base64 only** — unlike `image_url`,
+  it will not take a `data:` URI, so `ContentPart.videoFile(Path)` must emit the bare base64 payload,
+  not the `data:video/mp4;base64,...` form the image factories build.
+
+  (An earlier draft of this entry suggested smuggling video through
+  `ContentPart.imageBytes(bytes, "video/mp4")`, on the reasoning that `mtmd_helper_bitmap_init_from_buf`
+  sniffs the container. That is plausible — the `image_url` branch does pass
+  `accept_base64_uri = true` and does not validate the MIME string — but it is **untested here** and
+  additionally gated on `allow_image`, so it is not documented as a supported route.)
+
+  Remaining work: the factory, a bytes overload, and an integration test. Note the runtime cost:
+  upstream **shells out to `ffmpeg`/`ffprobe`**, so a consumer needs those binaries, which makes the
+  feature untestable on a CI runner without them.
+
+- **`--spec-synth-len` / `--spec-synth-rates` — deliberately NOT exposed, and this should stay that
+  way.** Added in b10649. Upstream's own help text marks both **"(benchmarking only)"**: they
+  synthesise fake per-position acceptance probabilities so the speculative-decoding harness can be
+  measured without a real draft model. They are an instrument for benchmarking llama.cpp itself, not a
+  knob for an application, and exposing them as library API would invite callers to "tune" numbers
+  that fabricate rather than measure acceptance. Anyone who genuinely wants them already has them:
+  `NativeServer` forwards raw llama-server argv verbatim.
 
 - **Expose `--spec-draft-backend-sampling` toggle via `ModelParameters.setSpecDraftBackendSampling(boolean)`.** Added in b9437 (env `LLAMA_ARG_SPEC_DRAFT_BACKEND_SAMPLING`). Backend sampling for the speculative draft is enabled by default upstream but auto-disabled on `LLAMA_SPLIT_MODE_TENSOR` setups; an explicit Java-side setter lets callers force-disable it for benchmarking or for backends with sampler bugs. Speculative-decoding power users.
 
@@ -222,6 +447,152 @@ the load-time failure class is already covered, and a slow smoke tends to get ma
 **Not yet observed green in CI** — the job and the two sibling-repo smokes landed in one change set
 and have only run locally so far.
 
+### Test-coverage gaps found by the b10679 mutation audit (PR #403)
+
+> **Update.** The `IdleSleepWakeIntegrationTest` added to close the `wake_and_post` gap immediately
+> found a real JVM crash (SIGSEGV on all six CI platforms) — see the CHANGELOG "Fixed" entry. Both
+> facets are fixed in that PR via the `wake_server()` choke point. This is the clearest evidence for
+> the entry below about a floor on executed tests: the defect had been reachable from public API for
+> as long as `--sleep-idle-seconds` has existed, and nothing ran that path.
+
+A mutation pass over the branch applied 27 mutations and 26 went red on the test that claims them,
+so no test here passes with its subject deleted. What it did find is code with **no runnable guard**.
+Two of the three were closed in that PR (a model-free `jsonSchemaToGrammar` test in
+`NativeLibraryLoadSmokeTest`, and `IdleSleepWakeIntegrationTest` for the `wake_and_post` path);
+these are what remains.
+
+- **`patches/0010` has no guard that runs on a model-free host.** Reverting the patch's
+  `(int)` cast in the fetched `tools/server/server-context.cpp` leaves `ctest` at a clean **520/520** —
+  the always-run `C++ Tests` job cannot see the regression at all. The only guard is
+  `NativeServerAttachIntegrationTest.models_reportNumericVocabType`, which is model-gated; it *does*
+  run on all six CI Java jobs (the full model set is downloaded there), so this is a coverage gap
+  rather than a shipping risk today. It becomes one the moment a platform stops downloading models.
+  `CommonJsonEnumTrap` in `test_json_helpers.cpp` cannot help — it builds its own JSON literals and
+  calls no project code. A direct unit test is impossible as things stand: `get_res_model_info` is
+  `static` inside `server-context.cpp` and unreachable from `jllama_test`. Cheapest real fix is a
+  CI assertion in the `C++ Tests` job that the patch is present in the fetched tree
+  (`grep -c '(int) meta.model_vocab_type'` plus a non-empty `git -C _deps/llama.cpp-src diff`).
+
+- **`TestConstantsTest.theShippedModelConstantsGoThroughTheResolver` is vacuous when the fixture is
+  absent.** Mutating `MODEL_PATH = resolveModelPath("models/…")` to the bare literal leaves the test
+  green with `models/` empty, and only goes red once the GGUF actually exists. In CI that is the
+  normal case (`validate-models.sh` hard-fails first), so residual risk is low — but the two
+  `src/test/resources/...` constants resolve from the module basedir either way, so their wrapper is
+  undetectable **even in CI**. Fix: assert the wiring structurally rather than by value — reflect
+  over the `String` constants and require each `models/…`-shaped one to equal
+  `resolveModelPath(literal)` against a `@TempDir` fixture planted at the reactor root, so the
+  assertion does not depend on a real model being present.
+
+- **Nothing asserts a floor on the number of tests actually executed.** A class-level `@BeforeAll`
+  assumption makes Surefire record `tests="0" errors="0" skipped="0"` — the class contributes no
+  entries at all, so "did the run skip anything?" is structurally blind to it. This is exactly how
+  the model-gated suite stayed silently muted for months. Summing `tests=` across
+  `target/surefire-reports/TEST-*.xml` in each `test-java-*` job and failing below a pinned minimum
+  is the one check that would have caught it directly, and it is cheap.
+
+### Release/build robustness gaps found by the b10679 audit (PR #403)
+
+Both are **pre-existing** and orthogonal to a version bump, so they were recorded rather than folded
+into that PR.
+
+- **Two `all-*-aarch64` fat jars are attached to releases with no smoke job.**
+  `.github/package-fatjars.sh` emits four OS/arch fat jars (`linux-x86-64`, `linux-aarch64`,
+  `windows-x86-64`, `windows-aarch64`), all uploaded as `llama-fatjars` and attached by
+  `github-release-signed` / `github-snapshot`. Only the two **x86-64** ones are smoked
+  (`smoke-fatjar-linux`, `smoke-fatjar-windows`); grepping `publish.yml` for `all-linux-aarch64` or
+  `all-windows-aarch64` returns nothing, so neither is ever downloaded or launched.
+
+  That directly violates the cross-repo rule in
+  [`../workspace/policies/fat-jar-release-assets.md`](../workspace/policies/fat-jar-release-assets.md)
+  — *"No release asset is attached that CI has not run"* — which exists because a corrupt macOS dylib
+  shipped in three releases under a fully green pipeline. The fix is cheap: the workflow **already**
+  uses the free ARM runners elsewhere (`ubuntu-24.04-arm` for the aarch64 CPU and Vulkan builds,
+  `windows-11-arm` for the Windows arm64 build), so `smoke-fatjar-linux-aarch64` and
+  `smoke-fatjar-windows-arm64` can mirror the existing smoke jobs and join both publish jobs'
+  `needs:`. Not done in the bump PR because it widens a version bump into CI work and would gate that
+  PR on a pre-existing defect if either jar turns out to be broken.
+
+- **The patch applier silently accepts a partially-reverted source tree.** The stamp file records the
+  checked-out llama.cpp commit plus each patch's SHA-256 — **nothing about the resulting file
+  contents**. Reverting one patched file after a successful apply leaves the stamp valid and the tree
+  still dirty (the other patched files are still modified), so the dirty-tree branch reports
+  "already applied — skipping", exits 0, and the build compiles unpatched code. Reproduction:
+
+  ```bash
+  # with the tree fully patched and the stamp written:
+  git -C <llama.cpp-src> checkout -- common/peg-parser.cpp     # drops patch 0011's fix
+  cmake -DPATCH_DIR=... -DLLAMA_SRC=... -P llama/cmake/apply-llama-patches.cmake
+  # -> "8 patch(es) already applied — skipping", exit 0, patch NOT restored
+  ```
+
+  Every other path is correctly fail-loud (committed-patch state, stamp/HEAD mismatch on a dirty tree,
+  and a non-git-worktree re-run all exit 1). The fix is a content oracle in the manifest — cheapest is
+  to append `git -C <src> diff --no-color | sha256`, or per-patched-file blob hashes — so a reverted or
+  hand-edited file invalidates the stamp. **CI is unaffected** (every job configures into a fresh build
+  directory); this only bites a local reconfigure, which is why it was not rushed. Note the stamp
+  format change will make every existing local build dir abort with the applier's
+  "configure into a fresh build directory" message — that is the designed fail-loud path, not a
+  regression.
+
+### Test-coverage debt found during the b10649 review (PR #403)
+
+Each item below was verified against pristine upstream tags and is real, but none is a regression
+introduced by the version bump — they were deferred to keep that PR landable.
+
+- **`ModelParameters` emits five CLI flags the server arg parser rejects, so any caller of them
+  cannot load a model.** `--dump-kv-cache`, `--hf-repo-v` and `--hf-file-v` no longer exist anywhere
+  in llama.cpp (absent at both b10456 and b10649); `--grp-attn-n` and `--grp-attn-w` still exist but
+  are `set_examples({LLAMA_EXAMPLE_COMPLETION, ...})`, so `add_opt` never registers them for
+  `LLAMA_EXAMPLE_SERVER` — the example jllama parses with. An unregistered flag is not ignored:
+  `arg.cpp` throws, `common_params_parse` returns false, and `load_model_impl` throws
+  `LlamaException("Failed to parse model parameters")`. Four existing tests pin the dead literals and
+  would pass forever. Fix: deprecate the five members the way this PR handled
+  `withTfsZ`/`withPenalizeNl` (keep source compatibility, never write the map), and add a hermetic
+  `jllama_test` contract test that walks `common_params_parser_init(params, LLAMA_EXAMPLE_SERVER)`'s
+  `ctx.options` (upstream's own `test-arg-parser` pattern; the symbols already link into
+  `jllama_test`) and asserts every flag `ModelParameters`/`ModelFlag` can emit is in that set,
+  excluding only `--vocab-only`, which `strip_flag_from_argv` removes on purpose. A grep-based sweep
+  is **not** sufficient — it is structurally blind to example scoping, which is exactly how
+  `--grp-attn-w` hides.
+
+- **`acquire_jllama_context_impl` / `release_jllama_context_impl` / `jllama_context_guard` have no
+  model-free unit guard.** These three (`jni_helpers.hpp`) are the whole `close()`-vs-inference
+  use-after-free defence, and grep finds zero references across all seven `test_*.cpp` files, while
+  their sibling `get_jllama_context_impl` has three tests. A dropped `fetch_add`, or a guard whose
+  destructor stops calling release, produces a use-after-free during `close()` or a `close()` that
+  hangs forever. `LlamaModelTest#testCloseDuringInference` covers the mechanism end to end but only
+  bluntly. They are absent from `jllama_test` only because they are `inline` and never odr-used
+  there: `g_ctx_mutex` is `extern` in the header and defined in `jllama.cpp`, which `jllama_test`
+  does not compile — a test-local definition at global scope unblocks it.
+
+- **`OSInfo`: the `archMapping` alias branch is untested.** `getArchName()`'s map lookup has no
+  assertion anywhere — the two test call sites either take the override early-return or only assert
+  non-empty — so a lost `amd64 -> x86_64` entry would send `LlamaLoader` to a resource directory
+  that does not exist. Cheap to close: set `os.arch`, assert the non-identity aliases only (identity
+  entries such as `s390x` are behaviourally redundant with the `\W`-stripping fallback).
+
+- **`LlamaTrainer`'s end-to-end path runs on no CI platform.** `LlamaTrainerIntegrationTest`
+  self-skips everywhere: `net.ladenthin.llama.train.model` is set by no job and its model is in no
+  `.github/models.csv` row, so `validate-models.{sh,bat}` does not treat it as required. The C++ half
+  is now mitigated (`test_tts_params.cpp`'s `TrainParams` + `ResolveCpuParams` suites), but nothing
+  exercises the Java → JNI → native trainer round trip. Adding a small training model to `models.csv`
+  plus the matching property to the Java test jobs would close it.
+
+- **`LlamaLoader`'s jar-extraction internals need synthetic jar fixtures.** `readBackendManifest`,
+  `tryLoadBackend`, `extractFile`, `moveIntoPlace`, `cleanPath` and `hasNativeLib` are named in no
+  test; `BackendManifestLoadTest` and `LlamaLoaderTest` drive the class only from outside via system
+  properties. Covering the multi-backend fat-jar path (per-backend temp subdir extraction,
+  manifest-extras-first ordering, `UnsatisfiedLinkError` fallback to the next backend and then to the
+  default CPU natives) means building jars carrying a `jllama-backends.txt` and dummy payloads.
+
+- **`Java8CompatibilityHelper` is mostly dead code — decide delete vs. test.** Six of its seven
+  public methods have zero call sites repo-wide; the only live one is
+  `toString(ByteArrayOutputStream, Charset)`, used once in `ProcessRunner`. Writing tests for the
+  rest would pin dead code.
+
+- **`ContentPart.videoFile(...)` — see the video-input entry above** for the wire shape upstream
+  expects (`input_video`, raw base64, not a `data:` URI).
+
 ## Open — cross-cutting (slice for this repo)
 
 - **jqwik pin policy** — see [`../workspace/policies/jqwik-prompt-injection.md`](../workspace/policies/jqwik-prompt-injection.md). `jqwik.version ≤ 1.9.3` is mandatory.
@@ -255,6 +626,41 @@ and have only run locally so far.
 - **Cross-repo code-quality TODOs** — see [`../workspace/policies/code-quality-todos.md`](../workspace/policies/code-quality-todos.md) for the canonical `@VisibleForTesting` design-fit review, package hierarchy review, and class/method naming review. This repo has no `@VisibleForTesting` usages today; package and naming reviews remain open.
 
 ## Done (kept for history)
+
+### 2026-08-25 — the five gaps recorded during the b10618 bump, now fixed
+
+All five were found while bumping llama.cpp to b10618, recorded there as diagnoses rather than fixes
+(the bump commit had to stay a bump), and closed in a follow-up. Details in CLAUDE.md; one-liners:
+
+- **Model-gated Java tests silently self-skipped in CI** — Surefire's working directory is the
+  module basedir while the GGUF cache is restored to the reactor root, so every `models/…` path
+  resolved to nothing, every model-gated class aborted in `@BeforeAll`, and the job still went green.
+  Fixed with `TestConstants.resolveModelPath` / `resolveModelProperty` (accept either layout), routed
+  through every path constant and every `-Dnet.ladenthin.llama.*` fixture property, plus
+  `TestConstantsTest` pinning the resolver **and** the wiring. `llama-langchain4j` had the same
+  defect and got the same resolver as `TestModelPaths`. Verified end-to-end: with a placeholder at
+  `<repo>/models/`, `LlamaModelTest` reports `Skipped: 0` and actually attempts the load.
+- **`getMetrics()` payload contract drifted at b10408** — restored in the native layer instead of
+  bending the Java contract: `handleSlotAction(0, …)` now posts both `SERVER_TASK_TYPE_METRICS` and
+  `SERVER_TASK_TYPE_SLOT_GET` and merges them via the pure `server_metrics_to_json`. All three
+  consumers keep working unchanged; `value.ServerMetrics` additionally exposes the cache and
+  speculative-decoding counters that previously existed only in the Prometheus text.
+  `LlamaModelTest#testGetMetrics` now asserts the parsed shape rather than substrings (the old
+  assertion was satisfiable by the slot entries themselves), and `GET /slots` answers `[]` instead of
+  an empty body when the payload carries no `slots` key.
+- **`RouterClient` had no API-key support** — added `RouterClient(port, apiKey)` /
+  `RouterClient(host, port, apiKey)` sending `Authorization: Bearer <key>`; an empty key behaves like
+  none, `toString()` never prints it, `equals` includes it.
+- **`RouterClient.awaitModelLoaded` vs hidden router models** — the TODO's first suggestion (poll to
+  the timeout) was wrong: upstream filters hidden models out of `GET /models` permanently, so no
+  amount of polling observes one. Fixed the honest way — the "not listed" message now names the
+  `dedup-cache-models` cause and the javadoc documents the direct-request path.
+- **`apply-llama-patches.cmake` was not idempotent** — replaced per-patch reverse-checking with a
+  stamp file (llama.cpp commit + per-patch SHA-256) gated on git's clean/dirty state. A reconfigure
+  over a patched tree is now a no-op; a genuine mismatch fails with an accurate message instead of a
+  misleading "does not apply cleanly". Verified against the real build tree and a purpose-built
+  two-patches-one-file fixture that reproduces the old failure.
+
 
 ### 2026-07-05 feature wave (PR #298) + follow-ups
 

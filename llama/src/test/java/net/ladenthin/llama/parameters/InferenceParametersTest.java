@@ -782,8 +782,26 @@ public class InferenceParametersTest {
 
     @Test
     public void testSetDryPenaltyLastN() {
-        InferenceParameters params = new InferenceParameters("").withDryPenaltyLastN(-1);
-        assertThat(params.parameters.get("dry_penalty_last_n"), is("-1"));
+        InferenceParameters params = new InferenceParameters("").withDryPenaltyLastN(512);
+        assertThat(params.parameters.get("dry_penalty_last_n"), is("512"));
+    }
+
+    @Test
+    public void testSetDryPenaltyLastNRejectsMinusOne() {
+        // llama.cpp b10273 set the request schema's hard limits to [0, INT32_MAX]; -1 no longer means
+        // "the whole context", it makes the server reject the request.
+        assertThrows(IllegalArgumentException.class, () -> new InferenceParameters("").withDryPenaltyLastN(-1));
+    }
+
+    @Test
+    public void testWithRepeatLastNRejectsMinusOne() {
+        assertThrows(IllegalArgumentException.class, () -> new InferenceParameters("").withRepeatLastN(-1));
+    }
+
+    @Test
+    public void testWithRepeatLastNAcceptsZeroAndPositive() {
+        assertThat(new InferenceParameters("").withRepeatLastN(0).parameters.get("repeat_last_n"), is("0"));
+        assertThat(new InferenceParameters("").withRepeatLastN(64).parameters.get("repeat_last_n"), is("64"));
     }
 
     @Test
@@ -834,7 +852,7 @@ public class InferenceParametersTest {
         assertThat(params.withDryMultiplier(0.8f), is(not(sameInstance(params))));
         assertThat(params.withDryBase(1.75f), is(not(sameInstance(params))));
         assertThat(params.withDryAllowedLength(2), is(not(sameInstance(params))));
-        assertThat(params.withDryPenaltyLastN(-1), is(not(sameInstance(params))));
+        assertThat(params.withDryPenaltyLastN(512), is(not(sameInstance(params))));
         assertThat(params.withDrySequenceBreakers("\n"), is(not(sameInstance(params))));
     }
 }

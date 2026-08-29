@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+
+SPDX-License-Identifier: MIT
+-->
+
 # `common_params_parse` can silently discard the caller's argv on Windows
 
 Technical findings for llama.cpp. Everything below was verified against

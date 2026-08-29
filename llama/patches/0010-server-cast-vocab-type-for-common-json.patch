@@ -1,0 +1,16 @@
+diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
+index 15fa8a498..f2fbe2be8 100644
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -4439,7 +4439,10 @@ static json get_res_model_info(const server_context_meta & meta) {
+         {"created",  std::time(0)},
+         {"owned_by", "llamacpp"},
+         {"meta",     {
+-            {"vocab_type",  meta.model_vocab_type},
++            // an unscoped enum has no common_json_value ctor of its own (the integral one is
++            // is_integral-gated, which excludes enums), so it binds to common_json_value(bool)
++            // and serialises as true/false -- cast it to keep the numeric vocab type on the wire
++            {"vocab_type",  (int) meta.model_vocab_type},
+             {"n_vocab",     meta.model_vocab_n_tokens},
+             {"n_ctx",       meta.slot_n_ctx},
+             {"n_ctx_train", meta.model_n_ctx_train},

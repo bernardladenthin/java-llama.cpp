@@ -23,7 +23,7 @@ import dev.langchain4j.model.chat.request.json.JsonStringSchema;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.output.FinishReason;
 import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.nio.file.Path;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.parameters.ModelParameters;
 import org.junit.jupiter.api.AfterAll;
@@ -49,9 +49,10 @@ class JllamaToolCallingIntegrationTest {
 
     @BeforeAll
     static void loadModel() {
-        String path = System.getProperty(PROP_TOOL_MODEL);
-        Assumptions.assumeTrue(path != null && !path.isEmpty(), "tool model path property not set");
-        Assumptions.assumeTrue(Files.exists(Paths.get(path)), "model file not present: " + path);
+        Path resolved = TestModelPaths.fromProperty(PROP_TOOL_MODEL);
+        Assumptions.assumeTrue(resolved != null, "tool model path property not set");
+        Assumptions.assumeTrue(Files.exists(resolved), "model file not present: " + resolved);
+        String path = resolved.toString();
         model = new LlamaModel(new ModelParameters()
                 .setModel(path)
                 .setCtxSize(8192)

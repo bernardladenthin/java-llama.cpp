@@ -53,7 +53,7 @@ final class OpenAiRequestMapper {
         // Tools are chat-only.
         JsonNode tools = request.path("tools");
         if (tools.isArray() && tools.size() > 0) {
-            params = params.withToolsJson(tools.toString()).withUseChatTemplate(true);
+            params = params.withToolsJson(tools.toString());
             JsonNode toolChoice = request.path("tool_choice");
             if (toolChoice.isTextual()) {
                 params = params.withToolChoice(toolChoice.asText());

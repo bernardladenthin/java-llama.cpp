@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
                 + "the upstream router wire format: list/find parsing, load/unload request "
                 + "bodies, error surfacing with the router's error body, and the "
                 + "awaitModelLoaded state machine (poll-until-loaded, fail-fast on failed "
-                + "worker or unknown model, timeout).")
+                + "worker or unknown model, timeout), and the optional API-key bearer header.")
 public class RouterClientTest {
 
     private HttpServer server;
@@ -43,6 +43,9 @@ public class RouterClientTest {
     /** Counts GET /models calls so await tests can serve a status sequence. */
     private final AtomicInteger modelsCalls = new AtomicInteger();
 
+    /** Authorization header seen by the stub on the most recent request; "" when absent. */
+    private final AtomicReference<String> lastAuthHeader = new AtomicReference<>("");
+
     private final AtomicReference<String> lastLoadBody = new AtomicReference<>("");
     private final AtomicReference<String> lastUnloadBody = new AtomicReference<>("");
 
@@ -50,6 +53,8 @@ public class RouterClientTest {
     public void startStub() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/models", exchange -> {
+            String auth = exchange.getRequestHeaders().getFirst("Authorization");
+            lastAuthHeader.set(auth == null ? "" : auth);
             String path = exchange.getRequestURI().getPath();
             if ("/models/load".equals(path)) {
                 lastLoadBody.set(readBody(exchange));
@@ -210,5 +215,65 @@ public class RouterClientTest {
 
         assertThat(thrown.getMessage(), containsString("did not reach LOADED"));
         assertThat(thrown.getMessage(), containsString("loading"));
+    }
+
+    @Test
+    public void unlistedModelMessageNamesTheHiddenCacheModelCause() {
+        // A model hidden by a preset with dedup-cache-models (upstream #27346, b10505) never shows
+        // up in GET /models even though it loads and serves, so the message must not send the
+        // caller off to double-check --models-dir alone.
+        modelsBody.set("{\"data\":[]}");
+
+        IllegalStateException thrown =
+                assertThrows(IllegalStateException.class, () -> client.awaitModelLoaded("qwen", 30_000L));
+
+        assertThat(thrown.getMessage(), containsString("dedup-cache-models"));
+        assertThat(thrown.getMessage(), containsString("--models-dir"));
+    }
+
+    @Test
+    public void noAuthorizationHeaderWithoutAnApiKey() throws IOException {
+        client.listModels();
+        assertThat(lastAuthHeader.get(), is(""));
+    }
+
+    @Test
+    public void apiKeyIsSentAsABearerTokenOnReads() throws IOException {
+        RouterClient authed = new RouterClient("127.0.0.1", server.getAddress().getPort(), "secret");
+        authed.listModels();
+        assertThat(lastAuthHeader.get(), is("Bearer secret"));
+    }
+
+    @Test
+    public void apiKeyIsSentAsABearerTokenOnWrites() throws IOException {
+        RouterClient authed = new RouterClient(server.getAddress().getPort(), "secret");
+        authed.loadModel("qwen");
+        assertThat(lastAuthHeader.get(), is("Bearer secret"));
+        authed.unloadModel("qwen");
+        assertThat(lastAuthHeader.get(), is("Bearer secret"));
+    }
+
+    @Test
+    public void anEmptyApiKeySendsNoHeader() throws IOException {
+        // Distinguishes "" from a real credential: an empty key must behave exactly like none,
+        // not send "Bearer ".
+        new RouterClient("127.0.0.1", server.getAddress().getPort(), "").listModels();
+        assertThat(lastAuthHeader.get(), is(""));
+    }
+
+    @Test
+    public void clientsDifferingOnlyInApiKeyAreNotEqual() {
+        int port = server.getAddress().getPort();
+        assertThat(
+                new RouterClient("127.0.0.1", port, "a").equals(new RouterClient("127.0.0.1", port, "b")), is(false));
+        assertThat(new RouterClient("127.0.0.1", port, "a").equals(new RouterClient("127.0.0.1", port, "a")), is(true));
+        assertThat(new RouterClient(port).equals(new RouterClient("127.0.0.1", port)), is(true));
+    }
+
+    @Test
+    public void toStringNeverLeaksTheApiKey() {
+        assertThat(
+                new RouterClient("127.0.0.1", 8080, "super-secret").toString(),
+                is("RouterClient(http://127.0.0.1:8080)"));
     }
 }

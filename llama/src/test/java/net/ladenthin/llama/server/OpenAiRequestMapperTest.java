@@ -105,9 +105,10 @@ public class OpenAiRequestMapperTest {
         assertThat(out.path("tools").isArray(), is(true));
         assertThat(out.path("tools").get(0).path("function").path("name").asText(), is("read_file"));
         assertThat(out.path("tool_choice").asText(), is("auto"));
-        // withUseChatTemplate(true) serializes as the native "use_jinja" flag, which enables the
-        // model's Jinja chat template (required for native tool-call parsing, e.g. Gemma 4 --jinja).
-        assertThat(out.path("use_jinja").asBoolean(), is(true));
+        // No "use_jinja" is sent: jinja is a load-time option (ModelParameters.enableJinja() /
+        // --jinja), and upstream never reads a "use_jinja" key from a request body -- it would be
+        // discarded silently. Native tool-call parsing depends on how the model was loaded.
+        assertThat(out.has("use_jinja"), is(false));
     }
 
     @Test

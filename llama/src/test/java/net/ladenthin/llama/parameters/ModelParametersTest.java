@@ -25,6 +25,7 @@ import net.ladenthin.llama.args.NumaStrategy;
 import net.ladenthin.llama.args.PoolingType;
 import net.ladenthin.llama.args.RopeScalingType;
 import net.ladenthin.llama.args.Sampler;
+import net.ladenthin.llama.args.TensorReadLazyMode;
 import org.junit.jupiter.api.Test;
 
 @ClaudeGenerated(
@@ -84,7 +85,48 @@ public class ModelParametersTest {
     }
 
     // -------------------------------------------------------------------------
-    // setRepeatLastN — validation (>= -1)
+    // setCpuMoeLayers / setCpuFfnLayers — the CPU-offload pair. --n-cpu-ffn is new in llama.cpp
+    // b10649; --n-cpu-moe has existed upstream since b6089 but was never exposed here until now.
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testSetCpuMoeLayersRendersTheUpstreamFlag() {
+        ModelParameters p = new ModelParameters().setCpuMoeLayers(12);
+        assertThat(p.parameters.get("--n-cpu-moe"), is("12"));
+    }
+
+    @Test
+    public void testSetCpuFfnLayersRendersTheUpstreamFlag() {
+        ModelParameters p = new ModelParameters().setCpuFfnLayers(8);
+        assertThat(p.parameters.get("--n-cpu-ffn"), is("8"));
+    }
+
+    @Test
+    public void testCpuOffloadLayersAcceptZeroMeaningKeepEverythingOnTheGpu() {
+        ModelParameters p = new ModelParameters().setCpuMoeLayers(0).setCpuFfnLayers(0);
+        assertThat(p.parameters.get("--n-cpu-moe"), is("0"));
+        assertThat(p.parameters.get("--n-cpu-ffn"), is("0"));
+    }
+
+    @Test
+    public void testCpuOffloadLayersRejectNegative() {
+        // Upstream throws invalid_argument on a negative value, which would surface as a model-load
+        // failure with no indication of the cause; reject it here where the message can name it.
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setCpuMoeLayers(-1));
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setCpuFfnLayers(-1));
+    }
+
+    @Test
+    public void testCpuOffloadLayersAreIndependentOfEachOther() {
+        // They target different weight sets (MoE experts vs dense FFN) and write different flags, so
+        // setting one must not disturb the other -- unlike the mmproj device/offload pair.
+        ModelParameters p = new ModelParameters().setCpuMoeLayers(4).setCpuFfnLayers(9);
+        assertThat(p.parameters.get("--n-cpu-moe"), is("4"));
+        assertThat(p.parameters.get("--n-cpu-ffn"), is("9"));
+    }
+
+    // -------------------------------------------------------------------------
+    // setRepeatLastN — validation (>= 0)
     // -------------------------------------------------------------------------
 
     @Test
@@ -94,9 +136,10 @@ public class ModelParametersTest {
     }
 
     @Test
-    public void testSetRepeatLastNValidMinusOne() {
-        ModelParameters p = new ModelParameters().setRepeatLastN(-1);
-        assertThat(p.parameters.get("--repeat-last-n"), is("-1"));
+    public void testSetRepeatLastNRejectsMinusOne() {
+        // llama.cpp b10273 dropped the -1 = ctx_size sentinel; common_params_parse now throws on a
+        // negative value, so the model would fail to load. Reject it here where the message can say why.
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setRepeatLastN(-1));
     }
 
     @Test
@@ -111,13 +154,19 @@ public class ModelParametersTest {
     }
 
     // -------------------------------------------------------------------------
-    // setDryPenaltyLastN — validation (>= -1)
+    // setDryPenaltyLastN — validation (>= 0 since llama.cpp b10273)
     // -------------------------------------------------------------------------
 
     @Test
-    public void testSetDryPenaltyLastNValidMinusOne() {
-        ModelParameters p = new ModelParameters().setDryPenaltyLastN(-1);
-        assertThat(p.parameters.get("--dry-penalty-last-n"), is("-1"));
+    public void testSetDryPenaltyLastNRejectsMinusOne() {
+        // Same b10273 change as setRepeatLastN: --dry-penalty-last-n -1 makes common_params_parse throw.
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setDryPenaltyLastN(-1));
+    }
+
+    @Test
+    public void testSetDryPenaltyLastNValidPositive() {
+        ModelParameters p = new ModelParameters().setDryPenaltyLastN(256);
+        assertThat(p.parameters.get("--dry-penalty-last-n"), is("256"));
     }
 
     @Test
@@ -442,6 +491,139 @@ public class ModelParametersTest {
     }
 
     @Test
+    public void testSetMmprojDevice() {
+        ModelParameters p = new ModelParameters().setMmprojDevice("CUDA1");
+        assertThat(p.parameters.get("--mmproj-device"), is("CUDA1"));
+    }
+
+    @Test
+    public void testSetMmprojDeviceNoneIsPassedThroughVerbatim() {
+        // "none" is upstream's sentinel for "do not offload the projector"; it must reach the
+        // native parser as-is rather than being translated into --no-mmproj-offload here.
+        ModelParameters p = new ModelParameters().setMmprojDevice("none");
+        assertThat(p.parameters.get("--mmproj-device"), is("none"));
+        assertThat(p.parameters, not(hasKey("--no-mmproj-offload")));
+    }
+
+    // -------------------------------------------------------------------------
+    // Video decoding — the mmproj-gated knobs added in llama.cpp b10649
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testVideoDecodingFlagsRenderTheUpstreamNames() {
+        ModelParameters p = new ModelParameters()
+                .setVideoFps(2.5f)
+                .setVideoTimestampInterval(1500L)
+                .setVideoFfmpegDir("/opt/ffmpeg/bin");
+        assertThat(p.parameters.get("--video-fps"), is("2.5"));
+        assertThat(p.parameters.get("--video-timestamp-interval"), is("1500"));
+        assertThat(p.parameters.get("--video-ffmpeg-dir"), is("/opt/ffmpeg/bin"));
+    }
+
+    @Test
+    public void testVideoFpsNonPositiveSelectsUpstreamNativeFpsSentinel() {
+        // mtmd-helper.h documents fps_target as "<= 0 means use the video's native fps", and the
+        // decoder resolves it as `fps_target = arg > 0 ? arg : orig_fps`. Rejecting it here would
+        // delete the only way to say "match this clip's own rate" -- the target is fixed when the
+        // projector loads, long before a clip is attached. Same rule as --mmproj-device "none": an
+        // upstream sentinel is passed through verbatim.
+        assertThat(new ModelParameters().setVideoFps(0.0f).parameters.get("--video-fps"), is("0.0"));
+        assertThat(new ModelParameters().setVideoFps(-1.0f).parameters.get("--video-fps"), is("-1.0"));
+    }
+
+    @Test
+    public void testVideoFpsRejectsNonFiniteValues() {
+        // Infinity survives std::stof and passes the decoder's `> 0` test, then reaches ffmpeg as
+        // the filter string "fps=inf". NaN takes the native-fps branch harmlessly but is always a
+        // caller bug.
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoFps(Float.NaN));
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoFps(Float.POSITIVE_INFINITY));
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoFps(Float.NEGATIVE_INFINITY));
+    }
+
+    @Test
+    public void testVideoTimestampIntervalRejectsNegativeValues() {
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setVideoTimestampInterval(-1L));
+        // Zero is legal and is upstream's "no timestamps" sentinel (mtmd-helper.h: "<= 0 means no
+        // timestamp"); the decoder gates emission on `timestamp_interval_ms > 0`. Negative is
+        // behaviourally identical upstream, so refusing it costs nothing and keeps the API honest.
+        ModelParameters p = new ModelParameters().setVideoTimestampInterval(0L);
+        assertThat(p.parameters.get("--video-timestamp-interval"), is("0"));
+    }
+
+    @Test
+    public void testVideoTimestampIntervalRejectsValuesAboveIntMax() {
+        // The upstream field is int64_t but the flag is registered with an int handler, dispatched
+        // through std::stoi -- so a larger value throws out_of_range, common_params_parse returns
+        // false, and the caller sees only "Failed to parse model parameters", naming neither the
+        // flag nor the reason.
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> new ModelParameters().setVideoTimestampInterval(Integer.MAX_VALUE + 1L));
+        // INT_MAX itself is the largest value std::stoi accepts, so it must still render; without
+        // this the bound could be tightened to >= and still pass.
+        ModelParameters p = new ModelParameters().setVideoTimestampInterval(Integer.MAX_VALUE);
+        assertThat(p.parameters.get("--video-timestamp-interval"), is("2147483647"));
+    }
+
+    @Test
+    public void testMmprojDeviceClearsOnlyTheContradictoryOffloadFlag() {
+        // --mmproj-device <named> sets (use_gpu=true, device=named); --no-mmproj-offload sets
+        // use_gpu=false. Together the result depends on argv order, and ours is HashMap-rendered,
+        // so the flag must go.
+        ModelParameters deviceLast =
+                new ModelParameters().setMmprojOffload(false).setMmprojDevice("CUDA1");
+        assertThat(deviceLast.parameters.get("--mmproj-device"), is("CUDA1"));
+        assertThat(deviceLast.parameters, not(hasKey("--no-mmproj-offload")));
+
+        // ... but --mmproj-offload agrees with a named device: both orders give (true, CUDA1), so
+        // dropping either would discard a real multi-GPU pin for no reason.
+        ModelParameters agreeing = new ModelParameters().setMmprojOffload(true).setMmprojDevice("CUDA1");
+        assertThat(agreeing.parameters.get("--mmproj-device"), is("CUDA1"));
+        assertThat(agreeing.parameters, hasKey("--mmproj-offload"));
+
+        // "none" is the exception: it sets use_gpu=false, so it does contradict --mmproj-offload.
+        ModelParameters none = new ModelParameters().setMmprojOffload(true).setMmprojDevice("none");
+        assertThat(none.parameters.get("--mmproj-device"), is("none"));
+        assertThat(none.parameters, not(hasKey("--mmproj-offload")));
+
+        // ... but "none" AGREES with --no-mmproj-offload: (false, null) in either order. This is the
+        // fourth combination, and it must survive -- exactly one flag is contradicted by each device
+        // value, never both.
+        ModelParameters noneAgreeing =
+                new ModelParameters().setMmprojOffload(false).setMmprojDevice("none");
+        assertThat(noneAgreeing.parameters.get("--mmproj-device"), is("none"));
+        assertThat(noneAgreeing.parameters, hasKey("--no-mmproj-offload"));
+    }
+
+    @Test
+    public void testMmprojOffloadClearsOnlyAContradictoryDevice() {
+        // Disabling offload contradicts any device name -> last call wins, device goes.
+        ModelParameters disabled =
+                new ModelParameters().setMmprojDevice("CUDA1").setMmprojOffload(false);
+        assertThat(disabled.parameters, hasKey("--no-mmproj-offload"));
+        assertThat(disabled.parameters, not(hasKey("--mmproj-device")));
+
+        // Enabling it does NOT: (true, CUDA1) either way, so the pin survives.
+        ModelParameters enabled = new ModelParameters().setMmprojDevice("CUDA1").setMmprojOffload(true);
+        assertThat(enabled.parameters, hasKey("--mmproj-offload"));
+        assertThat(enabled.parameters.get("--mmproj-device"), is("CUDA1"));
+
+        // Except against "none", which means use_gpu=false.
+        ModelParameters noneThenEnable =
+                new ModelParameters().setMmprojDevice("none").setMmprojOffload(true);
+        assertThat(noneThenEnable.parameters, hasKey("--mmproj-offload"));
+        assertThat(noneThenEnable.parameters, not(hasKey("--mmproj-device")));
+    }
+
+    @Test
+    public void testSetMmprojDeviceIsIndependentOfTheMainModelDevices() {
+        ModelParameters p = new ModelParameters().setDevices("CUDA0").setMmprojDevice("CUDA1");
+        assertThat(p.parameters.get("--device"), is("CUDA0"));
+        assertThat(p.parameters.get("--mmproj-device"), is("CUDA1"));
+    }
+
+    @Test
     public void testEnableMmprojOffload() {
         ModelParameters p = new ModelParameters().enableMmprojOffload();
         assertThat(p.parameters, hasKey("--mmproj-offload"));
@@ -506,9 +688,22 @@ public class ModelParametersTest {
     }
 
     @Test
-    public void testSetSleepIdleSecondsZero() {
-        ModelParameters p = new ModelParameters().setSleepIdleSeconds(0);
-        assertThat(p.parameters.get("--sleep-idle-seconds"), is("0"));
+    public void testSetSleepIdleSecondsDisabled() {
+        // -1 is upstream's documented "disabled" value and must pass through.
+        ModelParameters p = new ModelParameters().setSleepIdleSeconds(-1);
+        assertThat(p.parameters.get("--sleep-idle-seconds"), is("-1"));
+    }
+
+    @Test
+    public void testSetSleepIdleSecondsRejectsTheValuesUpstreamRejects() {
+        // Upstream's handler throws on 0 and on anything below -1, which aborts the whole argv parse
+        // and reaches the caller only as "Failed to parse model parameters". Reject here instead, so
+        // the message names the flag. This test replaced one that asserted 0 serialises to "0" --
+        // it pinned a value the server cannot accept.
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setSleepIdleSeconds(0));
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setSleepIdleSeconds(-2));
+        // The boundary itself must stay valid, so the guard cannot drift to `< 0`.
+        assertThat(new ModelParameters().setSleepIdleSeconds(-1).parameters.get("--sleep-idle-seconds"), is("-1"));
     }
 
     // -------------------------------------------------------------------------
@@ -527,5 +722,45 @@ public class ModelParametersTest {
         ModelParameters p = new ModelParameters().setClearIdle(false);
         assertThat(p.parameters, hasKey("--no-cache-idle-slots"));
         assertThat(p.parameters, not(hasKey("--cache-idle-slots")));
+    }
+
+    // -------------------------------------------------------------------------
+    // setKvUnifiedPerSlot / setTensorReadLazy (llama.cpp b10679)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testSetKvUnifiedPerSlot() {
+        ModelParameters p = new ModelParameters().setKvUnifiedPerSlot(4096);
+        assertThat(p.parameters.get("--kv-unified-per-slot"), is("4096"));
+    }
+
+    @Test
+    public void testSetKvUnifiedPerSlotZeroThrows() {
+        IllegalArgumentException ex =
+                assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setKvUnifiedPerSlot(0));
+        assertThat(ex.getMessage(), containsString("kv-unified-per-slot"));
+    }
+
+    @Test
+    public void testSetKvUnifiedPerSlotNegativeThrows() {
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setKvUnifiedPerSlot(-1));
+    }
+
+    @Test
+    public void testSetTensorReadLazyOff() {
+        ModelParameters p = new ModelParameters().setTensorReadLazy(TensorReadLazyMode.OFF);
+        assertThat(p.parameters.get("--tensor-read-lazy"), is("off"));
+    }
+
+    @Test
+    public void testSetTensorReadLazyAuto() {
+        ModelParameters p = new ModelParameters().setTensorReadLazy(TensorReadLazyMode.AUTO);
+        assertThat(p.parameters.get("--tensor-read-lazy"), is("auto"));
+    }
+
+    @Test
+    public void testSetTensorReadLazyOn() {
+        ModelParameters p = new ModelParameters().setTensorReadLazy(TensorReadLazyMode.ON);
+        assertThat(p.parameters.get("--tensor-read-lazy"), is("on"));
     }
 }

@@ -222,7 +222,7 @@ public class LlamaEmbeddingsTest {
      */
     @Test
     public void testNomicEmbedLoads() {
-        String nomicPath = System.getProperty(TestConstants.PROP_NOMIC_MODEL_PATH);
+        String nomicPath = TestConstants.resolveModelProperty(TestConstants.PROP_NOMIC_MODEL_PATH);
         Assumptions.assumeTrue(
                 nomicPath != null,
                 "Set -D" + TestConstants.PROP_NOMIC_MODEL_PATH + " to a nomic-embed-text GGUF to run this test");

@@ -23,6 +23,9 @@ import org.jspecify.annotations.Nullable;
 @EqualsAndHashCode(callSuper = true)
 public final class ModelParameters extends CliParameters {
 
+    private static final String ARG_MMPROJ_DEVICE = "--mmproj-device";
+    private static final String MMPROJ_DEVICE_NONE = "none";
+
     private static final String ARG_FIT = "--fit";
     static final String ARG_POOLING = "--pooling";
     /** CLI value enabling {@code --fit} (automatic device-memory fitting). */
@@ -431,15 +434,21 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set last n tokens to consider for penalize (default: 64, 0 = disabled, -1 = ctx_size).
+     * Set last n tokens to consider for penalize (default: 64, 0 = disabled).
      *
-     * @param repeatLastN the number of last tokens to consider for penalties (0 = disabled, -1 = ctx_size)
+     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10273</strong> (upstream #26524):
+     * the lower bound is now {@code 0}, and {@code --repeat-last-n -1} makes {@code common_params_parse}
+     * throw, which surfaces as a model-load failure. It is rejected here instead, so the failure names
+     * the cause rather than arriving from the native layer.</p>
+     *
+     * @param repeatLastN the number of last tokens to consider for penalties (0 = disabled)
      * @return this builder
+     * @throws IllegalArgumentException if {@code repeatLastN} is negative
      */
     public ModelParameters setRepeatLastN(int repeatLastN) {
-        if (repeatLastN < -1) {
-            throw new IllegalArgumentException(
-                    "Invalid repeat-last-n value: " + repeatLastN + " (must be >= -1; -1 = ctx_size, 0 = disabled)");
+        if (repeatLastN < 0) {
+            throw new IllegalArgumentException("Invalid repeat-last-n value: " + repeatLastN
+                    + " (must be >= 0; 0 = disabled. llama.cpp b10273 dropped -1 = ctx_size)");
         }
         return putScalar("--repeat-last-n", repeatLastN);
     }
@@ -505,15 +514,21 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set DRY penalty for the last n tokens (default: -1, 0 = disable, -1 = context size).
+     * Set DRY penalty for the last n tokens (default: 64, 0 = disable).
      *
-     * @param dryPenaltyLastN the DRY penalty window (-1 = context size, 0 = disabled)
+     * <p>Upstream llama.cpp dropped the {@code -1} = context-size sentinel at <strong>b10273</strong> (upstream #26524):
+     * the lower bound is now {@code 0}, and {@code --dry-penalty-last-n -1} makes
+     * {@code common_params_parse} throw, which surfaces as a model-load failure. It is rejected here
+     * instead, so the failure names the cause rather than arriving from the native layer.</p>
+     *
+     * @param dryPenaltyLastN the DRY penalty window (0 = disabled)
      * @return this builder
+     * @throws IllegalArgumentException if {@code dryPenaltyLastN} is negative
      */
     public ModelParameters setDryPenaltyLastN(int dryPenaltyLastN) {
-        if (dryPenaltyLastN < -1) {
+        if (dryPenaltyLastN < 0) {
             throw new IllegalArgumentException("Invalid dry-penalty-last-n value: " + dryPenaltyLastN
-                    + " (must be >= -1; -1 = context size, 0 = disabled)");
+                    + " (must be >= 0; 0 = disabled. llama.cpp b10273 dropped -1 = context size)");
         }
         return putScalar("--dry-penalty-last-n", dryPenaltyLastN);
     }
@@ -862,6 +877,50 @@ public final class ModelParameters extends CliParameters {
     public ModelParameters setDevices(String devices) {
         parameters.put("--device", devices);
         return this;
+    }
+
+    /**
+     * Keep the Mixture-of-Experts weights of the first {@code n} layers on the CPU.
+     *
+     * <p>The companion to {@link #setGpuLayers(int)} for VRAM-constrained hosts running a MoE model.
+     * Where {@code setGpuLayers} moves whole layers, this moves only the <em>expert</em> weights —
+     * which dominate a MoE model's size — so attention and the rest of each layer stay on the GPU.
+     * That usually fits a far larger model in the same VRAM at a much smaller speed cost than
+     * reducing the layer count would. Upstream {@code --n-cpu-moe} / {@code -ncmoe}, added in
+     * llama.cpp b6089 but never exposed here until now; use {@link #setCpuFfnLayers(int)} for a
+     * dense model.</p>
+     *
+     * @param layers the number of leading layers whose MoE expert weights stay on the CPU
+     * @return this builder
+     * @throws IllegalArgumentException if {@code layers} is negative
+     */
+    public ModelParameters setCpuMoeLayers(int layers) {
+        if (layers < 0) {
+            throw new IllegalArgumentException(
+                    "Invalid n-cpu-moe value: " + layers + " (must be >= 0; 0 = force no experts to the CPU)");
+        }
+        return putScalar("--n-cpu-moe", layers);
+    }
+
+    /**
+     * Keep the dense FFN weights of the first {@code n} layers on the CPU.
+     *
+     * <p>The dense-model counterpart of {@link #setCpuMoeLayers(int)}: it offloads the feed-forward
+     * weights rather than the MoE experts, trading a little speed for VRAM headroom without giving
+     * up whole layers. Upstream {@code --n-cpu-ffn} / {@code -ncffn}, added in llama.cpp b10645.
+     * On a MoE model use {@link #setCpuMoeLayers(int)} instead — this flag does not touch expert
+     * weights, so it frees very little there.</p>
+     *
+     * @param layers the number of leading layers whose dense FFN weights stay on the CPU
+     * @return this builder
+     * @throws IllegalArgumentException if {@code layers} is negative
+     */
+    public ModelParameters setCpuFfnLayers(int layers) {
+        if (layers < 0) {
+            throw new IllegalArgumentException(
+                    "Invalid n-cpu-ffn value: " + layers + " (must be >= 0; 0 = keep all FFN weights on the GPU)");
+        }
+        return putScalar("--n-cpu-ffn", layers);
     }
 
     /**
@@ -1350,6 +1409,42 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Select the device the multimodal projector runs on ({@code --mmproj-device}, upstream
+     * llama.cpp b10541). Independent of {@link #setDevices(String)}, which covers the main model:
+     * on a multi-GPU host the projector can be pinned to a different device than the weights.
+     *
+     * <p>Exactly one device may be named &mdash; upstream rejects a list &mdash; and the literal
+     * {@code "none"} disables projector offload entirely, the same end state as
+     * {@code setMmprojOffload(false)}. Use {@code --list-devices} (or
+     * {@code llama-server --list-devices}) to see the available names. When unset, upstream picks
+     * the device automatically.</p>
+     *
+     * @param device the device name, or {@code "none"} to keep the projector on the CPU
+     * @return this builder
+     */
+    public ModelParameters setMmprojDevice(String device) {
+        parameters.put(ARG_MMPROJ_DEVICE, device);
+        // --mmproj-device and --{no-,}mmproj-offload both write common_params::mmproj_use_gpu, so a
+        // clash is resolved by argv order -- and ours is rendered from a HashMap, where that order is
+        // unspecified. Clear only the genuinely conflicting combinations:
+        //
+        //   named device + --no-mmproj-offload -> (true,dev) vs (false,dev): ORDER MATTERS, clear.
+        //   named device + --mmproj-offload    -> (true,dev) either way:       safe, keep both.
+        //   "none"       + --mmproj-offload    -> (true,null) vs (false,null): ORDER MATTERS, clear.
+        //   "none"       + --no-mmproj-offload -> (false,null) either way:     safe, keep both.
+        //
+        // So exactly one flag is contradicted by each device value, and never both: clearing
+        // unconditionally would throw away a legitimate multi-GPU pin (or a deliberate
+        // --no-mmproj-offload) to set a field the other argument already agrees on.
+        if (MMPROJ_DEVICE_NONE.equals(device)) {
+            clearFlag(ModelFlag.MMPROJ_OFFLOAD);
+        } else {
+            clearFlag(ModelFlag.NO_MMPROJ_OFFLOAD);
+        }
+        return this;
+    }
+
+    /**
      * Enable offloading of the mmproj model to the GPU.
      *
      * @return this builder
@@ -1359,8 +1454,88 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Target frame rate at which an attached video is sampled (upstream {@code --video-fps},
+     * llama.cpp b10647; default 4.0).
+     *
+     * <p>Video frames are decoded through ffmpeg and fed to the projector as images, so this is the
+     * main cost/detail dial: doubling it doubles the frames, the tokens they occupy and the decode
+     * time. Applies only when a projector is loaded ({@link #setMmproj(String)}) and the request
+     * carries media &mdash; it is read once, when the projector is initialised.</p>
+     *
+     * <p><strong>Any value {@code <= 0} is upstream's sentinel for "sample at the video's own native
+     * frame rate"</strong>, not an error &mdash; {@code mtmd-helper.h} documents the field as
+     * "desired output fps; &lt;= 0 means use the video's native fps", and the decoder resolves it as
+     * {@code fps_target = arg > 0 ? arg : orig_fps}. Because the target is fixed when the projector
+     * loads, long before any clip is attached, the sentinel is the only way to say "match whatever
+     * this video runs at"; leaving the value unset selects the fixed 4.0 default instead.</p>
+     *
+     * @param fps frames per second to sample from the video, or any value {@code <= 0} to sample at
+     *     the video's native frame rate; must be finite
+     * @return this builder
+     * @throws IllegalArgumentException if {@code fps} is {@code NaN} or infinite
+     */
+    public ModelParameters setVideoFps(float fps) {
+        if (!Float.isFinite(fps)) {
+            throw new IllegalArgumentException(
+                    "Invalid video-fps value: " + fps + " (must be finite; <= 0 selects the video's native fps)");
+        }
+        return putScalar("--video-fps", fps);
+    }
+
+    /**
+     * Interval between the text timestamps interleaved into a decoded video (upstream
+     * {@code --video-timestamp-interval}, llama.cpp b10647; default 5000&nbsp;ms).
+     *
+     * <p>{@code 0} disables timestamps entirely &mdash; upstream emits one only while
+     * {@code timestamp_interval_ms > 0}. Unlike {@link #setVideoFps(float)}, nothing is lost by
+     * rejecting negatives here: every negative value reaches the same native state as {@code 0}.</p>
+     *
+     * @param intervalMillis milliseconds between timestamps, or {@code 0} for no timestamps;
+     *     must not be negative
+     * @return this builder
+     * @throws IllegalArgumentException if {@code intervalMillis} is negative or exceeds
+     *     {@link Integer#MAX_VALUE}
+     */
+    public ModelParameters setVideoTimestampInterval(long intervalMillis) {
+        if (intervalMillis < 0) {
+            throw new IllegalArgumentException(
+                    "Invalid video-timestamp-interval value: " + intervalMillis + " (must be >= 0)");
+        }
+        if (intervalMillis > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("Invalid video-timestamp-interval value: " + intervalMillis
+                    + " (must be <= " + Integer.MAX_VALUE
+                    + "; llama.cpp parses --video-timestamp-interval with std::stoi although the field is int64_t,"
+                    + " so a larger value aborts the whole argv parse with an unrelated message)");
+        }
+        return putScalar("--video-timestamp-interval", intervalMillis);
+    }
+
+    /**
+     * Directory holding the {@code ffmpeg} and {@code ffprobe} binaries used to decode video
+     * (upstream {@code --video-ffmpeg-dir}, llama.cpp b10647).
+     *
+     * <p>This matters more here than it does for the standalone server: llama.cpp looks the binaries
+     * up on {@code PATH} by default, and a JVM process &mdash; an application server, an Android app,
+     * a container built for the JAR alone &mdash; frequently has no ffmpeg on {@code PATH} even when
+     * one is installed. Naming the directory is then the only way to make video input work. When
+     * unset, upstream keeps its {@code PATH} lookup.</p>
+     *
+     * @param directory the directory containing the ffmpeg binaries
+     * @return this builder
+     */
+    public ModelParameters setVideoFfmpegDir(String directory) {
+        return putScalar("--video-ffmpeg-dir", directory);
+    }
+
+    /**
      * Enable or disable GPU offload for the multimodal projector. This is independent of
      * {@link #setGpuLayers(int)} because upstream enables projector offload by default.
+     *
+     * <p>Both this and {@link #setMmprojDevice(String)} write upstream's single
+     * {@code mmproj_use_gpu} field, so a combination whose meaning would depend on argv order is
+     * not allowed to survive: disabling offload clears a previously named device, and enabling it
+     * clears only the {@code "none"} sentinel. Enabling offload alongside a real device name is
+     * kept, because both orderings resolve to the same state.</p>
      *
      * @param enabled {@code true} to offload the projector, {@code false} to keep it on CPU
      * @return this builder
@@ -1368,6 +1543,13 @@ public final class ModelParameters extends CliParameters {
     public ModelParameters setMmprojOffload(boolean enabled) {
         setFlag(enabled ? ModelFlag.MMPROJ_OFFLOAD : ModelFlag.NO_MMPROJ_OFFLOAD);
         clearFlag(enabled ? ModelFlag.NO_MMPROJ_OFFLOAD : ModelFlag.MMPROJ_OFFLOAD);
+        // Keep a previously named device only where the pair resolves identically in either argv
+        // order -- that needs enabled == true AND a real device name. "none" sets mmproj_use_gpu
+        // false and so contradicts --mmproj-offload, and --no-mmproj-offload contradicts any device;
+        // in those cases the last call wins. See setMmprojDevice for the full table.
+        if (!enabled || MMPROJ_DEVICE_NONE.equals(parameters.get(ARG_MMPROJ_DEVICE))) {
+            parameters.remove(ARG_MMPROJ_DEVICE);
+        }
         return this;
     }
 
@@ -1397,13 +1579,29 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set the number of seconds of idle time after which the server shuts down automatically.
-     * Useful for resource management in on-demand deployments.
+     * Set the number of seconds of idle time after which the server releases the model
+     * ({@code --sleep-idle-seconds}).
      *
-     * @param seconds idle timeout in seconds before auto-shutdown
+     * <p>The server does <strong>not</strong> shut down: on entering the idle state upstream frees
+     * the model and context, and the next request transparently reloads them. That reload costs a
+     * full model load, so this trades first-request latency after an idle period for resident memory
+     * &mdash; useful for on-demand deployments where the process must stay alive but idle memory is
+     * expensive.</p>
+     *
+     * <p>Upstream accepts a positive count or {@code -1} to disable, and <strong>rejects</strong>
+     * {@code 0} and anything below {@code -1}. Those are rejected here rather than emitted, because
+     * upstream's own rejection aborts the whole argv parse and surfaces only as
+     * {@code "Failed to parse model parameters"}, naming neither the flag nor the reason.</p>
+     *
+     * @param seconds idle seconds before the model is released, or {@code -1} to disable
      * @return this builder
+     * @throws IllegalArgumentException if {@code seconds} is {@code 0} or less than {@code -1}
      */
     public ModelParameters setSleepIdleSeconds(int seconds) {
+        if (seconds == 0 || seconds < -1) {
+            throw new IllegalArgumentException("Invalid sleep-idle-seconds value: " + seconds
+                    + " (must be positive, or -1 to disable; upstream rejects 0 and values below -1)");
+        }
         return putScalar("--sleep-idle-seconds", seconds);
     }
 
@@ -1441,6 +1639,53 @@ public final class ModelParameters extends CliParameters {
         setFlag(kvUnified ? ModelFlag.KV_UNIFIED : ModelFlag.NO_KV_UNIFIED);
         clearFlag(kvUnified ? ModelFlag.NO_KV_UNIFIED : ModelFlag.KV_UNIFIED);
         return this;
+    }
+
+    /**
+     * Cap the context each parallel slot may use, independently of the shared KV pool
+     * ({@code --kv-unified-per-slot}, llama.cpp b10662).
+     *
+     * <p>Two distinct effects, both worth knowing:</p>
+     * <ul>
+     *   <li>It <strong>caps</strong> each slot's context at this value (the effective per-slot
+     *       context becomes {@code min(pool capacity, this, the model's training context)}).</li>
+     *   <li>Upstream can additionally <strong>size the shared KV pool</strong> to
+     *       {@code n_parallel * this} when the context size is left unset — but that half lives in
+     *       {@code llama_server()}, so it applies only to the full
+     *       {@link net.ladenthin.llama.server.NativeServer} server mode, <em>not</em> to a model
+     *       loaded through this builder. Here only the cap applies; size the pool yourself with
+     *       {@link #setCtxSize(int)}.</li>
+     * </ul>
+     *
+     * <p>A value above the pool's per-slot capacity can never bind, and upstream logs a warning
+     * saying so rather than failing.</p>
+     *
+     * @param contextPerSlot the per-slot context cap in tokens; must be positive
+     * @return this builder
+     * @throws IllegalArgumentException if {@code contextPerSlot} is not positive
+     */
+    public ModelParameters setKvUnifiedPerSlot(int contextPerSlot) {
+        if (contextPerSlot <= 0) {
+            throw new IllegalArgumentException("Invalid kv-unified-per-slot value: " + contextPerSlot
+                    + " (must be > 0; upstream treats 0 as unset, which is the default)");
+        }
+        return putScalar("--kv-unified-per-slot", contextPerSlot);
+    }
+
+    /**
+     * Control on-demand reading of tensors the model architecture marks as lazy-loadable, such as
+     * per-layer embeddings ({@code --tensor-read-lazy}, llama.cpp b10653).
+     *
+     * <p>Trades resident memory for disk reads during inference. <strong>Requires mmap</strong>, so
+     * it has no effect on a model loaded with mmap disabled. Upstream's default is
+     * {@link TensorReadLazyMode#AUTO}, which applies on-demand reading only to marked tensors above
+     * 4&nbsp;GiB.</p>
+     *
+     * @param mode the lazy-read mode
+     * @return this builder
+     */
+    public ModelParameters setTensorReadLazy(TensorReadLazyMode mode) {
+        return putEnum("--tensor-read-lazy", mode);
     }
 
     /**

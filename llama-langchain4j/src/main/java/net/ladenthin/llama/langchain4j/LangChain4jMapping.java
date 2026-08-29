@@ -96,7 +96,7 @@ final class LangChain4jMapping {
                 InferenceParameters.empty().withMessagesJson(jllama.buildMessagesJson());
         java.util.Optional<String> toolsJson = jllama.buildToolsJson();
         if (toolsJson.isPresent()) {
-            params = params.withToolsJson(toolsJson.get()).withUseChatTemplate(true);
+            params = params.withToolsJson(toolsJson.get());
             java.util.Optional<String> toolChoice = jllama.getToolChoice();
             if (toolChoice.isPresent()) {
                 params = params.withToolChoice(toolChoice.get());

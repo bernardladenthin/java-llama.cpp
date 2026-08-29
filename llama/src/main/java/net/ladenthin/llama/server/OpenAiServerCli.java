@@ -27,7 +27,7 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>Flags mirror llama.cpp's own server where they overlap ({@code -m}, {@code -p}, {@code -c},
  * {@code -b}, {@code -ub}, {@code -ngl}, {@code -t}, {@code -tb}, {@code -ctk}, {@code -ctv},
- * {@code --jinja}, {@code --chat-template-kwargs}); a few legacy spellings are accepted as aliases so
+ * {@code --jinja}, {@code --chat-template-kwargs}, {@code -mmdev}); a few legacy spellings are accepted as aliases so
  * earlier documented invocations keep working. The {@code --chat-template-kwargs} JSON is parsed here
  * (the only JSON this otherwise dependency-light parser touches) so a malformed object fails fast with
  * usage text rather than at native model load.
@@ -72,6 +72,7 @@ public final class OpenAiServerCli {
         @Nullable String modelId = null;
         @Nullable String apiKey = null;
         @Nullable String mmproj = null;
+        @Nullable String mmprojDevice = null;
         int ctxSize = 0;
         int gpuLayers = 0;
         int threads = 0;
@@ -153,6 +154,10 @@ public final class OpenAiServerCli {
                 case "--mmproj":
                     mmproj = nextValue(args, ++i, arg);
                     break;
+                case "-mmdev":
+                case "--mmproj-device":
+                    mmprojDevice = nextValue(args, ++i, arg);
+                    break;
                 case "--embedding":
                 case "--embeddings":
                     embedding = true;
@@ -180,6 +185,7 @@ public final class OpenAiServerCli {
                 modelId,
                 apiKey,
                 mmproj,
+                mmprojDevice,
                 ctxSize,
                 gpuLayers,
                 threads,
@@ -229,6 +235,7 @@ public final class OpenAiServerCli {
                 "  --model-id <name>          Model id reported by /v1/models (default: file name)",
                 "  --api-key <key>            Require an 'Authorization: Bearer <key>' header",
                 "  --mmproj <path>            Multimodal projector for vision models (enables image input)",
+                "  -mmdev, --mmproj-device <d>  Device for the multimodal projector ('none' = keep on CPU)",
                 "  --embedding                Load in embedding mode (enables POST /v1/embeddings)",
                 "  --reranking                Load in reranking mode (enables POST /v1/rerank)",
                 "  -h,  --help                Show this help and exit",
@@ -330,6 +337,7 @@ public final class OpenAiServerCli {
         private final @Nullable String modelId;
         private final @Nullable String apiKey;
         private final @Nullable String mmproj;
+        private final @Nullable String mmprojDevice;
         private final int ctxSize;
         private final int gpuLayers;
         private final int threads;
@@ -351,6 +359,7 @@ public final class OpenAiServerCli {
                 @Nullable String modelId,
                 @Nullable String apiKey,
                 @Nullable String mmproj,
+                @Nullable String mmprojDevice,
                 int ctxSize,
                 int gpuLayers,
                 int threads,
@@ -370,6 +379,7 @@ public final class OpenAiServerCli {
             this.modelId = modelId;
             this.apiKey = apiKey;
             this.mmproj = mmproj;
+            this.mmprojDevice = mmprojDevice;
             this.ctxSize = ctxSize;
             this.gpuLayers = gpuLayers;
             this.threads = threads;
@@ -441,6 +451,16 @@ public final class OpenAiServerCli {
          */
         public @Nullable String getMmproj() {
             return mmproj;
+        }
+
+        /**
+         * The device the multimodal projector should run on. Independent of the main model's
+         * placement; the literal {@code "none"} keeps the projector on the CPU.
+         *
+         * @return the projector device name, or {@code null} to let llama.cpp choose
+         */
+        public @Nullable String getMmprojDevice() {
+            return mmprojDevice;
         }
 
         /**
@@ -571,6 +591,9 @@ public final class OpenAiServerCli {
         public ModelParameters toModelParameters() {
             final ModelParameters params =
                     new ModelParameters().setModel(modelPath).setGpuLayers(gpuLayers);
+            if (mmprojDevice != null) {
+                params.setMmprojDevice(mmprojDevice);
+            }
             if (mmproj != null) {
                 params.setMmproj(mmproj);
             }
