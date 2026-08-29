@@ -449,6 +449,12 @@ and have only run locally so far.
 
 ### Test-coverage gaps found by the b10679 mutation audit (PR #403)
 
+> **Update.** The `IdleSleepWakeIntegrationTest` added to close the `wake_and_post` gap immediately
+> found a real JVM crash (SIGSEGV on all six CI platforms) — see the CHANGELOG "Fixed" entry. Both
+> facets are fixed in that PR via the `wake_server()` choke point. This is the clearest evidence for
+> the entry below about a floor on executed tests: the defect had been reachable from public API for
+> as long as `--sleep-idle-seconds` has existed, and nothing ran that path.
+
 A mutation pass over the branch applied 27 mutations and 26 went red on the test that claims them,
 so no test here passes with its subject deleted. What it did find is code with **no runnable guard**.
 Two of the three were closed in that PR (a model-free `jsonSchemaToGrammar` test in

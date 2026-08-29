@@ -688,9 +688,22 @@ public class ModelParametersTest {
     }
 
     @Test
-    public void testSetSleepIdleSecondsZero() {
-        ModelParameters p = new ModelParameters().setSleepIdleSeconds(0);
-        assertThat(p.parameters.get("--sleep-idle-seconds"), is("0"));
+    public void testSetSleepIdleSecondsDisabled() {
+        // -1 is upstream's documented "disabled" value and must pass through.
+        ModelParameters p = new ModelParameters().setSleepIdleSeconds(-1);
+        assertThat(p.parameters.get("--sleep-idle-seconds"), is("-1"));
+    }
+
+    @Test
+    public void testSetSleepIdleSecondsRejectsTheValuesUpstreamRejects() {
+        // Upstream's handler throws on 0 and on anything below -1, which aborts the whole argv parse
+        // and reaches the caller only as "Failed to parse model parameters". Reject here instead, so
+        // the message names the flag. This test replaced one that asserted 0 serialises to "0" --
+        // it pinned a value the server cannot accept.
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setSleepIdleSeconds(0));
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setSleepIdleSeconds(-2));
+        // The boundary itself must stay valid, so the guard cannot drift to `< 0`.
+        assertThat(new ModelParameters().setSleepIdleSeconds(-1).parameters.get("--sleep-idle-seconds"), is("-1"));
     }
 
     // -------------------------------------------------------------------------

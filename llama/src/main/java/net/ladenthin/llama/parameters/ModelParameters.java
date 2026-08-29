@@ -1579,13 +1579,29 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set the number of seconds of idle time after which the server shuts down automatically.
-     * Useful for resource management in on-demand deployments.
+     * Set the number of seconds of idle time after which the server releases the model
+     * ({@code --sleep-idle-seconds}).
      *
-     * @param seconds idle timeout in seconds before auto-shutdown
+     * <p>The server does <strong>not</strong> shut down: on entering the idle state upstream frees
+     * the model and context, and the next request transparently reloads them. That reload costs a
+     * full model load, so this trades first-request latency after an idle period for resident memory
+     * &mdash; useful for on-demand deployments where the process must stay alive but idle memory is
+     * expensive.</p>
+     *
+     * <p>Upstream accepts a positive count or {@code -1} to disable, and <strong>rejects</strong>
+     * {@code 0} and anything below {@code -1}. Those are rejected here rather than emitted, because
+     * upstream's own rejection aborts the whole argv parse and surfaces only as
+     * {@code "Failed to parse model parameters"}, naming neither the flag nor the reason.</p>
+     *
+     * @param seconds idle seconds before the model is released, or {@code -1} to disable
      * @return this builder
+     * @throws IllegalArgumentException if {@code seconds} is {@code 0} or less than {@code -1}
      */
     public ModelParameters setSleepIdleSeconds(int seconds) {
+        if (seconds == 0 || seconds < -1) {
+            throw new IllegalArgumentException("Invalid sleep-idle-seconds value: " + seconds
+                    + " (must be positive, or -1 to disable; upstream rejects 0 and values below -1)");
+        }
         return putScalar("--sleep-idle-seconds", seconds);
     }
 

@@ -14,6 +14,23 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 > [`docs/history/llama-cpp-breaking-changes.md`](docs/history/llama-cpp-breaking-changes.md), which
 > has a row per upgrade range and stays authoritative for the per-range detail.
 
+### Fixed
+- **JVM crash (SIGSEGV) on the first request after an idle-sleep window.** With
+  `--sleep-idle-seconds` set, upstream's `handle_sleeping_state(true)` calls `destroy()`, which frees
+  the model and context and nulls `ctx_tgt`/`model_tgt`. Two things in the JNI layer assumed they
+  outlived that: `server_context::get_meta()`, read on every request before the task is posted, and
+  the `jctx->vocab` pointer captured once after the initial load — dangling after the reload replaces
+  the model. The first was a null dereference that aborted the JVM at `llama_context::get_model()`;
+  the second a use-after-free on every tokenize/detokenize/rerank path. Both now go through a single
+  `wake_server()` choke point that waits out the sleep and re-reads the vocab, called from every entry
+  point that touches the model. The earlier `wake_and_post()` fix was necessary but not sufficient:
+  it woke at *post* time, and these reads happen before the post.
+- **`ModelParameters.setSleepIdleSeconds`** now rejects `0` and values below `-1`, which upstream's
+  own handler throws on. Emitting them aborted the whole argv parse and surfaced only as
+  `"Failed to parse model parameters"`, naming neither the flag nor the reason. Its Javadoc also said
+  the server "shuts down" after the idle window; it does not — it releases the model and reloads it on
+  the next request.
+
 ### Added
 - **`ModelParameters.setCpuMoeLayers(int)` / `setCpuFfnLayers(int)`** — keep the first N layers'
   Mixture-of-Experts weights, or dense FFN weights, on the CPU (upstream `--n-cpu-moe` / `-ncmoe` and
