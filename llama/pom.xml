@@ -58,7 +58,7 @@ SPDX-License-Identifier: MIT
 		<jspecify.version>1.0.1</jspecify.version>
 		<lombok.version>1.18.46</lombok.version>
 		<errorprone.version>2.50.0</errorprone.version>
-		<nullaway.version>0.13.8</nullaway.version>
+		<nullaway.version>0.14.0</nullaway.version>
 		<checker.version>4.2.2</checker.version>
 		<jackson.version>2.22.2</jackson.version>
 		<reactor.version>3.8.7</reactor.version>
@@ -70,7 +70,7 @@ SPDX-License-Identifier: MIT
 		<jmh.version>1.37</jmh.version>
 		<jcstress.version>0.16</jcstress.version>
 		<lincheck.version>3.7</lincheck.version>
-		<logcaptor.version>2.12.6</logcaptor.version>
+		<logcaptor.version>2.12.7</logcaptor.version>
 		<!-- log4j-api / log4j-to-slf4j arrive ONLY as test-scope transitives of
 		     io.github.hakky54:logcaptor, which requests 2.25.3. That version is affected by
 		     CVE-2026-49844 (GHSA-qv9r-c865-cp47, moderate): MapMessage.asJson() emits bare
@@ -90,8 +90,8 @@ SPDX-License-Identifier: MIT
 		<spotbugs.version>4.10.4.0</spotbugs.version>
 		<fb-contrib.version>7.7.4</fb-contrib.version>
 		<findsecbugs.version>1.14.0</findsecbugs.version>
-		<spotless.version>3.10.0</spotless.version>
-		<palantir-java-format.version>2.96.0</palantir-java-format.version>
+		<spotless.version>3.10.1</spotless.version>
+		<palantir-java-format.version>2.97.0</palantir-java-format.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.build.outputTimestamp>2026-07-07T07:32:17Z</project.build.outputTimestamp>
 	</properties>
@@ -375,7 +375,7 @@ SPDX-License-Identifier: MIT
 				<plugin>
 					<groupId>org.pitest</groupId>
 					<artifactId>pitest-maven</artifactId>
-					<version>1.25.9</version>
+					<version>1.30.0</version>
 				</plugin>
 				<plugin>
 					<groupId>org.sonatype.central</groupId>
