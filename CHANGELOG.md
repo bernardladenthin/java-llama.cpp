@@ -25,6 +25,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `wake_server()` choke point that waits out the sleep and re-reads the vocab, called from every entry
   point that touches the model. The earlier `wake_and_post()` fix was necessary but not sufficient:
   it woke at *post* time, and these reads happen before the post.
+  Fixing that exposed a third, latent defect in our own `patches/0002`: it guarded upstream's
+  progress-callback install on `== nullptr`, but `load_progress_text` is a **local** of
+  `load_model()` whose address upstream re-assigns on every call. On resume the guard saw our own
+  callback from the first load, skipped the re-assignment, and left `user_data` pointing into a dead
+  stack frame — a second SIGSEGV, this time inside `load_progress_callback()`. The guard now also
+  accepts its own callback, so our `user_data` is refreshed on every load while a caller-supplied
+  callback still survives.
 - **`ModelParameters.setSleepIdleSeconds`** now rejects `0` and values below `-1`, which upstream's
   own handler throws on. Emitting them aborted the whole argv parse and surfaced only as
   `"Failed to parse model parameters"`, naming neither the flag nor the reason. Its Javadoc also said
