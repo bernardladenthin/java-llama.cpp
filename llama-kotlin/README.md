@@ -11,11 +11,11 @@ Pure Kotlin/JVM — works on desktop JVMs **and** Android.
 
 ```kotlin
 dependencies {
-    implementation("net.ladenthin:llama-kotlin:5.0.6")
+    implementation("net.ladenthin:llama-kotlin:5.1.0")
     // ...plus the binding itself — the façade does NOT drag it in transitively
     // (provided scope), so YOU pick the right flavor:
-    implementation("net.ladenthin:llama:5.0.6")          // desktop JVM
-    // implementation("net.ladenthin:llama-android:5.0.6") // Android (AAR)
+    implementation("net.ladenthin:llama:5.1.0")          // desktop JVM
+    // implementation("net.ladenthin:llama-android:5.1.0") // Android (AAR)
 }
 ```
 

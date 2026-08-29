@@ -62,7 +62,7 @@ ScoringModel reranker     = new JllamaScoringModel(rerankLlama);
 <dependency>
     <groupId>net.ladenthin</groupId>
     <artifactId>llama-langchain4j</artifactId>
-    <version>5.0.6</version>
+    <version>5.1.0</version>
 </dependency>
 ```
 
