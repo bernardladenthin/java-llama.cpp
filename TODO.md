@@ -11,192 +11,16 @@ Open work items for this repo. Cross-cutting tracking lives in
 items here are jllama-specific or are this repo's slice of a
 cross-cutting initiative.
 
+**Completed work is not recorded here.** It lives in git history and in
+`crossrepostatus.md`; a finished item is deleted from this file rather than annotated,
+so everything below is genuinely still open.
+
 ## Open — jllama-specific
-
-### Model-backed tests that the CI-skip fix newly exposed (b10618 PR #403)
-
-Making the model-gated suite actually run in CI (`TestConstants.resolveModelPath`, see the Done
-section) turned a green-but-silent pipeline into a red-and-honest one. Everything below was already
-broken before this PR; none of it was visible while every model-gated class self-skipped. Two items
-were fixed in this PR, four are open.
-
-**How to read the CI evidence.** Surefire runs classes in filesystem order, which differs per OS, and
-`TtsIntegrationTest` kills the fork. On Linux/macOS it lands early (Ubuntu got through only **85**
-tests), so those jobs report *nothing but* the crash. The two Windows jobs happen to run it last and
-therefore reach **1461** tests — they are the only jobs whose failure list is complete. Do not read a
-short Linux failure list as "Linux is healthier".
-
-**Confirmed platform-independent (macOS 14, head `7be24a6`).** That job reached **517** tests before
-the crash and reproduced `SessionForkRewindIntegrationTest` (both cases) and
-`NativeServerAttachIntegrationTest` **identically** — same assertions, same messages. So these are
-not a Windows quirk. Its exit code was **141 (SIGPIPE)** rather than Ubuntu's 134 (SIGABRT), on the
-same crashed test.
-
-- **[FIXED — confirmed in CI] `TtsIntegrationTest` aborted the JVM natively on all 6 test
-  platforms.** **Root cause: our own hand-built `common_params`.**
-  `common_cpu_params::n_threads` defaults to **-1**, and `postprocess_cpu_params` — the function
-  that resolves it — is called **only** from `common/arg.cpp`, i.e. only for params that came
-  through `common_params_parse`. `common_init_from_params` does not call it. `tts_engine.cpp`
-  assembled `common_params` by hand and set only `cpuparams.n_threads`, so `cpuparams_batch`
-  stayed at -1; `common_threadpools::init` then saw a mismatch between the two and built a
-  *second* threadpool with **-1 threads**. `ggml_threadpool_new` sizes its worker array as
-  `sizeof(struct ggml_compute_state) * tpp->n_threads`, which for -1 wraps to a huge `size_t`;
-  `ggml_aligned_malloc` returns `NULL` (after logging *"insufficient memory"*) and the next line
-  is an unchecked `memset(workers, 0, workers_size)` — the `bzero`-at-address-0 seen on every
-  platform.
-  Fixed by mirroring `arg.cpp`'s two calls, including the `role_model` argument that makes the
-  batch pool inherit rather than resolve independently. `train_engine.cpp` had the same latent
-  defect (it set *neither* count, so both stayed -1 — they matched, so it built one pool with
-  -1 threads instead of two) and got the same fix. `jllama.cpp` / `jni_helpers.hpp` are safe:
-  their params come from `common_params_parse`, so `arg.cpp` resolves them.
-  Guarded by 5 new model-free C++ tests (`test_tts_params.cpp`, suite 499 → **504**), verified
-  by negative control: removing the two calls turns `TtsParams.ResolvesBothCpuThreadCounts` red
-  with `actual: -1 vs 0`. The builder was extracted to `tts_params.hpp` so the test exercises
-  the *real* production path rather than a copy that could drift.
-
-  **CI confirmation** (Ubuntu, run 32950691947 on `999034b`): **1689 tests ran** where the fork
-  previously died at 85, and the crash-print step found **no `hs_err_pid*.log` at all**. The only
-  thing it printed was the router worker's stderr (see the router entry below).
-
-  **How it was localised** (kept because the method generalises, not because the bug is still
-  open). The crash log became readable in the job log itself with `cfda4a9` (the section-3.1 print
-  step), and that is what produced everything below. The abort is a **null-pointer dereference
-  while zeroing a buffer during the TTS model load**, identically on two OS families:
-
-  | | Linux x86-64 (run 32941522341) | macOS 15 arm64 (same run) |
-  |---|---|---|
-  | signal | `SIGSEGV`, `si_code 1 (SEGV_MAPERR)`, `si_addr 0x0` | `SIGSEGV` |
-  | frame | `C [libc.so.6+0x1896ca]` | `C [libsystem_platform.dylib+0x2fb0] __bzero+0x20` |
-  | registers | `RDI=0`, `RSI=0` | — |
-
-  On x86-64 SysV `memset(void *s, int c, size_t n)` passes `s` in RDI and `c` in RSI, so
-  `RDI=0, RSI=0` is `memset(NULL, 0, n)` — the same call macOS names outright as `bzero`. The Java
-  frames are `TextToSpeech.loadNative` -> `TextToSpeech.<init>` ->
-  `TtsIntegrationTest.synthesizesWellFormedWav`, on the `main` thread in `_thread_in_native`,
-  after ~258 s (Linux) / ~288-300 s (macOS) of **total JVM elapsed time** -- that is time since the
-  fork started and ran the rest of the suite, NOT time spent inside the load, so it says nothing
-  about how far the load got.
-
-  Ruled out already, do not re-investigate: (1) a JNI signature mismatch of the kind that broke
-  `LlamaQuantizer` — `loadNative` is `(String, String, int, int) -> long` on both the Java and the
-  C++ side, verified; (2) `parse_jstring` — it guards a null `jstring`, a pending exception and a
-  null byte array, returning an empty string in each case; (3) the obvious null checks in
-  `tts_engine.cpp`'s load, which do test `model` / `ctx` / `mctx` and return `nullptr` with a
-  message. The faulting allocation is therefore *inside* the load, before those checks are reached.
-
-  **The macOS 15 Metal job resolved the native stack, and it is exactly two frames:**
-  `__bzero+0x20` called from `libjllama.dylib` `Java_..._TextToSpeech_loadNative+0x60`. Do NOT read
-  that as "the bug is in `loadNative`". Disassembling the shipped Linux library shows `loadNative`
-  contains **no** `memset`/`bzero` at all — its only calls are `parse_jstring`, `engine_init` (via
-  the PLT, so not inlined), `operator delete` and `__stack_chk_fail`. The JVM's frame-pointer
-  walker dropped the intermediate frames, leaving only the outermost and innermost. The fault is
-  therefore under `engine_init` — in `common_init_from_params` or the mtmd/mmproj init — not in the
-  JNI wrapper. (That much held up: it is in `common_init_from_params`, via
-  `common_threadpools::init`.) (Symbol attribution itself *is* trustworthy here: the library exports 12 529 symbols,
-  the whole llama/common layer included, so a PC inside `common_init_from_params` would have been
-  named as such. What is unreliable is the *depth* of the walk, not the naming.)
-
-  The shape of the guess at that point — *an allocation that returns null and is then zeroed
-  unchecked* — was right; the attribution was not. It was blamed on host memory pressure (the
-  macOS runner has **7 GB RAM / 3 cores** against Linux's 15 GB / 4) and on the `mmproj` being the
-  largest new buffer in the path. Neither is involved: the request is for
-  `sizeof(struct ggml_compute_state) * (size_t) -1` bytes, which no allocator can satisfy on any
-  host with any amount of RAM free. That both hosts failed identically was the clue that memory
-  pressure could not be the explanation.
-
-  Superseded note (kept because the reasoning was cited earlier): it was NOT certain an `hs_err`
-  existed at all — `if-no-files-found: warn` and Windows' exit code 1 left that open. It does
-  exist, on both platforms checked.
-
-- **[SUPERSEDED — see the entry above] `TtsIntegrationTest` aborts the JVM natively on all 6 test platforms.**
-  Ubuntu exit 134 (SIGABRT); macOS 14 Metal, macOS 15 Metal, macOS 15 no-Metal; Windows Ninja and
-  Windows MSVC exit 1. Not an OOM (Linux had ~14 GiB free, Windows ~12.3 GiB of 16 GiB). Not caused by
-  the bump: `git log b10456..b10618 -- tools/mtmd/mtmd-helper.{cpp,h}` contains only video/webp/
-  mergeable/sha256/cmake commits, and grepping that diff for `gen_audio|step_gen|step_prompt|
-  get_output|GGML_ASSERT|GGML_ABORT|throw` yields zero hits. It is a latent defect in
-  `tts_engine.cpp`'s drive of `mtmd_helper::gen_audio`, exposed the first time the test ran.
-  Next step: read `hs_err_pid*.log` from artifact `windows-output` (ID 9583568326) or
-  `error-log-macos-14-metal` (ID 9583085009) of run 32899147975 for the aborting frame. Because it
-  takes the whole fork down it also truncates every job's test run, so it blocks seeing the rest of
-  the suite and should be fixed first.
-
-- **[FIXED in this PR] `SessionForkRewindIntegrationTest` — empty reply after a slot restore.**
-  `rewindRestoresTranscriptAndConversationContinues` and
-  `forkCreatesIndependentSessionWithSameTranscript` failed `assertThat(reply.isEmpty(), is(false))`
-  after `rewind()` / `fork()`. The diagnosis above was right that it is not a bump regression, but
-  wrong that it is the KV restore: the model is Qwen3-0.6B, a **reasoning** model, and the tests'
-  token budget was being spent entirely inside `<think>`, so generation completed normally and
-  returned no assistant *content*. Fixed in `cc67ea7` by budgeting past the thinking block. The same
-  root cause resurfaced later in `llama-langchain4j` (`dd07b0e`), where both chat tests now share a
-  `MAX_OUTPUT_TOKENS = 1500` matching `ReasoningBudgetTest`'s `N_PREDICT`. Green on all six Java
-  platforms in run 33111759140.
-
-- **[FIXED in this PR] `NativeServerAttachIntegrationTest.completion_overHttp_served` — HTTP 500.**
-  `{"error":{"code":500,"message":"The model produced output that does not match the expected
-  Content-only format"}}`. Correctly identified above as long-standing upstream behaviour rather than
-  a bump regression. Root cause: `common_peg_until_parser` (`common/peg-parser.cpp`) tolerates an
-  **incomplete** trailing UTF-8 sequence in lenient mode — the only mode `common_chat_peg_parse` ever
-  uses — but its **invalid**-byte branch returned `FAIL` unconditionally, so a single malformed byte
-  anywhere in the output turned a *finished* generation into a 500. Fixed by local patch `0011`
-  (`ca60947`), which makes the invalid branch honour leniency exactly as the incomplete branch does;
-  strict mode is unchanged. Guarded by the `ContentOnlyParseUtf8` tests in `test_utils.cpp`, which —
-  unlike the upstream test the patch also adds — run in CI on every platform. Upstream-submittable;
-  re-checked at b10679 — the `until` parser's `INVALID` branch in pristine
-  `b10679:common/peg-parser.cpp` still returns `FAIL` with no `is_lenient()` guard — so the patch stays.
-
-- **[ANSWERED] Re-check the full suite once the TTS crash is fixed.** Done: Ubuntu on `999034b`
-  ran **1689 tests, 3 failures, 1 error, 2 skipped**. Exactly one item was new — the router entry
-  below — and the other three are the already-recorded `SessionForkRewind` pair and
-  `NativeServerAttach`. So the earlier Windows list was a lower bound by one item, not by many.
-
-- **[FIXED in this PR] `RouterModeIntegrationTest.setup:114` — the worker JVM could not load its
-  own main class.** `IllegalState: Router worker for model 'Qwen3-0.6B-Q4_K_M' failed with exit
-  code 1`; the worker's stderr (visible only because of the section-3.1 print step, in the surefire
-  `.dumpstream`) said `Could not find or load main class net.ladenthin.llama.server.NativeServer`.
-  Not a bump regression and not a router defect: `target/classes` carries a `module-info.class`, so
-  **Surefire auto-detects a named module and runs the main classes on the module path** —
-  `java.class.path` then holds only `target/test-classes` plus the dependency jars. The test built
-  the worker command from that property alone, so the spawned JVM had neither `NativeServer` nor the
-  packaged native library. It had never surfaced because the test self-skipped in CI for as long as
-  the model paths resolved to the wrong directory (the `TestConstants.resolveModelPath` fix in this
-  PR is what made it run). Fixed by deriving the main-classes root from
-  `NativeServer.class.getProtectionDomain().getCodeSource()`, which is correct in either mode and
-  for a directory or a jar alike. Reproduced and verified locally without a model: with the old
-  classpath the worker exits 1 on `ClassNotFoundException`; with the fix it loads `libjllama.so` and
-  reaches llama-server's own argument parser.
-
-  Note for later: the project sets no `<useModulePath>false</useModulePath>` (srcmorph does, and its
-  pom explains why classpath mode is the representative test environment). Flipping it would remove
-  this whole class of surprise, but it changes how all 1689 tests run and does not belong in a
-  version-bump PR.
-
-- **[FIXED in this PR] `LlamaQuantizer.quantizeNative` had C++ linkage — the whole class was
-  unusable in every published jar.** `QuantizerIntegrationTest` failed all 3 tests with
-  `UnsatisfiedLinkError: 'void net.ladenthin.llama.LlamaQuantizer.quantizeNative(...)'`. Cause: the
-  C-linkage declarations come from the javac-generated `jllama.h`, which covers **only**
-  `LlamaModel`; every other class's JNI function must say `extern "C"` itself (`train_engine.cpp` and
-  `native_server.cpp` do). `quantizeNative` did not, so it was exported as
-  `_Z54Java_net_ladenthin_llama_LlamaQuantizer_quantizeNativeP7JNIEnv_...` and the JVM could never
-  resolve it. Reproduced on Linux with `nm -D`, so it was never Windows-specific — the public
-  `LlamaQuantizer` API has never worked. Fixed, and guarded model-free by
-  `NativeLibraryLoadSmokeTest.quantizerNativeEntryPointResolves` (`nm -D` on the rebuilt lib now shows
-  zero mangled `Java_*` exports). **Confirmed on a second toolchain:** at `7be24a6` the macOS 14 job
-  ran `QuantizerIntegrationTest` at *3 tests, 0 failures, 0 errors* with no `UnsatisfiedLinkError`
-  anywhere in the run — the same 3 tests that were 2 failures + 1 error before the fix. Worth having,
-  since symbol export and mangling differ between ELF/gcc and Mach-O/clang.
-
-- **[FIXED in this PR] `JsonEndpointParametersTest.testDryMultiplierAccepted` sent
-  `dry_penalty_last_n: -1`.** The one genuine b10456→b10618 regression in the list: b10273 gave the
-  field hard limits `[0, INT32_MAX]` (0 = disabled) and dropped the old "-1 = context size" sentinel,
-  so the request now 400s. The `InferenceParameters` / `ModelParameters` setters were already fixed in
-  this PR; this test builds raw JSON and bypassed them. A repo-wide sweep confirms it was the only
-  remaining `-1` on either de-sentinelled field.
-
 
 ### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
 
 Left over from the 2026-06-20 code audit (18/18 findings fixed in PRs #258/#260, regression tests in
-#261/#262 — see the Done section): full per-process extraction **directory** isolation + a `cleanup()`
+#261/#262): full per-process extraction **directory** isolation + a `cleanup()`
 that recursively removes dead-process dirs. Since extraction writes are atomic and content-checked,
 this is a tidiness improvement (stops the shared-tmpdir `cleanup()` racing a live peer's flat file),
 not a correctness fix — and it needs Windows locked-file co-design.
@@ -378,15 +202,6 @@ Feel free to contribute fixes — PRs welcome.
   `synchronized` guard (or `compareAndSet`) on the Java side so `close()` is idempotent and
   the native pointer is nulled before the second caller can reach it.
 
-- **`ServerMetrics.getCumulativeTimings()` truncation — STALE / REFUTED.** This claim was
-  verified false: `getCumulativeTimings` reads `n_prompt_tokens_processed_total` /
-  `n_tokens_predicted_total` via `asLong(0L)` into `long` fields and constructs a `Timings`
-  with `long promptN` / `predictedN` (`ServerMetrics.java` / `Timings.java`) — no int cast
-  occurs. The real token-count truncation (now fixed) lived in the protocol shims
-  (`ResponsesStreamTranslator`, `AnthropicStreamTranslator`, `ResponsesApiSupport`,
-  `AnthropicApiSupport`, `OllamaApiSupport`, `ChatResponseParser.extractUsageField`), which used
-  `.asInt(0)`; those now use `.asLong(0L)` so sessions above ~2.1B tokens no longer overflow.
-
 - **Unbounded request-body read → OOM DoS.** The HTTP handler reads the entire request body
   into a `String`/`byte[]` before parsing it, with no size cap. A client that streams a
   multi-gigabyte body can exhaust heap memory and crash the JVM. Fix: add a configurable
@@ -401,7 +216,7 @@ The consolidated investigation lives in
 high-value from it has shipped — README system-properties table, per-run timing line
 (`TimingsLogger`), UTF-8 boundary safety (native `utf8_to_jstring_impl` path), runtime LoRA control,
 typed batch embeddings, in-JVM router mode, in-JVM GGUF quantization, GGUF metadata inspector,
-session fork/rewind (see the Done section). **Remaining:**
+session fork/rewind. **Remaining:**
 
 - **jbang single-file example** (XS-S): a `//DEPS net.ladenthin:llama` one-file runnable demo so new
   users can try the binding without a Maven project.
@@ -410,7 +225,7 @@ session fork/rewind (see the Done section). **Remaining:**
 ### Android example app (own session; the remaining Android item)
 
 The AAR + Kotlin façade + multi-ABI (arm64-v8a/x86_64) + emulator CI shipped, and the emulator job is
-a release gate (see the Done section / CLAUDE.md "Android AAR + Kotlin façade"). Remaining: a minimal
+a release gate (see CLAUDE.md "Android AAR + Kotlin façade"). Remaining: a minimal
 sample app under e.g. `examples/android-sample/` (single Activity, model picker, streaming text view)
 consuming `net.ladenthin:llama-android` + `llama-kotlin` — it validates what the emulator cannot:
 real arm64 hardware and the Adreno/OpenCL flavor. Treat LLaMAndroid as prior art.
@@ -601,16 +416,6 @@ introduced by the version bump — they were deferred to keep that PR landable.
 
 - **Null-safety refinement.** JSpecify + NullAway are now enforced at compile time in **strict JSpecify mode** with the extra options `CheckOptionalEmptiness`, `AcknowledgeRestrictiveAnnotations`, `AcknowledgeAndroidRecent`, `AssertsEnabled` (see `pom.xml`); `@NullMarked` on the three packages via `package-info.java`; JDK module exports in `.mvn/jvm.config`. The legacy `org.jetbrains.annotations` dep has been removed; all nullability annotations are JSpecify. Public-API methods that may legitimately have no value use `Optional<T>` rather than `@Nullable T` (`ChatResponse.getFirstMessage`, `ChatMessage.getParts`, `ChatRequest.buildToolsJson`). Open follow-up: review remaining unannotated public API surfaces for places where `@Nullable` would be more precise than the implicit non-null default.
 
-- **SpotBugs `effort=Max` + `threshold=Low`** — **DONE (already enabled in `pom.xml`)**, with fb-contrib +
-  findsecbugs, bound to `verify`. The legacy "flip the pom / ~65 findings" note is stale: only a handful
-  of unexcluded findings remain at any time, and `spotbugs:check` is kept green. Most recent pass fixed the
-  6 introduced by the audit Tier-1–3 fixes — `withScalar` uses a single `instanceof Number` (no
-  `ITC_INHERITANCE_TYPE_CHECKING`); `ChatMessage.getToolCalls` returns a fresh unmodifiable view (no
-  `EI_EXPOSE_REP`); the `LlamaModel` batch methods' deliberate re-throw and the `ChatMessage` public
-  constructor's `List` param carry narrow `<Match>` rationale suppressions.
-  **Note:** `spotbugs:check` is bound to the `verify` phase, which the model-backed CI test jobs
-  (`mvn test` / `mvn package`) do not reach — run `mvn verify` (or a dedicated job) to gate it in CI.
-
 - **Drop the project-wide `OPM_OVERLY_PERMISSIVE_METHOD` suppression in
   `spotbugs-exclude.xml`** once the package-architecture refactor lands
   (see [`../workspace/crossrepostatus.md`](../workspace/crossrepostatus.md)
@@ -624,158 +429,3 @@ introduced by the version bump — they were deferred to keep that PR landable.
 - **Additional ArchUnit rules to consider** — the full **`layeredArchitecture()`** rule and a **per-module banned-import** rule (`jacksonBannedFromContractsAndLoader` — Jackson kept out of `args`/`callback`/`exception`/`loader`) are now DONE. Still open: more per-module banned-imports if useful, public-API-surface constraints (no public mutable static state, etc.). Partial progress: `7b6667d` covers the "no public field that is not final" sub-rule.
 
 - **Cross-repo code-quality TODOs** — see [`../workspace/policies/code-quality-todos.md`](../workspace/policies/code-quality-todos.md) for the canonical `@VisibleForTesting` design-fit review, package hierarchy review, and class/method naming review. This repo has no `@VisibleForTesting` usages today; package and naming reviews remain open.
-
-## Done (kept for history)
-
-### 2026-08-25 — the five gaps recorded during the b10618 bump, now fixed
-
-All five were found while bumping llama.cpp to b10618, recorded there as diagnoses rather than fixes
-(the bump commit had to stay a bump), and closed in a follow-up. Details in CLAUDE.md; one-liners:
-
-- **Model-gated Java tests silently self-skipped in CI** — Surefire's working directory is the
-  module basedir while the GGUF cache is restored to the reactor root, so every `models/…` path
-  resolved to nothing, every model-gated class aborted in `@BeforeAll`, and the job still went green.
-  Fixed with `TestConstants.resolveModelPath` / `resolveModelProperty` (accept either layout), routed
-  through every path constant and every `-Dnet.ladenthin.llama.*` fixture property, plus
-  `TestConstantsTest` pinning the resolver **and** the wiring. `llama-langchain4j` had the same
-  defect and got the same resolver as `TestModelPaths`. Verified end-to-end: with a placeholder at
-  `<repo>/models/`, `LlamaModelTest` reports `Skipped: 0` and actually attempts the load.
-- **`getMetrics()` payload contract drifted at b10408** — restored in the native layer instead of
-  bending the Java contract: `handleSlotAction(0, …)` now posts both `SERVER_TASK_TYPE_METRICS` and
-  `SERVER_TASK_TYPE_SLOT_GET` and merges them via the pure `server_metrics_to_json`. All three
-  consumers keep working unchanged; `value.ServerMetrics` additionally exposes the cache and
-  speculative-decoding counters that previously existed only in the Prometheus text.
-  `LlamaModelTest#testGetMetrics` now asserts the parsed shape rather than substrings (the old
-  assertion was satisfiable by the slot entries themselves), and `GET /slots` answers `[]` instead of
-  an empty body when the payload carries no `slots` key.
-- **`RouterClient` had no API-key support** — added `RouterClient(port, apiKey)` /
-  `RouterClient(host, port, apiKey)` sending `Authorization: Bearer <key>`; an empty key behaves like
-  none, `toString()` never prints it, `equals` includes it.
-- **`RouterClient.awaitModelLoaded` vs hidden router models** — the TODO's first suggestion (poll to
-  the timeout) was wrong: upstream filters hidden models out of `GET /models` permanently, so no
-  amount of polling observes one. Fixed the honest way — the "not listed" message now names the
-  `dedup-cache-models` cause and the javadoc documents the direct-request path.
-- **`apply-llama-patches.cmake` was not idempotent** — replaced per-patch reverse-checking with a
-  stamp file (llama.cpp commit + per-patch SHA-256) gated on git's clean/dirty state. A reconfigure
-  over a patched tree is now a no-op; a genuine mismatch fails with an accurate message instead of a
-  misleading "does not apply cleanly". Verified against the real build tree and a purpose-built
-  two-patches-one-file fixture that reproduces the old failure.
-
-
-### 2026-07-05 feature wave (PR #298) + follow-ups
-
-One-liners for the sections removed from "Open" (full detail: PR #298, CLAUDE.md, git history):
-
-- **NativeServer attach mode** — `NativeServer(LlamaModel, String...)` via `patches/0007`
-  (`llama_server_attach`); serves an already-loaded model over the full upstream HTTP frontend.
-- **Typed router API** — `server.RouterClient` + `value.RouterModel` + parser; router mode in-JVM via
-  `patches/0008` + `NativeServer.setWorkerCommand`.
-- **GGUF metadata inspector** — pure-Java `GgufInspector` + `value.GgufMetadata` (LE/BE, fail-loud).
-- **Session fork/rewind** — `Session.checkpoint/rewind/fork` + `value.SessionCheckpoint`.
-- **LangChain4j v1 + streaming** — tool calling, JSON mode, multimodal; streamed tool calls +
-  per-token thinking via `StreamingChunkAssembler`.
-- **UTF-8 JNI path, runtime LoRA control, typed batch embeddings, in-JVM quantizer** (first batches).
-- **Android AAR + Kotlin façade + x86_64 ABI + emulator CI** — incl. the dlopen fix (`GGML_OPENMP OFF`
-  + `-static-libstdc++`, DT_NEEDED whitelist; also fixed the latent 5.0.5 arm64 defect); emulator job
-  promoted to a release gate; committed audio fixture (`audios/sample.wav`) wired as the
-  `AudioInputIntegrationTest` default.
-- **PIT gate hermeticity** — verified 295/295, 0 NO_COVERAGE with no fixtures; stale gotcha removed.
-- **llama.cpp b9870 → b9873 → b9876** — all 8 patches re-verified each step.
-- **Windows native classifiers (Ninja default flip + MSVC classifier + CUDA/Vulkan/OpenCL)** — shipped
-  earlier; docs live in CLAUDE.md "Windows native classifiers".
-- **b9739 Windows JNI arg-parse regression** — fixed via `patches/0001`; upstream submission tracked
-  in "Upstream PR submissions" above.
-- **Code audit (18 findings)** — fixed in PRs #258/#260 (+ tests #261/#262); only the optional
-  extraction-directory isolation remains (own section above).
-- **Branch protection aarch64 check rename** — closed as a no-op per owner.
-
-
-### b9739 upgrade + PR #248 (Windows Ninja, native aarch64, patches mechanism)
-
-- **llama.cpp b9682 → b9739** (#247, merged) + build fixes: `server-schema.cpp` added to the
-  `jllama_test` sources (b9739 link fix, `38be6db`); `test_server.cpp` `ParamsFromJsonCmpl`
-  expectations updated to b9739 schema behavior (`aaba886`).
-- **Windows Ninja artifact** — `ninja-windows` classifier JAR built with Ninja Multi-Config + sccache,
-  shipped alongside the permanent MSVC default; both build + Java-test jobs green (`e113ed3`,
-  `48f0863`). (See the open section above for the design rationale; verification is done.)
-- **Linux aarch64 → native `ubuntu-24.04-arm` build** (`ed9ecbb`). The dockcross `linux-arm64-lts`
-  image (GCC 8.5 / glibc 2.17) could no longer compile b9739's C++17 CTAD-in-`new`; now builds natively
-  with GCC 14 (mirroring upstream), runs `ctest` on real ARM (446 tests green), and warms sccache
-  (99.66% hits). Trade-off: glibc floor 2.17 → ~2.39 (same envelope as upstream's ARM binaries);
-  documented in the README classifier table. `build.sh` sccache auto-fetch generalized to aarch64.
-- **Generic `patches/` mechanism** — drop `*.patch`/`*.diff` in `llama/patches/`, applied to the
-  FetchContent'd llama.cpp source by `llama/cmake/apply-llama-patches.cmake` via the llama.cpp
-  `PATCH_COMMAND` (cross-platform, idempotent, fail-loud). Covers every C++ build from one place.
-  First patch fixes the Windows JNI arg-parse regression (`1d875b1` → deterministic form `f651b53`).
-  REUSE annotated via `patches/**` glob (`0cffac1`).
-- **CUDA sccache verified** — the `manylinux_2_28 (CUDA)` job caches all gcc C/C++ TUs (247/248 hits,
-  99.60%); the nvcc `.cu` kernels remain uncached (sccache limitation), and `CUDA_FAST_BUILD` keeps
-  PR/validation runs single-arch. (Doc/observation; no code change.)
-
-### Layered package restructure (flat root package → layered hierarchy)
-
-The flat `net.ladenthin.llama` root package was split (via `git mv`, history
-preserved) into layered packages so boundaries align with the layers, enforced
-by a new `layeredArchitecture()` ArchUnit rule (Api → Loader → Marshalling →
-Foundation):
-
-- **Foundation**: `value` (18 DTOs: ChatMessage, ContentPart, Pair, LlamaOutput,
-  …), `callback` (CancellationToken, LoadProgressCallback, ToolHandler),
-  `exception` (LlamaException, ModelUnavailableException), `args` (existing leaf).
-- **Marshalling**: `json` (response parsers + `TimingsLogger`, its only consumer),
-  `parameters` (Inference/Model/Json/Cli parameters + `ParameterJsonSerializer` +
-  `ChatRequest`).
-- **Loader** (internal, NOT exported): `loader` (LlamaLoader, OSInfo,
-  ProcessRunner, NativeLibraryPermissionSetter, Java8CompatibilityHelper,
-  OfflineModelGuard, LlamaSystemProperties).
-- **Api** (root): LlamaModel, Session, LlamaIterable, LlamaIterator.
-
-Cycle-breaking moves: `TimingsLogger` root→`json`, `ParameterJsonSerializer`
-`json`→`parameters`, `ChatRequest` root→`parameters` (it carries an
-`InferenceParameters` customizer). Test classes mirrored into their subjects'
-packages; cross-layer members promoted to `public`. Cross-package Javadoc
-`{@link}` references fully-qualified (palantir's `removeUnusedImports` strips
-javadoc-only imports). `module-info` exports the new public-API packages and
-keeps `loader` internal. All 11 ArchUnit rules green; `javadoc:jar` clean.
-
-**Breaking change**: public-API FQNs changed (e.g. `net.ladenthin.llama.ChatMessage`
-→ `net.ladenthin.llama.value.ChatMessage`) — ship under a major version bump.
-
-- **Reactive `LlamaPublisher` removed in favour of consumer-side adapters.**
-  The hand-rolled `LlamaPublisher` + `LlamaModel.streamPublisher` /
-  `streamChatPublisher` (shipped in PR #188 as §2.3 of the Kotlin SDK
-  feature comparison) had zero non-test callers. `LlamaIterable` is
-  already `Iterable<LlamaOutput> & AutoCloseable`, and every mainstream
-  reactive library wraps it in a few lines via its own resource-management
-  primitive (`Flux.using`, `Flowable.using`, Kotlin `use {}`). The real-world
-  Android consumer [LLaMAndroid](https://github.com/Rattlyy/LLaMAndroid)
-  already uses `LlamaIterable` inside a Kotlin `flow {}` block — bypassing
-  the publisher entirely. README "Reactive integration" section documents
-  the Reactor / RxJava 3 / Kotlin Flow / Akka patterns; correctness is
-  pinned end-to-end by a new `ReactorIntegrationTest` using
-  test-scope `reactor-core` (zero runtime deps added; `org.reactivestreams`
-  runtime dep dropped). Cleared 6 fb-contrib Max+Low findings on
-  `LlamaPublisher$LlamaSubscription` as a side effect.
-
-- **Error Prone bug-pattern promotions to `ERROR`** — `855f447` (12 patterns promoted; `-Xlint:all` enabled).
-- **`javac -Werror` + `-Xlint:all,-serial,-options,-classfile,-processing`** — `3e2efbb`. ~20 EP warnings addressed first (EqualsGetClass on `Pair` via instanceof; MissingOverride on `PoolingType` / `RopeScalingType`; JdkObsolete `LinkedList` → `ArrayList` in `LlamaLoader`; StringSplitter inline-suppressed; 3× StringCaseLocaleUsage `Locale.ROOT` in `OSInfo`; EmptyCatch in `OSInfo.isAlpineLinux`; FutureReturnValueIgnored in `LlamaModel.completeAsync`; Finalize on `LlamaModel.finalize`; MixedMutabilityReturnType in 4 parser methods; EnumOrdinal in `InferenceParameters.setMiroStat`; EscapedEntity in `InferenceParameters` javadoc; 4× TypeParameterUnusedInFormals; AnnotateFormatMethod on `Java8CompatibilityHelper.formatted`; SafeVarargs + varargs on `Java8CompatibilityHelper.listOf`).
-- **`-parameters` javac arg** — `4350cf2`.
-- **`--release N`** — `4350cf2` (`<release>8</release>`).
-- **Mutation-testing threshold enforcement (PIT)** — `62f8a00` + `bb93a8f` (docs) + `3bfa51f` (README badge). Runs every CI build with `<mutationThreshold>100</mutationThreshold>`. **Scope expanded 2026-06-07** from the original single `Pair` target (which was stale after the restructure — `llama.Pair`→`value.Pair` matched nothing) to `value.*` + `exception.*` + `args.*` + `json.TimingsLogger` = 27 classes / 163 mutations, all killed. Still open (optional): `json.ChatResponseParser` / `CompletionResponseParser` private-helper survivors (`RerankResponseParser` is excluded — equivalent empty-list mutant).
-- **Checker Framework as a second static-nullness pass** — `c63870b`. The original
-  `@PolyNull` on `JsonParameters.toJsonString` was simplified to plain `@Nullable`
-  (the only `@PolyNull` site in production; eliminated in a later cleanup).
-  Native-method constructor calls in `LlamaModel` carry
-  `@SuppressWarnings("method.invocation")` (Checker's `@UnderInitialization`
-  cannot see that the native callee does not dereference `this`); `Pair.equals`
-  and `Usage.equals` declare `@Nullable Object`; `LlamaSystemProperties` getters
-  return `@Nullable String`; `getPackage()` and resource-stream null derefs are
-  guarded.
-- **JPMS `module-info.java` with module-level `@NullMarked`** — `0fd066a` + `9528e79`. The module `net.ladenthin.llama` exports the three hand-written public packages (`net.ladenthin.llama`, `.args`, `.json`). Two-execution `maven-compiler-plugin` pattern; module-level `@NullMarked` lives on the module descriptor.
-- **Banned-API enforcement** — Maven Enforcer (`8baae0c`), ArchUnit `System.exit` / `new Random` / `Thread.sleep` (`329d764`), `sun.*` / `com.sun.*` / `jdk.internal.*` (`e6069da`).
-- **ArchUnit public-fields-final** — `7b6667d`.
-- **LogCaptor smoke test** — `LoggingSmokeTest` (`3cedc6e`).
-- **Offline / air-gapped model loading** — `ModelFlag.OFFLINE` + `ModelParameters.setOffline(boolean)` + `hasFlag` helper + public `ModelUnavailableException` (extends now-public `LlamaException`) + deterministic pre-check `OfflineModelGuard`. Unit tests in `LlamaModelOfflineTest`. No JNI rebuild required. *(Originally shipped as `SKIP_DOWNLOAD`/`setSkipDownload` over a parse-failure heuristic; reworked when llama.cpp b9803 removed `common_params::skip_download` and `common_skip_download_exception` — `--skip-download` was never a registered upstream arg, so it never actually skipped a download. `--offline` is the real upstream flag with the intended load-from-cache semantics.)*
-- **`LlamaSystemProperties` registry cleanup** — `getLibName()` deleted (`6bb63e1` upstream forensic trace); `OSInfo.getArchName()` now routes through `LlamaSystemProperties.getOsinfoArchitecture()` (`3ae6c81`).
-- **Abstract the Java and test writing guidelines to a workspace-level shared layer.** Workspace version chain at [`../workspace/guides/src/CODE_WRITING_GUIDE-8.md`](../workspace/guides/src/CODE_WRITING_GUIDE-8.md) and [`../workspace/guides/test/TEST_WRITING_GUIDE-8.md`](../workspace/guides/test/TEST_WRITING_GUIDE-8.md); canonical TDD skill at [`../workspace/.claude/skills/java-tdd-guide/SKILL.md`](../workspace/.claude/skills/java-tdd-guide/SKILL.md).
-- **Standardised CLAUDE.md template** — [`../workspace/templates/CLAUDE.md.template`](../workspace/templates/CLAUDE.md.template).
