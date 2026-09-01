@@ -250,12 +250,17 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Enable Flash Attention (default: disabled).
+     * Set the Flash Attention mode ({@code --flash-attn}).
      *
+     * <p>The value is mandatory upstream, so this is the only way to express the option correctly.
+     * {@link FlashAttn#AUTO} is llama.cpp's own default and lets it decide per backend and model;
+     * {@link FlashAttn#ON} forces it and fails the load where the backend cannot provide it.</p>
+     *
+     * @param mode the Flash Attention mode
      * @return this builder
      */
-    public ModelParameters enableFlashAttn() {
-        return setFlag(ModelFlag.FLASH_ATTN);
+    public ModelParameters setFlashAttn(FlashAttn mode) {
+        return putEnum("--flash-attn", mode);
     }
 
     /**
@@ -1726,8 +1731,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Enable the given flag, adding it to the active parameter set.
-     * Equivalent to calling the specific named method (e.g. {@link #enableFlashAttn()}
-     * for {@link net.ladenthin.llama.args.ModelFlag#FLASH_ATTN}).
+     * Equivalent to calling the specific named method (e.g. {@link #enableSwaFull()}
+     * for {@link net.ladenthin.llama.args.ModelFlag#SWA_FULL}).
      *
      * @param flag the flag to enable
      * @return this builder

@@ -9,6 +9,33 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Added
+- **`ModelParameters.setFlashAttn(FlashAttn)` — the only way to express `--flash-attn` correctly.**
+  llama.cpp turned that option from a bare flag into a value-taking one in **b10273**: the
+  `on|off|auto` value is mandatory, so emitting the key alone makes the parser consume whatever argv
+  token happens to follow it. The failure is as misleading as it sounds — the load dies naming a flag
+  the caller never set, e.g. `error: unknown value for --flash-attn: '--reasoning-format'`.
+
+  The new `args.FlashAttn` enum follows the existing `CacheType` / `TensorReadLazyMode` pattern, so
+  the option is now expressible: `AUTO` is upstream's own default, `ON` forces it and fails the load
+  where the backend cannot provide it, `OFF` disables it.
+
+### Removed
+- **`ModelParameters.enableFlashAttn()` and `ModelFlag.FLASH_ATTN` — breaking.** Both modelled
+  `--flash-attn` as a valueless flag, which it has not been since b10273. Keeping either would leave
+  the broken argv reachable: the method directly, the enum constant through the public
+  `setFlag(ModelFlag)`. Replacement: `setFlashAttn(FlashAttn)`.
+
+  Deprecating instead was considered and dropped. A deprecated method that still emits an argv
+  llama.cpp misparses is a trap with a warning label on it, and this is a major-version window.
+
+### Fixed
+- **A test pinned the broken argv shape as correct.** `ModelParametersExtendedTest`'s
+  complex-combination case asserted a 9-token argv built with `enableFlashAttn()` — i.e. it encoded
+  the valueless emission as the expected contract, which is why no gate ever flagged it. It now uses
+  `setFlashAttn(FlashAttn.ON)` and asserts 10 tokens, and a separate test pins the deprecated
+  method's emission explicitly as the defect it is, so the two cannot be confused again.
+
 ## [5.1.0] - 2026-08-29
 
 > The entries below also cover the **b9917 → b10456** window (PRs #341–#394), which went unrecorded

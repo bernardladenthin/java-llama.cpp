@@ -18,7 +18,6 @@ public class ModelFlagTest {
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][] {
             {ModelFlag.NO_CONTEXT_SHIFT, "--no-context-shift"},
-            {ModelFlag.FLASH_ATTN, "--flash-attn"},
             {ModelFlag.SWA_FULL, "--swa-full"},
             {ModelFlag.NO_PERF, "--no-perf"},
             {ModelFlag.ESCAPE, "--escape"},
@@ -67,7 +66,10 @@ public class ModelFlagTest {
 
     @Test
     public void testEnumCount() {
-        assertEquals(35, ModelFlag.values().length);
+        // 34 since FLASH_ATTN was removed: --flash-attn is not a valueless flag (llama.cpp b10273
+        // made its on|off|auto value mandatory), so modelling it here left a broken argv reachable
+        // through setFlag. It lives in the FlashAttn enum instead.
+        assertEquals(34, ModelFlag.values().length);
     }
 
     @ParameterizedTest(name = "{0} -> {1}")

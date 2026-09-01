@@ -12,15 +12,18 @@ package net.ladenthin.llama.args;
  * alone enables the behaviour. Pass to
  * {@link net.ladenthin.llama.parameters.ModelParameters#setFlag(ModelFlag)} /
  * {@link net.ladenthin.llama.parameters.ModelParameters#clearFlag(ModelFlag)} for programmatic control,
- * or use the named convenience methods (e.g. {@link net.ladenthin.llama.parameters.ModelParameters#enableFlashAttn()}).
+ * or use the named convenience methods (e.g. {@link net.ladenthin.llama.parameters.ModelParameters#enableSwaFull()}).
+ *
+ * <p>{@code --flash-attn} is deliberately NOT here. It looks like a flag and was modelled as one, but
+ * llama.cpp has required a mandatory {@code on|off|auto} value since b10273 — emitting the key alone
+ * makes the parser consume the next argv token. Listing it would leave that broken argv reachable
+ * through {@code setFlag}. Use
+ * {@link net.ladenthin.llama.parameters.ModelParameters#setFlashAttn(net.ladenthin.llama.args.FlashAttn)}.</p>
  */
 public enum ModelFlag {
 
     /** Disable context shift on infinite text generation. */
     NO_CONTEXT_SHIFT("--no-context-shift"),
-
-    /** Enable Flash Attention. */
-    FLASH_ATTN("--flash-attn"),
 
     /** Keep the full-size sliding-window-attention (SWA) KV cache, enabling cross-request
      *  prompt-prefix reuse (pairs with --cache-reuse) at ~2x the SWA-layer KV RAM. Default off.
