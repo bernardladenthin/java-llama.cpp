@@ -2205,9 +2205,12 @@ SPDX-License-Identifier: MIT
 						<groupId>org.apache.maven.plugins</groupId>
 						<artifactId>maven-assembly-plugin</artifactId>
 						<configuration>
-							<descriptorRefs>
-								<descriptorRef>jar-with-dependencies</descriptorRef>
-							</descriptorRefs>
+							<!-- Our own descriptor, not the predefined jar-with-dependencies ref: it is
+							     a verbatim copy of that one plus simplelogger.properties, which must
+							     reach the runnable jar without being published in the library jar. -->
+							<descriptors>
+								<descriptor>src/assembly/fat-jar.xml</descriptor>
+							</descriptors>
 							<archive>
 								<manifest>
 									<mainClass>net.ladenthin.llama.server.ServerLauncher</mainClass>

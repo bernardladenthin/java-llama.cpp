@@ -31,6 +31,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   To keep logback, exclude `org.slf4j:slf4j-simple` and declare your own binding — which is what the
   SLF4J api/binding split is for.
 
+  **The runnable fat jar carries logging defaults; the library jar deliberately does not.**
+  `simplelogger.properties` (INFO, stdout, timestamps, thread + short logger name — what the previous
+  logback default emitted) is added by the assembly, from `src/main/assembly-resources/`. It is *not*
+  under `src/main/resources`, because from there it would be published inside the library jar and land
+  on every consumer's classpath: slf4j-simple reads whichever file the classloader hands it first, so
+  a consumer with their own configuration would get a coin flip. A library must not decide that. The
+  `assembly` profile therefore uses its own descriptor — a verbatim copy of the predefined
+  `jar-with-dependencies` plus that one file.
+
 - **`checker-qual` pinned to 3.55.1 and marked optional.** 4.x is major 55 and its annotations are
   `@Retention(RUNTIME)`, so a Java 8 JVM throws `UnsupportedClassVersionError` the moment anything
   reflects over an annotated element. The optional flag keeps it out of consumers' transitive graph;

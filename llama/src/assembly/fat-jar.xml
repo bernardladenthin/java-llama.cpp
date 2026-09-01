@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+
+SPDX-License-Identifier: MIT
+-->
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 http://maven.apache.org/xsd/assembly-2.2.0.xsd">
+    <!--
+      Same output as the predefined jar-with-dependencies descriptor, plus one file.
+
+      The dependencySet below is a verbatim copy of the predefined descriptor shipped
+      inside maven-assembly-plugin: outputDirectory /, useProjectArtifact true,
+      unpack true, scope runtime. Keep it that way; the only reason this file exists at
+      all is the fileSet underneath it.
+
+      That fileSet adds simplelogger.properties, which cannot live in src/main/resources:
+      from there it would be published in the library jar and land on every consumer's
+      classpath, where slf4j-simple would read it instead of theirs. Only the runnable
+      artifact may carry logging defaults.
+    -->
+    <id>jar-with-dependencies</id>
+    <formats>
+        <format>jar</format>
+    </formats>
+    <includeBaseDirectory>false</includeBaseDirectory>
+    <dependencySets>
+        <dependencySet>
+            <outputDirectory>/</outputDirectory>
+            <useProjectArtifact>true</useProjectArtifact>
+            <unpack>true</unpack>
+            <scope>runtime</scope>
+        </dependencySet>
+    </dependencySets>
+    <fileSets>
+        <fileSet>
+            <directory>${project.basedir}/src/main/assembly-resources</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>simplelogger.properties</include>
+            </includes>
+        </fileSet>
+    </fileSets>
+</assembly>
