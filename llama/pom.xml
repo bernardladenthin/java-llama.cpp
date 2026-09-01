@@ -59,7 +59,14 @@ SPDX-License-Identifier: MIT
 		<lombok.version>1.18.46</lombok.version>
 		<errorprone.version>2.50.0</errorprone.version>
 		<nullaway.version>0.14.0</nullaway.version>
+		<!-- Build-time Checker Framework processor. Runs on the CI JDK, never ships, so it
+		     tracks the newest release. Deliberately NOT the same property as the annotations
+		     below: those are shipped and must stay Java 8 bytecode. -->
 		<checker.version>4.2.2</checker.version>
+		<!-- Shipped checker-qual annotations. Last release whose classes are class-file
+		     major 52; 4.0.0 moved the line to Java 11. See the dependency for why the pin,
+		     not just the optional flag, is what protects the artifact. -->
+		<checker.qual.version>3.55.1</checker.qual.version>
 		<jackson.version>2.22.2</jackson.version>
 		<reactor.version>3.8.7</reactor.version>
 		<slf4j.version>2.0.18</slf4j.version>
@@ -183,10 +190,20 @@ SPDX-License-Identifier: MIT
 			<artifactId>jspecify</artifactId>
 			<version>${jspecify.version}</version>
 		</dependency>
+		<!-- Pinned to the newest Java 8 line on purpose. checker-qual 4.x is Java 11
+		     bytecode (class-file major 55) and this artifact targets Java 8; its
+		     annotations are @Retention(RUNTIME), so anything reflecting over an
+		     annotated element (Jackson does) loads them and a Java 8 JVM then throws
+		     UnsatisfiedClassVersionError. Marking it optional keeps it out of
+		     consumers' transitive graph but NOT out of the fat jar; the
+		     jar-with-dependencies descriptor filters on scope only, so the version
+		     pin is the part that actually protects the shipped artifact.
+		     3.55.1 is the last release whose classes are major 52; the break is at 4.0.0. -->
 		<dependency>
 			<groupId>org.checkerframework</groupId>
 			<artifactId>checker-qual</artifactId>
-			<version>${checker.version}</version>
+			<version>${checker.qual.version}</version>
+			<optional>true</optional>
 		</dependency>
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>
@@ -200,11 +217,34 @@ SPDX-License-Identifier: MIT
 			<version>${slf4j.version}</version>
 		</dependency>
 		<!-- Default SLF4J binding shipped with this library. Runtime scope: not
-		     required on the compile classpath, only loaded at JVM startup. -->
+		     required on the compile classpath, only loaded at JVM startup.
+
+		     slf4j-simple rather than logback, for two independent reasons:
+
+		     (1) Java 8. Every logback release from 1.4.0 on is Java 11 bytecode, so
+		         LogbackServiceProvider cannot load on the Java 8 this artifact targets:
+		         SLF4J's ServiceLoader finds it at startup and the JVM throws
+		         UnsupportedClassVersionError. The Java 8 line (1.3.x) would fix that but
+		         is end-of-life: 1.3.16 (2025-10-29) is its last release, and every logback
+		         CVE disclosed since has been fixed only in 1.5.x/1.6.x with no backport
+		         (CVE-2026-1225, CVE-2026-9828, CVE-2026-10532; CVE-2026-19880 is fixed only in 1.6.3,
+		         which is Java 11 bytecode and therefore unreachable from here).
+
+		     (2) Attack surface. Essentially every logback CVE lives in its configuration
+		         or socket layers: Janino expression evaluation, HardenedObjectInputStream,
+		         SaxEventRecorder, SocketReceiver. slf4j-simple is six classes with no
+		         config parser, no socket server and no deserialization, so those classes
+		         of defect cannot exist in it. It also ships in the same release train as
+		         slf4j-api above, so the two can never drift apart.
+
+		     What consumers lose: no logback.xml. Configure via a classpath
+		     simplelogger.properties or -Dorg.slf4j.simpleLogger.* system properties.
+		     Anyone who wants logback (or any other binding) excludes this one and
+		     declares their own; that is the point of the SLF4J split. -->
 		<dependency>
-			<groupId>ch.qos.logback</groupId>
-			<artifactId>logback-classic</artifactId>
-			<version>${logback.version}</version>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-simple</artifactId>
+			<version>${slf4j.version}</version>
 			<scope>runtime</scope>
 		</dependency>
 		<!-- @IgnoreJRERequirement marker used by OSInfo (vendored from xerial/sqlite-jdbc)
@@ -651,6 +691,26 @@ SPDX-License-Identifier: MIT
 				<configuration>
 					<!-- -XX:+EnableDynamicAgentLoading: silences the JDK 21 byte-buddy self-attach agent warning that intermittently corrupts Surefire's fork channel ("Corrupted channel ..." / bogus "timeout in the fork"). See workspace policy ci-test-diagnostics.md section 2.1: https://github.com/bernardladenthin/workspace/blob/main/policies/ci-test-diagnostics.md - root cause: https://github.com/raphw/byte-buddy/issues/1639 -->
 					<argLine>@{argLine} -Xmx2g -XX:ErrorFile=hs_err_pid%p.log -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=. -XX:+EnableDynamicAgentLoading</argLine>
+					<!--
+					  Keep the shipped SLF4J binding OFF the test classpath.
+
+					  slf4j-simple is a runtime-scope dependency, and runtime scope is part of
+					  the test classpath too. LogCaptor (io.github.hakky54, test scope) brings
+					  logback, so both providers would be present, SLF4J would pick one
+					  arbitrarily, and LogCaptor fails outright when it does not get logback:
+					  "SLF4J Logger implementation should be of the type
+					  [ch.qos.logback.classic.Logger] but found [org.slf4j.simple.SimpleLogger]"
+					  (7 tests across LoggingSmokeTest, TimingsLoggerTest, ChatResponseParserTest
+					  and CompletionResponseParserTest).
+
+					  Excluding it here leaves logback as the sole provider during tests and does
+					  not touch the artifact: the shipped jar and the fat jar still carry
+					  slf4j-simple. The tests assert what our code logs, which is binding-agnostic;
+					  which binding renders it is not what they are about.
+					-->
+					<classpathDependencyExcludes>
+						<classpathDependencyExclude>org.slf4j:slf4j-simple</classpathDependencyExclude>
+					</classpathDependencyExcludes>
 					<!--
 					  Capture each test class's stdout/stderr into
 					  target/surefire-reports/<class>-output.txt. When a native crash
@@ -2145,9 +2205,12 @@ SPDX-License-Identifier: MIT
 						<groupId>org.apache.maven.plugins</groupId>
 						<artifactId>maven-assembly-plugin</artifactId>
 						<configuration>
-							<descriptorRefs>
-								<descriptorRef>jar-with-dependencies</descriptorRef>
-							</descriptorRefs>
+							<!-- Our own descriptor, not the predefined jar-with-dependencies ref: it is
+							     a verbatim copy of that one plus simplelogger.properties, which must
+							     reach the runnable jar without being published in the library jar. -->
+							<descriptors>
+								<descriptor>src/assembly/fat-jar.xml</descriptor>
+							</descriptors>
 							<archive>
 								<manifest>
 									<mainClass>net.ladenthin.llama.server.ServerLauncher</mainClass>
