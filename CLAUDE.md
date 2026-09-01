@@ -1624,6 +1624,22 @@ See [`../workspace/policies/javadoc-conventions.md`](../workspace/policies/javad
 
 See [`../workspace/policies/spotbugs-suppressions.md`](../workspace/policies/spotbugs-suppressions.md).
 
+**`spotbugs:check` binds to `verify`, so neither `mvn test` nor `mvn package` runs it.** A change
+can pass every local gate and still red the pipeline in the `Code style (spotless) + package graph`
+job. Before pushing, run what that job runs:
+
+```bash
+mvn -B --no-transfer-progress -f llama/pom.xml -DskipTests -Denforcer.skip=true compile spotbugs:check
+```
+
+This has actually shipped twice. Most recently the `--flash-attn` / `--lazy-mode` work reddened
+`main`: the design-intent `OCP_OVERLY_CONCRETE_PARAMETER` suppression in
+`llama/spotbugs-exclude.xml` lists methods **by name**, so renaming `setTensorReadLazy` to
+`setLazyMode` left a dead entry while the new `setLazyMode` and `setFlashAttn` were uncovered. **Any
+rename or addition of an enum-valued `ModelParameters` setter needs that list updated in the same
+commit** — the same "FQN not updated after a rename" class as the stale PIT `targetClasses` and
+`CMakeLists.txt` OSInfo repairs.
+
 ## Spotless Formatting
 
 See [`../workspace/policies/spotless-formatting.md`](../workspace/policies/spotless-formatting.md).
