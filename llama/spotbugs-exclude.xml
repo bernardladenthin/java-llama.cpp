@@ -59,8 +59,8 @@ SPDX-License-Identifier: MIT
 
     <!--
         ModelParameters intentionally types each enum-valued fluent setter
-        to its specific enum (CacheType, MiroStat, NumaStrategy,
-        ReasoningFormat, RopeScalingType, GpuSplitMode, TensorReadLazyMode)
+        to its specific enum (CacheType, FlashAttn, LazyMode, MiroStat,
+        NumaStrategy, ReasoningFormat, RopeScalingType, GpuSplitMode)
         rather than the shared CliArg interface that those enums all
         implement. The narrow type is the API contract:
 
@@ -80,12 +80,13 @@ SPDX-License-Identifier: MIT
         <Or>
             <Method name="setCacheTypeK"/>
             <Method name="setCacheTypeV"/>
+            <Method name="setFlashAttn"/>
+            <Method name="setLazyMode"/>
             <Method name="setMirostat"/>
             <Method name="setNuma"/>
             <Method name="setReasoningFormat"/>
             <Method name="setRopeScaling"/>
             <Method name="setSplitMode"/>
-            <Method name="setTensorReadLazy"/>
         </Or>
     </Match>
 
