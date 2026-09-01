@@ -7,13 +7,13 @@ package net.ladenthin.llama.args;
 import java.util.Arrays;
 import java.util.Collection;
 
-public class TensorReadLazyModeTest extends AbstractCliArgEnumTest<TensorReadLazyMode> {
+public class LazyModeTest extends AbstractCliArgEnumTest<LazyMode> {
 
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][] {
-            {TensorReadLazyMode.OFF, "off", 3},
-            {TensorReadLazyMode.AUTO, "auto", 3},
-            {TensorReadLazyMode.ON, "on", 3},
+            {LazyMode.OFF, "off", 3},
+            {LazyMode.AUTO, "auto", 3},
+            {LazyMode.ON, "on", 3},
         });
     }
 }

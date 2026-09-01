@@ -20,12 +20,12 @@ import java.util.List;
 import net.ladenthin.llama.ClaudeGenerated;
 import net.ladenthin.llama.args.CacheType;
 import net.ladenthin.llama.args.GpuSplitMode;
+import net.ladenthin.llama.args.LazyMode;
 import net.ladenthin.llama.args.MiroStat;
 import net.ladenthin.llama.args.NumaStrategy;
 import net.ladenthin.llama.args.PoolingType;
 import net.ladenthin.llama.args.RopeScalingType;
 import net.ladenthin.llama.args.Sampler;
-import net.ladenthin.llama.args.TensorReadLazyMode;
 import org.junit.jupiter.api.Test;
 
 @ClaudeGenerated(
@@ -725,7 +725,7 @@ public class ModelParametersTest {
     }
 
     // -------------------------------------------------------------------------
-    // setKvUnifiedPerSlot / setTensorReadLazy (llama.cpp b10679)
+    // setKvUnifiedPerSlot / setLazyMode (llama.cpp b10679)
     // -------------------------------------------------------------------------
 
     @Test
@@ -747,20 +747,20 @@ public class ModelParametersTest {
     }
 
     @Test
-    public void testSetTensorReadLazyOff() {
-        ModelParameters p = new ModelParameters().setTensorReadLazy(TensorReadLazyMode.OFF);
-        assertThat(p.parameters.get("--tensor-read-lazy"), is("off"));
+    public void testSetLazyModeOff() {
+        ModelParameters p = new ModelParameters().setLazyMode(LazyMode.OFF);
+        assertThat(p.parameters.get("--lazy-mode"), is("off"));
     }
 
     @Test
-    public void testSetTensorReadLazyAuto() {
-        ModelParameters p = new ModelParameters().setTensorReadLazy(TensorReadLazyMode.AUTO);
-        assertThat(p.parameters.get("--tensor-read-lazy"), is("auto"));
+    public void testSetLazyModeAuto() {
+        ModelParameters p = new ModelParameters().setLazyMode(LazyMode.AUTO);
+        assertThat(p.parameters.get("--lazy-mode"), is("auto"));
     }
 
     @Test
-    public void testSetTensorReadLazyOn() {
-        ModelParameters p = new ModelParameters().setTensorReadLazy(TensorReadLazyMode.ON);
-        assertThat(p.parameters.get("--tensor-read-lazy"), is("on"));
+    public void testSetLazyModeOn() {
+        ModelParameters p = new ModelParameters().setLazyMode(LazyMode.ON);
+        assertThat(p.parameters.get("--lazy-mode"), is("on"));
     }
 }

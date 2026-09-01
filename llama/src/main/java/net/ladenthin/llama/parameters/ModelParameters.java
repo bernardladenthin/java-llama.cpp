@@ -1679,18 +1679,23 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Control on-demand reading of tensors the model architecture marks as lazy-loadable, such as
-     * per-layer embeddings ({@code --tensor-read-lazy}, llama.cpp b10653).
+     * per-layer embeddings ({@code --lazy-mode} / {@code -lzm}, llama.cpp b10653).
+     *
+     * <p>The option was spelled {@code --tensor-read-lazy} up to b10730 and renamed in b10731 with no
+     * alias. This binding follows the rename rather than papering over it: the method was
+     * {@code setTensorReadLazy} and the enum {@code TensorReadLazyMode}. Carrying a name upstream no
+     * longer uses would leave the API describing a flag that does not exist.</p>
      *
      * <p>Trades resident memory for disk reads during inference. <strong>Requires mmap</strong>, so
      * it has no effect on a model loaded with mmap disabled. Upstream's default is
-     * {@link TensorReadLazyMode#AUTO}, which applies on-demand reading only to marked tensors above
+     * {@link LazyMode#AUTO}, which applies on-demand reading only to marked tensors above
      * 4&nbsp;GiB.</p>
      *
      * @param mode the lazy-read mode
      * @return this builder
      */
-    public ModelParameters setTensorReadLazy(TensorReadLazyMode mode) {
-        return putEnum("--tensor-read-lazy", mode);
+    public ModelParameters setLazyMode(LazyMode mode) {
+        return putEnum("--lazy-mode", mode);
     }
 
     /**
