@@ -8,15 +8,15 @@ package net.ladenthin.llama.args;
  * On-demand reading of tensors the model architecture marks as lazy-loadable, such as per-layer
  * embeddings.
  *
- * <p>The string constants are the exact values accepted by llama.cpp's {@code --tensor-read-lazy}
+ * <p>The string constants are the exact values accepted by llama.cpp's {@code --lazy-mode}
  * CLI argument (added in b10653), and map 1-to-1 to the {@code llama_lazy_mode} enum in
  * {@code include/llama.h}. Reading rows on demand keeps a large marked tensor out of resident
  * memory at the cost of disk reads during inference; it <strong>requires mmap</strong>, so it has
  * no effect when the model is loaded with mmap disabled.
  *
- * @see net.ladenthin.llama.parameters.ModelParameters#setTensorReadLazy(TensorReadLazyMode)
+ * @see net.ladenthin.llama.parameters.ModelParameters#setLazyMode(LazyMode)
  */
-public enum TensorReadLazyMode implements CliArg {
+public enum LazyMode implements CliArg {
 
     /**
      * Always read a marked tensor up front and keep it resident.
@@ -41,16 +41,16 @@ public enum TensorReadLazyMode implements CliArg {
     ON("on");
 
     /**
-     * The CLI string passed to {@code --tensor-read-lazy} in llama.cpp's {@code common/arg.cpp}.
+     * The CLI string passed to {@code --lazy-mode} in llama.cpp's {@code common/arg.cpp}.
      */
     private final String argValue;
 
-    TensorReadLazyMode(String value) {
+    LazyMode(String value) {
         this.argValue = value;
     }
 
     /**
-     * Returns the CLI string accepted by llama.cpp's {@code --tensor-read-lazy} argument.
+     * Returns the CLI string accepted by llama.cpp's {@code --lazy-mode} argument.
      *
      * @return the mode string ({@code "off"}, {@code "auto"} or {@code "on"})
      */

@@ -9,6 +9,51 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Added
+- **`ModelParameters.setFlashAttn(FlashAttn)` — the only way to express `--flash-attn` correctly.**
+  llama.cpp turned that option from a bare flag into a value-taking one in **b10273**: the
+  `on|off|auto` value is mandatory, so emitting the key alone makes the parser consume whatever argv
+  token happens to follow it. The failure is as misleading as it sounds — the load dies naming a flag
+  the caller never set, e.g. `error: unknown value for --flash-attn: '--reasoning-format'`.
+
+  The new `args.FlashAttn` enum follows the existing `CacheType` / `TensorReadLazyMode` pattern, so
+  the option is now expressible: `AUTO` is upstream's own default, `ON` forces it and fails the load
+  where the backend cannot provide it, `OFF` disables it.
+
+### Changed
+- **llama.cpp `b10682` → `b10731`.** One project-source change came out of it, and it is the kind a
+  header diff does not surface: upstream renamed `--tensor-read-lazy` to `-lzm` / `--lazy-mode`
+  (env `LLAMA_ARG_TENSOR_READ_LAZY` → `LLAMA_ARG_LAZY_MODE`) **with no alias**. The binding emitted
+  the old spelling, so every model load with the knob set would have failed on an unknown argument —
+  a contract change behind an unchanged signature.
+
+  Everything else in the range was ruled out mechanically: `common/speculative.h` is byte-unchanged
+  (only the `.cpp` moved), the two touched ggml headers have **zero deletions**, and the 42 files the
+  eight patches touch were intersected against the changed-file list — the sole hit is
+  `common/arg.cpp`, whose change sits at line ~2729 while patch `0001`'s hunks there are at
+  1201/1242. Confirmed by the real fail-loud applier: fresh `cmake -B build-b10731` configured clean,
+  `ggml commit: 0eadefebd`, stamp written over all eight patches.
+
+- **`TensorReadLazyMode` → `LazyMode`, `setTensorReadLazy` → `setLazyMode` — breaking.** The binding
+  follows upstream's rename rather than papering over it; keeping the old names would leave the API
+  describing a flag that no longer exists.
+
+### Removed
+- **`ModelParameters.enableFlashAttn()` and `ModelFlag.FLASH_ATTN` — breaking.** Both modelled
+  `--flash-attn` as a valueless flag, which it has not been since b10273. Keeping either would leave
+  the broken argv reachable: the method directly, the enum constant through the public
+  `setFlag(ModelFlag)`. Replacement: `setFlashAttn(FlashAttn)`.
+
+  Deprecating instead was considered and dropped. A deprecated method that still emits an argv
+  llama.cpp misparses is a trap with a warning label on it, and this is a major-version window.
+
+### Fixed
+- **A test pinned the broken argv shape as correct.** `ModelParametersExtendedTest`'s
+  complex-combination case asserted a 9-token argv built with `enableFlashAttn()` — i.e. it encoded
+  the valueless emission as the expected contract, which is why no gate ever flagged it. It now uses
+  `setFlashAttn(FlashAttn.ON)` and asserts 10 tokens, and a separate test pins the deprecated
+  method's emission explicitly as the defect it is, so the two cannot be confused again.
+
 ## [5.1.0] - 2026-08-29
 
 > The entries below also cover the **b9917 → b10456** window (PRs #341–#394), which went unrecorded

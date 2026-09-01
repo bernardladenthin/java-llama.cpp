@@ -22,6 +22,7 @@ import java.util.Map;
 import net.ladenthin.llama.ClaudeGenerated;
 import net.ladenthin.llama.args.*;
 import net.ladenthin.llama.args.CacheType;
+import net.ladenthin.llama.args.FlashAttn;
 import net.ladenthin.llama.args.GpuSplitMode;
 import net.ladenthin.llama.args.MiroStat;
 import net.ladenthin.llama.args.NumaStrategy;
@@ -635,10 +636,31 @@ public class ModelParametersExtendedTest {
     }
 
     @Test
-    public void testEnableFlashAttn() {
-        ModelParameters p = new ModelParameters().enableFlashAttn();
-        assertThat(p.parameters, hasKey("--flash-attn"));
-        assertThat(p.parameters.get("--flash-attn"), is(nullValue()));
+    public void testSetFlashAttnRendersEveryMode() {
+        // Every mode the enum declares must reach argv as its own CLI string; a mode added later is
+        // then covered without touching this test.
+        for (FlashAttn mode : FlashAttn.values()) {
+            ModelParameters p = new ModelParameters().setFlashAttn(mode);
+            assertThat(p.parameters, hasKey("--flash-attn"));
+            assertThat(p.parameters.get("--flash-attn"), is(mode.getArgValue()));
+        }
+    }
+
+    @Test
+    public void testSetFlashAttnPutsTheValueAfterTheKeyInArgv() {
+        // The point of the whole change: the value must be its own argv token immediately after the
+        // key. Anything else and llama.cpp consumes whatever follows as the mode.
+        String[] arr = new ModelParameters().setFlashAttn(FlashAttn.ON).toArray();
+        int key = -1;
+        for (int i = 0; i < arr.length; i++) {
+            if ("--flash-attn".equals(arr[i])) {
+                key = i;
+                break;
+            }
+        }
+        assertThat("--flash-attn missing from argv", key, is(not(-1)));
+        assertThat("--flash-attn is the last token, so its mandatory value is missing", key < arr.length - 1, is(true));
+        assertThat(arr[key + 1], is("on"));
     }
 
     @Test
@@ -1076,7 +1098,7 @@ public class ModelParametersExtendedTest {
         assertThat(p.setXtcProbability(0.3f), is(sameInstance(p)));
         assertThat(p.setRopeScale(2.0f), is(sameInstance(p)));
         assertThat(p.setGpuLayers(32), is(sameInstance(p)));
-        assertThat(p.enableFlashAttn(), is(sameInstance(p)));
+        assertThat(p.setFlashAttn(FlashAttn.AUTO), is(sameInstance(p)));
         assertThat(p.disableContextShift(), is(sameInstance(p)));
         assertThat(p.setModelDraft("/draft.gguf"), is(sameInstance(p)));
         assertThat(p.disableLog(), is(sameInstance(p)));
@@ -1092,10 +1114,13 @@ public class ModelParametersExtendedTest {
                 .setModel("model.gguf")
                 .setCtxSize(2048)
                 .enableEmbedding()
-                .enableFlashAttn();
+                .setFlashAttn(FlashAttn.ON);
         String[] arr = p.toArray();
-        // argv[0]="" + --fit + on + --model + model.gguf + --ctx-size + 2048 + --embedding + --flash-attn = 9
-        assertThat(arr, arrayWithSize(9));
+        // argv[0]="" + --fit + on + --model + model.gguf + --ctx-size + 2048 + --embedding
+        //   + --flash-attn + on = 10.
+        // This used to call the removed enableFlashAttn() and assert 9, which pinned the valueless
+        // emission as the expected argv shape -- the very defect setFlashAttn exists to fix.
+        assertThat(arr, arrayWithSize(10));
         assertThat(arr[0], is(""));
     }
 
@@ -1113,9 +1138,11 @@ public class ModelParametersExtendedTest {
 
     @Test
     public void testIsDefaultForFlagOnly() {
+        // Uses swa-full, not flash-attn: the latter is no longer a valueless flag, which is the whole
+        // point of the FlashAttn enum.
         ModelParameters p = new ModelParameters();
-        assertThat(p.isUnset("flash-attn"), is(true));
-        p.enableFlashAttn();
-        assertThat(p.isUnset("flash-attn"), is(false));
+        assertThat(p.isUnset("swa-full"), is(true));
+        p.enableSwaFull();
+        assertThat(p.isUnset("swa-full"), is(false));
     }
 }

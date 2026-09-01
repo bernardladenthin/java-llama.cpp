@@ -250,12 +250,17 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Enable Flash Attention (default: disabled).
+     * Set the Flash Attention mode ({@code --flash-attn}).
      *
+     * <p>The value is mandatory upstream, so this is the only way to express the option correctly.
+     * {@link FlashAttn#AUTO} is llama.cpp's own default and lets it decide per backend and model;
+     * {@link FlashAttn#ON} forces it and fails the load where the backend cannot provide it.</p>
+     *
+     * @param mode the Flash Attention mode
      * @return this builder
      */
-    public ModelParameters enableFlashAttn() {
-        return setFlag(ModelFlag.FLASH_ATTN);
+    public ModelParameters setFlashAttn(FlashAttn mode) {
+        return putEnum("--flash-attn", mode);
     }
 
     /**
@@ -1674,18 +1679,23 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Control on-demand reading of tensors the model architecture marks as lazy-loadable, such as
-     * per-layer embeddings ({@code --tensor-read-lazy}, llama.cpp b10653).
+     * per-layer embeddings ({@code --lazy-mode} / {@code -lzm}, llama.cpp b10653).
+     *
+     * <p>The option was spelled {@code --tensor-read-lazy} up to b10730 and renamed in b10731 with no
+     * alias. This binding follows the rename rather than papering over it: the method was
+     * {@code setTensorReadLazy} and the enum {@code TensorReadLazyMode}. Carrying a name upstream no
+     * longer uses would leave the API describing a flag that does not exist.</p>
      *
      * <p>Trades resident memory for disk reads during inference. <strong>Requires mmap</strong>, so
      * it has no effect on a model loaded with mmap disabled. Upstream's default is
-     * {@link TensorReadLazyMode#AUTO}, which applies on-demand reading only to marked tensors above
+     * {@link LazyMode#AUTO}, which applies on-demand reading only to marked tensors above
      * 4&nbsp;GiB.</p>
      *
      * @param mode the lazy-read mode
      * @return this builder
      */
-    public ModelParameters setTensorReadLazy(TensorReadLazyMode mode) {
-        return putEnum("--tensor-read-lazy", mode);
+    public ModelParameters setLazyMode(LazyMode mode) {
+        return putEnum("--lazy-mode", mode);
     }
 
     /**
@@ -1726,8 +1736,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Enable the given flag, adding it to the active parameter set.
-     * Equivalent to calling the specific named method (e.g. {@link #enableFlashAttn()}
-     * for {@link net.ladenthin.llama.args.ModelFlag#FLASH_ATTN}).
+     * Equivalent to calling the specific named method (e.g. {@link #enableSwaFull()}
+     * for {@link net.ladenthin.llama.args.ModelFlag#SWA_FULL}).
      *
      * @param flag the flag to enable
      * @return this builder
