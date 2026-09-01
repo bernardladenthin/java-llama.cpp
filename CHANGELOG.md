@@ -9,6 +9,34 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING (runtime): the shipped SLF4J binding is now `slf4j-simple`, not `logback-classic`.**
+  Two independent reasons, and the first is a hard failure rather than a preference:
+
+  1. **This artifact targets Java 8 and logback no longer does.** Every logback release from 1.4.0 on
+     is class-file major 55 (Java 11). SLF4J's `ServiceLoader` loads `LogbackServiceProvider` at JVM
+     startup, so a Java 8 consumer got `UnsupportedClassVersionError` before a single line of library
+     code ran. Measured: all 181 classes of logback-classic 1.6.3 are major 55.
+  2. **The Java 8 logback line is end-of-life with unfixed CVEs.** 1.3.16 (2025-10-29) is its last
+     release; CVE-2026-1225, CVE-2026-9828 and CVE-2026-10532 were fixed only in 1.5.x, and
+     CVE-2026-19880 only in 1.6.3 — which is Java 11 bytecode and therefore unreachable from here.
+     Downgrading would have traded a crash for permanent unpatchability.
+
+  `slf4j-simple` is six classes from the same release train as `slf4j-api`, with no configuration
+  parser, socket server or deserialization — the subsystems essentially every logback CVE lives in.
+
+  **What changes for you:** `logback.xml` is no longer read. Configure with a classpath
+  `simplelogger.properties` or `-Dorg.slf4j.simpleLogger.*`. With no configuration at all, output is
+  quieter than before (logback defaulted the root logger to DEBUG; slf4j-simple defaults to INFO).
+  To keep logback, exclude `org.slf4j:slf4j-simple` and declare your own binding — which is what the
+  SLF4J api/binding split is for.
+
+- **`checker-qual` pinned to 3.55.1 and marked optional.** 4.x is major 55 and its annotations are
+  `@Retention(RUNTIME)`, so a Java 8 JVM throws `UnsupportedClassVersionError` the moment anything
+  reflects over an annotated element. The optional flag keeps it out of consumers' transitive graph;
+  the version pin is what protects the fat jar, since `jar-with-dependencies` filters on scope only.
+  The build-time Checker Framework processor stays on 4.2.2 under its own property.
+
 ### Added
 - **`ModelParameters.setFlashAttn(FlashAttn)` — the only way to express `--flash-attn` correctly.**
   llama.cpp turned that option from a bare flag into a value-taking one in **b10273**: the

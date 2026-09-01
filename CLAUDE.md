@@ -1620,6 +1620,32 @@ EXPECT_FALSE(j.contains("stop_type"));  // filtered out
 
 See [`../workspace/policies/javadoc-conventions.md`](../workspace/policies/javadoc-conventions.md).
 
+## Java 8 bytecode floor — what may ship
+
+This artifact targets **Java 8** (`release 8`), so **every class a consumer's JVM can load must be
+class-file major 52 or lower**. Two entries in `llama/pom.xml` exist only for that, and both are
+easy to undo by accident:
+
+- **`slf4j-simple`, not logback, is the shipped SLF4J binding.** Every logback release from 1.4.0 on
+  is Java 11 bytecode, so `LogbackServiceProvider` cannot load on Java 8 — SLF4J's `ServiceLoader`
+  finds it at startup and the JVM throws `UnsupportedClassVersionError`. The Java 8 line (1.3.x) is
+  end-of-life (last release 1.3.16, 2025-10-29) and every logback CVE disclosed since has been fixed
+  only in 1.5.x/1.6.x with no backport, so it is not an option either. `slf4j-simple` is six classes
+  from the same release train as `slf4j-api`, with no configuration or socket layer for a CVE to
+  live in. Configure it with a classpath `simplelogger.properties` or `-Dorg.slf4j.simpleLogger.*`.
+- **`checker.qual.version` (3.55.1) is a separate property from `checker.version` (the build-time
+  processor).** checker-qual 4.x is major 55, its annotations are `@Retention(RUNTIME)`, and anything
+  reflecting over an annotated element (Jackson does) loads them. `<optional>true</optional>` keeps
+  it out of consumers' transitive graph but **not** out of the fat jar — `jar-with-dependencies`
+  filters on scope only — so the version pin is what protects the shipped artifact. Never collapse
+  the two properties back into one: the processor runs on the CI JDK and must stay current.
+
+**Surefire excludes `org.slf4j:slf4j-simple` from the test classpath** (`classpathDependencyExcludes`).
+Runtime scope is on the test classpath too, and LogCaptor (test scope) requires logback specifically —
+with both providers present it fails with *"SLF4J Logger implementation should be of the type
+[ch.qos.logback.classic.Logger]"*. The exclusion leaves logback the sole provider in tests and does
+not touch the artifact.
+
 ## SpotBugs Suppressions
 
 See [`../workspace/policies/spotbugs-suppressions.md`](../workspace/policies/spotbugs-suppressions.md).
@@ -1828,7 +1854,7 @@ the recommended path (README "Importing in Android", Option 1):
   change was needed. Built by the **standalone plain-Gradle build** in `llama-android/`
   (see "Repository layout" for why it is not a Maven module); the POM mirrors the core's
   compile-scope deps (jackson/slf4j-api/jspecify/checker-qual, versions parsed from
-  `llama/pom.xml` — deliberately NOT logback, which is the JVM-only runtime binding).
+  `llama/pom.xml` — deliberately NOT the SLF4J binding, which is the JVM-only runtime dependency).
 - **`net.ladenthin:llama-kotlin`** — Maven reactor module; pure-Kotlin (2.4, jvmTarget 1.8)
   coroutines façade: `generateFlow`/`generateChatFlow` (cold `Flow`, source closed on
   completion/error/cancellation) and `completeSuspend`/`chatSuspend`/`chatCompleteTextSuspend`/
