@@ -59,14 +59,10 @@ SPDX-License-Identifier: MIT
 		<lombok.version>1.18.46</lombok.version>
 		<errorprone.version>2.50.0</errorprone.version>
 		<nullaway.version>0.14.0</nullaway.version>
-		<!-- Build-time Checker Framework processor. Runs on the CI JDK, never ships, so it
-		     tracks the newest release. Deliberately NOT the same property as the annotations
-		     below: those are shipped and must stay Java 8 bytecode. -->
+		<!-- Checker Framework: the processor AND the checker-qual qualifiers it resolves.
+		     Both run on the build JDK and neither ships (checker-qual is provided scope), so
+		     this tracks the newest release. -->
 		<checker.version>4.2.2</checker.version>
-		<!-- Shipped checker-qual annotations. Last release whose classes are class-file
-		     major 52; 4.0.0 moved the line to Java 11. See the dependency for why the pin,
-		     not just the optional flag, is what protects the artifact. -->
-		<checker.qual.version>3.55.1</checker.qual.version>
 		<jackson.version>2.22.2</jackson.version>
 		<reactor.version>3.8.7</reactor.version>
 		<slf4j.version>2.0.18</slf4j.version>
@@ -190,20 +186,31 @@ SPDX-License-Identifier: MIT
 			<artifactId>jspecify</artifactId>
 			<version>${jspecify.version}</version>
 		</dependency>
-		<!-- Pinned to the newest Java 8 line on purpose. checker-qual 4.x is Java 11
-		     bytecode (class-file major 55) and this artifact targets Java 8; its
-		     annotations are @Retention(RUNTIME), so anything reflecting over an
-		     annotated element (Jackson does) loads them and a Java 8 JVM then throws
-		     UnsatisfiedClassVersionError. Marking it optional keeps it out of
-		     consumers' transitive graph but NOT out of the fat jar; the
-		     jar-with-dependencies descriptor filters on scope only, so the version
-		     pin is the part that actually protects the shipped artifact.
-		     3.55.1 is the last release whose classes are major 52; the break is at 4.0.0. -->
+		<!-- COMPILE-ONLY, and that is the whole point. checker-qual 4.x is Java 11
+		     bytecode (class-file major 55) while this artifact targets Java 8, and its
+		     annotations are @Retention(RUNTIME), so anything reflecting over an annotated
+		     element (Jackson does) loads them and a Java 8 JVM then throws
+		     UnsupportedClassVersionError.
+
+		     The obvious fix (pinning the shipped copy to the last Java 8 line, 3.55.1) does
+		     not work and was reverted: the Nullness Checker resolves its own qualifiers
+		     through javac's symbol table, i.e. the COMPILE CLASSPATH, so a 3.x checker-qual
+		     under a 4.x processor fails the build outright with "Could not load type:
+		     org.checkerframework.framework.qual.DoesNotUnrefineReceiver". Processor and
+		     qualifiers must share a major version.
+
+		     provided scope resolves both constraints at once: 4.2.2 is on the compile
+		     classpath where the checker needs it, and provided is excluded from consumers'
+		     transitive graph AND from the fat jar (jar-with-dependencies takes scope
+		     runtime), so no checker-qual class of any version reaches a consumer's JVM.
+		     Safe because no source in this module imports org.checkerframework: the
+		     annotations exist for the processor, not for our code.
+		     .github/verify-bytecode-version.sh enforces the resulting class-file floor. -->
 		<dependency>
 			<groupId>org.checkerframework</groupId>
 			<artifactId>checker-qual</artifactId>
-			<version>${checker.qual.version}</version>
-			<optional>true</optional>
+			<version>${checker.version}</version>
+			<scope>provided</scope>
 		</dependency>
 		<dependency>
 			<groupId>com.fasterxml.jackson.core</groupId>

@@ -1633,12 +1633,18 @@ easy to undo by accident:
   only in 1.5.x/1.6.x with no backport, so it is not an option either. `slf4j-simple` is six classes
   from the same release train as `slf4j-api`, with no configuration or socket layer for a CVE to
   live in. Configure it with a classpath `simplelogger.properties` or `-Dorg.slf4j.simpleLogger.*`.
-- **`checker.qual.version` (3.55.1) is a separate property from `checker.version` (the build-time
-  processor).** checker-qual 4.x is major 55, its annotations are `@Retention(RUNTIME)`, and anything
-  reflecting over an annotated element (Jackson does) loads them. `<optional>true</optional>` keeps
-  it out of consumers' transitive graph but **not** out of the fat jar — `jar-with-dependencies`
-  filters on scope only — so the version pin is what protects the shipped artifact. Never collapse
-  the two properties back into one: the processor runs on the CI JDK and must stay current.
+- **`checker-qual` is `provided` scope, not a pinned old version.** Its annotations are major 55
+  from 4.0.0 on and `@Retention(RUNTIME)`, so anything reflecting over an annotated element (Jackson
+  does) loads them and a Java 8 JVM throws `UnsupportedClassVersionError`. **Pinning the shipped copy
+  to the last Java 8 line (3.55.1) does not work** — that was shipped in #411 and broke `main`
+  outright: the Nullness Checker resolves its own qualifiers through javac's symbol table, i.e. the
+  *compile classpath*, so a 3.x checker-qual under the 4.x processor fails every build with
+  `Could not load type: org.checkerframework.framework.qual.DoesNotUnrefineReceiver`. Processor and
+  qualifiers must share a major version. `provided` satisfies both constraints: 4.2.2 on the compile
+  classpath where the checker needs it, and excluded from consumers' graph **and** from the fat jar
+  (`jar-with-dependencies` takes scope `runtime`), so no checker-qual class of any version ships.
+  `<optional>true</optional>` would not have been enough on its own — that descriptor filters on
+  scope only. Safe because no source imports `org.checkerframework`.
 
 **Surefire excludes `org.slf4j:slf4j-simple` from the test classpath** (`classpathDependencyExcludes`).
 Runtime scope is on the test classpath too, and LogCaptor (test scope) requires logback specifically —
