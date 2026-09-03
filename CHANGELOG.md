@@ -58,6 +58,28 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   where the backend cannot provide it, `OFF` disables it.
 
 ### Changed
+- **llama.cpp `b10731` → `b10792`.** No project-source change: every header move in the range is
+  additive or a **widening** const-qualification, and the server wire contract is byte-identical
+  (request-field set, `set_hard_limits` bounds and response keys all verified mechanically, which is
+  the check that catches the contract-behind-a-stable-signature breaks a header diff cannot see).
+  All 8 local patches still apply.
+
+  Two upstream changes are worth knowing even though nothing broke:
+
+  1. **`preserve_reasoning` now defaults to enabled** (llama.cpp #28174). `common_params_parse_ex`
+     sets it when the caller did not, where it previously followed the chat template's own default.
+     On a template advertising `supports_preserve_reasoning`, the full history now carries reasoning
+     traces instead of only the last assistant message — better continuity, **more prompt tokens**.
+     It applies to every entry point that parses argv, so `NativeServer` in both modes and
+     `LlamaModel`'s own parameter parse. Pass `--no-reasoning-preserve` to restore the old behaviour.
+  2. **`data:` URLs are now accepted for `input_audio` and `input_video`**, not only images
+     (llama.cpp #27735) — so an OpenAI-style request may inline base64 audio/video the same way it
+     could already inline an image.
+
+  Also picked up: a fix for **Qwen3-TTS-0.6b** (llama.cpp #28231), where an F16 `ffn_down` overflowed
+  on intermediate peaks past the 65504 ceiling and turned the residual into NaN. That is on the
+  `TextToSpeech` path this project ships.
+
 - **llama.cpp `b10682` → `b10731`.** One project-source change came out of it, and it is the kind a
   header diff does not surface: upstream renamed `--tensor-read-lazy` to `-lzm` / `--lazy-mode`
   (env `LLAMA_ARG_TENSOR_READ_LAZY` → `LLAMA_ARG_LAZY_MODE`) **with no alias**. The binding emitted
