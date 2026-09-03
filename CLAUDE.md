@@ -1646,6 +1646,27 @@ easy to undo by accident:
   `<optional>true</optional>` would not have been enough on its own — that descriptor filters on
   scope only. Safe because no source imports `org.checkerframework`.
 
+**The gate: `.github/verify-bytecode-version.sh`.** Kept **byte-identical** across java-llama.cpp /
+BitcoinAddressFinder / streambuffer / srcmorph (checksum table in `workspace/crossrepostatus.md`).
+It opens every `.class` in every jar it is given and fails on any whose class-file major version
+exceeds `--max-major`:
+
+```bash
+.github/verify-bytecode-version.sh --max-major 52 [--allow '<jar>:<entry>']... <jar-or-dir>...
+```
+
+Paths may be jars or directories (searched recursively for `*.jar`), so one invocation covers a whole
+artifact set — here all 16 classifier jars plus every `all-<os>-<arch>` fat jar. `module-info.class`
+and `META-INF/versions/**` are skipped unconditionally: a classpath JVM never loads either, which is
+why a `release 9` `module-info` is fine. `--allow` is a repeatable glob matched against
+`<jar-basename>:<entry-path>` for anything else that must be tolerated. Exit codes: 0 clean,
+1 violations, **2 nothing to scan** (an empty input is a failure, never a pass — the first version of
+this check reported a clean pass over a directory a failed build had left empty).
+
+It runs twice: in the `package` job over `llama/target` (every classifier jar plus the default fat
+jar, as early as they exist), and again in `smoke-fatjar-linux` over the downloaded `fatjars/` —
+`package-fatjars` rewrites those zips, and they are the artifacts users actually download.
+
 **Surefire excludes `org.slf4j:slf4j-simple` from the test classpath** (`classpathDependencyExcludes`).
 Runtime scope is on the test classpath too, and LogCaptor (test scope) requires logback specifically —
 with both providers present it fails with *"SLF4J Logger implementation should be of the type

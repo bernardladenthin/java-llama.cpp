@@ -3139,6 +3139,15 @@ jobs:
         # backends `cuda-windows` / `vulkan-windows` / `opencl-windows`. The default JAR's
         # Windows natives are the Ninja `*-libraries` merged into src/main/resources/ above.
         run: mvn --batch-mode --no-transfer-progress -P release,cuda,vulkan-linux,vulkan-linux-aarch64,opencl-android,windows-msvc,cuda-windows,vulkan-windows,opencl-windows,rocm-linux,rocm-windows,sycl-fp16-linux,sycl-fp32-linux,sycl-windows,opencl-windows-aarch64,openvino-linux,openvino-windows,assembly -Dmaven.test.skip=true -Dgpg.skip=true package
+      # Class-file floor, checked on every jar this job just built (all 16 classifier
+      # jars plus the default fat jar). Production code targets Java 8, so anything a
+      # consumer's JVM can load must be major 52 or lower: a single Java 11 class kills
+      # the process with UnsupportedClassVersionError before any of our code runs, which
+      # is exactly what shipped when logback's LogbackServiceProvider was the binding.
+      # module-info.class and META-INF/versions/** are skipped unconditionally because a
+      # classpath JVM never loads them. Kept byte-identical across all four sibling repos.
+      - name: Verify Java 8 bytecode (no class newer than major 52)
+        run: .github/verify-bytecode-version.sh --max-major 52 llama/target
       - name: Upload JARs
         uses: actions/upload-artifact@v7
         with:
@@ -3223,6 +3232,11 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
+      # Same floor, re-checked on the ASSEMBLED release asset rather than the module
+      # jars the `package` job verified: package-fatjars rewrites the zip (backend native
+      # trees + the jllama-backends.txt manifest), and this is the artifact users download.
+      - name: Verify Java 8 bytecode (no class newer than major 52)
+        run: .github/verify-bytecode-version.sh --max-major 52 fatjars
       - name: Run fat-jar server smoke test
         run: .github/smoke-test-fatjar.sh fatjars 'llama-*-all-linux-x86-64-jar-with-dependencies.jar' "models/${DRAFT_MODEL_NAME}"
       - name: Upload server logs
