@@ -1410,7 +1410,7 @@ jobs:
         shell: bash
         run: |
           mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh -DLLAMA_METAL=OFF -DGGML_NATIVE=OFF -DBUILD_TESTING=ON
+          .github/build.sh -DGGML_METAL=OFF -DGGML_NATIVE=OFF -DBUILD_TESTING=ON
       - name: Run C++ unit tests
         run: ctest --test-dir llama/build --output-on-failure
       - name: Upload artifacts
