@@ -58,7 +58,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   where the backend cannot provide it, `OFF` disables it.
 
 ### Changed
-- **llama.cpp `b10731` → `b10797`.** No project-source change: every header move in the range is
+- **llama.cpp `b10731` → `b10817`.** No project-source change: every header move in the range is
   additive or a **widening** const-qualification, and the server wire contract is byte-identical
   (request-field set, `set_hard_limits` bounds and response keys all verified mechanically, which is
   the check that catches the contract-behind-a-stable-signature breaks a header diff cannot see).
@@ -89,6 +89,21 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   generated `llama-version.h`; it does not reach `getLlamaCppBuildInfo()`, which reads
   `llama_build_info()` from `common/build-info.cpp` instead — verified by the smoke test that
   cross-checks the pin against the linked binary.
+
+  The final `b10797` → `b10817` step touches seven files across the paths this project links
+  against, `+12 / −13` in total, and none of them needs a source change here:
+
+  - `common/build-info.h` gains an optional `FILE *` on `llama_print_build_info` (llama.cpp
+    #28322) — a **default argument**, so every existing one-argument call still compiles. The
+    project does not call it; it uses `llama_build_info()`, which is unchanged.
+  - `ggml/include/ggml-backend.h` **removes** `ggml_backend_op_alloc_size_may_expand` (the ggml
+    sync, #28379). No source here references it, so the removal is inert — checked, not assumed,
+    because a deletion from a public header is the one shape that breaks a build silently.
+  - `tools/mtmd/mtmd.cpp` corrects Gemma-4V causal-attention handling for the E2B/E4B embedding
+    sizes and `clip.cpp` raises an image-token limit (#28335) — both model behaviour inside
+    upstream translation units, no API movement.
+  - The remaining three are upstream's own version bump, a `LLAMA_VERSION_MINOR` change and a
+    BoringSSL pin that only applies with `LLAMA_BUILD_BORINGSSL`, which this project leaves off.
 
 - **llama.cpp `b10682` → `b10731`.** One project-source change came out of it, and it is the kind a
   header diff does not surface: upstream renamed `--tensor-read-lazy` to `-lzm` / `--lazy-mode`
