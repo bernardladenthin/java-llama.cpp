@@ -56,16 +56,16 @@ SPDX-License-Identifier: MIT
 	<properties>
 		<sonar.organization>bernardladenthin</sonar.organization>
 		<jspecify.version>1.0.1</jspecify.version>
-		<lombok.version>1.18.46</lombok.version>
+		<lombok.version>1.18.48</lombok.version>
 		<errorprone.version>2.50.0</errorprone.version>
-		<nullaway.version>0.14.0</nullaway.version>
+		<nullaway.version>0.14.1</nullaway.version>
 		<!-- Checker Framework: the processor AND the checker-qual qualifiers it resolves.
 		     Both run on the build JDK and neither ships (checker-qual is provided scope), so
 		     this tracks the newest release. -->
-		<checker.version>4.2.2</checker.version>
+		<checker.version>4.2.3</checker.version>
 		<jackson.version>2.22.2</jackson.version>
 		<reactor.version>3.8.7</reactor.version>
-		<slf4j.version>2.0.18</slf4j.version>
+		<slf4j.version>2.0.19</slf4j.version>
 		<logback.version>1.6.3</logback.version>
 		<animal-sniffer.version>1.27</animal-sniffer.version>
 		<junit.version>6.1.3</junit.version>
@@ -90,10 +90,10 @@ SPDX-License-Identifier: MIT
 		     section "jqwik prompt-injection in test output" for full context. -->
 		<jqwik.version>1.9.3</jqwik.version>
 		<archunit.version>1.5.0</archunit.version>
-		<spotbugs.version>4.10.4.0</spotbugs.version>
+		<spotbugs.version>4.10.4.1</spotbugs.version>
 		<fb-contrib.version>7.7.4</fb-contrib.version>
 		<findsecbugs.version>1.14.0</findsecbugs.version>
-		<spotless.version>3.10.1</spotless.version>
+		<spotless.version>3.10.2</spotless.version>
 		<palantir-java-format.version>2.97.0</palantir-java-format.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.build.outputTimestamp>2026-09-01T07:57:45Z</project.build.outputTimestamp>
@@ -199,7 +199,7 @@ SPDX-License-Identifier: MIT
 		     org.checkerframework.framework.qual.DoesNotUnrefineReceiver". Processor and
 		     qualifiers must share a major version.
 
-		     provided scope resolves both constraints at once: 4.2.2 is on the compile
+		     provided scope resolves both constraints at once: 4.2.3 is on the compile
 		     classpath where the checker needs it, and provided is excluded from consumers'
 		     transitive graph AND from the fat jar (jar-with-dependencies takes scope
 		     runtime), so no checker-qual class of any version reaches a consumer's JVM.
@@ -349,7 +349,7 @@ SPDX-License-Identifier: MIT
 				<plugin>
 					<groupId>io.github.git-commit-id</groupId>
 					<artifactId>git-commit-id-maven-plugin</artifactId>
-					<version>10.0.0</version>
+					<version>10.0.1</version>
 				</plugin>
 				<plugin>
 					<groupId>org.apache.maven.plugins</groupId>
@@ -359,7 +359,7 @@ SPDX-License-Identifier: MIT
 				<plugin>
 					<groupId>org.apache.maven.plugins</groupId>
 					<artifactId>maven-compiler-plugin</artifactId>
-					<version>3.15.0</version>
+					<version>3.16.0</version>
 				</plugin>
 				<plugin>
 					<groupId>org.apache.maven.plugins</groupId>
@@ -389,7 +389,7 @@ SPDX-License-Identifier: MIT
 				<plugin>
 					<groupId>org.apache.maven.plugins</groupId>
 					<artifactId>maven-surefire-plugin</artifactId>
-					<version>3.5.6</version>
+					<version>3.6.0</version>
 					<configuration>
 						<!--
 							Tests in the `vmlens` package are meaningful only when run
