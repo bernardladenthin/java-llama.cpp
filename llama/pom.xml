@@ -832,6 +832,25 @@ SPDX-License-Identifier: MIT
 					</targetTests>
 					<mutationThreshold>100</mutationThreshold>
 					<timeoutConstant>30000</timeoutConstant>
+					<!--
+					  The same exclusion Surefire carries above, and it has to be repeated here
+					  because PIT builds its OWN classpath and does not read Surefire's
+					  configuration. Two SLF4J providers are on the test classpath: slf4j-simple
+					  arrives at runtime scope (it is the binding shipped in the fat jar) and
+					  logback-classic at test scope (LogCaptor requires logback specifically).
+					  SLF4J's ServiceLoader then picks one arbitrarily; when it picks
+					  slf4j-simple, every LogCaptor assertion fails and PIT aborts the whole run
+					  with "N tests did not pass without mutation ... requires a green suite" —
+					  a red gate on a suite Surefire had just run green, which is a genuinely
+					  confusing failure to land on.
+
+					  The parameter is pitest-maven's own, modelled on Surefire's and taking the
+					  same "groupId:artifactId" form. It changes nothing about the artifact: the
+					  jar and the fat jar still ship slf4j-simple.
+					-->
+					<classpathDependencyExcludes>
+						<classpathDependencyExclude>org.slf4j:slf4j-simple</classpathDependencyExclude>
+					</classpathDependencyExcludes>
 				</configuration>
 			</plugin>
 		</plugins>

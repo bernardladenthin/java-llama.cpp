@@ -1667,11 +1667,24 @@ It runs twice: in the `package` job over `llama/target` (every classifier jar pl
 jar, as early as they exist), and again in `smoke-fatjar-linux` over the downloaded `fatjars/` —
 `package-fatjars` rewrites those zips, and they are the artifacts users actually download.
 
-**Surefire excludes `org.slf4j:slf4j-simple` from the test classpath** (`classpathDependencyExcludes`).
-Runtime scope is on the test classpath too, and LogCaptor (test scope) requires logback specifically —
-with both providers present it fails with *"SLF4J Logger implementation should be of the type
-[ch.qos.logback.classic.Logger]"*. The exclusion leaves logback the sole provider in tests and does
-not touch the artifact.
+**Surefire AND PIT both exclude `org.slf4j:slf4j-simple` from the test classpath**
+(`classpathDependencyExcludes` in each). Runtime scope is on the test classpath too, and LogCaptor
+(test scope) requires logback specifically — with both providers present SLF4J's `ServiceLoader`
+picks one arbitrarily and the LogCaptor assertions fail. The exclusions leave logback the sole
+provider in tests and do not touch the artifact: the jar and the fat jar still ship slf4j-simple.
+
+**The PIT half is not redundant, and forgetting it is a trap worth naming.** `spotbugs:check` and
+`spotless:check` bind to `verify`, so `mvn test` misses them — a different trap. This one is
+sharper: **PIT builds its own classpath and never reads Surefire's configuration**, so a
+Surefire-only exclusion leaves the mutation run with two providers. It then aborts the whole gate
+with *"N tests did not pass without mutation … requires a green suite"* — a red gate on a suite
+Surefire had just reported green, which reads like a PIT bug rather than a classpath one. This
+shipped once (#411 added the binding with only the Surefire exclusion; the five affected
+LogCaptor tests reddened `Java Tests Ubuntu` and the failure went unseen because every publish run
+in between was cancelled). The sibling repo srcmorph hit the identical thing and solved it a
+different way — there both providers arrive transitively, so it excludes at the dependency instead.
+Same rule either way: **one SLF4J provider on the test classpath, enforced everywhere a test
+classpath is built.**
 
 ## SpotBugs Suppressions
 
