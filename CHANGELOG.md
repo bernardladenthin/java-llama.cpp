@@ -58,7 +58,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   where the backend cannot provide it, `OFF` disables it.
 
 ### Changed
-- **llama.cpp `b10731` → `b10817`.** No project-source change: every header move in the range is
+- **llama.cpp `b10731` → `b10819`.** No project-source change: every header move in the range is
   additive or a **widening** const-qualification, and the server wire contract is byte-identical
   (request-field set, `set_hard_limits` bounds and response keys all verified mechanically, which is
   the check that catches the contract-behind-a-stable-signature breaks a header diff cannot see).
@@ -104,6 +104,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
     upstream translation units, no API movement.
   - The remaining three are upstream's own version bump, a `LLAMA_VERSION_MINOR` change and a
     BoringSSL pin that only applies with `LLAMA_BUILD_BORINGSSL`, which this project leaves off.
+
+  The final `b10817` → `b10819` step is two commits over three files, none of which this project
+  links against: a **Metal memory-leak fix** on an early-return path
+  (`ggml-metal-context.m`, llama.cpp #28399), a SYCL Kronecker-product/FWHT restore (#28254) and
+  the matching upstream test. Nothing in the review surface, nothing in the server contract.
 
 - **llama.cpp `b10682` → `b10731`.** One project-source change came out of it, and it is the kind a
   header diff does not surface: upstream renamed `--tensor-read-lazy` to `-lzm` / `--lazy-mode`
