@@ -58,7 +58,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   where the backend cannot provide it, `OFF` disables it.
 
 ### Changed
-- **llama.cpp `b10731` → `b10819`.** No project-source change: every header move in the range is
+- **llama.cpp `b10731` → `b10850`.** No project-source change: every header move in the range is
   additive or a **widening** const-qualification, and the server wire contract is byte-identical
   (request-field set, `set_hard_limits` bounds and response keys all verified mechanically, which is
   the check that catches the contract-behind-a-stable-signature breaks a header diff cannot see).
@@ -109,6 +109,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   links against: a **Metal memory-leak fix** on an early-return path
   (`ggml-metal-context.m`, llama.cpp #28399), a SYCL Kronecker-product/FWHT restore (#28254) and
   the matching upstream test. Nothing in the review surface, nothing in the server contract.
+
+  The `b10819` → `b10850` step is 31 commits and 466 KB in total, but **10 files / +181 / −98**
+  across the paths this project links against — `common/arg.cpp`, `common/jinja/{caps,runtime}.cpp`,
+  `common/log.{cpp,h}` and `tools/server/server-models.{cpp,h}` plus that tool's CMake, README and
+  a router test. Everything else is GPU backends, the WebUI, docs and upstream CI. Two of those
+  files are patch targets (`common/arg.cpp` for `0001`, `tools/server/server-models.cpp` for
+  `0008`, the latter with 159 lines rewritten), so the intersection was **not** empty this time and
+  the applier had to prove it rather than the file list implying it: a fresh configure applied all
+  eight patches clean and stamped them at head `f114f91f`. The server wire contract was re-checked
+  mechanically and is byte-identical — request-field set, `set_hard_limits` bounds, and response
+  keys in **both** emit forms.
 
 - **llama.cpp `b10682` → `b10731`.** One project-source change came out of it, and it is the kind a
   header diff does not surface: upstream renamed `--tensor-read-lazy` to `-lzm` / `--lazy-mode`
