@@ -549,7 +549,12 @@ jobs:
           repository: ggml-org/llama.cpp
           ref: ${{ steps.tag.outputs.tag }}
           path: llamacpp-ui
-          sparse-checkout: tools/ui
+          # tools/ui holds the npm project AND the ui.cpp.in / ui.h.in templates;
+          # scripts/ holds ui-assets.cmake, which consumes them. Both are needed
+          # since upstream #28445 replaced the embed.cpp host tool.
+          sparse-checkout: |
+            tools/ui
+            scripts
           sparse-checkout-cone-mode: true
       - uses: actions/setup-node@v7
         with:
@@ -565,30 +570,46 @@ jobs:
           npm ci --ignore-scripts
           npm run build
           test -f dist/index.html
-      - name: Embed assets into ui.cpp / ui.h (gzip parity with upstream)
-        working-directory: llamacpp-ui/tools/ui
+      - name: Embed assets into ui.cpp / ui.h (upstream scripts/ui-assets.cmake)
         shell: bash
         run: |
           set -euo pipefail
-          # gzip every asset into dist/_gzip/<path> so llama-ui-embed embeds the
-          # compressed bytes (LLAMA_UI_GZIP parity); embed auto-detects _gzip.
-          ( cd dist && find . -type f -not -path './_gzip/*' | while read -r f; do
-              mkdir -p "_gzip/$(dirname "$f")"
-              gzip -9 -c "$f" > "_gzip/$f"
-            done )
-          # llama-ui-embed is a self-contained C++17 host tool (no npm) — build + run it.
-          g++ -O2 -std=c++17 -o llama-ui-embed embed.cpp
-          mkdir -p "$GITHUB_WORKSPACE/llama/webui-generated"
-          ./llama-ui-embed \
-            "$GITHUB_WORKSPACE/llama/webui-generated/ui.cpp" \
-            "$GITHUB_WORKSPACE/llama/webui-generated/ui.h" \
-            dist
+          # Upstream #28445 ("ui : embed assets directly with CMake") deleted the
+          # tools/ui/embed.cpp host tool this step used to compile, and replaced it
+          # with scripts/ui-assets.cmake -- a plain `cmake -P` script, no npm and no
+          # host executable. Priority 1 of its provisioning order is "pre-built
+          # assets in <UI_SOURCE_DIR>/dist", which is exactly what the npm step
+          # above produced, so BUILD_UI and HF_ENABLED stay OFF: no second npm run
+          # and no Hugging Face download happen here. LLAMA_UI_GZIP is upstream's
+          # own knob and replaces the hand-rolled gzip loop this step used to do.
+          GEN="${RUNNER_TEMP}/ui-assets"
+          OUT="${GITHUB_WORKSPACE}/llama/webui-generated"
+          mkdir -p "$GEN" "$OUT"
+          cmake \
+            "-DUI_SOURCE_DIR=${GITHUB_WORKSPACE}/llamacpp-ui/tools/ui" \
+            "-DUI_BINARY_DIR=${GEN}" \
+            "-DLLAMA_SOURCE_DIR=${GITHUB_WORKSPACE}/llamacpp-ui" \
+            -DBUILD_UI=OFF \
+            -DHF_ENABLED=OFF \
+            -DLLAMA_UI_GZIP=ON \
+            -P "${GITHUB_WORKSPACE}/llamacpp-ui/scripts/ui-assets.cmake"
+          # The script also drops a ui-gzip/ working tree next to the generated
+          # sources; copy only the two files the artifact is defined to carry.
+          cp "$GEN/ui.cpp" "$GEN/ui.h" "$OUT/"
           echo "=== generated WebUI assets ==="
-          ls -la "$GITHUB_WORKSPACE/llama/webui-generated"
-          if grep -q LLAMA_UI_HAS_ASSETS "$GITHUB_WORKSPACE/llama/webui-generated/ui.h"; then
-            echo "LLAMA_UI_HAS_ASSETS: present (real WebUI embedded)"
+          ls -la "$OUT"
+          # Guard against a silently empty WebUI. A bare `grep LLAMA_UI_HAS_ASSETS`
+          # does NOT work here and would pass the failure case: upstream's ui.h.in
+          # emits "/* #undef LLAMA_UI_HAS_ASSETS */" when the table is empty, so the
+          # token is present either way. (The old embed.cpp emitted no such line at
+          # all, which is why the naive grep used to be sufficient.) Assert the ACTIVE
+          # #define and a non-zero asset count instead -- verified against both paths.
+          N=$(sed -n 's/.*std::array<llama_ui_asset, \([0-9]\+\)>.*/\1/p' "$OUT/ui.h" | head -1)
+          if grep -qE '^[[:space:]]*#define[[:space:]]+LLAMA_UI_HAS_ASSETS' "$OUT/ui.h" \
+             && [ -n "$N" ] && [ "$N" -gt 0 ]; then
+            echo "LLAMA_UI_HAS_ASSETS: present, $N assets embedded"
           else
-            echo "ERROR: embed produced an empty asset table" >&2
+            echo "ERROR: ui-assets.cmake produced an empty asset table (assets=${N:-unknown})" >&2
             exit 1
           fi
       - name: Upload WebUI artifact

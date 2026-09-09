@@ -6,7 +6,7 @@
 
 // ui.h — minimal stand-in for the WebUI asset interface that llama.cpp's
 // tools/ui (CMake target "llama-ui") normally GENERATES into ui.h / ui.cpp at
-// build time via the llama-ui-embed host tool.
+// build time via scripts/ui-assets.cmake (before upstream #28445: the embed.cpp host tool).
 //
 // The upstream HTTP transport (tools/server/server-http.cpp) does
 //     #include "ui.h"
@@ -14,7 +14,7 @@
 // llama_ui_use_gzip().  We compile server-http.cpp directly into libjllama but do
 // NOT ship the Svelte WebUI assets (building them needs npm, or a prebuilt-asset
 // download from Hugging Face) — so we provide the exact "empty asset table"
-// interface that embed.cpp emits for its n_assets == 0 branch: the struct plus
+// interface upstream's ui.h.in emits for its n_assets == 0 branch: the struct plus
 // the three functions, returning nothing.
 //
 // LLAMA_UI_HAS_ASSETS is intentionally left UNDEFINED.  Every static-asset-serving
