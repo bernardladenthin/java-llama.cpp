@@ -568,6 +568,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_log_helpers.cpp
         src/test/cpp/test_tts_wav.cpp
         src/test/cpp/test_tts_params.cpp
+        src/test/cpp/test_model_split.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
@@ -585,6 +586,11 @@ if(BUILD_TESTING)
         # jni.h / jni_md.h needed by jni_helpers.hpp (mock JNI tests, no JVM required)
         ${JNI_INCLUDE_DIRS}
         ${llama.cpp_SOURCE_DIR}/tools/server
+        # llama.cpp's internal src/ -- test_model_split.cpp includes llama-model.h to drive the
+        # two load_tensors() split helpers that patches/0012 extracts. Upstream's own tests do the
+        # same (tests/test-batch-alloc.cpp, tests/test-quantize-stats.cpp include "../src/...").
+        # No header name in that directory collides with tools/server, tools/mtmd or src/main/cpp.
+        ${llama.cpp_SOURCE_DIR}/src
     )
     target_link_libraries(jllama_test PRIVATE llama-common mtmd llama nlohmann_json GTest::gtest_main)
     target_compile_features(jllama_test PRIVATE cxx_std_17)
