@@ -354,21 +354,22 @@ into that PR.
 Each item below was verified against pristine upstream tags and is real, but none is a regression
 introduced by the version bump — they were deferred to keep that PR landable.
 
-- **`ModelParameters` emits five CLI flags the server arg parser rejects, so any caller of them
-  cannot load a model.** `--dump-kv-cache`, `--hf-repo-v` and `--hf-file-v` no longer exist anywhere
-  in llama.cpp (absent at both b10456 and b10649); `--grp-attn-n` and `--grp-attn-w` still exist but
-  are `set_examples({LLAMA_EXAMPLE_COMPLETION, ...})`, so `add_opt` never registers them for
-  `LLAMA_EXAMPLE_SERVER` — the example jllama parses with. An unregistered flag is not ignored:
-  `arg.cpp` throws, `common_params_parse` returns false, and `load_model_impl` throws
-  `LlamaException("Failed to parse model parameters")`. Four existing tests pin the dead literals and
-  would pass forever. Fix: deprecate the five members the way this PR handled
-  `withTfsZ`/`withPenalizeNl` (keep source compatibility, never write the map), and add a hermetic
-  `jllama_test` contract test that walks `common_params_parser_init(params, LLAMA_EXAMPLE_SERVER)`'s
-  `ctx.options` (upstream's own `test-arg-parser` pattern; the symbols already link into
-  `jllama_test`) and asserts every flag `ModelParameters`/`ModelFlag` can emit is in that set,
-  excluding only `--vocab-only`, which `strip_flag_from_argv` removes on purpose. A grep-based sweep
-  is **not** sufficient — it is structurally blind to example scoping, which is exactly how
-  `--grp-attn-w` hides.
+- ~~**`ModelParameters` emits five CLI flags the server arg parser rejects, so any caller of them
+  cannot load a model.**~~ **DONE** — and it turned out to be **seven**, not five. The fix is the one
+  this entry prescribed: `cmake/extract-java-cli-flags.cmake` extracts every `"--flag"` literal
+  `ModelFlag.java`/`ModelParameters.java` can emit into a generated header, and
+  `src/test/cpp/test_model_flags.cpp` asserts each is registered in
+  `common_params_parser_init(params, LLAMA_EXAMPLE_SERVER).options`, exempting only `--vocab-only`
+  (which `strip_flag_from_argv` removes on purpose). Run against the pre-fix Java sources it reported
+  exactly the predicted set, which is how the count grew: the five named here plus `--mlock` and
+  `--no-mmap`, deleted upstream at b10878 while this entry was open. Those two have a faithful
+  replacement, so `enableMlock()`/`disableMmap()` were **repointed** to upstream's own deprecation-shim
+  mapping (`--load-mode mlock` / `--load-mode none`) behind a new `setLoadMode(LoadMode)` rather than
+  retired — no API loss. The other five became no-ops (`@Deprecated`, never write the map), and
+  `ModelFlag.MLOCK`/`NO_MMAP`/`DUMP_KV_CACHE` were removed from the enum so a broken argv is not
+  reachable through `setFlag` either — the same reasoning that already excluded `FLASH_ATTN`. The
+  replaced Java assertions now compare against a pristine `ModelParameters`, not against the old
+  "still has this key" shape that would have passed forever.
 
 - **`acquire_jllama_context_impl` / `release_jllama_context_impl` / `jllama_context_guard` have no
   model-free unit guard.** These three (`jni_helpers.hpp`) are the whole `close()`-vs-inference

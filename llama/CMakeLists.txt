@@ -560,6 +560,17 @@ if(BUILD_TESTING)
     enable_testing()
     include(GoogleTest)
 
+    # Make the Java layer's emitted CLI-flag set available to the C++ contract test. The Java
+    # sources are the single source of truth; see cmake/extract-java-cli-flags.cmake for why a
+    # textual sweep of common/arg.cpp is not a substitute (example scoping is invisible to it).
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract-java-cli-flags.cmake)
+    jllama_extract_java_cli_flags(
+        JAVA_FLAG_SOURCES
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/args/ModelFlag.java
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/parameters/ModelParameters.java
+        OUTPUT_HEADER ${CMAKE_CURRENT_BINARY_DIR}/generated/jllama_java_cli_flags.h
+    )
+
     add_executable(jllama_test
         src/test/cpp/test_utils.cpp
         src/test/cpp/test_server.cpp
@@ -569,6 +580,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_tts_wav.cpp
         src/test/cpp/test_tts_params.cpp
         src/test/cpp/test_model_split.cpp
+        src/test/cpp/test_model_flags.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
@@ -591,6 +603,8 @@ if(BUILD_TESTING)
         # same (tests/test-batch-alloc.cpp, tests/test-quantize-stats.cpp include "../src/...").
         # No header name in that directory collides with tools/server, tools/mtmd or src/main/cpp.
         ${llama.cpp_SOURCE_DIR}/src
+        # The generated Java-CLI-flag list consumed by test_model_flags.cpp.
+        ${CMAKE_CURRENT_BINARY_DIR}/generated
     )
     target_link_libraries(jllama_test PRIVATE llama-common mtmd llama nlohmann_json GTest::gtest_main)
     target_compile_features(jllama_test PRIVATE cxx_std_17)
