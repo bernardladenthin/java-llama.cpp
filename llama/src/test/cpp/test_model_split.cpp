@@ -75,6 +75,20 @@ TEST(LlamaModelSplits, ZeroSumStillMapsEveryLayerToARealDevice) {
     }
 }
 
+// The same degenerate sum reached from the other direction, and the reason this is not a
+// Metal-only defect: --tensor-split values are parsed with std::stof and never range-checked, so
+// `-ts 1,-1` cancels out and lands on the very same line, on any backend, with no memory pressure.
+// Unfixed this yields [inf, -nan] and every layer maps one past the last device.
+TEST(LlamaModelSplits, CancellingTensorSplitStillMapsEveryLayerToARealDevice) {
+    std::vector<float> splits = {1.0f, -1.0f};
+    llama_model_splits_normalize(splits);
+
+    for (size_t i = 0; i < splits.size(); ++i) {
+        EXPECT_TRUE(std::isfinite(splits[i])) << "i=" << i;
+    }
+    expect_every_layer_maps_into_range(splits, 32);
+}
+
 TEST(LlamaModelSplits, ProportionalSplitsMapEveryLayerToARealDevice) {
     std::vector<float> splits = {1.0f, 3.0f};
     llama_model_splits_normalize(splits);

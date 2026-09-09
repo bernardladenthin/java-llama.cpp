@@ -1,8 +1,8 @@
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index ffedf89e6..3c3f27c15 100644
+index ffedf89e6..97ef25746 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -1399,6 +1399,67 @@ void llama_model_base::load_vocab(llama_model_loader & ml) {
+@@ -1399,6 +1399,75 @@ void llama_model_base::load_vocab(llama_model_loader & ml) {
      vocab.load(ml, kv);
  }
  
@@ -21,17 +21,25 @@ index ffedf89e6..3c3f27c15 100644
 +    }
 +
 +    if (split_sum == 0.0f) {
-+        // No device reported any memory to weight the layers by. Dividing here would put a NaN in
-+        // every split point, and NaN compares false against everything, so the std::upper_bound in
-+        // llama_model_splits_select_device() below would return the end iterator and the lookup
-+        // would run off the end of the device list.
++        // The weights sum to zero, so there is nothing to weight the layers by. Dividing here would
++        // put a NaN (or an inf) in the split points, and NaN compares false against everything, so
++        // the std::upper_bound in llama_model_splits_select_device() below would return the end
++        // iterator and the lookup would run off the end of the device list.
 +        //
-+        // This is reachable in practice, not just in theory: a Metal device whose
-+        // currentAllocatedSize has grown past its recommendedMaxWorkingSetSize reports
-+        // free == 0 with a non-zero total, so the `free == 0 && total == 0` host-memory fallback
-+        // in the caller does not fire. Split evenly instead -- the only neutral choice when no
-+        // device can be preferred over another, and exactly right for a single device.
-+        LLAMA_LOG_WARN("%s: no device reported any free memory, splitting layers evenly\n", __func__);
++        // Two different inputs reach this, and both are reachable in practice:
++        //
++        //   * a device that reports no free memory -- e.g. a Metal device whose currentAllocatedSize
++        //     has grown past its recommendedMaxWorkingSetSize reports free == 0 with a non-zero
++        //     total, so the `free == 0 && total == 0` host-memory fallback in the caller does not
++        //     fire and every weight is 0;
++        //   * an explicit --tensor-split whose values cancel out, e.g. `-ts 1,-1`. The values are
++        //     parsed with std::stof and never range-checked, so this reaches us on any backend.
++        //
++        // Split evenly instead -- the only neutral choice when no device can be preferred over
++        // another, and exactly right for a single device.
++        LLAMA_LOG_WARN("%s: layer split weights sum to zero "
++                       "(no device reported free memory, or --tensor-split cancels out), "
++                       "splitting layers evenly\n", __func__);
 +        for (size_t i = 0; i < splits.size(); ++i) {
 +            splits[i] = float(i + 1)/splits.size();
 +        }
@@ -70,7 +78,7 @@ index ffedf89e6..3c3f27c15 100644
  bool llama_model_base::load_tensors(llama_model_loader & ml) {
      const auto & split_mode   = params.split_mode;
      const bool use_mlock      = params.load_mode == LLAMA_LOAD_MODE_MLOCK || params.load_mode == LLAMA_LOAD_MODE_MMAP_MLOCK;
-@@ -1466,15 +1527,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+@@ -1466,15 +1535,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
          std::copy(tensor_split, tensor_split + n_devices(), splits.begin());
      }
  
@@ -87,7 +95,7 @@ index ffedf89e6..3c3f27c15 100644
  
      const int i_gpu_start = std::max(n_layer_all + 1 - n_gpu_layers, 0);
      const int act_gpu_layers = devices.empty() ? 0 : std::min(n_gpu_layers, n_layer_all + 1);
-@@ -1484,7 +1537,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+@@ -1484,7 +1545,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
              LLAMA_LOG_DEBUG("load_tensors: layer %3d assigned to device %s, is_swa = %d\n", il, ggml_backend_dev_name(cpu_dev), is_swa);
              return {cpu_dev, &pimpl->cpu_buft_list};
          }
@@ -126,10 +134,10 @@ index c46377c76..229cb768d 100644
      target_link_libraries(test-chat PRIVATE server-context)
 diff --git a/tests/test-model-split.cpp b/tests/test-model-split.cpp
 new file mode 100644
-index 000000000..70d40c13b
+index 000000000..35cc84666
 --- /dev/null
 +++ b/tests/test-model-split.cpp
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,131 @@
 +#include "testing.h"
 +
 +#include "llama.h"
@@ -200,6 +208,22 @@ index 000000000..70d40c13b
 +    }
 +}
 +
++// The same degenerate sum, reached from the other direction: --tensor-split values are parsed with
++// std::stof and never range-checked, so `-ts 1,-1` cancels out and lands here on any backend, with
++// no GPU memory pressure involved at all.
++static void test_normalize_cancelling_tensor_split(testing & t) {
++    std::vector<float> splits = { 1.0f, -1.0f };
++    llama_model_splits_normalize(splits);
++
++    bool finite = true;
++    for (size_t i = 0; i < splits.size(); ++i) {
++        finite = finite && std::isfinite(splits[i]);
++    }
++
++    t.assert_true("no NaN or inf split point",  finite);
++    t.assert_true("all layers map into range",  all_layers_map_into_range(t, splits, 32));
++}
++
 +// The diagnostic half: a malformed set of split points must name itself rather than reaching the
 +// device list and coming back out as libc++'s bare "vector".
 +static void test_select_device_reports_malformed_splits(testing & t) {
@@ -240,6 +264,7 @@ index 000000000..70d40c13b
 +    t.test("normalize_proportional",  test_normalize_proportional);
 +    t.test("normalize_single_device", test_normalize_single_device);
 +    t.test("normalize_zero_sum",      test_normalize_zero_sum);
++    t.test("normalize_cancelling_ts", test_normalize_cancelling_tensor_split);
 +    t.test("select_device_malformed", test_select_device_reports_malformed_splits);
 +
 +    return t.summary();
