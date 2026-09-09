@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+//
+// SPDX-License-Identifier: MIT
+//
 // Runnable guard for patches/0012 (the layer-split fix in llama.cpp's src/llama-model.cpp).
 //
 // The patch also ships an upstream test (tests/test-model-split.cpp), but a FetchContent
@@ -26,7 +30,7 @@ void expect_every_layer_maps_into_range(const std::vector<float> &splits, int n_
         int idx = -1;
         ASSERT_NO_THROW(idx = llama_model_splits_select_device(splits, il, n_layers)) << "layer " << il;
         EXPECT_GE(idx, 0) << "layer " << il;
-        EXPECT_LT((size_t) idx, splits.size()) << "layer " << il;
+        EXPECT_LT((size_t)idx, splits.size()) << "layer " << il;
     }
 }
 
@@ -52,7 +56,7 @@ TEST(LlamaModelSplits, NormalizeSingleDeviceTakesEverything) {
 // currentAllocatedSize has grown past its recommendedMaxWorkingSetSize -- makes the sum of the
 // weights zero. Dividing by it put a NaN in every split point.
 TEST(LlamaModelSplits, ZeroSumDoesNotProduceNaNSplitPoints) {
-    for (size_t n_devices : {(size_t) 1, (size_t) 2, (size_t) 4}) {
+    for (size_t n_devices : {(size_t)1, (size_t)2, (size_t)4}) {
         std::vector<float> splits(n_devices, 0.0f);
         llama_model_splits_normalize(splits);
 
@@ -68,7 +72,7 @@ TEST(LlamaModelSplits, ZeroSumDoesNotProduceNaNSplitPoints) {
 // load_tensors() indexed one past the last device -- an std::out_of_range whose libc++ what() is
 // the bare string "vector". This is the assertion that would have failed before the fix.
 TEST(LlamaModelSplits, ZeroSumStillMapsEveryLayerToARealDevice) {
-    for (size_t n_devices : {(size_t) 1, (size_t) 2, (size_t) 4}) {
+    for (size_t n_devices : {(size_t)1, (size_t)2, (size_t)4}) {
         std::vector<float> splits(n_devices, 0.0f);
         llama_model_splits_normalize(splits);
         expect_every_layer_maps_into_range(splits, 32);

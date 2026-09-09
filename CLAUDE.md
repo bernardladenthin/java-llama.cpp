@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b10850**
+Current llama.cpp pinned version: **b10870**
 
 ## Upgrading CUDA Version
 
@@ -470,9 +470,21 @@ Pipeline (`.github/workflows/publish.yml`):
    pinned `b<nnnn>` tag from `llama/CMakeLists.txt`'s `GIT_TAG`, sparse-checks-out
    `ggml-org/llama.cpp@<tag>` `tools/ui`, runs the upstream Svelte build
    (`npm ci && npm run build`), gzips `dist/` into `dist/_gzip/` (LLAMA_UI_GZIP
-   parity), builds the self-contained `llama-ui-embed` host tool (plain C++17, **no
-   npm**) and runs it to produce the platform-independent **`webui-generated/ui.cpp`
-   + `ui.h`**, uploaded as the `webui-generated` artifact.
+   parity), then runs upstream's own **`scripts/ui-assets.cmake`** (a plain `cmake -P`
+   script, **no npm and no host executable**) to produce the platform-independent
+   **`webui-generated/ui.cpp` + `ui.h`**, uploaded as the `webui-generated` artifact.
+   Upstream **#28445** deleted the `tools/ui/embed.cpp` host tool this job used to
+   compile and replaced it with that script plus `ui.cpp.in`/`ui.h.in` templates; the
+   job passes `BUILD_UI=OFF HF_ENABLED=OFF` so the script takes its priority-1 path
+   ("pre-built assets in `<UI_SOURCE_DIR>/dist`") over the tree npm just built — no
+   second npm run, no Hugging Face download. `LLAMA_UI_GZIP` is upstream's own knob
+   and replaced the job's hand-rolled gzip loop. The sparse checkout therefore needs
+   **`scripts` as well as `tools/ui`**. **The completeness guard cannot be a bare
+   `grep LLAMA_UI_HAS_ASSETS`**: `ui.h.in` emits `/* #undef LLAMA_UI_HAS_ASSETS */`
+   for an empty table, so that token is present either way and the check passes the
+   failure case — the old `embed.cpp` emitted no such line, which is why the naive
+   grep used to work. The job asserts the **active** `#define` plus a non-zero count
+   parsed out of `std::array<llama_ui_asset, N>`.
 2. **Every native build job** (`needs: [startgate, build-webui]`) downloads that
    artifact into `webui-generated/` before building. npm never runs in the dockcross
    cross-compilers (which have no node) or per-platform.
@@ -489,14 +501,14 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 **Building the WebUI locally** (optional — a plain `cmake` build uses the stub and
 ships no UI):
 ```bash
-# needs node/npm + network; embed.cpp is plain C++17 (no npm)
-git clone --depth 1 --branch b10850 https://github.com/ggml-org/llama.cpp /tmp/lc
-( cd /tmp/lc/tools/ui && npm ci && npm run build \
-  && ( cd dist && find . -type f -not -path './_gzip/*' \
-       | while read -r f; do mkdir -p "_gzip/$(dirname "$f")"; gzip -9 -c "$f" > "_gzip/$f"; done ) \
-  && g++ -O2 -std=c++17 -o /tmp/llama-ui-embed embed.cpp )
-mkdir -p webui-generated
-/tmp/llama-ui-embed webui-generated/ui.cpp webui-generated/ui.h /tmp/lc/tools/ui/dist
+# needs node/npm + network for the asset build; the embed step is plain cmake -P
+git clone --depth 1 --branch b10870 https://github.com/ggml-org/llama.cpp /tmp/lc
+( cd /tmp/lc/tools/ui && npm ci && npm run build )
+mkdir -p webui-generated /tmp/ui-gen
+cmake -DUI_SOURCE_DIR=/tmp/lc/tools/ui -DUI_BINARY_DIR=/tmp/ui-gen \
+      -DLLAMA_SOURCE_DIR=/tmp/lc -DBUILD_UI=OFF -DHF_ENABLED=OFF -DLLAMA_UI_GZIP=ON \
+      -P /tmp/lc/scripts/ui-assets.cmake
+cp /tmp/ui-gen/ui.cpp /tmp/ui-gen/ui.h webui-generated/
 cmake -B build && cmake --build build --target jllama   # now embeds the real UI
 ```
 `webui-generated/` is git-ignored.
@@ -530,7 +542,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b10850`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b10870`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -1453,7 +1465,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b10850`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b10870`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.17.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
