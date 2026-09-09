@@ -26,12 +26,9 @@ public class ModelFlagTest {
             {ModelFlag.NO_WARMUP, "--no-warmup"},
             {ModelFlag.SPM_INFILL, "--spm-infill"},
             {ModelFlag.IGNORE_EOS, "--ignore-eos"},
-            {ModelFlag.DUMP_KV_CACHE, "--dump-kv-cache"},
             {ModelFlag.NO_KV_OFFLOAD, "--no-kv-offload"},
             {ModelFlag.CONT_BATCHING, "--cont-batching"},
             {ModelFlag.NO_CONT_BATCHING, "--no-cont-batching"},
-            {ModelFlag.MLOCK, "--mlock"},
-            {ModelFlag.NO_MMAP, "--no-mmap"},
             {ModelFlag.CHECK_TENSORS, "--check-tensors"},
             {ModelFlag.EMBEDDING, "--embedding"},
             {ModelFlag.RERANKING, "--reranking"},
@@ -66,10 +63,17 @@ public class ModelFlagTest {
 
     @Test
     public void testEnumCount() {
-        // 34 since FLASH_ATTN was removed: --flash-attn is not a valueless flag (llama.cpp b10273
-        // made its on|off|auto value mandatory), so modelling it here left a broken argv reachable
-        // through setFlag. It lives in the FlashAttn enum instead.
-        assertEquals(34, ModelFlag.values().length);
+        // 31 after four removals, all for the same reason: llama.cpp's server arg parser rejects an
+        // option it does not register, so a stale constant does not merely have no effect -- it makes
+        // every setFlag caller's model unloadable.
+        //   FLASH_ATTN     -- --flash-attn stopped being valueless at b10273 (on|off|auto is
+        //                     mandatory), so emitting the key alone consumed the next argv token.
+        //                     Use ModelParameters#setFlashAttn.
+        //   MLOCK, NO_MMAP -- deprecated at b10092, deleted at b10878.
+        //                     Use ModelParameters#setLoadMode.
+        //   DUMP_KV_CACHE  -- removed upstream with no replacement.
+        // src/test/cpp/test_model_flags.cpp enforces this against the real option table.
+        assertEquals(31, ModelFlag.values().length);
     }
 
     @ParameterizedTest(name = "{0} -> {1}")

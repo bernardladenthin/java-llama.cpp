@@ -14,11 +14,27 @@ package net.ladenthin.llama.args;
  * {@link net.ladenthin.llama.parameters.ModelParameters#clearFlag(ModelFlag)} for programmatic control,
  * or use the named convenience methods (e.g. {@link net.ladenthin.llama.parameters.ModelParameters#enableSwaFull()}).
  *
- * <p>{@code --flash-attn} is deliberately NOT here. It looks like a flag and was modelled as one, but
- * llama.cpp has required a mandatory {@code on|off|auto} value since b10273 — emitting the key alone
- * makes the parser consume the next argv token. Listing it would leave that broken argv reachable
- * through {@code setFlag}. Use
- * {@link net.ladenthin.llama.parameters.ModelParameters#setFlashAttn(net.ladenthin.llama.args.FlashAttn)}.</p>
+ * <p><strong>A constant is only listed here while llama.cpp's server argument parser still registers
+ * it.</strong> That parser treats an unknown option as a hard error, not a warning, so a stale
+ * constant does not merely have no effect — every {@code setFlag} caller gets
+ * {@code "Failed to parse model parameters"} instead of a loaded model. Four constants have been
+ * dropped for that reason and must not be reintroduced:</p>
+ *
+ * <ul>
+ *   <li>{@code --flash-attn} — looks like a flag and was modelled as one, but llama.cpp has required
+ *       a mandatory {@code on|off|auto} value since b10273, so emitting the key alone makes the
+ *       parser consume the next argv token. Use
+ *       {@link net.ladenthin.llama.parameters.ModelParameters#setFlashAttn(net.ladenthin.llama.args.FlashAttn)}.</li>
+ *   <li>{@code --mlock} and {@code --no-mmap} — deprecated at b10092 and <em>deleted</em> at b10878.
+ *       Use {@link net.ladenthin.llama.parameters.ModelParameters#setLoadMode(LoadMode)}
+ *       ({@link LoadMode#MLOCK} / {@link LoadMode#NONE} are upstream's own replacements).</li>
+ *   <li>{@code --dump-kv-cache} — removed upstream with no replacement.</li>
+ * </ul>
+ *
+ * <p>The rule is enforced, not just documented: {@code src/test/cpp/test_model_flags.cpp} feeds every
+ * flag string in this file (and in {@code ModelParameters}) to the real
+ * {@code common_params_parser_init(params, LLAMA_EXAMPLE_SERVER)} option table, so adding an
+ * unaccepted one reds the {@code C++ Tests} job on every platform.</p>
  */
 public enum ModelFlag {
 
@@ -51,9 +67,6 @@ public enum ModelFlag {
     /** Ignore end-of-stream token and continue generating. */
     IGNORE_EOS("--ignore-eos"),
 
-    /** Enable verbose printing of the KV cache. */
-    DUMP_KV_CACHE("--dump-kv-cache"),
-
     /** Disable KV offload. */
     NO_KV_OFFLOAD("--no-kv-offload"),
 
@@ -62,12 +75,6 @@ public enum ModelFlag {
 
     /** Disable continuous batching. */
     NO_CONT_BATCHING("--no-cont-batching"),
-
-    /** Force system to keep model in RAM rather than swapping or compressing. */
-    MLOCK("--mlock"),
-
-    /** Do not memory-map model (slower load but may reduce pageouts if not using mlock). */
-    NO_MMAP("--no-mmap"),
 
     /** Enable checking model tensor data for invalid values. */
     CHECK_TENSORS("--check-tensors"),

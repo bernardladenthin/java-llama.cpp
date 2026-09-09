@@ -752,30 +752,82 @@ public final class ModelParameters extends CliParameters {
     /**
      * Set group-attention factor (default: 1).
      *
+     * <p><strong>No longer emitted — this method is a no-op.</strong> {@code --grp-attn-n} still exists in
+     * {@code common/arg.cpp}, but carries {@code set_examples({LLAMA_EXAMPLE_COMPLETION,
+     * LLAMA_EXAMPLE_PASSKEY})}, so {@code common_params_parser_init} never registers it for
+     * {@code LLAMA_EXAMPLE_SERVER} — the example this binding parses with. A textual sweep of
+     * upstream sources cannot see that; only the real option table can. Because llama.cpp's
+     * argument parser treats an unregistered option as a hard error rather than a warning, still
+     * emitting it would make {@code loadModel()} throw {@code "Failed to parse model parameters"}
+     * instead of loading the model. Writing nothing keeps existing call sites compiling <em>and</em>
+     * loading. The method will be removed in a future release; the contract is enforced by
+     * {@code src/test/cpp/test_model_flags.cpp}, which drives every emitted flag through the real
+     * server option table.</p>
+     *
      * @param grpAttnN the group-attention factor
      * @return this builder
+     * @deprecated upstream scopes {@code --grp-attn-n} to non-server examples, so the server
+     *     argument parser rejects it
      */
+    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
+    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
+    // keep calling THIS method, so a later removal is one edit here and not a code search.
+    @SuppressWarnings("InlineMeSuggester")
+    @Deprecated
     public ModelParameters setGrpAttnN(int grpAttnN) {
-        return putScalar("--grp-attn-n", grpAttnN);
+        return this;
     }
 
     /**
      * Set group-attention width (default: 512).
      *
+     * <p><strong>No longer emitted — this method is a no-op.</strong> {@code --grp-attn-w} still exists in
+     * {@code common/arg.cpp}, but carries {@code set_examples({LLAMA_EXAMPLE_COMPLETION})}, so
+     * {@code common_params_parser_init} never registers it for {@code LLAMA_EXAMPLE_SERVER} — the
+     * example this binding parses with. Because llama.cpp's
+     * argument parser treats an unregistered option as a hard error rather than a warning, still
+     * emitting it would make {@code loadModel()} throw {@code "Failed to parse model parameters"}
+     * instead of loading the model. Writing nothing keeps existing call sites compiling <em>and</em>
+     * loading. The method will be removed in a future release; the contract is enforced by
+     * {@code src/test/cpp/test_model_flags.cpp}, which drives every emitted flag through the real
+     * server option table.</p>
+     *
      * @param grpAttnW the group-attention width
      * @return this builder
+     * @deprecated upstream scopes {@code --grp-attn-w} to the completion example, so the server
+     *     argument parser rejects it
      */
+    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
+    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
+    // keep calling THIS method, so a later removal is one edit here and not a code search.
+    @SuppressWarnings("InlineMeSuggester")
+    @Deprecated
     public ModelParameters setGrpAttnW(int grpAttnW) {
-        return putScalar("--grp-attn-w", grpAttnW);
+        return this;
     }
 
     /**
      * Enable verbose printing of the KV cache.
      *
+     * <p><strong>No longer emitted — this method is a no-op.</strong> Upstream removed {@code --dump-kv-cache}
+     * with no replacement; it appears nowhere in llama.cpp at the pinned build. Because llama.cpp's
+     * argument parser treats an unregistered option as a hard error rather than a warning, still
+     * emitting it would make {@code loadModel()} throw {@code "Failed to parse model parameters"}
+     * instead of loading the model. Writing nothing keeps existing call sites compiling <em>and</em>
+     * loading. The method will be removed in a future release; the contract is enforced by
+     * {@code src/test/cpp/test_model_flags.cpp}, which drives every emitted flag through the real
+     * server option table.</p>
+     *
      * @return this builder
+     * @deprecated upstream removed {@code --dump-kv-cache} with no replacement
      */
+    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
+    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
+    // keep calling THIS method, so a later removal is one edit here and not a code search.
+    @SuppressWarnings("InlineMeSuggester")
+    @Deprecated
     public ModelParameters enableDumpKvCache() {
-        return setFlag(ModelFlag.DUMP_KV_CACHE);
+        return this;
     }
 
     /**
@@ -846,21 +898,67 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Force system to keep model in RAM rather than swapping or compressing.
+     * Select how llama.cpp brings the model weights into memory.
      *
+     * <p>Maps to upstream's {@code -lm}/{@code --load-mode}, the single option that replaced the
+     * independent {@code --mlock}, {@code --mmap}/{@code --no-mmap} and {@code --direct-io} switches
+     * (deprecated at b10092, deleted at b10878). Because the modes are mutually exclusive, the last
+     * call wins — {@link LoadMode#MMAP_MLOCK} is the way to ask for both mmap and mlock.</p>
+     *
+     * <p>Upstream's default is {@link LoadMode#AUTO} (mmap unless a device cannot support it), so
+     * omitting this call is not the same as passing {@link LoadMode#NONE}.</p>
+     *
+     * @param loadMode the model-loading mode
      * @return this builder
      */
+    public ModelParameters setLoadMode(LoadMode loadMode) {
+        return putEnum("--load-mode", loadMode);
+    }
+
+    /**
+     * Force system to keep model in RAM rather than swapping or compressing.
+     *
+     * <p><strong>Now emits {@code --load-mode mlock}.</strong> Upstream deprecated {@code --mlock}
+     * at b10092 and deleted it at b10878; since llama.cpp's argument parser treats an unknown
+     * option as a hard error rather than a warning, continuing to emit it would make
+     * {@code loadModel()} throw {@code "Failed to parse model parameters"}. The substitution is
+     * upstream's own — its deprecation shim mapped {@code --mlock} to
+     * {@code LLAMA_LOAD_MODE_MLOCK} — so behaviour is unchanged. Prefer
+     * {@link #setLoadMode(LoadMode)} directly; this method will be removed in a future release.</p>
+     *
+     * @return this builder
+     * @deprecated use {@link #setLoadMode(LoadMode)} with {@link LoadMode#MLOCK}
+     */
+    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
+    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
+    // keep calling THIS method, so a later removal is one edit here and not a code search.
+    @SuppressWarnings("InlineMeSuggester")
+    @Deprecated
     public ModelParameters enableMlock() {
-        return setFlag(ModelFlag.MLOCK);
+        return setLoadMode(LoadMode.MLOCK);
     }
 
     /**
      * Do not memory-map model (slower load but may reduce pageouts if not using mlock).
      *
+     * <p><strong>Now emits {@code --load-mode none}.</strong> Upstream deprecated {@code --no-mmap}
+     * at b10092 and deleted it at b10878; the substitution is upstream's own deprecation-shim
+     * mapping ({@code --no-mmap} to {@code LLAMA_LOAD_MODE_NONE}), so behaviour is unchanged. Note
+     * that this is a whole loading mode, not an independent switch: a later
+     * {@link #setLoadMode(LoadMode)} call overrides it, and combining "no mmap" with mlock is
+     * expressed as {@link LoadMode#MLOCK} rather than as two calls. Prefer
+     * {@link #setLoadMode(LoadMode)} directly; this method will be removed in a future release.</p>
+     *
      * @return this builder
+     * @deprecated use {@link #setLoadMode(LoadMode)} with {@link LoadMode#NONE}
      */
+    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
+    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
+    // keep calling THIS method, so a later removal is one edit here and not a code search.
+    @SuppressWarnings("InlineMeSuggester")
+    @Deprecated
     public ModelParameters disableMmap() {
-        return setFlag(ModelFlag.NO_MMAP);
+        return setLoadMode(LoadMode.NONE);
     }
 
     /**
@@ -1094,22 +1192,54 @@ public final class ModelParameters extends CliParameters {
     /**
      * Set the Hugging Face model repository for the vocoder model (default: unused).
      *
+     * <p><strong>No longer emitted — this method is a no-op.</strong> Upstream removed {@code --hf-repo-v} with the
+     * OuteTTS-era two-model TTS design; it appears nowhere in llama.cpp at the pinned build. The
+     * current TTS pipeline takes a backbone plus an mmproj GGUF — see
+     * {@link net.ladenthin.llama.TextToSpeech}. Because llama.cpp's
+     * argument parser treats an unregistered option as a hard error rather than a warning, still
+     * emitting it would make {@code loadModel()} throw {@code "Failed to parse model parameters"}
+     * instead of loading the model. Writing nothing keeps existing call sites compiling <em>and</em>
+     * loading. The method will be removed in a future release; the contract is enforced by
+     * {@code src/test/cpp/test_model_flags.cpp}, which drives every emitted flag through the real
+     * server option table.</p>
+     *
      * @param hfRepoV the Hugging Face repository for the vocoder model
      * @return this builder
+     * @deprecated upstream removed {@code --hf-repo-v}; see {@link net.ladenthin.llama.TextToSpeech}
      */
+    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
+    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
+    // keep calling THIS method, so a later removal is one edit here and not a code search.
+    @SuppressWarnings("InlineMeSuggester")
+    @Deprecated
     public ModelParameters setHfRepoV(String hfRepoV) {
-        parameters.put("--hf-repo-v", hfRepoV);
         return this;
     }
 
     /**
      * Set the Hugging Face model file for the vocoder model (default: unused).
      *
+     * <p><strong>No longer emitted — this method is a no-op.</strong> Upstream removed {@code --hf-file-v} with the
+     * OuteTTS-era two-model TTS design; it appears nowhere in llama.cpp at the pinned build. The
+     * current TTS pipeline takes a backbone plus an mmproj GGUF — see
+     * {@link net.ladenthin.llama.TextToSpeech}. Because llama.cpp's
+     * argument parser treats an unregistered option as a hard error rather than a warning, still
+     * emitting it would make {@code loadModel()} throw {@code "Failed to parse model parameters"}
+     * instead of loading the model. Writing nothing keeps existing call sites compiling <em>and</em>
+     * loading. The method will be removed in a future release; the contract is enforced by
+     * {@code src/test/cpp/test_model_flags.cpp}, which drives every emitted flag through the real
+     * server option table.</p>
+     *
      * @param hfFileV the vocoder model file within the Hugging Face repository
      * @return this builder
+     * @deprecated upstream removed {@code --hf-file-v}; see {@link net.ladenthin.llama.TextToSpeech}
      */
+    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
+    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
+    // keep calling THIS method, so a later removal is one edit here and not a code search.
+    @SuppressWarnings("InlineMeSuggester")
+    @Deprecated
     public ModelParameters setHfFileV(String hfFileV) {
-        parameters.put("--hf-file-v", hfFileV);
         return this;
     }
 

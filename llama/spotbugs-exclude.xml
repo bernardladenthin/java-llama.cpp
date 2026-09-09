@@ -82,6 +82,7 @@ SPDX-License-Identifier: MIT
             <Method name="setCacheTypeV"/>
             <Method name="setFlashAttn"/>
             <Method name="setLazyMode"/>
+            <Method name="setLoadMode"/>
             <Method name="setMirostat"/>
             <Method name="setNuma"/>
             <Method name="setReasoningFormat"/>
