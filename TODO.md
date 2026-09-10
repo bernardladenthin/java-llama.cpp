@@ -122,6 +122,30 @@ upstream PR #22393 — it drops automatically when that merges.)
 
 These are JNI plumbing items for upstream API additions. Policy: add only after a real user request — they are mostly relevant to specific model families or specialized workflows.
 
+- **Three upstream flags found by the b10878 flag audit, deliberately NOT implemented there.** The
+  audit that produced `test_model_flags.cpp` swept every option `common/arg.cpp` registers for
+  `LLAMA_EXAMPLE_SERVER` against what `ModelParameters`/`ModelFlag` emit. Beyond the seven dead
+  flags it retired, it found ten option groups upstream had added since b10456 that the Java API
+  does not expose. Seven were already covered (`--kv-unified-per-slot`, `--mmproj-device`/`-mmdev`,
+  `--video-fps`, `--video-timestamp-interval`, `--video-ffmpeg-dir`, `--lazy-mode`/`-lzm`,
+  `--n-cpu-ffn`/`-ncffn`). These three are the remainder, left out of the correction PR on purpose
+  — it was a *fix* for an unloadable-model bug, and adding surface would have widened it:
+
+  - **`--log-jsonl` / `--no-log-jsonl`** (a positive/negative flag pair, so it would fit `ModelFlag`
+    directly). The only one of the three with real consumer value, but it is **not a free addition**:
+    it flips `common_log_set_jsonl(common_log_main(), …)`, i.e. the process-wide llama.cpp logger,
+    whose output for this library goes through the JNI log callback. The project already has its own
+    JSON logging at the Java level — the `args.LogFormat` enum plus `log_helpers.hpp`'s
+    `format_log_as_json` — so the two would overlap and could contradict each other on the same
+    stream. Deciding which layer owns the format is a **feature decision**, not a correctness fix,
+    and needs its own change with its own tests.
+  - **`--spec-synth-len` and `--spec-synth-rates`** — upstream's own help text marks both as
+    benchmarking-only knobs for synthetic speculative-decoding measurements. No consumer use case
+    here; listed so a future audit does not re-discover them as an oversight.
+
+  Nothing is broken by leaving these out: `NativeServer` forwards raw llama-server argv verbatim, so
+  all three remain reachable that way. The gap is only in the typed `ModelParameters` surface.
+
 - **Video input (`ContentPart.videoFile(...)`).** `mtmd` has had an end-to-end video path since
   llama.cpp **b9562** (#24269) — `mtmd_helper_video_init_params` was already present at the previous
   pin, b10456. What **b10647** (#24318, commit `f29551215`) added is the surfacing: a fourth
