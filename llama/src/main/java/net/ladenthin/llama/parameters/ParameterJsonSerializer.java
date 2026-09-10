@@ -184,19 +184,6 @@ public class ParameterJsonSerializer {
         return arr;
     }
 
-    /**
-     * Build a JSON integer array from a primitive {@code int[]}
-     * (used for penalty-prompt token sequences).
-     *
-     * @param values the token IDs to include
-     * @return a Jackson {@link ArrayNode} of integer values
-     */
-    public ArrayNode buildIntArray(int... values) {
-        ArrayNode arr = OBJECT_MAPPER.createArrayNode();
-        for (int v : values) arr.add(v);
-        return arr;
-    }
-
     // ------------------------------------------------------------------
     // Logit-bias pair arrays — [[key, value], ...]
     // ------------------------------------------------------------------

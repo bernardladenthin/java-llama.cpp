@@ -160,12 +160,6 @@ public class InferenceParametersTest {
     }
 
     @Test
-    public void testSetTfsZ() {
-        InferenceParameters params = new InferenceParameters("").withTfsZ(1.0f);
-        assertThat(params.parameters.get("tfs_z"), is("1.0"));
-    }
-
-    @Test
     public void testSetTypicalP() {
         InferenceParameters params = new InferenceParameters("").withTypicalP(0.8f);
         assertThat(params.parameters.get("typical_p"), is("0.8"));
@@ -232,12 +226,6 @@ public class InferenceParametersTest {
     }
 
     @Test
-    public void testSetPenalizeNl() {
-        InferenceParameters params = new InferenceParameters("").withPenalizeNl(false);
-        assertThat(params.parameters.get("penalize_nl"), is("false"));
-    }
-
-    @Test
     public void testSetDynamicTemperatureRange() {
         InferenceParameters params = new InferenceParameters("").withDynamicTemperatureRange(0.5f);
         assertThat(params.parameters.get("dynatemp_range"), is("0.5"));
@@ -277,18 +265,6 @@ public class InferenceParametersTest {
         InferenceParameters params = new InferenceParameters("").withJsonSchema(schema);
         assertThat(params.parameters.get("json_schema"), is(schema));
         assertThat(params.toString(), containsString("\"json_schema\": " + schema));
-    }
-
-    @Test
-    public void testSetPenaltyPromptString() {
-        InferenceParameters params = new InferenceParameters("").withPenaltyPrompt("Hello!");
-        assertThat(params.parameters.get("penalty_prompt"), is("\"Hello!\""));
-    }
-
-    @Test
-    public void testSetUseChatTemplate() {
-        InferenceParameters params = new InferenceParameters("").withUseChatTemplate(true);
-        assertThat(params.parameters.get("use_jinja"), is("true"));
     }
 
     @Test
@@ -562,23 +538,6 @@ public class InferenceParametersTest {
     public void testDisableTokensEmpty() {
         InferenceParameters params = new InferenceParameters("").withDisabledTokens(Collections.emptyList());
         assertThat(params.parameters, not(hasKey("logit_bias")));
-    }
-
-    // -------------------------------------------------------------------------
-    // Penalty prompt with token ids
-    // -------------------------------------------------------------------------
-
-    @Test
-    public void testSetPenaltyPromptTokenIds() {
-        InferenceParameters params = new InferenceParameters("").withPenaltyPrompt(new int[] {1, 2, 3});
-        assertThat(params.parameters.get("penalty_prompt"), is("[1,2,3]"));
-    }
-
-    @Test
-    public void testSetPenaltyPromptTokenIdsEmpty() {
-        InferenceParameters params = new InferenceParameters("");
-        params = params.withPenaltyPrompt(new int[] {});
-        assertThat(params.parameters, not(hasKey("penalty_prompt")));
     }
 
     // -------------------------------------------------------------------------

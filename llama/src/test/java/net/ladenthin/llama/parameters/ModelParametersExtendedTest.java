@@ -368,37 +368,6 @@ public class ModelParametersExtendedTest {
     }
 
     // -------------------------------------------------------------------------
-    // Group attention
-    // -------------------------------------------------------------------------
-
-    /**
-     * Asserts that a retired builder method wrote nothing at all -- compared against a pristine
-     * instance rather than against emptiness, because the constructor seeds defaults of its own
-     * ({@code --fit} today), and a future default must not quietly weaken this assertion.
-     */
-    private static void assertWroteNothing(ModelParameters actual) {
-        assertThat(actual.parameters, is(new ModelParameters().parameters));
-    }
-
-    // Retired flags: llama.cpp's server arg parser does not register these, and it treats an
-    // unregistered option as a hard error -- so the builder methods must write NOTHING, or every
-    // caller's model becomes unloadable. Asserting emptiness (not just "no longer that key") is the
-    // point: the old assertions pinned the mapping and would have passed forever while the flag was
-    // dead. src/test/cpp/test_model_flags.cpp is the upstream-facing half of this guard.
-    // --grp-attn-n/-w still exist upstream but are set_examples()-scoped to
-    // LLAMA_EXAMPLE_COMPLETION/PASSKEY, so the server example never registers them.
-
-    @Test
-    public void testSetGrpAttnNIsRetiredAndEmitsNothing() {
-        assertWroteNothing(new ModelParameters().setGrpAttnN(4));
-    }
-
-    @Test
-    public void testSetGrpAttnWIsRetiredAndEmitsNothing() {
-        assertWroteNothing(new ModelParameters().setGrpAttnW(1024));
-    }
-
-    // -------------------------------------------------------------------------
     // KV cache
     // -------------------------------------------------------------------------
 
@@ -435,12 +404,6 @@ public class ModelParametersExtendedTest {
         ModelParameters p = new ModelParameters().disableKvOffload();
         assertThat(p.parameters, hasKey("--no-kv-offload"));
         assertThat(p.parameters.get("--no-kv-offload"), is(nullValue()));
-    }
-
-    // --dump-kv-cache was removed upstream with no replacement; see the retired-flag note above.
-    @Test
-    public void testEnableDumpKvCacheIsRetiredAndEmitsNothing() {
-        assertWroteNothing(new ModelParameters().enableDumpKvCache());
     }
 
     @Test
@@ -600,29 +563,12 @@ public class ModelParametersExtendedTest {
         }
     }
 
-    // enableMlock()/disableMmap() kept their names but changed what they emit: upstream deleted
-    // --mlock and --no-mmap at b10878, and these are the substitutions upstream's own deprecation
-    // shim used (LLAMA_LOAD_MODE_MLOCK / LLAMA_LOAD_MODE_NONE), so behaviour is unchanged.
-
-    @Test
-    public void testEnableMlockEmitsLoadModeMlock() {
-        ModelParameters p = new ModelParameters().enableMlock();
-        assertThat(p.parameters.get("--load-mode"), is("mlock"));
-        assertThat(p.parameters, not(hasKey("--mlock")));
-    }
-
-    @Test
-    public void testDisableMmapEmitsLoadModeNone() {
-        ModelParameters p = new ModelParameters().disableMmap();
-        assertThat(p.parameters.get("--load-mode"), is("none"));
-        assertThat(p.parameters, not(hasKey("--no-mmap")));
-    }
-
     @Test
     public void testLoadModeIsSingleValuedSoTheLastCallWins() {
-        // The three used to be independent switches; they are one mutually exclusive mode now, so a
-        // caller wanting both mmap and mlock must say MMAP_MLOCK rather than chain two calls.
-        ModelParameters p = new ModelParameters().disableMmap().enableMlock();
+        // --mlock, --mmap and --no-mmap used to be independent switches; they are one mutually
+        // exclusive mode now, so a caller wanting both mmap and mlock must say MMAP_MLOCK rather
+        // than chain two calls.
+        ModelParameters p = new ModelParameters().setLoadMode(LoadMode.NONE).setLoadMode(LoadMode.MLOCK);
         assertThat(p.parameters.get("--load-mode"), is("mlock"));
     }
 
@@ -911,19 +857,6 @@ public class ModelParametersExtendedTest {
     public void testSetHfToken() {
         ModelParameters p = new ModelParameters().setHfToken("hf_abc123");
         assertThat(p.parameters.get("--hf-token"), is("hf_abc123"));
-    }
-
-    // --hf-repo-v/--hf-file-v went away with the OuteTTS-era two-model TTS design; see the
-    // retired-flag note above.
-
-    @Test
-    public void testSetHfRepoVIsRetiredAndEmitsNothing() {
-        assertWroteNothing(new ModelParameters().setHfRepoV("org/vocoder"));
-    }
-
-    @Test
-    public void testSetHfFileVIsRetiredAndEmitsNothing() {
-        assertWroteNothing(new ModelParameters().setHfFileV("vocoder.gguf"));
     }
 
     // -------------------------------------------------------------------------

@@ -67,7 +67,6 @@ public final class InferenceParameters extends JsonParameters {
     private static final String PARAM_TOP_K = "top_k";
     private static final String PARAM_TOP_P = "top_p";
     private static final String PARAM_MIN_P = "min_p";
-    private static final String PARAM_TFS_Z = "tfs_z";
     private static final String PARAM_TYPICAL_P = "typical_p";
     private static final String PARAM_TEMPERATURE = "temperature";
     private static final String PARAM_DYNATEMP_RANGE = "dynatemp_range";
@@ -79,21 +78,18 @@ public final class InferenceParameters extends JsonParameters {
     private static final String PARAM_MIROSTAT = "mirostat";
     private static final String PARAM_MIROSTAT_TAU = "mirostat_tau";
     private static final String PARAM_MIROSTAT_ETA = "mirostat_eta";
-    private static final String PARAM_PENALIZE_NL = "penalize_nl";
     private static final String PARAM_N_KEEP = "n_keep";
     private static final String PARAM_SEED = "seed";
     private static final String PARAM_N_PROBS = "n_probs";
     private static final String PARAM_MIN_KEEP = "min_keep";
     private static final String PARAM_GRAMMAR = "grammar";
     private static final String PARAM_JSON_SCHEMA = "json_schema";
-    private static final String PARAM_PENALTY_PROMPT = "penalty_prompt";
     private static final String PARAM_IGNORE_EOS = "ignore_eos";
     private static final String PARAM_LOGIT_BIAS = "logit_bias";
     private static final String PARAM_STOP = "stop";
     private static final String PARAM_SAMPLERS = "samplers";
     private static final String PARAM_STREAM = "stream";
     private static final String PARAM_CHAT_TEMPLATE = "chat_template";
-    private static final String PARAM_USE_JINJA = "use_jinja";
     private static final String PARAM_CHAT_TEMPLATE_KWARGS = "chat_template_kwargs";
     private static final String PARAM_MESSAGES = "messages";
     private static final String PARAM_TOP_N_SIGMA = "top_n_sigma";
@@ -293,24 +289,6 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with tail-free sampling z replaced (default: 1.0, 1.0 = disabled).
-     *
-     * <p><strong>Ignored by the server.</strong> Upstream llama.cpp no longer reads this field — {@code tfs_z}
-     * appears nowhere in {@code common/} or {@code tools/server/} as of the pinned build, and the request
-     * schema silently discards unknown fields rather than rejecting them, so setting it has no effect on
-     * generation. Retained only so existing call sites keep compiling; it will be removed in a future
-     * release.</p>
-     *
-     * @param tfsZ tail-free sampling parameter z (1.0 = disabled)
-     * @return a new instance; this instance is unchanged
-     * @deprecated upstream removed tail-free sampling; the value is discarded by the server
-     */
-    @Deprecated
-    public InferenceParameters withTfsZ(float tfsZ) {
-        return withScalar(PARAM_TFS_Z, tfsZ);
-    }
-
-    /**
      * Returns a new request with locally-typical sampling p replaced (default: 1.0, 1.0 = disabled).
      *
      * @param typicalP locally typical sampling parameter p (1.0 = disabled)
@@ -435,24 +413,6 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the newline-penalty flag replaced.
-     *
-     * <p><strong>Ignored by the server.</strong> Upstream llama.cpp no longer reads this field — {@code penalize_nl}
-     * appears nowhere in {@code common/} or {@code tools/server/} as of the pinned build, and the request
-     * schema silently discards unknown fields rather than rejecting them, so setting it has no effect on
-     * generation. Retained only so existing call sites keep compiling; it will be removed in a future
-     * release.</p>
-     *
-     * @param penalizeNl whether to penalize newline tokens
-     * @return a new instance; this instance is unchanged
-     * @deprecated upstream removed the newline penalty; the value is discarded by the server
-     */
-    @Deprecated
-    public InferenceParameters withPenalizeNl(boolean penalizeNl) {
-        return withScalar(PARAM_PENALIZE_NL, penalizeNl);
-    }
-
-    /**
      * Returns a new request with the {@code n_keep} value replaced (default: 0, -1 = all).
      *
      * @param nKeep tokens to keep from the initial prompt (-1 = all)
@@ -538,42 +498,6 @@ public final class InferenceParameters extends JsonParameters {
      */
     public InferenceParameters withResponseFormat(String responseFormatJson) {
         return withRaw(PARAM_RESPONSE_FORMAT, responseFormatJson);
-    }
-
-    /**
-     * Returns a new request with the repetition-penalty prompt-portion override replaced.
-     *
-     * <p><strong>Ignored by the server.</strong> Upstream llama.cpp no longer reads this field — {@code penalty_prompt}
-     * appears nowhere in {@code common/} or {@code tools/server/} as of the pinned build, and the request
-     * schema silently discards unknown fields rather than rejecting them, so setting it has no effect on
-     * generation. Retained only so existing call sites keep compiling; it will be removed in a future
-     * release.</p>
-     *
-     * @param penaltyPrompt the string portion of the prompt to penalize; {@code null} clears
-     * @return a new instance; this instance is unchanged
-     * @deprecated upstream removed the penalty-prompt override; the value is discarded by the server
-     */
-    @Deprecated
-    public InferenceParameters withPenaltyPrompt(@Nullable String penaltyPrompt) {
-        return withOptionalJson(PARAM_PENALTY_PROMPT, penaltyPrompt);
-    }
-
-    /**
-     * Returns a new request with the repetition-penalty prompt-portion override replaced
-     * (token-id form). Empty input is a no-op (returns {@code this}).
-     *
-     * <p><strong>Ignored by the server</strong> — see {@link #withPenaltyPrompt(String)}.</p>
-     *
-     * @param tokens token ids of the prompt portion to penalize
-     * @return a new instance with the array set, or {@code this} if {@code tokens} is empty
-     * @deprecated upstream removed the penalty-prompt override; the value is discarded by the server
-     */
-    @Deprecated
-    public InferenceParameters withPenaltyPrompt(int... tokens) {
-        if (tokens.length == 0) {
-            return this;
-        }
-        return withRaw(PARAM_PENALTY_PROMPT, serializer.buildIntArray(tokens).toString());
     }
 
     /**
@@ -674,29 +598,6 @@ public final class InferenceParameters extends JsonParameters {
             return this;
         }
         return withRaw(PARAM_SAMPLERS, serializer.buildSamplers(samplers).toString());
-    }
-
-    /**
-     * Returns a new request with the chat-template flag replaced.
-     *
-     * <p><strong>Ignored by the server.</strong> Jinja templating is a <em>launch-time</em> setting,
-     * not a per-request one. {@code common_params::use_jinja} is set at parse time &mdash; by
-     * {@code --jinja} / {@code --no-jinja}, by the per-example defaults, and by the
-     * {@code --gpt-oss-*-default} presets &mdash; and the string {@code "use_jinja"} appears nowhere
-     * in {@code common/} or {@code tools/server/} as a <em>request</em> key on the pinned build. The request
-     * schema silently discards unknown fields, so this neither enables nor disables anything.
-     * Use {@link net.ladenthin.llama.parameters.ModelParameters#enableJinja()} when loading the
-     * model instead. Retained only so existing call sites keep compiling; it will be removed in a
-     * future release.</p>
-     *
-     * @param useChatTemplate whether to apply a chat template
-     * @return a new instance; this instance is unchanged
-     * @deprecated jinja is a load-time option; the request field is discarded by the server. Use
-     *     {@link net.ladenthin.llama.parameters.ModelParameters#enableJinja()}
-     */
-    @Deprecated
-    public InferenceParameters withUseChatTemplate(boolean useChatTemplate) {
-        return withScalar(PARAM_USE_JINJA, useChatTemplate);
     }
 
     /**

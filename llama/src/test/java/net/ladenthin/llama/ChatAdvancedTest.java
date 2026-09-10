@@ -32,16 +32,15 @@ import org.junit.jupiter.api.Test;
  *   <li>nPredict=-1 with stop string — unbounded generation terminates</li>
  *   <li>setNProbs — streaming JSON contains probability data</li>
  *   <li>setChatTemplate — custom Jinja template applied by applyTemplate</li>
- *   <li>setUseChatTemplate(true) in generate() — template applied in raw path</li>
+ *   <li>withMessages in generate() — the model's chat template applied in the raw path</li>
  *   <li>setRepeatPenalty + setFrequencyPenalty + setPresencePenalty</li>
  *   <li>setSamplers — custom sampler chain</li>
  *   <li>setMiroStat V2 — alternative sampler path</li>
  *   <li>requestCompletion direct streaming (non-chat)</li>
  *   <li>disableTokenIds — logit bias to negative-infinity</li>
- *   <li>setPenaltyPrompt(String) and setPenaltyPrompt(int[]) accepted</li>
  *   <li>setNKeep — number of prompt tokens preserved</li>
  *   <li>Multiple stop strings — first match terminates generation</li>
- *   <li>setMinP / setTfsZ / setTypicalP — alternative sampler params</li>
+ *   <li>setMinP / setTypicalP — alternative sampler params</li>
  * </ul>
  */
 @ClaudeGenerated(
@@ -213,23 +212,26 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 5. setUseChatTemplate(true) in generate() — template in raw path
+    // 5. Messages in the raw generate() path
     // ------------------------------------------------------------------
 
     /**
-     * {@link InferenceParameters#setUseChatTemplate(boolean)} enables chat
-     * template application inside the raw {@code generate()} path (not via
-     * {@code generateChat()}). Combined with {@code setMessages()}, the
-     * generation must produce non-empty output and must not throw.
+     * {@code withMessages()} drives the raw {@code generate()} path (not
+     * {@code generateChat()}): the server applies the model's chat template to the
+     * message array, so the generation must produce non-empty output and must not throw.
+     *
+     * <p>This test used to also pass {@code withUseChatTemplate(true)}. That was never
+     * read by the server — jinja is a launch-time option, and no {@code "use_jinja"}
+     * request key has existed at any pin this project has carried — so the test measured
+     * {@code withMessages()} alone the whole time. It says so now.
      */
     @Test
-    public void testUseChatTemplateInGenerate() {
+    public void testMessagesInGenerate() {
         List<Pair<String, String>> messages = new ArrayList<>();
         messages.add(new Pair<>("user", "Write one word."));
 
         InferenceParameters params = new InferenceParameters("")
                 .withMessages(null, messages)
-                .withUseChatTemplate(true)
                 .withNPredict(N_PREDICT)
                 .withSeed(42)
                 .withTemperature(0.0f);
@@ -239,7 +241,7 @@ public class ChatAdvancedTest {
             output.append(token.text);
         }
 
-        assertFalse(output.toString().isEmpty(), "generate() with use_chat_template must produce output");
+        assertFalse(output.toString().isEmpty(), "generate() with messages must produce output");
     }
 
     // ------------------------------------------------------------------
@@ -391,43 +393,7 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 11. setPenaltyPrompt(String) and setPenaltyPrompt(int[]) accepted
-    // ------------------------------------------------------------------
-
-    /**
-     * Both overloads of {@code setPenaltyPrompt} must be accepted without error
-     * and must produce non-empty output. The string form restricts which part of
-     * the prompt is penalised; the token-array form does the same by ID.
-     */
-    @Test
-    public void testPenaltyPromptStringAccepted() {
-        InferenceParameters params = new InferenceParameters(SIMPLE_PROMPT)
-                .withNPredict(N_PREDICT)
-                .withSeed(42)
-                .withTemperature(0.0f)
-                .withPenaltyPrompt("def ")
-                .withRepeatPenalty(1.2f);
-
-        assertFalse(model.complete(params).isEmpty(), "setPenaltyPrompt(String) must produce output");
-    }
-
-    @Test
-    public void testPenaltyPromptTokenArrayAccepted() {
-        int[] penaltyTokens = model.encode("def ");
-        Assumptions.assumeTrue(penaltyTokens.length > 0, "Need at least one penalty token");
-
-        InferenceParameters params = new InferenceParameters(SIMPLE_PROMPT)
-                .withNPredict(N_PREDICT)
-                .withSeed(42)
-                .withTemperature(0.0f)
-                .withPenaltyPrompt(penaltyTokens)
-                .withRepeatPenalty(1.2f);
-
-        assertFalse(model.complete(params).isEmpty(), "setPenaltyPrompt(int[]) must produce output");
-    }
-
-    // ------------------------------------------------------------------
-    // 12. Multiple stop strings — first match terminates
+    // 11. Multiple stop strings — first match terminates
     // ------------------------------------------------------------------
 
     /**
@@ -453,12 +419,12 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 13. Alternative sampler parameters: minP, tfsZ, typicalP
+    // 12. Alternative sampler parameters: minP, typicalP
     // ------------------------------------------------------------------
 
     /**
-     * {@code setMinP()}, {@code setTfsZ()}, and {@code setTypicalP()} are
-     * alternative token-filtering parameters. Each must be individually accepted
+     * {@code setMinP()} and {@code setTypicalP()} are alternative token-filtering
+     * parameters. Each must be individually accepted
      * by the native layer and must produce non-empty output.
      */
     @Test
@@ -473,17 +439,6 @@ public class ChatAdvancedTest {
     }
 
     @Test
-    public void testTfsZSamplerAccepted() {
-        InferenceParameters params = new InferenceParameters(SIMPLE_PROMPT)
-                .withNPredict(N_PREDICT)
-                .withSeed(42)
-                .withTemperature(0.7f)
-                .withTfsZ(0.95f);
-
-        assertFalse(model.complete(params).isEmpty(), "setTfsZ must produce output");
-    }
-
-    @Test
     public void testTypicalPSamplerAccepted() {
         InferenceParameters params = new InferenceParameters(SIMPLE_PROMPT)
                 .withNPredict(N_PREDICT)
@@ -495,7 +450,7 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 14. setNKeep — prompt token preservation
+    // 13. setNKeep — prompt token preservation
     // ------------------------------------------------------------------
 
     /**
@@ -515,7 +470,7 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 15. disableTokens (string form) — accepted without crash
+    // 14. disableTokens (string form) — accepted without crash
     // ------------------------------------------------------------------
 
     /**
@@ -536,7 +491,7 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 16. MiroStat V1 — first-generation algorithm path
+    // 15. MiroStat V1 — first-generation algorithm path
     // ------------------------------------------------------------------
 
     /**

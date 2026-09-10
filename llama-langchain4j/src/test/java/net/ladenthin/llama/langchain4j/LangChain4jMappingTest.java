@@ -219,8 +219,9 @@ class LangChain4jMappingTest {
         assertThat(json, containsString("\"tool_choice\""));
         assertThat(json, containsString("required"));
         // Jinja is a load-time option (--jinja). Upstream's request parser never reads a "use_jinja"
-        // key and silently discards unknown fields, so a re-added withUseChatTemplate(true) here
-        // would be invisible at runtime and uncatchable by any integration test. Mirrors
+        // key and silently discards unknown fields, so sending one would be invisible at runtime
+        // and uncatchable by any integration test. The builder method that used to emit it is gone;
+        // this pins that nothing puts it back. Mirrors
         // OpenAiRequestMapperTest#toolsEnableChatTemplateAndForwardChoice.
         assertThat(json, not(containsString("\"use_jinja\"")));
     }
