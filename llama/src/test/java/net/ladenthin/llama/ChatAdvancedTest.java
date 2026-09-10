@@ -141,7 +141,7 @@ public class ChatAdvancedTest {
                 .withNProbs(3)
                 .withStream(true);
 
-        int taskId = model.requestCompletion(params.toString());
+        int taskId = model.requestCompletion(params.toJson());
 
         boolean foundProbabilities = false;
         int tokens = 0;
@@ -288,7 +288,7 @@ public class ChatAdvancedTest {
                 .withTemperature(0.0f)
                 .withStream(true);
 
-        int taskId = model.requestCompletion(params.toString());
+        int taskId = model.requestCompletion(params.toJson());
 
         StringBuilder sb = new StringBuilder();
         int tokens = 0;

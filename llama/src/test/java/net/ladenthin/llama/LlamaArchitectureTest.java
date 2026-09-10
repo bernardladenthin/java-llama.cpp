@@ -3,8 +3,12 @@
 // SPDX-License-Identifier: MIT
 package net.ladenthin.llama;
 
+import static com.tngtech.archunit.core.domain.JavaCall.Predicates.target;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.assignableTo;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAnyPackage;
+import static com.tngtech.archunit.core.domain.properties.HasName.Predicates.name;
+import static com.tngtech.archunit.core.domain.properties.HasOwner.Predicates.With.owner;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.fields;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.Architectures.layeredArchitecture;
@@ -209,6 +213,40 @@ public class LlamaArchitectureTest {
             .callMethod(Thread.class, "sleep", long.class)
             .orShould()
             .callMethod(Thread.class, "sleep", long.class, int.class)
+            .allowEmptyShould(true);
+
+    /**
+     * A parameter object's {@code toString()} must never reach a wire payload. It is the redacted
+     * debug view ({@code InferenceParameters{keys=[...], values=redacted}}) and is deliberately not
+     * valid JSON; {@code toJson()} is the serializer. The two used to be the same method, so every
+     * call site that was correct before the split is a silent trap after it — and this one bit:
+     * {@code LlamaIterator} kept calling {@code toString()} and sent the native parser an
+     * unparseable body on every streaming generation, which no local run could see because every
+     * test that exercises streaming is model-gated and self-skips without a GGUF.
+     *
+     * <p>The {@code parameters} package itself is scoped out, and not as a convenience: because
+     * {@code JsonParameters} is package-private and its subclasses are public, javac emits a
+     * synthetic bridge {@code toString()} in each subclass that does nothing but
+     * {@code invokespecial} the supertype's. That call exists in the bytecode and in no source file,
+     * so a rule covering the package would fail on a method nobody can edit.
+     *
+     * <p>Limitation worth knowing: this catches an explicit {@code toString()} call, not an implicit
+     * one through string concatenation, which the compiler lowers to {@code StringBuilder.append} or
+     * an {@code invokedynamic} string-concat factory and leaves no {@code toString()} call site to
+     * match. Concatenating a parameter object into a request body would still slip through — but
+     * that shape does not occur here, and the redacted form is unparseable precisely so that it
+     * fails loudly at the parser rather than sending a different body.
+     */
+    @ArchTest
+    static final ArchRule parameterToStringIsNeverAWirePayload = noClasses()
+            .that()
+            .resideInAPackage("net.ladenthin.llama..")
+            .and()
+            .resideOutsideOfPackage("net.ladenthin.llama.parameters..")
+            .should()
+            .callMethodWhere(target(name("toString"))
+                    .and(target(owner(assignableTo("net.ladenthin.llama.parameters.JsonParameters")))))
+            .because("toString() is the redacted debug view; the wire serializer is toJson()")
             .allowEmptyShould(true);
 
     /**
