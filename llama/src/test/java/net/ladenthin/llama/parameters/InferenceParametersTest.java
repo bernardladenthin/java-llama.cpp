@@ -264,7 +264,72 @@ public class InferenceParametersTest {
         String schema = "{\"type\":\"object\",\"properties\":{\"name\":{\"type\":\"string\"}},\"required\":[\"name\"]}";
         InferenceParameters params = new InferenceParameters("").withJsonSchema(schema);
         assertThat(params.parameters.get("json_schema"), is(schema));
-        assertThat(params.toString(), containsString("\"json_schema\": " + schema));
+        assertThat(params.toJson(), containsString("\"json_schema\":" + schema));
+    }
+
+    // -------------------------------------------------------------------------
+    // Raw-JSON entry points reject a fragment that is not exactly one JSON value
+    // -------------------------------------------------------------------------
+
+    /**
+     * The request body used to be assembled by string concatenation over the parameter map, so a
+     * caller-supplied fragment was spliced in verbatim. A fragment carrying a top-level comma
+     * therefore injected SIBLING fields, and because the native parser resolves duplicate keys
+     * last-wins, the injected value won over one the application had already set:
+     *
+     * <pre>
+     * withNPredict(16).withResponseFormat("{\"type\":\"json_object\"}, \"n_predict\": 999999")
+     *   -&gt; {"n_predict": 16, "response_format": {...}, "n_predict": 999999}
+     *   -&gt; the server reads n_predict = 999999
+     * </pre>
+     *
+     * <p>Every fragment is now parsed with FAIL_ON_TRAILING_TOKENS, so this fails at the call site
+     * that introduced it. Plain readTree would NOT be enough: it parses the first value and ignores
+     * the rest, which would silently truncate the fragment instead of rejecting it.
+     */
+    @Test
+    public void rawJsonEntryPointsRejectTrailingTokens() {
+        String injection = "{\"type\":\"json_object\"}, \"n_predict\": 999999";
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> InferenceParameters.empty().withResponseFormat(injection));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> InferenceParameters.empty().withJsonSchema(injection));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> InferenceParameters.empty().withStreamOptions(injection));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> InferenceParameters.empty().withMessagesJson("[], \"n_predict\": 999999"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> InferenceParameters.empty().withToolsJson("[], \"n_predict\": 999999"));
+    }
+
+    /** The rejection names the offending key, so the caller knows which argument to fix. */
+    @Test
+    public void rawJsonRejectionNamesTheKey() {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> InferenceParameters.empty().withResponseFormat("{} , 1"));
+        assertThat(e.getMessage(), containsString("response_format"));
+    }
+
+    /** A malformed fragment is rejected too, not only a well-formed one with trailing text. */
+    @Test
+    public void rawJsonEntryPointsRejectMalformedFragments() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> InferenceParameters.empty().withJsonSchema("{unclosed"));
+    }
+
+    /** A legitimate fragment still round-trips unchanged -- the guard must not cost functionality. */
+    @Test
+    public void rawJsonEntryPointsAcceptWellFormedFragments() {
+        String schema = "{\"type\":\"object\"}";
+        InferenceParameters params = InferenceParameters.empty().withJsonSchema(schema);
+        assertThat(params.parameters.get("json_schema"), is(schema));
     }
 
     @Test
@@ -602,20 +667,38 @@ public class InferenceParametersTest {
     // -------------------------------------------------------------------------
 
     @Test
-    public void testToStringContainsPrompt() {
+    public void testToJsonContainsPrompt() {
         InferenceParameters params = new InferenceParameters("test prompt");
-        String json = params.toString();
+        String json = params.toJson();
         assertThat(json, startsWith("{"));
         assertThat(json, endsWith("}"));
         assertThat(json, containsString("\"prompt\""));
         assertThat(json, containsString("\"test prompt\""));
     }
 
+    /**
+     * toString() is a debug view, not the wire document: it must name the keys that are set and
+     * must NOT carry their values, so a log line built from a parameter set cannot leak the prompt,
+     * the message history or the tool definitions. It must also not be valid JSON, so a caller who
+     * used to hand toString() to the native layer fails at the parser instead of silently sending
+     * a different body.
+     */
     @Test
-    public void testToStringWithMultipleParams() {
+    public void testToStringRedactsValuesAndIsNotJson() {
+        InferenceParameters params = new InferenceParameters("a very secret prompt").withTopK(20);
+        String debug = params.toString();
+        assertThat(debug, containsString("prompt"));
+        assertThat(debug, containsString("top_k"));
+        assertThat(debug, containsString("redacted"));
+        assertThat(debug, not(containsString("a very secret prompt")));
+        assertThat(debug, not(startsWith("{")));
+    }
+
+    @Test
+    public void testToJsonWithMultipleParams() {
         InferenceParameters params =
                 new InferenceParameters("p").withTemperature(0.7f).withTopK(20);
-        String json = params.toString();
+        String json = params.toJson();
         assertThat(json, containsString("\"temperature\""));
         assertThat(json, containsString("\"top_k\""));
     }

@@ -28,7 +28,7 @@ public class OpenAiRequestMapperTest {
 
     private JsonNode mapAndSerialize(String requestJson) throws IOException {
         InferenceParameters params = mapper.toInferenceParameters(MAPPER.readTree(requestJson));
-        return MAPPER.readTree(params.toString());
+        return MAPPER.readTree(params.toJson());
     }
 
     @Test

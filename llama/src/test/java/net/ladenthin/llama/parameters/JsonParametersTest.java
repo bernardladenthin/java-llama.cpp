@@ -17,10 +17,10 @@ import net.ladenthin.llama.args.CliArg;
 import org.junit.jupiter.api.Test;
 
 @ClaudeGenerated(
-        purpose = "Verify the withScalar / withEnum / withOptionalJson / withRaw helpers on the "
+        purpose = "Verify the withScalar / withOptionalJson / withRaw helpers on the "
                 + "immutable JsonParameters base: that they store the expected string form for every "
                 + "primitive type used by InferenceParameters (int, long, float, double, boolean), "
-                + "that withEnum uses getArgValue() rather than the enum name, that every helper "
+                + "that every stored value is exactly one well-formed JSON value, that every helper "
                 + "returns a NEW instance whose parameter map carries the entry inserted or replaced "
                 + "without touching the original, and that the inherited parameters map is an "
                 + "unmodifiable view. The CliParameters subclass tests cover the legacy put-style "
@@ -45,10 +45,6 @@ public class JsonParametersTest {
 
         TestBuilder withScalarPublic(String key, Object value) {
             return withScalar(key, value);
-        }
-
-        TestBuilder withEnumPublic(String key, CliArg value) {
-            return withEnum(key, value);
         }
 
         TestBuilder withRawPublic(String key, String value) {
@@ -126,30 +122,6 @@ public class JsonParametersTest {
     }
 
     @Test
-    public void withEnum_usesGetArgValueNotEnumName() {
-        TestBuilder b = new TestBuilder().withEnumPublic("--cache-type-k", CacheType.Q8_0);
-        assertEquals(CacheType.Q8_0.getArgValue(), b.parameters.get("--cache-type-k"));
-        // Sanity check: the stored string is not the Java enum constant name.
-        assertEquals("q8_0", b.parameters.get("--cache-type-k"));
-    }
-
-    @Test
-    public void withEnum_returnsFreshInstance() {
-        TestBuilder original = new TestBuilder();
-        TestBuilder derived = original.withEnumPublic("--cache-type-k", CacheType.F16);
-        assertNotSame(original, derived);
-    }
-
-    @Test
-    public void withEnum_overwritesPreviousValue() {
-        TestBuilder b = new TestBuilder()
-                .withEnumPublic("--cache-type-k", CacheType.F16)
-                .withEnumPublic("--cache-type-k", CacheType.Q8_0);
-        assertEquals("q8_0", b.parameters.get("--cache-type-k"));
-        assertEquals(1, b.parameters.size());
-    }
-
-    @Test
     public void withRaw_storesValueVerbatim() {
         TestBuilder b = new TestBuilder().withRawPublic("schema", "{\"type\":\"object\"}");
         assertEquals("{\"type\":\"object\"}", b.parameters.get("schema"));
@@ -216,5 +188,67 @@ public class JsonParametersTest {
         CliTestBuilder b = new CliTestBuilder();
         CliTestBuilder returned = b.putEnumPublic("--cache-type-k", CacheType.F16);
         assertSame(returned, b);
+    }
+    // -------------------------------------------------------------------------
+    // The one-JSON-value invariant on the base class
+    // -------------------------------------------------------------------------
+
+    /**
+     * withPut is the single choke point: every stored value must be exactly one well-formed JSON
+     * value, whichever helper wrote it. That is the invariant the wire renderer relies on, and the
+     * reason a raw fragment cannot inject sibling fields.
+     */
+    @Test
+    public void withRaw_rejectsAValueFollowedByMoreText() {
+        assertThrows(IllegalArgumentException.class, () -> new TestBuilder().withRawPublic("k", "1, \"x\": 2"));
+    }
+
+    @Test
+    public void withRaw_rejectsMalformedJson() {
+        assertThrows(IllegalArgumentException.class, () -> new TestBuilder().withRawPublic("k", "{"));
+    }
+
+    /**
+     * The removed withEnum helper stored getArgValue() unquoted (e.g. {@code q8_0}), which is not a
+     * JSON value at all -- it had no production caller on the JSON side, and the invariant is what
+     * makes that unrepresentable rather than merely unused. The CLI side keeps its own putEnum,
+     * where a bare string is exactly right because argv values are not JSON.
+     */
+    @Test
+    public void withRaw_rejectsABareEnumArgValue() {
+        assertThrows(IllegalArgumentException.class, () -> new TestBuilder().withRawPublic("k", "q8_0"));
+    }
+
+    /**
+     * The rejection message carries a bounded excerpt so a large or hostile fragment cannot flood a
+     * log through it. These two pin the boundary itself: exactly at the limit the value is shown
+     * whole, one character past it the excerpt is elided.
+     */
+    @Test
+    public void rejectionMessageShowsAValueAtTheExcerptLimitInFull() {
+        StringBuilder atLimit = new StringBuilder("{");
+        while (atLimit.length() < 80) {
+            atLimit.append('a');
+        }
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class, () -> new TestBuilder().withRawPublic("k", atLimit.toString()));
+        assertTrue(e.getMessage().endsWith(atLimit.toString()), e.getMessage());
+    }
+
+    @Test
+    public void rejectionMessageElidesAValuePastTheExcerptLimit() {
+        StringBuilder pastLimit = new StringBuilder("{");
+        while (pastLimit.length() < 81) {
+            pastLimit.append('a');
+        }
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class, () -> new TestBuilder().withRawPublic("k", pastLimit.toString()));
+        assertTrue(e.getMessage().endsWith("..."), e.getMessage());
+    }
+
+    @Test
+    public void toJson_rendersACompactObject() {
+        TestBuilder b = new TestBuilder().withScalarPublic("a", 1).withOptionalJsonPublic("b", "x");
+        assertEquals("{\"a\":1,\"b\":\"x\"}", b.toJson());
     }
 }
