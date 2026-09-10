@@ -22,6 +22,8 @@ import net.ladenthin.llama.args.CacheType;
 import net.ladenthin.llama.args.GpuSplitMode;
 import net.ladenthin.llama.args.LazyMode;
 import net.ladenthin.llama.args.MiroStat;
+import net.ladenthin.llama.args.ModelFlag;
+import net.ladenthin.llama.args.ModelOption;
 import net.ladenthin.llama.args.NumaStrategy;
 import net.ladenthin.llama.args.PoolingType;
 import net.ladenthin.llama.args.RopeScalingType;
@@ -249,19 +251,19 @@ public class ModelParametersTest {
     @Test
     public void testIsDefaultTrueWhenNotSet() {
         ModelParameters p = new ModelParameters();
-        assertThat(p.isUnset("threads"), is(true));
+        assertThat(p.isUnset(ModelOption.THREADS), is(true));
     }
 
     @Test
     public void testIsDefaultFalseWhenSet() {
         ModelParameters p = new ModelParameters().setThreads(4);
-        assertThat(p.isUnset("threads"), is(false));
+        assertThat(p.isUnset(ModelOption.THREADS), is(false));
     }
 
     @Test
     public void testIsDefaultFalseAfterFlagOnly() {
         ModelParameters p = new ModelParameters().enableEmbedding();
-        assertThat(p.isUnset("embedding"), is(false));
+        assertThat(p.isUnset(ModelFlag.EMBEDDING), is(false));
     }
 
     // -------------------------------------------------------------------------
@@ -271,50 +273,50 @@ public class ModelParametersTest {
     @Test
     public void testSetPoolingTypeMean() {
         ModelParameters p = new ModelParameters().setPoolingType(PoolingType.MEAN);
-        assertThat(p.parameters.get(ModelParameters.ARG_POOLING), is(PoolingType.MEAN.getArgValue()));
+        assertThat(p.parameters.get(ModelOption.POOLING.getCliOption()), is(PoolingType.MEAN.getArgValue()));
     }
 
     @Test
     public void testSetPoolingTypeNone() {
         ModelParameters p = new ModelParameters().setPoolingType(PoolingType.NONE);
-        assertThat(p.parameters.get(ModelParameters.ARG_POOLING), is(PoolingType.NONE.getArgValue()));
+        assertThat(p.parameters.get(ModelOption.POOLING.getCliOption()), is(PoolingType.NONE.getArgValue()));
     }
 
     @Test
     public void testSetPoolingTypeCls() {
         ModelParameters p = new ModelParameters().setPoolingType(PoolingType.CLS);
-        assertThat(p.parameters.get(ModelParameters.ARG_POOLING), is(PoolingType.CLS.getArgValue()));
+        assertThat(p.parameters.get(ModelOption.POOLING.getCliOption()), is(PoolingType.CLS.getArgValue()));
     }
 
     @Test
     public void testSetPoolingTypeLast() {
         ModelParameters p = new ModelParameters().setPoolingType(PoolingType.LAST);
-        assertThat(p.parameters.get(ModelParameters.ARG_POOLING), is(PoolingType.LAST.getArgValue()));
+        assertThat(p.parameters.get(ModelOption.POOLING.getCliOption()), is(PoolingType.LAST.getArgValue()));
     }
 
     @Test
     public void testSetPoolingTypeRank() {
         ModelParameters p = new ModelParameters().setPoolingType(PoolingType.RANK);
-        assertThat(p.parameters.get(ModelParameters.ARG_POOLING), is(PoolingType.RANK.getArgValue()));
+        assertThat(p.parameters.get(ModelOption.POOLING.getCliOption()), is(PoolingType.RANK.getArgValue()));
     }
 
     @Test
     public void testSetPoolingTypeUnspecifiedDoesNotSetParam() {
         ModelParameters p = new ModelParameters().setPoolingType(PoolingType.UNSPECIFIED);
         assertThat(
-                "UNSPECIFIED pooling type must not add " + ModelParameters.ARG_POOLING + " to parameters",
+                "UNSPECIFIED pooling type must not add " + ModelOption.POOLING.getCliOption() + " to parameters",
                 p.parameters,
-                not(hasKey(ModelParameters.ARG_POOLING)));
+                not(hasKey(ModelOption.POOLING.getCliOption())));
     }
 
     @Test
     public void testSetPoolingTypeUnspecifiedLeavesDefaultUntouched() {
         // A fresh ModelParameters must not have ARG_POOLING set by default either
         ModelParameters fresh = new ModelParameters();
-        assertThat(fresh.parameters, not(hasKey(ModelParameters.ARG_POOLING)));
+        assertThat(fresh.parameters, not(hasKey(ModelOption.POOLING.getCliOption())));
         // Calling setPoolingType(UNSPECIFIED) must leave that invariant intact
         fresh.setPoolingType(PoolingType.UNSPECIFIED);
-        assertThat(fresh.parameters, not(hasKey(ModelParameters.ARG_POOLING)));
+        assertThat(fresh.parameters, not(hasKey(ModelOption.POOLING.getCliOption())));
     }
 
     @Test

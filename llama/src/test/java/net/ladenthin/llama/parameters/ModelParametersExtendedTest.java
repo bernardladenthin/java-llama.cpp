@@ -1099,9 +1099,9 @@ public class ModelParametersExtendedTest {
     @Test
     public void testIsDefaultForCtxSize() {
         ModelParameters p = new ModelParameters();
-        assertThat(p.isUnset("ctx-size"), is(true));
+        assertThat(p.isUnset(ModelOption.CTX_SIZE), is(true));
         p.setCtxSize(2048);
-        assertThat(p.isUnset("ctx-size"), is(false));
+        assertThat(p.isUnset(ModelOption.CTX_SIZE), is(false));
     }
 
     @Test
@@ -1109,8 +1109,8 @@ public class ModelParametersExtendedTest {
         // Uses swa-full, not flash-attn: the latter is no longer a valueless flag, which is the whole
         // point of the FlashAttn enum.
         ModelParameters p = new ModelParameters();
-        assertThat(p.isUnset("swa-full"), is(true));
+        assertThat(p.isUnset(ModelFlag.SWA_FULL), is(true));
         p.enableSwaFull();
-        assertThat(p.isUnset("swa-full"), is(false));
+        assertThat(p.isUnset(ModelFlag.SWA_FULL), is(false));
     }
 }

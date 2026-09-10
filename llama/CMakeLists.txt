@@ -567,7 +567,7 @@ if(BUILD_TESTING)
     jllama_extract_java_cli_flags(
         JAVA_FLAG_SOURCES
             ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/args/ModelFlag.java
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/parameters/ModelParameters.java
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/args/ModelOption.java
         OUTPUT_HEADER ${CMAKE_CURRENT_BINARY_DIR}/generated/jllama_java_cli_flags.h
     )
 

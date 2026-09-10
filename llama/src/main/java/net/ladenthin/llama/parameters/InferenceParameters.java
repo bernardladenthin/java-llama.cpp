@@ -54,66 +54,8 @@ import org.jspecify.annotations.Nullable;
 @EqualsAndHashCode(callSuper = true)
 public final class InferenceParameters extends JsonParameters {
 
-    private static final String PARAM_PROMPT = "prompt";
-    private static final String PARAM_INPUT_PREFIX = "input_prefix";
-    private static final String PARAM_INPUT_SUFFIX = "input_suffix";
-    private static final String PARAM_CACHE_PROMPT = "cache_prompt";
-    private static final String PARAM_CACHE_REUSE = "n_cache_reuse";
-    private static final String PARAM_SLOT_ID = "id_slot";
-    private static final String PARAM_STREAM_OPTIONS = "stream_options";
-    private static final String PARAM_SSE_PING_INTERVAL = "sse_ping_interval";
-    private static final String PARAM_RESPONSE_FORMAT = "response_format";
-    private static final String PARAM_N_PREDICT = "n_predict";
-    private static final String PARAM_TOP_K = "top_k";
-    private static final String PARAM_TOP_P = "top_p";
-    private static final String PARAM_MIN_P = "min_p";
-    private static final String PARAM_TYPICAL_P = "typical_p";
-    private static final String PARAM_TEMPERATURE = "temperature";
-    private static final String PARAM_DYNATEMP_RANGE = "dynatemp_range";
-    private static final String PARAM_DYNATEMP_EXPONENT = "dynatemp_exponent";
-    private static final String PARAM_REPEAT_LAST_N = "repeat_last_n";
-    private static final String PARAM_REPEAT_PENALTY = "repeat_penalty";
-    private static final String PARAM_FREQUENCY_PENALTY = "frequency_penalty";
-    private static final String PARAM_PRESENCE_PENALTY = "presence_penalty";
-    private static final String PARAM_MIROSTAT = "mirostat";
-    private static final String PARAM_MIROSTAT_TAU = "mirostat_tau";
-    private static final String PARAM_MIROSTAT_ETA = "mirostat_eta";
-    private static final String PARAM_N_KEEP = "n_keep";
-    private static final String PARAM_SEED = "seed";
-    private static final String PARAM_N_PROBS = "n_probs";
-    private static final String PARAM_MIN_KEEP = "min_keep";
-    private static final String PARAM_GRAMMAR = "grammar";
-    private static final String PARAM_JSON_SCHEMA = "json_schema";
-    private static final String PARAM_IGNORE_EOS = "ignore_eos";
-    private static final String PARAM_LOGIT_BIAS = "logit_bias";
-    private static final String PARAM_STOP = "stop";
-    private static final String PARAM_SAMPLERS = "samplers";
-    private static final String PARAM_STREAM = "stream";
-    private static final String PARAM_CHAT_TEMPLATE = "chat_template";
-    private static final String PARAM_CHAT_TEMPLATE_KWARGS = "chat_template_kwargs";
-    private static final String PARAM_MESSAGES = "messages";
-    private static final String PARAM_TOP_N_SIGMA = "top_n_sigma";
-    private static final String PARAM_REASONING_FORMAT = "reasoning_format";
-    private static final String PARAM_REASONING_BUDGET_TOKENS = "reasoning_budget_tokens";
-    private static final String PARAM_CONTINUE_FINAL_MESSAGE = "continue_final_message";
-    private static final String PARAM_TOOLS = "tools";
-    private static final String PARAM_TOOL_CHOICE = "tool_choice";
-    private static final String PARAM_PARALLEL_TOOL_CALLS = "parallel_tool_calls";
-    private static final String PARAM_DRY_MULTIPLIER = "dry_multiplier";
-    private static final String PARAM_DRY_BASE = "dry_base";
-    private static final String PARAM_DRY_ALLOWED_LENGTH = "dry_allowed_length";
-    private static final String PARAM_DRY_PENALTY_LAST_N = "dry_penalty_last_n";
-    private static final String PARAM_DRY_SEQUENCE_BREAKERS = "dry_sequence_breakers";
     // Additional completion-schema fields honored by the native parser (eval_llama_cmpl_schema)
     // but previously not surfaced as withers. All plain scalars.
-    private static final String PARAM_XTC_PROBABILITY = "xtc_probability";
-    private static final String PARAM_XTC_THRESHOLD = "xtc_threshold";
-    private static final String PARAM_N_DISCARD = "n_discard";
-    private static final String PARAM_N_INDENT = "n_indent";
-    private static final String PARAM_T_MAX_PREDICT_MS = "t_max_predict_ms";
-    private static final String PARAM_POST_SAMPLING_PROBS = "post_sampling_probs";
-    private static final String PARAM_TIMINGS_PER_TOKEN = "timings_per_token";
-    private static final String PARAM_RETURN_TOKENS = "return_tokens";
 
     private static final InferenceParameters EMPTY = new InferenceParameters();
 
@@ -141,7 +83,9 @@ public final class InferenceParameters extends JsonParameters {
         // Mirror the JSON-encoding path used by withOptionalJson so toString() output
         // is byte-identical between `new InferenceParameters(p)` and `of(p)`.
         Map<String, String> m = new HashMap<>();
-        m.put(PARAM_PROMPT, new net.ladenthin.llama.parameters.ParameterJsonSerializer().toJsonString(prompt));
+        m.put(
+                RequestField.PROMPT.getKey(),
+                new net.ladenthin.llama.parameters.ParameterJsonSerializer().toJsonString(prompt));
         return Collections.unmodifiableMap(m);
     }
 
@@ -184,7 +128,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withPrompt(@Nullable String prompt) {
-        return withOptionalJson(PARAM_PROMPT, prompt);
+        return withOptionalJson(RequestField.PROMPT, prompt);
     }
 
     /**
@@ -194,7 +138,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withInputPrefix(@Nullable String inputPrefix) {
-        return withOptionalJson(PARAM_INPUT_PREFIX, inputPrefix);
+        return withOptionalJson(RequestField.INPUT_PREFIX, inputPrefix);
     }
 
     /**
@@ -204,7 +148,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withInputSuffix(@Nullable String inputSuffix) {
-        return withOptionalJson(PARAM_INPUT_SUFFIX, inputSuffix);
+        return withOptionalJson(RequestField.INPUT_SUFFIX, inputSuffix);
     }
 
     /**
@@ -214,7 +158,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withCachePrompt(boolean cachePrompt) {
-        return withScalar(PARAM_CACHE_PROMPT, cachePrompt);
+        return withScalar(RequestField.CACHE_PROMPT, cachePrompt);
     }
 
     /**
@@ -229,7 +173,7 @@ public final class InferenceParameters extends JsonParameters {
         if (cacheReuse < 0) {
             throw new IllegalArgumentException("cacheReuse must be non-negative but was " + cacheReuse);
         }
-        return withScalar(PARAM_CACHE_REUSE, cacheReuse);
+        return withScalar(RequestField.N_CACHE_REUSE, cacheReuse);
     }
 
     /**
@@ -244,7 +188,7 @@ public final class InferenceParameters extends JsonParameters {
         if (slotId < 0) {
             throw new IllegalArgumentException("slotId must be non-negative but was " + slotId);
         }
-        return withScalar(PARAM_SLOT_ID, slotId);
+        return withScalar(RequestField.ID_SLOT, slotId);
     }
 
     /**
@@ -255,7 +199,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withNPredict(int nPredict) {
-        return withScalar(PARAM_N_PREDICT, nPredict);
+        return withScalar(RequestField.N_PREDICT, nPredict);
     }
 
     /**
@@ -265,7 +209,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withTopK(int topK) {
-        return withScalar(PARAM_TOP_K, topK);
+        return withScalar(RequestField.TOP_K, topK);
     }
 
     /**
@@ -275,7 +219,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withTopP(float topP) {
-        return withScalar(PARAM_TOP_P, topP);
+        return withScalar(RequestField.TOP_P, topP);
     }
 
     /**
@@ -285,7 +229,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withMinP(float minP) {
-        return withScalar(PARAM_MIN_P, minP);
+        return withScalar(RequestField.MIN_P, minP);
     }
 
     /**
@@ -295,7 +239,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withTypicalP(float typicalP) {
-        return withScalar(PARAM_TYPICAL_P, typicalP);
+        return withScalar(RequestField.TYPICAL_P, typicalP);
     }
 
     /**
@@ -305,7 +249,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withTemperature(float temperature) {
-        return withScalar(PARAM_TEMPERATURE, temperature);
+        return withScalar(RequestField.TEMPERATURE, temperature);
     }
 
     /**
@@ -315,7 +259,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withDynamicTemperatureRange(float dynatempRange) {
-        return withScalar(PARAM_DYNATEMP_RANGE, dynatempRange);
+        return withScalar(RequestField.DYNATEMP_RANGE, dynatempRange);
     }
 
     /**
@@ -325,7 +269,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withDynamicTemperatureExponent(float dynatempExponent) {
-        return withScalar(PARAM_DYNATEMP_EXPONENT, dynatempExponent);
+        return withScalar(RequestField.DYNATEMP_EXPONENT, dynatempExponent);
     }
 
     /**
@@ -345,7 +289,7 @@ public final class InferenceParameters extends JsonParameters {
             throw new IllegalArgumentException("Invalid repeat_last_n value: " + repeatLastN
                     + " (must be >= 0; 0 = disabled. llama.cpp b10273 dropped -1 = ctx_size)");
         }
-        return withScalar(PARAM_REPEAT_LAST_N, repeatLastN);
+        return withScalar(RequestField.REPEAT_LAST_N, repeatLastN);
     }
 
     /**
@@ -355,7 +299,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withRepeatPenalty(float repeatPenalty) {
-        return withScalar(PARAM_REPEAT_PENALTY, repeatPenalty);
+        return withScalar(RequestField.REPEAT_PENALTY, repeatPenalty);
     }
 
     /**
@@ -365,7 +309,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withFrequencyPenalty(float frequencyPenalty) {
-        return withScalar(PARAM_FREQUENCY_PENALTY, frequencyPenalty);
+        return withScalar(RequestField.FREQUENCY_PENALTY, frequencyPenalty);
     }
 
     /**
@@ -375,7 +319,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withPresencePenalty(float presencePenalty) {
-        return withScalar(PARAM_PRESENCE_PENALTY, presencePenalty);
+        return withScalar(RequestField.PRESENCE_PENALTY, presencePenalty);
     }
 
     /**
@@ -389,7 +333,7 @@ public final class InferenceParameters extends JsonParameters {
     // declared order of MiroStat.values() matches the upstream contract.
     @SuppressWarnings("EnumOrdinal")
     public InferenceParameters withMiroStat(MiroStat mirostat) {
-        return withScalar(PARAM_MIROSTAT, mirostat.ordinal());
+        return withScalar(RequestField.MIROSTAT, mirostat.ordinal());
     }
 
     /**
@@ -399,7 +343,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withMiroStatTau(float mirostatTau) {
-        return withScalar(PARAM_MIROSTAT_TAU, mirostatTau);
+        return withScalar(RequestField.MIROSTAT_TAU, mirostatTau);
     }
 
     /**
@@ -409,7 +353,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withMiroStatEta(float mirostatEta) {
-        return withScalar(PARAM_MIROSTAT_ETA, mirostatEta);
+        return withScalar(RequestField.MIROSTAT_ETA, mirostatEta);
     }
 
     /**
@@ -419,7 +363,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withNKeep(int nKeep) {
-        return withScalar(PARAM_N_KEEP, nKeep);
+        return withScalar(RequestField.N_KEEP, nKeep);
     }
 
     /**
@@ -429,7 +373,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withSeed(int seed) {
-        return withScalar(PARAM_SEED, seed);
+        return withScalar(RequestField.SEED, seed);
     }
 
     /**
@@ -439,7 +383,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withNProbs(int nProbs) {
-        return withScalar(PARAM_N_PROBS, nProbs);
+        return withScalar(RequestField.N_PROBS, nProbs);
     }
 
     /**
@@ -449,7 +393,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withMinKeep(int minKeep) {
-        return withScalar(PARAM_MIN_KEEP, minKeep);
+        return withScalar(RequestField.MIN_KEEP, minKeep);
     }
 
     /**
@@ -459,7 +403,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withGrammar(@Nullable String grammar) {
-        return withOptionalJson(PARAM_GRAMMAR, grammar);
+        return withOptionalJson(RequestField.GRAMMAR, grammar);
     }
 
     /**
@@ -471,7 +415,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withJsonSchema(String schema) {
-        return withRaw(PARAM_JSON_SCHEMA, schema);
+        return withRaw(RequestField.JSON_SCHEMA, schema);
     }
 
     /**
@@ -484,7 +428,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withStreamOptions(String streamOptionsJson) {
-        return withRaw(PARAM_STREAM_OPTIONS, streamOptionsJson);
+        return withRaw(RequestField.STREAM_OPTIONS, streamOptionsJson);
     }
 
     /**
@@ -497,7 +441,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withResponseFormat(String responseFormatJson) {
-        return withRaw(PARAM_RESPONSE_FORMAT, responseFormatJson);
+        return withRaw(RequestField.RESPONSE_FORMAT, responseFormatJson);
     }
 
     /**
@@ -507,7 +451,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withIgnoreEos(boolean ignoreEos) {
-        return withScalar(PARAM_IGNORE_EOS, ignoreEos);
+        return withScalar(RequestField.IGNORE_EOS, ignoreEos);
     }
 
     /**
@@ -522,7 +466,8 @@ public final class InferenceParameters extends JsonParameters {
             return this;
         }
         return withRaw(
-                PARAM_LOGIT_BIAS, serializer.buildTokenIdBiasArray(logitBias).toString());
+                RequestField.LOGIT_BIAS,
+                serializer.buildTokenIdBiasArray(logitBias).toString());
     }
 
     /**
@@ -538,7 +483,8 @@ public final class InferenceParameters extends JsonParameters {
             return this;
         }
         return withRaw(
-                PARAM_LOGIT_BIAS, serializer.buildDisableTokenIdArray(tokenIds).toString());
+                RequestField.LOGIT_BIAS,
+                serializer.buildDisableTokenIdArray(tokenIds).toString());
     }
 
     /**
@@ -553,7 +499,7 @@ public final class InferenceParameters extends JsonParameters {
             return this;
         }
         return withRaw(
-                PARAM_LOGIT_BIAS,
+                RequestField.LOGIT_BIAS,
                 serializer.buildTokenStringBiasArray(logitBias).toString());
     }
 
@@ -570,7 +516,7 @@ public final class InferenceParameters extends JsonParameters {
             return this;
         }
         return withRaw(
-                PARAM_LOGIT_BIAS,
+                RequestField.LOGIT_BIAS,
                 serializer.buildDisableTokenStringArray(tokens).toString());
     }
 
@@ -584,7 +530,8 @@ public final class InferenceParameters extends JsonParameters {
         if (stopStrings.length == 0) {
             return this;
         }
-        return withRaw(PARAM_STOP, serializer.buildStopStrings(stopStrings).toString());
+        return withRaw(
+                RequestField.STOP, serializer.buildStopStrings(stopStrings).toString());
     }
 
     /**
@@ -597,7 +544,7 @@ public final class InferenceParameters extends JsonParameters {
         if (samplers.length == 0) {
             return this;
         }
-        return withRaw(PARAM_SAMPLERS, serializer.buildSamplers(samplers).toString());
+        return withRaw(RequestField.SAMPLERS, serializer.buildSamplers(samplers).toString());
     }
 
     /**
@@ -619,7 +566,7 @@ public final class InferenceParameters extends JsonParameters {
      */
     @Deprecated
     public InferenceParameters withChatTemplate(@Nullable String chatTemplate) {
-        return withOptionalJson(PARAM_CHAT_TEMPLATE, chatTemplate);
+        return withOptionalJson(RequestField.CHAT_TEMPLATE, chatTemplate);
     }
 
     /**
@@ -631,7 +578,7 @@ public final class InferenceParameters extends JsonParameters {
      */
     public InferenceParameters withChatTemplateKwargs(Map<String, String> kwargs) {
         return withRaw(
-                PARAM_CHAT_TEMPLATE_KWARGS,
+                RequestField.CHAT_TEMPLATE_KWARGS,
                 serializer.buildRawValueObject(kwargs).toString());
     }
 
@@ -645,7 +592,7 @@ public final class InferenceParameters extends JsonParameters {
      */
     public InferenceParameters withMessages(@Nullable String systemMessage, List<Pair<String, String>> messages) {
         return withRaw(
-                PARAM_MESSAGES,
+                RequestField.MESSAGES,
                 serializer.buildMessages(systemMessage, messages).toString());
     }
 
@@ -658,7 +605,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withMessages(List<ChatMessage> messages) {
-        return withRaw(PARAM_MESSAGES, serializer.buildMessages(messages).toString());
+        return withRaw(RequestField.MESSAGES, serializer.buildMessages(messages).toString());
     }
 
     /**
@@ -669,7 +616,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withMessagesJson(String messagesJson) {
-        return withRaw(PARAM_MESSAGES, messagesJson);
+        return withRaw(RequestField.MESSAGES, messagesJson);
     }
 
     /**
@@ -680,7 +627,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withToolsJson(String toolsJson) {
-        return withRaw(PARAM_TOOLS, toolsJson);
+        return withRaw(RequestField.TOOLS, toolsJson);
     }
 
     /**
@@ -690,7 +637,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withToolChoice(@Nullable String toolChoice) {
-        return withOptionalJson(PARAM_TOOL_CHOICE, toolChoice);
+        return withOptionalJson(RequestField.TOOL_CHOICE, toolChoice);
     }
 
     /**
@@ -700,7 +647,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withParallelToolCalls(boolean parallelToolCalls) {
-        return withScalar(PARAM_PARALLEL_TOOL_CALLS, parallelToolCalls);
+        return withScalar(RequestField.PARALLEL_TOOL_CALLS, parallelToolCalls);
     }
 
     /**
@@ -710,7 +657,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withTopNSigma(float topNSigma) {
-        return withScalar(PARAM_TOP_N_SIGMA, topNSigma);
+        return withScalar(RequestField.TOP_N_SIGMA, topNSigma);
     }
 
     /**
@@ -724,7 +671,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withDryMultiplier(float dryMultiplier) {
-        return withScalar(PARAM_DRY_MULTIPLIER, dryMultiplier);
+        return withScalar(RequestField.DRY_MULTIPLIER, dryMultiplier);
     }
 
     /**
@@ -737,7 +684,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withDryBase(float dryBase) {
-        return withScalar(PARAM_DRY_BASE, dryBase);
+        return withScalar(RequestField.DRY_BASE, dryBase);
     }
 
     /**
@@ -750,7 +697,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withDryAllowedLength(int dryAllowedLength) {
-        return withScalar(PARAM_DRY_ALLOWED_LENGTH, dryAllowedLength);
+        return withScalar(RequestField.DRY_ALLOWED_LENGTH, dryAllowedLength);
     }
 
     /**
@@ -772,7 +719,7 @@ public final class InferenceParameters extends JsonParameters {
             throw new IllegalArgumentException("Invalid dry_penalty_last_n value: " + dryPenaltyLastN
                     + " (must be >= 0; 0 = disabled. llama.cpp b10273 dropped -1 = context size)");
         }
-        return withScalar(PARAM_DRY_PENALTY_LAST_N, dryPenaltyLastN);
+        return withScalar(RequestField.DRY_PENALTY_LAST_N, dryPenaltyLastN);
     }
 
     /**
@@ -790,7 +737,7 @@ public final class InferenceParameters extends JsonParameters {
             return this;
         }
         return withRaw(
-                PARAM_DRY_SEQUENCE_BREAKERS,
+                RequestField.DRY_SEQUENCE_BREAKERS,
                 serializer.buildStopStrings(breakers).toString());
     }
 
@@ -801,7 +748,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withReasoningFormat(ReasoningFormat reasoningFormat) {
-        return withRaw(PARAM_REASONING_FORMAT, toJsonString(reasoningFormat.getArgValue()));
+        return withRaw(RequestField.REASONING_FORMAT, toJsonString(reasoningFormat.getArgValue()));
     }
 
     /**
@@ -812,7 +759,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withReasoningBudgetTokens(int budgetTokens) {
-        return withScalar(PARAM_REASONING_BUDGET_TOKENS, budgetTokens);
+        return withScalar(RequestField.REASONING_BUDGET_TOKENS, budgetTokens);
     }
 
     /**
@@ -822,7 +769,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withContinueFinalMessage(boolean continueFinalMessage) {
-        return withScalar(PARAM_CONTINUE_FINAL_MESSAGE, continueFinalMessage);
+        return withScalar(RequestField.CONTINUE_FINAL_MESSAGE, continueFinalMessage);
     }
 
     /**
@@ -832,7 +779,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withContinueFinalMessage(ContinuationMode mode) {
-        return withRaw(PARAM_CONTINUE_FINAL_MESSAGE, toJsonString(mode.getValue()));
+        return withRaw(RequestField.CONTINUE_FINAL_MESSAGE, toJsonString(mode.getValue()));
     }
 
     /**
@@ -844,7 +791,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withStream(boolean stream) {
-        return withScalar(PARAM_STREAM, stream);
+        return withScalar(RequestField.STREAM, stream);
     }
 
     /**
@@ -858,7 +805,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withSsePingInterval(int seconds) {
-        return withScalar(PARAM_SSE_PING_INTERVAL, seconds);
+        return withScalar(RequestField.SSE_PING_INTERVAL, seconds);
     }
 
     /**
@@ -871,7 +818,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withXtcProbability(float xtcProbability) {
-        return withScalar(PARAM_XTC_PROBABILITY, xtcProbability);
+        return withScalar(RequestField.XTC_PROBABILITY, xtcProbability);
     }
 
     /**
@@ -882,7 +829,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withXtcThreshold(float xtcThreshold) {
-        return withScalar(PARAM_XTC_THRESHOLD, xtcThreshold);
+        return withScalar(RequestField.XTC_THRESHOLD, xtcThreshold);
     }
 
     /**
@@ -894,7 +841,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withNDiscard(int nDiscard) {
-        return withScalar(PARAM_N_DISCARD, nDiscard);
+        return withScalar(RequestField.N_DISCARD, nDiscard);
     }
 
     /**
@@ -907,7 +854,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withNIndent(int nIndent) {
-        return withScalar(PARAM_N_INDENT, nIndent);
+        return withScalar(RequestField.N_INDENT, nIndent);
     }
 
     /**
@@ -919,7 +866,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withTMaxPredictMs(int tMaxPredictMs) {
-        return withScalar(PARAM_T_MAX_PREDICT_MS, tMaxPredictMs);
+        return withScalar(RequestField.T_MAX_PREDICT_MS, tMaxPredictMs);
     }
 
     /**
@@ -931,7 +878,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withPostSamplingProbs(boolean postSamplingProbs) {
-        return withScalar(PARAM_POST_SAMPLING_PROBS, postSamplingProbs);
+        return withScalar(RequestField.POST_SAMPLING_PROBS, postSamplingProbs);
     }
 
     /**
@@ -942,7 +889,7 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withTimingsPerToken(boolean timingsPerToken) {
-        return withScalar(PARAM_TIMINGS_PER_TOKEN, timingsPerToken);
+        return withScalar(RequestField.TIMINGS_PER_TOKEN, timingsPerToken);
     }
 
     /**
@@ -953,6 +900,6 @@ public final class InferenceParameters extends JsonParameters {
      * @return a new instance; this instance is unchanged
      */
     public InferenceParameters withReturnTokens(boolean returnTokens) {
-        return withScalar(PARAM_RETURN_TOKENS, returnTokens);
+        return withScalar(RequestField.RETURN_TOKENS, returnTokens);
     }
 }

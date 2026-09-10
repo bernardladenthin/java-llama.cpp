@@ -20,10 +20,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * Immutable base for JSON-shaped parameter builders.
  *
- * <p>The native server consumes parameters as a JSON object. This type holds an unmodifiable
- * {@code Map<String, String>} whose <strong>every value is exactly one well-formed JSON
- * value</strong> — that invariant is checked on write by {@link #withPut(String, String)} and is
- * what makes {@link #toJson()} safe. Subclasses expose typed {@code withX(...)} methods that
+ * <p>The native server consumes parameters as a JSON object. Keys are {@link RequestField}
+ * constants, never strings, so the set of names that can reach a request body is closed by
+ * construction; the map itself stays keyed by the wire string because that is what
+ * {@link #toJson()} emits. Every value is <strong>exactly one well-formed JSON value</strong> —
+ * that invariant is checked on write and is what makes {@link #toJson()} safe. Subclasses expose typed {@code withX(...)} methods that
  * delegate to the protected {@link #withScalar} / {@link #withOptionalJson} / {@link #withRaw}
  * helpers; each allocates a fresh map with one entry added or replaced and routes through the
  * abstract {@link #withParameters(Map)} factory hook so the subclass returns its own concrete type.
@@ -124,7 +125,7 @@ abstract class JsonParameters {
 
     /**
      * Serialize a non-null string to its JSON string form. Use
-     * {@link #withOptionalJson(String, String)} when the input may be null and the
+     * {@link #withOptionalJson(RequestField, String)} when the input may be null and the
      * caller wants null to behave as "do not set this parameter".
      *
      * @param text the non-null input
@@ -154,7 +155,8 @@ abstract class JsonParameters {
      * @throws IllegalArgumentException if {@code value} is not exactly one well-formed JSON value
      */
     @SuppressWarnings("TypeParameterUnusedInFormals")
-    private <T extends JsonParameters> T withPut(String key, String value) {
+    private <T extends JsonParameters> T withPut(RequestField field, String value) {
+        String key = field.getKey();
         parseOrThrow(key, value);
         Map<String, String> next = new HashMap<>(parameters);
         next.put(key, value);
@@ -187,15 +189,15 @@ abstract class JsonParameters {
      * <p>The fragment is validated, not trusted: anything that is not exactly one well-formed JSON
      * value — including a well-formed value followed by more text — is rejected.
      *
-     * @param key   the parameter key
+     * @param field the field to set
      * @param value the JSON value
      * @param <T>   the concrete subtype of this parameter set
      * @return a new instance with the entry inserted or replaced
      * @throws IllegalArgumentException if {@code value} is not exactly one well-formed JSON value
      */
     @SuppressWarnings("TypeParameterUnusedInFormals")
-    protected final <T extends JsonParameters> T withRaw(String key, String value) {
-        return withPut(key, value);
+    protected final <T extends JsonParameters> T withRaw(RequestField field, String value) {
+        return withPut(field, value);
     }
 
     /**
@@ -203,21 +205,21 @@ abstract class JsonParameters {
      * {@link String#valueOf(Object)}. Used for primitives (int, long, float, double,
      * boolean).
      *
-     * @param key   the parameter key
+     * @param field the field to set
      * @param value the scalar value; autoboxed at the call site
      * @param <T>   the concrete subtype of this parameter set
      * @return a new instance with the entry inserted or replaced
      */
     @SuppressWarnings("TypeParameterUnusedInFormals")
-    protected final <T extends JsonParameters> T withScalar(String key, Object value) {
+    protected final <T extends JsonParameters> T withScalar(RequestField field, Object value) {
         // String.valueOf on a non-finite float/double yields "NaN"/"Infinity" — invalid JSON tokens
         // the native nlohmann parser rejects. Reject at the source so the caller gets a clear error
         // instead of an opaque downstream failure. Integer/Long are always finite (a no-op here);
         // Boolean is not a Number and is skipped.
         if (value instanceof Number && !Double.isFinite(((Number) value).doubleValue())) {
-            throw new IllegalArgumentException(key + " must be a finite number but was " + value);
+            throw new IllegalArgumentException(field.getKey() + " must be a finite number but was " + value);
         }
-        return withPut(key, String.valueOf(value));
+        return withPut(field, String.valueOf(value));
     }
 
     /**
@@ -225,16 +227,16 @@ abstract class JsonParameters {
      * is {@code null} the call is a no-op (returns {@code this}); otherwise the value
      * is JSON-encoded and a new instance is returned.
      *
-     * @param key  the parameter key
-     * @param text the optional input; {@code null} means "leave the parameter unset"
+     * @param field the field to set
+     * @param text  the optional input; {@code null} means "leave the parameter unset"
      * @param <T>  the concrete subtype of this parameter set
      * @return {@code this} if {@code text} is null, otherwise a new instance with the entry set
      */
     @SuppressWarnings({"unchecked", "TypeParameterUnusedInFormals"})
-    protected final <T extends JsonParameters> T withOptionalJson(String key, @Nullable String text) {
+    protected final <T extends JsonParameters> T withOptionalJson(RequestField field, @Nullable String text) {
         if (text == null) {
             return (T) this;
         }
-        return withPut(key, serializer.toJsonString(text));
+        return withPut(field, serializer.toJsonString(text));
     }
 }
