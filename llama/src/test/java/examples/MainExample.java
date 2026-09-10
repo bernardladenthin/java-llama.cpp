@@ -40,7 +40,6 @@ public class MainExample {
                 prompt += "\nLlama: ";
                 InferenceParameters inferParams = new InferenceParameters(prompt)
                         .withTemperature(0.7f)
-                        .withPenalizeNl(true)
                         .withMiroStat(MiroStat.V2)
                         .withStopStrings("User:");
                 for (LlamaOutput output : model.generate(inferParams)) {

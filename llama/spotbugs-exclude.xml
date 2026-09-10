@@ -106,6 +106,23 @@ SPDX-License-Identifier: MIT
     </Match>
 
     <!--
+        JsonParameters.parseOrThrow is the write-time check that every stored value is exactly one
+        well-formed JSON value. That invariant is what stops a caller-supplied fragment from
+        injecting sibling fields into the request body. A parse failure there is a programming error
+        at the call site that supplied the fragment, not a recoverable I/O condition, so it is
+        reported as IllegalArgumentException naming the offending key. That matches the rejection
+        withScalar already performs for a non-finite number, and it keeps the builder methods free of
+        a checked exception no caller could act on. Jackson's parse entry points all declare a
+        checked JsonProcessingException, so the conversion is unavoidable; the cause is chained
+        through. Same tradeoff as the LlamaModel EXS suppression above.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.parameters.JsonParameters"/>
+        <Bug pattern="EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"/>
+        <Method name="parseOrThrow"/>
+    </Match>
+
+    <!--
         InferenceParameters and ModelParameters are fluent builders whose
         parameters field is a Map<String, String> serving as the CLI / JSON
         wire-format passed across JNI to nlohmann/json. Every setter

@@ -29,9 +29,12 @@
 // the real option table knows this, which is why the oracle here is
 // `common_params_parser_init(params, LLAMA_EXAMPLE_SERVER).options` rather than a file scan.
 //
-// The Java-side list is generated at configure time from ModelFlag.java + ModelParameters.java
-// (cmake/extract-java-cli-flags.cmake), so the two halves cannot drift: adding a builder method
-// with a bad flag string reds this test without anyone remembering to update it.
+// The Java-side list is generated at configure time from the two registry enums, ModelFlag.java
+// and ModelOption.java (cmake/extract-java-wire-names.cmake), so the two halves cannot drift:
+// adding a builder method with a bad flag string reds this test without anyone remembering to
+// update it. Each name carries the contract its own constant declares, so the exemption below is
+// read from the registry rather than repeated here -- a list inside a test is exactly the thing
+// that goes stale.
 //
 // Hermetic: no model, no JVM, no network. `common_params_parser_init` only fills a struct.
 
@@ -49,18 +52,14 @@
 
 namespace {
 
-// Flags the Java layer emits on purpose that llama.cpp is NOT expected to know.
-//
-// `--vocab-only` is this project's own pseudo-flag: `jllama.cpp`'s `loadModel` calls
-// `strip_flag_from_argv(argv, argc, "--vocab-only", &vocab_only)` and removes it *before*
-// `common_params_parse` ever sees the argv, using it to select the vocab-only path that owns
-// its model directly and never starts a server_context. Adding an entry here is a deliberate
-// statement that some project code removes the flag from argv -- never a way to silence this
-// test for a flag that is simply dead.
-const std::set<std::string> &project_only_flags() {
-    static const std::set<std::string> flags = {"--vocab-only"};
-    return flags;
-}
+// A name the Java layer emits on purpose that llama.cpp is NOT expected to know declares itself
+// as PROJECT_PSEUDO on its own enum constant. Today that is `--vocab-only`: `jllama.cpp`'s
+// `loadModel` calls `strip_flag_from_argv(argv, argc, "--vocab-only", &vocab_only)` and removes it
+// *before* `common_params_parse` ever sees the argv, using it to select the vocab-only path that
+// owns its model directly and never starts a server_context. Marking a constant PROJECT_PSEUDO is
+// a deliberate statement that some project code removes it from argv -- never a way to silence
+// this test for a name that is simply dead.
+bool is_project_pseudo(int index) { return std::string(JLLAMA_JAVA_CLI_CONTRACTS[index]) == "PROJECT_PSEUDO"; }
 
 // Every option string the server example registers, positive and negated forms alike.
 std::set<std::string> server_registered_flags() {
@@ -79,14 +78,14 @@ std::set<std::string> server_registered_flags() {
 } // namespace
 
 // The extractor must never hand us an empty or obviously truncated list: a vacuous pass is the
-// failure mode this whole file exists to prevent. cmake/extract-java-cli-flags.cmake enforces a
+// failure mode this whole file exists to prevent. cmake/extract-java-wire-names.cmake enforces a
 // floor of its own at configure time; this repeats it at the consuming end so a hand-edited or
 // stale generated header cannot slip through either.
 TEST(JavaCliFlagContract, GeneratedFlagListIsPopulated) {
-    ASSERT_GT(JLLAMA_JAVA_CLI_FLAG_COUNT, 50)
+    ASSERT_GT(JLLAMA_JAVA_CLI_COUNT, 50)
         << "the generated Java CLI flag list is empty or truncated -- the extractor is broken";
-    ASSERT_EQ(JLLAMA_JAVA_CLI_FLAG_COUNT,
-              static_cast<int>(sizeof(JLLAMA_JAVA_CLI_FLAGS) / sizeof(JLLAMA_JAVA_CLI_FLAGS[0])));
+    ASSERT_EQ(JLLAMA_JAVA_CLI_COUNT,
+              static_cast<int>(sizeof(JLLAMA_JAVA_CLI_NAMES) / sizeof(JLLAMA_JAVA_CLI_NAMES[0])));
 }
 
 // Sanity-check the oracle itself before trusting its verdict: if `common_params_parser_init`
@@ -107,9 +106,9 @@ TEST(JavaCliFlagContract, EveryJavaEmittedFlagIsAcceptedByTheServerParser) {
     const std::set<std::string> registered = server_registered_flags();
 
     std::vector<std::string> rejected;
-    for (int i = 0; i < JLLAMA_JAVA_CLI_FLAG_COUNT; ++i) {
-        const std::string flag = JLLAMA_JAVA_CLI_FLAGS[i];
-        if (project_only_flags().count(flag) != 0) {
+    for (int i = 0; i < JLLAMA_JAVA_CLI_COUNT; ++i) {
+        const std::string flag = JLLAMA_JAVA_CLI_NAMES[i];
+        if (is_project_pseudo(i)) {
             continue;
         }
         if (registered.count(flag) == 0) {
@@ -131,18 +130,27 @@ TEST(JavaCliFlagContract, EveryJavaEmittedFlagIsAcceptedByTheServerParser) {
            "LLAMA_EXAMPLE_SERVER, then repoint or retire the Java member.";
 }
 
-// The exemption list is not allowed to rot either: an entry that upstream later *does* register
-// would silently stop being checked. (It is fine for a project-only flag to stay unknown to
-// llama.cpp -- that is the point -- so this only asserts each entry is still emitted by Java.)
-TEST(JavaCliFlagContract, EveryExemptedFlagIsStillEmittedByJava) {
-    std::set<std::string> emitted;
-    for (int i = 0; i < JLLAMA_JAVA_CLI_FLAG_COUNT; ++i) {
-        emitted.insert(JLLAMA_JAVA_CLI_FLAGS[i]);
-    }
-    for (const auto &flag : project_only_flags()) {
-        EXPECT_EQ(emitted.count(flag), 1u)
+// The exemption is not allowed to rot either. It cannot go stale by naming something Java no
+// longer emits -- it lives on the constant, so it disappears with it -- but it CAN go stale the
+// other way: upstream may later register a name we exempted, at which point the exemption is
+// hiding a real check rather than describing a real strip. Also assert the set is not empty, so a
+// generator that dropped the contract column would not turn every name into a silent exemption.
+TEST(JavaCliFlagContract, ProjectPseudoFlagsAreStillUnknownToTheServerParser) {
+    const std::set<std::string> registered = server_registered_flags();
+
+    int pseudo_count = 0;
+    for (int i = 0; i < JLLAMA_JAVA_CLI_COUNT; ++i) {
+        if (!is_project_pseudo(i)) {
+            continue;
+        }
+        ++pseudo_count;
+        const std::string flag = JLLAMA_JAVA_CLI_NAMES[i];
+        EXPECT_EQ(registered.count(flag), 0u)
             << flag
-            << " is exempted from the contract but no longer emitted by the Java layer -- "
-               "drop the exemption";
+            << " is declared PROJECT_PSEUDO but llama.cpp's server parser now registers it -- "
+               "drop the contract override so the name is checked like every other";
     }
+    EXPECT_EQ(pseudo_count, 1) << "expected exactly one PROJECT_PSEUDO name (--vocab-only); a "
+                                  "different count means a contract was added, removed, or the "
+                                  "generated contract column is missing";
 }

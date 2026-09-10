@@ -644,6 +644,67 @@ siblings; why (and why the `DEPOT_TOKEN` org secret and the README "Build cache 
 are kept jllama-only) is explained in the cross-repo status under "Deliberate non-parity":
 [`../workspace/crossrepostatus.md`](../workspace/crossrepostatus.md).
 
+## Wire-name registries (CLI options, request keys, trainer keys)
+
+Three surfaces leave this library as names on a wire, and each is checked against the code that reads
+them. The names are **enum constants**, not string literals, and each declares the contract it must
+satisfy:
+
+| Registry | Receiver it is checked against | Contract kinds | Guard |
+|---|---|---|---|
+| `args.ModelFlag` + `args.ModelOption` | `common_params_parser_init(params, LLAMA_EXAMPLE_SERVER).options` | `SERVER_PARSER`, `PROJECT_PSEUDO` | `src/test/cpp/test_model_flags.cpp` |
+| `parameters.RequestField` | `server_schema::make_llama_cmpl_schema(...)` | `SCHEMA`, `OAI_LAYER` | `src/test/cpp/test_wire_contracts.cpp` |
+| `parameters.TrainingField` | `jllama_train::config_keys()` (`train_engine.h`) | — | `src/test/cpp/test_wire_contracts.cpp` |
+
+`cmake/extract-java-wire-names.cmake` reads the registry `.java` files at configure time and emits
+`{name, contract}` pairs into generated headers; the C++ tests feed them to the receivers. It matches
+**enum constant declarations only**, so prose and javadoc cannot contribute a name, and it fails the
+configure when a registry declares a name twice or extracts implausibly few. For `OAI_LAYER` keys —
+which by definition never reach the schema — it additionally sweeps upstream's own sources
+(`tools/server/*.cpp` + `common/*.cpp`, globbed) for a *reader shape* (`json_value(x, "k", …)`,
+`.contains("k")`, `.at("k")`) and emits the hit count, because the schema cannot vouch for them.
+
+**Why the failure modes differ, and why all three need a guard.** An unregistered CLI option is a hard
+parse error — `loadModel()` throws `"Failed to parse model parameters"`, so the model does not load.
+The other two are worse: llama.cpp's request schema discards an unknown key without a word, and
+`train_engine.cpp` reads with `j.value(key, default)`, so a dead field simply stops having an effect.
+Either way a Java test asserting the string mapping (`hasKey("--mlock")`) passes forever.
+
+**Rules when touching a registry:**
+
+1. **Adding a name** means adding a constant with its contract. There is no `put(String, ...)` to
+   bypass — that is the point.
+2. **A name with no counterpart is deleted, never deprecated.** A method that writes a key the
+   receiver discards reads as configuration and behaves as a no-op.
+3. **The exemption checks are inverted on purpose.** A `PROJECT_PSEUDO` / `OAI_LAYER` name cannot go
+   stale by outliving its constant. It *can* go stale the other way — upstream may later register a
+   name we exempted, hiding a real check — so the tests assert such a name is still unknown to the
+   receiver, and that the exempt set is non-empty (a generator that lost the contract column would
+   otherwise exempt everything).
+4. **An `OAI_LAYER` name must additionally be read by *something* upstream.** Absence from the schema
+   is satisfied just as well by a key nothing reads at all, so the inverted check alone left a hole
+   the exact size of the problem — `chat_template` sat in it, written by a public builder method and
+   read by nobody (upstream's only occurrence of that name is the `/props` payload it *emits*). The
+   reader sweep above closes it. It is a source pattern, not the parser: it proves a key is read from
+   some body, not that this endpoint reads it. That is enough for the failure that occurred, a count
+   of zero.
+5. **`WireNameRegistryTest` checks the other direction**: every declared constant must be reachable
+   from some public builder method (driven reflectively), names are unique across both CLI
+   registries, and every `OCP_OVERLY_CONCRETE_PARAMETER` suppression still names a real enum-valued
+   setter.
+
+`JsonParameters` additionally enforces that **every stored value is exactly one well-formed JSON
+value**, checked on write. That is what stops a caller-supplied fragment
+(`withJsonSchema`/`withResponseFormat`/`withStreamOptions`/`withMessagesJson`/`withToolsJson`) from
+injecting sibling fields into a request body — a demonstrated defect, with duplicate keys resolving
+last-wins in the native parser. Note `FAIL_ON_TRAILING_TOKENS` is load-bearing: plain `readTree`
+parses the first value and ignores the rest, which would silently truncate such a fragment instead of
+rejecting it.
+
+The full record — which names were dead when, the fork-point archaeology, and the injection
+reproducer — is in
+[`docs/history/parameter-wire-surface.md`](docs/history/parameter-wire-surface.md).
+
 ## Local llama.cpp source patches (`patches/`)
 
 The fetched llama.cpp source is patched before it compiles, via a generic mechanism:
@@ -1164,7 +1225,11 @@ If the local check passes (`BUILD SUCCESS`), the `mvn package` job in
 **Java layer** (`src/main/java/net/ladenthin/llama/`):
 - `LlamaModel` — Main API class (AutoCloseable). Wraps native context for inference, embeddings, re-ranking, and tokenization.
 - `TextToSpeech` — Separate AutoCloseable native type for speech synthesis over llama.cpp's upstream Qwen3-TTS pipeline (a backbone text GGUF + an mmproj GGUF bundling the speaker encoder, code predictor, and code2wav decoder); `synthesize(text)` returns a 24 kHz mono 16-bit WAV byte stream, with overloads for a cloned-voice speaker-reference clip and language. Native orchestration in `tts_engine.{h,cpp}` drives upstream's `mtmd_helper::gen_audio` streaming API directly (see "Qwen3-TTS via `mtmd_helper::gen_audio`" below) — there is nothing extracted or hand-copied from llama.cpp source; the in-memory WAV writer is `tts_wav.hpp`.
-- `ModelParameters` / `InferenceParameters` — Builder-pattern parameter classes that serialize to JSON (extend `JsonParameters`) for passing to native code.
+- `ModelParameters` / `InferenceParameters` — Builder-pattern parameter classes. Every wire name they can
+  emit is an enum constant carrying the contract it must satisfy (`args.ModelOption` + `args.ModelFlag` for
+  argv, `parameters.RequestField` for the request body), and the base classes accept nothing else — see
+  "Wire-name registries" below. `InferenceParameters.toJson()` renders the request body; its `toString()`
+  is a redacted debug view and deliberately not valid JSON.
 - `LlamaIterator` / `LlamaIterable` — Streaming generation via Java `Iterator`/`Iterable`.
 - `LlamaLoader` — Extracts the platform-specific native library from the JAR to a temp directory, or finds it on `java.library.path`.
 - `OSInfo` — Detects OS and architecture for library resolution.
@@ -1395,7 +1460,10 @@ prompt clip is committed (`src/test/resources/audios/sample.wav`) but the audio 
 no CI download — and `LlamaTrainerIntegrationTest`, whose `net.ladenthin.llama.train.model` property
 is set by no job and whose model is in no `models.csv` row. The trainer one matters more than it
 looks: `train_engine.cpp` carries the same `postprocess_cpu_params` pair as `tts_params.hpp`, so the
-JVM-abort class of bug documented under "Qwen3-TTS" can regress there with no runnable guard.
+JVM-abort class of bug documented under "Qwen3-TTS" can regress there with no runnable guard. Two
+slices of it are now covered without a model — `test_tts_params.cpp` drives `build_train_params` and
+`jllama::resolve_cpu_params`, and `test_wire_contracts.cpp` pins the configuration key set against
+`TrainingField` — but the Java → JNI → native round trip itself still runs nowhere.
 The model set has a **single source of truth: `.github/models.csv`** (one `filename,url` row per
 model; `#` comments). Everything derives from it: the **`download-models`** job (ubuntu,
 `needs: startgate`) is the only place models are fetched from HuggingFace (one manifest-driven
@@ -1460,9 +1528,10 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 | `src/test/cpp/test_tts_wav.cpp` | 2 | The in-memory WAV writer `pcm_to_wav16_bytes` in `tts_wav.hpp` (WAV header/payload + little-endian clamping) — our own code, not upstream. The Qwen3-TTS pipeline it pairs with (`mtmd_helper::gen_audio`) is entirely upstream-owned (no project-side DSP to unit-test here). The load path is additionally covered by `test_tts_params.cpp` (3 tests over `tts_params.hpp`'s `build_tts_params`, plus 2 pinning the upstream `-1` default it depends on), which pins the CPU-thread resolution whose absence used to crash the JVM on every platform — see the `TODO.md` entry for the mechanism. End-to-end coverage is `TtsIntegrationTest`, which is model-gated. |
 | `src/test/cpp/test_tts_params.cpp` | 13 | The **three** builders every hand-assembled `common_params` goes through: `build_tts_params` (`tts_params.hpp`), `build_train_params` (`train_params.hpp`) and the shared `jllama::resolve_cpu_params` (`cpu_params.hpp`). Each builder is guarded separately on purpose — testing the resolver alone does **not** cover its call sites, because `train_engine.cpp` is compiled into `jllama` only, never into `jllama_test`, and `LlamaTrainerIntegrationTest` is gated on `net.ladenthin.llama.train.model`, which no CI job sets. Without these the JVM-abort bug could regress in the trainer on every platform, unseen. |
 | `src/test/cpp/test_model_split.cpp` | 7 | The two `load_tensors()` split helpers that `patches/0012` extracts out of llama.cpp's `src/llama-model.cpp` — `llama_model_splits_normalize` (proportional split, single device, and the zero-sum case that used to produce NaN, **and the cancelling `--tensor-split` case** — `-ts 1,-1` reaches the identical line on any backend with no GPU memory pressure at all) and `llama_model_splits_select_device` (every layer maps to a real device index; malformed split points throw a message that names the function, the layer, the index and the split values instead of libc++'s bare `"vector"`). **This is the runnable guard for `0012`**: the patch also ships an upstream `tests/test-model-split.cpp`, but a FetchContent subproject builds with `LLAMA_BUILD_TESTS=OFF`, so that one is applied-but-never-compiled here. This file is the only place the two functions are linked in CI, on every platform — so a bump that drops the patch fails the `C++ Tests` build outright rather than resurfacing as one red macOS Java job. It is the one test file that includes an **internal** upstream header (`llama-model.h`, via the `${llama.cpp_SOURCE_DIR}/src` include dir added for it), which is deliberate: a signature drift should fail loudly at compile time. |
-| `src/test/cpp/test_model_flags.cpp` | 4 | **The contract between the Java flag surface and llama.cpp's server argument parser.** CMake extracts every `"--flag"` literal `ModelFlag.java` + `ModelParameters.java` can emit (`cmake/extract-java-cli-flags.cmake` → a generated header), and this file asserts each one is in `common_params_parser_init(params, LLAMA_EXAMPLE_SERVER).options`. It exists because **no Java test can catch this class**: `ModelFlagTest`/`ModelParametersExtendedTest` pin the *string mapping* (`hasKey("--mlock")`), never that llama.cpp still accepts the string, so they stay green forever while the flag is dead — and `common_params_parse` treats an unregistered option as a hard error, so the affected builder method makes the model **unloadable**, not merely ineffective. **A grep over `arg.cpp` is not a substitute**: `--grp-attn-n`/`-w` are present there at every pinned tag but `set_examples()`-scoped to `LLAMA_EXAMPLE_COMPLETION`/`PASSKEY`, so the server parser rejects them exactly like a deleted flag — only the real option table sees that. `--vocab-only` is the one exemption (a project pseudo-flag `strip_flag_from_argv` removes before the parse); the exemption list is itself asserted to stay live. |
+| `src/test/cpp/test_model_flags.cpp` | 4 | **The contract between the Java CLI-flag registries and llama.cpp's server argument parser.** CMake reads `ModelFlag.java` + `ModelOption.java` (`cmake/extract-java-wire-names.cmake` → a generated header of `{name, contract}` pairs), and this file asserts every `SERVER_PARSER` name is in `common_params_parser_init(params, LLAMA_EXAMPLE_SERVER).options`. It exists because **no Java test can catch this class**: `ModelFlagTest`/`ModelParametersExtendedTest` pin the *string mapping* (`hasKey("--mlock")`), never that llama.cpp still accepts the string, so they stay green forever while the flag is dead — and `common_params_parse` treats an unregistered option as a hard error, so the affected builder method makes the model **unloadable**, not merely ineffective. **A grep over `arg.cpp` is not a substitute**: `--grp-attn-n`/`-w` are present there at every pinned tag but `set_examples()`-scoped to `LLAMA_EXAMPLE_COMPLETION`/`PASSKEY`, so the server parser rejects them exactly like a deleted flag — only the real option table sees that. `--vocab-only` is the one exemption, and it declares itself `CliContract.PROJECT_PSEUDO` on its own constant rather than appearing in a list inside this file; the test asserts such a name is **still unknown** to the parser (an exemption upstream later registers would be hiding a real check) and that the exempt set is non-empty. |
+| `src/test/cpp/test_wire_contracts.cpp` | 6 | **The same contract for the two quieter surfaces.** `RequestField` against `server_schema::make_llama_cmpl_schema(...)` (5 tests) and `TrainingField` against `jllama_train::config_keys()` (1 test). Both receivers *silently ignore* an unknown key — the schema skips it, `train_engine.cpp` reads with `j.value(key, default)` and falls back — so a dead field produces no error anywhere and every string-mapping test keeps passing. `OAI_LAYER`-declared keys (consumed by `oaicompat_*_params_parse` before the schema) are exempt from the schema check, and are checked **both** ways: still unknown to the schema (the inverted check), and read by at least one upstream reader-shaped site (the configure-time sweep — this is what caught `chat_template`, a key a public builder wrote and nothing read). See [`docs/history/parameter-wire-surface.md`](docs/history/parameter-wire-surface.md). |
 
-**Current total: 531 tests (all passing).**
+**Current total: 537 tests (all passing).**
 
 #### Upstream source location (in CMake build tree)
 
@@ -1726,6 +1795,14 @@ rename or addition of an enum-valued `ModelParameters` setter needs that list up
 commit** — `setLoadMode` was added to it for exactly this reason — the same "FQN not updated after a rename" class as the stale PIT `targetClasses` and
 `CMakeLists.txt` OSInfo repairs.
 
+**Half of that is now a test.** `WireNameRegistryTest.everyOcpSuppressionStillNamesAnEnumValuedSetter`
+asserts every method named in those suppressions still exists as an enum-valued setter, which is the
+half nothing else covers: a suppression for a method that no longer exists is silently inert, so the
+next real finding on the renamed method arrives as a surprise. The opposite direction — a flagged
+setter *missing* from the list — already reds `spotbugs:check`, and is not derivable by reflection
+anyway: SpotBugs raises OCP only when a method uses nothing beyond the interface, so `setPoolingType`
+(compares a concrete constant) and `withMiroStat` (calls `ordinal()`) are legitimately absent.
+
 ## Spotless Formatting
 
 See [`../workspace/policies/spotless-formatting.md`](../workspace/policies/spotless-formatting.md).
@@ -1754,6 +1831,12 @@ audio-fixture gotcha is resolved).
 **`net.ladenthin.llama.value.*` is a target at `mutationThreshold` 100**, so a new getter on a
 `value` type needs its own test or the gate reds — the `ServerMetrics` counters added for the
 `getMetrics()` merge are covered by `ServerMetricsTest`.
+
+**`parameters.JsonParameters` is on the gate too**, because it carries the one-JSON-value invariant
+rather than plumbing. The rest of the `parameters` package is deliberately **not**: ~200 one-line
+builder setters would add cost without signal. Getting `JsonParameters` to 100% needed one test more
+than expected — the bounded excerpt in its rejection message is observable only *exactly* at the
+limit, so it is pinned from both sides.
 
 ## JPMS Module Descriptor
 

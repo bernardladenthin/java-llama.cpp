@@ -831,12 +831,22 @@ SPDX-License-Identifier: MIT
 						<param>net.ladenthin.llama.json.RerankResponseParser</param>
 						<param>net.ladenthin.llama.json.ChatResponseParser</param>
 						<param>net.ladenthin.llama.json.CompletionResponseParser</param>
+						<!--
+						  JsonParameters carries the one-JSON-value invariant that stops a
+						  caller-supplied fragment from injecting sibling fields into a request
+						  body, so it is gated rather than merely tested. The rest of the
+						  parameters package is deliberately NOT on the gate: those classes are
+						  ~200 one-line builder setters whose mutants add cost without adding
+						  signal.
+						-->
+						<param>net.ladenthin.llama.parameters.JsonParameters</param>
 					</targetClasses>
 					<targetTests>
 						<param>net.ladenthin.llama.value.*</param>
 						<param>net.ladenthin.llama.exception.*</param>
 						<param>net.ladenthin.llama.args.*</param>
 						<param>net.ladenthin.llama.json.*</param>
+						<param>net.ladenthin.llama.parameters.*</param>
 					</targetTests>
 					<mutationThreshold>100</mutationThreshold>
 					<timeoutConstant>30000</timeoutConstant>

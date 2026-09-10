@@ -136,7 +136,7 @@ public class LlamaModel implements AutoCloseable {
      */
     public String complete(InferenceParameters parameters) {
         InferenceParameters nonStreaming = parameters.withStream(false);
-        int taskId = requestCompletion(nonStreaming.toString());
+        int taskId = requestCompletion(nonStreaming.toJson());
         String json = receiveCompletionJson(taskId);
         return completionParser.parse(json).text;
     }
@@ -153,7 +153,7 @@ public class LlamaModel implements AutoCloseable {
      */
     public CompletionResult completeWithStats(InferenceParameters parameters) {
         InferenceParameters nonStreaming = parameters.withStream(false);
-        int taskId = requestCompletion(nonStreaming.toString());
+        int taskId = requestCompletion(nonStreaming.toJson());
         String json = receiveCompletionJson(taskId);
         return completionParser.parseCompletionResult(json);
     }
@@ -329,7 +329,7 @@ public class LlamaModel implements AutoCloseable {
         // at entry would defeat cooperative cancellation. The finally block below resets the
         // token after the call returns, so it stays reusable for the next call.
         InferenceParameters streaming = parameters.withStream(true);
-        int taskId = requestCompletion(streaming.toString());
+        int taskId = requestCompletion(streaming.toJson());
         StringBuilder sb = new StringBuilder();
         try {
             while (true) {
@@ -572,7 +572,7 @@ public class LlamaModel implements AutoCloseable {
      * @return the formatted chat template string
      */
     public String applyTemplate(InferenceParameters parameters) {
-        return applyTemplate(parameters.toString());
+        return applyTemplate(parameters.toJson());
     }
     /**
      * Native bridge that applies the chat template to a JSON-serialized parameter blob.
@@ -606,7 +606,7 @@ public class LlamaModel implements AutoCloseable {
      */
     public String chatComplete(InferenceParameters parameters) {
         InferenceParameters nonStreaming = parameters.withStream(false);
-        return handleChatCompletions(nonStreaming.toString());
+        return handleChatCompletions(nonStreaming.toJson());
     }
 
     /**
@@ -720,7 +720,7 @@ public class LlamaModel implements AutoCloseable {
      */
     public void streamChatCompletion(InferenceParameters parameters, Consumer<String> chunkSink) {
         InferenceParameters streaming = parameters.withStream(true);
-        int taskId = requestChatCompletionStream(streaming.toString());
+        int taskId = requestChatCompletionStream(streaming.toJson());
         boolean stopped = false;
         try {
             while (!stopped) {

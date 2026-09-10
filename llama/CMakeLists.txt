@@ -560,15 +560,44 @@ if(BUILD_TESTING)
     enable_testing()
     include(GoogleTest)
 
-    # Make the Java layer's emitted CLI-flag set available to the C++ contract test. The Java
-    # sources are the single source of truth; see cmake/extract-java-cli-flags.cmake for why a
-    # textual sweep of common/arg.cpp is not a substitute (example scoping is invisible to it).
-    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract-java-cli-flags.cmake)
-    jllama_extract_java_cli_flags(
-        JAVA_FLAG_SOURCES
+    # Make the three wire-name registries the Java layer declares available to the C++ contract
+    # tests. The Java enums are the single source of truth; see cmake/extract-java-wire-names.cmake
+    # for why a textual sweep of the receiver's source is not a substitute (a CLI option can be
+    # present in common/arg.cpp yet scoped away from the server example, and an unknown request key
+    # is discarded without a word).
+    include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract-java-wire-names.cmake)
+    file(GLOB JLLAMA_REQUEST_READER_SOURCES
+        ${llama.cpp_SOURCE_DIR}/tools/server/*.cpp
+        ${llama.cpp_SOURCE_DIR}/common/*.cpp)
+    jllama_extract_java_wire_names(
+        JAVA_SOURCES
             ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/args/ModelFlag.java
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/parameters/ModelParameters.java
-        OUTPUT_HEADER ${CMAKE_CURRENT_BINARY_DIR}/generated/jllama_java_cli_flags.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/args/ModelOption.java
+        ARRAY_PREFIX     JLLAMA_JAVA_CLI
+        DEFAULT_CONTRACT SERVER_PARSER
+        MIN_COUNT        50
+        OUTPUT_HEADER    ${CMAKE_CURRENT_BINARY_DIR}/generated/jllama_java_cli_flags.h
+    )
+    jllama_extract_java_wire_names(
+        JAVA_SOURCES
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/parameters/RequestField.java
+        ARRAY_PREFIX     JLLAMA_JAVA_REQUEST
+        DEFAULT_CONTRACT SCHEMA
+        MIN_COUNT        30
+        OUTPUT_HEADER    ${CMAKE_CURRENT_BINARY_DIR}/generated/jllama_java_request_fields.h
+        # An OAI_LAYER key never reaches make_llama_cmpl_schema, so the schema cannot vouch for
+        # it. Sweep the layer that does consume it instead -- globbed, not listed, so an upstream
+        # file split does not quietly narrow the corpus.
+        READER_CONTRACT  OAI_LAYER
+        READER_SOURCES   ${JLLAMA_REQUEST_READER_SOURCES}
+    )
+    jllama_extract_java_wire_names(
+        JAVA_SOURCES
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/parameters/TrainingField.java
+        ARRAY_PREFIX     JLLAMA_JAVA_TRAINING
+        DEFAULT_CONTRACT ENGINE
+        MIN_COUNT        10
+        OUTPUT_HEADER    ${CMAKE_CURRENT_BINARY_DIR}/generated/jllama_java_training_fields.h
     )
 
     add_executable(jllama_test
@@ -581,6 +610,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_tts_params.cpp
         src/test/cpp/test_model_split.cpp
         src/test/cpp/test_model_flags.cpp
+        src/test/cpp/test_wire_contracts.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp

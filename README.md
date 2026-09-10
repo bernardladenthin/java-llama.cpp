@@ -390,10 +390,9 @@ public class Example {
                 System.out.print("Llama: ");
                 prompt += "\nLlama: ";
                 InferenceParameters inferParams = new InferenceParameters(prompt)
-                        .setTemperature(0.7f)
-                        .setPenalizeNl(true)
-                        .setMiroStat(MiroStat.V2)
-                        .setStopStrings("User:");
+                        .withTemperature(0.7f)
+                        .withMiroStat(MiroStat.V2)
+                        .withStopStrings("User:");
                 for (LlamaOutput output : model.generate(inferParams)) {
                     System.out.print(output);
                     prompt += output;
@@ -443,9 +442,8 @@ just the text content of the assistant message.
 List<Pair<String, String>> messages = new ArrayList<>();
 messages.add(new Pair<>("user", "Write a haiku about Java."));
 
-InferenceParameters inferParams = new InferenceParameters("")
-        .setMessages("You are a helpful assistant.", messages)
-        .setUseChatTemplate(true);
+InferenceParameters inferParams =
+        new InferenceParameters("").withMessages("You are a helpful assistant.", messages);
 
 try (LlamaModel model = new LlamaModel(modelParams)) {
     // Streaming
@@ -588,7 +586,7 @@ unknown tool names are returned to the model as valid `{"error":"..."}` tool-res
 
 ### Infilling
 
-You can simply set `InferenceParameters#setInputPrefix(String)` and `InferenceParameters#setInputSuffix(String)`.
+You can simply set `InferenceParameters#withInputPrefix(String)` and `InferenceParameters#withInputSuffix(String)`.
 
 ### Embeddings & Reranking
 
@@ -1036,8 +1034,8 @@ String grammar = """
 		expr  ::= term ([-+*/] term)*
 		term  ::= [0-9]""";
 InferenceParameters inferParams = new InferenceParameters("")
-        .setGrammar(grammar)
-        .setTemperature(0.8);
+        .withGrammar(grammar)
+        .withTemperature(0.8f);
 try (LlamaModel model = new LlamaModel(modelParams)) {
     model.generate(inferParams);
 }

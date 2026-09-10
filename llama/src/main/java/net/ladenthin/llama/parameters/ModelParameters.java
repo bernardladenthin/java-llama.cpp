@@ -23,11 +23,8 @@ import org.jspecify.annotations.Nullable;
 @EqualsAndHashCode(callSuper = true)
 public final class ModelParameters extends CliParameters {
 
-    private static final String ARG_MMPROJ_DEVICE = "--mmproj-device";
     private static final String MMPROJ_DEVICE_NONE = "none";
 
-    private static final String ARG_FIT = "--fit";
-    static final String ARG_POOLING = "--pooling";
     /** CLI value enabling {@code --fit} (automatic device-memory fitting). */
     public static final String FIT_ON = "on";
     /** CLI value disabling {@code --fit}. */
@@ -40,7 +37,7 @@ public final class ModelParameters extends CliParameters {
 
     /** Creates a new {@link ModelParameters} with {@code --fit=on} preset. */
     public ModelParameters() {
-        parameters.put(ARG_FIT, DEFAULT_FIT_VALUE);
+        putString(ModelOption.FIT, DEFAULT_FIT_VALUE);
     }
 
     static String fitValue(boolean fit) {
@@ -54,7 +51,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setFit(boolean fit) {
-        parameters.put(ARG_FIT, fitValue(fit));
+        putString(ModelOption.FIT, fitValue(fit));
         return this;
     }
 
@@ -65,7 +62,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setThreads(int nThreads) {
-        return putScalar("--threads", nThreads);
+        return putScalar(ModelOption.THREADS, nThreads);
     }
 
     /**
@@ -75,7 +72,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setThreadsBatch(int nThreads) {
-        return putScalar("--threads-batch", nThreads);
+        return putScalar(ModelOption.THREADS_BATCH, nThreads);
     }
 
     /**
@@ -85,7 +82,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCpuMask(String mask) {
-        parameters.put("--cpu-mask", mask);
+        putString(ModelOption.CPU_MASK, mask);
         return this;
     }
 
@@ -96,7 +93,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCpuRange(String range) {
-        parameters.put("--cpu-range", range);
+        putString(ModelOption.CPU_RANGE, range);
         return this;
     }
 
@@ -107,7 +104,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCpuStrict(int strictCpu) {
-        return putScalar("--cpu-strict", strictCpu);
+        return putScalar(ModelOption.CPU_STRICT, strictCpu);
     }
 
     /**
@@ -121,7 +118,7 @@ public final class ModelParameters extends CliParameters {
             throw new IllegalArgumentException(
                     "Invalid value for priority: " + priority + " (allowed: 0=normal, 1=medium, 2=high, 3=realtime)");
         }
-        return putScalar("--prio", priority);
+        return putScalar(ModelOption.PRIO, priority);
     }
 
     /**
@@ -131,7 +128,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setPoll(int poll) {
-        return putScalar("--poll", poll);
+        return putScalar(ModelOption.POLL, poll);
     }
 
     /**
@@ -141,7 +138,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCpuMaskBatch(String mask) {
-        parameters.put("--cpu-mask-batch", mask);
+        putString(ModelOption.CPU_MASK_BATCH, mask);
         return this;
     }
 
@@ -152,7 +149,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCpuRangeBatch(String range) {
-        parameters.put("--cpu-range-batch", range);
+        putString(ModelOption.CPU_RANGE_BATCH, range);
         return this;
     }
 
@@ -163,7 +160,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCpuStrictBatch(int strictCpuBatch) {
-        return putScalar("--cpu-strict-batch", strictCpuBatch);
+        return putScalar(ModelOption.CPU_STRICT_BATCH, strictCpuBatch);
     }
 
     /**
@@ -177,7 +174,7 @@ public final class ModelParameters extends CliParameters {
             throw new IllegalArgumentException("Invalid value for priority batch: " + priorityBatch
                     + " (allowed: 0=normal, 1=medium, 2=high, 3=realtime)");
         }
-        return putScalar("--prio-batch", priorityBatch);
+        return putScalar(ModelOption.PRIO_BATCH, priorityBatch);
     }
 
     /**
@@ -187,7 +184,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setPollBatch(int pollBatch) {
-        return putScalar("--poll-batch", pollBatch);
+        return putScalar(ModelOption.POLL_BATCH, pollBatch);
     }
 
     /**
@@ -197,7 +194,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCtxSize(int ctxSize) {
-        return putScalar("--ctx-size", ctxSize);
+        return putScalar(ModelOption.CTX_SIZE, ctxSize);
     }
 
     /**
@@ -207,7 +204,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setPredict(int nPredict) {
-        return putScalar("--predict", nPredict);
+        return putScalar(ModelOption.PREDICT, nPredict);
     }
 
     /**
@@ -217,7 +214,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setBatchSize(int batchSize) {
-        return putScalar("--batch-size", batchSize);
+        return putScalar(ModelOption.BATCH_SIZE, batchSize);
     }
 
     /**
@@ -227,7 +224,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setUbatchSize(int ubatchSize) {
-        return putScalar("--ubatch-size", ubatchSize);
+        return putScalar(ModelOption.UBATCH_SIZE, ubatchSize);
     }
 
     /**
@@ -237,7 +234,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setKeep(int keep) {
-        return putScalar("--keep", keep);
+        return putScalar(ModelOption.KEEP, keep);
     }
 
     /**
@@ -260,7 +257,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setFlashAttn(FlashAttn mode) {
-        return putEnum("--flash-attn", mode);
+        return putEnum(ModelOption.FLASH_ATTN, mode);
     }
 
     /**
@@ -344,7 +341,7 @@ public final class ModelParameters extends CliParameters {
                     builder.append(';');
                 }
             }
-            parameters.put("--samplers", builder.toString());
+            putString(ModelOption.SAMPLERS, builder.toString());
         }
         return this;
     }
@@ -356,7 +353,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setSeed(long seed) {
-        return putScalar("--seed", seed);
+        return putScalar(ModelOption.SEED, seed);
     }
 
     /**
@@ -375,7 +372,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setTemp(float temp) {
-        return putScalar("--temp", temp);
+        return putScalar(ModelOption.TEMP, temp);
     }
 
     /**
@@ -385,7 +382,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setTopK(int topK) {
-        return putScalar("--top-k", topK);
+        return putScalar(ModelOption.TOP_K, topK);
     }
 
     /**
@@ -395,7 +392,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setTopP(float topP) {
-        return putScalar("--top-p", topP);
+        return putScalar(ModelOption.TOP_P, topP);
     }
 
     /**
@@ -405,7 +402,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMinP(float minP) {
-        return putScalar("--min-p", minP);
+        return putScalar(ModelOption.MIN_P, minP);
     }
 
     /**
@@ -415,7 +412,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setXtcProbability(float xtcProbability) {
-        return putScalar("--xtc-probability", xtcProbability);
+        return putScalar(ModelOption.XTC_PROBABILITY, xtcProbability);
     }
 
     /**
@@ -425,7 +422,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setXtcThreshold(float xtcThreshold) {
-        return putScalar("--xtc-threshold", xtcThreshold);
+        return putScalar(ModelOption.XTC_THRESHOLD, xtcThreshold);
     }
 
     /**
@@ -435,7 +432,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setTypical(float typP) {
-        return putScalar("--typical", typP);
+        return putScalar(ModelOption.TYPICAL, typP);
     }
 
     /**
@@ -455,7 +452,7 @@ public final class ModelParameters extends CliParameters {
             throw new IllegalArgumentException("Invalid repeat-last-n value: " + repeatLastN
                     + " (must be >= 0; 0 = disabled. llama.cpp b10273 dropped -1 = ctx_size)");
         }
-        return putScalar("--repeat-last-n", repeatLastN);
+        return putScalar(ModelOption.REPEAT_LAST_N, repeatLastN);
     }
 
     /**
@@ -465,7 +462,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setRepeatPenalty(float repeatPenalty) {
-        return putScalar("--repeat-penalty", repeatPenalty);
+        return putScalar(ModelOption.REPEAT_PENALTY, repeatPenalty);
     }
 
     /**
@@ -475,7 +472,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setPresencePenalty(float presencePenalty) {
-        return putScalar("--presence-penalty", presencePenalty);
+        return putScalar(ModelOption.PRESENCE_PENALTY, presencePenalty);
     }
 
     /**
@@ -485,7 +482,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setFrequencyPenalty(float frequencyPenalty) {
-        return putScalar("--frequency-penalty", frequencyPenalty);
+        return putScalar(ModelOption.FREQUENCY_PENALTY, frequencyPenalty);
     }
 
     /**
@@ -495,7 +492,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDryMultiplier(float dryMultiplier) {
-        return putScalar("--dry-multiplier", dryMultiplier);
+        return putScalar(ModelOption.DRY_MULTIPLIER, dryMultiplier);
     }
 
     /**
@@ -505,7 +502,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDryBase(float dryBase) {
-        return putScalar("--dry-base", dryBase);
+        return putScalar(ModelOption.DRY_BASE, dryBase);
     }
 
     /**
@@ -515,7 +512,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDryAllowedLength(int dryAllowedLength) {
-        return putScalar("--dry-allowed-length", dryAllowedLength);
+        return putScalar(ModelOption.DRY_ALLOWED_LENGTH, dryAllowedLength);
     }
 
     /**
@@ -535,7 +532,7 @@ public final class ModelParameters extends CliParameters {
             throw new IllegalArgumentException("Invalid dry-penalty-last-n value: " + dryPenaltyLastN
                     + " (must be >= 0; 0 = disabled. llama.cpp b10273 dropped -1 = context size)");
         }
-        return putScalar("--dry-penalty-last-n", dryPenaltyLastN);
+        return putScalar(ModelOption.DRY_PENALTY_LAST_N, dryPenaltyLastN);
     }
 
     /**
@@ -545,7 +542,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDrySequenceBreaker(String drySequenceBreaker) {
-        parameters.put("--dry-sequence-breaker", drySequenceBreaker);
+        putString(ModelOption.DRY_SEQUENCE_BREAKER, drySequenceBreaker);
         return this;
     }
 
@@ -556,7 +553,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDynatempRange(float dynatempRange) {
-        return putScalar("--dynatemp-range", dynatempRange);
+        return putScalar(ModelOption.DYNATEMP_RANGE, dynatempRange);
     }
 
     /**
@@ -566,7 +563,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDynatempExponent(float dynatempExponent) {
-        return putScalar("--dynatemp-exp", dynatempExponent);
+        return putScalar(ModelOption.DYNATEMP_EXP, dynatempExponent);
     }
 
     /**
@@ -576,7 +573,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMirostat(MiroStat mirostat) {
-        return putEnum("--mirostat", mirostat);
+        return putEnum(ModelOption.MIROSTAT, mirostat);
     }
 
     /**
@@ -586,7 +583,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMirostatLR(float mirostatLR) {
-        return putScalar("--mirostat-lr", mirostatLR);
+        return putScalar(ModelOption.MIROSTAT_LR, mirostatLR);
     }
 
     /**
@@ -596,7 +593,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMirostatEnt(float mirostatEnt) {
-        return putScalar("--mirostat-ent", mirostatEnt);
+        return putScalar(ModelOption.MIROSTAT_ENT, mirostatEnt);
     }
 
     /**
@@ -606,7 +603,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setLogitBias(String tokenIdAndBias) {
-        parameters.put("--logit-bias", tokenIdAndBias);
+        putString(ModelOption.LOGIT_BIAS, tokenIdAndBias);
         return this;
     }
 
@@ -617,7 +614,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setGrammar(String grammar) {
-        parameters.put("--grammar", grammar);
+        putString(ModelOption.GRAMMAR, grammar);
         return this;
     }
 
@@ -628,7 +625,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setGrammarFile(String fileName) {
-        parameters.put("--grammar-file", fileName);
+        putString(ModelOption.GRAMMAR_FILE, fileName);
         return this;
     }
 
@@ -639,7 +636,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setJsonSchema(String schema) {
-        parameters.put("--json-schema", schema);
+        putString(ModelOption.JSON_SCHEMA, schema);
         return this;
     }
 
@@ -654,7 +651,7 @@ public final class ModelParameters extends CliParameters {
     public ModelParameters setPoolingType(PoolingType type) {
         if (type != PoolingType.UNSPECIFIED) {
             // Don't set if unspecified, as it will use the model's default pooling type
-            parameters.put(ARG_POOLING, type.getArgValue());
+            putString(ModelOption.POOLING, type.getArgValue());
         }
         return this;
     }
@@ -666,7 +663,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setRopeScaling(RopeScalingType type) {
-        return putEnum("--rope-scaling", type);
+        return putEnum(ModelOption.ROPE_SCALING, type);
     }
 
     /**
@@ -676,7 +673,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setRopeScale(float ropeScale) {
-        return putScalar("--rope-scale", ropeScale);
+        return putScalar(ModelOption.ROPE_SCALE, ropeScale);
     }
 
     /**
@@ -686,7 +683,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setRopeFreqBase(float ropeFreqBase) {
-        return putScalar("--rope-freq-base", ropeFreqBase);
+        return putScalar(ModelOption.ROPE_FREQ_BASE, ropeFreqBase);
     }
 
     /**
@@ -696,7 +693,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setRopeFreqScale(float ropeFreqScale) {
-        return putScalar("--rope-freq-scale", ropeFreqScale);
+        return putScalar(ModelOption.ROPE_FREQ_SCALE, ropeFreqScale);
     }
 
     /**
@@ -706,7 +703,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setYarnOrigCtx(int yarnOrigCtx) {
-        return putScalar("--yarn-orig-ctx", yarnOrigCtx);
+        return putScalar(ModelOption.YARN_ORIG_CTX, yarnOrigCtx);
     }
 
     /**
@@ -716,7 +713,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setYarnExtFactor(float yarnExtFactor) {
-        return putScalar("--yarn-ext-factor", yarnExtFactor);
+        return putScalar(ModelOption.YARN_EXT_FACTOR, yarnExtFactor);
     }
 
     /**
@@ -726,7 +723,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setYarnAttnFactor(float yarnAttnFactor) {
-        return putScalar("--yarn-attn-factor", yarnAttnFactor);
+        return putScalar(ModelOption.YARN_ATTN_FACTOR, yarnAttnFactor);
     }
 
     /**
@@ -736,7 +733,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setYarnBetaSlow(float yarnBetaSlow) {
-        return putScalar("--yarn-beta-slow", yarnBetaSlow);
+        return putScalar(ModelOption.YARN_BETA_SLOW, yarnBetaSlow);
     }
 
     /**
@@ -746,88 +743,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setYarnBetaFast(float yarnBetaFast) {
-        return putScalar("--yarn-beta-fast", yarnBetaFast);
-    }
-
-    /**
-     * Set group-attention factor (default: 1).
-     *
-     * <p><strong>No longer emitted — this method is a no-op.</strong> {@code --grp-attn-n} still exists in
-     * {@code common/arg.cpp}, but carries {@code set_examples({LLAMA_EXAMPLE_COMPLETION,
-     * LLAMA_EXAMPLE_PASSKEY})}, so {@code common_params_parser_init} never registers it for
-     * {@code LLAMA_EXAMPLE_SERVER} — the example this binding parses with. A textual sweep of
-     * upstream sources cannot see that; only the real option table can. Because llama.cpp's
-     * argument parser treats an unregistered option as a hard error rather than a warning, still
-     * emitting it would make {@code loadModel()} throw {@code "Failed to parse model parameters"}
-     * instead of loading the model. Writing nothing keeps existing call sites compiling <em>and</em>
-     * loading. The method will be removed in a future release; the contract is enforced by
-     * {@code src/test/cpp/test_model_flags.cpp}, which drives every emitted flag through the real
-     * server option table.</p>
-     *
-     * @param grpAttnN the group-attention factor
-     * @return this builder
-     * @deprecated upstream scopes {@code --grp-attn-n} to non-server examples, so the server
-     *     argument parser rejects it
-     */
-    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
-    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
-    // keep calling THIS method, so a later removal is one edit here and not a code search.
-    @SuppressWarnings("InlineMeSuggester")
-    @Deprecated
-    public ModelParameters setGrpAttnN(int grpAttnN) {
-        return this;
-    }
-
-    /**
-     * Set group-attention width (default: 512).
-     *
-     * <p><strong>No longer emitted — this method is a no-op.</strong> {@code --grp-attn-w} still exists in
-     * {@code common/arg.cpp}, but carries {@code set_examples({LLAMA_EXAMPLE_COMPLETION})}, so
-     * {@code common_params_parser_init} never registers it for {@code LLAMA_EXAMPLE_SERVER} — the
-     * example this binding parses with. Because llama.cpp's
-     * argument parser treats an unregistered option as a hard error rather than a warning, still
-     * emitting it would make {@code loadModel()} throw {@code "Failed to parse model parameters"}
-     * instead of loading the model. Writing nothing keeps existing call sites compiling <em>and</em>
-     * loading. The method will be removed in a future release; the contract is enforced by
-     * {@code src/test/cpp/test_model_flags.cpp}, which drives every emitted flag through the real
-     * server option table.</p>
-     *
-     * @param grpAttnW the group-attention width
-     * @return this builder
-     * @deprecated upstream scopes {@code --grp-attn-w} to the completion example, so the server
-     *     argument parser rejects it
-     */
-    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
-    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
-    // keep calling THIS method, so a later removal is one edit here and not a code search.
-    @SuppressWarnings("InlineMeSuggester")
-    @Deprecated
-    public ModelParameters setGrpAttnW(int grpAttnW) {
-        return this;
-    }
-
-    /**
-     * Enable verbose printing of the KV cache.
-     *
-     * <p><strong>No longer emitted — this method is a no-op.</strong> Upstream removed {@code --dump-kv-cache}
-     * with no replacement; it appears nowhere in llama.cpp at the pinned build. Because llama.cpp's
-     * argument parser treats an unregistered option as a hard error rather than a warning, still
-     * emitting it would make {@code loadModel()} throw {@code "Failed to parse model parameters"}
-     * instead of loading the model. Writing nothing keeps existing call sites compiling <em>and</em>
-     * loading. The method will be removed in a future release; the contract is enforced by
-     * {@code src/test/cpp/test_model_flags.cpp}, which drives every emitted flag through the real
-     * server option table.</p>
-     *
-     * @return this builder
-     * @deprecated upstream removed {@code --dump-kv-cache} with no replacement
-     */
-    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
-    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
-    // keep calling THIS method, so a later removal is one edit here and not a code search.
-    @SuppressWarnings("InlineMeSuggester")
-    @Deprecated
-    public ModelParameters enableDumpKvCache() {
-        return this;
+        return putScalar(ModelOption.YARN_BETA_FAST, yarnBetaFast);
     }
 
     /**
@@ -846,7 +762,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCacheTypeK(CacheType type) {
-        return putEnum("--cache-type-k", type);
+        return putEnum(ModelOption.CACHE_TYPE_K, type);
     }
 
     /**
@@ -856,7 +772,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCacheTypeV(CacheType type) {
-        return putEnum("--cache-type-v", type);
+        return putEnum(ModelOption.CACHE_TYPE_V, type);
     }
 
     /**
@@ -866,7 +782,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDefragThold(float defragThold) {
-        return putScalar("--defrag-thold", defragThold);
+        return putScalar(ModelOption.DEFRAG_THOLD, defragThold);
     }
 
     /**
@@ -876,7 +792,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setParallel(int nParallel) {
-        return putScalar("--parallel", nParallel);
+        return putScalar(ModelOption.PARALLEL, nParallel);
     }
 
     /**
@@ -912,53 +828,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setLoadMode(LoadMode loadMode) {
-        return putEnum("--load-mode", loadMode);
-    }
-
-    /**
-     * Force system to keep model in RAM rather than swapping or compressing.
-     *
-     * <p><strong>Now emits {@code --load-mode mlock}.</strong> Upstream deprecated {@code --mlock}
-     * at b10092 and deleted it at b10878; since llama.cpp's argument parser treats an unknown
-     * option as a hard error rather than a warning, continuing to emit it would make
-     * {@code loadModel()} throw {@code "Failed to parse model parameters"}. The substitution is
-     * upstream's own — its deprecation shim mapped {@code --mlock} to
-     * {@code LLAMA_LOAD_MODE_MLOCK} — so behaviour is unchanged. Prefer
-     * {@link #setLoadMode(LoadMode)} directly; this method will be removed in a future release.</p>
-     *
-     * @return this builder
-     * @deprecated use {@link #setLoadMode(LoadMode)} with {@link LoadMode#MLOCK}
-     */
-    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
-    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
-    // keep calling THIS method, so a later removal is one edit here and not a code search.
-    @SuppressWarnings("InlineMeSuggester")
-    @Deprecated
-    public ModelParameters enableMlock() {
-        return setLoadMode(LoadMode.MLOCK);
-    }
-
-    /**
-     * Do not memory-map model (slower load but may reduce pageouts if not using mlock).
-     *
-     * <p><strong>Now emits {@code --load-mode none}.</strong> Upstream deprecated {@code --no-mmap}
-     * at b10092 and deleted it at b10878; the substitution is upstream's own deprecation-shim
-     * mapping ({@code --no-mmap} to {@code LLAMA_LOAD_MODE_NONE}), so behaviour is unchanged. Note
-     * that this is a whole loading mode, not an independent switch: a later
-     * {@link #setLoadMode(LoadMode)} call overrides it, and combining "no mmap" with mlock is
-     * expressed as {@link LoadMode#MLOCK} rather than as two calls. Prefer
-     * {@link #setLoadMode(LoadMode)} directly; this method will be removed in a future release.</p>
-     *
-     * @return this builder
-     * @deprecated use {@link #setLoadMode(LoadMode)} with {@link LoadMode#NONE}
-     */
-    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
-    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
-    // keep calling THIS method, so a later removal is one edit here and not a code search.
-    @SuppressWarnings("InlineMeSuggester")
-    @Deprecated
-    public ModelParameters disableMmap() {
-        return setLoadMode(LoadMode.NONE);
+        return putEnum(ModelOption.LOAD_MODE, loadMode);
     }
 
     /**
@@ -968,7 +838,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setNuma(NumaStrategy numaStrategy) {
-        return putEnum("--numa", numaStrategy);
+        return putEnum(ModelOption.NUMA, numaStrategy);
     }
 
     /**
@@ -978,7 +848,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDevices(String devices) {
-        parameters.put("--device", devices);
+        putString(ModelOption.DEVICE, devices);
         return this;
     }
 
@@ -1002,7 +872,7 @@ public final class ModelParameters extends CliParameters {
             throw new IllegalArgumentException(
                     "Invalid n-cpu-moe value: " + layers + " (must be >= 0; 0 = force no experts to the CPU)");
         }
-        return putScalar("--n-cpu-moe", layers);
+        return putScalar(ModelOption.N_CPU_MOE, layers);
     }
 
     /**
@@ -1023,7 +893,7 @@ public final class ModelParameters extends CliParameters {
             throw new IllegalArgumentException(
                     "Invalid n-cpu-ffn value: " + layers + " (must be >= 0; 0 = keep all FFN weights on the GPU)");
         }
-        return putScalar("--n-cpu-ffn", layers);
+        return putScalar(ModelOption.N_CPU_FFN, layers);
     }
 
     /**
@@ -1033,7 +903,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setGpuLayers(int gpuLayers) {
-        return putScalar("--gpu-layers", gpuLayers);
+        return putScalar(ModelOption.GPU_LAYERS, gpuLayers);
     }
 
     /**
@@ -1043,7 +913,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setSplitMode(GpuSplitMode splitMode) {
-        return putEnum("--split-mode", splitMode);
+        return putEnum(ModelOption.SPLIT_MODE, splitMode);
     }
 
     /**
@@ -1053,7 +923,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setTensorSplit(String tensorSplit) {
-        parameters.put("--tensor-split", tensorSplit);
+        putString(ModelOption.TENSOR_SPLIT, tensorSplit);
         return this;
     }
 
@@ -1064,7 +934,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMainGpu(int mainGpu) {
-        return putScalar("--main-gpu", mainGpu);
+        return putScalar(ModelOption.MAIN_GPU, mainGpu);
     }
 
     /**
@@ -1083,7 +953,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setOverrideKv(String keyValue) {
-        parameters.put("--override-kv", keyValue);
+        putString(ModelOption.OVERRIDE_KV, keyValue);
         return this;
     }
 
@@ -1094,7 +964,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters addLoraAdapter(String fname) {
-        parameters.put("--lora", fname);
+        putString(ModelOption.LORA, fname);
         return this;
     }
 
@@ -1106,7 +976,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters addLoraScaledAdapter(String fname, float scale) {
-        parameters.put("--lora-scaled", fname + "," + scale);
+        putString(ModelOption.LORA_SCALED, fname + "," + scale);
         return this;
     }
 
@@ -1117,7 +987,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters addControlVector(String fname) {
-        parameters.put("--control-vector", fname);
+        putString(ModelOption.CONTROL_VECTOR, fname);
         return this;
     }
 
@@ -1129,7 +999,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters addControlVectorScaled(String fname, float scale) {
-        parameters.put("--control-vector-scaled", fname + "," + scale);
+        putString(ModelOption.CONTROL_VECTOR_SCALED, fname + "," + scale);
         return this;
     }
 
@@ -1141,7 +1011,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setControlVectorLayerRange(int start, int end) {
-        parameters.put("--control-vector-layer-range", start + "," + end);
+        putString(ModelOption.CONTROL_VECTOR_LAYER_RANGE, start + "," + end);
         return this;
     }
 
@@ -1152,7 +1022,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setModel(String model) {
-        parameters.put("--model", model);
+        putString(ModelOption.MODEL, model);
         return this;
     }
 
@@ -1163,7 +1033,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setModelUrl(String modelUrl) {
-        parameters.put("--model-url", modelUrl);
+        putString(ModelOption.MODEL_URL, modelUrl);
         return this;
     }
 
@@ -1174,7 +1044,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setHfRepo(String hfRepo) {
-        parameters.put("--hf-repo", hfRepo);
+        putString(ModelOption.HF_REPO, hfRepo);
         return this;
     }
 
@@ -1185,61 +1055,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setHfFile(String hfFile) {
-        parameters.put("--hf-file", hfFile);
-        return this;
-    }
-
-    /**
-     * Set the Hugging Face model repository for the vocoder model (default: unused).
-     *
-     * <p><strong>No longer emitted — this method is a no-op.</strong> Upstream removed {@code --hf-repo-v} with the
-     * OuteTTS-era two-model TTS design; it appears nowhere in llama.cpp at the pinned build. The
-     * current TTS pipeline takes a backbone plus an mmproj GGUF — see
-     * {@link net.ladenthin.llama.TextToSpeech}. Because llama.cpp's
-     * argument parser treats an unregistered option as a hard error rather than a warning, still
-     * emitting it would make {@code loadModel()} throw {@code "Failed to parse model parameters"}
-     * instead of loading the model. Writing nothing keeps existing call sites compiling <em>and</em>
-     * loading. The method will be removed in a future release; the contract is enforced by
-     * {@code src/test/cpp/test_model_flags.cpp}, which drives every emitted flag through the real
-     * server option table.</p>
-     *
-     * @param hfRepoV the Hugging Face repository for the vocoder model
-     * @return this builder
-     * @deprecated upstream removed {@code --hf-repo-v}; see {@link net.ladenthin.llama.TextToSpeech}
-     */
-    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
-    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
-    // keep calling THIS method, so a later removal is one edit here and not a code search.
-    @SuppressWarnings("InlineMeSuggester")
-    @Deprecated
-    public ModelParameters setHfRepoV(String hfRepoV) {
-        return this;
-    }
-
-    /**
-     * Set the Hugging Face model file for the vocoder model (default: unused).
-     *
-     * <p><strong>No longer emitted — this method is a no-op.</strong> Upstream removed {@code --hf-file-v} with the
-     * OuteTTS-era two-model TTS design; it appears nowhere in llama.cpp at the pinned build. The
-     * current TTS pipeline takes a backbone plus an mmproj GGUF — see
-     * {@link net.ladenthin.llama.TextToSpeech}. Because llama.cpp's
-     * argument parser treats an unregistered option as a hard error rather than a warning, still
-     * emitting it would make {@code loadModel()} throw {@code "Failed to parse model parameters"}
-     * instead of loading the model. Writing nothing keeps existing call sites compiling <em>and</em>
-     * loading. The method will be removed in a future release; the contract is enforced by
-     * {@code src/test/cpp/test_model_flags.cpp}, which drives every emitted flag through the real
-     * server option table.</p>
-     *
-     * @param hfFileV the vocoder model file within the Hugging Face repository
-     * @return this builder
-     * @deprecated upstream removed {@code --hf-file-v}; see {@link net.ladenthin.llama.TextToSpeech}
-     */
-    // Error Prone's InlineMeSuggester wants an @InlineMe here because the body is a single
-    // expression. Inlining would be exactly wrong: the point of the deprecation is that callers
-    // keep calling THIS method, so a later removal is one edit here and not a code search.
-    @SuppressWarnings("InlineMeSuggester")
-    @Deprecated
-    public ModelParameters setHfFileV(String hfFileV) {
+        putString(ModelOption.HF_FILE, hfFile);
         return this;
     }
 
@@ -1250,7 +1066,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setHfToken(String hfToken) {
-        parameters.put("--hf-token", hfToken);
+        putString(ModelOption.HF_TOKEN, hfToken);
         return this;
     }
 
@@ -1279,7 +1095,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCacheReuse(int cacheReuse) {
-        return putScalar("--cache-reuse", cacheReuse);
+        return putScalar(ModelOption.CACHE_REUSE, cacheReuse);
     }
 
     /**
@@ -1289,7 +1105,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setSlotSavePath(String slotSavePath) {
-        parameters.put("--slot-save-path", slotSavePath);
+        putString(ModelOption.SLOT_SAVE_PATH, slotSavePath);
         return this;
     }
 
@@ -1300,7 +1116,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setChatTemplate(String chatTemplate) {
-        parameters.put("--chat-template", chatTemplate);
+        putString(ModelOption.CHAT_TEMPLATE, chatTemplate);
         return this;
     }
 
@@ -1321,8 +1137,9 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setChatTemplateKwargs(java.util.Map<String, String> kwargs) {
-        parameters.put(
-                "--chat-template-kwargs", serializer.buildRawValueObject(kwargs).toString());
+        putString(
+                ModelOption.CHAT_TEMPLATE_KWARGS,
+                serializer.buildRawValueObject(kwargs).toString());
         return this;
     }
 
@@ -1333,7 +1150,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setSlotPromptSimilarity(float similarity) {
-        return putScalar("--slot-prompt-similarity", similarity);
+        return putScalar(ModelOption.SLOT_PROMPT_SIMILARITY, similarity);
     }
 
     /**
@@ -1352,7 +1169,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCtxCheckpoints(int ctxCheckpoints) {
-        return putScalar("--ctx-checkpoints", ctxCheckpoints);
+        return putScalar(ModelOption.CTX_CHECKPOINTS, ctxCheckpoints);
     }
 
     /**
@@ -1369,7 +1186,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCheckpointMinStep(int checkpointMinStep) {
-        return putScalar("--checkpoint-min-step", checkpointMinStep);
+        return putScalar(ModelOption.CHECKPOINT_MIN_STEP, checkpointMinStep);
     }
 
     /**
@@ -1397,7 +1214,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setLogFile(String logFile) {
-        parameters.put("--log-file", logFile);
+        putString(ModelOption.LOG_FILE, logFile);
         return this;
     }
 
@@ -1417,7 +1234,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setLogVerbosity(int verbosity) {
-        return putScalar("--log-verbosity", verbosity);
+        return putScalar(ModelOption.LOG_VERBOSITY, verbosity);
     }
 
     /**
@@ -1445,7 +1262,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDraftMax(int draftMax) {
-        return putScalar("--spec-draft-n-max", draftMax);
+        return putScalar(ModelOption.SPEC_DRAFT_N_MAX, draftMax);
     }
 
     /**
@@ -1455,7 +1272,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDraftMin(int draftMin) {
-        return putScalar("--spec-draft-n-min", draftMin);
+        return putScalar(ModelOption.SPEC_DRAFT_N_MIN, draftMin);
     }
 
     /**
@@ -1465,7 +1282,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDraftPMin(float draftPMin) {
-        return putScalar("--spec-draft-p-min", draftPMin);
+        return putScalar(ModelOption.SPEC_DRAFT_P_MIN, draftPMin);
     }
 
     /**
@@ -1475,7 +1292,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setDeviceDraft(String deviceDraft) {
-        parameters.put("--spec-draft-device", deviceDraft);
+        putString(ModelOption.SPEC_DRAFT_DEVICE, deviceDraft);
         return this;
     }
 
@@ -1486,7 +1303,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setGpuLayersDraft(int gpuLayersDraft) {
-        return putScalar("--spec-draft-ngl", gpuLayersDraft);
+        return putScalar(ModelOption.SPEC_DRAFT_NGL, gpuLayersDraft);
     }
 
     /**
@@ -1496,7 +1313,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setModelDraft(String modelDraft) {
-        parameters.put("--spec-draft-model", modelDraft);
+        putString(ModelOption.SPEC_DRAFT_MODEL, modelDraft);
         return this;
     }
 
@@ -1507,7 +1324,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMmproj(String mmproj) {
-        parameters.put("--mmproj", mmproj);
+        putString(ModelOption.MMPROJ, mmproj);
         return this;
     }
 
@@ -1518,7 +1335,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMmprojUrl(String url) {
-        parameters.put("--mmproj-url", url);
+        putString(ModelOption.MMPROJ_URL, url);
         return this;
     }
 
@@ -1558,7 +1375,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setMmprojDevice(String device) {
-        parameters.put(ARG_MMPROJ_DEVICE, device);
+        putString(ModelOption.MMPROJ_DEVICE, device);
         // --mmproj-device and --{no-,}mmproj-offload both write common_params::mmproj_use_gpu, so a
         // clash is resolved by argv order -- and ours is rendered from a HashMap, where that order is
         // unspecified. Clear only the genuinely conflicting combinations:
@@ -1614,7 +1431,7 @@ public final class ModelParameters extends CliParameters {
             throw new IllegalArgumentException(
                     "Invalid video-fps value: " + fps + " (must be finite; <= 0 selects the video's native fps)");
         }
-        return putScalar("--video-fps", fps);
+        return putScalar(ModelOption.VIDEO_FPS, fps);
     }
 
     /**
@@ -1642,7 +1459,7 @@ public final class ModelParameters extends CliParameters {
                     + "; llama.cpp parses --video-timestamp-interval with std::stoi although the field is int64_t,"
                     + " so a larger value aborts the whole argv parse with an unrelated message)");
         }
-        return putScalar("--video-timestamp-interval", intervalMillis);
+        return putScalar(ModelOption.VIDEO_TIMESTAMP_INTERVAL, intervalMillis);
     }
 
     /**
@@ -1659,7 +1476,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setVideoFfmpegDir(String directory) {
-        return putScalar("--video-ffmpeg-dir", directory);
+        return putScalar(ModelOption.VIDEO_FFMPEG_DIR, directory);
     }
 
     /**
@@ -1682,8 +1499,8 @@ public final class ModelParameters extends CliParameters {
         // order -- that needs enabled == true AND a real device name. "none" sets mmproj_use_gpu
         // false and so contradicts --mmproj-offload, and --no-mmproj-offload contradicts any device;
         // in those cases the last call wins. See setMmprojDevice for the full table.
-        if (!enabled || MMPROJ_DEVICE_NONE.equals(parameters.get(ARG_MMPROJ_DEVICE))) {
-            parameters.remove(ARG_MMPROJ_DEVICE);
+        if (!enabled || MMPROJ_DEVICE_NONE.equals(getOption(ModelOption.MMPROJ_DEVICE))) {
+            removeOption(ModelOption.MMPROJ_DEVICE);
         }
         return this;
     }
@@ -1697,7 +1514,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setReasoningFormat(net.ladenthin.llama.args.ReasoningFormat format) {
-        return putEnum("--reasoning-format", format);
+        return putEnum(ModelOption.REASONING_FORMAT, format);
     }
 
     /**
@@ -1710,7 +1527,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setReasoningBudget(int budget) {
-        return putScalar("--reasoning-budget", budget);
+        return putScalar(ModelOption.REASONING_BUDGET, budget);
     }
 
     /**
@@ -1737,7 +1554,7 @@ public final class ModelParameters extends CliParameters {
             throw new IllegalArgumentException("Invalid sleep-idle-seconds value: " + seconds
                     + " (must be positive, or -1 to disable; upstream rejects 0 and values below -1)");
         }
-        return putScalar("--sleep-idle-seconds", seconds);
+        return putScalar(ModelOption.SLEEP_IDLE_SECONDS, seconds);
     }
 
     /**
@@ -1804,7 +1621,7 @@ public final class ModelParameters extends CliParameters {
             throw new IllegalArgumentException("Invalid kv-unified-per-slot value: " + contextPerSlot
                     + " (must be > 0; upstream treats 0 as unset, which is the default)");
         }
-        return putScalar("--kv-unified-per-slot", contextPerSlot);
+        return putScalar(ModelOption.KV_UNIFIED_PER_SLOT, contextPerSlot);
     }
 
     /**
@@ -1825,7 +1642,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setLazyMode(LazyMode mode) {
-        return putEnum("--lazy-mode", mode);
+        return putEnum(ModelOption.LAZY_MODE, mode);
     }
 
     /**
@@ -1840,7 +1657,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setCacheRamMib(int cacheRamMib) {
-        return putScalar("--cache-ram", cacheRamMib);
+        return putScalar(ModelOption.CACHE_RAM, cacheRamMib);
     }
 
     /**
@@ -1873,7 +1690,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters setFlag(ModelFlag flag) {
-        parameters.put(flag.getCliFlag(), null);
+        putFlag(flag);
         return this;
     }
 
@@ -1884,7 +1701,7 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters clearFlag(ModelFlag flag) {
-        parameters.remove(flag.getCliFlag());
+        removeFlag(flag);
         return this;
     }
 
@@ -1896,7 +1713,7 @@ public final class ModelParameters extends CliParameters {
      *         {@link #clearFlag(ModelFlag)} has not since removed it; {@code false} otherwise
      */
     public boolean hasFlag(ModelFlag flag) {
-        return parameters.containsKey(flag.getCliFlag());
+        return isFlagSet(flag);
     }
 
     /**
@@ -1935,16 +1752,30 @@ public final class ModelParameters extends CliParameters {
      * @return the {@code --model} path, or {@code null} if unset
      */
     public @Nullable String getModel() {
-        return parameters.get("--model");
+        return getOption(ModelOption.MODEL);
     }
 
     /**
-     * Returns whether the given parameter key has not been explicitly set.
+     * Returns whether the given option has not been explicitly set.
      *
-     * @param key the parameter key without the {@code --} prefix
-     * @return {@code true} if the key is absent from the configured parameters
+     * <p>This took a bare {@code String} key and prefixed {@code --} itself, which meant a caller
+     * could ask about a name that no builder method can emit and get a confident {@code true}
+     * forever. The typed overloads can only ask about names that exist.
+     *
+     * @param option the option to test
+     * @return {@code true} if the option is absent from the configured parameters
      */
-    public boolean isUnset(String key) {
-        return !parameters.containsKey("--" + key);
+    public boolean isUnset(ModelOption option) {
+        return !isOptionSet(option);
+    }
+
+    /**
+     * Returns whether the given flag has not been explicitly set.
+     *
+     * @param flag the flag to test
+     * @return {@code true} if the flag is absent from the configured parameters
+     */
+    public boolean isUnset(ModelFlag flag) {
+        return !isFlagSet(flag);
     }
 }

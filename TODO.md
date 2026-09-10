@@ -124,7 +124,8 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
 
 - **Three upstream flags found by the b10878 flag audit, deliberately NOT implemented there.** The
   audit that produced `test_model_flags.cpp` swept every option `common/arg.cpp` registers for
-  `LLAMA_EXAMPLE_SERVER` against what `ModelParameters`/`ModelFlag` emit. Beyond the seven dead
+  `LLAMA_EXAMPLE_SERVER` against what the Java layer emits (now `args.ModelFlag` + `args.ModelOption`;
+  at the time of the audit, the string literals in `ModelParameters`). Beyond the seven dead
   flags it retired, it found ten option groups upstream had added since b10456 that the Java API
   does not expose. Seven were already covered (`--kv-unified-per-slot`, `--mmproj-device`/`-mmdev`,
   `--video-fps`, `--video-timestamp-interval`, `--video-ffmpeg-dir`, `--lazy-mode`/`-lzm`,
@@ -139,12 +140,24 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
     `format_log_as_json` — so the two would overlap and could contradict each other on the same
     stream. Deciding which layer owns the format is a **feature decision**, not a correctness fix,
     and needs its own change with its own tests.
-  - **`--spec-synth-len` and `--spec-synth-rates`** — upstream's own help text marks both as
-    benchmarking-only knobs for synthetic speculative-decoding measurements. No consumer use case
-    here; listed so a future audit does not re-discover them as an oversight.
+  - **`--spec-synth-len` and `--spec-synth-rates`** — a documented non-goal, not deferred work. The
+    reasoning lives in its own entry below (**"deliberately NOT exposed, and this should stay that
+    way"**); it is not repeated here.
 
   Nothing is broken by leaving these out: `NativeServer` forwards raw llama-server argv verbatim, so
   all three remain reachable that way. The gap is only in the typed `ModelParameters` surface.
+
+- **Request-key exposure, measured rather than guessed.** With `parameters.RequestField` in place the
+  gap is countable instead of arguable. The Java layer writes **57** request keys (47 checked against
+  llama.cpp's completion-request schema, 10 consumed by the OpenAI layer ahead of it); upstream's
+  schema declares **68** primary fields, and **22** of those nothing here writes: `logprobs`, `lora`,
+  `response_fields`, `return_progress`, `n`, `echo`, `max_tokens`/`max_completion_tokens`, the
+  `reasoning_*` family, `grammar_lazy`/`grammar_triggers`, `preserved_tokens`, `chat_format`,
+  `parse_tool_calls`, `adaptive_target`/`adaptive_decay` and `backend_sampling`. Same policy as the
+  flags above — add on a real request, not speculatively — but the list is no longer something a
+  future audit has to rediscover: re-derive it by diffing `RequestField.values()` against the field
+  table `src/test/cpp/test_wire_contracts.cpp` already walks. (Counts are from the b10883 pin; the
+  two numbers move independently, so re-measure rather than trusting them after a bump.)
 
 - **Video input (`ContentPart.videoFile(...)`).** `mtmd` has had an end-to-end video path since
   llama.cpp **b9562** (#24269) — `mtmd_helper_video_init_params` was already present at the previous
@@ -189,6 +202,12 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
   knob for an application, and exposing them as library API would invite callers to "tune" numbers
   that fabricate rather than measure acceptance. Anyone who genuinely wants them already has them:
   `NativeServer` forwards raw llama-server argv verbatim.
+
+  **This is the single record for these two flags.** The b10878 flag audit (entry above) swept them up
+  again as "upstream options the Java API does not expose" and briefly carried its own copy of the
+  reasoning; that copy is now a pointer here. An audit re-finding them is expected and is not a signal
+  to reopen the decision — the audit answers "is this name reachable from Java", which is a different
+  question from "should it be".
 
 - **Expose `--spec-draft-backend-sampling` toggle via `ModelParameters.setSpecDraftBackendSampling(boolean)`.** Added in b9437 (env `LLAMA_ARG_SPEC_DRAFT_BACKEND_SAMPLING`). Backend sampling for the speculative draft is enabled by default upstream but auto-disabled on `LLAMA_SPLIT_MODE_TENSOR` setups; an explicit Java-side setter lets callers force-disable it for benchmarking or for backends with sampler bugs. Speculative-decoding power users.
 
@@ -413,10 +432,12 @@ introduced by the version bump — they were deferred to keep that PR landable.
 
 - **`LlamaTrainer`'s end-to-end path runs on no CI platform.** `LlamaTrainerIntegrationTest`
   self-skips everywhere: `net.ladenthin.llama.train.model` is set by no job and its model is in no
-  `.github/models.csv` row, so `validate-models.{sh,bat}` does not treat it as required. The C++ half
-  is now mitigated (`test_tts_params.cpp`'s `TrainParams` + `ResolveCpuParams` suites), but nothing
-  exercises the Java → JNI → native trainer round trip. Adding a small training model to `models.csv`
-  plus the matching property to the Java test jobs would close it.
+  `.github/models.csv` row, so `validate-models.{sh,bat}` does not treat it as required. Two slices
+  are now mitigated — `test_tts_params.cpp`'s `TrainParams` + `ResolveCpuParams` suites for the
+  parameter build, and `test_wire_contracts.cpp`'s `JavaTrainingFieldContract` for the configuration
+  key set (`parameters.TrainingField` against `jllama_train::config_keys()`) — but nothing exercises
+  the Java → JNI → native trainer round trip. Adding a small training model to `models.csv` plus the
+  matching property to the Java test jobs would close it.
 
 - **`LlamaLoader`'s jar-extraction internals need synthetic jar fixtures.** `readBackendManifest`,
   `tryLoadBackend`, `extractFile`, `moveIntoPlace`, `cleanPath` and `hasNativeLib` are named in no

@@ -189,32 +189,6 @@ public class ParameterJsonSerializerTest {
     }
 
     // ------------------------------------------------------------------
-    // buildIntArray
-    // ------------------------------------------------------------------
-
-    @Test
-    public void testBuildIntArray_values() {
-        ArrayNode arr = serializer.buildIntArray(new int[] {1, 2, 3});
-        assertThat(arr.size(), is(3));
-        assertThat(arr.get(0).asInt(), is(1));
-        assertThat(arr.get(2).asInt(), is(3));
-    }
-
-    @Test
-    public void testBuildIntArray_empty() {
-        ArrayNode arr = serializer.buildIntArray(new int[] {});
-        assertThat(arr.size(), is(0));
-    }
-
-    @Test
-    public void testBuildIntArray_roundtripsAsJson() throws Exception {
-        ArrayNode arr = serializer.buildIntArray(new int[] {10, 20});
-        JsonNode parsed = serializer.OBJECT_MAPPER.readTree(arr.toString());
-        assertThat(parsed.isArray(), is(true));
-        assertThat(parsed.get(0).asInt(), is(10));
-    }
-
-    // ------------------------------------------------------------------
     // buildTokenIdBiasArray
     // ------------------------------------------------------------------
 

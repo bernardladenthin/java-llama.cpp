@@ -80,8 +80,7 @@ public class ToolCallingIntegrationTest {
                 .withMessagesJson(request.buildMessagesJson())
                 .withToolsJson(request.buildToolsJson().orElseThrow())
                 .withToolChoice(request.getToolChoice().orElseThrow())
-                .withParallelToolCalls(request.getParallelToolCalls().orElseThrow())
-                .withUseChatTemplate(true));
+                .withParallelToolCalls(request.getParallelToolCalls().orElseThrow()));
         List<String> chunks = new ArrayList<String>();
 
         model.streamChatCompletion(params, chunks::add);

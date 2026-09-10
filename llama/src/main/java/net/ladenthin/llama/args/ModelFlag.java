@@ -32,9 +32,12 @@ package net.ladenthin.llama.args;
  * </ul>
  *
  * <p>The rule is enforced, not just documented: {@code src/test/cpp/test_model_flags.cpp} feeds every
- * flag string in this file (and in {@code ModelParameters}) to the real
+ * name declared here and in {@link ModelOption} to the real
  * {@code common_params_parser_init(params, LLAMA_EXAMPLE_SERVER)} option table, so adding an
- * unaccepted one reds the {@code C++ Tests} job on every platform.</p>
+ * unaccepted one reds the {@code C++ Tests} job on every platform. Which table a name has to appear
+ * in is stated by its own {@link CliContract} rather than by a list living inside that test, so the
+ * exemption for {@code --vocab-only} — a project pseudo-flag stripped from argv before the parse —
+ * cannot go stale.</p>
  */
 public enum ModelFlag {
 
@@ -104,7 +107,7 @@ public enum ModelFlag {
     JINJA("--jinja"),
 
     /** Only load the vocabulary for tokenization; no weights are loaded. */
-    VOCAB_ONLY("--vocab-only"),
+    VOCAB_ONLY("--vocab-only", CliContract.PROJECT_PSEUDO),
 
     /** Enable a single unified KV buffer shared across all sequences. */
     KV_UNIFIED("--kv-unified"),
@@ -146,9 +149,15 @@ public enum ModelFlag {
     OFFLINE("--offline");
 
     private final String cliFlag;
+    private final CliContract contract;
 
     ModelFlag(String cliFlag) {
+        this(cliFlag, CliContract.SERVER_PARSER);
+    }
+
+    ModelFlag(String cliFlag, CliContract contract) {
         this.cliFlag = cliFlag;
+        this.contract = contract;
     }
 
     /**
@@ -158,5 +167,14 @@ public enum ModelFlag {
      */
     public String getCliFlag() {
         return cliFlag;
+    }
+
+    /**
+     * Returns the contract this flag is required to satisfy.
+     *
+     * @return the contract kind
+     */
+    public CliContract getContract() {
+        return contract;
     }
 }

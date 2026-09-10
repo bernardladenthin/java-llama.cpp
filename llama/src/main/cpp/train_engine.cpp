@@ -106,21 +106,21 @@ extern "C" JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaTrainer_finet
     jllama_train::finetune_config cfg;
     try {
         const json j = json::parse(config_json);
-        cfg.model_path = j.value("model_path", std::string());
-        cfg.training_text = j.value("training_text", std::string());
-        cfg.training_file = j.value("training_file", std::string());
-        cfg.output_path = j.value("output_path", std::string());
-        cfg.epochs = j.value("epochs", 2);
-        cfg.learning_rate = j.value("learning_rate", 1e-5f);
-        cfg.lr_min = j.value("lr_min", -1.0f);
-        cfg.decay_epochs = j.value("decay_epochs", -1.0f);
-        cfg.weight_decay = j.value("weight_decay", 0.0f);
-        cfg.optimizer = j.value("optimizer", 0);
-        cfg.n_ctx = j.value("n_ctx", 0);
-        cfg.n_gpu_layers = j.value("n_gpu_layers", -1);
-        cfg.val_split = j.value("val_split", 0.05f);
-        cfg.n_batch = j.value("n_batch", 0);
-        cfg.n_ubatch = j.value("n_ubatch", 0);
+        cfg.model_path = j.value(jllama_train::keys::MODEL_PATH, std::string());
+        cfg.training_text = j.value(jllama_train::keys::TRAINING_TEXT, std::string());
+        cfg.training_file = j.value(jllama_train::keys::TRAINING_FILE, std::string());
+        cfg.output_path = j.value(jllama_train::keys::OUTPUT_PATH, std::string());
+        cfg.epochs = j.value(jllama_train::keys::EPOCHS, 2);
+        cfg.learning_rate = j.value(jllama_train::keys::LEARNING_RATE, 1e-5f);
+        cfg.lr_min = j.value(jllama_train::keys::LR_MIN, -1.0f);
+        cfg.decay_epochs = j.value(jllama_train::keys::DECAY_EPOCHS, -1.0f);
+        cfg.weight_decay = j.value(jllama_train::keys::WEIGHT_DECAY, 0.0f);
+        cfg.optimizer = j.value(jllama_train::keys::OPTIMIZER, 0);
+        cfg.n_ctx = j.value(jllama_train::keys::N_CTX, 0);
+        cfg.n_gpu_layers = j.value(jllama_train::keys::N_GPU_LAYERS, -1);
+        cfg.val_split = j.value(jllama_train::keys::VAL_SPLIT, 0.05f);
+        cfg.n_batch = j.value(jllama_train::keys::N_BATCH, 0);
+        cfg.n_ubatch = j.value(jllama_train::keys::N_UBATCH, 0);
     } catch (const std::exception &e) {
         return env->NewStringUTF((std::string("invalid training config: ") + e.what()).c_str());
     }

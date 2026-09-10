@@ -95,7 +95,7 @@ class LangChain4jMappingTest {
                         .stopSequences(Arrays.asList("STOP"))
                         .build();
 
-        String json = LangChain4jMapping.toStreamingParameters(request).toString();
+        String json = LangChain4jMapping.toStreamingParameters(request).toJson();
 
         assertThat(json, containsString("\"temperature\""));
         assertThat(json, containsString("\"top_k\""));
@@ -211,7 +211,7 @@ class LangChain4jMappingTest {
                 .toolChoice(ToolChoice.REQUIRED)
                 .build();
 
-        String json = LangChain4jMapping.toStreamingParameters(request).toString();
+        String json = LangChain4jMapping.toStreamingParameters(request).toJson();
 
         // The streaming blob must carry the same tools wiring the blocking path applies.
         assertThat(json, containsString("\"tools\""));
@@ -219,8 +219,9 @@ class LangChain4jMappingTest {
         assertThat(json, containsString("\"tool_choice\""));
         assertThat(json, containsString("required"));
         // Jinja is a load-time option (--jinja). Upstream's request parser never reads a "use_jinja"
-        // key and silently discards unknown fields, so a re-added withUseChatTemplate(true) here
-        // would be invisible at runtime and uncatchable by any integration test. Mirrors
+        // key and silently discards unknown fields, so sending one would be invisible at runtime
+        // and uncatchable by any integration test. The builder method that used to emit it is gone;
+        // this pins that nothing puts it back. Mirrors
         // OpenAiRequestMapperTest#toolsEnableChatTemplateAndForwardChoice.
         assertThat(json, not(containsString("\"use_jinja\"")));
     }
@@ -295,7 +296,7 @@ class LangChain4jMappingTest {
                 .responseFormat(ResponseFormat.JSON)
                 .build();
 
-        String json = LangChain4jMapping.toStreamingParameters(request).toString();
+        String json = LangChain4jMapping.toStreamingParameters(request).toJson();
 
         assertThat(json, containsString("\"response_format\""));
         assertThat(json, containsString("json_object"));
@@ -318,7 +319,7 @@ class LangChain4jMappingTest {
                 .responseFormat(format)
                 .build();
 
-        String json = LangChain4jMapping.toStreamingParameters(request).toString();
+        String json = LangChain4jMapping.toStreamingParameters(request).toJson();
 
         assertThat(json, containsString("\"json_schema\""));
         assertThat(json, containsString("\"name\""));
@@ -331,7 +332,7 @@ class LangChain4jMappingTest {
                 .responseFormat(ResponseFormat.TEXT)
                 .build();
 
-        String json = LangChain4jMapping.toStreamingParameters(request).toString();
+        String json = LangChain4jMapping.toStreamingParameters(request).toJson();
 
         assertThat(json, not(containsString("\"response_format\"")));
         assertThat(json, not(containsString("\"json_schema\"")));

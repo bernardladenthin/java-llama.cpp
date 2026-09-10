@@ -155,7 +155,7 @@ public class MultimodalMessagesTest {
         // setMessages encodes into the parameters map under "messages"; verify the
         // resulting JSON has the array form, which is what the upstream OAI chat
         // parser expects for multimodal routing.
-        String json = params.toString();
+        String json = params.toJson();
         assertThat("messages array must be present", json, containsString("\"messages\""));
         assertThat("multimodal part type must be in the serialised JSON", json, containsString("\"image_url\""));
         assertThat("data URI must round-trip into the request body", json, containsString("data:image/png;base64,QQ"));

@@ -14,10 +14,10 @@ package net.ladenthin.llama.args;
  * {@code --mlock}, {@code --mmap}/{@code --no-mmap} and {@code -dio}/{@code --direct-io} at b10092
  * and <strong>deleted them at b10878</strong> — the whole deprecation window opened and closed
  * inside eight tags. Because llama.cpp's argument parser treats an unknown option as a hard error
- * rather than a warning, the deleted spellings do not degrade a model load, they prevent it; the
- * {@code ModelParameters} methods that used to emit them now emit the matching mode here instead
- * (see {@link net.ladenthin.llama.parameters.ModelParameters#enableMlock()} and
- * {@link net.ladenthin.llama.parameters.ModelParameters#disableMmap()}).
+ * rather than a warning, the deleted spellings do not degrade a model load, they prevent it. The
+ * {@code ModelParameters} methods that used to emit them were removed together with the flags;
+ * pass {@link #MLOCK} (was {@code --mlock}) or {@link #NONE} (was {@code --no-mmap}) to
+ * {@link net.ladenthin.llama.parameters.ModelParameters#setLoadMode(LoadMode)} instead.
  *
  * @see net.ladenthin.llama.parameters.ModelParameters#setLoadMode(LoadMode)
  */
