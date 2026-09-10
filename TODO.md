@@ -124,7 +124,8 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
 
 - **Three upstream flags found by the b10878 flag audit, deliberately NOT implemented there.** The
   audit that produced `test_model_flags.cpp` swept every option `common/arg.cpp` registers for
-  `LLAMA_EXAMPLE_SERVER` against what `ModelParameters`/`ModelFlag` emit. Beyond the seven dead
+  `LLAMA_EXAMPLE_SERVER` against what the Java layer emits (now `args.ModelFlag` + `args.ModelOption`;
+  at the time of the audit, the string literals in `ModelParameters`). Beyond the seven dead
   flags it retired, it found ten option groups upstream had added since b10456 that the Java API
   does not expose. Seven were already covered (`--kv-unified-per-slot`, `--mmproj-device`/`-mmdev`,
   `--video-fps`, `--video-timestamp-interval`, `--video-ffmpeg-dir`, `--lazy-mode`/`-lzm`,
@@ -145,6 +146,21 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
 
   Nothing is broken by leaving these out: `NativeServer` forwards raw llama-server argv verbatim, so
   all three remain reachable that way. The gap is only in the typed `ModelParameters` surface.
+
+- **Request-key exposure, measured rather than guessed.** With `parameters.RequestField` in place the
+  gap is now countable instead of arguable: of llama.cpp's completion-request schema, the Java layer
+  writes 47 of its keys. Ones it does not write include `logprobs`, `lora`, `response_fields`,
+  `return_progress`, `n`, `echo`, `max_tokens`/`max_completion_tokens`, the `reasoning_*` family,
+  `grammar_lazy`/`grammar_triggers`, `preserved_tokens`, `chat_format`, `parse_tool_calls`,
+  `adaptive_target`/`adaptive_decay` and `backend_sampling`. Same policy as the flags above — add on a
+  real request, not speculatively — but the list is no longer something a future audit has to
+  rediscover: re-derive it by diffing `RequestField.values()` against the field table
+  `src/test/cpp/test_wire_contracts.cpp` already walks.
+
+- **An `OAI_LAYER` request key is checked only for *absence* from the schema.** That it is genuinely
+  read by `oaicompat_*_params_parse` or the task layer is documented on the constant, not asserted.
+  Closing it means driving those parsers from a C++ test the way `make_llama_cmpl_schema` is driven
+  now — feasible, but the eleven keys are stable OpenAI-protocol names, so this is low priority.
 
 - **Video input (`ContentPart.videoFile(...)`).** `mtmd` has had an end-to-end video path since
   llama.cpp **b9562** (#24269) — `mtmd_helper_video_init_params` was already present at the previous
@@ -413,10 +429,12 @@ introduced by the version bump — they were deferred to keep that PR landable.
 
 - **`LlamaTrainer`'s end-to-end path runs on no CI platform.** `LlamaTrainerIntegrationTest`
   self-skips everywhere: `net.ladenthin.llama.train.model` is set by no job and its model is in no
-  `.github/models.csv` row, so `validate-models.{sh,bat}` does not treat it as required. The C++ half
-  is now mitigated (`test_tts_params.cpp`'s `TrainParams` + `ResolveCpuParams` suites), but nothing
-  exercises the Java → JNI → native trainer round trip. Adding a small training model to `models.csv`
-  plus the matching property to the Java test jobs would close it.
+  `.github/models.csv` row, so `validate-models.{sh,bat}` does not treat it as required. Two slices
+  are now mitigated — `test_tts_params.cpp`'s `TrainParams` + `ResolveCpuParams` suites for the
+  parameter build, and `test_wire_contracts.cpp`'s `JavaTrainingFieldContract` for the configuration
+  key set (`parameters.TrainingField` against `jllama_train::config_keys()`) — but nothing exercises
+  the Java → JNI → native trainer round trip. Adding a small training model to `models.csv` plus the
+  matching property to the Java test jobs would close it.
 
 - **`LlamaLoader`'s jar-extraction internals need synthetic jar fixtures.** `readBackendManifest`,
   `tryLoadBackend`, `extractFile`, `moveIntoPlace`, `cleanPath` and `hasNativeLib` are named in no
