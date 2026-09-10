@@ -94,25 +94,25 @@ public final class TrainingParameters {
      */
     public String toJson() {
         ObjectNode node = MAPPER.createObjectNode();
-        node.put("model_path", modelPath.toString());
+        node.put(TrainingField.MODEL_PATH.getKey(), modelPath.toString());
         if (trainingText != null) {
-            node.put("training_text", trainingText);
+            node.put(TrainingField.TRAINING_TEXT.getKey(), trainingText);
         }
         if (trainingFile != null) {
-            node.put("training_file", trainingFile.toString());
+            node.put(TrainingField.TRAINING_FILE.getKey(), trainingFile.toString());
         }
-        node.put("output_path", outputPath.toString());
-        node.put("epochs", epochs);
-        node.put("learning_rate", learningRate);
-        node.put("lr_min", lrMin);
-        node.put("decay_epochs", decayEpochs);
-        node.put("weight_decay", weightDecay);
-        node.put("optimizer", optimizer.getNativeValue());
-        node.put("n_ctx", nCtx);
-        node.put("n_gpu_layers", nGpuLayers);
-        node.put("val_split", valSplit);
-        node.put("n_batch", nBatch);
-        node.put("n_ubatch", nUbatch);
+        node.put(TrainingField.OUTPUT_PATH.getKey(), outputPath.toString());
+        node.put(TrainingField.EPOCHS.getKey(), epochs);
+        node.put(TrainingField.LEARNING_RATE.getKey(), learningRate);
+        node.put(TrainingField.LR_MIN.getKey(), lrMin);
+        node.put(TrainingField.DECAY_EPOCHS.getKey(), decayEpochs);
+        node.put(TrainingField.WEIGHT_DECAY.getKey(), weightDecay);
+        node.put(TrainingField.OPTIMIZER.getKey(), optimizer.getNativeValue());
+        node.put(TrainingField.N_CTX.getKey(), nCtx);
+        node.put(TrainingField.N_GPU_LAYERS.getKey(), nGpuLayers);
+        node.put(TrainingField.VAL_SPLIT.getKey(), valSplit);
+        node.put(TrainingField.N_BATCH.getKey(), nBatch);
+        node.put(TrainingField.N_UBATCH.getKey(), nUbatch);
         return node.toString();
     }
 }

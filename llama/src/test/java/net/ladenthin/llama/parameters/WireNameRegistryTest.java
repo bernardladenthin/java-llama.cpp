@@ -98,6 +98,20 @@ public class WireNameRegistryTest {
         assertThat(duplicates, is(empty()));
     }
 
+    @Test
+    public void trainerKeysAreWellFormedAndUnique() {
+        Set<String> seen = new HashSet<>();
+        List<String> duplicates = new ArrayList<>();
+        for (TrainingField field : TrainingField.values()) {
+            assertThat(field.name(), field.getKey().trim(), is(field.getKey()));
+            assertThat(field.name(), field.getKey().isEmpty(), is(false));
+            if (!seen.add(field.getKey())) {
+                duplicates.add(field.getKey());
+            }
+        }
+        assertThat(duplicates, is(empty()));
+    }
+
     // -------------------------------------------------------------------------
     // Reachability: a declared name that nothing emits is dead weight
     // -------------------------------------------------------------------------
@@ -249,6 +263,32 @@ public class WireNameRegistryTest {
         }
         throw new IllegalStateException(
                 "spotbugs-exclude.xml not found from " + new java.io.File(".").getAbsolutePath());
+    }
+
+    /**
+     * A fully-populated {@code TrainingParameters} must write every declared key.
+     *
+     * <p>Two of them ({@code training_text} / {@code training_file}) are only written when their
+     * field is non-null, so a configuration with neither set silently omits both — this pins that
+     * each is reachable at all, which is what the C++ side then checks against the engine.
+     */
+    @Test
+    public void everyTrainingFieldIsWrittenByAFullyPopulatedConfiguration() {
+        String json = TrainingParameters.builder()
+                .modelPath(java.nio.file.Paths.get("base.gguf"))
+                .trainingText("corpus")
+                .trainingFile(java.nio.file.Paths.get("corpus.txt"))
+                .outputPath(java.nio.file.Paths.get("out.gguf"))
+                .build()
+                .toJson();
+
+        Set<String> missing = new TreeSet<>();
+        for (TrainingField field : TrainingField.values()) {
+            if (!json.contains("\"" + field.getKey() + "\"")) {
+                missing.add(field.name() + " (" + field.getKey() + ")");
+            }
+        }
+        assertThat(missing, is(empty()));
     }
 
     /**

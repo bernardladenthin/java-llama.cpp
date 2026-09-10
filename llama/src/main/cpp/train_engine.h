@@ -12,8 +12,45 @@
 #define JLLAMA_TRAIN_ENGINE_H
 
 #include <string>
+#include <vector>
 
 namespace jllama_train {
+
+// The keys the configuration parser reads, in one place so the Java registry can be checked
+// against them.
+//
+// This pairing needs a guard more than it looks like it does. The parser reads every key with
+// `j.value(key, default)`, which falls back to the default when the key is absent -- so a rename
+// on either side does not fail, it silently reverts one knob to its default. Java's
+// `parameters.TrainingField` declares the same names and `test_wire_contracts.cpp` asserts the two
+// sets are equal; without that, nothing runnable covers this boundary at all, because
+// `LlamaTrainerIntegrationTest` is gated on a system property no CI job sets.
+namespace keys {
+inline constexpr const char *MODEL_PATH    = "model_path";
+inline constexpr const char *TRAINING_TEXT = "training_text";
+inline constexpr const char *TRAINING_FILE = "training_file";
+inline constexpr const char *OUTPUT_PATH   = "output_path";
+inline constexpr const char *EPOCHS        = "epochs";
+inline constexpr const char *LEARNING_RATE = "learning_rate";
+inline constexpr const char *LR_MIN        = "lr_min";
+inline constexpr const char *DECAY_EPOCHS  = "decay_epochs";
+inline constexpr const char *WEIGHT_DECAY  = "weight_decay";
+inline constexpr const char *OPTIMIZER     = "optimizer";
+inline constexpr const char *N_CTX         = "n_ctx";
+inline constexpr const char *N_GPU_LAYERS  = "n_gpu_layers";
+inline constexpr const char *VAL_SPLIT     = "val_split";
+inline constexpr const char *N_BATCH       = "n_batch";
+inline constexpr const char *N_UBATCH      = "n_ubatch";
+} // namespace keys
+
+// Every key `config_keys()` lists is one the parser reads, and vice versa: both are written
+// against the `keys` constants above, so a changed spelling moves together.
+inline std::vector<std::string> config_keys() {
+    return {keys::MODEL_PATH,   keys::TRAINING_TEXT, keys::TRAINING_FILE, keys::OUTPUT_PATH,
+            keys::EPOCHS,       keys::LEARNING_RATE, keys::LR_MIN,        keys::DECAY_EPOCHS,
+            keys::WEIGHT_DECAY, keys::OPTIMIZER,     keys::N_CTX,         keys::N_GPU_LAYERS,
+            keys::VAL_SPLIT,    keys::N_BATCH,       keys::N_UBATCH};
+}
 
 // One fine-tuning run's inputs.
 struct finetune_config {
