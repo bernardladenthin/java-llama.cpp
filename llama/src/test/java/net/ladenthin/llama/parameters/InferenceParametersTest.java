@@ -333,12 +333,6 @@ public class InferenceParametersTest {
     }
 
     @Test
-    public void testSetChatTemplate() {
-        InferenceParameters params = new InferenceParameters("").withChatTemplate("{{messages}}");
-        assertThat(params.parameters.get("chat_template"), is("\"{{messages}}\""));
-    }
-
-    @Test
     public void testSetChatTemplateKwargs() {
         java.util.Map<String, String> kwargs = new java.util.LinkedHashMap<>();
         kwargs.put("enable_thinking", "true");

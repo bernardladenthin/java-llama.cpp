@@ -13,7 +13,7 @@ package net.ladenthin.llama.args;
  * {@code common_params_parse} — the emitted set is closed by construction rather than by review.
  *
  * <p>{@link ModelFlag} is the same registry for the options that take no value. Both are read at
- * configure time by {@code cmake/extract-java-cli-flags.cmake} and checked against the real server
+ * configure time by {@code cmake/extract-java-wire-names.cmake} and checked against the real server
  * option table by {@code src/test/cpp/test_model_flags.cpp}, which runs on every platform.
  *
  * @see CliContract

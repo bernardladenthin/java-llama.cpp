@@ -72,7 +72,7 @@ by hand only (no automated test); `build` = enforced at build/resource-compile t
 | R4.2 | Messages render as **bubbles** (user vs assistant styling); the list **auto-scrolls** to the newest message. | `MainActivity.MessageBubble` / `Conversation` | manual |
 | R4.3 | A **localized system prompt** is passed on every turn, nudging the model to answer in the user's language. | `system_prompt`; `ChatViewModel.send` | manual |
 | R4.4 | `send` is a **no-op** when the input is blank, no model is loaded, or a generation is already in flight. | `ChatViewModel.send` | manual |
-| R4.5 | An optional **chat-template override** (e.g. `chatml`) is supported for template-less GGUFs (used by the test hook; real instruct models carry their own template). | `ChatViewModel.chatTemplate` | instrumented |
+| R4.5 | An optional **chat-template override** (e.g. `chatml`) is supported for template-less GGUFs (used by the test hook; real instruct models carry their own template). It is applied at **model load** (`ModelParameters.setChatTemplate`) — per request it was silently discarded by llama.cpp's schema, so the hook proved nothing. | `ChatViewModel.openModel` | instrumented |
 | R4.6 | A generation error keeps the partial reply and surfaces a localized generation error. | `ChatViewModel.startGeneration`; `error_generation` | manual |
 | R4.7 | **Prompt shortcut chips** (localized `SuggestionChip`s) appear above the input when ready/idle and the input is empty; tapping one fills the draft with a quick-start prompt. | `MainActivity.Conversation` (`promptChip`); `chip_*` | manual |
 

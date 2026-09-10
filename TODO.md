@@ -148,19 +148,16 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
   all three remain reachable that way. The gap is only in the typed `ModelParameters` surface.
 
 - **Request-key exposure, measured rather than guessed.** With `parameters.RequestField` in place the
-  gap is now countable instead of arguable: of llama.cpp's completion-request schema, the Java layer
-  writes 47 of its keys. Ones it does not write include `logprobs`, `lora`, `response_fields`,
-  `return_progress`, `n`, `echo`, `max_tokens`/`max_completion_tokens`, the `reasoning_*` family,
-  `grammar_lazy`/`grammar_triggers`, `preserved_tokens`, `chat_format`, `parse_tool_calls`,
-  `adaptive_target`/`adaptive_decay` and `backend_sampling`. Same policy as the flags above — add on a
-  real request, not speculatively — but the list is no longer something a future audit has to
-  rediscover: re-derive it by diffing `RequestField.values()` against the field table
-  `src/test/cpp/test_wire_contracts.cpp` already walks.
-
-- **An `OAI_LAYER` request key is checked only for *absence* from the schema.** That it is genuinely
-  read by `oaicompat_*_params_parse` or the task layer is documented on the constant, not asserted.
-  Closing it means driving those parsers from a C++ test the way `make_llama_cmpl_schema` is driven
-  now — feasible, but the eleven keys are stable OpenAI-protocol names, so this is low priority.
+  gap is countable instead of arguable. The Java layer writes **57** request keys (47 checked against
+  llama.cpp's completion-request schema, 10 consumed by the OpenAI layer ahead of it); upstream's
+  schema declares **68** primary fields, and **22** of those nothing here writes: `logprobs`, `lora`,
+  `response_fields`, `return_progress`, `n`, `echo`, `max_tokens`/`max_completion_tokens`, the
+  `reasoning_*` family, `grammar_lazy`/`grammar_triggers`, `preserved_tokens`, `chat_format`,
+  `parse_tool_calls`, `adaptive_target`/`adaptive_decay` and `backend_sampling`. Same policy as the
+  flags above — add on a real request, not speculatively — but the list is no longer something a
+  future audit has to rediscover: re-derive it by diffing `RequestField.values()` against the field
+  table `src/test/cpp/test_wire_contracts.cpp` already walks. (Counts are from the b10883 pin; the
+  two numbers move independently, so re-measure rather than trusting them after a bump.)
 
 - **Video input (`ContentPart.videoFile(...)`).** `mtmd` has had an end-to-end video path since
   llama.cpp **b9562** (#24269) — `mtmd_helper_video_init_params` was already present at the previous

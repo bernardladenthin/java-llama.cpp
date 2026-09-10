@@ -548,28 +548,6 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
-     * Returns a new request with the chat-template string replaced.
-     *
-     * <p><strong>Ignored by the server.</strong> The chat template is chosen when the model is
-     * loaded, not per request: on the pinned build the only {@code "chat_template"} string in
-     * {@code common/} or {@code tools/server/} is the one the server <em>emits</em> in its
-     * {@code /props} response, and nothing reads it from a request body. The request schema
-     * silently discards unknown fields, so a template passed here is never applied. Use
-     * {@link net.ladenthin.llama.parameters.ModelParameters#setChatTemplate(String)} instead.
-     * Retained only so existing call sites keep compiling; it will be removed in a future
-     * release.</p>
-     *
-     * @param chatTemplate the Jinja-style chat template to use; {@code null} clears
-     * @return a new instance; this instance is unchanged
-     * @deprecated the chat template is a load-time option; the request field is discarded by the
-     *     server. Use {@link net.ladenthin.llama.parameters.ModelParameters#setChatTemplate(String)}
-     */
-    @Deprecated
-    public InferenceParameters withChatTemplate(@Nullable String chatTemplate) {
-        return withOptionalJson(RequestField.CHAT_TEMPLATE, chatTemplate);
-    }
-
-    /**
      * Returns a new request with custom Jinja template kwargs replaced. Values must be
      * valid JSON.
      *

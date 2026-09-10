@@ -659,7 +659,10 @@ satisfy:
 `cmake/extract-java-wire-names.cmake` reads the registry `.java` files at configure time and emits
 `{name, contract}` pairs into generated headers; the C++ tests feed them to the receivers. It matches
 **enum constant declarations only**, so prose and javadoc cannot contribute a name, and it fails the
-configure when a registry declares a name twice or extracts implausibly few.
+configure when a registry declares a name twice or extracts implausibly few. For `OAI_LAYER` keys —
+which by definition never reach the schema — it additionally sweeps upstream's own sources
+(`tools/server/*.cpp` + `common/*.cpp`, globbed) for a *reader shape* (`json_value(x, "k", …)`,
+`.contains("k")`, `.at("k")`) and emits the hit count, because the schema cannot vouch for them.
 
 **Why the failure modes differ, and why all three need a guard.** An unregistered CLI option is a hard
 parse error — `loadModel()` throws `"Failed to parse model parameters"`, so the model does not load.
@@ -678,7 +681,14 @@ Either way a Java test asserting the string mapping (`hasKey("--mlock")`) passes
    name we exempted, hiding a real check — so the tests assert such a name is still unknown to the
    receiver, and that the exempt set is non-empty (a generator that lost the contract column would
    otherwise exempt everything).
-4. **`WireNameRegistryTest` checks the other direction**: every declared constant must be reachable
+4. **An `OAI_LAYER` name must additionally be read by *something* upstream.** Absence from the schema
+   is satisfied just as well by a key nothing reads at all, so the inverted check alone left a hole
+   the exact size of the problem — `chat_template` sat in it, written by a public builder method and
+   read by nobody (upstream's only occurrence of that name is the `/props` payload it *emits*). The
+   reader sweep above closes it. It is a source pattern, not the parser: it proves a key is read from
+   some body, not that this endpoint reads it. That is enough for the failure that occurred, a count
+   of zero.
+5. **`WireNameRegistryTest` checks the other direction**: every declared constant must be reachable
    from some public builder method (driven reflectively), names are unique across both CLI
    registries, and every `OCP_OVERLY_CONCRETE_PARAMETER` suppression still names a real enum-valued
    setter.
@@ -1519,9 +1529,9 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 | `src/test/cpp/test_tts_params.cpp` | 13 | The **three** builders every hand-assembled `common_params` goes through: `build_tts_params` (`tts_params.hpp`), `build_train_params` (`train_params.hpp`) and the shared `jllama::resolve_cpu_params` (`cpu_params.hpp`). Each builder is guarded separately on purpose — testing the resolver alone does **not** cover its call sites, because `train_engine.cpp` is compiled into `jllama` only, never into `jllama_test`, and `LlamaTrainerIntegrationTest` is gated on `net.ladenthin.llama.train.model`, which no CI job sets. Without these the JVM-abort bug could regress in the trainer on every platform, unseen. |
 | `src/test/cpp/test_model_split.cpp` | 7 | The two `load_tensors()` split helpers that `patches/0012` extracts out of llama.cpp's `src/llama-model.cpp` — `llama_model_splits_normalize` (proportional split, single device, and the zero-sum case that used to produce NaN, **and the cancelling `--tensor-split` case** — `-ts 1,-1` reaches the identical line on any backend with no GPU memory pressure at all) and `llama_model_splits_select_device` (every layer maps to a real device index; malformed split points throw a message that names the function, the layer, the index and the split values instead of libc++'s bare `"vector"`). **This is the runnable guard for `0012`**: the patch also ships an upstream `tests/test-model-split.cpp`, but a FetchContent subproject builds with `LLAMA_BUILD_TESTS=OFF`, so that one is applied-but-never-compiled here. This file is the only place the two functions are linked in CI, on every platform — so a bump that drops the patch fails the `C++ Tests` build outright rather than resurfacing as one red macOS Java job. It is the one test file that includes an **internal** upstream header (`llama-model.h`, via the `${llama.cpp_SOURCE_DIR}/src` include dir added for it), which is deliberate: a signature drift should fail loudly at compile time. |
 | `src/test/cpp/test_model_flags.cpp` | 4 | **The contract between the Java CLI-flag registries and llama.cpp's server argument parser.** CMake reads `ModelFlag.java` + `ModelOption.java` (`cmake/extract-java-wire-names.cmake` → a generated header of `{name, contract}` pairs), and this file asserts every `SERVER_PARSER` name is in `common_params_parser_init(params, LLAMA_EXAMPLE_SERVER).options`. It exists because **no Java test can catch this class**: `ModelFlagTest`/`ModelParametersExtendedTest` pin the *string mapping* (`hasKey("--mlock")`), never that llama.cpp still accepts the string, so they stay green forever while the flag is dead — and `common_params_parse` treats an unregistered option as a hard error, so the affected builder method makes the model **unloadable**, not merely ineffective. **A grep over `arg.cpp` is not a substitute**: `--grp-attn-n`/`-w` are present there at every pinned tag but `set_examples()`-scoped to `LLAMA_EXAMPLE_COMPLETION`/`PASSKEY`, so the server parser rejects them exactly like a deleted flag — only the real option table sees that. `--vocab-only` is the one exemption, and it declares itself `CliContract.PROJECT_PSEUDO` on its own constant rather than appearing in a list inside this file; the test asserts such a name is **still unknown** to the parser (an exemption upstream later registers would be hiding a real check) and that the exempt set is non-empty. |
-| `src/test/cpp/test_wire_contracts.cpp` | 5 | **The same contract for the two quieter surfaces.** `RequestField` against `server_schema::make_llama_cmpl_schema(...)` (4 tests) and `TrainingField` against `jllama_train::config_keys()` (1 test). Both receivers *silently ignore* an unknown key — the schema skips it, `train_engine.cpp` reads with `j.value(key, default)` and falls back — so a dead field produces no error anywhere and every string-mapping test keeps passing. `OAI_LAYER`-declared keys (consumed by `oaicompat_*_params_parse` before the schema) are exempt, checked the same inverted way as `PROJECT_PSEUDO` above. See [`docs/history/parameter-wire-surface.md`](docs/history/parameter-wire-surface.md). |
+| `src/test/cpp/test_wire_contracts.cpp` | 6 | **The same contract for the two quieter surfaces.** `RequestField` against `server_schema::make_llama_cmpl_schema(...)` (5 tests) and `TrainingField` against `jllama_train::config_keys()` (1 test). Both receivers *silently ignore* an unknown key — the schema skips it, `train_engine.cpp` reads with `j.value(key, default)` and falls back — so a dead field produces no error anywhere and every string-mapping test keeps passing. `OAI_LAYER`-declared keys (consumed by `oaicompat_*_params_parse` before the schema) are exempt from the schema check, and are checked **both** ways: still unknown to the schema (the inverted check), and read by at least one upstream reader-shaped site (the configure-time sweep — this is what caught `chat_template`, a key a public builder wrote and nothing read). See [`docs/history/parameter-wire-surface.md`](docs/history/parameter-wire-surface.md). |
 
-**Current total: 536 tests (all passing).**
+**Current total: 537 tests (all passing).**
 
 #### Upstream source location (in CMake build tree)
 

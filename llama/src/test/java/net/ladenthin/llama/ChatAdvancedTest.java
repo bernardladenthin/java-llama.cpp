@@ -170,49 +170,7 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 4. setChatTemplate — custom Jinja template applied by applyTemplate
-    // ------------------------------------------------------------------
-
-    /**
-     * {@link InferenceParameters#setChatTemplate(String)} puts a custom Jinja2
-     * template in the request JSON. The server may or may not apply it depending
-     * on whether the model has a compiled (peg-native) built-in template — if
-     * one exists, the built-in template takes precedence over the per-request
-     * {@code chat_template} field for the {@code applyTemplate()} code path.
-     * <p>
-     * This test therefore verifies the parameter is:
-     * <ol>
-     *   <li>Serialised correctly by {@link InferenceParameters} (no JSON error)</li>
-     *   <li>Accepted by the native layer without throwing</li>
-     *   <li>Producing a non-empty result that contains the message content</li>
-     * </ol>
-     * Behavioural verification that the custom filter ({@code | upper}) is
-     * applied is intentionally omitted because the CodeLlama model's embedded
-     * ChatML template overrides the per-request template for this endpoint.
-     */
-    @Test
-    public void testCustomChatTemplateAcceptedWithoutError() {
-        List<Pair<String, String>> messages = new ArrayList<>();
-        messages.add(new Pair<>("user", "hello world"));
-
-        // A custom template using Jinja2 | upper filter
-        String customTemplate = "{% for m in messages %}" + "{{ m.role | upper }}: {{ m.content }}" + "{% endfor %}";
-
-        InferenceParameters params =
-                new InferenceParameters("").withMessages(null, messages).withChatTemplate(customTemplate);
-
-        // Must not throw; parameter is accepted and forwarded to native layer
-        String result = model.applyTemplate(params);
-
-        assertNotNull(result, "applyTemplate with setChatTemplate must return non-null");
-        assertFalse(result.isEmpty(), "applyTemplate with setChatTemplate must return non-empty result");
-        assertTrue(
-                result.contains("hello world"),
-                "Result must contain the message content 'hello world' regardless of template used");
-    }
-
-    // ------------------------------------------------------------------
-    // 5. Messages in the raw generate() path
+    // 4. Messages in the raw generate() path
     // ------------------------------------------------------------------
 
     /**
@@ -245,7 +203,7 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 6. Penalty params — repeatPenalty, frequencyPenalty, presencePenalty
+    // 5. Penalty params — repeatPenalty, frequencyPenalty, presencePenalty
     // ------------------------------------------------------------------
 
     /**
@@ -269,7 +227,7 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 7. setSamplers — custom sampler chain
+    // 6. setSamplers — custom sampler chain
     // ------------------------------------------------------------------
 
     /**
@@ -292,7 +250,7 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 8. MiroStat V2 — alternative sampler path
+    // 7. MiroStat V2 — alternative sampler path
     // ------------------------------------------------------------------
 
     /**
@@ -314,7 +272,7 @@ public class ChatAdvancedTest {
     }
 
     // ------------------------------------------------------------------
-    // 9. requestCompletion direct streaming (non-chat)
+    // 8. requestCompletion direct streaming (non-chat)
     // ------------------------------------------------------------------
 
     /**

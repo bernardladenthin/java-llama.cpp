@@ -566,6 +566,9 @@ if(BUILD_TESTING)
     # present in common/arg.cpp yet scoped away from the server example, and an unknown request key
     # is discarded without a word).
     include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract-java-wire-names.cmake)
+    file(GLOB JLLAMA_REQUEST_READER_SOURCES
+        ${llama.cpp_SOURCE_DIR}/tools/server/*.cpp
+        ${llama.cpp_SOURCE_DIR}/common/*.cpp)
     jllama_extract_java_wire_names(
         JAVA_SOURCES
             ${CMAKE_CURRENT_SOURCE_DIR}/src/main/java/net/ladenthin/llama/args/ModelFlag.java
@@ -582,6 +585,11 @@ if(BUILD_TESTING)
         DEFAULT_CONTRACT SCHEMA
         MIN_COUNT        30
         OUTPUT_HEADER    ${CMAKE_CURRENT_BINARY_DIR}/generated/jllama_java_request_fields.h
+        # An OAI_LAYER key never reaches make_llama_cmpl_schema, so the schema cannot vouch for
+        # it. Sweep the layer that does consume it instead -- globbed, not listed, so an upstream
+        # file split does not quietly narrow the corpus.
+        READER_CONTRACT  OAI_LAYER
+        READER_SOURCES   ${JLLAMA_REQUEST_READER_SOURCES}
     )
     jllama_extract_java_wire_names(
         JAVA_SOURCES

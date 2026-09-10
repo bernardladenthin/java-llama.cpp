@@ -29,14 +29,34 @@
 # previous version of this script scanned any string literal in code position across a 1900-line
 # builder and needed a comment-stripping heuristic to do it.
 #
+# THE EXEMPTION HOLE, AND WHY THERE IS A SECOND SCAN
+# --------------------------------------------------
+# A name that declares a contract the receiver above cannot answer for -- OAI_LAYER, consumed by
+# oaicompat_*_params_parse and the task layer before the schema ever sees the body -- was checked
+# only for *absence* from the schema. Absence is satisfied just as well by a name nothing reads at
+# all, so the exemption was a hole exactly the size of the problem the registry was built to close:
+# `chat_template` sat in it, written by a public builder method, read by nobody, discarded silently.
+#
+# There is no callable table to ask "which keys does this parser read", so the oracle here is a
+# *reader-shaped* sweep of the receiver's own source -- `json_value(x, "k", ...)`, `.contains("k")`,
+# `.at("k")` -- rather than a bare token grep. The shape is what makes it useful: `chat_template`
+# does occur as a literal upstream, in the `/props` payload the server *emits*, and a token grep
+# would have called it live. This is weaker evidence than driving the real receiver, so it proves
+# only "something reads this key from a body"; the C++ test says so where it asserts on it.
+#
 # Inputs : JAVA_SOURCES     - the registry .java files to scan
-#          ARRAY_PREFIX     - C identifier prefix; emits <P>_NAMES[], <P>_CONTRACTS[], <P>_COUNT
+#          ARRAY_PREFIX     - C identifier prefix; emits <P>_NAMES[], <P>_CONTRACTS[],
+#                             <P>_READERS[], <P>_COUNT
 #          DEFAULT_CONTRACT - contract for a constant that does not name one
 #          MIN_COUNT        - floor below which extraction is treated as broken
 #          OUTPUT_HEADER    - path of the header to write
+#          READER_CONTRACT  - optional: contract whose names get the reader sweep
+#          READER_SOURCES   - optional: receiver sources to sweep for those names
 
 function(jllama_extract_java_wire_names)
-    cmake_parse_arguments(ARG "" "ARRAY_PREFIX;DEFAULT_CONTRACT;MIN_COUNT;OUTPUT_HEADER" "JAVA_SOURCES" ${ARGN})
+    cmake_parse_arguments(ARG ""
+        "ARRAY_PREFIX;DEFAULT_CONTRACT;MIN_COUNT;OUTPUT_HEADER;READER_CONTRACT"
+        "JAVA_SOURCES;READER_SOURCES" ${ARGN})
 
     foreach(_required ARRAY_PREFIX DEFAULT_CONTRACT MIN_COUNT OUTPUT_HEADER JAVA_SOURCES)
         if(NOT ARG_${_required})
@@ -88,16 +108,55 @@ function(jllama_extract_java_wire_names)
             "sources moved")
     endif()
 
+    # Reader sweep. Concatenated once, then matched per name -- the receiver sources are read
+    # here and nowhere else, so a rename upstream shows up as an empty corpus, not as silence.
+    set(_reader_corpus "")
+    if(ARG_READER_CONTRACT)
+        if(NOT ARG_READER_SOURCES)
+            message(FATAL_ERROR
+                "jllama_extract_java_wire_names: READER_CONTRACT without READER_SOURCES")
+        endif()
+        foreach(_src IN LISTS ARG_READER_SOURCES)
+            if(NOT EXISTS "${_src}")
+                continue()
+            endif()
+            file(READ "${_src}" _content)
+            string(APPEND _reader_corpus "${_content}")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_src}")
+        endforeach()
+        string(LENGTH "${_reader_corpus}" _corpus_length)
+        if(_corpus_length EQUAL 0)
+            message(FATAL_ERROR
+                "jllama_extract_java_wire_names: ${ARG_ARRAY_PREFIX} reader sweep read nothing "
+                "from READER_SOURCES -- the receiver sources moved, and every scanned name would "
+                "otherwise report as unread")
+        endif()
+    endif()
+
     set(_name_body "")
     set(_contract_body "")
+    set(_reader_body "")
+    set(_swept 0)
     foreach(_name IN LISTS _names)
         string(APPEND _name_body "    \"${_name}\",\n")
+        set(_this_contract "")
         foreach(_pair IN LISTS _contracts)
             if(_pair MATCHES "^${_name}=(.*)$")
-                string(APPEND _contract_body "    \"${CMAKE_MATCH_1}\",\n")
+                set(_this_contract "${CMAKE_MATCH_1}")
+                string(APPEND _contract_body "    \"${_this_contract}\",\n")
                 break()
             endif()
         endforeach()
+        # -1 means "not swept", which is not the same as "swept and found nothing" (0).
+        set(_readers -1)
+        if(ARG_READER_CONTRACT AND _this_contract STREQUAL "${ARG_READER_CONTRACT}")
+            string(REGEX MATCHALL
+                "json_value\\([A-Za-z_.]+, *\"${_name}\"|\\.contains\\(\"${_name}\"\\)|\\.at\\(\"${_name}\"\\)"
+                _hits "${_reader_corpus}")
+            list(LENGTH _hits _readers)
+            math(EXPR _swept "${_swept} + 1")
+        endif()
+        string(APPEND _reader_body "    ${_readers},\n")
     endforeach()
 
     set(_header "// Generated by cmake/extract-java-wire-names.cmake -- DO NOT EDIT.\n")
@@ -105,6 +164,7 @@ function(jllama_extract_java_wire_names)
     string(APPEND _header "#pragma once\n\n")
     string(APPEND _header "static const char * const ${ARG_ARRAY_PREFIX}_NAMES[] = {\n${_name_body}};\n\n")
     string(APPEND _header "static const char * const ${ARG_ARRAY_PREFIX}_CONTRACTS[] = {\n${_contract_body}};\n\n")
+    string(APPEND _header "static const int ${ARG_ARRAY_PREFIX}_READERS[] = {\n${_reader_body}};\n\n")
     string(APPEND _header "static const int ${ARG_ARRAY_PREFIX}_COUNT = ${_count};\n")
 
     # Only rewrite when the content actually changed, so an unrelated re-configure does not
@@ -122,5 +182,10 @@ function(jllama_extract_java_wire_names)
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_src}")
     endforeach()
 
-    message(STATUS "jllama: extracted ${_count} ${ARG_ARRAY_PREFIX} names -> ${ARG_OUTPUT_HEADER}")
+    set(_swept_note "")
+    if(ARG_READER_CONTRACT)
+        set(_swept_note " (${_swept} swept for ${ARG_READER_CONTRACT} readers)")
+    endif()
+    message(STATUS
+        "jllama: extracted ${_count} ${ARG_ARRAY_PREFIX} names${_swept_note} -> ${ARG_OUTPUT_HEADER}")
 endfunction()

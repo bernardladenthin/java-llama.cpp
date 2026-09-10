@@ -142,6 +142,37 @@ TEST(JavaRequestFieldContract, OaiLayerKeysAreStillOutsideTheSchema) {
                                "missing, which would exempt nothing and check everything by luck";
 }
 
+// The other half of that exemption, and the half that was missing. Absence from the schema is
+// satisfied just as well by a key nothing reads at all, so the check above passed for
+// `chat_template` -- a public builder method writing a name whose only occurrence upstream was in
+// the `/props` payload the server *emits*. There is no callable table to ask which keys
+// oaicompat_*_params_parse reads, so the generator sweeps the receiver's own source for a reader
+// *shape* (`json_value(x, "k", ...)`, `.contains("k")`, `.at("k")`) and reports the hit count
+// here. That is weaker than driving the parser: it proves a key is read from some body, not that
+// this endpoint reads it. It is enough for the failure that actually occurred, which is a count of
+// zero.
+TEST(JavaRequestFieldContract, EveryOaiLayerKeyIsReadSomewhereUpstream) {
+    int swept = 0;
+    for (int i = 0; i < JLLAMA_JAVA_REQUEST_COUNT; ++i) {
+        if (!is_oai_layer(i)) {
+            EXPECT_EQ(JLLAMA_JAVA_REQUEST_READERS[i], -1)
+                << JLLAMA_JAVA_REQUEST_NAMES[i]
+                << " was swept although it is not OAI_LAYER -- the generator's contract filter and "
+                   "this test disagree about which names the sweep covers";
+            continue;
+        }
+        ++swept;
+        EXPECT_GT(JLLAMA_JAVA_REQUEST_READERS[i], 0)
+            << JLLAMA_JAVA_REQUEST_NAMES[i]
+            << " is declared OAI_LAYER but no upstream source reads it from a request body. The "
+               "schema discards it and the OAI layer never looks at it, so the builder method "
+               "writing it is a no-op -- delete the constant and its method rather than "
+               "re-labelling the contract";
+    }
+    EXPECT_GT(swept, 0) << "the sweep covered no key at all; READER_CONTRACT in CMakeLists.txt no "
+                           "longer matches any declared contract";
+}
+
 // The trainer contract. Both ends are ours, which makes it easy to assume it cannot drift -- but
 // the parser reads with `j.value(key, default)`, so a rename on either side turns a configured
 // knob into its default with no error, and LlamaTrainerIntegrationTest is gated on a system

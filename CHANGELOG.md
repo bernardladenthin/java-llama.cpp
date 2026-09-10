@@ -138,7 +138,50 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   follows upstream's rename rather than papering over it; keeping the old names would leave the API
   describing a flag that no longer exists.
 
+### Added
+- **Wire-name registries with a declared contract, checked in CI against the real receiver.** The
+  three surfaces that leave this library as names on a wire — CLI options, request keys, trainer
+  configuration keys — are now enum constants (`args.ModelOption` + `args.ModelFlag`,
+  `parameters.RequestField`, `parameters.TrainingField`), each declaring the contract it satisfies.
+  The parameter base classes accept nothing else, so an undeclared name cannot reach the wire at
+  all. CMake extracts the declarations at configure time and three C++ test files feed them to the
+  actual receivers — llama.cpp's server argument parser, its completion-request schema, and the
+  trainer's own key list — on **every** platform, which is the only place these can be checked: the
+  request schema and the trainer both ignore an unknown key silently. `WireNameRegistryTest` checks
+  the other direction, that every declared constant is still reachable from a public builder method.
+
+  This found the twelve dead names removed below. It also found one that a schema check alone could
+  not: a key exempted as "consumed by the OpenAI layer before the schema" is only proven *absent*
+  from the schema, which a key nothing reads at all satisfies equally well. That exemption now
+  additionally requires a reader upstream, and `chat_template` was the one key that had none.
+
 ### Removed
+- **Twelve builder methods that wrote a name no llama.cpp receiver reads — breaking, no
+  deprecation window.** Each one looked like configuration and behaved as a no-op, or worse:
+
+  | Removed | Why |
+  |---|---|
+  | `InferenceParameters.withTfsZ` | `tfs_z` — upstream deleted the tail-free sampler |
+  | `InferenceParameters.withPenalizeNl` | `penalize_nl` — deleted upstream |
+  | `InferenceParameters.withPenaltyPrompt(String)` / `(int...)` | `penalty_prompt` — deleted upstream |
+  | `InferenceParameters.withUseChatTemplate` | `use_jinja` is a **server start** flag, never a request key |
+  | `InferenceParameters.withChatTemplate` | `chat_template` is a **load-time** option; the server only ever *emits* that name, in `/props` |
+  | `ModelParameters.setGrpAttnN` / `setGrpAttnW` | `--grp-attn-n`/`-w` exist in `arg.cpp` but are `set_examples()`-scoped away from the server, so the parser rejects them |
+  | `ModelParameters.enableDumpKvCache` | `--dump-kv-cache` — deleted upstream |
+  | `ModelParameters.setHfRepoV` / `setHfFileV` | `--hf-repo-v`/`--hf-file-v` — deleted upstream |
+  | `ModelParameters.enableMlock` / `disableMmap` | `--mlock`/`--no-mmap` — deleted at b10878 in favour of `--load-mode` |
+
+  The two failure modes differ and neither was visible from Java. A dead **CLI** name is a hard parse
+  error, so `loadModel()` throws `"Failed to parse model parameters"` and the model does not load. A
+  dead **request** key is discarded by llama.cpp's schema without a word, so the parameter simply
+  stops having an effect. Either way the Java tests asserting the string mapping
+  (`hasKey("--mlock")`) stayed green. Replacements where one exists: `setLoadMode(LoadMode)` for the
+  last row, `ModelParameters.setChatTemplate(String)` for `withChatTemplate`, and `--jinja` at server
+  start for `withUseChatTemplate`.
+
+  Deprecating was considered and rejected for the same reason as `enableFlashAttn` below: a method
+  that keeps writing a name nothing reads is a trap with a warning label on it.
+
 - **`ModelParameters.enableFlashAttn()` and `ModelFlag.FLASH_ATTN` — breaking.** Both modelled
   `--flash-attn` as a valueless flag, which it has not been since b10273. Keeping either would leave
   the broken argv reachable: the method directly, the enum constant through the public
@@ -148,6 +191,20 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   llama.cpp misparses is a trap with a warning label on it, and this is a major-version window.
 
 ### Fixed
+- **A caller-supplied JSON fragment could inject sibling fields into a request body.**
+  `InferenceParameters` stored every value as a raw string and built the request by concatenating
+  `"key": value` pairs, so a fragment passed to `withJsonSchema` / `withResponseFormat` /
+  `withStreamOptions` / `withMessagesJson` / `withToolsJson` — anywhere a caller supplies JSON text —
+  could close its own object and append arbitrary keys. Duplicate keys resolve last-wins in the
+  native parser, so an injected `n_predict` or `grammar` silently beat the one the builder wrote.
+  The body is now built as a real JSON tree, and every stored value is parsed and required to be
+  **exactly one well-formed JSON value** at write time — a fragment with a trailing sibling is
+  rejected with the offending key named. `toString()` on a parameter object is now a redacted debug
+  view (keys only) and deliberately not valid JSON; use `toJson()` for the wire form.
+- **The Android "LLM Service" app applied its chat-template override per request**, where llama.cpp
+  discarded it. It is now set at model load (`ModelParameters.setChatTemplate`), which is where
+  upstream reads it. Only the `CHAT_TEMPLATE` test hook set it, so no shipped UI path changed
+  behaviour — but the on-device test was proving less than it looked.
 - **A test pinned the broken argv shape as correct.** `ModelParametersExtendedTest`'s
   complex-combination case asserted a 9-token argv built with `enableFlashAttn()` — i.e. it encoded
   the valueless emission as the expected contract, which is why no gate ever flagged it. It now uses

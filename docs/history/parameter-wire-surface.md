@@ -10,13 +10,14 @@ This library sends names on three wires — CLI options in the argv that loads a
 completion request, and JSON keys in a fine-tuning configuration. For most of its recorded history
 nothing checked any of them against the code that reads them.
 
-This file records the measurements behind the four-commit rework that changed that, so a later reader
-does not have to re-derive them. Every number here was produced by running something, not by reading
+This file records the measurements behind the rework that changed that, so a later reader does not
+have to re-derive them. Every number here was produced by running something, not by reading
 code; the commands are given so they can be re-run.
 
 ## 1. Eleven names were dead, and most of them were born that way
 
-The rework deleted eleven wire names. The interesting part is not that they were dead — it is **when**
+The rework deleted eleven wire names in its first pass (a twelfth, `chat_template`, was found later by
+the guard itself — see section 5a). The interesting part is not that they were dead — it is **when**
 they died.
 
 This repository's recorded history starts at commit `38f00b2`, which has **no parent**: the tree was
@@ -169,13 +170,63 @@ now goes through a `jllama_train::keys` constant per field and `config_keys()` r
 constants, so a changed spelling moves both at once, and `JavaTrainingFieldContract` asserts the Java
 registry and the engine list are equal in both directions.
 
+## 5a. The exemption that proved a key dead, one commit after it was written
+
+Section 4's `OAI_LAYER` contract says: this key is consumed by `oaicompat_*_params_parse` or the task
+layer before `make_llama_cmpl_schema` ever sees the body, so do not expect the schema to know it. The
+test asserted exactly that — the key is **not** in the schema — with the inverted-check reasoning in
+rule 3: an exemption cannot rot by outliving its constant, only by upstream later adopting the name.
+
+That reasoning was incomplete. Absence from the schema is satisfied equally well by a key **nothing
+reads at all**, so the exemption was a hole exactly the size of the problem the registry was built to
+close. `chat_template` sat in it: a public `InferenceParameters.withChatTemplate`, writing a key that
+appears in upstream sources only where the server *emits* it, in the `/props` payload.
+
+It could not be closed by driving the parser, because the eleven keys have three different consumers
+(`oaicompat_chat_params_parse`, the completion/task layer, and `server-context.cpp`'s infill path) and
+two of them need a live `server_context`. The oracle chosen instead is a **reader-shaped** sweep of the
+receiver's own sources, run at configure time by the same generator:
+
+```bash
+# what the generator does, per OAI_LAYER key, over tools/server/*.cpp + common/*.cpp
+grep -rEn 'json_value\([A-Za-z_.]+, *"<key>"|\.contains\("<key>"\)|\.at\("<key>"\)'
+```
+
+The *shape* is the whole point. `chat_template` does occur as a bare literal upstream, so a token grep
+would have called it live; requiring it to appear in a position that reads it from a body does not.
+Measured at b10883:
+
+| key | readers | key | readers |
+|---|---|---|---|
+| `chat_template` | **0** | `parallel_tool_calls` | 1 |
+| `chat_template_kwargs` | 1 | `prompt` | 8 |
+| `id_slot` | 1 | `response_format` | 3 |
+| `input_prefix` | 2 | `tool_choice` | 3 |
+| `input_suffix` | 2 | `tools` | 9 |
+| `messages` | 4 | | |
+
+`JavaRequestFieldContract.EveryOaiLayerKeyIsReadSomewhereUpstream` fails on a count of zero, naming the
+key and the remedy. Run against the tree that declared `chat_template`, that is exactly what it printed;
+the constant and its builder method were then deleted under rule 2 (a name with no counterpart is
+deleted, never deprecated).
+
+One consumer was affected: the Android "LLM Service" app passed its chat-template override per request,
+where llama.cpp discarded it. It now sets it at load time via `ModelParameters.setChatTemplate`. Two
+tests had also pinned the dead key — a `ChatAdvancedTest` case asserting only that `applyTemplate` did
+not throw (its own Javadoc explained the missing behavioural assertion with the wrong cause: the model's
+built-in template winning, rather than the field never being read), and an `InferenceParametersTest`
+case asserting the string mapping. Both were deleted with the method. This is the same shape as every
+other entry in section 1: a green test pinning the mapping, never the contract.
+
 ## 6. What this does not cover
 
 - The **failure path** of a dead name is still only checkable by the receiver's own tables. If
   upstream stops populating one of those tables, the guard degrades to a vacuous pass — which is why
   each test also asserts its oracle is populated before trusting its verdict.
-- `test_wire_contracts.cpp` checks the request schema, not the OAI/task layer above it. An
-  `OAI_LAYER`-declared key is checked only for *absence* from the schema; that it is genuinely read
-  by `oaicompat_*_params_parse` is documented, not asserted.
+- `test_wire_contracts.cpp` checks the request schema, not the OAI/task layer above it. The
+  `OAI_LAYER` exemption is now checked from both sides — absent from the schema, and read by
+  *something* upstream (section 5a) — but the reader sweep is a source pattern, not the parser. It
+  proves a key is read from some request body; it does not prove *this* endpoint reads it, nor that
+  it is read with the meaning the builder method documents.
 - The **Java↔C++ trainer contract** is guarded; the C++↔C++ pairing inside `train_engine.cpp` rests on
   both sides being written against the same `keys` constants, not on a test.

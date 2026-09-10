@@ -302,6 +302,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     .setCtxSize(config.contextSize)
                     .setThreads(config.threads)
                     .setGpuLayers(0) // CPU-only: portable across every device
+                // The chat template is a LOAD-time option. It used to be passed per request via
+                // InferenceParameters.withChatTemplate, which llama.cpp's request schema discarded
+                // without a word -- the MODEL_PATH/CHAT_TEMPLATE test hook silently had no effect.
+                if (template != null) {
+                    parameters.setChatTemplate(template)
+                }
                 if (mmproj != null) {
                     // Mirrors the CPU-only + mmproj config validated by MultimodalIntegrationTest:
                     // no GPU device selection, no mmproj offload attempt.
@@ -397,7 +403,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 .withMinP(s.minP)
                 .withRepeatPenalty(s.repeatPenalty)
                 .withRepeatLastN(s.repeatLastN)
-            chatTemplate?.let { params = params.withChatTemplate(it) }
 
             log("Generating (temp=${s.temperature}, repeat=${s.repeatPenalty}/${s.repeatLastN}, maxTokens=${s.maxTokens})")
             val reply = StringBuilder()

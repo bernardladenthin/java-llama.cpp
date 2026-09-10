@@ -12,7 +12,7 @@ package net.ladenthin.llama.parameters;
  * the point is a closed set, not an escape hatch — a new key is added by declaring a constant with
  * the contract it satisfies, which is what makes it visible to the guard.
  *
- * <p>Read at configure time by {@code cmake/extract-java-cli-flags.cmake} and checked against
+ * <p>Read at configure time by {@code cmake/extract-java-wire-names.cmake} and checked against
  * llama.cpp's own request-schema field table by the C++ test suite.
  *
  * @see RequestContract
@@ -21,9 +21,6 @@ enum RequestField {
 
     /** Request key {@code cache_prompt}. */
     CACHE_PROMPT("cache_prompt"),
-
-    /** Request key {@code chat_template}, consumed by the OAI/task layer. */
-    CHAT_TEMPLATE("chat_template", RequestContract.OAI_LAYER),
 
     /** Request key {@code chat_template_kwargs}, consumed by the OAI/task layer. */
     CHAT_TEMPLATE_KWARGS("chat_template_kwargs", RequestContract.OAI_LAYER),
