@@ -140,9 +140,9 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
     `format_log_as_json` — so the two would overlap and could contradict each other on the same
     stream. Deciding which layer owns the format is a **feature decision**, not a correctness fix,
     and needs its own change with its own tests.
-  - **`--spec-synth-len` and `--spec-synth-rates`** — upstream's own help text marks both as
-    benchmarking-only knobs for synthetic speculative-decoding measurements. No consumer use case
-    here; listed so a future audit does not re-discover them as an oversight.
+  - **`--spec-synth-len` and `--spec-synth-rates`** — a documented non-goal, not deferred work. The
+    reasoning lives in its own entry below (**"deliberately NOT exposed, and this should stay that
+    way"**); it is not repeated here.
 
   Nothing is broken by leaving these out: `NativeServer` forwards raw llama-server argv verbatim, so
   all three remain reachable that way. The gap is only in the typed `ModelParameters` surface.
@@ -202,6 +202,12 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
   knob for an application, and exposing them as library API would invite callers to "tune" numbers
   that fabricate rather than measure acceptance. Anyone who genuinely wants them already has them:
   `NativeServer` forwards raw llama-server argv verbatim.
+
+  **This is the single record for these two flags.** The b10878 flag audit (entry above) swept them up
+  again as "upstream options the Java API does not expose" and briefly carried its own copy of the
+  reasoning; that copy is now a pointer here. An audit re-finding them is expected and is not a signal
+  to reopen the decision — the audit answers "is this name reachable from Java", which is a different
+  question from "should it be".
 
 - **Expose `--spec-draft-backend-sampling` toggle via `ModelParameters.setSpecDraftBackendSampling(boolean)`.** Added in b9437 (env `LLAMA_ARG_SPEC_DRAFT_BACKEND_SAMPLING`). Backend sampling for the speculative draft is enabled by default upstream but auto-disabled on `LLAMA_SPLIT_MODE_TENSOR` setups; an explicit Java-side setter lets callers force-disable it for benchmarking or for backends with sampler bugs. Speculative-decoding power users.
 
