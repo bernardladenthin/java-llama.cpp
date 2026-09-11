@@ -52,9 +52,11 @@ public final class LlamaIterator implements Iterator<LlamaOutput>, AutoCloseable
         // is not mutated — InferenceParameters is immutable and withStream returns a
         // new instance with the flag set.
         InferenceParameters streamingParams = parameters.withStream(true);
+        // toJson(), never toString(): toString() is the redacted debug view and is deliberately
+        // not valid JSON, so passing it here would send the native parser a body it rejects.
         taskId = chat
-                ? model.requestChatCompletion(streamingParams.toString())
-                : model.requestCompletion(streamingParams.toString());
+                ? model.requestChatCompletion(streamingParams.toJson())
+                : model.requestCompletion(streamingParams.toJson());
     }
 
     @Override

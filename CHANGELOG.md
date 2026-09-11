@@ -191,6 +191,21 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   llama.cpp misparses is a trap with a warning label on it, and this is a major-version window.
 
 ### Fixed
+- **Every streaming generation sent the native parser an unparseable body.** Splitting the parameter
+  object's single renderer into `toJson()` (the wire form) and `toString()` (a redacted debug view,
+  deliberately not valid JSON) turned every surviving `toString()` payload call site into a silent
+  trap. Six were repointed; `LlamaIterator` was missed, so `generate()`, `generateChat()`, the
+  `LlamaIterable` paths and the Kotlin `generateFlow` / `generateChatFlow` all shipped
+  `InferenceParameters{keys=[…], values=redacted}` where a request body belonged. It is caught by an
+  ArchUnit rule now — no class outside the `parameters` package may call a parameter object's
+  `toString()` at all — and the stale class javadoc that described `toString` as "consumed by the
+  native server" is corrected.
+
+  Nothing local could see it: every test that exercises streaming is model-gated and self-skips
+  without a GGUF, so a green `mvn test` with 269 skips said nothing about it. It surfaced on the
+  first full-matrix CI run, on all five model-backed test jobs at once — which is the behaviour the
+  redacted form was designed for, an unparseable body failing loudly at the parser rather than a
+  plausible-looking one succeeding with different values.
 - **A caller-supplied JSON fragment could inject sibling fields into a request body.**
   `InferenceParameters` stored every value as a raw string and built the request by concatenating
   `"key": value` pairs, so a fragment passed to `withJsonSchema` / `withResponseFormat` /

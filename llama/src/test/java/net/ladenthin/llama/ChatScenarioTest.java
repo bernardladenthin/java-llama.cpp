@@ -193,7 +193,7 @@ public class ChatScenarioTest {
                 .withTemperature(0.0f)
                 .withStream(true);
 
-        int taskId = model.requestChatCompletion(params.toString());
+        int taskId = model.requestChatCompletion(params.toJson());
 
         StringBuilder sb = new StringBuilder();
         int tokens = 0;
