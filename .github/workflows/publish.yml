@@ -795,6 +795,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-s390x-linux-gnu g++-s390x-linux-gnu qemu-user-static
+      # NOTE: GGML_NATIVE=OFF is required here (an x86 build host must not bake -march=native into an
+      # s390x artifact), and it has a non-obvious second effect: ggml declares
+      # `option(GGML_VXE "ggml: enable vxe" ${GGML_NATIVE})`, so VXE is off too. No `-mvx -mzvector` is
+      # passed, `__VEC__` stays undefined, and ggml-cpu-impl.h's `#if defined(__s390x__) && defined(__VEC__)`
+      # never self-defines `__VXE__`/`__VXE2__`. This job therefore builds a SCALAR s390x binary -- which is
+      # exactly right for what it is (a big-endian correctness gate for our own layer, not a perf target).
+      # Do NOT "fix" a VXE-related compile error by adding -DGGML_VXE=ON: that define sets __VXE__ and
+      # __VXE2__ together while -march stays at the toolchain default arch11, so every z14+ builtin is
+      # rejected. See the patches/0013 row in CLAUDE.md for the measured comparison.
       - name: Build libraries (cross-compile s390x)
         shell: bash
         run: |
