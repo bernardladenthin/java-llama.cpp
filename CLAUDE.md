@@ -213,7 +213,7 @@ Wiring (mirrors the CUDA-Linux / OpenCL-Android classifier pattern):
    (`OpenCL.lib`), then delegates to `build.bat` with `-DOpenCL_INCLUDE_DIR`/`-DOpenCL_LIBRARY`
    (the Windows analogue of `build_opencl_android.sh`).
 4. **`.github/workflows/publish.yml`** — build jobs (all `windows-2025-vs2026`, `ilammy/msvc-dev-cmd@v1`,
-   sccache v0.16.0 zip + Depot WebDAV):
+   sccache v0.18.0 zip + Depot WebDAV):
    - `build-windows-x86_64` / `build-windows-x86` — **Ninja CPU**, artifacts `Windows-{arch}-libraries`
      → picked up by the `package` job's `pattern: "*-libraries"` into the **default** tree.
    - `build-windows-x86_64-msvc` / `build-windows-x86-msvc` — **MSVC CPU**, artifacts `Windows-{arch}-msvc`.
@@ -638,7 +638,7 @@ v0.16.0 + the probe this is no longer a risk.) Job-by-job status:
 Per-job recipe: add `env:` { `USE_CACHE`, `SCCACHE_WEBDAV_ENDPOINT`, `SCCACHE_WEBDAV_TOKEN` } and
 `DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"` — the
 dockcross wrapper only forwards host env it is explicitly told to via `-e`. The fetched sccache
-version is the `SCCACHE_DL_VERSION` knob in `build.sh` (default **0.16.0**; overridable per-job
+version is the `SCCACHE_DL_VERSION` knob in `build.sh` (default **0.18.0**; overridable per-job
 to try a different build against a container that crashed another). **Windows** is handled
 separately (the Visual Studio generator ignores `CMAKE_*_COMPILER_LAUNCHER`): see
 "Windows native classifiers" below — the **default** Windows CPU JAR now uses the **Ninja
@@ -1187,12 +1187,12 @@ not track the loader's own Java package). This is the same
 ### Code Formatting
 
 C++ formatting is **enforced in CI** (`.github/workflows/clang-format.yml`) with a **pinned**
-clang-format — currently **22.1.8**, installed via `pip install clang-format==22.1.8`. Format with
+clang-format — currently **23.1.1**, installed via `pip install clang-format==23.1.1`. Format with
 that exact version before committing; a different clang-format version reflows code differently and
 will fail the check.
 
 ```bash
-pip install "clang-format==22.1.8"
+pip install "clang-format==23.1.1"
 clang-format -i src/main/cpp/*.cpp src/main/cpp/*.hpp src/test/cpp/*.cpp   # Format C++ code
 ```
 
@@ -1604,7 +1604,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11062`.
 
-**GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.17.0`), used solely
+**GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
 llama.cpp pin or the bundled nlohmann/json. There is **no constraint behind the exact tag**; it
 is just the latest stable at the time it was last touched. Bump it from time to time (nothing
@@ -2128,16 +2128,16 @@ compiles/loads the API); this one has a UI and is driven end-to-end. The name is
 domain is the only string that must be globally unique.
 
 Structure (mirrors the consumer-test's plumbing):
-- **`settings.gradle.kts`** — `rootProject.name = "android-llmservice"`; pins AGP `9.3.0` + the
+- **`settings.gradle.kts`** — `rootProject.name = "android-llmservice"`; pins AGP `9.4.0` + the
   Compose compiler plugin (`2.4.10`); `mavenLocal()` first so the freshly-built AAR + façade
   resolve there in CI (Maven Central for real users). Stay at `>= 9.2.1`: `9.2.1` (not `9.2.0`)
   first fixed a real R8 regression (`ClassNotFoundException` on `com.android.tools.r8.RecordTag`
   after upgrading Gradle to 9.x with AGP 9.2.0) that hits this project directly since
-  `buildTypes.release` sets `isMinifyEnabled = true`; `9.3.0` carries that fix forward and the
-  `.github/android-consumer-test` fixture is pinned the same way. AGP 9.3.x requires Gradle >= 9.5.0
+  `buildTypes.release` sets `isMinifyEnabled = true`; `9.4.0` carries that fix forward and the
+  `.github/android-consumer-test` fixture is pinned the same way. AGP 9.4.x requires Gradle >= 9.6.0
   and JDK 17+; CI already runs JDK 21 everywhere (`env.JAVA_VERSION`), so only the `gradle-version`
   pin on the jobs that build this project (and the `.github/android-consumer-test` fixture)
-  needed bumping (9.4.1 → 9.5.0). AGP 9.0+ has **built-in Kotlin support** (a runtime dependency on
+  needed bumping (currently `9.7.1`). AGP 9.0+ has **built-in Kotlin support** (a runtime dependency on
   Kotlin Gradle plugin 2.2.10+), so the standalone `org.jetbrains.kotlin.android` plugin is no longer
   applied — applying it now fails the build with "no longer required for Kotlin support since
   AGP 9.0" (`app/build.gradle.kts` line 7). The Compose compiler plugin still applies
