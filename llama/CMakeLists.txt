@@ -550,7 +550,7 @@ if(BUILD_TESTING)
         # No constraint behind this exact tag — GoogleTest is only used by this repo's own
         # C++ unit tests (jllama_test), not by the shipped library and not tied to llama.cpp.
         # It is just "latest stable at the time"; bump it from time to time (see CLAUDE.md).
-        GIT_TAG        v1.17.0
+        GIT_TAG        v1.18.0
     )
     # Keep GTest on the same CRT as the rest of the project.
     # OFF means GTest respects CMAKE_MSVC_RUNTIME_LIBRARY (static /MT here).

@@ -33,9 +33,9 @@ fi
 #
 # SCCACHE_DL_VERSION is overridable per-job, so a container that crashes one sccache build can
 # try another without editing this script (the in-container panic that stalled phase 2 was on
-# v0.8.2; v0.16.0 is the latest release and the default). A wrong/unavailable version just fails
+# v0.8.2; v0.18.0 is the latest release and the default). A wrong/unavailable version just fails
 # the `curl -f` and falls back to an uncached build, so bumping it can never red a build.
-SCCACHE_DL_VERSION="${SCCACHE_DL_VERSION:-0.16.0}"
+SCCACHE_DL_VERSION="${SCCACHE_DL_VERSION:-0.18.0}"
 case "$(uname -m)" in
   x86_64)        SCCACHE_DL_ARCH="x86_64" ;;
   aarch64|arm64) SCCACHE_DL_ARCH="aarch64" ;;
