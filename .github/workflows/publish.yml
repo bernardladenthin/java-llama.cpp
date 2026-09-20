@@ -2162,15 +2162,22 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
-      - name: Install OpenCL dev + Intel OpenVINO 2026.2.1 (archive)
+      - name: Install OpenCL dev + Intel OpenVINO 2026.4 (archive)
         run: |
           # Intel's OpenVINO APT repo only publishes up to ~2025 (the /openvino/2026 path 404s), and
           # 2025.x has the older ov::Allocator API that breaks ggml-openvino's template compile. So use
-          # the ARCHIVE for 2026.2.1 — exactly what upstream llama.cpp's linux-setup-openvino action does.
+          # the ARCHIVE — exactly what upstream llama.cpp's linux-setup-openvino action does, from the
+          # same URL template.
+          #
+          # KEEP IN SYNC WITH UPSTREAM. The version tracks llama.cpp's own OPENVINO_VERSION_MAJOR /
+          # OPENVINO_VERSION_FULL (.github/workflows/release.yml at the pinned GIT_TAG); ggml-openvino
+          # is developed against that pair, so lagging it is what eventually breaks the compile. Both
+          # OpenVINO jobs here (Linux + Windows) use the same two values — bump them together:
+          #   major = 2026.4   full = 2026.4.0.22959.99c81491cc3
           # OpenCL headers (incl. the C++ CL/cl2.hpp via opencl-clhpp-headers) come from Ubuntu's own repos.
           sudo apt-get update
           sudo apt-get install -y ocl-icd-opencl-dev opencl-headers opencl-clhpp-headers intel-opencl-icd
-          url="https://storage.openvinotoolkit.org/repositories/openvino/packages/2026.2.1/linux/openvino_toolkit_ubuntu24_2026.2.1.21919.ede283a88e3_x86_64.tgz"
+          url="https://storage.openvinotoolkit.org/repositories/openvino/packages/2026.4/linux/openvino_toolkit_ubuntu24_2026.4.0.22959.99c81491cc3_x86_64.tgz"
           sudo mkdir -p /opt/intel/openvino
           curl -fSL "$url" | sudo tar -xz --strip-components=1 -C /opt/intel/openvino
           echo "OpenVINO_DIR=/opt/intel/openvino/runtime/cmake" >> "$GITHUB_ENV"
@@ -2202,14 +2209,16 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Install OpenCL headers (vcpkg) + Intel OpenVINO 2026.2.1
+      - name: Install OpenCL headers (vcpkg) + Intel OpenVINO 2026.4
         shell: pwsh
         # vcpkg's opencl port ships the full C++ headers incl. CL/cl2.hpp that OpenVINO's
         # ocl_wrapper.hpp needs (the Khronos OpenCL-Headers dropped cl2.hpp) — same as upstream
-        # llama.cpp's windows-openvino job. OpenVINO 2026.2.1 matches ggml-openvino's target API.
+        # llama.cpp's windows-openvino job. OpenVINO 2026.4 matches ggml-openvino's target API.
+        # Keep the version in sync with the Linux OpenVINO job above (and with upstream's
+        # OPENVINO_VERSION_MAJOR / OPENVINO_VERSION_FULL) — see the note there.
         run: |
           C:\vcpkg\vcpkg install opencl:x64-windows
-          $url = "https://storage.openvinotoolkit.org/repositories/openvino/packages/2026.2.1/windows/openvino_toolkit_windows_2026.2.1.21919.ede283a88e3_x86_64.zip"
+          $url = "https://storage.openvinotoolkit.org/repositories/openvino/packages/2026.4/windows/openvino_toolkit_windows_2026.4.0.22959.99c81491cc3_x86_64.zip"
           Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\openvino.zip"
           Expand-Archive -Path "$env:RUNNER_TEMP\openvino.zip" -DestinationPath "C:\openvino" -Force
           # The archive extracts into a nested versioned folder; point OpenVINO_DIR at its runtime/cmake.
