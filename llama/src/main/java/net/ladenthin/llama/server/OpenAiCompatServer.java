@@ -161,14 +161,15 @@ public final class OpenAiCompatServer implements AutoCloseable {
     }
 
     /**
-     * Create a server backed by an arbitrary {@link OpenAiBackend}. Used by tests to drive the full HTTP
-     * surface without a native library or model.
+     * Create a server backed by an arbitrary {@link OpenAiBackend}. Used by tests — this module's and
+     * sibling modules' (see {@code llama-atmosphere-agent}) — to drive the full HTTP surface without a
+     * native library or model.
      *
      * @param backend the inference engine seam
      * @param config the server configuration
      * @throws IOException if the listening socket cannot be bound
      */
-    OpenAiCompatServer(OpenAiBackend backend, OpenAiServerConfig config) throws IOException {
+    public OpenAiCompatServer(OpenAiBackend backend, OpenAiServerConfig config) throws IOException {
         this.config = config;
         this.backend = backend;
         this.requestExecutor = Executors.newCachedThreadPool(namedFactory("jllama-openai-http"));

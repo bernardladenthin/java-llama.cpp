@@ -17,6 +17,32 @@ so everything below is genuinely still open.
 
 ## Open — jllama-specific
 
+### Atmosphere coding agent (`llama-atmosphere-agent/`) — follow-ups
+
+The headless loop is verified (see CLAUDE.md "Local coding agent with Atmosphere"). Still open:
+
+- **First model-backed CI run.** `test-java-llama-atmosphere-agent-integration` was added without a
+  run on GitHub's runners; the three assertions are about the loop (tool invoked, result answered,
+  file changed), but a 1.5B model on a CPU runner may still need a prompt or budget tweak. Read its
+  first run before trusting it as a signal.
+- **Tool rounds are not carried across REPL turns** — only `user`/`assistant` text is replayed, so a
+  second question cannot refer to a tool result of the first. Keep the full Atmosphere
+  `ChatMessage` list (incl. `tool_calls`/`tool` messages) per turn instead.
+- **Approval for destructive tools.** `write_file`/`delete`/`run_command` run unasked. Atmosphere's
+  `ToolDefinition.requiresApproval` + an `ApprovalStrategy` on the context would give a Claude-Code
+  style "allow this?" prompt on the console.
+- **In-stream engine errors are swallowed by Atmosphere** (pinned in
+  `AtmosphereWireContractTest.midStreamEngineFailureCompletesSilentlyRatherThanErroring`): an SSE
+  `data: {"error":…}` after HTTP 200 is ignored by `OpenAiCompatibleClient.processSSELine` (it reads
+  only `choices[0]`). Worth an upstream PR to Atmosphere; until then the console shows an empty turn.
+- **Spring Boot `@Agent` variant** (WebSocket/SSE UI via `atmosphere-ai-spring-boot-starter` and
+  `LLM_BASE_URL`) is expected to work on the same runtime but is not CI-covered; a smoke that boots
+  the starter against the scripted `OpenAiCompatServer` would close that.
+- **Anthropic Messages surface.** The server also speaks `/v1/messages`; the Anthropic adapter
+  (`org.atmosphere:atmosphere-anthropic`) was not tested against it.
+- **Model recommendation table** for the agent (which local GGUFs actually complete an
+  edit→build→test loop) — needs a GPU host, not CI.
+
 ### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
 
 Left over from the 2026-06-20 code audit (18/18 findings fixed in PRs #258/#260, regression tests in

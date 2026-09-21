@@ -15,7 +15,7 @@ import java.io.IOException;
  * failure propagate so the in-flight generation can be cancelled.
  */
 @FunctionalInterface
-interface ChunkSink {
+public interface ChunkSink {
 
     /**
      * Accept one streaming chunk's JSON text.

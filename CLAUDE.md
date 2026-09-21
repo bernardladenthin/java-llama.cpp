@@ -1996,7 +1996,9 @@ snippet was exactly the one forgotten on the `5.0.4 → 5.0.5` bump; it is liste
 missed again.)
 
 - **`README.md`** (root) — the install snippet, the two classifier-example snippets (default + the
-  `<classifier>` template), and the `llama-langchain4j` snippet. The Maven Central **badge**
+  `<classifier>` template), and the `llama-langchain4j` snippet.
+- **`llama-atmosphere-agent/pom.xml`** — the `llama.version` property default (standalone project,
+  outside the reactor, so `versions:set` skips it). The Maven Central **badge**
   auto-pulls the latest released version, so leave it. The **`-SNAPSHOT` line** in the "Snapshot
   builds" section documents the snapshot channel — set it to the *next* dev version, not the release.
   (The per-classifier snippets were **deduplicated** to a single canonical + template pair, so the
@@ -2131,6 +2133,68 @@ Both publish jobs `need` these jobs (fail-loud release gating) and publish the A
 snapshots to the Central snapshots repo (`publishAllPublicationsToCentralSnapshotsRepository`),
 releases as a signed Central Portal bundle upload (staging repo → zip → Publisher API).
 `llama-kotlin` rides the normal reactor `mvn -P release deploy`.
+
+## Local coding agent with Atmosphere (`llama-atmosphere-agent/`, standalone)
+
+A **copy-and-run terminal coding agent** (Claude Code / OpenCode reduced to the essentials, offline)
+that pairs [Atmosphere](https://github.com/Atmosphere/atmosphere)'s built-in OpenAI-compatible
+agent runtime with this project's `OpenAiCompatServer`. Like `android-llmservice/` it is a
+**standalone Maven project, NOT a reactor module and NOT published** — it is an application, and it
+needs Java 21 (Atmosphere's floor) while the core stays Java 8. CI builds it against the core it just
+installed (`-Dllama.version=<reactor version>`); a user copies the folder, sets a released
+`llama.version`, and runs `mvn compile exec:java -Dexec.args="…"`.
+
+**What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.70) ships
+`BuiltInAgentRuntime` + `OpenAiCompatibleClient`: a zero-framework OpenAI client that *always*
+streams (`stream:true`), accumulates `delta.tool_calls` by `index`, executes `ToolDefinition`
+executors, re-submits the conversation (assistant `tool_calls` message **without** a `content` key,
+then one `role:"tool"` message per call with `tool_call_id` + `name`), and loops until
+`finish_reason` is not `tool_calls`. It reads `LLM_BASE_URL`/`LLM_MODEL`/`LLM_API_KEY` or takes
+`AiConfig.configure(mode, model, apiKey, baseUrl)`; `GET /models` is best-effort; the Responses API
+is used only when the base URL contains `api.openai.com`; `tool_choice`/`parallel_tool_calls`/
+`response_format` are not sent. It runs headless — `runtime.execute(AgentExecutionContext,
+StreamingSession)` — so no Spring Boot, servlet container or `@Agent` scanning is involved; its
+built-in `FileSystemTools` resolve the `AgentFileSystem` from `StreamingSession.injectables()`,
+which is how the tools are confined to a workspace. The `@Agent`/`@AiTool` annotations and the
+Spring Boot starter are a deployment layer on top of the same runtime.
+
+**Verified compatibility (verdict A — works unchanged).** Two test layers, both in the project:
+
+- `AtmosphereWireContractTest` + `LocalAgentTest` — **model-free, every PR, seconds**: the *real*
+  `OpenAiCompatServer` (routing, bearer auth, `/v1/models`, SSE framing) over a loopback socket with
+  a `ScriptedBackend` replaying llama.cpp-shaped chunks (role delta, `tool_calls` deltas with
+  `index`/`id`/`name` and fragmented `arguments`, `finish_reason:"tool_calls"`). Pins: one tool
+  round; four rounds incl. a parallel pair with interleaved fragments and the whole history kept;
+  chunk-by-chunk streaming and history replay; `temperature`/`max_tokens` on the wire; 401 on a
+  wrong key before the backend is reached; and the **one known gap** — an engine failure *after* the
+  stream started is an SSE `data: {"error":…}` under HTTP 200 (upstream llama-server does the same),
+  which Atmosphere's parser ignores (it reads only `choices[0]`), so the turn completes with the
+  text so far instead of erroring. That is a SHOULD for Atmosphere's `OpenAiCompatibleClient`, not
+  for this project.
+- `AtmosphereToolLoopIntegrationTest` — **model-backed, CI only** (`test-java-llama-atmosphere-agent-integration`,
+  validation-only, not a publish gate): the same loop against the cached Qwen2.5-1.5B tool model
+  through the downloaded Linux natives — plain chat, streaming (≥ 2 chunks), a tool call whose result
+  is answered, a read→write→read loop that changes a temp file. Self-skips without the GGUF.
+
+**The one core change this needed:** `OpenAiBackend`, `ChunkSink` and
+`OpenAiCompatServer(OpenAiBackend, OpenAiServerConfig)` are now **public** (they were the
+package-private test seam). A sibling module cannot otherwise drive the real server without a model;
+the alternative — a same-named package in the sibling's test tree — is a split package that breaks
+the moment anything runs on the module path.
+
+**Layout.** `AgentOptions` (CLI parsing, pure), `AgentRunner` (the whole Atmosphere wiring, ~40
+lines: `AiConfig.configure` → `BuiltInAgentRuntime` → `AgentExecutionContext` + `ToolLoopPolicies`),
+`ConsoleSession` (streams to stdout, prints `⚙ tool {args}` / `↳ result`, supplies the
+`WorkspaceAgentFileSystem` via `injectables()`), `ShellTool` (opt-in `run_command`, `sh -c` /
+`cmd /c` in the workspace, timeout kills the process tree, output tail-truncated), `LocalAgent`
+(`--base-url` = external server, `--model` = in-process `LlamaModel` + loopback `OpenAiCompatServer`
+with `enableJinja()`, one-shot `--prompt` or a `you>` REPL with `/clear` `/exit`). Spotless (palantir)
+is configured in its own pom; the model-free CI job runs `spotless:check`.
+
+**Version bump note.** The pom's `llama.version` property defaults to the current reactor version
+(CI always overrides it). `versions:set` does not touch this standalone pom, so bump the default by
+hand together with the two README snippets (`README.md` "Local coding agent" + the project's own
+README) — the same class as the `llama-langchain4j/README.md` snippet.
 
 ## Android app "LLM Service" (`android-llmservice/`)
 

@@ -19,8 +19,13 @@ import java.io.IOException;
  * handler) and returns the OpenAI-shaped response JSON, except {@link #stream} which delivers chunks
  * incrementally. The {@code GET /v1/models} response is built from configuration alone and so is not
  * part of this seam.
+ *
+ * <p>Public so that sibling modules can drive the real HTTP surface with a scripted backend — the
+ * {@code llama-atmosphere-agent} wire-contract tests replay llama.cpp-shaped
+ * {@code chat.completion.chunk} sequences through {@link OpenAiCompatServer} to prove an OpenAI client's
+ * tool-calling loop end to end without a model.
  */
-interface OpenAiBackend {
+public interface OpenAiBackend {
 
     /**
      * Return llama.cpp server metrics, including per-slot cache counters.
