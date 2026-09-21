@@ -139,7 +139,7 @@ workflow in `.github/workflows/`). It contributes to the `mergeable_state: block
 
 ### Upstream PR submissions — drop the carried patches (open)
 
-There are **nine** patches today (`0001`–`0003`, `0006`–`0008`, `0010`–`0012`). **Eight are
+There are **eight** patches today (`0001`–`0003`, `0006`–`0008`, `0012`, `0014`). **Seven are
 upstream-submittable verbatim**; each accepted PR (once the pin is bumped past it) deletes a patch
 from the bump checklist. The exception is **`0003`**, a carry of upstream PR #22393, which upstream
 **closed without merging** — it is permanent and will never be droppable via a bump. (`0003` used to
@@ -158,13 +158,13 @@ be described here as "drops automatically when that merges"; it will not.)
 - **`0007` `llama_server_attach`** (HTTP frontend on an existing `server_context`).
 - **`0008` `LLAMA_SERVER_WORKER_CMD` router worker override** (also useful for containerized/wrapped
   deployments).
-- **`0010` cast `vocab_type` for `common_json`** (one line; upstream regressed `GET /models` +
-  `GET /v1/models` to emit `true`/`false` instead of the numeric vocab type when they flipped the
-  `json` alias to `common_json` at b10585/#27511). **Not yet filed upstream.**
 - **`0012` guard the zero split-sum and name the device index** (a GPU reporting zero free memory —
   or a cancelling `--tensor-split` such as `-ts 1,-1` on any backend — makes every model load fail
   with the unactionable `error loading model: vector`). Ships an upstream `tests/test-model-split.cpp`.
   **Not yet filed upstream.**
+- **`0014` add a callback sink to `common_log`** (`common_log_set_callback`, what `LlamaModel.setLogger`
+  hooks; upstream has file/colors/prefix/timestamps/verbosity/JSONL but no hook, so an embedding host
+  cannot route the server's own `SRV_*`/`SLT_*` lines anywhere). **Not yet filed upstream.**
 
 (`0009` is **not** in this list and the number is burned: upstream merged the subprocess.h fix via
 ggml-org/llama.cpp#26606, so the patch was dropped at the b10280 bump. `0013` is likewise gone —
@@ -172,7 +172,10 @@ upstream merged this project's own PR ggml-org/llama.cpp#28775 and it was droppe
 went the same way at b11069: upstream fixed the invalid-UTF-8 PEG-parser failure independently and
 more broadly via ggml-org/llama.cpp#29161 (one U+FFFD per undecodable run, text after it kept) before
 the patch was ever filed, so the `ContentOnlyParseUtf8` guard now pins upstream's contract instead.
-All three drops are recorded in `CLAUDE.md` under the patch table.)
+`0010` followed at b11080: upstream gave `common_json_value` an enum constructor via
+ggml-org/llama.cpp#28518, fixing at the root the enum-to-bool trap the patch cast around, so it became
+a redundant carry — note that it still *applied* cleanly, which is why the by-hand drop-check exists.
+All four drops are recorded in `CLAUDE.md` under the patch table.)
 
 ### llama.cpp upstream feature exposure (queued, deferred by policy)
 
@@ -340,20 +343,9 @@ and have only run locally so far.
 A mutation pass over the branch applied 27 mutations and 26 went red on the test that claims them,
 so no test here passes with its subject deleted. What it did find is code with **no runnable guard**.
 Two of the three were closed in that PR (a model-free `jsonSchemaToGrammar` test in
-`NativeLibraryLoadSmokeTest`, and `IdleSleepWakeIntegrationTest` for the `wake_and_post` path);
-these are what remains.
-
-- **`patches/0010` has no guard that runs on a model-free host.** Reverting the patch's
-  `(int)` cast in the fetched `tools/server/server-context.cpp` leaves `ctest` at a clean **520/520** —
-  the always-run `C++ Tests` job cannot see the regression at all. The only guard is
-  `NativeServerAttachIntegrationTest.models_reportNumericVocabType`, which is model-gated; it *does*
-  run on all six CI Java jobs (the full model set is downloaded there), so this is a coverage gap
-  rather than a shipping risk today. It becomes one the moment a platform stops downloading models.
-  `CommonJsonEnumTrap` in `test_json_helpers.cpp` cannot help — it builds its own JSON literals and
-  calls no project code. A direct unit test is impossible as things stand: `get_res_model_info` is
-  `static` inside `server-context.cpp` and unreachable from `jllama_test`. Cheapest real fix is a
-  CI assertion in the `C++ Tests` job that the patch is present in the fetched tree
-  (`grep -c '(int) meta.model_vocab_type'` plus a non-empty `git -C _deps/llama.cpp-src diff`).
+`NativeLibraryLoadSmokeTest`, and `IdleSleepWakeIntegrationTest` for the `wake_and_post` path); the
+third was `patches/0010`'s `(int)` cast, reachable only from a model-gated Java test, and it went
+away with the patch itself at the b11080 bump. This is what remains.
 
 - **`TestConstantsTest.theShippedModelConstantsGoThroughTheResolver` is vacuous when the fixture is
   absent.** Mutating `MODEL_PATH = resolveModelPath("models/…")` to the bare literal leaves the test

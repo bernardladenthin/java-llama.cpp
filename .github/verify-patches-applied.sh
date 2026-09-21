@@ -7,21 +7,26 @@
 # Asserts that every llama/patches/*.patch really reached the fetched llama.cpp tree.
 #
 # WHY THIS EXISTS. The patch applier (llama/cmake/apply-llama-patches.cmake) is fail-loud on
-# "does not apply", so a *stale* patch cannot ship silently. What it cannot detect is a patch
-# that stops having an effect while still applying, and most patches do not need this check
-# because they have a runnable guard that reds CI on every platform if they go missing:
+# "does not apply", so a *stale* patch cannot ship silently. What it cannot detect is the
+# applier never having run at all, or a patched tree being reverted after the fact — the stamp
+# bookkeeping and the tree's dirty state are the only evidence of that, and this script asserts
+# both. It runs in the always-on `C++ Tests` job, needs no model, and costs milliseconds.
+#
+# Every patch in the set does also have a runnable guard that reds CI on every platform if it
+# goes missing, so these checks are a second line rather than the only one:
 #
 #   0003, 0006, 0007, 0008  -> jllama.cpp / native_server.cpp call the symbols they add,
 #                              so dropping one is a compile or link error.
 #   0012                    -> src/test/cpp/test_model_split.cpp.
+#   0014                    -> src/test/cpp/test_common_log_callback.cpp (link error).
 #   0001, 0002              -> model-gated Java jobs (Windows argv, LoadProgressCallbackTest).
 #
-# `0010` is the exception and the reason for this script. It casts one enum to int inside
-# upstream's `get_res_model_info()`, which is `static` in server-context.cpp and therefore
-# unreachable from jllama_test; reverting it leaves `ctest` completely green. Its only guard is
-# NativeServerAttachIntegrationTest.models_reportNumericVocabType, which is model-gated — so the
-# day a platform stops downloading models, the regression ships. This check runs in the
-# always-on `C++ Tests` job, needs no model, and costs milliseconds.
+# It used to carry a third, patch-specific check for `0010`, the one patch with no runnable
+# guard (it cast an enum inside upstream's `static get_res_model_info()`, unreachable from
+# jllama_test). That patch was DROPPED at the b11080 bump — upstream #28518 gave
+# `common_json_value` an enum constructor, fixing the defect at its root — so the check retired
+# with it. If a future patch is ever added that likewise cannot be reached from `ctest`, add a
+# check for it here rather than relying on a model-gated Java test.
 #
 # Usage: .github/verify-patches-applied.sh [<llama.cpp-src-dir>]
 # Exit codes: 0 all good, 1 a check failed.
@@ -67,14 +72,4 @@ if git -C "$SRC" rev-parse --git-dir >/dev/null 2>&1; then
     fi
 fi
 
-# --- 3. the one patch with no runnable guard ------------------------------------------------------
-VOCAB_CAST='(int) meta.model_vocab_type'
-SERVER_CONTEXT="$SRC/tools/server/server-context.cpp"
-[ -f "$SERVER_CONTEXT" ] || fail "not found: $SERVER_CONTEXT"
-grep -qF "$VOCAB_CAST" "$SERVER_CONTEXT" \
-    || fail "patches/0010 is not present in $SERVER_CONTEXT: expected '$VOCAB_CAST'.
-         Without the cast, common_json binds the unscoped enum to its bool constructor and
-         GET /models + GET /v1/models report vocab_type as true/false instead of a number.
-         If upstream added the cast themselves, DROP patch 0010 and update this check."
-
-echo "patches verified: $on_disk applied, tree dirty, patches/0010 cast present"
+echo "patches verified: $on_disk applied, tree dirty"

@@ -143,7 +143,7 @@ public class NativeServerAttachIntegrationTest extends OpenAiServerTestSupport {
                 .path("vocab_type");
         assertThat(
                 "vocab_type must be the numeric llama_vocab_type, not a JSON boolean - "
-                        + "patches/0010 reverted, dropped, or no longer applying? body: " + response.body,
+                        + "did common_json lose the enum constructor upstream #28518 added? body: " + response.body,
                 vocabType.isIntegralNumber(),
                 is(true));
     }
