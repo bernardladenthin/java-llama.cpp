@@ -172,4 +172,17 @@ class LocalAgentTest {
         assertThat(args, hasItem("--verbose"));
         assertThat(args, not(hasItem("--log-verbosity")));
     }
+
+    @Test
+    void mavenJvmConfigPinsAUtf8ConsoleForExecJava() throws Exception {
+        // On Windows llama.cpp's common_init() switches the console to UTF-8 after the JVM fixed its
+        // stdout encoding from the old code page; exec:java runs in Maven's JVM, so the fix has to
+        // live in .mvn/jvm.config (Maven reads it from the project root the user runs mvn in).
+        Path jvmConfig = Path.of(".mvn", "jvm.config").toAbsolutePath();
+        assertThat("expected " + jvmConfig, Files.exists(jvmConfig), is(true));
+        String content = Files.readString(jvmConfig);
+
+        assertThat(content, containsString("-Dstdout.encoding=UTF-8"));
+        assertThat(content, containsString("-Dstderr.encoding=UTF-8"));
+    }
 }
