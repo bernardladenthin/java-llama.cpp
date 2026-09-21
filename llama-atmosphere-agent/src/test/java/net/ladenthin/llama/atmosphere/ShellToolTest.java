@@ -17,17 +17,33 @@ import org.atmosphere.ai.tool.ToolDefinition;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+/**
+ * Runs on every platform: each test picks its command line with {@link ShellTool#isWindows()}, the same
+ * detection {@link ShellTool#run} uses to choose between {@code cmd.exe /c} and {@code sh -c}, so the test
+ * always speaks the shell the tool actually starts.
+ */
 class ShellToolTest {
 
     @TempDir
     Path workspace;
+
+    /**
+     * The command line for the shell {@link ShellTool} starts on this platform.
+     *
+     * @param posix the {@code sh} form
+     * @param windows the {@code cmd.exe} form
+     * @return the form matching {@link ShellTool#isWindows()}
+     */
+    private static String shell(String posix, String windows) {
+        return ShellTool.isWindows() ? windows : posix;
+    }
 
     @Test
     void runsInTheWorkspaceAndReportsExitCodeAndOutput() throws Exception {
         Files.writeString(workspace.resolve("marker.txt"), "x");
         ToolDefinition tool = ShellTool.definition(workspace, Duration.ofSeconds(30), 10_000);
 
-        Object result = tool.executor().execute(Map.of("command", "ls"));
+        Object result = tool.executor().execute(Map.of("command", shell("ls", "dir /b")));
 
         assertThat(tool.name(), is(ShellTool.TOOL_NAME));
         assertThat(String.valueOf(result), startsWith("exit code: 0"));
@@ -38,7 +54,8 @@ class ShellToolTest {
     void nonZeroExitAndStderrAreReturnedNotThrown() throws Exception {
         ToolDefinition tool = ShellTool.definition(workspace, Duration.ofSeconds(30), 10_000);
 
-        Object result = tool.executor().execute(Map.of("command", "echo boom 1>&2; exit 3"));
+        Object result =
+                tool.executor().execute(Map.of("command", shell("echo boom 1>&2; exit 3", "echo boom 1>&2 & exit 3")));
 
         assertThat(String.valueOf(result), startsWith("exit code: 3"));
         assertThat(String.valueOf(result), containsString("boom"));
@@ -53,15 +70,23 @@ class ShellToolTest {
 
     @Test
     void outputIsTruncatedToTheTail() throws Exception {
-        String result = ShellTool.run(workspace, "printf 'aaaaaaaaaaaaaaaaaaaaZZ'", Duration.ofSeconds(30), 5);
+        // echo is the one output command both shells share; it ends the line with the platform's
+        // separator (\n from sh, \r\n from cmd.exe), which is part of the counted output.
+        String newline = ShellTool.isWindows() ? "\r\n" : "\n";
+        String result = ShellTool.run(workspace, "echo aaaaaaaaaaaaaaaaaaaaZZ", Duration.ofSeconds(30), 5);
 
-        assertThat(result, containsString("[output truncated to the last 5 of 22 characters]"));
-        assertThat(result, containsString("aaaZZ"));
+        assertThat(
+                result,
+                containsString("[output truncated to the last 5 of " + (22 + newline.length()) + " characters]"));
+        assertThat(result, containsString("ZZ" + newline));
     }
 
     @Test
     void timeoutKillsTheProcess() throws Exception {
-        String result = ShellTool.run(workspace, "sleep 30", Duration.ofMillis(300), 10_000);
+        // cmd.exe has no sleep; ping waits about one second per echo request. Like `sh -c "sleep 30"`,
+        // it is a child of the shell, so this also covers killing the descendants.
+        String result = ShellTool.run(
+                workspace, shell("sleep 30", "ping -n 30 127.0.0.1 >nul"), Duration.ofMillis(300), 10_000);
 
         assertThat(result, startsWith("exit code: (killed after 0 s)"));
     }

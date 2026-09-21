@@ -2214,9 +2214,11 @@ tools are only for files" — with the tool registered and `docker` on `PATH`; a
 refused too, so it was the prompt, not the chat history. Without `--allow-shell` the prompt says commands
 are unavailable and names the flag, so the model does not invent its own limitation. Pinned by
 `AgentOptionsTest.defaultSystemPromptIsGeneralPurposeAndAllowsAnyCommandWithTheShell` and
-`shellToolDescriptionDoesNotNarrowItToTheProject`. `ShellToolTest` uses POSIX commands (`ls`, `sleep`,
-`exit 3`), so it passes only on Linux/macOS — CI runs it on Linux; on Windows run the suite with
-`-Dtest=!ShellToolTest`.
+`shellToolDescriptionDoesNotNarrowItToTheProject`. `ShellToolTest` runs on every platform: each test
+picks its command line with `ShellTool.isWindows()` — the same detection `ShellTool.run` uses to choose
+`cmd.exe /c` over `sh -c` — so `ls`/`dir /b`, `sleep 30`/`ping -n 30 127.0.0.1 >nul`, and the truncation
+test counts the platform's line separator. It used plain POSIX commands before and failed 4 of 5 on
+Windows; never skip it per OS, give a new test both command forms instead.
 
 **Version bump note.** The pom's `llama.version` property is the **release** version, not the
 reactor's `-SNAPSHOT` (CI always overrides it, so a not-yet-published default never breaks CI).
