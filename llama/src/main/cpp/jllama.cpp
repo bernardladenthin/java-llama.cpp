@@ -607,6 +607,33 @@ JNIEnv *get_jni_env_or_null() noexcept {
     return env;
 }
 
+/**
+ * A JNIEnv for the current thread, attaching the thread to the JVM if it is not attached yet.
+ *
+ * The log sink runs on common_log's worker thread, a plain std::thread that llama.cpp creates
+ * (and re-creates on every pause/resume) and that has never seen the JVM. A per-call attach is
+ * the only option that leaks nothing: the thread is not ours, so nobody could detach it before
+ * it exits, and a thread that exits while attached leaves a dangling JavaThread behind. Returns
+ * nullptr (nothing to log through) when the JVM is gone or refuses the attach. `attached` tells
+ * the caller whether it owes a DetachCurrentThread.
+ */
+JNIEnv *get_jni_env_attaching(bool &attached) noexcept {
+    attached = false;
+    JNIEnv *env = nullptr;
+    if (g_vm == nullptr) {
+        return nullptr;
+    }
+    const jint res = g_vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6);
+    if (res == JNI_OK) {
+        return env;
+    }
+    if (res == JNI_EDETACHED && g_vm->AttachCurrentThread(reinterpret_cast<void **>(&env), nullptr) == JNI_OK) {
+        attached = true;
+        return env;
+    }
+    return nullptr;
+}
+
 bool log_json;
 std::function<void(ggml_log_level, const char *, void *)> log_callback;
 // Guards the logger globals so concurrent setLogger calls (and the trampoline
@@ -849,6 +876,8 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) try {
         env->DeleteGlobalRef(*p);
     }
 
+    // Detach the sink first (this drains the queue through it), then drop the ref it calls into.
+    common_log_set_callback(common_log_main(), nullptr, nullptr);
     if (o_log_callback != nullptr) {
         env->DeleteGlobalRef(o_log_callback);
     }
@@ -1517,50 +1546,72 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_cancelCompletion(JNIE
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_setLogger(JNIEnv *env, jclass clazz, jobject log_format,
                                                                      jobject jcallback) {
     return jni_guard_impl(env, c_llama_error, [&]() -> void {
-        // Serialize the whole swap under the logger mutex: first clear the live callback so no NEW
-        // trampoline invocation can copy a lambda that still references the global ref we are about
-        // to delete, then DRAIN trampolines already executing a copied callback (g_log_active), then
-        // delete the old ref, then install the new one. Without the drain, an in-flight trampoline
-        // could still call into the just-deleted global ref. Note: this makes setLogger block until
-        // running log callbacks return — do not call setLogger from within a log callback.
-        std::unique_lock<std::mutex> lk(g_log_mutex);
-        log_callback = nullptr;
-        g_log_cv.wait(lk, [] { return g_log_active == 0; });
-        if (o_log_callback != nullptr) {
-            env->DeleteGlobalRef(o_log_callback);
-            o_log_callback = nullptr;
+        // The Java logger is a sink on common_log (patches/0014), not a llama_log_set() callback.
+        // Every line reaches common_log -- the server's SRV_*/SLT_* macros write into it directly
+        // and llama/ggml lines arrive through common_log_default_callback -- and common_init(),
+        // which every model load runs, re-points llama_log_set() at that same default callback
+        // without touching the sink. So the logger survives the load whichever order the caller
+        // chose, and it sees the slot/srv lines llama_log_set() never carried.
+        //
+        // Step 1, outside the logger mutex: detach the current sink. This pauses common_log's
+        // worker, which first drains every queued entry through the OLD callback (so a caller that
+        // sets null gets a synchronous flush) and then joins. The worker needs g_log_mutex to read
+        // the callback, so holding it here would deadlock the join.
+        common_log_set_callback(common_log_main(), nullptr, nullptr);
+
+        {
+            // Step 2: swap the Java-side state. No new trampoline can start now (the sink is off);
+            // still DRAIN any trampoline that copied the old std::function before that (g_log_active)
+            // so the old global ref is never used after it is deleted.
+            std::unique_lock<std::mutex> lk(g_log_mutex);
+            log_callback = nullptr;
+            g_log_cv.wait(lk, [] { return g_log_active == 0; });
+            if (o_log_callback != nullptr) {
+                env->DeleteGlobalRef(o_log_callback);
+                o_log_callback = nullptr;
+            }
+
+            log_json = env->IsSameObject(log_format, o_log_format_json);
+
+            if (jcallback != nullptr) {
+                o_log_callback = env->NewGlobalRef(jcallback);
+                // Capture copies of the global ref and method id so the callback never dereferences
+                // the logger globals at call time (those may be swapped by a concurrent setLogger).
+                jobject cb_ref = o_log_callback;
+                log_callback = [cb_ref](enum ggml_log_level level, const char *text, void *user_data) noexcept {
+                    // common_log delivers from its own worker thread, which is not attached to the
+                    // JVM; attach for the call and detach again (see get_jni_env_attaching).
+                    bool attached = false;
+                    JNIEnv *env = get_jni_env_attaching(attached);
+                    if (env == nullptr || text == nullptr) {
+                        return;
+                    }
+                    // Log lines can embed payload text (prompts, model metadata), so the
+                    // message must cross as standard UTF-8, not Modified UTF-8.
+                    jstring message = utf8_to_jstring(env, text);
+                    if (message == nullptr) {
+                        env->ExceptionClear(); // allocation failed; drop this log line
+                    } else {
+                        jobject log_level = log_level_to_jobject(level);
+                        env->CallVoidMethod(cb_ref, m_biconsumer_accept, log_level, message);
+                        if (env->ExceptionCheck()) {
+                            env->ExceptionClear(); // a throwing logger must not poison the worker
+                        }
+                        env->DeleteLocalRef(message);
+                    }
+                    if (attached) {
+                        g_vm->DetachCurrentThread();
+                    }
+                };
+            }
         }
 
-        log_json = env->IsSameObject(log_format, o_log_format_json);
-
-        if (jcallback == nullptr) {
-            log_callback = nullptr;
-            llama_log_set(nullptr, nullptr);
-        } else {
-            o_log_callback = env->NewGlobalRef(jcallback);
-            // Capture copies of the global ref and method id so the callback never dereferences the
-            // logger globals at call time (those may be swapped by a concurrent setLogger).
-            jobject cb_ref = o_log_callback;
-            log_callback = [cb_ref](enum ggml_log_level level, const char *text, void *user_data) noexcept {
-                // Logging can fire from internal native threads with no JNIEnv; skip rather than
-                // throw (an exception here would unwind through llama.cpp's C frames).
-                JNIEnv *env = get_jni_env_or_null();
-                if (env == nullptr || text == nullptr) {
-                    return;
-                }
-                // Log lines can embed payload text (prompts, model metadata), so the
-                // message must cross as standard UTF-8, not Modified UTF-8.
-                jstring message = utf8_to_jstring(env, text);
-                if (message == nullptr) {
-                    env->ExceptionClear(); // allocation failed; drop this log line
-                    return;
-                }
-                jobject log_level = log_level_to_jobject(level);
-                env->CallVoidMethod(cb_ref, m_biconsumer_accept, log_level, message);
-                env->DeleteLocalRef(message);
-            };
-            // Always set the trampoline — it handles JSON formatting internally
-            llama_log_set(log_callback_trampoline, nullptr);
+        // Step 3: install the sink (the trampoline handles JSON formatting internally) and make sure
+        // llama/ggml lines feed common_log even before the first model load runs common_init().
+        // A null callback leaves the sink detached: common_log prints to the console again.
+        if (jcallback != nullptr) {
+            common_log_set_callback(common_log_main(), log_callback_trampoline, nullptr);
+            llama_log_set(common_log_default_callback, nullptr);
         }
     });
 }

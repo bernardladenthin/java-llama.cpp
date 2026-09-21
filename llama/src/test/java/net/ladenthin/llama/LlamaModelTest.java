@@ -661,40 +661,96 @@ public class LlamaModelTest {
         }
     }
 
-    @Disabled
+    /**
+     * The logger receives the per-request {@code slot …} / {@code srv …} lines: they are written by
+     * the server's own macros straight into llama.cpp's {@code common_log}, which {@code llama_log_set}
+     * never carried, so this used to see nothing at all (the reason both log tests were disabled).
+     * Delivery is asynchronous from the log worker thread; removing the logger drains the queue.
+     */
+    @Test
     public void testLogText() {
-        List<LogMessage> messages = new ArrayList<>();
-        LlamaModel.setLogger(LogFormat.TEXT, (level, msg) -> messages.add(new LogMessage(level, msg)));
+        List<LogMessage> messages = Collections.synchronizedList(new ArrayList<>());
+        try {
+            LlamaModel.setLogger(LogFormat.TEXT, (level, msg) -> messages.add(new LogMessage(level, msg)));
 
-        InferenceParameters params =
-                new InferenceParameters(prefix).withNPredict(nPredict).withSeed(42);
-        model.complete(params);
+            InferenceParameters params =
+                    new InferenceParameters(prefix).withNPredict(nPredict).withSeed(42);
+            model.complete(params);
+        } finally {
+            LlamaModel.setLogger(LogFormat.TEXT, null);
+        }
 
-        assertFalse(messages.isEmpty());
+        assertFalse(messages.isEmpty(), "a completion must log at least one line at the default threshold");
 
         Pattern jsonPattern = Pattern.compile("^\\s*[\\[{].*[}\\]]\\s*$");
         for (LogMessage message : messages) {
             assertNotNull(message.level);
-            assertFalse(jsonPattern.matcher(message.text).matches());
+            assertFalse(jsonPattern.matcher(message.text).matches(), "text mode must not wrap: " + message.text);
+        }
+        assertTrue(
+                messages.stream().anyMatch(m -> m.text.startsWith("slot ") || m.text.startsWith("srv ")),
+                "the server's own slot/srv lines must reach the logger, got: " + describe(messages));
+    }
+
+    @Test
+    public void testLogJSON() {
+        List<LogMessage> messages = Collections.synchronizedList(new ArrayList<>());
+        try {
+            LlamaModel.setLogger(LogFormat.JSON, (level, msg) -> messages.add(new LogMessage(level, msg)));
+
+            InferenceParameters params =
+                    new InferenceParameters(prefix).withNPredict(nPredict).withSeed(42);
+            model.complete(params);
+        } finally {
+            LlamaModel.setLogger(LogFormat.TEXT, null);
+        }
+
+        assertFalse(messages.isEmpty());
+
+        Pattern jsonPattern = Pattern.compile("^\\s*[\\[{].*[}\\]]\\s*$", Pattern.DOTALL);
+        for (LogMessage message : messages) {
+            assertNotNull(message.level);
+            assertTrue(jsonPattern.matcher(message.text).matches(), "JSON mode must wrap: " + message.text);
         }
     }
 
-    @Disabled
-    public void testLogJSON() {
-        List<LogMessage> messages = new ArrayList<>();
-        LlamaModel.setLogger(LogFormat.JSON, (level, msg) -> messages.add(new LogMessage(level, msg)));
-
-        InferenceParameters params =
-                new InferenceParameters(prefix).withNPredict(nPredict).withSeed(42);
-        model.complete(params);
-
-        assertFalse(messages.isEmpty());
-
-        Pattern jsonPattern = Pattern.compile("^\\s*[\\[{].*[}\\]]\\s*$");
-        for (LogMessage message : messages) {
-            assertNotNull(message.level);
-            assertTrue(jsonPattern.matcher(message.text).matches());
+    /**
+     * Every model load runs llama.cpp's {@code common_init()}, which re-points {@code llama_log_set}
+     * at its default callback. The Java logger is a sink behind that callback (patches/0014), so a
+     * logger installed <em>before</em> the load keeps receiving lines through and after it. This
+     * pins the ordering every consumer uses: {@code setLogger(…)} first, {@code new LlamaModel(…)}
+     * second. A vocab-only load is enough: it runs the same {@code common_init()} and logs the
+     * {@code srv … loading tokenizer} line at INFO.
+     */
+    @Test
+    public void testLoggerSetBeforeLoadSurvivesTheLoad() {
+        List<LogMessage> messages = Collections.synchronizedList(new ArrayList<>());
+        try {
+            LlamaModel.setLogger(LogFormat.TEXT, (level, msg) -> messages.add(new LogMessage(level, msg)));
+            try (LlamaModel vocabModel = new LlamaModel(
+                    new ModelParameters().setModel(TestConstants.MODEL_PATH).setVocabOnly())) {
+                assertTrue(vocabModel.encode("hello").length > 0);
+            }
+        } finally {
+            LlamaModel.setLogger(LogFormat.TEXT, null);
         }
+
+        assertTrue(
+                messages.stream().anyMatch(m -> m.text.contains("loading tokenizer")),
+                "the load's own log line must reach a logger set before the load, got: " + describe(messages));
+        assertTrue(
+                messages.stream().allMatch(m -> m.level != null),
+                "every line carries a level, got: " + describe(messages));
+    }
+
+    private static String describe(List<LogMessage> messages) {
+        StringBuilder sb = new StringBuilder();
+        synchronized (messages) {
+            for (LogMessage m : messages) {
+                sb.append(m.level).append(": ").append(m.text.trim()).append('\n');
+            }
+        }
+        return sb.toString();
     }
 
     @Disabled

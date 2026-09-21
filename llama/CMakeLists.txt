@@ -606,6 +606,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_jni_helpers.cpp
         src/test/cpp/test_json_helpers.cpp
         src/test/cpp/test_log_helpers.cpp
+        src/test/cpp/test_common_log_callback.cpp
         src/test/cpp/test_tts_wav.cpp
         src/test/cpp/test_tts_params.cpp
         src/test/cpp/test_model_split.cpp

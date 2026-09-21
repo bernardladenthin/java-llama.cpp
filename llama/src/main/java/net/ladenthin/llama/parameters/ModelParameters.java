@@ -1210,6 +1210,9 @@ public final class ModelParameters extends CliParameters {
     /**
      * Set the log file path.
      *
+     * <p>The file is written <em>in addition to</em> the console (or the
+     * {@link net.ladenthin.llama.LlamaModel#setLogger} callback), not instead of it.
+     *
      * @param logFile the path to the log file
      * @return this builder
      */
@@ -1230,6 +1233,12 @@ public final class ModelParameters extends CliParameters {
     /**
      * Set the verbosity threshold (messages with a higher verbosity will be ignored).
      *
+     * <p>llama.cpp's {@code -lv} scale: {@code 0} tool output only, {@code 1} errors, {@code 2}
+     * warnings, {@code 3} info (the default: the server's per-request {@code slot …} lines),
+     * {@code 4} trace (also the llama/ggml model-loading lines), {@code 5} debug. The threshold is
+     * process-wide and takes effect when the parameters are parsed, so the last model loaded wins.
+     * It applies before the {@link net.ladenthin.llama.LlamaModel#setLogger} callback is reached.
+     *
      * @param verbosity the verbosity threshold level
      * @return this builder
      */
@@ -1240,6 +1249,10 @@ public final class ModelParameters extends CliParameters {
     /**
      * Enable prefix in log messages.
      *
+     * <p>Effectively a no-op: llama.cpp's {@code common_init()} enables the prefix and the
+     * timestamps unconditionally on every model load, after this flag was parsed. Kept because it
+     * is a valid server flag.
+     *
      * @return this builder
      */
     public ModelParameters enableLogPrefix() {
@@ -1248,6 +1261,8 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Enable timestamps in log messages.
+     *
+     * <p>Effectively a no-op, for the same reason as {@link #enableLogPrefix()}.
      *
      * @return this builder
      */
