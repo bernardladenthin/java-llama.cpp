@@ -37,10 +37,21 @@ public final class AgentOptions {
     /** Context size for the in-process model ({@code --model}). */
     public static final int DEFAULT_CTX_SIZE = 8192;
 
+    /**
+     * Log verbosity threshold of the in-process model ({@code --model}): llama.cpp's {@code -lv}
+     * scale, {@code 0} output only, {@code 1} errors, {@code 2} warnings, {@code 3} info, {@code 4}
+     * trace, {@code 5} debug. The default keeps warnings and errors but drops the per-request
+     * {@code slot …} / {@code srv …} INFO lines, which otherwise interleave with the streamed answer
+     * on the console (llama.cpp writes them to stderr).
+     */
+    public static final int DEFAULT_LOG_VERBOSITY = 2;
+
     private final @Nullable String baseUrl;
     private final @Nullable String modelPath;
     private final int gpuLayers;
     private final int ctxSize;
+    private final int logVerbosity;
+    private final boolean verbose;
     private final String apiKey;
     private final String modelId;
     private final Path workspace;
@@ -57,6 +68,8 @@ public final class AgentOptions {
         this.modelPath = b.modelPath;
         this.gpuLayers = b.gpuLayers;
         this.ctxSize = b.ctxSize;
+        this.logVerbosity = b.logVerbosity;
+        this.verbose = b.verbose;
         this.apiKey = b.apiKey;
         this.modelId = b.modelId;
         this.workspace = b.workspace;
@@ -88,6 +101,8 @@ public final class AgentOptions {
                 case "--model" -> b.modelPath = value(args, ++i, a);
                 case "--ngl", "--gpu-layers" -> b.gpuLayers = intValue(args, ++i, a);
                 case "--ctx-size" -> b.ctxSize = intValue(args, ++i, a);
+                case "--log-verbosity" -> b.logVerbosity = intValue(args, ++i, a);
+                case "--verbose", "-v" -> b.verbose = true;
                 case "--api-key" -> b.apiKey = value(args, ++i, a);
                 case "--model-id" -> b.modelId = value(args, ++i, a);
                 case "--workspace" ->
@@ -146,6 +161,9 @@ public final class AgentOptions {
                 "  --model <file.gguf>     load this GGUF in-process and serve it to the agent",
                 "  --ngl <n>               GPU layers for --model (default 0 = CPU only)",
                 "  --ctx-size <n>          context size for --model (default " + DEFAULT_CTX_SIZE + ")",
+                "  --log-verbosity <n>     llama.cpp log threshold for --model: 1 errors, 2 warnings,",
+                "                          3 info, 4 trace, 5 debug (default " + DEFAULT_LOG_VERBOSITY + ")",
+                "  --verbose, -v           log everything for --model (same as llama-server -v)",
                 "",
                 "Agent:",
                 "  --workspace <dir>       directory the file tools are confined to (default: cwd)",
@@ -194,6 +212,24 @@ public final class AgentOptions {
      */
     public int getCtxSize() {
         return ctxSize;
+    }
+
+    /**
+     * Log verbosity threshold for the in-process model.
+     *
+     * @return the {@code -lv} threshold; ignored when {@link #isVerbose()} is set
+     */
+    public int getLogVerbosity() {
+        return logVerbosity;
+    }
+
+    /**
+     * Whether {@code --verbose} was given.
+     *
+     * @return {@code true} to log every message of the in-process model
+     */
+    public boolean isVerbose() {
+        return verbose;
     }
 
     /**
@@ -289,7 +325,8 @@ public final class AgentOptions {
     @Override
     public String toString() {
         return "AgentOptions{baseUrl=" + baseUrl + ", modelPath=" + modelPath + ", gpuLayers=" + gpuLayers
-                + ", ctxSize=" + ctxSize + ", modelId=" + modelId + ", workspace=" + workspace
+                + ", ctxSize=" + ctxSize + ", logVerbosity=" + (verbose ? "verbose" : logVerbosity)
+                + ", modelId=" + modelId + ", workspace=" + workspace
                 + ", allowShell=" + allowShell + ", temperature=" + temperature + ", maxTokens=" + maxTokens
                 + ", maxToolRounds=" + maxToolRounds + ", prompt=" + (prompt == null ? "<interactive>" : "<set>")
                 + "}";
@@ -304,6 +341,8 @@ public final class AgentOptions {
 
         int gpuLayers = 0;
         int ctxSize = DEFAULT_CTX_SIZE;
+        int logVerbosity = DEFAULT_LOG_VERBOSITY;
+        boolean verbose;
         String apiKey = DEFAULT_API_KEY;
         String modelId = DEFAULT_MODEL_ID;
         Path workspace = Paths.get("").toAbsolutePath().normalize();

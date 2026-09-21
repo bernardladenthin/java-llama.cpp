@@ -78,6 +78,7 @@ irrelevant: inference stays in the running server, the agent's JVM loads no mode
 | `--base-url <url>` | OpenAI-compatible base URL of a running server | — |
 | `--model <file.gguf>` | load this GGUF in-process instead | — |
 | `--ngl <n>` / `--ctx-size <n>` | GPU layers / context size for `--model` | `0` / `8192` |
+| `--log-verbosity <n>` / `--verbose` | llama.cpp log threshold for `--model` (1 errors, 2 warnings, 3 info, 4 trace, 5 debug) / log everything | `2` / off |
 | `--workspace <dir>` | directory the file tools (and `run_command`) are confined to | cwd |
 | `--allow-shell` | register `run_command` | off |
 | `--system <text>` | replace the default system prompt | built-in |
@@ -88,6 +89,19 @@ irrelevant: inference stays in the running server, the agent's JVM loads no mode
 
 Exactly one of `--base-url` / `--model` is required. Exit code 0 = turn completed, 1 = the turn
 errored, 2 = usage error. Set `-Dorg.slf4j.simpleLogger.defaultLogLevel=debug` to see every request.
+
+**Console output with `--model`.** llama.cpp writes its own log (`slot …`, `srv …`, model loading)
+to **stderr**, the same console the streamed answer goes to on stdout, so at llama.cpp's default
+threshold (INFO) the per-request timing lines land in the middle of the answer. The agent therefore
+loads the in-process model with `--log-verbosity 2` (warnings and errors only); `--log-verbosity 3`
+brings the INFO lines back and `--verbose` logs everything. With `--base-url` the server is a separate
+process and keeps its own log settings (`-lv` on `llama-server` / `NativeServer`). Two things stay
+true whatever the threshold: the agent's own status lines (`Loading …`, `Endpoint …`) also go to
+stderr, and `2> llama.log` therefore hides both. On Windows, loading a model switches the console to
+UTF-8 (llama.cpp calls `SetConsoleOutputCP(CP_UTF8)`), while the JVM keeps encoding stdout in the
+code page it saw at startup, so umlauts and emoji in the answer would turn into `�` / `?`; the
+project's `.mvn/jvm.config` pins `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` for the `mvn`
+JVM so both sides agree.
 
 Pick a **tool-capable instruct model** (Qwen2.5/Qwen3-Instruct, Llama-3.x-Instruct, Mistral,
 Hermes, …). Quality of the loop is the model's: a 1.5B model calls one tool and reads its result, a

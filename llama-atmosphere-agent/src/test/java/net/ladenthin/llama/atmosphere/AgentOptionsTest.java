@@ -28,8 +28,35 @@ class AgentOptionsTest {
         assertThat(options.getTemperature(), is(AgentOptions.DEFAULT_TEMPERATURE));
         assertThat(options.getMaxTokens(), is(AgentOptions.DEFAULT_MAX_TOKENS));
         assertThat(options.getMaxToolRounds(), is(AgentOptions.DEFAULT_MAX_TOOL_ROUNDS));
+        assertThat(options.getLogVerbosity(), is(AgentOptions.DEFAULT_LOG_VERBOSITY));
+        assertThat(options.isVerbose(), is(false));
         assertThat(options.getPrompt(), is(nullValue()));
         assertThat(options.isHelp(), is(false));
+    }
+
+    @Test
+    void logVerbosityIsAnIntegerThreshold() {
+        AgentOptions options = AgentOptions.parse(new String[] {"--model", "m.gguf", "--log-verbosity", "4"});
+
+        assertThat(options.getLogVerbosity(), is(4));
+        assertThat(options.isVerbose(), is(false));
+        assertThat(
+                assertThrows(
+                                IllegalArgumentException.class,
+                                () -> AgentOptions.parse(new String[] {"--model", "m.gguf", "--log-verbosity", "loud"}))
+                        .getMessage(),
+                containsString("--log-verbosity"));
+    }
+
+    @Test
+    void verboseIsAFlagWithAShortForm() {
+        assertThat(
+                AgentOptions.parse(new String[] {"--model", "m.gguf", "--verbose"})
+                        .isVerbose(),
+                is(true));
+        assertThat(AgentOptions.parse(new String[] {"--model", "m.gguf", "-v"}).isVerbose(), is(true));
+        assertThat(AgentOptions.usage(), containsString("--log-verbosity"));
+        assertThat(AgentOptions.usage(), containsString("--verbose"));
     }
 
     @Test

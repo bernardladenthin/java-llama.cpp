@@ -6,8 +6,11 @@ package net.ladenthin.llama.atmosphere;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThan;
+import static org.hamcrest.Matchers.not;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.ByteArrayOutputStream;
@@ -144,5 +147,29 @@ class LocalAgentTest {
 
             assertThat(exit, is(1));
         }
+    }
+
+    @Test
+    void inProcessModelIsLoadedWithAQuietLogThresholdByDefault() {
+        // llama.cpp prints its per-request INFO lines to stderr, the very console the streamed answer
+        // goes to; the default threshold has to stay below INFO (3) or the two interleave again.
+        List<String> args = List.of(LocalAgent.modelParameters(AgentOptions.parse(new String[] {"--model", "m.gguf"}))
+                .toArray());
+
+        assertThat(args, hasItem("--log-verbosity"));
+        assertThat(
+                args.get(args.indexOf("--log-verbosity") + 1), is(String.valueOf(AgentOptions.DEFAULT_LOG_VERBOSITY)));
+        assertThat(AgentOptions.DEFAULT_LOG_VERBOSITY, lessThan(3));
+        assertThat(args, not(hasItem("--verbose")));
+    }
+
+    @Test
+    void verboseReplacesTheThresholdWithLlamaCppsOwnVerboseFlag() {
+        List<String> args = List.of(LocalAgent.modelParameters(
+                        AgentOptions.parse(new String[] {"--model", "m.gguf", "--log-verbosity", "1", "--verbose"}))
+                .toArray());
+
+        assertThat(args, hasItem("--verbose"));
+        assertThat(args, not(hasItem("--log-verbosity")));
     }
 }
