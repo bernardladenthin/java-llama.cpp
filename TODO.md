@@ -17,6 +17,26 @@ so everything below is genuinely still open.
 
 ## Open — jllama-specific
 
+### Logging sink (`patches/0014`) — follow-ups
+
+- **Keep the log worker attached instead of attaching per line.** `LlamaModel.setLogger`'s trampoline
+  runs on `common_log`'s worker thread, which llama.cpp creates (and re-creates on every
+  pause/resume) and which is not ours; today `get_jni_env_attaching` does `AttachCurrentThread` +
+  `DetachCurrentThread` **per log line**. Leak-free and simple, but every attach creates a
+  `java.lang.Thread` object and fires JVMTI `ThreadStart`/`ThreadEnd`, which is noticeable at
+  `--verbose` volumes and makes profilers/debuggers crawl. The cheaper shape is a `thread_local`
+  guard object whose destructor detaches once at thread exit (C++ TLS destructors run on normal
+  thread exit on glibc/macOS/MSVC, including for a `dlopen`'d library, and `std::thread::join` in
+  `common_log::pause()` is a normal exit). Caveats to design in: attach as daemon
+  (`AttachCurrentThreadAsDaemon`, so `DestroyJavaVM` never waits for the leaked singleton's worker),
+  skip the detach when `g_vm` is already gone (`JNI_OnUnload` ran), and pin the behaviour with the
+  existing model-free `LlamaLoggerTest` plus a count of `java.lang.Thread` objects seen by the
+  callback — `deliveryIsAsynchronousOnTheLogWorkerAndRemovingTheLoggerDrains` already prints it
+  (measured: 13 lines of a failed load → 13 distinct `Thread` objects, i.e. one per line). Not a
+  correctness issue; measure the time cost before doing it.
+- **File the patch upstream.** `common_log_set_callback` is a small, self-contained addition to
+  `common/log.{h,cpp}` with no jllama specifics; upstream acceptance would retire the carry.
+
 ### Atmosphere coding agent (`llama-atmosphere-agent/`) — follow-ups
 
 The headless loop is verified, including the model-backed CI job (run 35600558852: tool call

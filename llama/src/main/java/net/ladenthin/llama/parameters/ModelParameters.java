@@ -1236,8 +1236,10 @@ public final class ModelParameters extends CliParameters {
      * <p>llama.cpp's {@code -lv} scale: {@code 0} tool output only, {@code 1} errors, {@code 2}
      * warnings, {@code 3} info (the default: the server's per-request {@code slot …} lines),
      * {@code 4} trace (also the llama/ggml model-loading lines), {@code 5} debug. The threshold is
-     * process-wide and takes effect when the parameters are parsed, so the last model loaded wins.
-     * It applies before the {@link net.ladenthin.llama.LlamaModel#setLogger} callback is reached.
+     * process-wide and set by <em>every</em> load when its parameters are parsed: to this value, or
+     * to llama.cpp's default ({@code 3}) when the method was not called, so the last model loaded
+     * wins either way. It applies before the {@link net.ladenthin.llama.LlamaModel#setLogger}
+     * callback is reached.
      *
      * @param verbosity the verbosity threshold level
      * @return this builder

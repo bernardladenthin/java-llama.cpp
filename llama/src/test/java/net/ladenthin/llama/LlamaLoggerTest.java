@@ -6,6 +6,7 @@ package net.ladenthin.llama;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.is;
@@ -22,8 +23,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import net.ladenthin.llama.args.LogFormat;
 import net.ladenthin.llama.exception.LlamaException;
@@ -89,17 +93,28 @@ class LlamaLoggerTest {
 
     /** Logs through a failing load and drains the queue; the drain is what makes the assertions safe. */
     private List<Line> linesOfAFailedLoad(LogFormat format) throws IOException {
+        return linesOfAFailedLoad(format, new ModelParameters());
+    }
+
+    private List<Line> linesOfAFailedLoad(LogFormat format, ModelParameters parameters) throws IOException {
         List<Line> lines = Collections.synchronizedList(new ArrayList<>());
         LlamaModel.setLogger(format, (level, text) -> lines.add(new Line(level, text)));
-        Path file = notAGguf();
-        assertThrows(
-                LlamaException.class,
-                () -> new LlamaModel(
-                                new ModelParameters().setModel(file.toString()).setDevices("none"))
-                        .close());
+        failingLoad(parameters);
         // Removing the logger flushes every queued message to the previous callback before returning.
         LlamaModel.setLogger(LogFormat.TEXT, null);
         return lines;
+    }
+
+    private void failingLoad(ModelParameters parameters) throws IOException {
+        Path file = notAGguf();
+        assertThrows(
+                LlamaException.class,
+                () -> new LlamaModel(parameters.setModel(file.toString()).setDevices("none")).close());
+    }
+
+    /** The server's own {@code srv … loading model '…'} INFO line — not llama's {@code error loading model}. */
+    private static boolean sawLoadingModel(List<Line> lines) {
+        return lines.stream().anyMatch(l -> l.text.startsWith("srv ") && l.text.contains("loading model '"));
     }
 
     @Test
@@ -111,7 +126,7 @@ class LlamaLoggerTest {
         assertThat("a failed load must log something: " + lines, lines, not(empty()));
         assertThat(
                 "the server's own INFO line ('srv … loading model') must reach a logger set before the load: " + lines,
-                lines.stream().anyMatch(l -> l.text.contains("loading model")),
+                sawLoadingModel(lines),
                 is(true));
         assertThat(
                 "llama's own error line must reach the logger too: " + lines,
@@ -158,5 +173,102 @@ class LlamaLoggerTest {
         Map<String, JsonNode> map = new HashMap<>();
         node.fields().forEachRemaining(e -> map.put(e.getKey(), e.getValue()));
         return map;
+    }
+
+    /**
+     * Concurrent {@code setLogger} calls must be serialized natively. The sink swap pauses and
+     * resumes llama.cpp's log worker, and two unserialized swaps race on that {@code std::thread}:
+     * one caller joins it while the other assigns a fresh thread over the still-joinable object,
+     * which is {@code std::terminate} — the whole JVM dies, not a test. Before the fix this hammered
+     * the race hard enough to reproduce it.
+     */
+    @Test
+    void concurrentSetLoggerCallsDoNotRaceOnTheLogWorker() throws Exception {
+        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping logger guard");
+        final int threads = 4;
+        final int rounds = 200;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        try {
+            java.util.List<java.util.concurrent.Future<?>> futures = new ArrayList<>();
+            for (int t = 0; t < threads; t++) {
+                futures.add(pool.submit(() -> {
+                    for (int i = 0; i < rounds; i++) {
+                        LlamaModel.setLogger(LogFormat.TEXT, (level, text) -> {});
+                        LlamaModel.setLogger(LogFormat.JSON, null);
+                    }
+                }));
+            }
+            for (java.util.concurrent.Future<?> f : futures) {
+                f.get(2, java.util.concurrent.TimeUnit.MINUTES);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    /**
+     * The verbosity threshold is process-wide and applies before the sink: {@code -lv 1} hides the
+     * server's INFO line but keeps llama's ERROR line. It is set by <em>every</em> load, not only by
+     * one that passes {@code -lv}: {@code common_params_parse} ends with
+     * {@code common_log_set_verbosity_thold(params.verbosity)}, whose default is 3, so a load without
+     * the flag resets the threshold to llama.cpp's default. The last model loaded wins, whichever
+     * way it was loaded. (Written down because the opposite was assumed once, in a review.)
+     */
+    @Test
+    void verbosityThresholdIsProcessWideAndEveryLoadSetsIt() throws IOException {
+        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping logger guard");
+        try {
+            List<Line> errorsOnly = linesOfAFailedLoad(LogFormat.TEXT, new ModelParameters().setLogVerbosity(1));
+            assertThat("-lv 1 must drop the server's INFO line: " + errorsOnly, sawLoadingModel(errorsOnly), is(false));
+            assertThat(
+                    "-lv 1 must keep llama's ERROR line: " + errorsOnly,
+                    errorsOnly.stream().map(l -> l.level).collect(Collectors.toList()),
+                    hasItem(LogLevel.ERROR));
+
+            List<Line> reset = linesOfAFailedLoad(LogFormat.TEXT, new ModelParameters());
+            assertThat(
+                    "a load without -lv resets the threshold to llama.cpp's default (3), so the INFO line is back: "
+                            + reset,
+                    sawLoadingModel(reset),
+                    is(true));
+        } finally {
+            // Belt and braces for the other tests: leave the process at llama.cpp's default.
+            linesOfAFailedLoad(LogFormat.TEXT, new ModelParameters().setLogVerbosity(3));
+        }
+    }
+
+    /**
+     * Messages are delivered on llama.cpp's log worker thread, never on the thread that logged
+     * or the one that installed the logger; and removing the logger returns only after every queued
+     * message has been delivered. Both are the facts behind the two deadlock rules in the Javadoc
+     * (no {@code setLogger} from a callback; no lock held that the previous callback needs). The
+     * distinct-thread count is recorded, not pinned: today every line attaches the worker afresh
+     * (one {@code java.lang.Thread} per line), a {@code thread_local} guard would make it one.
+     */
+    @Test
+    void deliveryIsAsynchronousOnTheLogWorkerAndRemovingTheLoggerDrains() throws Exception {
+        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping logger guard");
+        Thread caller = Thread.currentThread();
+        Set<Thread> deliveringThreads = Collections.synchronizedSet(new HashSet<>());
+        AtomicInteger delivered = new AtomicInteger();
+        LlamaModel.setLogger(LogFormat.TEXT, (level, text) -> {
+            deliveringThreads.add(Thread.currentThread());
+            delivered.incrementAndGet();
+        });
+
+        failingLoad(new ModelParameters());
+        LlamaModel.setLogger(LogFormat.TEXT, null);
+        int atReturn = delivered.get();
+        Thread.sleep(200);
+
+        assertThat("a failed load logs at least one line", atReturn, greaterThan(0));
+        assertThat("nothing may arrive after setLogger(format, null) returned", delivered.get(), is(atReturn));
+        assertThat("delivery never runs on the caller's thread", deliveringThreads.contains(caller), is(false));
+        assertThat(
+                "every delivering thread is a native-attached one, not a Java-created one",
+                deliveringThreads.stream().allMatch(t -> t.getName().startsWith("Thread-")),
+                is(true));
+        System.out.println("[LlamaLoggerTest] " + atReturn + " lines delivered on " + deliveringThreads.size()
+                + " distinct Thread object(s)");
     }
 }
