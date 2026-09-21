@@ -116,16 +116,23 @@ class AtmosphereToolLoopIntegrationTest {
         return new ConsoleSession(new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8), fs);
     }
 
+    /**
+     * Plain chat: a non-empty answer that arrives as several streamed chunks. The first CI run (run
+     * 35600558852) showed why this must not pin wording: asked to "reply with exactly ATMOSPHERE_OK", the
+     * 1.5B model streamed {@code OK} — a perfectly working loop failing a prose assertion. What the wire
+     * contract guarantees is that the question reaches the model and its answer streams back, so that
+     * is what is asserted; the one content check is a fact no instruct model gets wrong.
+     */
     @Test
     void plainChatStreamsAnAnswer() throws Exception {
         ConsoleSession session = session();
 
-        runner(List.of()).run("Reply with exactly this word and nothing else: ATMOSPHERE_OK", List.of(), session);
+        runner(List.of()).run("What is 2 + 2? Answer with one short sentence.", List.of(), session);
 
         assertThat(session.await(TURN_TIMEOUT), is(true));
         assertThat(session.failure(), is(nullValue()));
-        assertThat(
-                "streamed text: " + session.text(), session.text().toUpperCase().contains("ATMOSPHERE_OK"), is(true));
+        assertThat("streamed text: " + session.text(), session.text().trim().isEmpty(), is(false));
+        assertThat("the answer must contain the number 4: " + session.text(), session.text(), containsString("4"));
         assertThat(
                 "the answer must arrive as several SSE chunks, not one blob",
                 session.chunks().size(),

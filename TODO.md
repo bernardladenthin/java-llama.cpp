@@ -19,12 +19,9 @@ so everything below is genuinely still open.
 
 ### Atmosphere coding agent (`llama-atmosphere-agent/`) — follow-ups
 
-The headless loop is verified (see CLAUDE.md "Local coding agent with Atmosphere"). Still open:
+The headless loop is verified, including the model-backed CI job (run 35600558852: tool call
+answered, read→write→read loop changed the file). Still open:
 
-- **First model-backed CI run.** `test-java-llama-atmosphere-agent-integration` was added without a
-  run on GitHub's runners; the three assertions are about the loop (tool invoked, result answered,
-  file changed), but a 1.5B model on a CPU runner may still need a prompt or budget tweak. Read its
-  first run before trusting it as a signal.
 - **Tool rounds are not carried across REPL turns** — only `user`/`assistant` text is replayed, so a
   second question cannot refer to a tool result of the first. Keep the full Atmosphere
   `ChatMessage` list (incl. `tool_calls`/`tool` messages) per turn instead.
