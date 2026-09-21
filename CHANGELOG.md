@@ -58,6 +58,21 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   where the backend cannot provide it, `OFF` disables it.
 
 ### Changed
+- **llama.cpp `b11062` → `b11069`, and local patch `0011` dropped — malformed UTF-8 in a
+  completion is now replaced, not truncated.** Seven upstream commits, 57 KiB, no project-source
+  change; the one that matters is llama.cpp #29161 ("common/peg : handle invalid utf-8 sequences in
+  the AST", first tagged b11063). It fixes the failure `0011` had carried since 5.1.0 — a single
+  undecodable byte in the model's output made the content-only parse `FAIL` and the request 500 —
+  independently and more broadly than the patch did, so the patch no longer applies and was dropped
+  rather than refreshed (the `0009`/`0013` precedent). The observable difference: `0011` returned the
+  text *up to* the bad byte, whereas upstream consumes every undecodable run and substitutes exactly
+  one U+FFFD for it (the Unicode "maximal subpart" rule — `\xE4\xB8` followed by `c` is one run,
+  `\xFF\xFE` is two), so the text *after* the byte is now delivered too. A trailing sequence that is
+  still incomplete at the end of the input keeps being withheld, as before. The `ContentOnlyParseUtf8`
+  C++ tests that guarded the patch now pin upstream's replacement contract on every platform. The
+  rest of the range is CUDA/Metal/WebGPU kernel tuning and a converter flag; `tools/server/`,
+  `common/arg.*`, `src/llama-model.*` and `ggml/include` are byte-identical across it, so the other
+  eight patches apply unchanged and the server wire contract cannot have moved.
 - **llama.cpp `b10731` → `b10850`.** No project-source change: every header move in the range is
   additive or a **widening** const-qualification, and the server wire contract is byte-identical
   (request-field set, `set_hard_limits` bounds and response keys all verified mechanically, which is
