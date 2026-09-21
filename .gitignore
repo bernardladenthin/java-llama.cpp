@@ -43,6 +43,8 @@ hs_err_pid*
 replay_pid*
 
 models/*.gguf
+# the agent README downloads its model next to the agent: llama-atmosphere-agent/models/
+llama-atmosphere-agent/models/*.gguf
 llama/src/main/cpp/net_ladenthin_llama_*.h
 llama/src/main/resources_linux_cuda/
 # Per-classifier native trees, staged by CI before the matching Maven profile runs,

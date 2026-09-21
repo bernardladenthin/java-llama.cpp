@@ -1026,12 +1026,35 @@ essentials, fully offline; it edits files and, with `--allow-shell`, runs any co
 (`docker`, `git`, build tools) — built from [Atmosphere](https://github.com/Atmosphere/atmosphere)'s
 built-in OpenAI-compatible agent runtime (streaming, tool loop, workspace file tools) driven
 **headless** against this project's OpenAI-compatible server. It is a standalone Maven project (not a
-reactor module, not published); you copy the folder and run it. With java-llama.cpp already running
-(`--jinja` is required for tool calling):
+reactor module, not published); you clone the repository and run it from that folder. It needs only
+JDK 21+ and Maven — the core jar from Maven Central ships the natives:
+
+```bash
+# get the folder and a tool-capable model (Qwen3-4B-Instruct-2507, 2.3 GB)
+git clone --depth 1 https://github.com/bernardladenthin/java-llama.cpp.git
+cd java-llama.cpp/llama-atmosphere-agent
+curl -L --create-dirs -o models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
+  https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+
+# the agent with the model loaded in-process — a you> prompt appears (/clear, /exit)
+mvn -q compile exec:java \
+    -Dexec.args="--model models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ctx-size 16384 --workspace /path/to/project --allow-shell"
+```
+
+> [!WARNING]
+> With `--allow-shell` the model runs any command it decides to run, with your user's rights and
+> without asking. Use a machine and a workspace you are willing to hand to the model.
+
+On Windows PowerShell quote the whole argument (`"-Dexec.args=--model models\… --allow-shell"`); for
+the GPU add e.g. `-Dllama.classifier=vulkan-windows-x86-64` and `--ngl 99`. The agent's
+[README](llama-atmosphere-agent/) walks through all of it step by step. Other ways to run it, e.g.
+against a java-llama.cpp server that is already running (`--jinja` is required for tool calling;
+the fat jars are [GitHub release](https://github.com/bernardladenthin/java-llama.cpp/releases) assets,
+`llama-<version>-all-<os>-<arch>-jar-with-dependencies.jar` picks a GPU backend itself):
 
 ```bash
 # 1. the server, e.g. from the release fat jar
-java -jar llama-5.2.0-jar-with-dependencies.jar -m /models/Qwen2.5-7B-Instruct-Q4_K_M.gguf --jinja --port 8080
+java -jar llama-5.2.0-jar-with-dependencies.jar -m models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --jinja --port 8080
 
 # 2. the agent, from the llama-atmosphere-agent/ folder — a you> prompt appears (/clear, /exit)
 mvn -q compile exec:java \
@@ -1043,11 +1066,11 @@ mvn -q compile exec:java \
 
 # or without a separate server: load the GGUF in-process
 mvn -q compile exec:java \
-    -Dexec.args="--model /models/Qwen2.5-7B-Instruct-Q4_K_M.gguf --ngl 99 --workspace /path/to/project"
+    -Dexec.args="--model models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --workspace /path/to/project"
 
 # everything at once: shell access plus your own system prompt (replaces the built-in one)
 mvn -q compile exec:java \
-    -Dexec.args="--model /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --ctx-size 16384 --workspace /path/to/project --allow-shell --system 'You are a local assistant on this machine with full shell access. run_command executes any command line, including docker, git and build tools. When asked about the system, run a command instead of explaining it. Answer in the language of the user.'"
+    -Dexec.args="--model models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --ctx-size 16384 --workspace /path/to/project --allow-shell --system 'You are a local assistant on this machine with full shell access. run_command executes any command line, including docker, git and build tools. When asked about the system, run a command instead of explaining it. Answer in the language of the user.'"
 ```
 
 The full streaming tool-calling loop (tools → `delta.tool_calls` → Java tool → `role:"tool"` result →

@@ -26,20 +26,74 @@ published: CI builds and tests it against the core of the same checkout; you cop
 run it. Its `pom.xml` pins `llama.version` to the release these instructions describe (**5.2.0**);
 pass `-Dllama.version=…` to run against another core, e.g. a `-SNAPSHOT` before a release.
 
-## Quick start
+> [!WARNING]
+> With `--allow-shell` the model runs **any** command it decides to run, with **your** user's
+> rights, without asking — deleting files, pushing to git, stopping containers included. Start it on
+> a machine and account you are willing to hand to the model, and point `--workspace` at a copy of
+> a project, not your only one. Without the flag it can only use the file tools inside `--workspace`.
 
-Requirements: JDK 21+ and Maven. No native toolchain: the core jar ships the natives.
+## Getting started from scratch
+
+You need **JDK 21+** and **Maven** (`mvn -v` must report Java 21 or newer). No C++ toolchain, no
+CMake and no separate llama.cpp install: the core jar from Maven Central ships the native libraries
+for Windows, Linux and macOS.
+
+**1. Get this folder.** It is not published as an artifact; clone the repository (or download it
+as a ZIP from GitHub) and work in `llama-atmosphere-agent/`. The folder is self-contained — you can
+copy it anywhere, `.mvn/jvm.config` included:
+
+```bash
+git clone --depth 1 https://github.com/bernardladenthin/java-llama.cpp.git
+cd java-llama.cpp/llama-atmosphere-agent
+```
+
+**2. Get a model.** Any tool-capable instruct GGUF works; a fast default that fits an 8 GB GPU with a
+16k context is Qwen3-4B-Instruct-2507 (2.3 GB):
+
+```bash
+curl -L --create-dirs -o models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
+  https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf
+```
+
+**3. Start the agent.** The first run downloads `net.ladenthin:llama` and Atmosphere from Maven
+Central; then a `you>` prompt appears (`/clear` drops the history, `/exit` quits).
+
+Linux / macOS:
+
+```bash
+mvn -q compile exec:java \
+    -Dexec.args="--model models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ctx-size 16384 --workspace /path/to/project --allow-shell"
+```
+
+Windows (PowerShell — quote the whole `-D` argument, no line continuation with `\`):
+
+```powershell
+mvn -q compile exec:java "-Dexec.args=--model models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ctx-size 16384 --workspace C:\path\to\project --allow-shell"
+```
+
+**4. Optional: use the GPU.** Add a core classifier and offload the layers, e.g.
+`-Dllama.classifier=vulkan-windows-x86-64` (or `vulkan-linux-x86-64`; any current GPU driver) or
+`cuda13-linux-x86-64` (needs the CUDA 13 toolkit), plus `--ngl 99` inside `-Dexec.args`. macOS uses
+Metal with the default jar already. The root README's classifier table lists every backend.
+
+## Quick start
 
 **A. Against a java-llama.cpp server that is already running** (you keep every llama.cpp flag):
 
-1. java-llama.cpp is running, for example started from the release fat jar like this
+1. java-llama.cpp is running, for example started from a release fat jar
    (`--jinja` is required for tool calling: it enables the model's tool-call chat template):
 
    ```bash
-   java -jar llama-5.2.0-jar-with-dependencies.jar -m /models/Qwen2.5-7B-Instruct-Q4_K_M.gguf --jinja --port 8080
+   java -jar llama-5.2.0-jar-with-dependencies.jar -m models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --jinja --port 8080
    ```
 
-   Upstream `llama-server` with the same flags works too; any OpenAI-compatible endpoint does.
+   The fat jars are assets of each [GitHub release](https://github.com/bernardladenthin/java-llama.cpp/releases):
+   `llama-5.2.0-jar-with-dependencies.jar` runs on the CPU (and Metal on macOS);
+   `llama-5.2.0-all-<os>-<arch>-jar-with-dependencies.jar` (`linux-x86-64`, `linux-aarch64`,
+   `windows-x86-64`, `windows-aarch64`) additionally carries every GPU backend for that platform and
+   uses the first one whose vendor runtime loads — CUDA, ROCm, SYCL, Vulkan, OpenCL, OpenVINO — falling
+   back to the CPU; `-Dnet.ladenthin.llama.backend=vulkan` (or `cpu`) forces one. Upstream
+   `llama-server` with the same flags works too; any OpenAI-compatible endpoint does.
 
 2. Start the agent from this folder (`llama-atmosphere-agent/`):
 
@@ -66,14 +120,14 @@ If the server was started with `--api-key <key>`, add `--api-key <key>` to the a
 
 ```bash
 mvn -q compile exec:java \
-    -Dexec.args="--model /models/Qwen2.5-7B-Instruct-Q4_K_M.gguf --ngl 99 --workspace /path/to/project"
+    -Dexec.args="--model models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --workspace /path/to/project"
 ```
 
 **Everything at once — shell access and your own system prompt:**
 
 ```bash
 mvn -q compile exec:java \
-    -Dexec.args="--model /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --ctx-size 16384 --workspace /path/to/project --allow-shell --system 'You are a local assistant on this machine with full shell access. run_command executes any command line, including docker, git and build tools. When asked about the system, run a command instead of explaining it. Read a file before you edit it. Answer in the language of the user.'"
+    -Dexec.args="--model models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --ctx-size 16384 --workspace /path/to/project --allow-shell --system 'You are a local assistant on this machine with full shell access. run_command executes any command line, including docker, git and build tools. When asked about the system, run a command instead of explaining it. Read a file before you edit it. Answer in the language of the user.'"
 ```
 
 Then ask, for example, *"which docker images are available?"* or *"build the project and fix the
@@ -209,5 +263,11 @@ starter are the *deployment* layer on top of the same runtime — not needed for
 - Tool rounds are not kept in the cross-turn history (only `user`/`assistant` text is replayed).
 - No approval prompts for destructive tools yet (`ToolDefinition.requiresApproval` exists in Atmosphere).
 - An engine error after the stream started ends the turn silently (see the table).
+- **One in-process agent per machine at a time.** The core extracts its native library to a fixed
+  name (`jllama.dll` / `libjllama.so` in the temp directory); on Windows a second JVM cannot replace
+  the file while the first one has it loaded, so a second `--model` agent fails at startup with
+  `Failed to delete old native lib` followed by `No native library found`. Two in-process models
+  also share the GPU's memory — a second 4B model on an 8 GB card can stall instead of failing.
+  To run several agents, start one server (mode A) and point each agent at it with `--base-url`.
 - The Spring Boot `@Agent` + WebSocket/SSE UI variant is untested here; it uses the same runtime and
   the same `LLM_BASE_URL`, so it is expected to work but is not CI-covered.
