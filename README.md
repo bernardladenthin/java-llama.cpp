@@ -1146,21 +1146,28 @@ app already uses. The pattern is verified end-to-end by
 
 ### Logging
 
-Per default, logs are written to stdout.
-This can be intercepted via the static method `LlamaModel.setLogger(LogFormat, BiConsumer<LogLevel, String>)`. 
-There is text- and JSON-based logging. The default is JSON.
-Note, that text-based logging will include additional output of the GGML backend, while JSON-based logging
-only provides request logs (while still writing GGML messages to stdout).
-To only change the log format while still writing to stdout, `null` can be passed for the callback. 
-Logging can be disabled by passing an empty callback.
+Per default, llama.cpp writes its log as text to **stderr** (`0.00.035.060 I slot …` once a model is
+loaded): the server's own `srv …` / `slot …` lines and, from verbosity 4 on, the llama/ggml lines.
+All of it can be intercepted via the static method
+`LlamaModel.setLogger(LogFormat, BiConsumer<LogLevel, String>)`: with a callback set, every line goes
+to the callback instead of the console (a `setLogFile` file keeps receiving them). The callback
+survives model loads, so set it before `new LlamaModel(…)` to capture the loading lines too.
+`LogFormat.TEXT` hands over the bare message, `LogFormat.JSON` one JSON object per line. Passing
+`null` as the callback restores the console output (always llama.cpp's own text format; the format
+argument only matters with a callback). Logging can be disabled by passing an empty callback.
+Messages arrive asynchronously from llama.cpp's log worker thread; replacing or removing the logger
+flushes what is queued to the previous callback first. The verbosity threshold
+(`ModelParameters.setLogVerbosity(int)`, llama.cpp's `-lv`: 1 errors, 2 warnings, 3 info, 4 trace,
+5 debug) applies before the callback: `2` keeps warnings and errors and silences the per-request
+INFO lines, which is what a console application sharing the terminal with its own output wants.
 
 ```java
 // Re-direct log messages however you like (e.g. to a logging library)
 LlamaModel.setLogger(LogFormat.TEXT, (level, message) -> System.out.println(level.name() + ": " + message));
-// Log to stdout, but change the format
+// Back to llama.cpp's own console output (stderr)
 LlamaModel.setLogger(LogFormat.TEXT, null);
 // Disable logging by passing a no-op
-LlamaModel.setLogger(null, (level, message) -> {});
+LlamaModel.setLogger(LogFormat.TEXT, (level, message) -> {});
 ```
 
 The `LogLevel` enum values passed to the callback correspond to the native llama.cpp log levels:

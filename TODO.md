@@ -171,10 +171,10 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
   - **`--log-jsonl` / `--no-log-jsonl`** (a positive/negative flag pair, so it would fit `ModelFlag`
     directly). The only one of the three with real consumer value, but it is **not a free addition**:
     it flips `common_log_set_jsonl(common_log_main(), …)`, i.e. the process-wide llama.cpp logger,
-    whose output for this library goes through the JNI log callback. The project already has its own
-    JSON logging at the Java level — the `args.LogFormat` enum plus `log_helpers.hpp`'s
-    `format_log_as_json` — so the two would overlap and could contradict each other on the same
-    stream. Deciding which layer owns the format is a **feature decision**, not a correctness fix,
+    whose console output (and, since `patches/0014`, the sink `LlamaModel.setLogger` hooks) it would
+    reformat. The project already has its own JSON logging at the Java level — the `args.LogFormat`
+    enum plus `log_helpers.hpp`'s `format_log_as_json` — so the two would overlap and could contradict
+    each other on the same stream. Deciding which layer owns the format is a **feature decision**, not a correctness fix,
     and needs its own change with its own tests.
   - **`--spec-synth-len` and `--spec-synth-rates`** — a documented non-goal, not deferred work. The
     reasoning lives in its own entry below (**"deliberately NOT exposed, and this should stay that

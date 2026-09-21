@@ -1,0 +1,108 @@
+common: add a callback sink to common_log (common_log_set_callback)
+
+An embedding host (here: the java-llama.cpp JNI binding) has no way to receive the
+lines that common_log prints: llama_log_set() covers only llama/ggml, while the
+server's SRV_*/SLT_* macros write straight into common_log and end up on stderr no
+matter what the host configured. common_log offers file, colors, prefix, timestamps,
+verbosity and JSONL, but no hook.
+
+This adds common_log_set_callback(log, cb, user_data): while set, the worker thread
+hands every entry to the callback instead of printing it (a file set via
+common_log_set_file still receives it). The callback gets the formatted message
+without prefix/timestamp/colors and has the ggml_log_callback signature, so one
+function can serve both llama_log_set() and this sink. Swapping the callback pauses
+the worker first, so entries already queued reach the previous sink.
+
+Upstream-submittable ("common : add a callback sink to common_log for embedding
+hosts"); not yet filed. Guarded by src/test/cpp/test_common_log_callback.cpp.
+
+diff --git a/common/log.cpp b/common/log.cpp
+index 0a9a4eb..8c8ed23 100644
+--- a/common/log.cpp
++++ b/common/log.cpp
+@@ -176,6 +176,9 @@ struct common_log {
+         running    = false;
+         t_start    = t_us();
+ 
++        callback           = nullptr;
++        callback_user_data = nullptr;
++
+         queue.resize(capacity, common_log_entry(256));
+         head = 0;
+         tail = 0;
+@@ -198,6 +201,9 @@ private:
+ 
+     FILE * file;
+ 
++    common_log_callback callback;
++    void *              callback_user_data;
++
+     bool prefix;
+     bool timestamps;
+     bool running;
+@@ -212,7 +218,12 @@ private:
+     bool print_entry(const common_log_entry & e) const {
+         if (e.is_end) return true;
+ 
+-        e.print();
++        if (callback) {
++            // the sink replaces the console, not the file
++            callback(e.level, e.msg.data(), callback_user_data);
++        } else {
++            e.print();
++        }
+         if (file) {
+             e.print(file);
+         }
+@@ -407,6 +418,17 @@ public:
+         resume();
+     }
+ 
++    void set_callback(common_log_callback cb, void * user_data) {
++        // pause() drains the queue through the current sink before the worker stops, so an entry
++        // logged before the swap never reaches the new callback
++        pause();
++
++        callback           = cb;
++        callback_user_data = user_data;
++
++        resume();
++    }
++
+     void set_colors(bool colors) {
+         pause();
+ 
+@@ -498,6 +520,10 @@ void common_log_set_file(struct common_log * log, const char * file) {
+     log->set_file(file);
+ }
+ 
++void common_log_set_callback(struct common_log * log, common_log_callback callback, void * user_data) {
++    log->set_callback(callback, user_data);
++}
++
+ void common_log_set_colors(struct common_log * log, log_colors colors) {
+     if (colors == LOG_COLORS_AUTO) {
+         log->set_colors(tty_can_use_colors());
+diff --git a/common/log.h b/common/log.h
+index e36b094..65a0261 100644
+--- a/common/log.h
++++ b/common/log.h
+@@ -97,6 +97,18 @@ void common_log_set_prefix    (struct common_log * log, bool prefix);       // w
+ void common_log_set_timestamps(struct common_log * log, bool timestamps);   // whether to output timestamps in the prefix
+ void common_log_flush         (struct common_log * log);                    // flush all pending log messages
+ 
++// a sink for log entries, for hosts that embed llama.cpp (a JNI/FFI binding, a GUI, a service
++// with its own logger): while a callback is set, the worker thread hands every entry to it
++// instead of printing to stdout/stderr; a file set via common_log_set_file() still receives them.
++//
++// `text` is the formatted message only (no prefix, no timestamp, no colors) -- the callback
++// decides how to present it. The signature matches ggml_log_callback, so one function can serve
++// both llama_log_set() and this sink. Entries already queued when the callback changes are
++// delivered to the previous sink first. Pass NULL to restore the default console output.
++typedef void (*common_log_callback)(enum ggml_log_level level, const char * text, void * user_data);
++
++void common_log_set_callback(struct common_log * log, common_log_callback callback, void * user_data); // not thread-safe
++
+ // helper macros for logging
+ // use these to avoid computing log arguments if the verbosity of the log is higher than the threshold
+ //

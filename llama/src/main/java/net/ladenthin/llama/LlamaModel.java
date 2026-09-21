@@ -432,14 +432,33 @@ public class LlamaModel implements AutoCloseable {
 
     /**
      * Sets a callback for native llama.cpp log messages.
-     * Per default, log messages are written in JSON to stdout. Note, that in text mode the callback will be also
-     * invoked with log messages of the GGML backend, while JSON mode can only access request log messages.
-     * In JSON mode, GGML messages will still be written to stdout.
-     * To only change the log format but keep logging to stdout, the given callback can be <code>null</code>.
-     * To disable logging, pass an empty callback, i.e., <code>(level, msg) {@literal ->} {}</code>.
+     *
+     * <p>Without a callback, llama.cpp prints its log as text to <b>stderr</b> (with a
+     * {@code 0.00.035.060 I } timestamp-and-level prefix once a model has been loaded). With a
+     * callback, <b>every</b> line goes to the callback instead of the console: the server's own
+     * {@code srv …} / {@code slot …} lines as well as the llama/ggml lines (model loading, backend
+     * setup). A log file set via {@link ModelParameters#setLogFile(String)} keeps receiving them.
+     * The callback survives model loads whichever order the caller chooses, so the usual
+     * {@code setLogger(…)} before {@code new LlamaModel(…)} captures the loading lines too.
+     *
+     * <p>The verbosity threshold applies before the callback is reached: at llama.cpp's default
+     * (INFO, {@code 3}) the callback sees errors, warnings and the server's INFO lines, while the
+     * llama/ggml INFO lines are only delivered from {@link ModelParameters#setLogVerbosity(int)}
+     * {@code 4} on, exactly as on the console.
+     *
+     * <p>{@link LogFormat#TEXT} passes the message as is (no prefix, no timestamp);
+     * {@link LogFormat#JSON} wraps it into one JSON object per call ({@code level}, {@code message},
+     * {@code timestamp}). The format only matters together with a callback: passing {@code null}
+     * as the callback restores the console output, which is always llama.cpp's own text format.
+     *
+     * <p>Messages are delivered asynchronously from llama.cpp's log worker thread, never from the
+     * thread that logged. Replacing or removing the logger first flushes every queued message to the
+     * previous callback and blocks until that is done, so {@code setLogger(format, null)} is a
+     * synchronous drain; do not call it from inside a log callback. To discard everything, pass an
+     * empty callback, i.e. <code>(level, msg) {@literal ->} {}</code>.
      *
      * @param format the log format to use
-     * @param callback a method to call for log messages
+     * @param callback a method to call for log messages, or {@code null} for the console
      */
     public static native void setLogger(LogFormat format, BiConsumer<LogLevel, String> callback);
 

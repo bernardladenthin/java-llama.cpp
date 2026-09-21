@@ -179,7 +179,16 @@ public final class LocalAgent {
         return finished && session.failure() == null;
     }
 
-    private static ModelParameters modelParameters(AgentOptions options) {
+    /**
+     * The native parameters for {@code --model}.
+     *
+     * <p>Visible for tests: the log threshold is the one knob whose effect is only observable on a
+     * console, so the test pins the flags that leave here instead.
+     *
+     * @param options the parsed options
+     * @return the parameters the in-process {@link LlamaModel} is loaded with
+     */
+    static ModelParameters modelParameters(AgentOptions options) {
         ModelParameters parameters = new ModelParameters()
                 .setModel(options.getModelPath())
                 .setCtxSize(options.getCtxSize())
@@ -187,6 +196,13 @@ public final class LocalAgent {
                 .setFit(false)
                 // Jinja rendering is what lets the native parser apply the model's tool-call template.
                 .enableJinja();
+        // llama.cpp logs to stderr, which shares the console with the streamed answer on stdout; the
+        // default threshold keeps warnings and errors and drops the per-request INFO lines.
+        if (options.isVerbose()) {
+            parameters.setVerbose();
+        } else {
+            parameters.setLogVerbosity(options.getLogVerbosity());
+        }
         if (options.getGpuLayers() == 0) {
             parameters.setDevices("none");
         }

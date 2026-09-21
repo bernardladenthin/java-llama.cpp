@@ -9,7 +9,33 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Fixed
+- **`LlamaModel.setLogger` was silently overridden by every model load, and never saw the server's own
+  log lines.** llama.cpp's `common_init()` — run on each load — re-points `llama_log_set()` at its own
+  default callback, so a logger set *before* `new LlamaModel(…)` (the natural order) stopped receiving
+  anything; and the `srv …` / `slot …` lines (per-request timings, slot state) are written by the server
+  macros straight into `common_log`, which `llama_log_set()` never carried, so they went to stderr no
+  matter what Java configured. The logger is now a sink on `common_log` itself
+  (`patches/0014-common-log-callback-sink.patch`, `common_log_set_callback`): it survives loads, it
+  receives every line — the server's and llama/ggml's — and it replaces the console output instead of
+  duplicating it (a `setLogFile` file keeps being written). Messages are delivered from llama.cpp's log
+  worker thread; replacing or removing the logger flushes what is queued to the previous callback first,
+  so `setLogger(format, null)` is a synchronous drain. Behaviour change to know: the verbosity threshold
+  now applies before the callback (as on the console), so llama/ggml INFO lines reach the logger only
+  from `setLogVerbosity(4)` on. `LlamaModelTest#testLogText/testLogJSON` are re-enabled (they were
+  `@Disabled` because of exactly this), `#testLoggerSetBeforeLoadSurvivesTheLoad` pins the ordering, and
+  the model-free `LlamaLoggerTest` plus six C++ tests guard the sink on every platform.
+- The `setLogger` Javadoc and the README "Logging" section claimed JSON to stdout as the default; the
+  default is llama.cpp's text format on stderr. `enableLogPrefix()` / `enableLogTimestamps()` are
+  documented as the no-ops they are (`common_init()` forces both on), `setLogFile` as additive.
+
 ### Added
+- **`llama-atmosphere-agent`: `--log-verbosity <n>` (default `2`) and `--verbose`** for the in-process
+  `--model` mode. llama.cpp's per-request INFO lines go to stderr, the console the streamed answer is
+  printed to, and interleaved with it; the agent now loads the model with warnings-and-errors only. A
+  `.mvn/jvm.config` pins `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` for the `mvn exec:java`
+  JVM, because on Windows `common_init()` switches the console to UTF-8 after the JVM fixed its stdout
+  encoding from the old code page (umlauts/emoji in answers rendered as `�`/`?`).
 - **`llama-atmosphere-agent/` — a local, offline JVM coding agent** (Claude Code / OpenCode reduced to
   the essentials) that drives [Atmosphere](https://github.com/Atmosphere/atmosphere)'s built-in
   OpenAI-compatible agent runtime **headless** (no Spring Boot, no servlet container) against this
