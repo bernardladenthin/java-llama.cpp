@@ -2356,10 +2356,10 @@ jobs:
         run: |
           mvn -q --no-transfer-progress -f llama/pom.xml compile
           .github/build.sh -DBUILD_TESTING=ON
-      # Most patches have a runnable guard that reds this job if they go missing (a link error, or
-      # test_utils.cpp / test_model_split.cpp). patches/0010 has none — it casts one enum inside a
-      # `static` function unreachable from jllama_test, so reverting it leaves ctest fully green and
-      # only a model-gated Java test notices. This is the always-on, model-free check for it.
+      # Every patch has a runnable guard that reds this job if it goes missing (a link error, or
+      # test_utils.cpp / test_model_split.cpp / test_common_log_callback.cpp). This is the second
+      # line: it asserts the applier actually ran and nothing reverted the patched tree, which no
+      # per-patch guard covers directly. Model-free, milliseconds.
       - name: Verify llama.cpp patches are applied
         run: .github/verify-patches-applied.sh
       - name: Run C++ unit tests

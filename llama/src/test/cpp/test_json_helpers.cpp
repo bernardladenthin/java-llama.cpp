@@ -357,28 +357,45 @@ TEST(ExtractEmbeddingPrompt, ArrayPrompt_ReturnedAsIs) {
 }
 
 // ============================================================
-// common_json enum trap (llama.cpp b10585, upstream #27511)
+// common_json enum handling (llama.cpp b11080, upstream #28518)
 //
-//   The upstream `json` alias is `common_json`, whose value constructors cover
-//   bool / integral / floating-point / string / container — but the integral one
-//   is `std::is_integral`-gated, and an *enum* is not integral.  An unscoped enum
-//   therefore binds to `common_json_value(bool)` and silently serialises as
-//   true/false.  Project code must cast enum values to `int` before putting them
-//   in JSON; `jllama.cpp`'s two "vocab_type" emit sites do exactly that, and
-//   `ModelMeta.getVocabType()` reads the result with Jackson's `asInt(0)`.
+//   The upstream `json` alias is `common_json`.  From b10585 (#27511) until
+//   b11080 its integral value constructor was `std::is_integral`-gated, which
+//   excludes enums, so an unscoped enum bound to `common_json_value(bool)` and
+//   silently serialised as true/false.  Upstream #28518 fixed that at the root:
+//   `common_json_value` now has an `std::is_enum`-gated constructor delegating
+//   to the underlying type, and `common_json_is_value` accepts enums.  That is
+//   what retired `patches/0010`, which used to cast the enum at upstream's own
+//   `get_res_model_info()` emit site.
+//
+//   These three tests are the re-pointed guard.  The first is the tripwire: if
+//   a future bump loses the enum constructor, an uncast enum goes back to being
+//   a JSON boolean and `ModelMeta.getVocabType()` (Jackson `asInt(0)`) reports 1
+//   for every non-SPM model — reinstate the cast (and `patches/0010`) then.  The
+//   second pins that an explicit `static_cast<int>` is still equivalent, which
+//   is what `jllama.cpp`'s two "vocab_type" emit sites keep doing.  The third
+//   pins that the new overload did not swallow real booleans on its way in.
 // ============================================================
 
-TEST(CommonJsonEnumTrap, UncastEnumBecomesBoolean) {
-    // documents the trap this guard exists for (tripwire: if upstream ever adds an
-    // enum constructor, this flips and the cast convention can be revisited)
+TEST(CommonJsonEnum, UncastEnumKeepsTheNumericValue) {
     const json j = json::object({{"vocab_type", LLAMA_VOCAB_TYPE_WPM}});
-    EXPECT_TRUE(j.at("vocab_type").is_boolean());
+    EXPECT_FALSE(j.at("vocab_type").is_boolean());
+    EXPECT_TRUE(j.at("vocab_type").is_number_integer());
+    EXPECT_EQ(j.at("vocab_type").get<int>(), static_cast<int>(LLAMA_VOCAB_TYPE_WPM));
 }
 
-TEST(CommonJsonEnumTrap, ExplicitIntCastKeepsTheNumericValue) {
+TEST(CommonJsonEnum, ExplicitIntCastKeepsTheNumericValue) {
     const json j = json::object({{"vocab_type", static_cast<int>(LLAMA_VOCAB_TYPE_WPM)}});
     EXPECT_TRUE(j.at("vocab_type").is_number_integer());
     EXPECT_EQ(j.at("vocab_type").get<int>(), static_cast<int>(LLAMA_VOCAB_TYPE_WPM));
+}
+
+TEST(CommonJsonEnum, BoolIsStillABoolean) {
+    // the enum constructor sits next to common_json_value(bool); make sure it did
+    // not swallow real booleans on its way in
+    const json j = json::object({{"stream", true}});
+    EXPECT_TRUE(j.at("stream").is_boolean());
+    EXPECT_FALSE(j.at("stream").is_number_integer());
 }
 
 // ============================================================

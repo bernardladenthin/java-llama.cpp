@@ -101,6 +101,33 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   where the backend cannot provide it, `OFF` disables it.
 
 ### Changed
+- **llama.cpp `b11069` → `b11080`, and local patch `0010` dropped — upstream fixed the
+  enum-to-JSON-boolean trap at its root.** Eleven upstream commits, 1244 KiB, no project-source
+  change. The size is one commit that does not concern this project (llama.cpp #29197 rewrites 46
+  files under `ggml/src/ggml-hexagon/`; no hexagon classifier is built here); the rest of `ggml/src`
+  is additive ARM repack kernels, a Metal fusion-list simplification and a SYCL softmax tweak, and
+  `ggml/include` is byte-identical. The one that matters is llama.cpp #28518 ("json: Fixed json enum
+  handling"): `common_json_value` gains an `std::is_enum`-gated constructor delegating to the
+  underlying type, so an unscoped enum no longer binds to `common_json_value(bool)` and serialises
+  as `true`/`false`. That is exactly the defect `patches/0010` cast around in upstream's own
+  `get_res_model_info()`, so the patch became a redundant carry and was dropped rather than kept
+  (the `0009`/`0011`/`0013` precedent). **Nothing observable changes for consumers** —
+  `GET /models` and `GET /v1/models` reported a numeric `vocab_type` with the patch and still do
+  without it — but the drop is worth flagging because `0010` *still applied cleanly*: the fail-loud
+  applier can only detect "does not apply", never "upstream already fixed this", which is why that
+  patch carries a by-hand drop-check on every bump. Its guard was kept and re-pointed: the
+  `CommonJsonEnumTrap` pair in `test_json_helpers.cpp` is now the `CommonJsonEnum` trio and pins
+  upstream's contract (uncast enum is numeric, an explicit cast is equivalent, a real `bool` is
+  still a boolean), so a bump that loses the constructor reds `C++ Tests` everywhere instead of
+  shipping a boolean. `jllama.cpp` keeps its own two `"vocab_type"` casts — correct either way.
+  Also in range: six existing sampling flags gained environment defaults (#27380 —
+  `LLAMA_ARG_TEMPERATURE`, `_TOP_P`, `_MIN_P`, `_REPEAT_PENALTY`, `_PRESENCE_PENALTY`,
+  `_FREQUENCY_PENALTY`), which adds no option but does mean a host with those variables set now
+  inherits them; and a router no longer forwards `LLAMA_ARG_API_KEY_FILE` to spawned children
+  (#28938). `tools/server/`'s schema, task and context translation units are byte-identical, and
+  the request-field set (68), bounded-field set (23) and response-key set (142) were all verified
+  unchanged mechanically, so the server wire contract cannot have moved. The other eight patches
+  apply unchanged and all four remaining drop-checks still say "still required".
 - **llama.cpp `b11062` → `b11069`, and local patch `0011` dropped — malformed UTF-8 in a
   completion is now replaced, not truncated.** Seven upstream commits, 57 KiB, no project-source
   change; the one that matters is llama.cpp #29161 ("common/peg : handle invalid utf-8 sequences in
