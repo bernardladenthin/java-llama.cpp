@@ -2199,8 +2199,11 @@ streamed answer shares, so the per-request `slot …` INFO lines would interleav
 / `--verbose` override — one-shot `--prompt` or a `you>` REPL with `/clear` `/exit`). `.mvn/jvm.config`
 pins `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` for the `mvn exec:java` JVM: on Windows,
 `common_init()` switches the console to UTF-8 (`SetConsoleOutputCP(CP_UTF8)`) after the JVM fixed its
-stdout encoding from the old code page, which turned umlauts/emoji in answers into `�`/`?`. Spotless (palantir)
-is configured in its own pom; the model-free CI job runs `spotless:check`.
+stdout encoding from the old code page, which turned umlauts/emoji in answers into `�`/`?`. It needs a
+sibling **`.mvn/jvm.config.license`** (the same two SPDX lines as the one next to the root `.mvn/jvm.config`):
+a `jvm.config` takes no comments, so REUSE can only read its metadata from that file, and without it the
+`REUSE Compliance Check` job fails on `main` — which is how it was found, the PR run having been cancelled.
+Spotless (palantir) is configured in its own pom; the model-free CI job runs `spotless:check`.
 
 **Version bump note.** The pom's `llama.version` property is the **release** version, not the
 reactor's `-SNAPSHOT` (CI always overrides it, so a not-yet-published default never breaks CI).
