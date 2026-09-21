@@ -2205,7 +2205,12 @@ a `jvm.config` takes no comments, so REUSE can only read its metadata from that 
 `REUSE Compliance Check` job fails on `main` — which is how it was found, the PR run having been cancelled.
 Spotless (palantir) is configured in its own pom; the model-free CI job runs `spotless:check`.
 
-**The default system prompt is general-purpose on purpose — do not narrow it back.** `LocalAgent.systemPrompt`
+**The default system prompt is general-purpose on purpose — do not narrow it back.** Every model-facing
+text is a resource, not a Java literal: `src/main/resources/net/ladenthin/llama/atmosphere/` holds
+`system-prompt.txt`, `system-prompt-shell.txt`, `system-prompt-no-shell.txt` and `run-command-tool.txt`
+(each with a `.license` sidecar for REUSE), loaded by `LocalAgent.prompt(name)` with `{placeholder}`
+substitution; `AgentOptionsTest.promptResourcesLoadAndEveryPlaceholderIsFilled` fails on a missing file or
+an unfilled placeholder. `LocalAgent.systemPrompt`
 and the `ShellTool` description describe `run_command` as running *any* command line through the named
 shell (`ShellTool.shellName()`), not limited to the workspace, and tell the model to run a command rather
 than explain one. The earlier wording ("careful *coding agent*", `run_command` "to build, test or inspect

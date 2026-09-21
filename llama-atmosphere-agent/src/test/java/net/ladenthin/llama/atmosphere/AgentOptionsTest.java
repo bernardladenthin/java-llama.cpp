@@ -166,11 +166,35 @@ class AgentOptionsTest {
     }
 
     @Test
+    void promptResourcesLoadAndEveryPlaceholderIsFilled() {
+        for (String name : new String[] {
+            LocalAgent.SYSTEM_PROMPT,
+            LocalAgent.SHELL_PROMPT,
+            LocalAgent.NO_SHELL_PROMPT,
+            ShellTool.DESCRIPTION_RESOURCE
+        }) {
+            assertThat(name, LocalAgent.prompt(name).isBlank(), is(false));
+        }
+        for (boolean allowShell : new boolean[] {true, false}) {
+            AgentOptions options = AgentOptions.parse(
+                    allowShell
+                            ? new String[] {"--base-url", "u", "--workspace", "ws", "--allow-shell"}
+                            : new String[] {"--base-url", "u", "--workspace", "ws"});
+            String prompt = LocalAgent.systemPrompt(options);
+
+            // a renamed or mistyped placeholder would otherwise reach the model verbatim
+            assertThat(prompt, prompt.contains("{"), is(false));
+            assertThat(prompt, containsString(options.getWorkspace().toString()));
+        }
+    }
+
+    @Test
     void shellToolDescriptionDoesNotNarrowItToTheProject() {
         String description =
                 ShellTool.definition(Path.of("."), Duration.ofSeconds(1), 100).description();
         assertThat(description, containsString("any command line"));
         assertThat(description, containsString(ShellTool.shellName()));
+        assertThat(description, description.contains("{"), is(false));
     }
 
     @Test

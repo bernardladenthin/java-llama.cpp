@@ -5,8 +5,11 @@
 package net.ladenthin.llama.atmosphere;
 
 import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.PrintStream;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -44,6 +47,15 @@ public final class LocalAgent {
 
     /** Wall-clock bound on one user turn, including every tool round. */
     private static final Duration TURN_TIMEOUT = Duration.ofMinutes(30);
+
+    /** The default system prompt; placeholders {@code {workspace}} and {@code {shell_section}}. */
+    static final String SYSTEM_PROMPT = "system-prompt.txt";
+
+    /** The {@code {shell_section}} with {@code --allow-shell}; placeholder {@code {shell}}. */
+    static final String SHELL_PROMPT = "system-prompt-shell.txt";
+
+    /** The {@code {shell_section}} without {@code --allow-shell}. */
+    static final String NO_SHELL_PROMPT = "system-prompt-no-shell.txt";
 
     private static final Duration SHELL_TIMEOUT = Duration.ofSeconds(120);
     private static final int SHELL_MAX_OUTPUT_CHARS = 20_000;
@@ -217,7 +229,8 @@ public final class LocalAgent {
      * requests such as "list the docker images" even though {@code run_command} could do it. With
      * {@code --allow-shell} the prompt therefore states that any command line is allowed and that the
      * model should run a command rather than explain one; without it, the prompt says so honestly
-     * instead of letting the model invent a limitation.
+     * instead of letting the model invent a limitation. The text itself is in the resources
+     * {@value #SYSTEM_PROMPT}, {@value #SHELL_PROMPT} and {@value #NO_SHELL_PROMPT} (see {@link #prompt}).
      *
      * @param options the options
      * @return the system prompt
@@ -226,19 +239,32 @@ public final class LocalAgent {
         if (options.getSystemPrompt() != null) {
             return options.getSystemPrompt();
         }
-        String files = " The file tools ls, read_file, write_file, edit_file, glob, grep, delete and rename work"
-                + " on the directory " + options.getWorkspace() + "; their paths are relative to it.";
-        String shell = options.isAllowShell()
-                ? " You have full shell access: run_command executes any command line through "
-                        + ShellTool.shellName() + " on this machine, starting in that directory but not"
-                        + " limited to it, e.g. docker, git, package managers, build tools or system"
-                        + " information. When the user asks about this machine or wants something done,"
-                        + " run the command instead of explaining how to do it."
-                : " You cannot run shell commands in this session; if a request needs one, say so and"
-                        + " suggest restarting the agent with --allow-shell.";
-        return "You are a helpful general-purpose assistant running locally on the user's computer, with"
-                + " tools to act on it." + files + shell
-                + " Work step by step: read a file before you edit it, check the result after a change,"
-                + " and finish with a short summary. Answer in the user's language.";
+        String shellSection = options.isAllowShell()
+                ? prompt(SHELL_PROMPT).replace("{shell}", ShellTool.shellName())
+                : prompt(NO_SHELL_PROMPT);
+        return prompt(SYSTEM_PROMPT)
+                .replace("{workspace}", options.getWorkspace().toString())
+                .replace("{shell_section}", shellSection);
+    }
+
+    /**
+     * A prompt text from the resources next to this class, trimmed.
+     *
+     * <p>The wording lives in {@code src/main/resources/net/ladenthin/llama/atmosphere/*.txt} so it can
+     * be read and edited as text; {@code {placeholders}} are filled in by {@link #systemPrompt}.
+     *
+     * @param name the file name, e.g. {@value #SYSTEM_PROMPT}
+     * @return the file content without leading or trailing whitespace
+     * @throws IllegalStateException when the resource is missing from the jar
+     */
+    static String prompt(String name) {
+        try (InputStream in = LocalAgent.class.getResourceAsStream(name)) {
+            if (in == null) {
+                throw new IllegalStateException("Prompt resource missing: " + name);
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8).strip();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Cannot read prompt resource " + name, e);
+        }
     }
 }

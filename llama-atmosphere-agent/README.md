@@ -126,6 +126,12 @@ command line on this machine (the shell is named, so the model writes the right 
 model should run a command rather than explain one. Without `--allow-shell` it tells the model it
 cannot run commands and to suggest the flag, so the model does not invent a limitation of its own.
 
+The wording is plain text, not Java: [`src/main/resources/net/ladenthin/llama/atmosphere/`](src/main/resources/net/ladenthin/llama/atmosphere/)
+holds `system-prompt.txt` (placeholders `{workspace}` and `{shell_section}`), `system-prompt-shell.txt` /
+`system-prompt-no-shell.txt` (the `{shell_section}` with and without `--allow-shell`; `{shell}` is the
+shell's name) and `run-command-tool.txt` (the `run_command` description the model reads). Edit them
+there to change the default for everyone; `--system` overrides it per run.
+
 This wording matters more than it looks: an earlier default called the agent a *coding agent* and
 described `run_command` as a way to *"build, test or inspect the project"*, and Qwen3-4B then refused
 *"list the docker images"* ("my tools are only for files") although the tool was registered and the

@@ -1,0 +1,1 @@
+You cannot run shell commands in this session; if a request needs one, say so and suggest restarting the agent with --allow-shell.

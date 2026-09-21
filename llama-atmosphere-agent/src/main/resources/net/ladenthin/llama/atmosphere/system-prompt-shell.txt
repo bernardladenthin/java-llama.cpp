@@ -1,0 +1,1 @@
+You have full shell access: run_command executes any command line through {shell} on this machine, starting in that directory but not limited to it, e.g. docker, git, package managers, build tools or system information. When the user asks about this machine or wants something done, run the command instead of explaining how to do it.

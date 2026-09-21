@@ -24,6 +24,9 @@ public final class ShellTool {
     /** Tool name as offered to the model. */
     public static final String TOOL_NAME = "run_command";
 
+    /** The tool description the model reads (a resource next to this class); placeholder {@code {shell}}. */
+    static final String DESCRIPTION_RESOURCE = "run-command-tool.txt";
+
     private static final String PARAM_COMMAND = "command";
     private static final String PARAM_TIMEOUT = "timeout_seconds";
 
@@ -39,11 +42,7 @@ public final class ShellTool {
      */
     public static ToolDefinition definition(Path workspace, Duration defaultTimeout, int maxOutputChars) {
         return ToolDefinition.builder(
-                        TOOL_NAME,
-                        "Run any command line on this machine through " + shellName() + " and return its exit"
-                                + " code and output (stdout and stderr merged). It starts in the workspace"
-                                + " directory but is not limited to it: use it for every task a terminal can do,"
-                                + " e.g. docker, git, package managers, build tools or system information.")
+                        TOOL_NAME, LocalAgent.prompt(DESCRIPTION_RESOURCE).replace("{shell}", shellName()))
                 .parameter(PARAM_COMMAND, "The command line to run through " + shellName(), "string", true)
                 .parameter(PARAM_TIMEOUT, "Seconds to wait before the command is killed", "integer", false)
                 .executor(args -> {
