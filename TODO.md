@@ -31,7 +31,9 @@ so everything below is genuinely still open.
   (`AttachCurrentThreadAsDaemon`, so `DestroyJavaVM` never waits for the leaked singleton's worker),
   skip the detach when `g_vm` is already gone (`JNI_OnUnload` ran), and pin the behaviour with the
   existing model-free `LlamaLoggerTest` plus a count of `java.lang.Thread` objects seen by the
-  callback (today it is one per line). Not a correctness issue; measure before doing it.
+  callback — `deliveryIsAsynchronousOnTheLogWorkerAndRemovingTheLoggerDrains` already prints it
+  (measured: 13 lines of a failed load → 13 distinct `Thread` objects, i.e. one per line). Not a
+  correctness issue; measure the time cost before doing it.
 - **File the patch upstream.** `common_log_set_callback` is a small, self-contained addition to
   `common/log.{h,cpp}` with no jllama specifics; upstream acceptance would retire the carry.
 
