@@ -905,7 +905,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_cuda</outputDirectory>
@@ -986,7 +986,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_opencl_android</outputDirectory>
@@ -1075,7 +1075,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_windows_msvc</outputDirectory>
@@ -1159,7 +1159,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_windows_cuda</outputDirectory>
@@ -1240,7 +1240,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_windows_vulkan</outputDirectory>
@@ -1321,7 +1321,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_linux_vulkan</outputDirectory>
@@ -1403,7 +1403,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_linux_vulkan_aarch64</outputDirectory>
@@ -1487,7 +1487,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_windows_opencl</outputDirectory>
@@ -1566,7 +1566,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_linux_rocm</outputDirectory>
@@ -1644,7 +1644,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_windows_rocm</outputDirectory>
@@ -1722,7 +1722,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_linux_sycl_fp16</outputDirectory>
@@ -1800,7 +1800,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_linux_sycl_fp32</outputDirectory>
@@ -1878,7 +1878,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_windows_sycl</outputDirectory>
@@ -1958,7 +1958,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_windows_opencl_aarch64</outputDirectory>
@@ -2036,7 +2036,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_linux_openvino</outputDirectory>
@@ -2114,7 +2114,7 @@ SPDX-License-Identifier: MIT
 								</excludes>
 								<compilerArgs>
 									<arg>-h</arg>
-									<arg>src/main/cpp</arg>
+									<arg>${project.basedir}/src/main/cpp</arg>
 								</compilerArgs>
 								<outputDirectory>
 									${project.build.outputDirectory}_windows_openvino</outputDirectory>
