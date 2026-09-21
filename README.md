@@ -1019,6 +1019,29 @@ See [`llama-langchain4j/README.md`](llama-langchain4j/) for streaming/embedding/
 examples and the current mapping limitations (tool calling, JSON mode, and multimodal input are
 not yet forwarded).
 
+### Local coding agent with Atmosphere (`llama-atmosphere-agent/`)
+
+A copy-and-run **terminal coding agent on the JVM** — Claude Code / OpenCode reduced to the
+essentials, fully offline — built from [Atmosphere](https://github.com/Atmosphere/atmosphere)'s
+built-in OpenAI-compatible agent runtime (streaming, tool loop, workspace file tools) driven
+**headless** against this project's OpenAI-compatible server. It is a standalone Maven project (not a
+reactor module, not published); you copy the folder and run it:
+
+```bash
+# against a server you started (java-llama.cpp fat jar with --jinja, or llama-server) ...
+mvn -q compile exec:java -Dllama.version=<version> \
+    -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --allow-shell"
+# ... or with the GGUF loaded in-process
+mvn -q compile exec:java -Dllama.version=<version> \
+    -Dexec.args="--model /models/Qwen2.5-7B-Instruct-Q4_K_M.gguf --ngl 99 --workspace /path/to/project"
+```
+
+The full streaming tool-calling loop (tools → `delta.tool_calls` → Java tool → `role:"tool"` result →
+next turn, over several rounds) is verified on every PR against the real `OpenAiCompatServer` with
+no model, and in CI against the Qwen2.5-1.5B tool model. See
+[`llama-atmosphere-agent/README.md`](llama-atmosphere-agent/) for the options and the verified
+compatibility matrix.
+
 ### Model/Inference Configuration
 
 There are two sets of parameters you can configure, `ModelParameters` and `InferenceParameters`. Both provide builder 

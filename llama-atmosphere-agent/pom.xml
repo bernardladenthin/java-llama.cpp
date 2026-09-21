@@ -1,0 +1,161 @@
+<!--
+SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+
+SPDX-License-Identifier: MIT
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<!--
+		Standalone (NOT a reactor module, NOT published): a copy-and-run local coding agent that
+		wires Atmosphere's built-in OpenAI-compatible agent runtime to java-llama.cpp. CI builds and
+		tests it against the freshly installed core (-Dllama.version=<reactor version>); a user copies
+		the folder, picks a released llama.version and runs it with `mvn compile exec:java`.
+		See README.md.
+	-->
+	<groupId>net.ladenthin</groupId>
+	<artifactId>llama-atmosphere-agent</artifactId>
+	<version>1.0.0-SNAPSHOT</version>
+	<packaging>jar</packaging>
+
+	<name>${project.groupId}:${project.artifactId}</name>
+	<description>Local JVM coding agent: Atmosphere's built-in OpenAI-compatible agent runtime
+		(tool calling, streaming) driven against java-llama.cpp's OpenAI-compatible server.</description>
+	<url>https://github.com/bernardladenthin/java-llama.cpp</url>
+
+	<licenses>
+		<license>
+			<name>MIT License</name>
+			<url>https://www.opensource.org/licenses/mit-license.php</url>
+			<distribution>repo</distribution>
+		</license>
+	</licenses>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<!-- Atmosphere requires Java 21; the core net.ladenthin:llama stays Java 8. -->
+		<maven.compiler.release>21</maven.compiler.release>
+		<!-- The java-llama.cpp version to run against. CI overrides this with the reactor version it
+		     just installed; a user picks a released version, e.g. -Dllama.version=5.2.0. -->
+		<llama.version>5.2.0-SNAPSHOT</llama.version>
+		<!-- Native backend of the core jar: empty = default CPU jar (incl. macOS Metal). GPU users pass
+		     e.g. -Dllama.classifier=cuda13-linux-x86-64 or vulkan-windows-x86-64 (runtime on PATH). -->
+		<llama.classifier></llama.classifier>
+		<atmosphere.version>4.0.70</atmosphere.version>
+		<slf4j.version>2.0.19</slf4j.version>
+		<jspecify.version>1.0.1</jspecify.version>
+		<junit.version>6.1.3</junit.version>
+		<hamcrest.version>3.0</hamcrest.version>
+		<compiler.plugin.version>3.16.0</compiler.plugin.version>
+		<surefire.version>3.6.0</surefire.version>
+		<exec.plugin.version>3.5.0</exec.plugin.version>
+		<spotless.version>3.10.2</spotless.version>
+		<palantir-java-format.version>2.98.0</palantir-java-format.version>
+		<agent.main>net.ladenthin.llama.atmosphere.LocalAgent</agent.main>
+	</properties>
+
+	<!-- Lets the default -SNAPSHOT llama.version resolve without a local install of the core. -->
+	<repositories>
+		<repository>
+			<id>sonatype-snapshots</id>
+			<url>https://central.sonatype.com/repository/maven-snapshots/</url>
+			<releases>
+				<enabled>false</enabled>
+			</releases>
+			<snapshots>
+				<enabled>true</enabled>
+			</snapshots>
+		</repository>
+	</repositories>
+
+	<dependencies>
+		<!-- The model server (in-process mode) and the OpenAI-compatible HTTP surface under test. -->
+		<dependency>
+			<groupId>net.ladenthin</groupId>
+			<artifactId>llama</artifactId>
+			<version>${llama.version}</version>
+			<classifier>${llama.classifier}</classifier>
+		</dependency>
+
+		<!-- Atmosphere's built-in OpenAI-compatible agent runtime: streaming, tool loop, file tools.
+		     No Spring Boot, no servlet container: BuiltInAgentRuntime is driven headless. -->
+		<dependency>
+			<groupId>org.atmosphere</groupId>
+			<artifactId>atmosphere-ai</artifactId>
+			<version>${atmosphere.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.jspecify</groupId>
+			<artifactId>jspecify</artifactId>
+			<version>${jspecify.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-simple</artifactId>
+			<version>${slf4j.version}</version>
+			<scope>runtime</scope>
+		</dependency>
+
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<version>${junit.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.hamcrest</groupId>
+			<artifactId>hamcrest</artifactId>
+			<version>${hamcrest.version}</version>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<version>${compiler.plugin.version}</version>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<version>${surefire.version}</version>
+				<configuration>
+					<!-- Model-backed tests self-skip without a GGUF; the wire-contract tests need
+					     nothing. Keep the fork on the classpath (the core jar carries a module-info). -->
+					<useModulePath>false</useModulePath>
+					<trimStackTrace>false</trimStackTrace>
+				</configuration>
+			</plugin>
+			<!-- `mvn compile exec:java -Dexec.args="..."` runs the agent from the source tree. -->
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>exec-maven-plugin</artifactId>
+				<version>${exec.plugin.version}</version>
+				<configuration>
+					<mainClass>${agent.main}</mainClass>
+					<!-- Fail the Maven build with the agent's exit code instead of swallowing it. -->
+					<cleanupDaemonThreads>false</cleanupDaemonThreads>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>com.diffplug.spotless</groupId>
+				<artifactId>spotless-maven-plugin</artifactId>
+				<version>${spotless.version}</version>
+				<configuration>
+					<java>
+						<palantirJavaFormat>
+							<version>${palantir-java-format.version}</version>
+						</palantirJavaFormat>
+					</java>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+</project>

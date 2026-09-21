@@ -9,6 +9,23 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Added
+- **`llama-atmosphere-agent/` — a local, offline JVM coding agent** (Claude Code / OpenCode reduced to
+  the essentials) that drives [Atmosphere](https://github.com/Atmosphere/atmosphere)'s built-in
+  OpenAI-compatible agent runtime **headless** (no Spring Boot, no servlet container) against this
+  project's `OpenAiCompatServer`: streaming, the model→tool→model loop, Atmosphere's workspace-confined
+  file tools and an opt-in `run_command` tool. Standalone Maven project (not a reactor module, not
+  published): `mvn compile exec:java -Dexec.args="--base-url http://127.0.0.1:8080/v1 …"` against a
+  running java-llama.cpp / llama-server, or `--model x.gguf` to host the model in-process. Verified two
+  ways and wired into CI: model-free wire-contract tests drive the *real* `OpenAiCompatServer` with a
+  scripted engine (tool-call deltas by index, parallel calls, four consecutive rounds with full history,
+  401 handling, the one known Atmosphere gap on in-stream errors), and a model-backed job runs the loop
+  against the Qwen2.5-1.5B tool model. Result: Atmosphere works **unchanged** (verdict A).
+- `OpenAiBackend`, `ChunkSink` and `OpenAiCompatServer(OpenAiBackend, OpenAiServerConfig)` are now
+  **public** — the inference-engine seam behind the OpenAI-compatible server, previously package-private
+  and used only by the core's own tests, so that sibling projects can drive the real HTTP surface
+  without a native library or model.
+
 ### Changed
 - **BREAKING (runtime): the shipped SLF4J binding is now `slf4j-simple`, not `logback-classic`.**
   Two independent reasons, and the first is a hard failure rather than a preference:
