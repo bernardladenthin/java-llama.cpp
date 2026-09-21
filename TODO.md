@@ -118,10 +118,6 @@ be described here as "drops automatically when that merges"; it will not.)
 - **`0010` cast `vocab_type` for `common_json`** (one line; upstream regressed `GET /models` +
   `GET /v1/models` to emit `true`/`false` instead of the numeric vocab type when they flipped the
   `json` alias to `common_json` at b10585/#27511). **Not yet filed upstream.**
-- **`0011` lenient invalid-UTF-8 in the PEG parser** (one malformed byte from the model turns a
-  finished generation into an HTTP 500; the `INVALID` branch ignores leniency while the `INCOMPLETE`
-  branch beside it honours it). Ships an upstream `tests/peg-parser/test-unicode.cpp` case.
-  **Not yet filed upstream.**
 - **`0012` guard the zero split-sum and name the device index** (a GPU reporting zero free memory —
   or a cancelling `--tensor-split` such as `-ts 1,-1` on any backend — makes every model load fail
   with the unactionable `error loading model: vector`). Ships an upstream `tests/test-model-split.cpp`.
@@ -129,8 +125,11 @@ be described here as "drops automatically when that merges"; it will not.)
 
 (`0009` is **not** in this list and the number is burned: upstream merged the subprocess.h fix via
 ggml-org/llama.cpp#26606, so the patch was dropped at the b10280 bump. `0013` is likewise gone —
-upstream merged this project's own PR ggml-org/llama.cpp#28775 and it was dropped at b10948. Both
-drops are recorded in `CLAUDE.md` under the patch table.)
+upstream merged this project's own PR ggml-org/llama.cpp#28775 and it was dropped at b10948. `0011`
+went the same way at b11069: upstream fixed the invalid-UTF-8 PEG-parser failure independently and
+more broadly via ggml-org/llama.cpp#29161 (one U+FFFD per undecodable run, text after it kept) before
+the patch was ever filed, so the `ContentOnlyParseUtf8` guard now pins upstream's contract instead.
+All three drops are recorded in `CLAUDE.md` under the patch table.)
 
 ### llama.cpp upstream feature exposure (queued, deferred by policy)
 
