@@ -1996,15 +1996,16 @@ snippet was exactly the one forgotten on the `5.0.4 → 5.0.5` bump; it is liste
 missed again.)
 
 - **`README.md`** (root) — the install snippet, the two classifier-example snippets (default + the
-  `<classifier>` template), and the `llama-langchain4j` snippet.
-- **`llama-atmosphere-agent/pom.xml`** — the `llama.version` property default (standalone project,
-  outside the reactor, so `versions:set` skips it). The Maven Central **badge**
+  `<classifier>` template), and the `llama-langchain4j` snippet. The Maven Central **badge**
   auto-pulls the latest released version, so leave it. The **`-SNAPSHOT` line** in the "Snapshot
   builds" section documents the snapshot channel — set it to the *next* dev version, not the release.
   (The per-classifier snippets were **deduplicated** to a single canonical + template pair, so the
   release version now appears in only ~4 spots here, not ~20 — the runtime details live once in the
   classifier table.)
 - **`llama-langchain4j/README.md`** — its own `<dependency>` snippet.
+- **`llama-atmosphere-agent/pom.xml`** — the `llama.version` property default (standalone project,
+  outside the reactor, so `versions:set` skips it), plus the `-Dllama.version=<version>` snippets
+  in the root README's "Local coding agent" section and the project's own README.
 - **`llama-android/README.md`** and **`llama-kotlin/README.md`** — their Gradle dependency
   snippets, plus the `llama-android`/`llama-kotlin` snippets in the root README's
   "Importing in Android" section.
