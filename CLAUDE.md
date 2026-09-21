@@ -2003,9 +2003,10 @@ missed again.)
   release version now appears in only ~4 spots here, not ~20 — the runtime details live once in the
   classifier table.)
 - **`llama-langchain4j/README.md`** — its own `<dependency>` snippet.
-- **`llama-atmosphere-agent/pom.xml`** — the `llama.version` property default (standalone project,
-  outside the reactor, so `versions:set` skips it), plus the `-Dllama.version=<version>` snippets
-  in the root README's "Local coding agent" section and the project's own README.
+- **`llama-atmosphere-agent/pom.xml`** — the `llama.version` property (the **release** version;
+  standalone project outside the reactor, so `versions:set` skips it), plus the fat-jar filename
+  `llama-<version>-jar-with-dependencies.jar` in the root README's "Local coding agent" section and
+  the project's own README.
 - **`llama-android/README.md`** and **`llama-kotlin/README.md`** — their Gradle dependency
   snippets, plus the `llama-android`/`llama-kotlin` snippets in the root README's
   "Importing in Android" section.
@@ -2142,8 +2143,10 @@ that pairs [Atmosphere](https://github.com/Atmosphere/atmosphere)'s built-in Ope
 agent runtime with this project's `OpenAiCompatServer`. Like `android-llmservice/` it is a
 **standalone Maven project, NOT a reactor module and NOT published** — it is an application, and it
 needs Java 21 (Atmosphere's floor) while the core stays Java 8. CI builds it against the core it just
-installed (`-Dllama.version=<reactor version>`); a user copies the folder, sets a released
-`llama.version`, and runs `mvn compile exec:java -Dexec.args="…"`.
+installed (`-Dllama.version=<reactor version>`); a user copies the folder and runs
+`mvn compile exec:java -Dexec.args="…"` with no `-D` at all — the pom's `llama.version` names the
+**released** core the READMEs describe (currently `5.2.0`, written as if released so the docs are
+right the moment the release lands).
 
 **What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.70) ships
 `BuiltInAgentRuntime` + `OpenAiCompatibleClient`: a zero-framework OpenAI client that *always*
@@ -2192,10 +2195,13 @@ lines: `AiConfig.configure` → `BuiltInAgentRuntime` → `AgentExecutionContext
 with `enableJinja()`, one-shot `--prompt` or a `you>` REPL with `/clear` `/exit`). Spotless (palantir)
 is configured in its own pom; the model-free CI job runs `spotless:check`.
 
-**Version bump note.** The pom's `llama.version` property defaults to the current reactor version
-(CI always overrides it). `versions:set` does not touch this standalone pom, so bump the default by
-hand together with the two README snippets (`README.md` "Local coding agent" + the project's own
-README) — the same class as the `llama-langchain4j/README.md` snippet.
+**Version bump note.** The pom's `llama.version` property is the **release** version, not the
+reactor's `-SNAPSHOT` (CI always overrides it, so a not-yet-published default never breaks CI).
+`versions:set` does not touch this standalone pom, so at release time bump it by hand together with
+the fat-jar filename `llama-<version>-jar-with-dependencies.jar` in the two READMEs (`README.md`
+"Local coding agent" + the project's own README) — the same class as the `llama-langchain4j/README.md`
+snippet. Before the release, run it against a pre-release core with `-Dllama.version=<x>-SNAPSHOT`
+(the pom keeps the Sonatype snapshot repository for exactly that).
 
 ## Android app "LLM Service" (`android-llmservice/`)
 

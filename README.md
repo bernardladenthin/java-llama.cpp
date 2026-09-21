@@ -1025,14 +1025,23 @@ A copy-and-run **terminal coding agent on the JVM** — Claude Code / OpenCode r
 essentials, fully offline — built from [Atmosphere](https://github.com/Atmosphere/atmosphere)'s
 built-in OpenAI-compatible agent runtime (streaming, tool loop, workspace file tools) driven
 **headless** against this project's OpenAI-compatible server. It is a standalone Maven project (not a
-reactor module, not published); you copy the folder and run it:
+reactor module, not published); you copy the folder and run it. With java-llama.cpp already running
+(`--jinja` is required for tool calling):
 
 ```bash
-# against a server you started (java-llama.cpp fat jar with --jinja, or llama-server) ...
-mvn -q compile exec:java -Dllama.version=<version> \
+# 1. the server, e.g. from the release fat jar
+java -jar llama-5.2.0-jar-with-dependencies.jar -m /models/Qwen2.5-7B-Instruct-Q4_K_M.gguf --jinja --port 8080
+
+# 2. the agent, from the llama-atmosphere-agent/ folder — a you> prompt appears (/clear, /exit)
+mvn -q compile exec:java \
     -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --allow-shell"
-# ... or with the GGUF loaded in-process
-mvn -q compile exec:java -Dllama.version=<version> \
+
+# a single turn instead of the prompt loop
+mvn -q compile exec:java \
+    -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --prompt 'Read the README and summarize it'"
+
+# or without a separate server: load the GGUF in-process
+mvn -q compile exec:java \
     -Dexec.args="--model /models/Qwen2.5-7B-Instruct-Q4_K_M.gguf --ngl 99 --workspace /path/to/project"
 ```
 
