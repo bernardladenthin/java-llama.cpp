@@ -2140,7 +2140,7 @@ releases as a signed Central Portal bundle upload (staging repo → zip → Publ
 
 ## Local coding agent with Atmosphere (`llama-atmosphere-agent/`, standalone)
 
-A **copy-and-run terminal coding agent** (Claude Code / OpenCode reduced to the essentials, offline)
+A **copy-and-run general-purpose terminal agent** (Claude Code / OpenCode reduced to the essentials, offline)
 that pairs [Atmosphere](https://github.com/Atmosphere/atmosphere)'s built-in OpenAI-compatible
 agent runtime with this project's `OpenAiCompatServer`. Like `android-llmservice/` it is a
 **standalone Maven project, NOT a reactor module and NOT published** — it is an application, and it
@@ -2192,7 +2192,7 @@ the moment anything runs on the module path.
 lines: `AiConfig.configure` → `BuiltInAgentRuntime` → `AgentExecutionContext` + `ToolLoopPolicies`),
 `ConsoleSession` (streams to stdout, prints `⚙ tool {args}` / `↳ result`, supplies the
 `WorkspaceAgentFileSystem` via `injectables()`), `ShellTool` (opt-in `run_command`, `sh -c` /
-`cmd /c` in the workspace, timeout kills the process tree, output tail-truncated), `LocalAgent`
+`cmd /c` starting in the workspace, timeout kills the process tree, output tail-truncated), `LocalAgent`
 (`--base-url` = external server, `--model` = in-process `LlamaModel` + loopback `OpenAiCompatServer`
 with `enableJinja()` and `setLogVerbosity(2)` by default — llama.cpp logs to **stderr**, the console the
 streamed answer shares, so the per-request `slot …` INFO lines would interleave with it; `--log-verbosity <n>`
@@ -2204,6 +2204,19 @@ sibling **`.mvn/jvm.config.license`** (the same two SPDX lines as the one next t
 a `jvm.config` takes no comments, so REUSE can only read its metadata from that file, and without it the
 `REUSE Compliance Check` job fails on `main` — which is how it was found, the PR run having been cancelled.
 Spotless (palantir) is configured in its own pom; the model-free CI job runs `spotless:check`.
+
+**The default system prompt is general-purpose on purpose — do not narrow it back.** `LocalAgent.systemPrompt`
+and the `ShellTool` description describe `run_command` as running *any* command line through the named
+shell (`ShellTool.shellName()`), not limited to the workspace, and tell the model to run a command rather
+than explain one. The earlier wording ("careful *coding agent*", `run_command` "to build, test or inspect
+the project" / "build, test, grep or list files") made Qwen3-4B refuse "list the docker images" — "my
+tools are only for files" — with the tool registered and `docker` on `PATH`; a fresh single-turn run
+refused too, so it was the prompt, not the chat history. Without `--allow-shell` the prompt says commands
+are unavailable and names the flag, so the model does not invent its own limitation. Pinned by
+`AgentOptionsTest.defaultSystemPromptIsGeneralPurposeAndAllowsAnyCommandWithTheShell` and
+`shellToolDescriptionDoesNotNarrowItToTheProject`. `ShellToolTest` uses POSIX commands (`ls`, `sleep`,
+`exit 3`), so it passes only on Linux/macOS — CI runs it on Linux; on Windows run the suite with
+`-Dtest=!ShellToolTest`.
 
 **Version bump note.** The pom's `llama.version` property is the **release** version, not the
 reactor's `-SNAPSHOT` (CI always overrides it, so a not-yet-published default never breaks CI).

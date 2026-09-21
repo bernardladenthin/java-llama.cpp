@@ -167,7 +167,7 @@ public final class AgentOptions {
                 "",
                 "Agent:",
                 "  --workspace <dir>       directory the file tools are confined to (default: cwd)",
-                "  --allow-shell           add the run_command tool (runs shell commands in the workspace)",
+                "  --allow-shell           add the run_command tool (runs any command line, starting in the workspace)",
                 "  --system <text>         replace the default system prompt",
                 "  --prompt <text>, -p     run one turn and exit (default: interactive; /exit to quit)",
                 "  --temperature <t>       sampling temperature (default " + DEFAULT_TEMPERATURE + ")",

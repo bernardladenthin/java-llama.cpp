@@ -10,7 +10,9 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import org.junit.jupiter.api.Test;
 
 class AgentOptionsTest {
@@ -145,6 +147,34 @@ class AgentOptionsTest {
 
         assertThat(LocalAgent.systemPrompt(plain).contains("run_command"), is(false));
         assertThat(LocalAgent.systemPrompt(shell), containsString("run_command"));
+    }
+
+    @Test
+    void defaultSystemPromptIsGeneralPurposeAndAllowsAnyCommandWithTheShell() {
+        // A narrow "coding agent ... build, test or inspect the project" framing made a 4B model refuse
+        // "list the docker images" although run_command could run it; the prompt must grant it outright.
+        String shell = LocalAgent.systemPrompt(
+                AgentOptions.parse(new String[] {"--base-url", "http://x/v1", "--allow-shell"}));
+        assertThat(shell, containsString("general-purpose"));
+        assertThat(shell, containsString("any command line through " + ShellTool.shellName()));
+        assertThat(shell, containsString("run the command instead of explaining"));
+        assertThat(shell.contains("coding agent"), is(false));
+
+        // Without the shell the model must not invent a limitation: it is told why and how to lift it.
+        String plain = LocalAgent.systemPrompt(AgentOptions.parse(new String[] {"--base-url", "http://x/v1"}));
+        assertThat(plain, containsString("--allow-shell"));
+    }
+
+    @Test
+    void shellToolDescriptionDoesNotNarrowItToTheProject() {
+        String description =
+                ShellTool.definition(Path.of("."), Duration.ofSeconds(1), 100).description();
+        assertThat(description, containsString("any command line"));
+        assertThat(description, containsString(ShellTool.shellName()));
+    }
+
+    @Test
+    void systemPromptOverrideReplacesTheDefault() {
         assertThat(
                 LocalAgent.systemPrompt(AgentOptions.parse(new String[] {"--base-url", "u", "--system", "custom"})),
                 is("custom"));

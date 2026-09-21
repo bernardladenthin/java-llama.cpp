@@ -15,7 +15,7 @@ import java.util.concurrent.TimeoutException;
 import org.atmosphere.ai.tool.ToolDefinition;
 
 /**
- * The {@code run_command} tool: runs a shell command inside the workspace and returns its exit code and
+ * The {@code run_command} tool: runs any shell command (starting in the workspace) and returns its exit code and
  * (merged, truncated) output. Opt-in via {@code --allow-shell} — a model-driven shell is exactly as
  * powerful as the user account it runs under.
  */
@@ -40,9 +40,11 @@ public final class ShellTool {
     public static ToolDefinition definition(Path workspace, Duration defaultTimeout, int maxOutputChars) {
         return ToolDefinition.builder(
                         TOOL_NAME,
-                        "Run a shell command in the workspace directory and return its exit code and output"
-                                + " (stdout and stderr merged). Use it to build, test, grep or list files.")
-                .parameter(PARAM_COMMAND, "The command line to run through the system shell", "string", true)
+                        "Run any command line on this machine through " + shellName() + " and return its exit"
+                                + " code and output (stdout and stderr merged). It starts in the workspace"
+                                + " directory but is not limited to it: use it for every task a terminal can do,"
+                                + " e.g. docker, git, package managers, build tools or system information.")
+                .parameter(PARAM_COMMAND, "The command line to run through " + shellName(), "string", true)
                 .parameter(PARAM_TIMEOUT, "Seconds to wait before the command is killed", "integer", false)
                 .executor(args -> {
                     Object command = args.get(PARAM_COMMAND);
@@ -53,6 +55,26 @@ public final class ShellTool {
                     return run(workspace, command.toString(), timeout, maxOutputChars);
                 })
                 .build();
+    }
+
+    /**
+     * Whether commands run through {@code cmd.exe} rather than {@code sh}.
+     *
+     * @return {@code true} on Windows
+     */
+    static boolean isWindows() {
+        return System.getProperty("os.name", "")
+                .toLowerCase(java.util.Locale.ROOT)
+                .contains("win");
+    }
+
+    /**
+     * The shell {@link #run} uses, named for the model so it writes commands in the right syntax.
+     *
+     * @return {@code "cmd.exe on Windows"} or {@code "sh"}
+     */
+    static String shellName() {
+        return isWindows() ? "cmd.exe on Windows" : "sh";
     }
 
     private static Duration timeoutOf(Object raw, Duration fallback) {
@@ -85,11 +107,8 @@ public final class ShellTool {
      */
     static String run(Path workspace, String command, Duration timeout, int maxOutputChars)
             throws IOException, InterruptedException {
-        boolean windows = System.getProperty("os.name", "")
-                .toLowerCase(java.util.Locale.ROOT)
-                .contains("win");
         ProcessBuilder builder =
-                windows ? new ProcessBuilder("cmd.exe", "/c", command) : new ProcessBuilder("sh", "-c", command);
+                isWindows() ? new ProcessBuilder("cmd.exe", "/c", command) : new ProcessBuilder("sh", "-c", command);
         builder.directory(workspace.toFile());
         builder.redirectErrorStream(true);
         Process process = builder.start();

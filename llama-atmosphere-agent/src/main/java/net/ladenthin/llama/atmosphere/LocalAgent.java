@@ -23,7 +23,7 @@ import org.atmosphere.ai.tool.ToolDefinition;
 import org.jspecify.annotations.Nullable;
 
 /**
- * A local, terminal coding agent in the spirit of Claude Code / OpenCode, built from two parts that
+ * A local, general-purpose terminal agent in the spirit of Claude Code / OpenCode, built from two parts that
  * already exist: <b>Atmosphere</b>'s built-in OpenAI-compatible agent runtime (streaming, tool loop,
  * workspace file tools) and <b>java-llama.cpp</b>'s OpenAI-compatible server.
  *
@@ -212,6 +212,13 @@ public final class LocalAgent {
     /**
      * The default system prompt, or the {@code --system} override.
      *
+     * <p>The default describes a general-purpose agent on this machine, not a coding agent confined to a
+     * project: a small model reads a narrow role or tool description as a prohibition and then refuses
+     * requests such as "list the docker images" even though {@code run_command} could do it. With
+     * {@code --allow-shell} the prompt therefore states that any command line is allowed and that the
+     * model should run a command rather than explain one; without it, the prompt says so honestly
+     * instead of letting the model invent a limitation.
+     *
      * @param options the options
      * @return the system prompt
      */
@@ -219,13 +226,19 @@ public final class LocalAgent {
         if (options.getSystemPrompt() != null) {
             return options.getSystemPrompt();
         }
+        String files = " The file tools ls, read_file, write_file, edit_file, glob, grep, delete and rename work"
+                + " on the directory " + options.getWorkspace() + "; their paths are relative to it.";
         String shell = options.isAllowShell()
-                ? " Use run_command to build, test or inspect the project with shell commands."
-                : "";
-        return "You are a careful coding agent working in the directory " + options.getWorkspace() + "."
-                + " Use the tools to inspect and change files: ls, read_file, write_file, edit_file, glob,"
-                + " grep, delete, rename. Paths are relative to that directory." + shell
-                + " Work step by step: read a file before you edit it, verify the result after a change,"
-                + " and finish with a short summary of what you did.";
+                ? " You have full shell access: run_command executes any command line through "
+                        + ShellTool.shellName() + " on this machine, starting in that directory but not"
+                        + " limited to it, e.g. docker, git, package managers, build tools or system"
+                        + " information. When the user asks about this machine or wants something done,"
+                        + " run the command instead of explaining how to do it."
+                : " You cannot run shell commands in this session; if a request needs one, say so and"
+                        + " suggest restarting the agent with --allow-shell.";
+        return "You are a helpful general-purpose assistant running locally on the user's computer, with"
+                + " tools to act on it." + files + shell
+                + " Work step by step: read a file before you edit it, check the result after a change,"
+                + " and finish with a short summary. Answer in the user's language.";
     }
 }

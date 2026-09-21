@@ -4,10 +4,12 @@ SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 SPDX-License-Identifier: MIT
 -->
 
-# llama-atmosphere-agent — a local JVM coding agent on java-llama.cpp
+# llama-atmosphere-agent — a local, general-purpose JVM agent on java-llama.cpp
 
-A minimal, copy-and-run **terminal coding agent** (think Claude Code / OpenCode, reduced to the
-essentials) that runs entirely on the JVM and entirely offline:
+A minimal, copy-and-run **general-purpose terminal agent** (think Claude Code / OpenCode, reduced to
+the essentials): it reads and edits files, and with `--allow-shell` it runs any command on your
+machine — `docker`, `git`, build tools, system information. It runs entirely on the JVM and entirely
+offline:
 
 - **Model:** any GGUF served by java-llama.cpp's OpenAI-compatible HTTP surface — either a server
   you start yourself, or the GGUF loaded **in this process**.
@@ -16,7 +18,8 @@ essentials) that runs entirely on the JVM and entirely offline:
   workspace-confined file tools (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`,
   `delete`, `rename`). Driven **headless** — no Spring Boot, no servlet container, no `@Agent`
   scanning — through `BuiltInAgentRuntime`.
-- **Shell:** an opt-in `run_command` tool (`--allow-shell`) so the model can build and test.
+- **Shell:** an opt-in `run_command` tool (`--allow-shell`) that runs any command line through the
+  system shell (`cmd.exe` on Windows, `sh` elsewhere).
 
 This folder is a **standalone Maven project**, deliberately *not* a reactor module and *not*
 published: CI builds and tests it against the core of the same checkout; you copy the folder and
@@ -66,6 +69,18 @@ mvn -q compile exec:java \
     -Dexec.args="--model /models/Qwen2.5-7B-Instruct-Q4_K_M.gguf --ngl 99 --workspace /path/to/project"
 ```
 
+**Everything at once — shell access and your own system prompt:**
+
+```bash
+mvn -q compile exec:java \
+    -Dexec.args="--model /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --ctx-size 16384 --workspace /path/to/project --allow-shell --system 'You are a local assistant on this machine with full shell access. run_command executes any command line, including docker, git and build tools. When asked about the system, run a command instead of explaining it. Read a file before you edit it. Answer in the language of the user.'"
+```
+
+Then ask, for example, *"which docker images are available?"* or *"build the project and fix the
+first compiler error"*. On Windows PowerShell, quote the whole argument instead:
+`"-Dexec.args=--model C:\models\… --allow-shell --system '…'"`. Inside `--system '…'` avoid the
+apostrophe (write *the user* rather than *user's*): the value is already single-quoted.
+
 GPU natives: pick the core classifier, e.g. `-Dllama.classifier=cuda13-linux-x86-64` or
 `vulkan-windows-x86-64` (the vendor runtime must be installed — see the root README's classifier
 table). Without it the default CPU jar (incl. macOS Metal) is used. In mode A the classifier is
@@ -79,8 +94,8 @@ irrelevant: inference stays in the running server, the agent's JVM loads no mode
 | `--model <file.gguf>` | load this GGUF in-process instead | — |
 | `--ngl <n>` / `--ctx-size <n>` | GPU layers / context size for `--model` | `0` / `8192` |
 | `--log-verbosity <n>` / `--verbose` | llama.cpp log threshold for `--model` (1 errors, 2 warnings, 3 info, 4 trace, 5 debug) / log everything | `2` / off |
-| `--workspace <dir>` | directory the file tools (and `run_command`) are confined to | cwd |
-| `--allow-shell` | register `run_command` | off |
+| `--workspace <dir>` | directory the file tools are confined to, and where `run_command` starts | cwd |
+| `--allow-shell` | register `run_command`: any command line, starting in the workspace | off |
 | `--system <text>` | replace the default system prompt | built-in |
 | `--prompt <text>`, `-p` | one turn, then exit | interactive |
 | `--temperature <t>` / `--max-tokens <n>` | sampling / per-call budget | `0.2` / `2048` |
@@ -103,9 +118,25 @@ code page it saw at startup, so umlauts and emoji in the answer would turn into 
 project's `.mvn/jvm.config` pins `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` for the `mvn`
 JVM so both sides agree.
 
+### The system prompt
+
+Without `--system` the agent uses a built-in **general-purpose** prompt: it names the file tools and
+the workspace they work on, and — only with `--allow-shell` — states that `run_command` runs *any*
+command line on this machine (the shell is named, so the model writes the right syntax) and that the
+model should run a command rather than explain one. Without `--allow-shell` it tells the model it
+cannot run commands and to suggest the flag, so the model does not invent a limitation of its own.
+
+This wording matters more than it looks: an earlier default called the agent a *coding agent* and
+described `run_command` as a way to *"build, test or inspect the project"*, and Qwen3-4B then refused
+*"list the docker images"* ("my tools are only for files") although the tool was registered and the
+command worked. `--system <text>` replaces the default **completely** — include whatever the model
+still needs to know (the workspace, the shell, your language) in your own text.
+
 Pick a **tool-capable instruct model** (Qwen2.5/Qwen3-Instruct, Llama-3.x-Instruct, Mistral,
 Hermes, …). Quality of the loop is the model's: a 1.5B model calls one tool and reads its result, a
-7B–32B model does multi-step edit/build/test work.
+7B–32B model does multi-step edit/build/test work. Qwen3-4B-Instruct-2507 is a good fast default (fits
+an 8 GB GPU with a 16k context); Qwen2.5-Coder-7B, in contrast, wrote the call as a JSON code block
+into its answer instead of calling the tool.
 
 ## What is verified, and where
 
