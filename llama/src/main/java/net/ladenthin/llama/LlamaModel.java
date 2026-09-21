@@ -454,8 +454,12 @@ public class LlamaModel implements AutoCloseable {
      * <p>Messages are delivered asynchronously from llama.cpp's log worker thread, never from the
      * thread that logged. Replacing or removing the logger first flushes every queued message to the
      * previous callback and blocks until that is done, so {@code setLogger(format, null)} is a
-     * synchronous drain; do not call it from inside a log callback. To discard everything, pass an
-     * empty callback, i.e. <code>(level, msg) {@literal ->} {}</code>.
+     * synchronous drain. Two rules follow from that: do not call it from inside a log callback, and
+     * do not call it while holding a lock the <em>previous</em> callback may need (a
+     * {@code synchronized} logger, a bounded queue the calling thread drains): the queued messages
+     * are delivered on the log worker thread while the caller waits, so such a lock deadlocks.
+     * Concurrent calls from different threads are serialized natively. To discard everything, pass
+     * an empty callback, i.e. <code>(level, msg) {@literal ->} {}</code>.
      *
      * @param format the log format to use
      * @param callback a method to call for log messages, or {@code null} for the console

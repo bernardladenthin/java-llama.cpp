@@ -611,11 +611,14 @@ JNIEnv *get_jni_env_or_null() noexcept {
  * A JNIEnv for the current thread, attaching the thread to the JVM if it is not attached yet.
  *
  * The log sink runs on common_log's worker thread, a plain std::thread that llama.cpp creates
- * (and re-creates on every pause/resume) and that has never seen the JVM. A per-call attach is
- * the only option that leaks nothing: the thread is not ours, so nobody could detach it before
- * it exits, and a thread that exits while attached leaves a dangling JavaThread behind. Returns
- * nullptr (nothing to log through) when the JVM is gone or refuses the attach. `attached` tells
- * the caller whether it owes a DetachCurrentThread.
+ * (and re-creates on every pause/resume) and that has never seen the JVM. The thread is not ours,
+ * and a thread that exits while attached leaves a dangling JavaThread behind, so this attaches per
+ * call and the caller detaches again. That is the simple, leak-free choice, not the cheapest one:
+ * every attach creates a java.lang.Thread object (and fires JVMTI thread events), which is
+ * noticeable at --verbose volumes. A thread_local guard whose destructor detaches once at thread
+ * exit would keep the thread attached across lines; see TODO.md. Returns nullptr (nothing to log
+ * through) when the JVM is gone or refuses the attach. `attached` tells the caller whether it owes
+ * a DetachCurrentThread.
  */
 JNIEnv *get_jni_env_attaching(bool &attached) noexcept {
     attached = false;
@@ -645,6 +648,12 @@ static std::mutex g_log_mutex;
 // call into a just-deleted global ref (a use-after-free on the JNI ref).
 static int g_log_active = 0;
 static std::condition_variable g_log_cv;
+// Serializes setLogger callers against each other. It is NOT g_log_mutex: the swap pauses and
+// resumes common_log's worker (a join + a fresh std::thread), and two unserialized swaps race on
+// that std::thread -- one caller joins it while the other assigns a new thread over the still
+// joinable object, which is std::terminate. The trampoline never takes this mutex, so holding it
+// across the join cannot deadlock.
+static std::mutex g_set_logger_mutex;
 
 /**
  * Invoke the log callback if there is any. When JSON mode is enabled,
@@ -1546,6 +1555,9 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_cancelCompletion(JNIE
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_setLogger(JNIEnv *env, jclass clazz, jobject log_format,
                                                                      jobject jcallback) {
     return jni_guard_impl(env, c_llama_error, [&]() -> void {
+        // One swap at a time (see g_set_logger_mutex); the trampoline never takes this lock.
+        std::lock_guard<std::mutex> swap_lock(g_set_logger_mutex);
+
         // The Java logger is a sink on common_log (patches/0014), not a llama_log_set() callback.
         // Every line reaches common_log -- the server's SRV_*/SLT_* macros write into it directly
         // and llama/ggml lines arrive through common_log_default_callback -- and common_init(),

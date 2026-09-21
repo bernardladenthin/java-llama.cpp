@@ -159,4 +159,35 @@ class LlamaLoggerTest {
         node.fields().forEachRemaining(e -> map.put(e.getKey(), e.getValue()));
         return map;
     }
+
+    /**
+     * Concurrent {@code setLogger} calls must be serialized natively. The sink swap pauses and
+     * resumes llama.cpp's log worker, and two unserialized swaps race on that {@code std::thread}:
+     * one caller joins it while the other assigns a fresh thread over the still-joinable object,
+     * which is {@code std::terminate} — the whole JVM dies, not a test. Before the fix this hammered
+     * the race hard enough to reproduce it.
+     */
+    @Test
+    void concurrentSetLoggerCallsDoNotRaceOnTheLogWorker() throws Exception {
+        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping logger guard");
+        final int threads = 4;
+        final int rounds = 200;
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        try {
+            java.util.List<java.util.concurrent.Future<?>> futures = new ArrayList<>();
+            for (int t = 0; t < threads; t++) {
+                futures.add(pool.submit(() -> {
+                    for (int i = 0; i < rounds; i++) {
+                        LlamaModel.setLogger(LogFormat.TEXT, (level, text) -> {});
+                        LlamaModel.setLogger(LogFormat.JSON, null);
+                    }
+                }));
+            }
+            for (java.util.concurrent.Future<?> f : futures) {
+                f.get(2, java.util.concurrent.TimeUnit.MINUTES);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+    }
 }
