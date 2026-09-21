@@ -1021,8 +1021,9 @@ not yet forwarded).
 
 ### Local coding agent with Atmosphere (`llama-atmosphere-agent/`)
 
-A copy-and-run **terminal coding agent on the JVM** — Claude Code / OpenCode reduced to the
-essentials, fully offline — built from [Atmosphere](https://github.com/Atmosphere/atmosphere)'s
+A copy-and-run **general-purpose terminal agent on the JVM** — Claude Code / OpenCode reduced to the
+essentials, fully offline; it edits files and, with `--allow-shell`, runs any command on your machine
+(`docker`, `git`, build tools) — built from [Atmosphere](https://github.com/Atmosphere/atmosphere)'s
 built-in OpenAI-compatible agent runtime (streaming, tool loop, workspace file tools) driven
 **headless** against this project's OpenAI-compatible server. It is a standalone Maven project (not a
 reactor module, not published); you copy the folder and run it. With java-llama.cpp already running
@@ -1043,6 +1044,10 @@ mvn -q compile exec:java \
 # or without a separate server: load the GGUF in-process
 mvn -q compile exec:java \
     -Dexec.args="--model /models/Qwen2.5-7B-Instruct-Q4_K_M.gguf --ngl 99 --workspace /path/to/project"
+
+# everything at once: shell access plus your own system prompt (replaces the built-in one)
+mvn -q compile exec:java \
+    -Dexec.args="--model /models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --ctx-size 16384 --workspace /path/to/project --allow-shell --system 'You are a local assistant on this machine with full shell access. run_command executes any command line, including docker, git and build tools. When asked about the system, run a command instead of explaining it. Answer in the language of the user.'"
 ```
 
 The full streaming tool-calling loop (tools → `delta.tool_calls` → Java tool → `role:"tool"` result →

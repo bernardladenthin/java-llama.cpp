@@ -1,0 +1,1 @@
+Run any command line on this machine through {shell} and return its exit code and output (stdout and stderr merged). It starts in the workspace directory but is not limited to it: use it for every task a terminal can do, e.g. docker, git, package managers, build tools or system information.
