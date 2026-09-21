@@ -13,7 +13,8 @@ SPDX-License-Identifier: MIT
 		Standalone (NOT a reactor module, NOT published): a copy-and-run local coding agent that
 		wires Atmosphere's built-in OpenAI-compatible agent runtime to java-llama.cpp. CI builds and
 		tests it against the freshly installed core (-Dllama.version=<reactor version>); a user copies
-		the folder, picks a released llama.version and runs it with `mvn compile exec:java`.
+		the folder and runs it with `mvn compile exec:java` against the released core the
+		llama.version default names.
 		See README.md.
 	-->
 	<groupId>net.ladenthin</groupId>
@@ -38,9 +39,11 @@ SPDX-License-Identifier: MIT
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<!-- Atmosphere requires Java 21; the core net.ladenthin:llama stays Java 8. -->
 		<maven.compiler.release>21</maven.compiler.release>
-		<!-- The java-llama.cpp version to run against. CI overrides this with the reactor version it
-		     just installed; a user picks a released version, e.g. -Dllama.version=5.2.0. -->
-		<llama.version>5.2.0-SNAPSHOT</llama.version>
+		<!-- The java-llama.cpp release this project is documented against (the README's commands
+		     run without any -D). CI overrides it with the reactor version it just installed; anyone
+		     else can override it too, e.g. -Dllama.version=5.3.0-SNAPSHOT for a pre-release core.
+		     Bump it as part of every release. -->
+		<llama.version>5.2.0</llama.version>
 		<!-- Native backend of the core jar: empty = default CPU jar (incl. macOS Metal). GPU users pass
 		     e.g. -Dllama.classifier=cuda13-linux-x86-64 or vulkan-windows-x86-64 (runtime on PATH). -->
 		<llama.classifier></llama.classifier>
@@ -57,7 +60,7 @@ SPDX-License-Identifier: MIT
 		<agent.main>net.ladenthin.llama.atmosphere.LocalAgent</agent.main>
 	</properties>
 
-	<!-- Lets the default -SNAPSHOT llama.version resolve without a local install of the core. -->
+	<!-- Only consulted for a -SNAPSHOT llama.version override (releases come from Maven Central). -->
 	<repositories>
 		<repository>
 			<id>sonatype-snapshots</id>

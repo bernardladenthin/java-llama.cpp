@@ -19,42 +19,57 @@ essentials) that runs entirely on the JVM and entirely offline:
 - **Shell:** an opt-in `run_command` tool (`--allow-shell`) so the model can build and test.
 
 This folder is a **standalone Maven project**, deliberately *not* a reactor module and *not*
-published: CI builds and tests it against the core of the same checkout; you copy the folder, set
-`llama.version`, and run it.
+published: CI builds and tests it against the core of the same checkout; you copy the folder and
+run it. Its `pom.xml` pins `llama.version` to the release these instructions describe (**5.2.0**);
+pass `-Dllama.version=…` to run against another core, e.g. a `-SNAPSHOT` before a release.
 
 ## Quick start
 
 Requirements: JDK 21+ and Maven. No native toolchain: the core jar ships the natives.
 
-**A. Against a server you run yourself** (you keep every llama.cpp flag):
+**A. Against a java-llama.cpp server that is already running** (you keep every llama.cpp flag):
+
+1. java-llama.cpp is running, for example started from the release fat jar like this
+   (`--jinja` is required for tool calling: it enables the model's tool-call chat template):
+
+   ```bash
+   java -jar llama-5.2.0-jar-with-dependencies.jar -m /models/Qwen2.5-7B-Instruct-Q4_K_M.gguf --jinja --port 8080
+   ```
+
+   Upstream `llama-server` with the same flags works too; any OpenAI-compatible endpoint does.
+
+2. Start the agent from this folder (`llama-atmosphere-agent/`):
+
+   ```bash
+   mvn -q compile exec:java \
+       -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --allow-shell"
+   ```
+
+A `you>` prompt appears. Type a request; the answer streams as it is generated, and every tool call
+and its result are printed as `⚙ read_file {path=…}` / `↳ …` lines. `/clear` drops the history,
+`/exit` quits.
+
+A single turn without the REPL:
 
 ```bash
-# 1. start java-llama.cpp's full upstream server (WebUI included) from the fat jar of a release;
-#    --jinja enables the model's tool-call template, which tool calling needs
-java -jar llama-<version>-jar-with-dependencies.jar -m /models/Qwen2.5-7B-Instruct-Q4_K_M.gguf \
-     --jinja --port 8080 --api-key sk-local
-#    (or upstream llama-server with the same flags — any OpenAI-compatible endpoint works)
-
-# 2. run the agent from this folder
-mvn -q compile exec:java -Dllama.version=<version> \
-    -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --allow-shell"
+mvn -q compile exec:java \
+    -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --prompt 'Read the README and summarize it'"
 ```
 
+If the server was started with `--api-key <key>`, add `--api-key <key>` to the agent's arguments.
+
 **B. In-process** (one command, the GGUF is loaded into the agent's JVM and served over a loopback
-`OpenAiCompatServer`):
+`OpenAiCompatServer` — no separately running server):
 
 ```bash
-mvn -q compile exec:java -Dllama.version=<version> \
+mvn -q compile exec:java \
     -Dexec.args="--model /models/Qwen2.5-7B-Instruct-Q4_K_M.gguf --ngl 99 --workspace /path/to/project"
 ```
 
 GPU natives: pick the core classifier, e.g. `-Dllama.classifier=cuda13-linux-x86-64` or
 `vulkan-windows-x86-64` (the vendor runtime must be installed — see the root README's classifier
-table). Without it the default CPU jar (incl. macOS Metal) is used.
-
-Then type a request at the `you>` prompt (`/clear` drops the history, `/exit` quits), or run a single
-turn with `--prompt "…"`. Streamed text appears as it is generated; every tool call and its result
-are printed as `⚙ read_file {path=…}` / `↳ …` lines.
+table). Without it the default CPU jar (incl. macOS Metal) is used. In mode A the classifier is
+irrelevant: inference stays in the running server, the agent's JVM loads no model.
 
 ### Options
 
