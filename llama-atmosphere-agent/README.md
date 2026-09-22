@@ -223,6 +223,34 @@ into a file stays correct. Colour is on only on a real terminal and obeys `NO_CO
 `CLICOLOR=0` and `CLICOLOR_FORCE=1`. On the classic Windows `conhost.exe` escape sequences may show up
 literally unless `HKCU\Console\VirtualTerminalLevel` is 1 — Windows Terminal needs nothing.
 
+### Try it
+
+Start the agent with shell access (add `-Dllama.classifier=…` and `--ngl 99` for a GPU; leave both
+out to stay on the CPU):
+
+```bash
+mvn -q compile exec:java \
+    -Dexec.args="--model models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ctx-size 16384 --workspace /path/to/project --allow-shell"
+```
+
+Then, in this order:
+
+| Type this | What should happen |
+|---|---|
+| `/help` | the command overview — the agent answers, the model never sees the line |
+| `/status` | mode, context use, tools, model, workspace, history size |
+| `/tools` | every tool, and which of them ask before running |
+| `docker is running locally, list the images` | `? run_command {command=docker images}` and the prompt `[y]es / [n]o / [a]uto` |
+| answer `n` | the command does **not** run; the model is told it was cancelled and offers an alternative |
+| ask again, answer `y` | the command runs and its output goes back to the model |
+| `/mode auto` | the status line flips to `auto`; nothing asks any more |
+| `explain Markdown with a heading, a list, bold text and a code block` | the answer arrives rendered: heading bold, `•` bullets, code in colour |
+| `/compact` | the conversation is summarized and replaces the history; `ctx` drops |
+| `/exit` | leave |
+
+`--auto` starts in auto mode, `--verbose` brings llama.cpp's own log back, and `NO_COLOR=1` turns
+the styling off.
+
 ### The system prompt
 
 Without `--system` the agent uses a built-in **general-purpose** prompt: it names the file tools and
