@@ -185,6 +185,7 @@ unknown `/command` included — goes to the model:
 | `/tools` | the tools offered, and which of them ask first |
 | `/mode [manual\|auto]` (`/approve`) | show or set the approval mode |
 | `/compact [focus]` | summarize the conversation and continue from the summary |
+| `/loop [--every 5m] [--max 20] [--check '<cmd>'] <task>` | keep working on one task until it is done |
 | `/clear` (`/reset`, `/new`) | drop the history |
 | `/exit` (`/quit`) | leave |
 
@@ -216,6 +217,33 @@ the answer.
 next step; `/compact <focus>` adds an emphasis), then replaces the history with that summary. Use it
 when the context fills up. Note the history only ever held the user texts and the final answers —
 tool rounds are not replayed across turns — so nothing else is lost.
+
+**`/loop`** keeps working on one task without you typing anything between steps:
+
+```
+/loop --check 'mvn -q test' make ShellToolTest pass on Windows
+```
+
+Every step sends the **same** message — the task verbatim plus "read `AGENT-LOOP.md`, do one concrete
+step, write down what happened". The conversation history is **dropped between steps**: the file in
+the workspace is the memory, so the context never grows and the loop can run for a long time. The
+loop ends when a line of the answer is exactly
+
+```
+<<TASK_COMPLETE>>
+```
+
+A marker *mentioned* inside a sentence does not count, only a line of its own. This is a text marker
+rather than a "done" tool on purpose: small local models produce a well-formed tool call far less
+reliably than a line of text — mini-SWE-agent reaches its SWE-bench results with a plain sentinel and
+no tool-call API at all, and Claude Code's own ralph-wiggum plugin matches an exact string too.
+
+With `--check '<command>'` the marker is only believed when that command succeeds; otherwise its
+output goes into the next step. That is the cheapest defence against a small model declaring victory
+after one edit. Four limits stop a runaway loop, all enforced by the agent, none of them trusted to
+the model: `--max` steps (20 by default), a two-hour wall-clock budget, a stall detector (three steps
+in a row that write nothing and call no tool), and `--every <duration>` for a paced run. A loop needs
+the `auto` approval mode — it asks once and switches, or leaves you alone if you say no.
 
 **The status line** above the prompt reads
 `[manual · ctx ~3.1k/16k · 9 tools · local-model]`: the approval mode, the context used out of the
@@ -255,6 +283,7 @@ Then, in this order:
 | `explain Markdown with a heading, a list, bold text and a code block` | the answer arrives rendered: heading bold, `•` bullets, code in colour |
 | press ↑ | the previous line comes back; Tab after `/` completes the commands |
 | `/compact` | the conversation is summarized and replaces the history; `ctx` drops |
+| `/loop --max 3 add a line with the current date to notes.txt, then stop` | three steps at most, with `AGENT-LOOP.md` appearing in the workspace |
 | `/exit` | leave |
 
 `--auto` starts in auto mode, `--verbose` brings llama.cpp's own log back, and `NO_COLOR=1` turns
@@ -353,6 +382,8 @@ starter are the *deployment* layer on top of the same runtime — not needed for
   Atmosphere's `ApprovalResolution` also supports approve-with-edited-arguments, which the console
   does not offer.
 - No auto-compaction when the context fills up; `/compact` is manual.
+- `/loop` cannot be interrupted in the middle of a step — Ctrl-C ends the process; the loop file
+  survives, so restarting the same `/loop` continues where it left off.
 - An engine error after the stream started ends the turn silently (see the table).
 - **One in-process agent per machine at a time.** The core extracts its native library to a fixed
   name (`jllama.dll` / `libjllama.so` in the temp directory); on Windows a second JVM cannot replace

@@ -62,6 +62,12 @@ public final class LocalAgent {
     /** The {@code /help} overview. */
     static final String HELP_TEXT = "help.txt";
 
+    /** The per-step message of {@code /loop}; placeholders {@code {task}}, {@code {file}}, {@code {check_hint}}. */
+    static final String LOOP_PROMPT = "loop-prompt.txt";
+
+    /** The skeleton written to {@link TaskLoop#LOOP_FILE}; placeholder {@code {task}}. */
+    static final String LOOP_FILE_TEMPLATE = "loop-file-template.md";
+
     /** The instructions {@code /compact} sends; placeholder {@code {focus}}. */
     static final String COMPACT_PROMPT = "compact-prompt.txt";
 
@@ -193,7 +199,13 @@ public final class LocalAgent {
             boolean estimated = false;
             while (true) {
                 terminal.status(StatusLine.render(
-                        mode.get(), inputTokens, estimated, contextSize, tools.size(), options.getModelId()));
+                        options.getWorkspace(),
+                        mode.get(),
+                        inputTokens,
+                        estimated,
+                        contextSize,
+                        tools.size(),
+                        options.getModelId()));
                 String line = terminal.readLine("you> ");
                 if (line == null) {
                     return 0;
@@ -236,7 +248,66 @@ public final class LocalAgent {
         }
     }
 
-    private static ConsoleSession turn(
+    /**
+     * Run {@code /loop}: work on one task step by step until it is done.
+     *
+     * <p>Two things are settled before the first step. The loop needs the {@link ApprovalMode#AUTO}
+     * mode — a run that asks before every write is not a loop, it is a conversation — so a manual
+     * session is asked once and left alone if the answer is no. And the history is <em>not</em> the
+     * loop's memory: {@link TaskLoop} drops it every step and keeps the state in a file, so nothing of
+     * the current conversation is used or changed here.
+     *
+     * @param runner the runner
+     * @param fileSystem the workspace filesystem
+     * @param terminal the console
+     * @param options the agent options, for the workspace
+     * @param mode the approval mode, possibly switched to auto here
+     * @param arguments everything after {@code /loop}
+     * @throws InterruptedException if interrupted while a step runs
+     */
+    private static void loop(
+            AgentRunner runner,
+            AgentFileSystem fileSystem,
+            AgentTerminal terminal,
+            AgentOptions options,
+            AtomicReference<ApprovalMode> mode,
+            String arguments)
+            throws InterruptedException {
+        LoopOptions loopOptions;
+        try {
+            loopOptions = LoopOptions.parse(arguments);
+        } catch (IllegalArgumentException e) {
+            terminal.line(e.getMessage());
+            return;
+        }
+        if (mode.get() != ApprovalMode.AUTO) {
+            String answer =
+                    terminal.readKey("a loop cannot stop at every question — switch to auto for it? [y]es / [n]o: ");
+            if (answer == null || !(answer.startsWith("y") || answer.isEmpty())) {
+                terminal.line("loop: cancelled (use /mode auto to allow it)");
+                return;
+            }
+            mode.set(ApprovalMode.AUTO);
+        }
+        if (!TaskLoop.canKeepNotes(runner.toolNames())) {
+            terminal.line("loop: needs the read_file and write_file tools to keep its notes");
+            return;
+        }
+        TaskLoop.Outcome outcome = TaskLoop.run(
+                runner,
+                fileSystem,
+                terminal,
+                options.getWorkspace(),
+                loopOptions,
+                () -> false,
+                TaskLoop.DEFAULT_BUDGET);
+        terminal.line(
+                outcome.completed()
+                        ? terminal.ansi().green("loop: " + outcome.reason())
+                        : terminal.ansi().yellow("loop: " + outcome.reason()));
+    }
+
+    static ConsoleSession turn(
             AgentRunner runner,
             AgentFileSystem fileSystem,
             String message,
@@ -308,6 +379,7 @@ public final class LocalAgent {
             }
             case STATUS -> {
                 terminal.line(StatusLine.render(
+                        options.getWorkspace(),
                         mode.get(),
                         inputTokens,
                         estimated,
@@ -320,6 +392,7 @@ public final class LocalAgent {
             case COMPACT -> {
                 return compact(runner, fileSystem, history, command.arguments(), terminal);
             }
+            case LOOP -> loop(runner, fileSystem, terminal, options, mode, command.arguments());
             case EXIT -> {
                 // handled by the caller, which has to return from the loop
             }

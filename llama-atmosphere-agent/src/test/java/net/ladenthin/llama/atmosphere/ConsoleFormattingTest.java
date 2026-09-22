@@ -49,10 +49,23 @@ class ConsoleFormattingTest {
     // ----- StatusLine -----
 
     @Test
-    void theStatusLineShowsModeContextToolsAndModel() {
-        String line = StatusLine.render(ApprovalMode.MANUAL, 1234, false, 16384, 9, "local-model");
+    void theStatusLineShowsWorkspaceModeContextToolsAndModel() {
+        String line = StatusLine.render(
+                java.nio.file.Path.of("/tmp/ws"), ApprovalMode.MANUAL, 1234, false, 16384, 9, "local-model");
 
-        assertThat(line, is("[manual · ctx 1.2k/16k · 9 tools · local-model]"));
+        assertThat(line, containsString("ws · manual · ctx 1.2k/16k · 9 tools · local-model]"));
+    }
+
+    @Test
+    void aLongWorkspacePathIsShortenedToItsLastTwoSegments() {
+        // the path is on every line of the session, so it must not push the rest off the screen
+        java.nio.file.Path deep = java.nio.file.Path.of("/home/someone/projects/customer/service/backend/module");
+        assertThat(StatusLine.shorten(deep), containsString("backend"));
+        assertThat(StatusLine.shorten(deep), containsString("module"));
+        assertThat(StatusLine.shorten(deep).startsWith("…"), is(true));
+        assertThat(
+                StatusLine.shorten(java.nio.file.Path.of("/tmp/ws")),
+                is(java.nio.file.Path.of("/tmp/ws").toString()));
     }
 
     @Test

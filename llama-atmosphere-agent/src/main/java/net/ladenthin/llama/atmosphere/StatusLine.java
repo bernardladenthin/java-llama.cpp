@@ -7,8 +7,8 @@ package net.ladenthin.llama.atmosphere;
 import java.util.Locale;
 
 /**
- * The one-line status shown above the {@code you>} prompt: approval mode, context usage, tool count
- * and model id.
+ * The one-line status pinned below the answer: workspace, approval mode, context usage, tool count
+ * and model id — the four things whose answer changes what the next request does.
  *
  * <p>Context usage is the <b>input</b> side of the last completed turn — the prompt the server had to
  * process, which is what fills the context window; the generated tokens of that turn are already part
@@ -26,6 +26,9 @@ import java.util.Locale;
  */
 public final class StatusLine {
 
+    /** Above this many characters the workspace path is shortened to its last two segments. */
+    private static final int MAX_PATH_CHARS = 40;
+
     /** The context size is unknown (no {@code /props}, and no in-process model). */
     public static final int UNKNOWN_CONTEXT = 0;
 
@@ -34,6 +37,7 @@ public final class StatusLine {
     /**
      * Render the status line.
      *
+     * @param workspace the directory the tools work in
      * @param mode the approval mode
      * @param inputTokens the input tokens of the last turn, or {@code 0} before the first one
      * @param estimated whether that number is an estimate rather than the server's own count
@@ -43,9 +47,34 @@ public final class StatusLine {
      * @return one line, without a trailing newline
      */
     public static String render(
-            ApprovalMode mode, long inputTokens, boolean estimated, int contextSize, int tools, String modelId) {
-        return "[" + mode.label() + " · " + context(inputTokens, estimated, contextSize) + " · " + tools + " tools · "
-                + modelId + "]";
+            java.nio.file.Path workspace,
+            ApprovalMode mode,
+            long inputTokens,
+            boolean estimated,
+            int contextSize,
+            int tools,
+            String modelId) {
+        return "[" + shorten(workspace) + " · " + mode.label() + " · " + context(inputTokens, estimated, contextSize)
+                + " · " + tools + " tools · " + modelId + "]";
+    }
+
+    /**
+     * The workspace path, shortened from the left when it would take over the line.
+     *
+     * <p>The tools work relative to this directory and the shell starts in it, so it belongs on the
+     * line that is always visible — but a deep path would push everything else off the screen, so only
+     * the last two segments survive, marked with a leading ellipsis.
+     *
+     * @param workspace the workspace directory
+     * @return the path, or its tail
+     */
+    static String shorten(java.nio.file.Path workspace) {
+        String full = workspace.toString();
+        if (full.length() <= MAX_PATH_CHARS || workspace.getNameCount() < 2) {
+            return full;
+        }
+        return "…" + workspace.getFileSystem().getSeparator()
+                + workspace.subpath(workspace.getNameCount() - 2, workspace.getNameCount());
     }
 
     /**

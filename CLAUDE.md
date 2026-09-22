@@ -2266,7 +2266,18 @@ are decisions, not details:
    emphasis). Colour is decided once in `Ansi.detect()` — `CLICOLOR_FORCE`, then `NO_COLOR`, then
    `TERM=dumb`/`CLICOLOR=0`, else "is a terminal" via `Console.isTerminal()` (reflective: JDK 22+;
    below that `System.console() != null`).
-5. **The context number in the status line is an estimate, marked `~`.** llama.cpp emits its usage
+5. **`/loop` keeps its state in a file, not in the context, and stops on a text marker** (`TaskLoop`,
+   `LoopOptions`). Every step re-sends the task verbatim and drops the history, so the context cannot
+   grow (Claude Code's ralph-wiggum plugin does the same, and `AGENT-LOOP.md` in the workspace is the
+   memory). The stop signal is a line that is **exactly** `<<TASK_COMPLETE>>`, never a substring —
+   deliberately **not** a "done" tool: below 7B a model emits a malformed tool call far more often
+   than a malformed line, and mini-SWE-agent's SWE-bench results come from exactly this plain-sentinel
+   design. `--check '<cmd>'` re-verifies the claim and feeds a failure back. Four guards, none of them
+   trusted to the model: step cap, wall-clock budget, stall detection (three steps with no file change
+   and no tool call), interval. **Order matters and a test pins it**: the marker is checked *before*
+   the stall detector, because the step that only answers "done" changes nothing and would otherwise
+   be reported as no progress.
+6. **The context number in the status line is an estimate, marked `~`.** llama.cpp emits its usage
    chunk only when the client sets `stream_options.include_usage`, and Atmosphere's client does not;
    `ConsoleSession.usage()` takes the real count when one arrives, otherwise `LocalAgent.estimateTokens`
    uses four characters per token. The window size is `--ctx-size` (in-process) or the server's

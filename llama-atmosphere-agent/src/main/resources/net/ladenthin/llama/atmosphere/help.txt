@@ -5,6 +5,9 @@ Commands (everything else is sent to the model):
   /tools                 the tools offered to the model
   /mode [manual|auto]    show or set the approval mode              (/approve)
   /compact [focus]       summarize the history and continue with the summary
+  /loop [--every 5m] [--max 20] [--check '<cmd>'] <task>
+                         keep working on <task> until the model answers <<TASK_COMPLETE>>;
+                         the state lives in AGENT-LOOP.md, not in the conversation
   /clear                 drop the history                           (/reset, /new)
   /exit                  leave                                      (/quit)
 

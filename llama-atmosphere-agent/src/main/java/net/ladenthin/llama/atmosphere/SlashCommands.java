@@ -32,6 +32,8 @@ public record SlashCommands(Command command, String arguments) {
         CLEAR("/clear", "/reset", "/new"),
         /** Summarize the history and continue with the summary; the argument steers the summary. */
         COMPACT("/compact"),
+        /** Keep working on one task until it is done; see {@link TaskLoop}. */
+        LOOP("/loop"),
         /** Show or set the approval mode; the argument is {@code manual} or {@code auto}. */
         MODE("/mode", "/approve"),
         /** Print endpoint, model, tools, approval mode and context usage. */
