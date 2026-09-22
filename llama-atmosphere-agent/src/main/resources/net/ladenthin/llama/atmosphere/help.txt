@@ -1,0 +1,13 @@
+Commands (everything else is sent to the model):
+
+  /help                  this overview                              (/?, /commands)
+  /status                endpoint, model, tools, mode, context use
+  /tools                 the tools offered to the model
+  /mode [manual|auto]    show or set the approval mode              (/approve)
+  /compact [focus]       summarize the history and continue with the summary
+  /clear                 drop the history                           (/reset, /new)
+  /exit                  leave                                      (/quit)
+
+In manual mode every tool that writes or runs a command asks first: [y]es runs it once,
+[n]o tells the model the user cancelled it, [a]uto stops asking for the rest of the session.
+Reading tools never ask. An unknown /command is sent to the model, not rejected.

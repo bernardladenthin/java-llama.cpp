@@ -27,10 +27,10 @@ run it. Its `pom.xml` pins `llama.version` to the release these instructions des
 pass `-Dllama.version=…` to run against another core, e.g. a `-SNAPSHOT` before a release.
 
 > [!WARNING]
-> With `--allow-shell` the model runs **any** command it decides to run, with **your** user's
-> rights, without asking — deleting files, pushing to git, stopping containers included. Start it on
-> a machine and account you are willing to hand to the model, and point `--workspace` at a copy of
-> a project, not your only one. Without the flag it can only use the file tools inside `--workspace`.
+> `--allow-shell` lets the model run **any** command with **your** user's rights. By default it asks
+> first (`[y]es / [n]o / [a]uto` per call) and only writes and commands are gated — but `--auto`, and
+> the `[a]` answer, turn that off for the rest of the session. Point `--workspace` at a copy of a
+> project, not your only one.
 
 ## Getting started from scratch
 
@@ -102,9 +102,9 @@ Metal with the default jar already. The root README's classifier table lists eve
        -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --allow-shell"
    ```
 
-A `you>` prompt appears. Type a request; the answer streams as it is generated, and every tool call
-and its result are printed as `⚙ read_file {path=…}` / `↳ …` lines. `/clear` drops the history,
-`/exit` quits.
+A `you>` prompt appears, above it a status line. The answer streams as it is generated, and every
+tool call and its result are printed as `● read_file {path=…}` / `↳ …` lines. See
+[Commands, approval and the status line](#commands-approval-and-the-status-line).
 
 A single turn without the REPL:
 
@@ -150,6 +150,7 @@ irrelevant: inference stays in the running server, the agent's JVM loads no mode
 | `--log-verbosity <n>` / `--verbose` | llama.cpp log threshold for `--model` (1 errors, 2 warnings, 3 info, 4 trace, 5 debug) / log everything | `2` / off |
 | `--workspace <dir>` | directory the file tools are confined to, and where `run_command` starts | cwd |
 | `--allow-shell` | register `run_command`: any command line, starting in the workspace | off |
+| `--auto` | run tools without asking (otherwise every write and command is confirmed) | off |
 | `--system <text>` | replace the default system prompt | built-in |
 | `--prompt <text>`, `-p` | one turn, then exit | interactive |
 | `--temperature <t>` / `--max-tokens <n>` | sampling / per-call budget | `0.2` / `2048` |
@@ -171,6 +172,56 @@ UTF-8 (llama.cpp calls `SetConsoleOutputCP(CP_UTF8)`), while the JVM keeps encod
 code page it saw at startup, so umlauts and emoji in the answer would turn into `�` / `?`; the
 project's `.mvn/jvm.config` pins `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` for the `mvn`
 JVM so both sides agree.
+
+### Commands, approval and the status line
+
+A line that starts with `/` and names a command is answered by the agent itself; anything else — an
+unknown `/command` included — goes to the model:
+
+| Command | |
+|---|---|
+| `/help` (`/?`, `/commands`) | the overview below |
+| `/status` | mode, context use, tools, model, workspace, history size |
+| `/tools` | the tools offered, and which of them ask first |
+| `/mode [manual\|auto]` (`/approve`) | show or set the approval mode |
+| `/compact [focus]` | summarize the conversation and continue from the summary |
+| `/clear` (`/reset`, `/new`) | drop the history |
+| `/exit` (`/quit`) | leave |
+
+**Approval.** In the default `manual` mode every tool that writes or runs a command —
+`run_command`, `write_file`, `edit_file`, `delete`, `rename` — asks before it runs:
+
+```
+● run_command {command=rm -rf build}
+? run_command {command=rm -rf build}
+  allow? [y]es / [n]o / [a]uto (no more questions):
+```
+
+`[y]` runs it once, `[n]` cancels it *and tells the model*, so it replans instead of assuming the
+command ran, `[a]` switches to `auto` for the rest of the session (`/mode manual` switches back).
+Reading tools (`ls`, `read_file`, `glob`, `grep`) never ask. **In one-shot mode (`--prompt`) nobody
+can answer, so a gated call is denied** — pass `--auto` to run unattended. The gate itself is
+Atmosphere's (`ToolApprovalPolicy` + `ApprovalStrategy`); the agent only supplies the question and
+the answer.
+
+**`/compact`** asks the model to summarize the conversation (goal, facts, work done, problems, state,
+next step; `/compact <focus>` adds an emphasis), then replaces the history with that summary. Use it
+when the context fills up. Note the history only ever held the user texts and the final answers —
+tool rounds are not replayed across turns — so nothing else is lost.
+
+**The status line** above the prompt reads
+`[manual · ctx ~3.1k/16k · 9 tools · local-model]`: the approval mode, the context used out of the
+window, the number of tools and the model id. A `~` means the number is an estimate from the text
+length: llama.cpp reports token counts only to clients that ask for them
+(`stream_options.include_usage`), which Atmosphere's client does not. The window size comes from
+`--ctx-size` with `--model`, and from the server's `/props` with `--base-url`; when neither answers,
+the line shows the count alone.
+
+**Colours and Markdown.** The answer is rendered line by line as it streams: headings, bullets,
+fenced code blocks and inline `**bold**` / `` `code` ``. Nothing is ever redrawn, so piping the output
+into a file stays correct. Colour is on only on a real terminal and obeys `NO_COLOR`, `TERM=dumb`,
+`CLICOLOR=0` and `CLICOLOR_FORCE=1`. On the classic Windows `conhost.exe` escape sequences may show up
+literally unless `HKCU\Console\VirtualTerminalLevel` is 1 — Windows Terminal needs nothing.
 
 ### The system prompt
 
@@ -261,7 +312,10 @@ starter are the *deployment* layer on top of the same runtime — not needed for
 ## Limitations / next steps
 
 - Tool rounds are not kept in the cross-turn history (only `user`/`assistant` text is replayed).
-- No approval prompts for destructive tools yet (`ToolDefinition.requiresApproval` exists in Atmosphere).
+- Approval is per call, not per command prefix: there is no "always allow `git status`" rule yet.
+  Atmosphere's `ApprovalResolution` also supports approve-with-edited-arguments, which the console
+  does not offer.
+- No auto-compaction when the context fills up; `/compact` is manual.
 - An engine error after the stream started ends the turn silently (see the table).
 - **One in-process agent per machine at a time.** The core extracts its native library to a fixed
   name (`jllama.dll` / `libjllama.so` in the temp directory); on Windows a second JVM cannot replace

@@ -1042,8 +1042,14 @@ mvn -q compile exec:java \
 ```
 
 > [!WARNING]
-> With `--allow-shell` the model runs any command it decides to run, with your user's rights and
-> without asking. Use a machine and a workspace you are willing to hand to the model.
+> `--allow-shell` lets the model run any command with your user's rights. By default every write and
+> every command is confirmed on the console (`[y]es / [n]o / [a]uto`); `--auto` turns that off. Use a
+> workspace you are willing to hand to the model.
+
+In the REPL, `/help` lists the commands (`/status`, `/tools`, `/mode manual|auto`, `/compact`,
+`/clear`, `/exit`); anything else goes to the model. A status line shows the approval mode and the
+context used (`[manual · ctx ~3.1k/16k · 9 tools · local-model]`), and the answer is rendered with
+headings, bullets and code spans.
 
 On Windows PowerShell quote the whole argument (`"-Dexec.args=--model models\… --allow-shell"`); for
 the GPU add e.g. `-Dllama.classifier=vulkan-windows-x86-64` and `--ngl 99`. The agent's

@@ -56,6 +56,7 @@ public final class AgentOptions {
     private final String modelId;
     private final Path workspace;
     private final boolean allowShell;
+    private final boolean auto;
     private final double temperature;
     private final int maxTokens;
     private final int maxToolRounds;
@@ -74,6 +75,7 @@ public final class AgentOptions {
         this.modelId = b.modelId;
         this.workspace = b.workspace;
         this.allowShell = b.allowShell;
+        this.auto = b.auto;
         this.temperature = b.temperature;
         this.maxTokens = b.maxTokens;
         this.maxToolRounds = b.maxToolRounds;
@@ -97,6 +99,7 @@ public final class AgentOptions {
             switch (a) {
                 case "-h", "--help" -> b.help = true;
                 case "--allow-shell" -> b.allowShell = true;
+                case "--auto" -> b.auto = true;
                 case "--base-url" -> b.baseUrl = stripTrailingSlash(value(args, ++i, a));
                 case "--model" -> b.modelPath = value(args, ++i, a);
                 case "--ngl", "--gpu-layers" -> b.gpuLayers = intValue(args, ++i, a);
@@ -168,6 +171,7 @@ public final class AgentOptions {
                 "Agent:",
                 "  --workspace <dir>       directory the file tools are confined to (default: cwd)",
                 "  --allow-shell           add the run_command tool (runs any command line, starting in the workspace)",
+                "  --auto                  run tools without asking (default: ask before writes and commands)",
                 "  --system <text>         replace the default system prompt",
                 "  --prompt <text>, -p     run one turn and exit (default: interactive; /exit to quit)",
                 "  --temperature <t>       sampling temperature (default " + DEFAULT_TEMPERATURE + ")",
@@ -260,6 +264,16 @@ public final class AgentOptions {
     }
 
     /**
+     * Whether tool calls run without asking.
+     *
+     * @return {@code true} when {@code --auto} was given, i.e. the session starts in
+     *     {@link ApprovalMode#AUTO}
+     */
+    public boolean isAuto() {
+        return auto;
+    }
+
+    /**
      * Whether the {@code run_command} tool is registered.
      *
      * @return {@code true} when shell access was opted into
@@ -327,7 +341,8 @@ public final class AgentOptions {
         return "AgentOptions{baseUrl=" + baseUrl + ", modelPath=" + modelPath + ", gpuLayers=" + gpuLayers
                 + ", ctxSize=" + ctxSize + ", logVerbosity=" + (verbose ? "verbose" : logVerbosity)
                 + ", modelId=" + modelId + ", workspace=" + workspace
-                + ", allowShell=" + allowShell + ", temperature=" + temperature + ", maxTokens=" + maxTokens
+                + ", allowShell=" + allowShell + ", auto=" + auto + ", temperature=" + temperature + ", maxTokens="
+                + maxTokens
                 + ", maxToolRounds=" + maxToolRounds + ", prompt=" + (prompt == null ? "<interactive>" : "<set>")
                 + "}";
     }
@@ -347,6 +362,7 @@ public final class AgentOptions {
         String modelId = DEFAULT_MODEL_ID;
         Path workspace = Paths.get("").toAbsolutePath().normalize();
         boolean allowShell;
+        boolean auto;
         double temperature = DEFAULT_TEMPERATURE;
         int maxTokens = DEFAULT_MAX_TOKENS;
         int maxToolRounds = DEFAULT_MAX_TOOL_ROUNDS;

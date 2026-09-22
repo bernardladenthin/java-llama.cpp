@@ -76,7 +76,8 @@ class LocalAgentTest {
             assertThat(exit, is(0));
         }
         String console = out.toString(StandardCharsets.UTF_8);
-        assertThat(console, containsString("⚙ read_file {path=hello.txt}"));
+        // the tool line and its result, as ConsoleSession renders them (unstyled here: not a terminal)
+        assertThat(console, containsString("● read_file {path=hello.txt}"));
         assertThat(console, containsString("↳ VALUE=42"));
         assertThat(console, containsString("The file says VALUE=42."));
         List<JsonNode> requests = backend.requests();

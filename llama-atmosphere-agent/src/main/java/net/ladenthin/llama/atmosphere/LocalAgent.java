@@ -14,6 +14,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.parameters.ModelParameters;
 import net.ladenthin.llama.server.OpenAiCompatServer;
@@ -56,6 +58,17 @@ public final class LocalAgent {
 
     /** The {@code {shell_section}} without {@code --allow-shell}. */
     static final String NO_SHELL_PROMPT = "system-prompt-no-shell.txt";
+
+    /** The {@code /help} overview. */
+    static final String HELP_TEXT = "help.txt";
+
+    /** The instructions {@code /compact} sends; placeholder {@code {focus}}. */
+    static final String COMPACT_PROMPT = "compact-prompt.txt";
+
+    /** The system prompt of the summarizing turn: no tools, no agent role, just condense. */
+    static final String COMPACT_SYSTEM_PROMPT =
+            "You summarize a conversation between a user and a coding assistant. Follow the user's"
+                    + " instructions exactly and answer with the summary only.";
 
     private static final Duration SHELL_TIMEOUT = Duration.ofSeconds(120);
     private static final int SHELL_MAX_OUTPUT_CHARS = 20_000;
@@ -142,31 +155,68 @@ public final class LocalAgent {
                     + " tools=" + runner.toolNames());
 
             List<ChatMessage> history = new ArrayList<>();
+            AtomicReference<ApprovalMode> mode =
+                    new AtomicReference<>(options.isAuto() ? ApprovalMode.AUTO : ApprovalMode.MANUAL);
+            boolean interactive = options.getPrompt() == null && input != null;
+            BufferedReader reader = input == null ? null : new BufferedReader(input);
+            // One-shot runs have nobody at the keyboard, so the strategy gets no console and denies
+            // gated calls unless --auto was passed (see ConsoleApprovalStrategy).
+            Ansi ansi = Ansi.detect();
+            runner.approval(
+                    new ConsoleApprovalStrategy(mode, interactive ? reader : null, out, ansi),
+                    ConsoleApprovalStrategy.policy());
+            int contextSize = options.getModelPath() != null
+                    ? options.getCtxSize()
+                    : ServerProps.contextSize(baseUrl, options.getApiKey());
+
             if (options.getPrompt() != null) {
-                return turn(runner, fileSystem, options.getPrompt(), history, out) ? 0 : 1;
+                return turn(runner, fileSystem, options.getPrompt(), history, out, ansi)
+                                        .failure()
+                                == null
+                        ? 0
+                        : 1;
             }
-            if (input == null) {
+            if (reader == null) {
                 err.println("No interactive input available; pass --prompt <text>.");
                 return 2;
             }
-            BufferedReader reader = new BufferedReader(input);
-            err.println("Interactive mode: type a request, /clear to drop the history, /exit to quit.");
+            err.println("Interactive mode: type a request, /help for the commands.");
+            long inputTokens = 0;
+            boolean estimated = false;
             while (true) {
+                out.println(ansi.dim(StatusLine.render(
+                        mode.get(), inputTokens, estimated, contextSize, tools.size(), options.getModelId())));
                 out.print("you> ");
                 out.flush();
                 String line = reader.readLine();
-                if (line == null || line.trim().equals("/exit") || line.trim().equals("/quit")) {
+                if (line == null) {
                     return 0;
                 }
                 if (line.trim().isEmpty()) {
                     continue;
                 }
-                if (line.trim().equals("/clear")) {
-                    history.clear();
-                    err.println("(history cleared)");
+                Optional<SlashCommands> command = SlashCommands.parse(line);
+                if (command.isPresent()) {
+                    if (command.get().command() == SlashCommands.Command.EXIT) {
+                        return 0;
+                    }
+                    inputTokens = handleCommand(
+                            command.get(),
+                            runner,
+                            fileSystem,
+                            history,
+                            mode,
+                            options,
+                            contextSize,
+                            inputTokens,
+                            estimated,
+                            out,
+                            ansi);
                     continue;
                 }
-                turn(runner, fileSystem, line, history, out);
+                ConsoleSession completed = turn(runner, fileSystem, line, history, out, ansi);
+                estimated = completed.inputTokens() == 0;
+                inputTokens = estimated ? estimateTokens(systemPrompt(options), history) : completed.inputTokens();
             }
         } finally {
             if (server != null) {
@@ -178,17 +228,167 @@ public final class LocalAgent {
         }
     }
 
-    private static boolean turn(
-            AgentRunner runner, AgentFileSystem fileSystem, String message, List<ChatMessage> history, PrintStream out)
+    private static ConsoleSession turn(
+            AgentRunner runner,
+            AgentFileSystem fileSystem,
+            String message,
+            List<ChatMessage> history,
+            PrintStream out,
+            Ansi ansi)
             throws InterruptedException {
-        ConsoleSession session = new ConsoleSession(out, fileSystem);
+        ConsoleSession session = new ConsoleSession(out, fileSystem, ansi);
         runner.run(message, history, session);
         boolean finished = session.await(TURN_TIMEOUT);
         history.add(ChatMessage.user(message));
         if (!session.text().isEmpty()) {
             history.add(ChatMessage.assistant(session.text()));
         }
-        return finished && session.failure() == null;
+        if (!finished) {
+            session.error(new IllegalStateException("turn did not finish within " + TURN_TIMEOUT));
+        }
+        return session;
+    }
+
+    /**
+     * Run one REPL command.
+     *
+     * @param command the parsed command
+     * @param runner the runner (used by {@code /compact})
+     * @param fileSystem the workspace filesystem (used by {@code /compact}'s session)
+     * @param history the conversation history, modified in place by {@code /clear} and {@code /compact}
+     * @param mode the approval mode, modified in place by {@code /mode}
+     * @param options the options, for the status output
+     * @param contextSize the context window in tokens, or {@link StatusLine#UNKNOWN_CONTEXT}
+     * @param inputTokens the input tokens of the last turn
+     * @param estimated whether that number is an estimate
+     * @param out the console
+     * @param ansi the console styles
+     * @return the input tokens to show from now on (unchanged, or the summary's after {@code /compact})
+     * @throws InterruptedException if interrupted while a summary is generated
+     */
+    private static long handleCommand(
+            SlashCommands command,
+            AgentRunner runner,
+            AgentFileSystem fileSystem,
+            List<ChatMessage> history,
+            AtomicReference<ApprovalMode> mode,
+            AgentOptions options,
+            int contextSize,
+            long inputTokens,
+            boolean estimated,
+            PrintStream out,
+            Ansi ansi)
+            throws InterruptedException {
+        switch (command.command()) {
+            case HELP -> out.println(prompt(HELP_TEXT));
+            case CLEAR -> {
+                history.clear();
+                out.println("(history cleared)");
+            }
+            case TOOLS -> {
+                out.println("tools: " + String.join(", ", runner.toolNames()));
+                out.println("asks before running (manual mode): "
+                        + String.join(", ", ConsoleApprovalStrategy.gated(runner.toolNames())));
+            }
+            case MODE -> {
+                if (command.hasArguments()) {
+                    try {
+                        mode.set(ApprovalMode.parse(command.arguments()));
+                    } catch (IllegalArgumentException e) {
+                        out.println(e.getMessage());
+                        return inputTokens;
+                    }
+                }
+                out.println("approval mode: " + mode.get().label());
+            }
+            case STATUS -> {
+                out.println(StatusLine.render(
+                        mode.get(),
+                        inputTokens,
+                        estimated,
+                        contextSize,
+                        runner.toolNames().size(),
+                        options.getModelId()));
+                out.println("workspace: " + options.getWorkspace());
+                out.println("history: " + history.size() + " messages");
+            }
+            case COMPACT -> {
+                return compact(runner, fileSystem, history, command.arguments(), out, ansi);
+            }
+            case EXIT -> {
+                // handled by the caller, which has to return from the loop
+            }
+        }
+        return inputTokens;
+    }
+
+    /**
+     * A rough token count of what the next request will carry.
+     *
+     * <p>Used only for the status line, and only because llama.cpp sends its own count just to clients
+     * that ask for it ({@code stream_options.include_usage}), which Atmosphere's client does not. Four
+     * characters per token is the usual rule of thumb; the status line marks the number with a
+     * {@code ~} so nobody reads it as exact.
+     *
+     * @param systemPrompt the system prompt sent with every request
+     * @param history the conversation so far
+     * @return the estimated token count
+     */
+    static long estimateTokens(String systemPrompt, List<ChatMessage> history) {
+        long characters = systemPrompt.length();
+        for (ChatMessage message : history) {
+            characters += message.content() == null ? 0 : message.content().length();
+        }
+        return characters / 4;
+    }
+
+    /**
+     * Summarize the history and continue from the summary.
+     *
+     * <p>The summary is generated by the same model with no tools, then <b>replaces</b> the history as
+     * a {@code user} message plus a short assistant acknowledgement — aider's shape, and the one that
+     * survives a strict chat template, because a conversation may not start with two assistant turns.
+     * The tool rounds of a turn are not in the history to begin with (only the user text and the final
+     * answer are), so what is condensed here is what the next turn would have replayed anyway.
+     *
+     * @param runner the runner
+     * @param fileSystem the workspace filesystem for the summary session
+     * @param history the history, replaced in place
+     * @param focus optional extra instructions from {@code /compact <focus>}
+     * @param out the console
+     * @param ansi the console styles
+     * @return the input tokens the summarizing call reported
+     * @throws InterruptedException if interrupted while the summary is generated
+     */
+    private static long compact(
+            AgentRunner runner,
+            AgentFileSystem fileSystem,
+            List<ChatMessage> history,
+            String focus,
+            PrintStream out,
+            Ansi ansi)
+            throws InterruptedException {
+        if (history.isEmpty()) {
+            out.println("(nothing to compact)");
+            return 0;
+        }
+        String instructions = prompt(COMPACT_PROMPT)
+                .replace("{focus}", focus.isEmpty() ? "" : System.lineSeparator() + "Focus on: " + focus);
+        int before = history.size();
+        out.println("(compacting " + before + " messages …)");
+        ConsoleSession session = new ConsoleSession(out, fileSystem, ansi);
+        runner.runWithoutTools(instructions, List.copyOf(history), session, COMPACT_SYSTEM_PROMPT);
+        if (!session.await(TURN_TIMEOUT) || session.text().isBlank()) {
+            out.println("(compact failed; history kept)");
+            return 0;
+        }
+        history.clear();
+        history.add(ChatMessage.user("Summary of the conversation so far:" + System.lineSeparator()
+                + session.text().strip()));
+        history.add(ChatMessage.assistant("Understood, I will continue from that summary."));
+        out.println("(compacted " + before + " messages into a summary of "
+                + session.text().strip().length() + " characters)");
+        return session.inputTokens();
     }
 
     /**

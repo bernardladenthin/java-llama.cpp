@@ -13,6 +13,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.atmosphere.ai.AiEvent;
 import org.atmosphere.ai.StreamingSession;
+import org.atmosphere.ai.TokenUsage;
 import org.atmosphere.ai.fs.AgentFileSystem;
 import org.jspecify.annotations.Nullable;
 
@@ -30,21 +31,37 @@ public final class ConsoleSession implements StreamingSession {
     private static final int RESULT_PREVIEW_CHARS = 400;
 
     private final PrintStream out;
+    private final Ansi ansi;
+    private final MarkdownConsole markdown;
     private final Map<Class<?>, Object> injectables;
     private final StringBuilder text = new StringBuilder();
     private final List<String> chunks = new CopyOnWriteArrayList<>();
     private final CountDownLatch done = new CountDownLatch(1);
     private volatile @Nullable Throwable failure;
     private volatile int toolCalls;
+    private volatile long inputTokens;
+
+    /**
+     * Create an unstyled session printing to {@code out}.
+     *
+     * @param out where streamed text and tool lines go
+     * @param fileSystem the workspace-confined filesystem handed to the file tools
+     */
+    public ConsoleSession(PrintStream out, AgentFileSystem fileSystem) {
+        this(out, fileSystem, Ansi.PLAIN);
+    }
 
     /**
      * Create a session printing to {@code out}.
      *
      * @param out where streamed text and tool lines go
      * @param fileSystem the workspace-confined filesystem handed to the file tools
+     * @param ansi the styles for the answer and the tool lines
      */
-    public ConsoleSession(PrintStream out, AgentFileSystem fileSystem) {
+    public ConsoleSession(PrintStream out, AgentFileSystem fileSystem, Ansi ansi) {
         this.out = out;
+        this.ansi = ansi;
+        this.markdown = new MarkdownConsole(out, ansi);
         this.injectables = Map.of(AgentFileSystem.class, fileSystem);
     }
 
@@ -61,14 +78,33 @@ public final class ConsoleSession implements StreamingSession {
     @Override
     public void send(String chunk) {
         chunks.add(chunk);
+        // The history keeps the raw text; only the console sees the rendered form.
         text.append(chunk);
-        out.print(chunk);
-        out.flush();
+        markdown.append(chunk);
     }
 
     @Override
     public void sendMetadata(String key, Object value) {
-        // token usage, model id, tool-call argument deltas: not shown on the console
+        // model id, tool-call argument deltas: not shown on the console
+    }
+
+    @Override
+    public void usage(TokenUsage usage) {
+        // The prompt of the last model call is what fills the context window -- the tokens generated
+        // in that call are part of the next call's input. Several calls happen per turn (one per tool
+        // round); the last one wins, which is the largest and the one the next turn continues from.
+        if (usage != null && usage.input() > 0) {
+            inputTokens = usage.input();
+        }
+    }
+
+    /**
+     * The input tokens of the last model call of this turn.
+     *
+     * @return the count, or {@code 0} when the endpoint reported no usage
+     */
+    public long inputTokens() {
+        return inputTokens;
     }
 
     @Override
@@ -78,7 +114,7 @@ public final class ConsoleSession implements StreamingSession {
 
     @Override
     public void complete() {
-        out.println();
+        markdown.flush();
         out.flush();
         done.countDown();
     }
@@ -94,8 +130,8 @@ public final class ConsoleSession implements StreamingSession {
     @Override
     public void error(Throwable t) {
         failure = t;
-        out.println();
-        out.println("[error] " + t);
+        markdown.flush();
+        out.println(ansi.red("[error] " + t));
         out.flush();
         done.countDown();
     }
@@ -110,18 +146,17 @@ public final class ConsoleSession implements StreamingSession {
         switch (event) {
             case AiEvent.ToolStart start -> {
                 toolCalls++;
-                if (text.length() > 0 && text.charAt(text.length() - 1) != '\n') {
-                    out.println();
-                }
-                out.println("⚙ " + start.toolName() + " " + start.arguments());
+                markdown.flush();
+                out.println(ansi.green("●") + " " + ansi.bold(start.toolName()) + " "
+                        + ansi.dim(String.valueOf(start.arguments())));
                 out.flush();
             }
             case AiEvent.ToolResult result -> {
-                out.println("↳ " + preview(String.valueOf(result.result())));
+                out.println(ansi.dim("  ↳ " + preview(String.valueOf(result.result()))));
                 out.flush();
             }
             case AiEvent.ToolError error -> {
-                out.println("↳ error: " + error.error());
+                out.println(ansi.red("  ↳ error: " + error.error()));
                 out.flush();
             }
             default -> StreamingSession.super.emit(event);

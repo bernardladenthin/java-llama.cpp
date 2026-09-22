@@ -2233,6 +2233,35 @@ a `jvm.config` takes no comments, so REUSE can only read its metadata from that 
 `REUSE Compliance Check` job fails on `main` — which is how it was found, the PR run having been cancelled.
 Spotless (palantir) is configured in its own pom; the model-free CI job runs `spotless:check`.
 
+**The REPL layer (commands, approval, status line, rendering).** Five small classes, no new dependency:
+`SlashCommands` (a line starting with `/` whose first word names a command is handled locally —
+`/help /status /tools /mode /compact /clear /exit`; **an unknown `/command` goes to the model**, which
+is why no escape syntax is needed for `/usr/bin/…`), `ApprovalMode` + `ConsoleApprovalStrategy`
+(`[y]es/[n]o/[a]uto` per gated call), `StatusLine`, and `Ansi` + `MarkdownConsole`. Four points that
+are decisions, not details:
+
+1. **The approval gate is Atmosphere's, not ours.** `AgentRunner.approval(strategy, policy)` attaches
+   `ToolApprovalPolicy.custom(...)` (gating `run_command`, `write_file`, `edit_file`, `delete`,
+   `rename` — reading tools never ask) and a `ConsoleApprovalStrategy`; `ToolExecutionHelper` then
+   blocks the tool loop before the executor runs and turns a denial into the tool result
+   `{"status":"cancelled","message":"Action cancelled by user"}` for the model. Do not reimplement
+   that message. `ApprovalWireTest` pins both halves over the real server.
+2. **One-shot (`--prompt`) denies a gated call** instead of auto-approving it — `--auto` is the
+   deliberate opt-in. Atmosphere itself fails closed when no strategy is wired, and this keeps that
+   direction: an unattended run must not be the most permissive one.
+3. **The answer is rendered append-only, one completed line at a time** (`MarkdownConsole`). Redrawing
+   on every token is what produces the known overdraw/truncation bugs in the Ink/Bubble-Tea based
+   clients and breaks when the output is piped. Only headings, bullets, fences and inline
+   `**bold**`/`` `code` `` are handled; italics deliberately are not (`*` is more often a glob than
+   emphasis). Colour is decided once in `Ansi.detect()` — `CLICOLOR_FORCE`, then `NO_COLOR`, then
+   `TERM=dumb`/`CLICOLOR=0`, else "is a terminal" via `Console.isTerminal()` (reflective: JDK 22+;
+   below that `System.console() != null`).
+4. **The context number in the status line is an estimate, marked `~`.** llama.cpp emits its usage
+   chunk only when the client sets `stream_options.include_usage`, and Atmosphere's client does not;
+   `ConsoleSession.usage()` takes the real count when one arrives, otherwise `LocalAgent.estimateTokens`
+   uses four characters per token. The window size is `--ctx-size` (in-process) or the server's
+   `/props` (`ServerProps`), and is omitted rather than guessed when neither answers.
+
 **The default system prompt is general-purpose on purpose — do not narrow it back.** Every model-facing
 text is a resource, not a Java literal: `src/main/resources/net/ladenthin/llama/atmosphere/` holds
 `system-prompt.txt`, `system-prompt-shell.txt`, `system-prompt-no-shell.txt` and `run-command-tool.txt`
