@@ -4,11 +4,7 @@
 
 package net.ladenthin.llama.atmosphere;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.PrintStream;
 import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import org.atmosphere.ai.StreamingSession;
@@ -16,7 +12,6 @@ import org.atmosphere.ai.approval.ApprovalResolution;
 import org.atmosphere.ai.approval.ApprovalStrategy;
 import org.atmosphere.ai.approval.PendingApproval;
 import org.atmosphere.ai.approval.ToolApprovalPolicy;
-import org.jspecify.annotations.Nullable;
 
 /**
  * Asks on the console before a tool that changes something runs: {@code [y]es / [n]o / [a]uto}.
@@ -50,8 +45,8 @@ public final class ConsoleApprovalStrategy implements ApprovalStrategy {
     private static final int ARGUMENT_PREVIEW_CHARS = 300;
 
     private final AtomicReference<ApprovalMode> mode;
-    private final @Nullable BufferedReader input;
-    private final PrintStream out;
+    private final AgentTerminal terminal;
+    private final boolean interactive;
     private final Ansi ansi;
 
     /**
@@ -59,16 +54,14 @@ public final class ConsoleApprovalStrategy implements ApprovalStrategy {
      *
      * @param mode the shared, mutable approval mode (also written by {@code /mode} and by an
      *     {@code [a]} answer)
-     * @param input the console the user answers on, or {@code null} when nobody can be asked
-     * @param out where the prompt is printed
-     * @param ansi the styles for the question
+     * @param terminal where the question is asked
+     * @param interactive whether anybody can answer at all ({@code false} for a one-shot run)
      */
-    public ConsoleApprovalStrategy(
-            AtomicReference<ApprovalMode> mode, @Nullable BufferedReader input, PrintStream out, Ansi ansi) {
+    public ConsoleApprovalStrategy(AtomicReference<ApprovalMode> mode, AgentTerminal terminal, boolean interactive) {
         this.mode = mode;
-        this.input = input;
-        this.out = out;
-        this.ansi = ansi;
+        this.terminal = terminal;
+        this.interactive = interactive;
+        this.ansi = terminal.ansi();
     }
 
     /**
@@ -100,28 +93,22 @@ public final class ConsoleApprovalStrategy implements ApprovalStrategy {
         if (mode.get() == ApprovalMode.AUTO) {
             return ApprovalResolution.approve();
         }
-        if (input == null) {
-            out.println();
-            out.println(ansi.red("✗ " + approval.toolName() + " " + preview(approval)
+        if (!interactive) {
+            terminal.line(ansi.red("✗ " + approval.toolName() + " " + preview(approval)
                     + " — denied: no console to ask (run with --auto to allow tools unattended)"));
-            out.flush();
             return ApprovalResolution.deny();
         }
-        out.println();
-        out.println(ansi.yellow("? " + approval.toolName()) + " " + ansi.dim(preview(approval)));
+        terminal.line(ansi.yellow("? " + approval.toolName()) + " " + ansi.dim(preview(approval)));
         while (true) {
-            out.print(ansi.yellow("  allow? [y]es / [n]o / [a]uto (no more questions): "));
-            out.flush();
-            String answer = readLine();
+            String answer = terminal.readKey(ansi.yellow("  allow? [y]es / [n]o / [a]uto (no more questions): "));
             if (answer == null) {
-                // stdin closed mid-turn: the same situation as having no console at all
-                out.println();
-                out.println("  denied (input closed)");
-                out.flush();
+                // input closed mid-turn: the same situation as having no console at all
+                terminal.line("  denied (input closed)");
                 return ApprovalResolution.deny();
             }
-            switch (answer.trim().toLowerCase(Locale.ROOT)) {
-                case "y", "yes", "" -> {
+            switch (answer) {
+                // "\r" / "\n": Enter in raw mode, taken as yes like an empty line on a plain stream
+                case "y", "yes", "", "\r", "\n" -> {
                     return ApprovalResolution.approve();
                 }
                 case "n", "no" -> {
@@ -129,20 +116,11 @@ public final class ConsoleApprovalStrategy implements ApprovalStrategy {
                 }
                 case "a", "auto" -> {
                     mode.set(ApprovalMode.AUTO);
-                    out.println("  approval mode: auto (use /mode manual to ask again)");
-                    out.flush();
+                    terminal.line("  approval mode: auto (use /mode manual to ask again)");
                     return ApprovalResolution.approve();
                 }
-                default -> out.println("  please answer y, n or a");
+                default -> terminal.line("  please answer y, n or a");
             }
-        }
-    }
-
-    private @Nullable String readLine() {
-        try {
-            return input == null ? null : input.readLine();
-        } catch (IOException e) {
-            return null;
         }
     }
 

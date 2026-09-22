@@ -74,7 +74,10 @@ class AtmosphereWireContractTest {
 
     private ConsoleSession session() {
         AgentFileSystem fs = new WorkspaceAgentFileSystem(workspace, AgentFileSystem.Limits.defaults());
-        return new ConsoleSession(new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8), fs);
+        return new ConsoleSession(
+                new PlainTerminal(
+                        new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8), null, Ansi.PLAIN),
+                fs);
     }
 
     private static ToolDefinition tool(String name, List<String> invocations, String result) {

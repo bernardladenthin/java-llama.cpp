@@ -52,9 +52,15 @@ class ApprovalWireTest {
 
     private final ByteArrayOutputStream console = new ByteArrayOutputStream();
 
+    private AgentTerminal terminal(String typed) {
+        return new PlainTerminal(
+                new PrintStream(console, true, StandardCharsets.UTF_8),
+                new BufferedReader(new StringReader(typed)),
+                Ansi.PLAIN);
+    }
+
     private AgentRunner runner(OpenAiCompatServer server, List<ToolDefinition> tools, String typed) {
         AtomicReference<ApprovalMode> mode = new AtomicReference<>(ApprovalMode.MANUAL);
-        PrintStream out = new PrintStream(console, true, StandardCharsets.UTF_8);
         return new AgentRunner(
                         "http://127.0.0.1:" + server.getPort() + "/v1",
                         API_KEY,
@@ -65,14 +71,13 @@ class ApprovalWireTest {
                         64,
                         10)
                 .retryPolicy(RetryPolicy.NONE)
-                .approval(
-                        new ConsoleApprovalStrategy(mode, new BufferedReader(new StringReader(typed)), out, Ansi.PLAIN),
-                        ConsoleApprovalStrategy.policy());
+                .approval(new ConsoleApprovalStrategy(mode, terminal(typed), true), ConsoleApprovalStrategy.policy());
     }
 
     private ConsoleSession session() {
         AgentFileSystem fs = new WorkspaceAgentFileSystem(workspace, AgentFileSystem.Limits.defaults());
-        return new ConsoleSession(new PrintStream(console, true, StandardCharsets.UTF_8), fs);
+        return new ConsoleSession(
+                new PlainTerminal(new PrintStream(console, true, StandardCharsets.UTF_8), null, Ansi.PLAIN), fs);
     }
 
     private static OpenAiServerConfig config() {

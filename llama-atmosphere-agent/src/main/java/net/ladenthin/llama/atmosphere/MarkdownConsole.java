@@ -4,7 +4,7 @@
 
 package net.ladenthin.llama.atmosphere;
 
-import java.io.PrintStream;
+import java.util.function.Consumer;
 
 /**
  * Renders the streamed answer as it arrives: just enough Markdown to make it readable.
@@ -25,7 +25,7 @@ import java.io.PrintStream;
  */
 public final class MarkdownConsole {
 
-    private final PrintStream out;
+    private final Consumer<String> sink;
     private final Ansi ansi;
     private final StringBuilder pending = new StringBuilder();
     private boolean inFence;
@@ -33,11 +33,11 @@ public final class MarkdownConsole {
     /**
      * Create a renderer.
      *
-     * @param out where the rendered text goes
+     * @param sink receives each rendered line, without its terminator
      * @param ansi the styles (a plain instance writes the text unchanged)
      */
-    public MarkdownConsole(PrintStream out, Ansi ansi) {
-        this.out = out;
+    public MarkdownConsole(Consumer<String> sink, Ansi ansi) {
+        this.sink = sink;
         this.ansi = ansi;
     }
 
@@ -52,19 +52,17 @@ public final class MarkdownConsole {
         while ((newline = pending.indexOf("\n")) >= 0) {
             String line = pending.substring(0, newline);
             pending.delete(0, newline + 1);
-            out.println(render(line.endsWith("\r") ? line.substring(0, line.length() - 1) : line));
+            sink.accept(render(line.endsWith("\r") ? line.substring(0, line.length() - 1) : line));
         }
-        out.flush();
     }
 
     /** Write what is left of an unfinished line, e.g. an answer that does not end with a newline. */
     public void flush() {
         if (pending.length() > 0) {
-            out.println(render(pending.toString()));
+            sink.accept(render(pending.toString()));
             pending.setLength(0);
         }
         inFence = false;
-        out.flush();
     }
 
     /**

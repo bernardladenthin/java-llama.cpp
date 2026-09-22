@@ -4,7 +4,6 @@
 
 package net.ladenthin.llama.atmosphere;
 
-import java.io.PrintStream;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -30,7 +29,7 @@ public final class ConsoleSession implements StreamingSession {
 
     private static final int RESULT_PREVIEW_CHARS = 400;
 
-    private final PrintStream out;
+    private final AgentTerminal terminal;
     private final Ansi ansi;
     private final MarkdownConsole markdown;
     private final Map<Class<?>, Object> injectables;
@@ -42,26 +41,15 @@ public final class ConsoleSession implements StreamingSession {
     private volatile long inputTokens;
 
     /**
-     * Create an unstyled session printing to {@code out}.
+     * Create a session writing to {@code terminal}.
      *
-     * @param out where streamed text and tool lines go
+     * @param terminal where streamed text and tool lines go
      * @param fileSystem the workspace-confined filesystem handed to the file tools
      */
-    public ConsoleSession(PrintStream out, AgentFileSystem fileSystem) {
-        this(out, fileSystem, Ansi.PLAIN);
-    }
-
-    /**
-     * Create a session printing to {@code out}.
-     *
-     * @param out where streamed text and tool lines go
-     * @param fileSystem the workspace-confined filesystem handed to the file tools
-     * @param ansi the styles for the answer and the tool lines
-     */
-    public ConsoleSession(PrintStream out, AgentFileSystem fileSystem, Ansi ansi) {
-        this.out = out;
-        this.ansi = ansi;
-        this.markdown = new MarkdownConsole(out, ansi);
+    public ConsoleSession(AgentTerminal terminal, AgentFileSystem fileSystem) {
+        this.terminal = terminal;
+        this.ansi = terminal.ansi();
+        this.markdown = new MarkdownConsole(terminal::line, ansi);
         this.injectables = Map.of(AgentFileSystem.class, fileSystem);
     }
 
@@ -115,7 +103,6 @@ public final class ConsoleSession implements StreamingSession {
     @Override
     public void complete() {
         markdown.flush();
-        out.flush();
         done.countDown();
     }
 
@@ -131,8 +118,7 @@ public final class ConsoleSession implements StreamingSession {
     public void error(Throwable t) {
         failure = t;
         markdown.flush();
-        out.println(ansi.red("[error] " + t));
-        out.flush();
+        terminal.line(ansi.red("[error] " + t));
         done.countDown();
     }
 
@@ -147,17 +133,14 @@ public final class ConsoleSession implements StreamingSession {
             case AiEvent.ToolStart start -> {
                 toolCalls++;
                 markdown.flush();
-                out.println(ansi.green("●") + " " + ansi.bold(start.toolName()) + " "
+                terminal.line(ansi.green("●") + " " + ansi.bold(start.toolName()) + " "
                         + ansi.dim(String.valueOf(start.arguments())));
-                out.flush();
             }
             case AiEvent.ToolResult result -> {
-                out.println(ansi.dim("  ↳ " + preview(String.valueOf(result.result()))));
-                out.flush();
+                terminal.line(ansi.dim("  ↳ " + preview(String.valueOf(result.result()))));
             }
             case AiEvent.ToolError error -> {
-                out.println(ansi.red("  ↳ error: " + error.error()));
-                out.flush();
+                terminal.line(ansi.red("  ↳ error: " + error.error()));
             }
             default -> StreamingSession.super.emit(event);
         }

@@ -102,7 +102,7 @@ Metal with the default jar already. The root README's classifier table lists eve
        -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --allow-shell"
    ```
 
-A `you>` prompt appears, above it a status line. The answer streams as it is generated, and every
+A `you>` prompt appears, with a status line pinned to the bottom of the window. The answer streams as it is generated, and every
 tool call and its result are printed as `● read_file {path=…}` / `↳ …` lines. See
 [Commands, approval and the status line](#commands-approval-and-the-status-line).
 
@@ -188,6 +188,13 @@ unknown `/command` included — goes to the model:
 | `/clear` (`/reset`, `/new`) | drop the history |
 | `/exit` (`/quit`) | leave |
 
+**The prompt.** On a real terminal the agent uses [JLine](https://github.com/jline/jline3): arrow keys
+and the usual editing shortcuts work, ↑ recalls earlier lines, Tab completes the commands, Ctrl-C
+drops the current line and Ctrl-D leaves. The status line and the rule above it stay at the bottom
+while the answer scrolls past, and while a turn runs that line shows what is going on
+(`⠙ working… (12s · 2 tool calls)`). With piped input, in one-shot mode and wherever JLine finds no
+terminal, everything falls back to plain `println`/`readLine` — same features, no cursor tricks.
+
 **Approval.** In the default `manual` mode every tool that writes or runs a command —
 `run_command`, `write_file`, `edit_file`, `delete`, `rename` — asks before it runs:
 
@@ -198,7 +205,8 @@ unknown `/command` included — goes to the model:
 ```
 
 `[y]` runs it once, `[n]` cancels it *and tells the model*, so it replans instead of assuming the
-command ran, `[a]` switches to `auto` for the rest of the session (`/mode manual` switches back).
+command ran, `[a]` switches to `auto` for the rest of the session (`/mode manual` switches back). On a
+terminal a single key is enough — no Enter; Enter alone also means yes, and Ctrl-C means no.
 Reading tools (`ls`, `read_file`, `glob`, `grep`) never ask. **In one-shot mode (`--prompt`) nobody
 can answer, so a gated call is denied** — pass `--auto` to run unattended. The gate itself is
 Atmosphere's (`ToolApprovalPolicy` + `ApprovalStrategy`); the agent only supplies the question and
@@ -245,6 +253,7 @@ Then, in this order:
 | ask again, answer `y` | the command runs and its output goes back to the model |
 | `/mode auto` | the status line flips to `auto`; nothing asks any more |
 | `explain Markdown with a heading, a list, bold text and a code block` | the answer arrives rendered: heading bold, `•` bullets, code in colour |
+| press ↑ | the previous line comes back; Tab after `/` completes the commands |
 | `/compact` | the conversation is summarized and replaces the history; `ctx` drops |
 | `/exit` | leave |
 

@@ -39,9 +39,10 @@ class ConsoleApprovalStrategyTest {
 
     private ApprovalOutcome ask(AtomicReference<ApprovalMode> mode, String typed) {
         BufferedReader reader = typed == null ? null : new BufferedReader(new StringReader(typed));
-        PrintStream out = new PrintStream(console, true, StandardCharsets.UTF_8);
+        AgentTerminal terminal =
+                new PlainTerminal(new PrintStream(console, true, StandardCharsets.UTF_8), reader, Ansi.PLAIN);
         // The strategy never touches the session; Atmosphere passes it only so a UI can emit events.
-        return new ConsoleApprovalStrategy(mode, reader, out, Ansi.PLAIN).awaitApproval(approval(), null);
+        return new ConsoleApprovalStrategy(mode, terminal, typed != null).awaitApproval(approval(), null);
     }
 
     private String consoleText() {

@@ -70,6 +70,12 @@ public final class LocalAgent {
             "You summarize a conversation between a user and a coding assistant. Follow the user's"
                     + " instructions exactly and answer with the summary only.";
 
+    /** How often the activity line is refreshed while a turn runs. */
+    private static final Duration ACTIVITY_INTERVAL = Duration.ofMillis(250);
+
+    /** The spinner shown in the activity line. */
+    private static final String ACTIVITY_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+
     private static final Duration SHELL_TIMEOUT = Duration.ofSeconds(120);
     private static final int SHELL_MAX_OUTPUT_CHARS = 20_000;
 
@@ -116,6 +122,7 @@ public final class LocalAgent {
             throws Exception {
         LlamaModel model = null;
         OpenAiCompatServer server = null;
+        AgentTerminal terminal = null;
         String baseUrl = options.getBaseUrl();
         try {
             if (options.getModelPath() != null) {
@@ -159,18 +166,19 @@ public final class LocalAgent {
                     new AtomicReference<>(options.isAuto() ? ApprovalMode.AUTO : ApprovalMode.MANUAL);
             boolean interactive = options.getPrompt() == null && input != null;
             BufferedReader reader = input == null ? null : new BufferedReader(input);
+            terminal = interactive ? JLineTerminal.open(commandNames()) : null;
+            if (terminal == null) {
+                terminal = new PlainTerminal(out, reader, Ansi.detect());
+            }
             // One-shot runs have nobody at the keyboard, so the strategy gets no console and denies
             // gated calls unless --auto was passed (see ConsoleApprovalStrategy).
-            Ansi ansi = Ansi.detect();
-            runner.approval(
-                    new ConsoleApprovalStrategy(mode, interactive ? reader : null, out, ansi),
-                    ConsoleApprovalStrategy.policy());
+            runner.approval(new ConsoleApprovalStrategy(mode, terminal, interactive), ConsoleApprovalStrategy.policy());
             int contextSize = options.getModelPath() != null
                     ? options.getCtxSize()
                     : ServerProps.contextSize(baseUrl, options.getApiKey());
 
             if (options.getPrompt() != null) {
-                return turn(runner, fileSystem, options.getPrompt(), history, out, ansi)
+                return turn(runner, fileSystem, options.getPrompt(), history, terminal)
                                         .failure()
                                 == null
                         ? 0
@@ -184,11 +192,9 @@ public final class LocalAgent {
             long inputTokens = 0;
             boolean estimated = false;
             while (true) {
-                out.println(ansi.dim(StatusLine.render(
-                        mode.get(), inputTokens, estimated, contextSize, tools.size(), options.getModelId())));
-                out.print("you> ");
-                out.flush();
-                String line = reader.readLine();
+                terminal.status(StatusLine.render(
+                        mode.get(), inputTokens, estimated, contextSize, tools.size(), options.getModelId()));
+                String line = terminal.readLine("you> ");
                 if (line == null) {
                     return 0;
                 }
@@ -210,15 +216,17 @@ public final class LocalAgent {
                             contextSize,
                             inputTokens,
                             estimated,
-                            out,
-                            ansi);
+                            terminal);
                     continue;
                 }
-                ConsoleSession completed = turn(runner, fileSystem, line, history, out, ansi);
+                ConsoleSession completed = turn(runner, fileSystem, line, history, terminal);
                 estimated = completed.inputTokens() == 0;
                 inputTokens = estimated ? estimateTokens(systemPrompt(options), history) : completed.inputTokens();
             }
         } finally {
+            if (terminal != null) {
+                terminal.close();
+            }
             if (server != null) {
                 server.close();
             }
@@ -233,12 +241,11 @@ public final class LocalAgent {
             AgentFileSystem fileSystem,
             String message,
             List<ChatMessage> history,
-            PrintStream out,
-            Ansi ansi)
+            AgentTerminal terminal)
             throws InterruptedException {
-        ConsoleSession session = new ConsoleSession(out, fileSystem, ansi);
+        ConsoleSession session = new ConsoleSession(terminal, fileSystem);
         runner.run(message, history, session);
-        boolean finished = session.await(TURN_TIMEOUT);
+        boolean finished = awaitWithActivity(session, terminal);
         history.add(ChatMessage.user(message));
         if (!session.text().isEmpty()) {
             history.add(ChatMessage.assistant(session.text()));
@@ -261,8 +268,7 @@ public final class LocalAgent {
      * @param contextSize the context window in tokens, or {@link StatusLine#UNKNOWN_CONTEXT}
      * @param inputTokens the input tokens of the last turn
      * @param estimated whether that number is an estimate
-     * @param out the console
-     * @param ansi the console styles
+     * @param terminal the console
      * @return the input tokens to show from now on (unchanged, or the summary's after {@code /compact})
      * @throws InterruptedException if interrupted while a summary is generated
      */
@@ -276,18 +282,17 @@ public final class LocalAgent {
             int contextSize,
             long inputTokens,
             boolean estimated,
-            PrintStream out,
-            Ansi ansi)
+            AgentTerminal terminal)
             throws InterruptedException {
         switch (command.command()) {
-            case HELP -> out.println(prompt(HELP_TEXT));
+            case HELP -> prompt(HELP_TEXT).lines().forEach(terminal::line);
             case CLEAR -> {
                 history.clear();
-                out.println("(history cleared)");
+                terminal.line("(history cleared)");
             }
             case TOOLS -> {
-                out.println("tools: " + String.join(", ", runner.toolNames()));
-                out.println("asks before running (manual mode): "
+                terminal.line("tools: " + String.join(", ", runner.toolNames()));
+                terminal.line("asks before running (manual mode): "
                         + String.join(", ", ConsoleApprovalStrategy.gated(runner.toolNames())));
             }
             case MODE -> {
@@ -295,31 +300,59 @@ public final class LocalAgent {
                     try {
                         mode.set(ApprovalMode.parse(command.arguments()));
                     } catch (IllegalArgumentException e) {
-                        out.println(e.getMessage());
+                        terminal.line(e.getMessage());
                         return inputTokens;
                     }
                 }
-                out.println("approval mode: " + mode.get().label());
+                terminal.line("approval mode: " + mode.get().label());
             }
             case STATUS -> {
-                out.println(StatusLine.render(
+                terminal.line(StatusLine.render(
                         mode.get(),
                         inputTokens,
                         estimated,
                         contextSize,
                         runner.toolNames().size(),
                         options.getModelId()));
-                out.println("workspace: " + options.getWorkspace());
-                out.println("history: " + history.size() + " messages");
+                terminal.line("workspace: " + options.getWorkspace());
+                terminal.line("history: " + history.size() + " messages");
             }
             case COMPACT -> {
-                return compact(runner, fileSystem, history, command.arguments(), out, ansi);
+                return compact(runner, fileSystem, history, command.arguments(), terminal);
             }
             case EXIT -> {
                 // handled by the caller, which has to return from the loop
             }
         }
         return inputTokens;
+    }
+
+    /**
+     * Wait for a turn while the status line shows that something is happening.
+     *
+     * <p>A local model can think for a while before the first token arrives, and a silent console is
+     * indistinguishable from a hung one. The line is rewritten in place (it is the pinned status area,
+     * not the scrollback), so nothing the user has already read moves.
+     *
+     * @param session the running turn
+     * @param terminal the console
+     * @return {@code true} when the turn finished within {@link #TURN_TIMEOUT}
+     * @throws InterruptedException if interrupted while waiting
+     */
+    private static boolean awaitWithActivity(ConsoleSession session, AgentTerminal terminal)
+            throws InterruptedException {
+        long start = System.nanoTime();
+        int frame = 0;
+        while (!session.await(ACTIVITY_INTERVAL)) {
+            long seconds = (System.nanoTime() - start) / 1_000_000_000L;
+            if (seconds > TURN_TIMEOUT.toSeconds()) {
+                return false;
+            }
+            terminal.status(ACTIVITY_FRAMES.charAt(frame++ % ACTIVITY_FRAMES.length()) + " working… (" + seconds
+                    + "s · " + session.toolCalls() + " tool calls)");
+        }
+        terminal.status("");
+        return true;
     }
 
     /**
@@ -355,8 +388,7 @@ public final class LocalAgent {
      * @param fileSystem the workspace filesystem for the summary session
      * @param history the history, replaced in place
      * @param focus optional extra instructions from {@code /compact <focus>}
-     * @param out the console
-     * @param ansi the console styles
+     * @param terminal the console
      * @return the input tokens the summarizing call reported
      * @throws InterruptedException if interrupted while the summary is generated
      */
@@ -365,28 +397,27 @@ public final class LocalAgent {
             AgentFileSystem fileSystem,
             List<ChatMessage> history,
             String focus,
-            PrintStream out,
-            Ansi ansi)
+            AgentTerminal terminal)
             throws InterruptedException {
         if (history.isEmpty()) {
-            out.println("(nothing to compact)");
+            terminal.line("(nothing to compact)");
             return 0;
         }
         String instructions = prompt(COMPACT_PROMPT)
                 .replace("{focus}", focus.isEmpty() ? "" : System.lineSeparator() + "Focus on: " + focus);
         int before = history.size();
-        out.println("(compacting " + before + " messages …)");
-        ConsoleSession session = new ConsoleSession(out, fileSystem, ansi);
+        terminal.line("(compacting " + before + " messages …)");
+        ConsoleSession session = new ConsoleSession(terminal, fileSystem);
         runner.runWithoutTools(instructions, List.copyOf(history), session, COMPACT_SYSTEM_PROMPT);
-        if (!session.await(TURN_TIMEOUT) || session.text().isBlank()) {
-            out.println("(compact failed; history kept)");
+        if (!awaitWithActivity(session, terminal) || session.text().isBlank()) {
+            terminal.line("(compact failed; history kept)");
             return 0;
         }
         history.clear();
         history.add(ChatMessage.user("Summary of the conversation so far:" + System.lineSeparator()
                 + session.text().strip()));
         history.add(ChatMessage.assistant("Understood, I will continue from that summary."));
-        out.println("(compacted " + before + " messages into a summary of "
+        terminal.line("(compacted " + before + " messages into a summary of "
                 + session.text().strip().length() + " characters)");
         return session.inputTokens();
     }
@@ -419,6 +450,17 @@ public final class LocalAgent {
             parameters.setDevices("none");
         }
         return parameters;
+    }
+
+    /**
+     * Every command name and alias, for tab completion.
+     *
+     * @return the names, each with its leading slash
+     */
+    static List<String> commandNames() {
+        return java.util.Arrays.stream(SlashCommands.Command.values())
+                .flatMap(command -> command.names().stream())
+                .toList();
     }
 
     /**

@@ -9,9 +9,6 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
 
-import java.io.ByteArrayOutputStream;
-import java.io.PrintStream;
-import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -80,14 +77,15 @@ class ConsoleFormattingTest {
     // ----- MarkdownConsole -----
 
     private static String render(String text, Ansi ansi) {
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        MarkdownConsole console = new MarkdownConsole(new PrintStream(buffer, true, StandardCharsets.UTF_8), ansi);
+        StringBuilder buffer = new StringBuilder();
+        MarkdownConsole console =
+                new MarkdownConsole(line -> buffer.append(line).append(System.lineSeparator()), ansi);
         // one character at a time: the renderer must not depend on where the stream splits
         for (int i = 0; i < text.length(); i++) {
             console.append(text.substring(i, i + 1));
         }
         console.flush();
-        return buffer.toString(StandardCharsets.UTF_8);
+        return buffer.toString();
     }
 
     @Test

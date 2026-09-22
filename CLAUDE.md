@@ -2233,7 +2233,8 @@ a `jvm.config` takes no comments, so REUSE can only read its metadata from that 
 `REUSE Compliance Check` job fails on `main` — which is how it was found, the PR run having been cancelled.
 Spotless (palantir) is configured in its own pom; the model-free CI job runs `spotless:check`.
 
-**The REPL layer (commands, approval, status line, rendering).** Five small classes, no new dependency:
+**The REPL layer (commands, approval, status line, rendering).** Eight small classes and one dependency
+(`org.jline:jline`, one jar, no transitive deps):
 `SlashCommands` (a line starting with `/` whose first word names a command is handled locally —
 `/help /status /tools /mode /compact /clear /exit`; **an unknown `/command` goes to the model**, which
 is why no escape syntax is needed for `/usr/bin/…`), `ApprovalMode` + `ConsoleApprovalStrategy`
@@ -2249,14 +2250,23 @@ are decisions, not details:
 2. **One-shot (`--prompt`) denies a gated call** instead of auto-approving it — `--auto` is the
    deliberate opt-in. Atmosphere itself fails closed when no strategy is wired, and this keeps that
    direction: an unattended run must not be the most permissive one.
-3. **The answer is rendered append-only, one completed line at a time** (`MarkdownConsole`). Redrawing
+3. **`AgentTerminal` has exactly two implementations, chosen once at startup.** `JLineTerminal` (a real
+   terminal: line editing, history, Tab completion of the command names, a status line pinned to the
+   bottom via JLine's `Status`, single-key answers through `enterRawMode`, streamed output via
+   `LineReader.printAbove` so the bottom block stays put) and `PlainTerminal` (a `PrintStream` plus a
+   `BufferedReader`: no cursor control at all, correct when the output is a file). `JLineTerminal.open`
+   returns **null** instead of throwing when there is no usable terminal — piped input, a dumb
+   terminal, a missing native provider — and the caller falls back. Every test drives `PlainTerminal`,
+   which is why none of them needs a TTY. Verified on Windows: JLine picks the `windows-vtp` provider,
+   so ANSI works there without the registry caveat.
+4. **The answer is rendered append-only, one completed line at a time** (`MarkdownConsole`). Redrawing
    on every token is what produces the known overdraw/truncation bugs in the Ink/Bubble-Tea based
    clients and breaks when the output is piped. Only headings, bullets, fences and inline
    `**bold**`/`` `code` `` are handled; italics deliberately are not (`*` is more often a glob than
    emphasis). Colour is decided once in `Ansi.detect()` — `CLICOLOR_FORCE`, then `NO_COLOR`, then
    `TERM=dumb`/`CLICOLOR=0`, else "is a terminal" via `Console.isTerminal()` (reflective: JDK 22+;
    below that `System.console() != null`).
-4. **The context number in the status line is an estimate, marked `~`.** llama.cpp emits its usage
+5. **The context number in the status line is an estimate, marked `~`.** llama.cpp emits its usage
    chunk only when the client sets `stream_options.include_usage`, and Atmosphere's client does not;
    `ConsoleSession.usage()` takes the real count when one arrives, otherwise `LocalAgent.estimateTokens`
    uses four characters per token. The window size is `--ctx-size` (in-process) or the server's
