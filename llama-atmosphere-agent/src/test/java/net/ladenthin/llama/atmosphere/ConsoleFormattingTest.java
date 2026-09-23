@@ -138,4 +138,16 @@ class ConsoleFormattingTest {
         assertThat(render("a **b\n", Ansi.PLAIN), is("a **b" + System.lineSeparator()));
         assertThat(render("2 * 3 * 4\n", Ansi.PLAIN), is("2 * 3 * 4" + System.lineSeparator()));
     }
+
+    // ----- the pinned block -----
+
+    @Test
+    void aStatusRowIsCutToTheWindowWidthBecauseAWrappedRowBreaksTheBlock() {
+        // A wrapped row takes two screen lines while the reserved region is sized in lines, so
+        // everything below it lands in the wrong place -- a long /compact summary tore the block apart.
+        assertThat(JLineTerminal.fit("short", 20), is("short"));
+        assertThat(JLineTerminal.fit("0123456789", 10), is("0123456789"));
+        assertThat(JLineTerminal.fit("0123456789x", 10), is("012345678…"));
+        assertThat(JLineTerminal.fit("0123456789x", 10).length(), is(10));
+    }
 }

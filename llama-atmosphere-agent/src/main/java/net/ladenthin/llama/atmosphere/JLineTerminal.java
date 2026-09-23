@@ -40,6 +40,7 @@ public final class JLineTerminal implements AgentTerminal {
     private final LineReader reader;
     private final Status status;
     private final Ansi ansi;
+    private volatile boolean reading;
 
     private JLineTerminal(Terminal terminal, LineReader reader, Status status, Ansi ansi) {
         this.terminal = terminal;
@@ -74,17 +75,28 @@ public final class JLineTerminal implements AgentTerminal {
 
     @Override
     public void line(String text) {
-        reader.printAbove(text);
+        if (reading) {
+            // Only while the line reader owns the screen: printAbove scrolls the text in above the
+            // prompt and redraws that prompt afterwards. Calling it when nobody is reading redraws a
+            // prompt that is not there, which is where the repeated "you>" lines came from.
+            reader.printAbove(text);
+        } else {
+            terminal.writer().println(text);
+            terminal.writer().flush();
+        }
     }
 
     @Override
     public @Nullable String readLine(String prompt) {
+        reading = true;
         try {
             return reader.readLine(prompt);
         } catch (UserInterruptException e) {
             return ""; // Ctrl-C: drop the line, ask again
         } catch (EndOfFileException e) {
             return null; // Ctrl-D
+        } finally {
+            reading = false;
         }
     }
 
@@ -122,13 +134,28 @@ public final class JLineTerminal implements AgentTerminal {
         }
         // A rule above the block separates it from the scrollback, the way the established terminal
         // agents frame their input.
-        int width = Math.max(10, terminal.getSize().getColumns());
+        // One row must never wrap: a wrapped row occupies two screen lines, the reserved region is
+        // sized in lines, and everything below it is then drawn in the wrong place -- which is how a
+        // long summary tore the block apart.
+        int width = Math.max(10, terminal.getSize().getColumns() - 1);
         List<AttributedString> block = new java.util.ArrayList<>();
         block.add(new AttributedString("─".repeat(width), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
         for (String line : lines) {
-            block.add(new AttributedString(line, AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
+            block.add(
+                    new AttributedString(fit(line, width), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
         }
         status.update(block);
+    }
+
+    /**
+     * Cut a status row to the window width.
+     *
+     * @param text the row
+     * @param width how many characters fit
+     * @return the row, ending in {@code …} when it had to be cut
+     */
+    static String fit(String text, int width) {
+        return text.length() <= width ? text : text.substring(0, Math.max(1, width - 1)) + "…";
     }
 
     @Override
