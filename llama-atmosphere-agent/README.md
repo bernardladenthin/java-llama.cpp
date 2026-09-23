@@ -15,9 +15,10 @@ offline:
   you start yourself, or the GGUF loaded **in this process**.
 - **Agent:** [Atmosphere](https://github.com/Atmosphere/atmosphere)'s built-in OpenAI-compatible
   runtime (`org.atmosphere:atmosphere-ai`): streaming, the model→tool→model loop, and its
-  workspace-confined file tools (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`,
-  `delete`, `rename`). Driven **headless** — no Spring Boot, no servlet container, no `@Agent`
-  scanning — through `BuiltInAgentRuntime`.
+  workspace-confined file tools (`ls`, `write_file`, `glob`, `delete`, `rename`). Driven **headless**
+  — no Spring Boot, no servlet container, no `@Agent` scanning — through `BuiltInAgentRuntime`.
+  `read_file`, `edit_file` and `grep` are this project's own (see [Tools](#tools)), on the same
+  workspace-confined filesystem.
 - **Shell:** an opt-in `run_command` tool (`--allow-shell`) that runs any command line through the
   system shell (`cmd.exe` on Windows, `sh` elsewhere).
 
@@ -288,6 +289,43 @@ Then, in this order:
 
 `--auto` starts in auto mode, `--verbose` brings llama.cpp's own log back, and `NO_COLOR=1` turns
 the styling off.
+
+### Tools
+
+Eight file tools plus the optional shell. Five are Atmosphere's; three are replaced here because what
+they return decides how well a model can work:
+
+| Tool | | |
+|---|---|---|
+| `ls`, `write_file`, `glob`, `delete`, `rename` | Atmosphere | unchanged |
+| `read_file(file_path, offset, limit)` | **ours** | a numbered window, `  12: text`, 400 lines at a time, and it says what it left out. Reading whole files costs context and measurably lowers task success (SWE-agent: 12.7 % with whole files against 18.0 % with a 100-line window) |
+| `edit_file(file_path, old_string, new_string, replace_all, edits[])` | **ours** | see below |
+| `grep(pattern, dir, glob, files_only)` | **ours** | skips `.git`, `target`, `build`, `node_modules` and friends, groups matches by file with line numbers, caps at 100 matches and **says so** when it truncates |
+| `run_command` | ours | opt-in via `--allow-shell` |
+
+**Why `edit_file` is not Atmosphere's.** Four things it does that the framework's does not, each for a
+measured reason:
+
+1. **Line endings.** The framework compares the raw file content, so a model's LF text never matches a
+   CRLF file — on Windows every edit fails silently. Here the file is normalized before matching and
+   written back in its own ending (byte-order mark included).
+2. **A miss explains itself.** Instead of "not found", it shows the closest lines in the file with
+   their numbers. A failed edit is not a free retry: measured on SWE-agent trajectories, an edit
+   attempt eventually succeeds in 90.5 % of cases, but only 57.2 % once one edit has failed.
+3. **An ambiguous match names the lines** (`occurs 2 times, on lines 1, 3`) instead of asking for
+   "more context", and `replace_all` is offered.
+4. **Several edits in one call** via `edits: [{old_string, new_string}]`, applied **all or nothing** —
+   every shipping agent applies them sequentially and leaves a half-edited file behind.
+
+`edit_file` also **refuses to edit a file that was not read** in this session, so `old_string` comes
+from the file rather than from the model's memory.
+
+**Formats that were considered and rejected.** A unified-diff or patch tool: Meta's ablation measures
+search-replace at 42–53 % against 26–30 % for unified diff and 20–26 % for line diffs on the same
+model, and a 7B model drops from 54 % to 33 % to 14 % across those three. Fuzzy matching (a similarity
+threshold instead of an exact match): it turns a loud "not found" into a silent edit in the wrong
+place. Whole-file rewriting stays available as `write_file` — for a small model that is often the most
+reliable route, and the system prompt says so.
 
 ### The system prompt
 

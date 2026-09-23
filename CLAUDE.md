@@ -2277,7 +2277,33 @@ are decisions, not details:
    and no tool call), interval. **Order matters and a test pins it**: the marker is checked *before*
    the stall detector, because the step that only answers "done" changes nothing and would otherwise
    be reported as no progress.
-6. **The context number in the status line is an estimate, marked `~`.** llama.cpp emits its usage
+6. **Three of the file tools are this project's, not Atmosphere's** (`WorkspaceTools`, `TextEdits`,
+   `WorkspaceSearch`) — `read_file`, `edit_file`, `grep`. They are **replacements, not additions**:
+   two tools that both claim to read a file is the worst case for tool selection. They call the same
+   `AgentFileSystem`, so workspace confinement, path validation and size limits stay Atmosphere's.
+   Each replacement has a measured reason, and all three are pinned by tests:
+   - `edit_file`: the framework matches against the **raw** file content, so a model's LF text never
+     matches a CRLF file — on Windows *every* edit fails silently. `TextEdits` normalizes before
+     matching and restores the file's own ending and byte-order mark. It also shows the nearest lines
+     on a miss and the line numbers on an ambiguous match (a failed edit drops the eventual success
+     rate from 90.5 % to 57.2 %), offers `replace_all`, and applies a batch of edits **all-or-nothing**
+     — a deviation from every shipping agent, which apply sequentially and leave a half-edited file.
+   - `grep`: the framework walks **alphabetically** with one global 2-second deadline and one global
+     500-hit budget, so `.git`, `target` and `node_modules` consume both before `src` is reached.
+     `WorkspaceSearch` excludes them, groups by file with line numbers, and **states** truncation.
+   - `read_file`: `offset`/`limit` and numbered lines (whole-file reads measure 12.7 % against 18.0 %
+     task success in the SWE-agent ablations). The numbers are display only, which both the tool
+     description and the system prompt say — leaked line numbers in `old_string` are a known failure.
+   - `edit_file` **refuses a file that was not read** in this session (`WorkspaceTools.ReadTracker`).
+     Not a staleness check: an exact unambiguous match is safe regardless; this catches the model
+     inventing the text.
+   **Rejected on evidence, do not add later without new numbers:** a unified-diff/patch tool (Meta's
+   ablation: search-replace 42–53 % vs 26–30 % unified diff vs 20–26 % line diff on one model; a 7B
+   model collapses 54 → 33 → 14 %), fuzzy matching (turns a loud miss into a silent wrong-place edit),
+   an embedding index (Cursor's production effect is +0.3 %), and LSP tools (the one isolation study
+   finds them token-negative and *worse* at multi-file rename, because renames touch comments and
+   strings that semantic references exclude).
+7. **The context number in the status line is an estimate, marked `~`.** llama.cpp emits its usage
    chunk only when the client sets `stream_options.include_usage`, and Atmosphere's client does not;
    `ConsoleSession.usage()` takes the real count when one arrives, otherwise `LocalAgent.estimateTokens`
    uses four characters per token. The window size is `--ctx-size` (in-process) or the server's

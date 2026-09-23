@@ -53,7 +53,7 @@ class LocalAgentTest {
     void oneShotTurnReadsAWorkspaceFileThroughTheBuiltInFileTools() throws Exception {
         Files.writeString(workspace.resolve("hello.txt"), "VALUE=42\n");
         ScriptedBackend backend = new ScriptedBackend((call, request) -> call == 1
-                ? ScriptedBackend.toolCallTurn("call_1", "read_file", "{\"path\":\"hello.txt\"}")
+                ? ScriptedBackend.toolCallTurn("call_1", "read_file", "{\"file_path\":\"hello.txt\"}")
                 : ScriptedBackend.textTurn("The file says VALUE=42."));
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         ByteArrayOutputStream err = new ByteArrayOutputStream();
@@ -77,8 +77,9 @@ class LocalAgentTest {
         }
         String console = out.toString(StandardCharsets.UTF_8);
         // the tool line and its result, as ConsoleSession renders them (unstyled here: not a terminal)
-        assertThat(console, containsString("● read_file {path=hello.txt}"));
-        assertThat(console, containsString("↳ VALUE=42"));
+        assertThat(console, containsString("● read_file {file_path=hello.txt}"));
+        // our read_file numbers the lines, so the result is "  1: VALUE=42"
+        assertThat(console, containsString("↳   1: VALUE=42"));
         assertThat(console, containsString("The file says VALUE=42."));
         List<JsonNode> requests = backend.requests();
         assertThat(requests, hasSize(2));

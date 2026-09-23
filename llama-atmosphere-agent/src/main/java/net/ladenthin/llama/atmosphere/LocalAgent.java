@@ -21,7 +21,6 @@ import net.ladenthin.llama.parameters.ModelParameters;
 import net.ladenthin.llama.server.OpenAiCompatServer;
 import net.ladenthin.llama.server.OpenAiServerConfig;
 import org.atmosphere.ai.fs.AgentFileSystem;
-import org.atmosphere.ai.fs.FileSystemTools;
 import org.atmosphere.ai.fs.WorkspaceAgentFileSystem;
 import org.atmosphere.ai.llm.ChatMessage;
 import org.atmosphere.ai.tool.ToolDefinition;
@@ -151,7 +150,9 @@ public final class LocalAgent {
             }
             AgentFileSystem fileSystem =
                     new WorkspaceAgentFileSystem(options.getWorkspace(), AgentFileSystem.Limits.defaults());
-            List<ToolDefinition> tools = new ArrayList<>(FileSystemTools.all());
+            // Our own read_file/edit_file/grep replace the framework's (see WorkspaceTools); the
+            // read tracker is what lets an edit insist the file was read first.
+            List<ToolDefinition> tools = new ArrayList<>(WorkspaceTools.all(new WorkspaceTools.ReadTracker()));
             if (options.isAllowShell()) {
                 tools.add(ShellTool.definition(options.getWorkspace(), SHELL_TIMEOUT, SHELL_MAX_OUTPUT_CHARS));
             }
