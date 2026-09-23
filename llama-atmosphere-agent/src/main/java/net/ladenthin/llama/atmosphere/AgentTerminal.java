@@ -48,11 +48,15 @@ public interface AgentTerminal extends AutoCloseable {
     String readKey(String prompt);
 
     /**
-     * Set the status line kept at the bottom of the window.
+     * Set the block kept at the bottom of the window.
      *
-     * @param text the line; an empty string removes it
+     * <p>Two lines in practice: what the agent is doing right now, and the session's state. Keeping
+     * both there at all times is what stops the block from changing height, which would make the
+     * output above it jump on every update.
+     *
+     * @param lines the lines, top to bottom; an empty list removes the block
      */
-    void status(String text);
+    void status(java.util.List<String> lines);
 
     /**
      * Whether {@link #status} really pins the line to the bottom of the window.

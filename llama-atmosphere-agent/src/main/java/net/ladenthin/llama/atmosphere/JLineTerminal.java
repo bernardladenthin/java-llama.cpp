@@ -115,17 +115,20 @@ public final class JLineTerminal implements AgentTerminal {
     }
 
     @Override
-    public void status(String text) {
-        if (text.isEmpty()) {
+    public void status(List<String> lines) {
+        if (lines.isEmpty()) {
             status.update(List.of());
             return;
         }
-        // A rule above the status line separates the live block from the scrollback, the way the
-        // established terminal agents frame their input.
+        // A rule above the block separates it from the scrollback, the way the established terminal
+        // agents frame their input.
         int width = Math.max(10, terminal.getSize().getColumns());
-        status.update(List.of(
-                new AttributedString("─".repeat(width), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)),
-                new AttributedString(text, AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT))));
+        List<AttributedString> block = new java.util.ArrayList<>();
+        block.add(new AttributedString("─".repeat(width), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
+        for (String line : lines) {
+            block.add(new AttributedString(line, AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
+        }
+        status.update(block);
     }
 
     @Override

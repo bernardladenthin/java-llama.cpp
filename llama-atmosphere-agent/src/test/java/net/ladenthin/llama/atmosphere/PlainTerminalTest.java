@@ -54,7 +54,7 @@ class PlainTerminalTest {
         // otherwise produce four lines a second in a piped log. The caller prints the status itself,
         // once, above the prompt.
         PlainTerminal terminal = terminal("x" + System.lineSeparator());
-        terminal.status("⠙ Fettling… (5s)");
+        terminal.status(java.util.List.of("⠙ Fettling… (5s)", "[state]"));
 
         terminal.readLine("you> ");
 

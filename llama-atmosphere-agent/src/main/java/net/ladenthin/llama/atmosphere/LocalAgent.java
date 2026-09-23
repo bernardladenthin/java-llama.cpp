@@ -84,6 +84,9 @@ public final class LocalAgent {
     /** The spinner shown in the activity line. */
     private static final String ACTIVITY_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 
+    /** The first line of the block while nothing is running. */
+    static final String IDLE_LINE = "… waiting for input …";
+
     /** The whimsical words the activity line picks from, one per turn. */
     static final String SPINNER_WORDS = "spinner-words.txt";
 
@@ -198,7 +201,7 @@ public final class LocalAgent {
                     : ServerProps.contextSize(baseUrl, options.getApiKey());
 
             if (options.getPrompt() != null) {
-                return turn(runner, fileSystem, options.getPrompt(), history, terminal, callLog, 1)
+                return turn(runner, fileSystem, options.getPrompt(), history, terminal, callLog, 1, "")
                                         .failure()
                                 == null
                         ? 0
@@ -226,7 +229,7 @@ public final class LocalAgent {
                         tools.size(),
                         options.getModelId());
                 if (terminal.pinsStatus()) {
-                    terminal.status(status);
+                    terminal.status(List.of(IDLE_LINE, status));
                 } else {
                     terminal.line(terminal.ansi().dim(status));
                 }
@@ -266,7 +269,8 @@ public final class LocalAgent {
                         history,
                         terminal,
                         callLog,
-                        turnNumber);
+                        turnNumber,
+                        status);
                 pendingNote = toolNote(completed.rounds());
                 estimated = completed.inputTokens() == 0;
                 inputTokens = estimated ? estimateTokens(systemPrompt(options), history) : completed.inputTokens();
@@ -353,11 +357,12 @@ public final class LocalAgent {
             List<ChatMessage> history,
             AgentTerminal terminal,
             ToolCallLog callLog,
-            int turnNumber)
+            int turnNumber,
+            String stateLine)
             throws InterruptedException {
         ConsoleSession session = new ConsoleSession(terminal, fileSystem);
         runner.run(message, history, session);
-        boolean finished = awaitWithActivity(session, terminal);
+        boolean finished = awaitWithActivity(session, terminal, stateLine);
         history.add(ChatMessage.user(message));
         callLog.add(turnNumber, session.rounds());
         if (!session.text().isEmpty()) {
@@ -504,10 +509,11 @@ public final class LocalAgent {
      *
      * @param session the running turn
      * @param terminal the console
+     * @param stateLine the second line of the block, kept in place so it does not change height
      * @return {@code true} when the turn finished within {@link #TURN_TIMEOUT}
      * @throws InterruptedException if interrupted while waiting
      */
-    private static boolean awaitWithActivity(ConsoleSession session, AgentTerminal terminal)
+    private static boolean awaitWithActivity(ConsoleSession session, AgentTerminal terminal, String stateLine)
             throws InterruptedException {
         long start = System.nanoTime();
         int frame = 0;
@@ -518,15 +524,17 @@ public final class LocalAgent {
             if (seconds > TURN_TIMEOUT.toSeconds()) {
                 return false;
             }
-            terminal.status(activityLine(
-                    ACTIVITY_FRAMES.charAt(frame++ % ACTIVITY_FRAMES.length()),
-                    word,
-                    seconds,
-                    session.runningTool(),
-                    session.runningSeconds(),
-                    session.toolCalls()));
+            terminal.status(List.of(
+                    activityLine(
+                            ACTIVITY_FRAMES.charAt(frame++ % ACTIVITY_FRAMES.length()),
+                            word,
+                            seconds,
+                            session.runningTool(),
+                            session.runningSeconds(),
+                            session.toolCalls()),
+                    stateLine));
         }
-        terminal.status("");
+        terminal.status(List.of(IDLE_LINE, stateLine));
         return true;
     }
 
@@ -625,7 +633,7 @@ public final class LocalAgent {
         terminal.line("(compacting " + before + " messages …)");
         ConsoleSession session = new ConsoleSession(terminal, fileSystem);
         runner.runWithoutTools(instructions, List.copyOf(history), session, COMPACT_SYSTEM_PROMPT);
-        if (!awaitWithActivity(session, terminal) || session.text().isBlank()) {
+        if (!awaitWithActivity(session, terminal, "/compact") || session.text().isBlank()) {
             terminal.line("(compact failed; history kept)");
             return 0;
         }

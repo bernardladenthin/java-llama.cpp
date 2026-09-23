@@ -59,7 +59,7 @@ public final class PlainTerminal implements AgentTerminal {
     }
 
     @Override
-    public void status(String text) {
+    public void status(java.util.List<String> lines) {
         // Nothing can be pinned on a plain stream, and the caller already prints the status line above
         // the prompt. Dropping it here is what keeps a piped session free of half-drawn spinner lines.
     }

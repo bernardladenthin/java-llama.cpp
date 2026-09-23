@@ -188,7 +188,8 @@ public final class TaskLoop {
                     new java.util.ArrayList<>(),
                     terminal,
                     callLog,
-                    step);
+                    step,
+                    "loop step " + step + "/" + options.maxSteps() + " · " + options.task());
             extra = "";
             if (session.failure() != null) {
                 return new Outcome("step " + step + " failed: " + session.failure(), false);
