@@ -45,8 +45,12 @@ class JLineTerminalTest {
     private final ByteArrayOutputStream emitted = new ByteArrayOutputStream();
 
     private Terminal terminal(String keystrokes) throws Exception {
+        return terminal(new ByteArrayInputStream(keystrokes.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    private Terminal terminal(java.io.InputStream keystrokes) throws Exception {
         return TerminalBuilder.builder()
-                .streams(new ByteArrayInputStream(keystrokes.getBytes(StandardCharsets.UTF_8)), emitted)
+                .streams(keystrokes, emitted)
                 .type("xterm-256color")
                 // The rule is drawn with U+2500. Both are needed: the writer encodes through the
                 // stdout charset, which is not the one .encoding() sets, and without it every rule
@@ -216,6 +220,38 @@ class JLineTerminalTest {
             assertThat(
                     "the row that was rendered for the wide window is not reused", occurrences("x".repeat(50)), is(1));
             assertThat("it is cut for the narrow one", screen(), containsString("…"));
+        }
+    }
+
+    @Test
+    void everyResizeDrawsExactlyOnePrompt() throws Exception {
+        // The reported artefact is a second, stale "> " left on screen after dragging the window.
+        // This drives the path that redraws it -- a real size change plus the signal, with the reader
+        // sitting in readLine as it does all session -- and pins that shrinking, growing and changing
+        // the row count each produce one prompt and not two. It holds for every size tried, which is
+        // what says the remaining artefact is not in this path.
+        java.io.PipedOutputStream keys = new java.io.PipedOutputStream();
+        try (Terminal terminal = terminal(new java.io.PipedInputStream(keys));
+                JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reader = new Thread(() -> console.readLine("ignored"));
+            reader.setDaemon(true);
+            reader.start();
+            Thread.sleep(200);
+            console.status(List.of("state row"));
+
+            int[][] sizes = {{30, 10}, {90, 10}, {45, 10}, {120, 24}};
+            for (int[] size : sizes) {
+                int before = screen().length();
+
+                terminal.setSize(new Size(size[0], size[1]));
+                terminal.raise(Terminal.Signal.WINCH);
+                Thread.sleep(150);
+
+                String drawn = screen().substring(before);
+                long prompts =
+                        drawn.chars().filter(character -> character == '>').count();
+                assertThat("one prompt after resizing to " + size[0] + "x" + size[1], prompts, is(1L));
+            }
         }
     }
 
