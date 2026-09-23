@@ -318,7 +318,10 @@ mode, the context used out of the window, the number of tools and the model id.
 
 The mode carries a glyph as well as its name — **`⏸ manual`** stops at every gated call, **`⏵⏵ auto`**
 runs through — so the one thing that decides whether the next command asks first is findable without
-reading the line.
+reading the line. **Shift+Tab at the prompt switches it**, without typing `/mode`; the status line
+updates on the key. The shortcut needs a real terminal and works between turns (while the prompt is
+waiting), which is when the mode matters — during a turn nobody is reading keys. Where the terminal
+does not send backtab, the startup line simply does not offer it and `/mode` still works.
 
 The context figure **moves while the turn runs**, not only at the next prompt: every tool round appends
 the call and its output to the conversation the next model call of the same turn is sent, so a turn that
@@ -363,6 +366,7 @@ Then, in this order:
 | answer `n` | the command does **not** run; the model is told it was cancelled and offers an alternative |
 | ask again, answer `y` | the command runs and its output goes back to the model |
 | `/mode auto` | the status line flips to `⏵⏵ auto`; nothing asks any more |
+| press Shift+Tab at the prompt | the same switch without a command; the status line updates immediately |
 | `explain Markdown with a heading, a list, bold text and a code block` | the answer arrives rendered: heading bold, `•` bullets, code in colour |
 | press ↑ | the previous line comes back; Tab after `/` completes the commands |
 | `/compact` | the conversation is summarized and replaces the history; `ctx` drops |

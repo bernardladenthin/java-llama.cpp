@@ -61,6 +61,20 @@ public enum ApprovalMode {
     }
 
     /**
+     * The next mode in the cycle, which is what the shift+tab shortcut switches to.
+     *
+     * <p>With two modes this is a toggle; it is written as a cycle so a third mode would need no
+     * change here. The order follows the declaration order, so it is the same order {@code /mode}
+     * lists.
+     *
+     * @return the following mode, wrapping around at the end
+     */
+    public ApprovalMode next() {
+        ApprovalMode[] all = values();
+        return all[(ordinal() + 1) % all.length];
+    }
+
+    /**
      * Parse a mode name as typed by the user.
      *
      * @param text the name, in any case, optionally surrounded by whitespace

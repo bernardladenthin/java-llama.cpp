@@ -229,9 +229,29 @@ public final class LocalAgent {
                 err.println("No interactive input available; pass --prompt <text>.");
                 return 2;
             }
-            err.println("Interactive mode: type a request, /help for the commands.");
-            long inputTokens = 0;
-            boolean estimated = false;
+            // Held rather than kept in locals so the shift+tab shortcut, which fires from inside the
+            // line reader, can re-render the status row with the numbers the last turn left behind.
+            java.util.concurrent.atomic.AtomicLong inputTokens = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicBoolean estimated = new java.util.concurrent.atomic.AtomicBoolean();
+            AgentTerminal console = terminal;
+            java.util.function.Supplier<String> idleStatus = () -> StatusLine.render(
+                    options.getWorkspace(),
+                    mode.get(),
+                    inputTokens.get(),
+                    estimated.get(),
+                    contextSize,
+                    tools.size(),
+                    options.getModelId());
+            boolean shortcut = console.onCycleMode(() -> {
+                mode.set(mode.get().next());
+                if (console.pinsStatus()) {
+                    console.status(List.of(IDLE_LINE, idleStatus.get()));
+                } else {
+                    console.line(console.ansi().dim(idleStatus.get()));
+                }
+            });
+            err.println("Interactive mode: type a request, /help for the commands."
+                    + (shortcut ? " shift+tab switches the approval mode." : ""));
             int turnNumber = 0;
             String pendingNote = "";
             while (true) {
@@ -241,8 +261,8 @@ public final class LocalAgent {
                 String status = StatusLine.render(
                         options.getWorkspace(),
                         mode.get(),
-                        inputTokens,
-                        estimated,
+                        inputTokens.get(),
+                        estimated.get(),
                         contextSize,
                         tools.size(),
                         options.getModelId());
@@ -263,7 +283,7 @@ public final class LocalAgent {
                     if (command.get().command() == SlashCommands.Command.EXIT) {
                         return 0;
                     }
-                    inputTokens = handleCommand(
+                    inputTokens.set(handleCommand(
                             command.get(),
                             runner,
                             fileSystem,
@@ -271,10 +291,10 @@ public final class LocalAgent {
                             mode,
                             options,
                             contextSize,
-                            inputTokens,
-                            estimated,
+                            inputTokens.get(),
+                            estimated.get(),
                             terminal,
-                            callLog);
+                            callLog));
                     continue;
                 }
                 turnNumber++;
@@ -283,8 +303,8 @@ public final class LocalAgent {
                 if (needsCompaction(
                         options, contextSize, estimateTokens(systemPrompt(options), history) + line.length() / 4)) {
                     terminal.line(terminal.ansi().yellow("(context nearly full — compacting first)"));
-                    inputTokens = compact(runner, fileSystem, history, "", terminal);
-                    estimated = true;
+                    inputTokens.set(compact(runner, fileSystem, history, "", terminal));
+                    estimated.set(true);
                 }
                 // What the request carries before the model has answered anything; the turn adds to it.
                 long baseTokens = estimateTokens(systemPrompt(options), history) + line.length() / CHARS_PER_TOKEN;
@@ -308,8 +328,9 @@ public final class LocalAgent {
                                 options.getModelId()),
                         activity);
                 pendingNote = toolNote(completed.rounds());
-                estimated = completed.inputTokens() == 0;
-                inputTokens = estimated ? estimateTokens(systemPrompt(options), history) : completed.inputTokens();
+                estimated.set(completed.inputTokens() == 0);
+                inputTokens.set(
+                        estimated.get() ? estimateTokens(systemPrompt(options), history) : completed.inputTokens());
             }
         } finally {
             if (terminal != null) {

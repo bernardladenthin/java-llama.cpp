@@ -7,9 +7,12 @@ package net.ladenthin.llama.atmosphere;
 import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
+import org.jline.keymap.KeyMap;
+import org.jline.reader.Binding;
 import org.jline.reader.EndOfFileException;
 import org.jline.reader.LineReader;
 import org.jline.reader.LineReaderBuilder;
+import org.jline.reader.Reference;
 import org.jline.reader.UserInterruptException;
 import org.jline.reader.impl.completer.StringsCompleter;
 import org.jline.terminal.Attributes;
@@ -17,6 +20,7 @@ import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.jline.utils.AttributedString;
 import org.jline.utils.AttributedStyle;
+import org.jline.utils.InfoCmp;
 import org.jline.utils.Status;
 import org.jspecify.annotations.Nullable;
 
@@ -163,6 +167,38 @@ public final class JLineTerminal implements AgentTerminal {
      */
     static String fit(String text, int width) {
         return text.length() <= width ? text : text.substring(0, Math.max(1, width - 1)) + "…";
+    }
+
+    /**
+     * What a terminal sends for shift+tab: {@code ESC [ Z}, "backtab" (CSI Z).
+     *
+     * <p>It is bound literally as well as through terminfo, because JLine's Windows terminfo
+     * (<code>windows-vtp.caps</code>) declares no <code>key_btab</code> at all — so the capability
+     * lookup yields nothing there while the terminal itself, in virtual-terminal input mode, does
+     * send the sequence.
+     */
+    private static final String BACKTAB = "\033[Z";
+
+    /** The name the cycle action is registered under; a widget is addressed by name, not by object. */
+    private static final String CYCLE_MODE_WIDGET = "jllama-cycle-approval-mode";
+
+    @Override
+    public boolean onCycleMode(Runnable action) {
+        KeyMap<Binding> keys = reader.getKeyMaps().get(LineReader.MAIN);
+        if (keys == null) {
+            return false;
+        }
+        reader.getWidgets().put(CYCLE_MODE_WIDGET, () -> {
+            action.run();
+            return true;
+        });
+        Reference widget = new Reference(CYCLE_MODE_WIDGET);
+        String fromTerminfo = KeyMap.key(terminal, InfoCmp.Capability.key_btab);
+        if (fromTerminfo != null) {
+            keys.bind(widget, fromTerminfo);
+        }
+        keys.bind(widget, BACKTAB);
+        return true;
     }
 
     @Override

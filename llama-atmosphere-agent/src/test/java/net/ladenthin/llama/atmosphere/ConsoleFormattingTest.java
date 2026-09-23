@@ -57,6 +57,25 @@ class ConsoleFormattingTest {
     }
 
     @Test
+    void shiftTabCyclesTheModeAndAPlainStreamDeclinesTheShortcut() {
+        // the key can only be seen by a console that owns the keyboard; everything else keeps /mode
+        assertThat(ApprovalMode.MANUAL.next(), is(ApprovalMode.AUTO));
+        assertThat(ApprovalMode.AUTO.next(), is(ApprovalMode.MANUAL));
+        assertThat(
+                "a cycle, so it always returns to where it started",
+                ApprovalMode.MANUAL.next().next(),
+                is(ApprovalMode.MANUAL));
+
+        AgentTerminal plain =
+                new PlainTerminal(new java.io.PrintStream(new java.io.ByteArrayOutputStream()), null, Ansi.PLAIN);
+        assertThat(
+                plain.onCycleMode(() -> {
+                    throw new AssertionError("must not run");
+                }),
+                is(false));
+    }
+
+    @Test
     void eachModeCarriesItsOwnSymbol() {
         // the glyph is what makes the mode findable at a glance; the word stays next to it
         assertThat(ApprovalMode.MANUAL.badge(), is("⏸ manual"));

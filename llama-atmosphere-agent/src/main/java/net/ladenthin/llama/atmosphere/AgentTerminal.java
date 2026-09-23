@@ -68,6 +68,23 @@ public interface AgentTerminal extends AutoCloseable {
     boolean pinsStatus();
 
     /**
+     * Ask the terminal to run {@code action} when the user presses shift+tab at the prompt.
+     *
+     * <p>Only a real terminal can offer this: it needs to own the keyboard and see a key that is not
+     * a line of text. It also only fires **while a line is being read** — during a turn nobody is
+     * reading keys, so the mode is switched between turns, which is when it matters.
+     *
+     * <p>The default is to decline, which every non-interactive console does; the caller uses that
+     * answer to decide whether to advertise the shortcut, and {@code /mode} remains either way.
+     *
+     * @param action what to run on the key; it must not block
+     * @return {@code true} when the key was bound
+     */
+    default boolean onCycleMode(Runnable action) {
+        return false;
+    }
+
+    /**
      * The styles to use for this console.
      *
      * @return a colouring instance on a terminal, a plain one otherwise

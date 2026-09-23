@@ -2353,10 +2353,18 @@ are decisions, not details:
    *name*; results and errors are folded the same way. `JLineTerminal.line` splits a multi-line string
    as a backstop for a caller that forgets. Only the console is cut — the model gets everything, and
    `ConsoleSession.rounds()` keeps the full arguments for the history note and `/calls`.
-10. **The approval mode carries a glyph**: `ApprovalMode.symbol()` / `badge()` render `⏸ manual` and
-   `⏵⏵ auto` on the status line and in `/mode`, the transport symbols the established terminal agents
-   use for the same distinction. The word stays next to it; the glyph is what makes the one setting
-   that decides whether the next command asks first findable at a glance.
+10. **The approval mode carries a glyph, and shift+tab switches it**: `ApprovalMode.symbol()` /
+   `badge()` render `⏸ manual` and `⏵⏵ auto` on the status line and in `/mode`, the transport symbols
+   the established terminal agents use for the same distinction; `ApprovalMode.next()` is the cycle
+   the key walks. The binding is `AgentTerminal.onCycleMode(Runnable)`, which **defaults to declining**
+   — only `JLineTerminal` overrides it, and the startup line advertises the key only when the bind
+   succeeded. Two details are not obvious: it is bound **both** through terminfo
+   (`InfoCmp.Capability.key_btab`) **and** to the literal `ESC [ Z`, because JLine's
+   `windows-vtp.caps` declares no `key_btab` at all while the terminal in virtual-terminal input mode
+   does send the sequence; and the shortcut fires **only while a line is being read**, so it switches
+   the mode between turns — which is when it is decided anyway. The REPL therefore holds the two
+   status numbers in an `AtomicLong`/`AtomicBoolean` rather than locals, so the widget (which runs
+   inside the reader) can re-render the pinned row with what the last turn left behind.
 
 **The default system prompt is general-purpose on purpose — do not narrow it back.** Every model-facing
 text is a resource, not a Java literal: `src/main/resources/net/ladenthin/llama/atmosphere/` holds
