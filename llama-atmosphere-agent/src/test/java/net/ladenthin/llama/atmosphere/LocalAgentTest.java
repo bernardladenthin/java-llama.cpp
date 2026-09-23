@@ -216,20 +216,51 @@ class LocalAgentTest {
                     new PrintStream(err, true, StandardCharsets.UTF_8));
         }
 
-        // third request = second turn: the call and its result must be in what the model gets to see.
-        // Not as real tool_calls messages -- Atmosphere's assembleMessages rebuilds history entries as
-        // new ChatMessage(role, content) and drops everything else -- so they ride in the content.
+        // third request = second turn: the calls of turn one ride along with the new user message, so
+        // the model sees that they happened. Not as tool_calls messages (Atmosphere's assembleMessages
+        // rebuilds history as new ChatMessage(role, content) and drops the rest), and not as assistant
+        // text either (the model copied that into its own answers).
         List<JsonNode> requests = backend.requests();
         assertThat(requests.size(), is(3));
         List<String> roles = new ArrayList<>();
         for (JsonNode message : requests.get(2).path("messages")) {
             roles.add(message.path("role").asText());
         }
-        assertThat(roles, contains("system", "user", "assistant", "user"));
-        String replayedAnswer =
-                requests.get(2).path("messages").get(2).path("content").asText();
-        assertThat(replayedAnswer, containsString("read_file"));
-        assertThat(replayedAnswer, containsString("VALUE=42"));
-        assertThat("and the answer itself is still there", replayedAnswer, containsString("The file says VALUE=42."));
+        assertThat(
+                "strict alternation keeps every chat template happy",
+                roles,
+                contains("system", "user", "assistant", "user"));
+        String secondUserMessage =
+                requests.get(2).path("messages").get(3).path("content").asText();
+        assertThat(secondUserMessage, containsString("read_file"));
+        assertThat(secondUserMessage, containsString("VALUE=42"));
+        assertThat(secondUserMessage, containsString("do not repeat it"));
+        assertThat("and the user's own words are still there", secondUserMessage, containsString("and now?"));
+        assertThat(
+                "the answer itself stays the model's own",
+                requests.get(2).path("messages").get(2).path("content").asText(),
+                is("The file says VALUE=42."));
+    }
+
+    @Test
+    void theActivityLineNamesTheRunningToolSoALongBuildLooksAlive() {
+        // "working… (90s)" during a two-minute mvn test is indistinguishable from a hang.
+        assertThat(
+                LocalAgent.activityLine('x', 12, "run_command", 9, 2), is("x run_command… (9s of 12s · 2 tool calls)"));
+        assertThat(LocalAgent.activityLine('x', 5, null, 0, 0), is("x thinking… (5s)"));
+        assertThat(LocalAgent.activityLine('x', 30, null, 0, 3), is("x thinking… (30s · 3 tool calls)"));
+    }
+
+    @Test
+    void theToolNoteIsAddressedToTheModelAndNotWrittenAsItsOwnWords() {
+        // It first rode in front of the assistant's answer -- and the model copied it into its next
+        // reply, so the user read "(tools I actually ran this turn: …)" as the first line of an answer.
+        String note = LocalAgent.toolNote(
+                List.of(new ConsoleSession.ToolRound("grep", "{pattern=Test}", "3 matches in 2 files")));
+
+        assertThat(note, containsString("do not repeat it"));
+        assertThat(note, containsString("grep"));
+        assertThat(note, containsString("3 matches in 2 files"));
+        assertThat(LocalAgent.toolNote(List.of()), is(""));
     }
 }

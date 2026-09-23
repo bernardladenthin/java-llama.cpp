@@ -2314,7 +2314,17 @@ are decisions, not details:
    model stopped calling tools after the third turn of a real session and *described* the work instead
    — inventing JUnit tests, a Maven build and a `.bat` script, complete with exit codes, while the
    workspace stayed empty. The system prompt also forbids claiming an action without the call.
+   **Placement was found by failing twice, so do not "simplify" it:** in front of the assistant's
+   answer made the model copy the record into its own replies (the user saw `(tools I actually ran
+   this turn: …)` as the first line of an answer); real `tool_calls` messages are impossible (see
+   above); a mid-history system message is cleanest but Mistral's template requires strict
+   user/assistant alternation and Gemma has no system role. It therefore rides in front of the **next
+   user message**, which every template accepts.
    Pinned by `LocalAgentTest.aToolCallStaysInTheHistorySoTheNextTurnSeesItHappened`.
+   **Live feedback while a turn runs** (`LocalAgent.activityLine`, `ShellTool`'s line-by-line output):
+   the pinned line names the running tool and its own elapsed time, and shell output is printed as it
+   arrives. Reading the pipe incrementally is not only cosmetic — an unread pipe blocks the child once
+   it is full, which on Windows is roughly 4 KB.
 8. **The context number in the status line is an estimate, marked `~`.** llama.cpp emits its usage
    chunk only when the client sets `stream_options.include_usage`, and Atmosphere's client does not;
    `ConsoleSession.usage()` takes the real count when one arrives, otherwise `LocalAgent.estimateTokens`

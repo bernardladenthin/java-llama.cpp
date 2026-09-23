@@ -157,7 +157,13 @@ public final class LocalAgent {
             // read tracker is what lets an edit insist the file was read first.
             List<ToolDefinition> tools = new ArrayList<>(WorkspaceTools.all(new WorkspaceTools.ReadTracker()));
             if (options.isAllowShell()) {
-                tools.add(ShellTool.definition(options.getWorkspace(), SHELL_TIMEOUT, SHELL_MAX_OUTPUT_CHARS));
+                // Live output: a two-minute build has to show that it is doing something.
+                AgentTerminal console = terminal;
+                tools.add(ShellTool.definition(
+                        options.getWorkspace(),
+                        SHELL_TIMEOUT,
+                        SHELL_MAX_OUTPUT_CHARS,
+                        line -> console.line(console.ansi().dim("  │ " + line))));
             }
             AgentRunner runner = new AgentRunner(
                     baseUrl,
@@ -203,6 +209,7 @@ public final class LocalAgent {
             long inputTokens = 0;
             boolean estimated = false;
             int turnNumber = 0;
+            String pendingNote = "";
             while (true) {
                 terminal.status(StatusLine.render(
                         options.getWorkspace(),
@@ -239,7 +246,17 @@ public final class LocalAgent {
                     continue;
                 }
                 turnNumber++;
-                ConsoleSession completed = turn(runner, fileSystem, line, history, terminal, callLog, turnNumber);
+                ConsoleSession completed = turn(
+                        runner,
+                        fileSystem,
+                        pendingNote.isEmpty()
+                                ? line
+                                : pendingNote + System.lineSeparator() + System.lineSeparator() + line,
+                        history,
+                        terminal,
+                        callLog,
+                        turnNumber);
+                pendingNote = toolNote(completed.rounds());
                 estimated = completed.inputTokens() == 0;
                 inputTokens = estimated ? estimateTokens(systemPrompt(options), history) : completed.inputTokens();
             }
@@ -332,9 +349,8 @@ public final class LocalAgent {
         boolean finished = awaitWithActivity(session, terminal);
         history.add(ChatMessage.user(message));
         callLog.add(turnNumber, session.rounds());
-        String answer = withToolNotes(session.rounds(), session.text());
-        if (!answer.isEmpty()) {
-            history.add(ChatMessage.assistant(answer));
+        if (!session.text().isEmpty()) {
+            history.add(ChatMessage.assistant(session.text()));
         }
         if (!finished) {
             session.error(new IllegalStateException("turn did not finish within " + TURN_TIMEOUT));
@@ -352,6 +368,14 @@ public final class LocalAgent {
      * writes nothing at all. That is not hypothetical; it happened on a real session, with the model
      * inventing test results and a jar that never existed.
      *
+     * <p><b>Where it goes, and why not somewhere more obvious.</b> In front of the <em>next user
+     * message</em>. The first attempt put it in front of the assistant's own answer, and the model
+     * promptly copied it into its next reply — the user read "(tools I actually ran this turn: …)" as
+     * the first line of an answer, because text attributed to the assistant is text a model imitates.
+     * A system message mid-history would be cleaner still, but not every chat template accepts one:
+     * Mistral's requires strict user/assistant alternation and Gemma has no system role at all.
+     * Riding along with the next user message keeps the sequence template-safe everywhere.
+     *
      * <p><b>Why a note rather than real {@code tool_calls} messages.</b> Atmosphere's
      * {@code AbstractAgentRuntime.assembleMessages} rebuilds every history entry as
      * {@code new ChatMessage(role, content)} — the tool-call array and the tool-call id are dropped on
@@ -360,14 +384,14 @@ public final class LocalAgent {
      * instead of a message pair, with the result cut to {@value #HISTORY_RESULT_CHARS} characters.
      *
      * @param rounds the tool calls of the finished turn
-     * @param text the model's answer
-     * @return the answer with the calls noted above it
+     * @return the note, or an empty string when no tool ran
      */
-    static String withToolNotes(List<ConsoleSession.ToolRound> rounds, String text) {
+    static String toolNote(List<ConsoleSession.ToolRound> rounds) {
         if (rounds.isEmpty()) {
-            return text;
+            return "";
         }
-        StringBuilder note = new StringBuilder("(tools I actually ran this turn:");
+        StringBuilder note = new StringBuilder("Record of the tools that actually ran in the previous turn."
+                + " This is a log for your reference; do not repeat it and do not mention it.");
         for (ConsoleSession.ToolRound round : rounds) {
             String result = round.result().replace("\r\n", " ").replace('\n', ' ');
             note.append(System.lineSeparator())
@@ -381,8 +405,7 @@ public final class LocalAgent {
                                     ? result
                                     : result.substring(0, HISTORY_RESULT_CHARS) + " …[cut]");
         }
-        note.append(")");
-        return text.isEmpty() ? note.toString() : note + System.lineSeparator() + System.lineSeparator() + text;
+        return note.toString();
     }
 
     /**
@@ -482,11 +505,37 @@ public final class LocalAgent {
             if (seconds > TURN_TIMEOUT.toSeconds()) {
                 return false;
             }
-            terminal.status(ACTIVITY_FRAMES.charAt(frame++ % ACTIVITY_FRAMES.length()) + " working… (" + seconds
-                    + "s · " + session.toolCalls() + " tool calls)");
+            terminal.status(activityLine(
+                    ACTIVITY_FRAMES.charAt(frame++ % ACTIVITY_FRAMES.length()),
+                    seconds,
+                    session.runningTool(),
+                    session.runningSeconds(),
+                    session.toolCalls()));
         }
         terminal.status("");
         return true;
+    }
+
+    /**
+     * What the pinned line says while a turn is running.
+     *
+     * <p>Naming the running tool is the point: a build or a test run can take minutes, and
+     * "working…" during a two-minute {@code mvn test} is indistinguishable from a hang. When no tool
+     * runs, the model is generating, which is its own kind of waiting.
+     *
+     * @param frame the spinner character
+     * @param seconds how long the whole turn has been running
+     * @param runningTool the tool executing right now, or {@code null}
+     * @param toolSeconds how long that tool has been running
+     * @param toolCalls how many tools ran in this turn so far
+     * @return the line
+     */
+    static String activityLine(
+            char frame, long seconds, @Nullable String runningTool, long toolSeconds, int toolCalls) {
+        String what = runningTool == null
+                ? "thinking… (" + seconds + "s"
+                : runningTool + "… (" + toolSeconds + "s of " + seconds + "s";
+        return frame + " " + what + (toolCalls == 0 ? "" : " · " + toolCalls + " tool calls") + ")";
     }
 
     /**

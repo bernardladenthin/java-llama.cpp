@@ -220,13 +220,18 @@ arguments and a short result. Use it when an answer sounds too good: a model tha
 *describing* work — "the tests passed, the jar was created" — while calling nothing at all. The
 scrollback reads the same either way; this list only grows when something really ran.
 
-To make that drift less likely, each turn's calls are also carried into the conversation as a short
-note above the answer (`(tools I actually ran this turn: …)`). Without it the history holds only the
-user's messages and the model's own prose, and a small model then continues the pattern it sees —
-prose. This is not theoretical: in a real session a 4B model invented JUnit tests, a Maven build and a
-`.bat` script it had never written, three turns in a row. The note is plain text rather than proper
-`tool_calls` messages because Atmosphere's `assembleMessages` rebuilds every history entry as
-`new ChatMessage(role, content)` and drops the rest; the content is what survives.
+To make that drift less likely, each turn's calls ride along with the **next** message as a short
+record. Without it the history holds only the user's messages and the model's own prose, and a small
+model then continues the pattern it sees — prose. This is not theoretical: in a real session a 4B
+model invented JUnit tests, a Maven build and a `.bat` script it had never written, three turns in a
+row.
+
+Two placements were tried and discarded, both visible failures: in front of the assistant's answer
+(the model copied it into its next reply, so the record appeared as the first line of an answer), and
+as real `tool_calls` messages (impossible — Atmosphere's `assembleMessages` rebuilds every history
+entry as `new ChatMessage(role, content)` and drops the rest). A system message mid-history would be
+cleaner, but Mistral's template requires strict user/assistant alternation and Gemma has no system
+role at all.
 
 **`/compact`** asks the model to summarize the conversation (goal, facts, work done, problems, state,
 next step; `/compact <focus>` adds an emphasis), then replaces the history with that summary. Use it
@@ -259,6 +264,13 @@ after one edit. Four limits stop a runaway loop, all enforced by the agent, none
 the model: `--max` steps (20 by default), a two-hour wall-clock budget, a stall detector (three steps
 in a row that write nothing and call no tool), and `--every <duration>` for a paced run. A loop needs
 the `auto` approval mode — it asks once and switches, or leaves you alone if you say no.
+
+**While a turn runs, the pinned line says what is happening**: `⠙ thinking… (5s)` while the model
+generates, and `⠙ run_command… (47s of 61s · 2 tool calls)` while a tool is executing. A build that
+takes two minutes is otherwise indistinguishable from a hang. `run_command` additionally prints its
+output **line by line while it runs** (dimmed, `│ `-prefixed) instead of dumping it at the end — which
+also keeps the pipe drained; a process whose output nobody reads blocks once the buffer is full, and
+on Windows that buffer is about 4 KB.
 
 **The status line** above the prompt reads
 `[manual · ctx ~3.1k/16k · 9 tools · local-model]`: the approval mode, the context used out of the

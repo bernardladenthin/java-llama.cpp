@@ -40,6 +40,8 @@ public final class ConsoleSession implements StreamingSession {
     private volatile int toolCalls;
     private volatile long inputTokens;
     private final List<ToolRound> rounds = new CopyOnWriteArrayList<>();
+    private volatile @Nullable String runningTool;
+    private volatile long runningSince;
 
     /**
      * Create a session writing to {@code terminal}.
@@ -151,21 +153,43 @@ public final class ConsoleSession implements StreamingSession {
         switch (event) {
             case AiEvent.ToolStart start -> {
                 toolCalls++;
+                runningTool = start.toolName();
+                runningSince = System.nanoTime();
                 rounds.add(new ToolRound(start.toolName(), String.valueOf(start.arguments()), ""));
                 markdown.flush();
                 terminal.line(ansi.green("●") + " " + ansi.bold(start.toolName()) + " "
                         + ansi.dim(String.valueOf(start.arguments())));
             }
             case AiEvent.ToolResult result -> {
+                runningTool = null;
                 recordResult(String.valueOf(result.result()));
                 terminal.line(ansi.dim("  ↳ " + preview(String.valueOf(result.result()))));
             }
             case AiEvent.ToolError error -> {
+                runningTool = null;
                 recordResult("error: " + error.error());
                 terminal.line(ansi.red("  ↳ error: " + error.error()));
             }
             default -> StreamingSession.super.emit(event);
         }
+    }
+
+    /**
+     * The tool that is executing right now, if any.
+     *
+     * @return the tool name, or {@code null} when the model is generating rather than running something
+     */
+    public @Nullable String runningTool() {
+        return runningTool;
+    }
+
+    /**
+     * How long the running tool has been running.
+     *
+     * @return the seconds since it started, or {@code 0} when nothing runs
+     */
+    public long runningSeconds() {
+        return runningTool == null ? 0 : (System.nanoTime() - runningSince) / 1_000_000_000L;
     }
 
     /** Attach a result to the round that is still waiting for one. */
