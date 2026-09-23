@@ -325,4 +325,33 @@ class LocalAgentTest {
                         .getMessage(),
                 containsString("between 10 and 95"));
     }
+
+    @Test
+    void compactingAnAlreadyCompactedHistoryIsRefusedInsteadOfRepeated() throws Exception {
+        // A compacted history is the summary plus its acknowledgement. Summarizing that again returns
+        // the same text for another model call -- and re-sends a byte-identical prompt, which llama.cpp
+        // answers with "need to evaluate at least 1 token for each active slot".
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("a summary"));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (OpenAiCompatServer server = server(backend)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url", "http://127.0.0.1:" + server.getPort() + "/v1", "--workspace", workspace.toString()
+            });
+
+            LocalAgent.run(
+                    options,
+                    new StringReader("hello" + System.lineSeparator() + "/compact" + System.lineSeparator() + "/compact"
+                            + System.lineSeparator()),
+                    new PrintStream(out, true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        }
+
+        // one turn + one compaction = two requests; the second /compact must not add a third
+        assertThat(backend.requests(), hasSize(2));
+        assertThat(
+                "the first compaction really happened",
+                out.toString(StandardCharsets.UTF_8),
+                containsString("compacted"));
+        assertThat(out.toString(StandardCharsets.UTF_8), containsString("already a summary"));
+    }
 }

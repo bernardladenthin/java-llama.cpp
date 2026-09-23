@@ -75,6 +75,9 @@ public final class LocalAgent {
             "You summarize a conversation between a user and a coding assistant. Follow the user's"
                     + " instructions exactly and answer with the summary only.";
 
+    /** How the user message of a compacted history begins; also how a repeat compaction is detected. */
+    static final String SUMMARY_PREFIX = "Summary of the conversation so far:";
+
     /** How much of a tool result is kept in the history of later turns. */
     private static final int HISTORY_RESULT_CHARS = 400;
 
@@ -633,6 +636,18 @@ public final class LocalAgent {
     }
 
     /**
+     * Whether the history is the untouched result of a compaction.
+     *
+     * @param history the conversation
+     * @return {@code true} when it is exactly the summary and its acknowledgement
+     */
+    static boolean isCompacted(List<ChatMessage> history) {
+        return history.size() == 2
+                && history.get(0).content() != null
+                && history.get(0).content().startsWith(SUMMARY_PREFIX);
+    }
+
+    /**
      * A rough token count of what the next request will carry.
      *
      * <p>Used only for the status line, and only because llama.cpp sends its own count just to clients
@@ -680,6 +695,13 @@ public final class LocalAgent {
             terminal.line("(nothing to compact)");
             return 0;
         }
+        if (isCompacted(history)) {
+            // After a compaction the history IS the summary plus its acknowledgement. Summarizing that
+            // again returns the same text for another model call -- and re-sends a byte-identical
+            // prompt, which is what makes llama.cpp log "need to evaluate at least 1 token".
+            terminal.line("(the history is already a summary — nothing to compact)");
+            return estimateTokens("", history);
+        }
         String instructions = prompt(COMPACT_PROMPT)
                 .replace("{focus}", focus.isEmpty() ? "" : System.lineSeparator() + "Focus on: " + focus);
         int before = history.size();
@@ -702,8 +724,8 @@ public final class LocalAgent {
             return 0;
         }
         history.clear();
-        history.add(ChatMessage.user("Summary of the conversation so far:" + System.lineSeparator()
-                + session.text().strip()));
+        history.add(ChatMessage.user(
+                SUMMARY_PREFIX + System.lineSeparator() + session.text().strip()));
         history.add(ChatMessage.assistant("Understood, I will continue from that summary."));
         terminal.line("(compacted " + before + " messages into a summary of "
                 + session.text().strip().length() + " characters)");

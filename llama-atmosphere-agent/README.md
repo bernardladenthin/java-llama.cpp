@@ -243,6 +243,12 @@ unknown context size — a foreign endpoint whose `/props` answers nothing — n
 all rather than guessed. The threshold sits below the ~85 % a hosted agent uses because our token
 number is usually an estimate and the reply still has to fit next to the prompt.
 
+Calling `/compact` twice in a row answers `(the history is already a summary — nothing to compact)`:
+after a compaction the history *is* the summary plus its acknowledgement, so summarizing it again
+returns the same text for another model call. It also re-sends a byte-identical prompt, which is what
+makes llama.cpp log `need to evaluate at least 1 token for each active slot` — a harmless note from
+the server about a prompt it has already cached in full, not an error on our side.
+
 **`/compact`** asks the model to summarize the conversation (goal, facts, work done, problems, state,
 next step; `/compact <focus>` adds an emphasis), then replaces the history with that summary. Use it
 when the context fills up. Note the history only ever held the user texts and the final answers —
