@@ -85,6 +85,13 @@ public final class JLineTerminal implements AgentTerminal {
             LineReader reader = LineReaderBuilder.builder()
                     .terminal(terminal)
                     .completer(new StringsCompleter(completions))
+                    // The input sits in a framed box at the bottom. Without this the box would be
+                    // left behind in the scrollback on every Enter, so a few empty lines would print
+                    // a wall of rules; the line the user typed is echoed above it instead.
+                    .option(LineReader.Option.ERASE_LINE_ON_FINISH, true)
+                    // "!" is a shell history expansion in the reader's default configuration, which
+                    // silently rewrites a request like: git commit -m "fixed!"
+                    .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
                     .build();
             return new JLineTerminal(terminal, reader, Status.getStatus(terminal), Ansi.detect());
         } catch (IOException | RuntimeException e) {
@@ -125,9 +132,8 @@ public final class JLineTerminal implements AgentTerminal {
      * random. So every read in this class — a request, an approval answer — is served from the one
      * queue this thread fills, and nothing else ever reads the terminal.
      *
-     * @param prompt the prompt, kept for the whole session (the first caller decides it)
      */
-    private synchronized void startReading(String prompt) {
+    private synchronized void startReading() {
         if (input != null) {
             return;
         }
@@ -136,7 +142,15 @@ public final class JLineTerminal implements AgentTerminal {
                     while (!closed) {
                         reading = true;
                         try {
-                            typed.put(reader.readLine(prompt));
+                            // Built fresh each time: the rule has to match the window, which can be
+                            // resized between two requests.
+                            String line = reader.readLine(rule() + System.lineSeparator() + "> ");
+                            if (!line.isBlank()) {
+                                // The box is erased on Enter, so the conversation would lose what was
+                                // asked. Echoing it above keeps the transcript readable.
+                                line(ansi.bold("› " + line.strip()));
+                            }
+                            typed.put(line);
                         } catch (UserInterruptException e) {
                             // Ctrl-C: drop what was typed and ask again, as before.
                         } catch (EndOfFileException e) {
@@ -158,9 +172,21 @@ public final class JLineTerminal implements AgentTerminal {
         input.start();
     }
 
+    /**
+     * The rule that frames the input box, as wide as the window.
+     *
+     * @return a line of {@code ─}
+     */
+    private String rule() {
+        return "─".repeat(Math.max(10, terminal.getSize().getColumns() - 1));
+    }
+
     @Override
     public @Nullable String readLine(String prompt) {
-        startReading(prompt);
+        // The prompt is the box this terminal draws, so the caller's is ignored: a "you> " in front of
+        // an input line that already sits in a frame is noise, and the frame cannot be handed in as a
+        // string because it is rebuilt on every window size.
+        startReading();
         try {
             return take(typed.take());
         } catch (InterruptedException e) {
@@ -196,7 +222,7 @@ public final class JLineTerminal implements AgentTerminal {
         // there while the agent works. A single-key read here would need a second reader on the same
         // terminal, and the two would take turns at random.
         line(prompt);
-        startReading("you> ");
+        startReading();
         try {
             String answer = take(typed.take());
             return answer == null ? null : answer.trim().toLowerCase(Locale.ROOT);
@@ -212,14 +238,15 @@ public final class JLineTerminal implements AgentTerminal {
             status.update(List.of());
             return;
         }
-        // A rule above the block separates it from the scrollback, the way the established terminal
-        // agents frame their input.
+        // The rule on top of this block is the bottom edge of the input box: the reader draws the top
+        // edge as the first line of its prompt, so the two together frame the input the way the
+        // established terminal agents do.
         // One row must never wrap: a wrapped row occupies two screen lines, the reserved region is
         // sized in lines, and everything below it is then drawn in the wrong place -- which is how a
         // long summary tore the block apart.
         int width = Math.max(10, terminal.getSize().getColumns() - 1);
         List<AttributedString> block = new java.util.ArrayList<>();
-        block.add(new AttributedString("─".repeat(width), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
+        block.add(new AttributedString(rule(), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
         for (String line : lines) {
             block.add(
                     new AttributedString(fit(line, width), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));

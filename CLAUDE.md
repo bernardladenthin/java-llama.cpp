@@ -2246,7 +2246,14 @@ are decisions, not details:
    `rename` — reading tools never ask) and a `ConsoleApprovalStrategy`; `ToolExecutionHelper` then
    blocks the tool loop before the executor runs and turns a denial into the tool result
    `{"status":"cancelled","message":"Action cancelled by user"}` for the model. Do not reimplement
-   that message. `ApprovalWireTest` pins both halves over the real server.
+   that message. `ApprovalWireTest` pins both halves over the real server. **The reading tools
+   (`ls`, `read_file`, `glob`, `grep`) never ask, and that is a decision, not an omission**: gating
+   them would make the question so frequent it stops being read. Because the gate is a list of
+   *names*, a tool upstream adds or renames would drop out of it and then run unasked — so
+   `READ_ONLY_TOOLS` names the other half explicitly and
+   `ConsoleApprovalStrategyTest.everyOfferedToolIsEitherGatedOrDeclaredReadOnly` asserts every offered
+   tool is in exactly one of the two sets, and that neither set names a tool nobody offers. Same class
+   as the stale `spotbugs-exclude.xml` entries: an allowlist that silently stops matching.
 2. **One-shot (`--prompt`) denies a gated call** instead of auto-approving it — `--auto` is the
    deliberate opt-in. Atmosphere itself fails closed when no strategy is wired, and this keeps that
    direction: an unattended run must not be the most permissive one.
@@ -2366,7 +2373,22 @@ are decisions, not details:
    status numbers in an `AtomicLong`/`AtomicBoolean` rather than locals, so the widget (which runs
    inside the reader) can re-render the pinned row with what the last turn left behind.
 
-11. **The prompt stays at the bottom during a turn, and typing stops the turn.** One thread inside
+11. **The input is framed into the pinned block, and the prompt stays there during a turn; typing
+   stops the turn.** The frame is two halves that must be read together: the **top** rule is the first
+   line of the reader's *prompt* (`rule() + newline + "> "`, rebuilt on every read because the window
+   can be resized), the **bottom** rule is the first line of the *status* block — JLine draws the
+   status below the prompt, so that is the only way to get the input inside a frame at all. Both call
+   the same `rule()`, or the two edges drift apart on a resize. `AgentTerminal.readLine`'s `prompt`
+   argument is consequently **ignored** here. `ERASE_LINE_ON_FINISH` removes the box on Enter —
+   without it every submitted line leaves a rule pair in the scrollback, and a few empty Enters print a
+   wall of them — and the reader thread echoes the line above as `› text` so the transcript keeps it.
+   `DISABLE_EVENT_EXPANSION` is set in the same builder because the reader's default treats `!` as a
+   shell history expansion, which silently rewrites a request like `git commit -m "fixed!"`.
+   **What cannot be done, asked and answered:** keep the block visible while the *user* scrolls the
+   terminal's scrollback. That needs the alternate screen buffer, i.e. a full-screen application, which
+   would give up the scrollback and the append-only property the whole console design rests on.
+
+   **The prompt stays at the bottom during a turn, and typing stops the turn.** One thread inside
    `JLineTerminal` (`startReading`) sits in `readLine` for the whole session and fills a queue;
    **every** read in that class is served from it, because a terminal has one keyboard and two threads
    reading it take turns at random. That is why `readKey` no longer reads a single key in raw mode: the

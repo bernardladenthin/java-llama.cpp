@@ -42,6 +42,17 @@ public final class ConsoleApprovalStrategy implements ApprovalStrategy {
     public static final Set<String> GATED_TOOLS =
             Set.of(ShellTool.TOOL_NAME, "write_file", "edit_file", "delete", "rename");
 
+    /**
+     * The tools that deliberately never ask, because they only read.
+     *
+     * <p>It exists so that "does not ask" is a <em>decision</em> rather than the absence of one.
+     * {@link #GATED_TOOLS} is a list of names, so a tool that is added or renamed upstream falls out
+     * of it silently and then runs unasked — the same class of quiet breakage as a stale exclusion
+     * file. {@code ConsoleApprovalStrategyTest} asserts every registered tool is in exactly one of the
+     * two sets, so such a change fails the build instead of the session.
+     */
+    public static final Set<String> READ_ONLY_TOOLS = Set.of("ls", "read_file", "glob", "grep");
+
     private static final int ARGUMENT_PREVIEW_CHARS = 300;
 
     private final AtomicReference<ApprovalMode> mode;

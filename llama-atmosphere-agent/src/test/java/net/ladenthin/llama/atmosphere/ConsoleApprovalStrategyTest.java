@@ -25,6 +25,33 @@ import org.junit.jupiter.api.Test;
 
 class ConsoleApprovalStrategyTest {
 
+    @org.junit.jupiter.api.Test
+    void everyOfferedToolIsEitherGatedOrDeclaredReadOnly() {
+        // The gate is a list of names, so a tool that upstream adds or renames drops out of it and
+        // then runs without asking -- in manual mode, silently. This is the check that turns that into
+        // a red build: every tool the model is offered must be classified, one way or the other.
+        java.util.List<String> offered =
+                new java.util.ArrayList<>(WorkspaceTools.all(new WorkspaceTools.ReadTracker()).stream()
+                        .map(ToolDefinition::name)
+                        .toList());
+        offered.add(ShellTool.TOOL_NAME);
+
+        for (String tool : offered) {
+            boolean gated = ConsoleApprovalStrategy.GATED_TOOLS.contains(tool);
+            boolean readOnly = ConsoleApprovalStrategy.READ_ONLY_TOOLS.contains(tool);
+            assertThat(
+                    tool + " is in neither set: decide whether it has to ask before it runs",
+                    gated || readOnly,
+                    is(true));
+            assertThat(tool + " cannot be both", gated && readOnly, is(false));
+        }
+        assertThat(
+                "a set that names tools nobody offers is stale",
+                offered.containsAll(ConsoleApprovalStrategy.GATED_TOOLS),
+                is(true));
+        assertThat(offered.containsAll(ConsoleApprovalStrategy.READ_ONLY_TOOLS), is(true));
+    }
+
     private final ByteArrayOutputStream console = new ByteArrayOutputStream();
     private final TurnActivity activity = new TurnActivity();
 

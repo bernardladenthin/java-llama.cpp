@@ -294,23 +294,37 @@ output **line by line while it runs** (dimmed, `│ `-prefixed) instead of dumpi
 also keeps the pipe drained; a process whose output nobody reads blocks once the buffer is full, and
 on Windows that buffer is about 4 KB.
 
-**The block at the bottom has two rows**, below a rule, and both are always present:
+**The bottom of the window is one framed block**: the input line between two rules, then what the agent
+is doing and the session state.
 
 ```
+────────────────────────────────────────────────────────────────────
+> add a test for the parser
 ────────────────────────────────────────────────────────────────────
 ⠙ Fettling… (run_command 47s of 61s · 2 tool calls)
 [/path/to/project · ⏸ manual · ctx ~3.1k/16k · 9 tools · local-model]
 ```
 
-The first row is what the agent is doing — `… waiting for input …` when it is your turn, the spinner
-with the running tool and its elapsed time while it works. The second row is the session's state. Two
-fixed rows rather than one changing one: a block that changes height makes the output above it jump on
-every refresh.
+The top rule is the first line of the reader's prompt, the three below it are the pinned block — which
+is how the input ends up inside the frame at all. There is no `you>`: the box already says where the
+input is. On Enter the box is erased and the line is echoed above it as `› your text`, so the transcript
+keeps what was asked instead of accumulating leftover rules. (`!` history expansion is switched off in
+the same place, or a request like `git commit -m "fixed!"` would be rewritten silently.)
 
-Note where "the bottom" is: the bottom of the *window*, not the line under the cursor. In a tall
-terminal with only a few lines of output there is a gap between your prompt and the block. On a plain
-stream (piped input, a one-shot run) nothing can be pinned, so the state line is printed above the
-prompt instead and the activity row is dropped rather than repeated into the log.
+The two lower rows are always both present: the activity row — `… waiting for input …` when it is your
+turn, the spinner with the running tool and its elapsed time while it works — and the session's state.
+Two fixed rows rather than one changing one: a block that changes height makes the output above it jump
+on every refresh.
+
+**On scrolling.** The block stays put while the agent writes: JLine keeps those lines out of the
+terminal's scroll region. It cannot stay while *you* scroll the terminal's own scrollback with the
+mouse — then the whole viewport moves and no program on this side of the terminal has a say. Staying
+visible through that needs the alternate screen buffer, i.e. a full-screen application, which would
+trade away the scrollback and the "written once, never redrawn" property this console is built on. The
+established terminal agents behave the same way.
+
+On a plain stream (piped input, a one-shot run) nothing can be pinned, so the state line is printed
+above the prompt instead and the activity row is dropped rather than repeated into the log.
 
 **The status line** above the prompt reads
 `[/path/to/project · ⏸ manual · ctx ~3.1k/16k · 9 tools · local-model]`: the workspace, the approval
