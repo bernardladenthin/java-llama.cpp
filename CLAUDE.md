@@ -2467,6 +2467,16 @@ are decisions, not details:
    computes against a belief the wipe invalidated — observed as a single character emitted where a
    whole block was missing. `JLineTerminalTest.theBlockIsBackOnScreenAfterAClear` is what says so.
 
+   **The turn after an interrupted one is pinned end to end** (`InterruptedTurnTest`): with a scripted
+   backend behind the real `OpenAiCompatServer`, a turn is cut short by pending input and the next one
+   is then driven through — it reaches the server, carries the interrupted question in its history,
+   and answers. Reported as "it does not carry on by itself"; the mechanism works, so the cause of
+   that report is elsewhere and is **not** claimed to be fixed. Two things the writing of it settled:
+   a turn that finishes inside one activity tick is never even looked at for interruption (correct —
+   there is nothing to cut short), which is why the scripted backend has to be made slow or the test
+   proves nothing; and a second line typed during the replacement turn stops that one too, which is
+   the design and not a defect, but looks from the outside exactly like a turn that never started.
+
    **A blank line must not count as pending input.** `hasPendingInput()` ignores blank lines but leaves
    them queued: counting them meant that holding Enter cancelled one turn per keystroke and produced
    nothing, while dropping them would break the approval prompt, where an empty answer means yes.
