@@ -335,6 +335,17 @@ a few turns and wrong at the start. Pushing the cursor to the last row before th
 that the state from the beginning. The cost is a screen of blank lines above the session: the
 alternative is taking over the whole screen (alternate buffer), which costs the scrollback.
 
+**The status line is icons and values**: `📁` workspace, the mode glyph, `📊` context,
+`🔧` tools, and `🤖` for a model this process loaded or `🌐` for one reached over the
+network. Each is an icon, a space, its value. Rows are cut by **screen columns** rather than characters,
+because an icon is one character and two columns — counting characters lets a row come out wider than
+the window, wrap, and push the pinned block out of place.
+
+**Resizing the window** is handled explicitly: the pinned region keeps the size it was created with, so
+without a `WINCH` handler its reserved rows stop matching the window and a prompt redraw lands beside
+the previous one (a row of `> > > > >` across the screen). The block is then re-rendered from the text
+it was built from, not from the rows that were cut for the old width.
+
 **Three threads write to this console** and all of them had to be brought into line, because a write that
 goes around the line reader scrolls the screen without JLine noticing and the pinned block ends up
 somewhere else than it believes — first as a stray `1H` drawn into the rule, then as no block at all.

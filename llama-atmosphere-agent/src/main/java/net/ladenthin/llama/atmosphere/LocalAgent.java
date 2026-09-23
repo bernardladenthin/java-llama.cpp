@@ -243,7 +243,8 @@ public final class LocalAgent {
                     estimated.get(),
                     contextSize,
                     tools.size(),
-                    options.getModelId());
+                    options.getModelId(),
+                    options.getModelPath() == null);
             boolean shortcut = console.onCycleMode(() -> {
                 mode.set(mode.get().next());
                 if (console.pinsStatus()) {
@@ -267,7 +268,8 @@ public final class LocalAgent {
                         estimated.get(),
                         contextSize,
                         tools.size(),
-                        options.getModelId());
+                        options.getModelId(),
+                        options.getModelPath() == null);
                 if (terminal.pinsStatus()) {
                     terminal.status(List.of(IDLE_LINE, status));
                 } else {
@@ -327,7 +329,8 @@ public final class LocalAgent {
                                 running.inputTokens() == 0,
                                 contextSize,
                                 tools.size(),
-                                options.getModelId()),
+                                options.getModelId(),
+                                options.getModelPath() == null),
                         activity);
                 pendingNote = toolNote(completed.rounds());
                 estimated.set(completed.inputTokens() == 0);
@@ -590,7 +593,8 @@ public final class LocalAgent {
                         estimated,
                         contextSize,
                         runner.toolNames().size(),
-                        options.getModelId()));
+                        options.getModelId(),
+                        options.getModelPath() == null));
                 terminal.line("workspace: " + options.getWorkspace());
                 terminal.line("history: " + history.size() + " messages");
             }

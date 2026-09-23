@@ -181,6 +181,43 @@ class JLineTerminalTest {
     }
 
     @Test
+    void makingTheWindowNarrowerRedrawsTheBlockAtTheNewWidth() throws Exception {
+        // Reported as a row of "> > > > >" across the screen after dragging the window smaller. The
+        // pinned region keeps the size it was built with unless it is told, so its reserved rows stop
+        // matching the window and everything below them is drawn in the wrong place.
+        try (Terminal terminal = terminal("\n");
+                JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            console.status(List.of("state"));
+            int before = screen().length();
+
+            terminal.setSize(new Size(30, 10));
+            console.resized();
+
+            String afterResize = screen().substring(before);
+            assertThat("the block was drawn again", afterResize.isEmpty(), is(false));
+            assertThat(
+                    "and never again at the width of the window that is gone",
+                    afterResize.contains("─".repeat(SIZE.getColumns() - 1)),
+                    is(false));
+        }
+    }
+
+    @Test
+    void aRowTooWideForTheNewWindowIsCutRatherThanWrapped() throws Exception {
+        try (Terminal terminal = terminal("\n");
+                JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            console.status(List.of("x".repeat(50)));
+
+            terminal.setSize(new Size(20, 10));
+            console.resized();
+
+            assertThat(
+                    "the row that was rendered for the wide window is not reused", occurrences("x".repeat(50)), is(1));
+            assertThat("it is cut for the narrow one", screen(), containsString("…"));
+        }
+    }
+
+    @Test
     void theBlockIsBackOnScreenAfterAClear() throws Exception {
         // Clearing erases the block along with everything else, and the pinned region is redrawn only
         // when its content changes -- so after a clear it believes it is still on screen and draws
@@ -210,6 +247,25 @@ class JLineTerminalTest {
             assertThat(console.readLine("ignored"), is("still here"));
             assertThat("Ctrl-L cleared rather than being typed into the line", screen(), containsString(ERASE_DISPLAY));
         }
+    }
+
+    @Test
+    void aRowIsCutByScreenColumnsNotByCharacters() {
+        // An icon takes two columns and one character. Cutting by character length lets the row come
+        // out wider than the window, wrap onto a second screen line, and push everything below the
+        // reserved region out of place -- the tearing that a long summary caused, through another door.
+        String icons = "📁".repeat(20);
+
+        String cut = JLineTerminal.fit(icons, 10);
+
+        // What matters is the width on screen, not how many characters that took.
+        assertThat("the row fits the window", new org.jline.utils.AttributedString(cut).columnLength() <= 10, is(true));
+        assertThat(
+                "a cut by characters would have kept nine icons, which is eighteen columns",
+                cut.codePointCount(0, cut.length()) < 9,
+                is(true));
+        assertThat(cut.endsWith("…"), is(true));
+        assertThat("plain text is untouched when it fits", JLineTerminal.fit("short", 10), is("short"));
     }
 
     @Test

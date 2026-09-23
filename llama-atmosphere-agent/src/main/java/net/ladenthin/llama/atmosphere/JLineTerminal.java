@@ -79,6 +79,15 @@ public final class JLineTerminal implements AgentTerminal {
      */
     private volatile List<AttributedString> block = List.of();
 
+    /**
+     * The block as it was asked for, before being cut to the window.
+     *
+     * <p>A resize changes what "cut to the window" means, so the rendered rows cannot be reused — they
+     * were shortened for a width that no longer exists. What is kept is the text the caller handed
+     * over, which is re-rendered at the new size.
+     */
+    private volatile List<String> requested = List.of();
+
     private volatile boolean closed;
     private @Nullable Thread input;
 
@@ -133,7 +142,32 @@ public final class JLineTerminal implements AgentTerminal {
                 // silently rewrites a request like: git commit -m "fixed!"
                 .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
                 .build();
-        return new JLineTerminal(terminal, reader, Status.getStatus(terminal), Ansi.detect());
+        JLineTerminal console = new JLineTerminal(terminal, reader, Status.getStatus(terminal), Ansi.detect());
+        // Without this the pinned region keeps the size it was built with: its reserved rows no longer
+        // match the window, everything below is drawn in the wrong place, and a redraw of the prompt
+        // lands next to the previous one instead of over it -- a row of "> > > > >" across the screen
+        // was the window being made narrower.
+        terminal.handle(Terminal.Signal.WINCH, ignored -> console.resized());
+        return console;
+    }
+
+    /**
+     * Redraw everything that was sized for the old window.
+     *
+     * <p>The rows are re-rendered from the text they were built from rather than reused: they were cut
+     * to a width that no longer exists, and a row that is too wide wraps onto a second screen line,
+     * which is exactly what the reserved region cannot survive.
+     */
+    void resized() {
+        synchronized (writing) {
+            status.resize();
+            status.reset();
+            List<String> lines = requested;
+            block = List.of(); // whatever is on screen was drawn for another size
+            if (!lines.isEmpty()) {
+                updateStatus(lines);
+            }
+        }
     }
 
     @Override
@@ -238,7 +272,9 @@ public final class JLineTerminal implements AgentTerminal {
             // reset() makes it forget what it believes is on screen; without that the update below is
             // a no-op, because the content it would draw is the content it thinks is already there.
             status.reset();
-            status.update(block);
+            // A fresh list every time: JLine keeps the one it is given and works on it, so handing it
+            // the kept copy makes that copy its own and the next update trips over it.
+            status.update(new java.util.ArrayList<>(block));
         }
     }
 
@@ -345,7 +381,11 @@ public final class JLineTerminal implements AgentTerminal {
     }
 
     private void updateStatus(List<String> lines) {
+        requested = List.copyOf(lines);
         if (lines.isEmpty()) {
+            if (block.isEmpty()) {
+                return;
+            }
             block = List.of();
             status.update(List.of());
             return;
@@ -376,7 +416,15 @@ public final class JLineTerminal implements AgentTerminal {
      * @return the row, ending in {@code …} when it had to be cut
      */
     static String fit(String text, int width) {
-        return text.length() <= width ? text : text.substring(0, Math.max(1, width - 1)) + "…";
+        // Counted in screen columns, not characters. An icon or an emoji occupies two columns and one
+        // character, so cutting by character length lets a row come out wider than the window, wrap
+        // onto a second screen line, and push everything below the reserved region out of place --
+        // the same tearing a long summary caused, arriving through a different door.
+        AttributedString measured = new AttributedString(text);
+        if (measured.columnLength() <= width) {
+            return text;
+        }
+        return measured.columnSubSequence(0, Math.max(1, width - 1)).toString() + "…";
     }
 
     /**

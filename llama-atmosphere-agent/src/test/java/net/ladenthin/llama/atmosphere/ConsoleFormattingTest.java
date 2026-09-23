@@ -51,9 +51,11 @@ class ConsoleFormattingTest {
     @Test
     void theStatusLineShowsWorkspaceModeContextToolsAndModel() {
         String line = StatusLine.render(
-                java.nio.file.Path.of("/tmp/ws"), ApprovalMode.MANUAL, 1234, false, 16384, 9, "local-model");
+                java.nio.file.Path.of("/tmp/ws"), ApprovalMode.MANUAL, 1234, false, 16384, 9, "local-model", false);
 
-        assertThat(line, containsString("ws · ⏸ manual · ctx 1.2k/16k · 9 tools · local-model]"));
+        // an icon, a space, its value -- the same shape for every part of the line
+        assertThat(line, containsString("📁 "));
+        assertThat(line, containsString("ws · ⏸ manual · 📊 1.2k/16k · 🔧 9 · 🤖 local-model]"));
     }
 
     @Test
@@ -81,8 +83,15 @@ class ConsoleFormattingTest {
         assertThat(ApprovalMode.MANUAL.badge(), is("⏸ manual"));
         assertThat(ApprovalMode.AUTO.badge(), is("⏵⏵ auto"));
         assertThat(
-                StatusLine.render(java.nio.file.Path.of("/tmp/ws"), ApprovalMode.AUTO, 0, true, 0, 1, "m"),
+                StatusLine.render(java.nio.file.Path.of("/tmp/ws"), ApprovalMode.AUTO, 0, true, 0, 1, "m", false),
                 containsString("⏵⏵ auto"));
+    }
+
+    @Test
+    void aRemoteEndpointIsMarkedDifferentlyFromAModelLoadedHere() {
+        java.nio.file.Path ws = java.nio.file.Path.of("/tmp/ws");
+        assertThat(StatusLine.render(ws, ApprovalMode.MANUAL, 0, true, 0, 1, "m", false), containsString("🤖 m"));
+        assertThat(StatusLine.render(ws, ApprovalMode.MANUAL, 0, true, 0, 1, "m", true), containsString("🌐 m"));
     }
 
     @Test
@@ -99,17 +108,17 @@ class ConsoleFormattingTest {
 
     @Test
     void contextIsShownInThousandsAndWithoutASizeWhenItIsUnknown() {
-        assertThat(StatusLine.context(812, false, 32768), is("ctx 812/33k"));
-        assertThat(StatusLine.context(16000, false, 32768), is("ctx 16k/33k"));
-        assertThat(StatusLine.context(0, false, StatusLine.UNKNOWN_CONTEXT), is("ctx 0"));
-        assertThat(StatusLine.context(2500, false, StatusLine.UNKNOWN_CONTEXT), is("ctx 2.5k"));
+        assertThat(StatusLine.context(812, false, 32768), is("812/33k"));
+        assertThat(StatusLine.context(16000, false, 32768), is("16k/33k"));
+        assertThat(StatusLine.context(0, false, StatusLine.UNKNOWN_CONTEXT), is("0"));
+        assertThat(StatusLine.context(2500, false, StatusLine.UNKNOWN_CONTEXT), is("2.5k"));
     }
 
     @Test
     void anEstimatedCountIsMarkedWithATilde() {
         // llama.cpp reports usage only to clients that ask for it, and Atmosphere does not, so the
         // number normally comes from LocalAgent.estimateTokens -- the tilde says so.
-        assertThat(StatusLine.context(2500, true, 16384), is("ctx ~2.5k/16k"));
+        assertThat(StatusLine.context(2500, true, 16384), is("~2.5k/16k"));
         assertThat(
                 LocalAgent.estimateTokens(
                         "0123456789", java.util.List.of(org.atmosphere.ai.llm.ChatMessage.user("0123456789"))),

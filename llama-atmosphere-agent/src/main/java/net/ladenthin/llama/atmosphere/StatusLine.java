@@ -26,6 +26,21 @@ import java.util.Locale;
  */
 public final class StatusLine {
 
+    /** In front of the workspace path. */
+    private static final String WORKSPACE_ICON = "📁";
+
+    /** In front of the context figure. */
+    private static final String CONTEXT_ICON = "📊";
+
+    /** In front of the tool count. */
+    private static final String TOOLS_ICON = "🔧";
+
+    /** In front of a model this process loaded itself. */
+    private static final String LOCAL_MODEL_ICON = "🤖";
+
+    /** In front of a model served by something else over the network. */
+    private static final String REMOTE_MODEL_ICON = "🌐";
+
     /** Above this many characters the workspace path is shortened to its last two segments. */
     private static final int MAX_PATH_CHARS = 40;
 
@@ -44,6 +59,7 @@ public final class StatusLine {
      * @param contextSize the context window in tokens, or {@link #UNKNOWN_CONTEXT}
      * @param tools how many tools are offered to the model
      * @param modelId the model id sent in every request
+     * @param remote whether the model is served by another process rather than loaded here
      * @return one line, without a trailing newline
      */
     public static String render(
@@ -53,9 +69,16 @@ public final class StatusLine {
             boolean estimated,
             int contextSize,
             int tools,
-            String modelId) {
-        return "[" + shorten(workspace) + " · " + mode.badge() + " · " + context(inputTokens, estimated, contextSize)
-                + " · " + tools + " tools · " + modelId + "]";
+            String modelId,
+            boolean remote) {
+        // Every part is an icon, a space, and its value. The icons carry what the words used to, so
+        // the line stays short enough to survive a narrow window; the space is what keeps an icon from
+        // running into its value, which is easy to lose when the glyph is wide.
+        return "[" + WORKSPACE_ICON + " " + shorten(workspace)
+                + " · " + mode.badge()
+                + " · " + CONTEXT_ICON + " " + context(inputTokens, estimated, contextSize)
+                + " · " + TOOLS_ICON + " " + tools
+                + " · " + (remote ? REMOTE_MODEL_ICON : LOCAL_MODEL_ICON) + " " + modelId + "]";
     }
 
     /**
@@ -83,13 +106,13 @@ public final class StatusLine {
      * @param inputTokens the input tokens of the last turn
      * @param estimated whether that number is an estimate (rendered with a leading {@code ~})
      * @param contextSize the context window in tokens, or {@link #UNKNOWN_CONTEXT}
-     * @return e.g. {@code "ctx 1.2k/16k"}, or {@code "ctx 1.2k"} when the size is unknown
+     * @return e.g. {@code "1.2k/16k"}, or {@code "1.2k"} when the size is unknown
      */
     static String context(long inputTokens, boolean estimated, int contextSize) {
         // Two numbers in k, no percentage: everyone reads 12k/16k at a glance, and a percentage of a
         // number that is itself an estimate suggests a precision this does not have.
         String used = (estimated ? "~" : "") + abbreviate(inputTokens);
-        return contextSize <= UNKNOWN_CONTEXT ? "ctx " + used : "ctx " + used + "/" + abbreviate(contextSize);
+        return contextSize <= UNKNOWN_CONTEXT ? used : used + "/" + abbreviate(contextSize);
     }
 
     /**
