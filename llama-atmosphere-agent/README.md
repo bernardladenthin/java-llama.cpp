@@ -305,11 +305,19 @@ is doing and the session state.
 [/path/to/project · ⏸ manual · ctx ~3.1k/16k · 9 tools · local-model]
 ```
 
-The top rule is the first line of the reader's prompt, the three below it are the pinned block — which
-is how the input ends up inside the frame at all. There is no `you>`: the box already says where the
-input is. On Enter the box is erased and the line is echoed above it as `› your text`, so the transcript
-keeps what was asked instead of accumulating leftover rules. (`!` history expansion is switched off in
-the same place, or a request like `git commit -m "fixed!"` would be rewritten silently.)
+The top rule is ordinary output, printed once before each read; the three rows below are the pinned
+block. There is no `you>`: the box already says where the input is. On Enter the input line is erased
+and echoed above as `› your text`, so the transcript keeps what was asked. (`!` history expansion is
+switched off in the same place, or a request like `git commit -m "fixed!"` would be rewritten silently.)
+
+**Why the top rule is not part of the prompt**, although that is the obvious way to draw it: the line
+reader erases exactly **one** line when the input is submitted, so a two-line prompt leaves its rule
+behind on every Enter — hold Enter and you get a column of them. It was built that way first and the
+symptom was reported within the hour. `JLineTerminalTest` now drives a real line reader over a pair of
+streams and counts the rules in the bytes it emits, which is the only way to see this without a
+console. Note what that test had to learn: a box character goes out as UTF-8 `─` from ordinary output
+but as the DEC line-drawing set (`ESC(0` + a row of `q`) inside a prompt, so counting only the first
+form passed against the very bug it was written for.
 
 The two lower rows are always both present: the activity row — `… waiting for input …` when it is your
 turn, the spinner with the running tool and its elapsed time while it works — and the session's state.

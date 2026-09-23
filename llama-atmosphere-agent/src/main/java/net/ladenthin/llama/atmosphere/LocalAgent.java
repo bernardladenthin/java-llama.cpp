@@ -271,6 +271,7 @@ public final class LocalAgent {
                 } else {
                     terminal.line(terminal.ansi().dim(status));
                 }
+                terminal.separator();
                 String line = terminal.readLine("you> ");
                 if (line == null) {
                     return 0;

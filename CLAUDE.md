@@ -2376,12 +2376,29 @@ are decisions, not details:
 11. **The input is framed into the pinned block, and the prompt stays there during a turn; typing
    stops the turn.** The frame is two halves that must be read together: the **top** rule is the first
    line of the reader's *prompt* (`rule() + newline + "> "`, rebuilt on every read because the window
-   can be resized), the **bottom** rule is the first line of the *status* block — JLine draws the
-   status below the prompt, so that is the only way to get the input inside a frame at all. Both call
-   the same `rule()`, or the two edges drift apart on a resize. `AgentTerminal.readLine`'s `prompt`
-   argument is consequently **ignored** here. `ERASE_LINE_ON_FINISH` removes the box on Enter —
-   without it every submitted line leaves a rule pair in the scrollback, and a few empty Enters print a
-   wall of them — and the reader thread echoes the line above as `› text` so the transcript keeps it.
+   can be resized) — **no.** That is how it was built and it was wrong: `ERASE_LINE_ON_FINISH` erases
+   exactly **one** line, so a two-line prompt leaves its rule behind on every Enter, and holding Enter
+   draws a column of them. The **top** rule is therefore ordinary output (`AgentTerminal.separator()`,
+   printed before each read, suppressed when nothing has been printed since so repeated Enters draw
+   nothing), the **bottom** rule is the first line of the *status* block — JLine draws the status below
+   the prompt, so that is the only way to get the input inside a frame at all. Both call the same
+   `rule()`, or the two edges drift apart on a resize. The prompt is `"> "`, one line, and
+   `AgentTerminal.readLine`'s `prompt` argument is consequently **ignored** here.
+   `ERASE_LINE_ON_FINISH` removes the input line on Enter and the reader thread echoes it above as
+   `› text`, so the transcript keeps what was asked.
+
+   **`JLineTerminalTest` is how any of this is checkable**: `JLineTerminal.over(Terminal, …)` takes a
+   terminal built over two streams, which renders exactly like a TTY, so the screen can be asserted on
+   the emitted bytes. Two things that cost an hour each and are not guessable: the test terminal needs
+   **`stdoutEncoding`** as well as `encoding`, or every `─` arrives as `?`; and a box character is
+   written as UTF-8 from `printAbove` but as the **DEC line-drawing set** (`ESC(0` + `q`s + `ESC(B`)
+   inside a *prompt*, so a counter that looks only for `─` passes against the exact bug it was
+   written for — verified by putting the two-line prompt back and watching the test go from 1 rule to 5.
+
+   **The `[?1h` that appeared as text above the prompt** was a second, separate defect: `line()` wrote
+   straight to the terminal whenever the reader was not inside `readLine`, and that instant is exactly
+   when the next read is emitting its init sequence, so the two interleaved and half an escape sequence
+   landed in the scrollback. Once the reader thread exists, **everything** goes through `printAbove`.
    `DISABLE_EVENT_EXPANSION` is set in the same builder because the reader's default treats `!` as a
    shell history expansion, which silently rewrites a request like `git commit -m "fixed!"`.
    **What cannot be done, asked and answered:** keep the block visible while the *user* scrolls the

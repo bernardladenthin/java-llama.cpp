@@ -58,7 +58,7 @@ public final class JLineTerminal implements AgentTerminal {
     private final Status status;
     private final Ansi ansi;
     private final BlockingQueue<String> typed = new LinkedBlockingQueue<>();
-    private volatile boolean reading;
+    private volatile boolean ruleOnScreen;
     private volatile boolean closed;
     private @Nullable Thread input;
 
@@ -82,26 +82,43 @@ public final class JLineTerminal implements AgentTerminal {
                 terminal.close();
                 return null;
             }
-            LineReader reader = LineReaderBuilder.builder()
-                    .terminal(terminal)
-                    .completer(new StringsCompleter(completions))
-                    // The input sits in a framed box at the bottom. Without this the box would be
-                    // left behind in the scrollback on every Enter, so a few empty lines would print
-                    // a wall of rules; the line the user typed is echoed above it instead.
-                    .option(LineReader.Option.ERASE_LINE_ON_FINISH, true)
-                    // "!" is a shell history expansion in the reader's default configuration, which
-                    // silently rewrites a request like: git commit -m "fixed!"
-                    .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
-                    .build();
-            return new JLineTerminal(terminal, reader, Status.getStatus(terminal), Ansi.detect());
+            return over(terminal, completions);
         } catch (IOException | RuntimeException e) {
             // No terminal, no native provider, a restricted environment: the plain console still works.
             return null;
         }
     }
 
+    /**
+     * Wrap a terminal that has already been built.
+     *
+     * <p>The seam the tests use: a terminal over a pair of streams renders exactly like a real one —
+     * same escape sequences, same line reader — so what the screen would look like can be asserted on
+     * the emitted bytes, without a TTY. That is the only way to catch a drawing bug like a prompt whose
+     * height does not match what the reader erases when the line is submitted.
+     *
+     * @param terminal the terminal to drive
+     * @param completions the words tab completes
+     * @return the wrapper
+     */
+    static JLineTerminal over(Terminal terminal, List<String> completions) {
+        LineReader reader = LineReaderBuilder.builder()
+                .terminal(terminal)
+                .completer(new StringsCompleter(completions))
+                // The input line is erased when submitted and echoed above instead, so it does
+                // not pile up in the scrollback. It erases exactly ONE line, which is why the
+                // prompt has to stay one line -- see startReading.
+                .option(LineReader.Option.ERASE_LINE_ON_FINISH, true)
+                // "!" is a shell history expansion in the reader's default configuration, which
+                // silently rewrites a request like: git commit -m "fixed!"
+                .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
+                .build();
+        return new JLineTerminal(terminal, reader, Status.getStatus(terminal), Ansi.detect());
+    }
+
     @Override
     public void line(String text) {
+        ruleOnScreen = false;
         if (text.indexOf('\n') >= 0 || text.indexOf('\r') >= 0) {
             // One call must be one screen line: the status block is sized in lines, so a multi-line
             // string handed over as "a line" desynchronises the reserved region. Callers fold their
@@ -109,15 +126,30 @@ public final class JLineTerminal implements AgentTerminal {
             text.lines().forEach(this::line);
             return;
         }
-        if (reading) {
-            // Only while the line reader owns the screen: printAbove scrolls the text in above the
-            // prompt and redraws that prompt afterwards. Calling it when nobody is reading redraws a
-            // prompt that is not there, which is where the repeated "you>" lines came from.
+        if (input != null) {
+            // Once the reader thread exists it owns the screen, and nothing may write around it --
+            // not even in the instant between two reads. A direct write there cuts into the escape
+            // sequence the next read is emitting and half of it lands in the scrollback as text:
+            // a stray "[?1h" above the prompt was exactly that.
             reader.printAbove(text);
         } else {
             terminal.writer().println(text);
             terminal.writer().flush();
         }
+    }
+
+    @Override
+    public void separator() {
+        if (ruleOnScreen) {
+            // Already drawn, with nothing printed since: it is still directly above the input line.
+            return;
+        }
+        // Starts the reader if this is the first call: the rule belongs above a prompt, so drawing it
+        // is also the moment the prompt has to exist. Without this the very first box had no top edge
+        // -- the reader only started on the first read, which comes after.
+        startReading();
+        reader.printAbove(rule());
+        ruleOnScreen = true;
     }
 
     /**
@@ -140,14 +172,17 @@ public final class JLineTerminal implements AgentTerminal {
         input = new Thread(
                 () -> {
                     while (!closed) {
-                        reading = true;
                         try {
-                            // Built fresh each time: the rule has to match the window, which can be
-                            // resized between two requests.
-                            String line = reader.readLine(rule() + System.lineSeparator() + "> ");
+                            // One line, and it has to stay one line: the reader erases a single line
+                            // when the input is submitted, so a two-line prompt -- the rule above the
+                            // input, which is where this started -- leaves the rule behind on every
+                            // Enter, a column of them after a few. separator() draws the rule as
+                            // ordinary output instead, which cannot be left behind because it was
+                            // never part of the prompt.
+                            String line = reader.readLine("> ");
                             if (!line.isBlank()) {
-                                // The box is erased on Enter, so the conversation would lose what was
-                                // asked. Echoing it above keeps the transcript readable.
+                                // The input line is erased on Enter, so the conversation would lose
+                                // what was asked. Echoing it above keeps the transcript readable.
                                 line(ansi.bold("› " + line.strip()));
                             }
                             typed.put(line);
@@ -162,8 +197,6 @@ public final class JLineTerminal implements AgentTerminal {
                         } catch (RuntimeException e) {
                             typed.offer(END_OF_INPUT); // the terminal is gone; stop reading it
                             return;
-                        } finally {
-                            reading = false;
                         }
                     }
                 },
