@@ -344,9 +344,12 @@ the window, wrap, and push the pinned block out of place.
 **Resizing the window** is left to JLine, which resizes the pinned region and re-cuts its rows itself.
 A handler of our own was tried for a reported row of `> > > > >` after dragging the window smaller and
 made it worse: the line reader installs its own handler for as long as it is reading, so ours only
-added a second writer on the terminal while the reader was redrawing. That report is **not currently
-reproducible** here — a probe raising a real resize signal shows a clean redraw with one prompt — so it
-is listed as open rather than claimed as fixed.
+added a second writer on the terminal while the reader was redrawing. A test drives the real path — a
+size change plus the resize signal, with the reader reading as it does all session — across shrinking,
+growing and a changed row count, and every one draws exactly one prompt. The leftover `> ` row that is
+still reported is therefore not produced there; the remaining suspect is the console reflowing its own
+screen buffer on a resize, which moves lines the program never wrote again and which nothing on this
+side can reproduce. `/cls` or Ctrl-L cleans it up.
 
 **Three threads write to this console** and all of them had to be brought into line, because a write that
 goes around the line reader scrolls the screen without JLine noticing and the pinned block ends up
