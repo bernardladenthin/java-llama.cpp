@@ -5,6 +5,7 @@
 package net.ladenthin.llama.atmosphere;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
@@ -19,6 +20,7 @@ import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import net.ladenthin.llama.server.OpenAiCompatServer;
 import net.ladenthin.llama.server.OpenAiServerConfig;
@@ -186,5 +188,48 @@ class LocalAgentTest {
 
         assertThat(content, containsString("-Dstdout.encoding=UTF-8"));
         assertThat(content, containsString("-Dstderr.encoding=UTF-8"));
+    }
+
+    @Test
+    void aToolCallStaysInTheHistorySoTheNextTurnSeesItHappened() throws Exception {
+        // The failure this pins: with only user text and the model's prose in the history, a small
+        // model stops calling tools after a few turns and starts DESCRIBING the work instead --
+        // reporting exit codes and files that never existed. The evidence has to stay in the context.
+        Files.writeString(workspace.resolve("hello.txt"), "VALUE=42\n");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> switch (call) {
+            case 1 -> ScriptedBackend.toolCallTurn("call_1", "read_file", "{\"file_path\":\"hello.txt\"}");
+            case 2 -> ScriptedBackend.textTurn("The file says VALUE=42.");
+            default -> ScriptedBackend.textTurn("Understood.");
+        });
+        try (OpenAiCompatServer server = server(backend)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url", "http://127.0.0.1:" + server.getPort() + "/v1", "--workspace", workspace.toString()
+            });
+
+            LocalAgent.run(
+                    options,
+                    new StringReader(
+                            "what does hello.txt say?" + System.lineSeparator() + "and now?" + System.lineSeparator()),
+                    new PrintStream(out, true, StandardCharsets.UTF_8),
+                    new PrintStream(err, true, StandardCharsets.UTF_8));
+        }
+
+        // third request = second turn: the call and its result must be in what the model gets to see.
+        // Not as real tool_calls messages -- Atmosphere's assembleMessages rebuilds history entries as
+        // new ChatMessage(role, content) and drops everything else -- so they ride in the content.
+        List<JsonNode> requests = backend.requests();
+        assertThat(requests.size(), is(3));
+        List<String> roles = new ArrayList<>();
+        for (JsonNode message : requests.get(2).path("messages")) {
+            roles.add(message.path("role").asText());
+        }
+        assertThat(roles, contains("system", "user", "assistant", "user"));
+        String replayedAnswer =
+                requests.get(2).path("messages").get(2).path("content").asText();
+        assertThat(replayedAnswer, containsString("read_file"));
+        assertThat(replayedAnswer, containsString("VALUE=42"));
+        assertThat("and the answer itself is still there", replayedAnswer, containsString("The file says VALUE=42."));
     }
 }

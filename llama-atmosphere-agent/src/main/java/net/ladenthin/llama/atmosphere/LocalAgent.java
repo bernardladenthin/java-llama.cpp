@@ -75,6 +75,9 @@ public final class LocalAgent {
             "You summarize a conversation between a user and a coding assistant. Follow the user's"
                     + " instructions exactly and answer with the summary only.";
 
+    /** How much of a tool result is kept in the history of later turns. */
+    private static final int HISTORY_RESULT_CHARS = 400;
+
     /** How often the activity line is refreshed while a turn runs. */
     private static final Duration ACTIVITY_INTERVAL = Duration.ofMillis(250);
 
@@ -169,6 +172,7 @@ public final class LocalAgent {
                     + " tools=" + runner.toolNames());
 
             List<ChatMessage> history = new ArrayList<>();
+            ToolCallLog callLog = new ToolCallLog();
             AtomicReference<ApprovalMode> mode =
                     new AtomicReference<>(options.isAuto() ? ApprovalMode.AUTO : ApprovalMode.MANUAL);
             boolean interactive = options.getPrompt() == null && input != null;
@@ -185,7 +189,7 @@ public final class LocalAgent {
                     : ServerProps.contextSize(baseUrl, options.getApiKey());
 
             if (options.getPrompt() != null) {
-                return turn(runner, fileSystem, options.getPrompt(), history, terminal)
+                return turn(runner, fileSystem, options.getPrompt(), history, terminal, callLog, 1)
                                         .failure()
                                 == null
                         ? 0
@@ -198,6 +202,7 @@ public final class LocalAgent {
             err.println("Interactive mode: type a request, /help for the commands.");
             long inputTokens = 0;
             boolean estimated = false;
+            int turnNumber = 0;
             while (true) {
                 terminal.status(StatusLine.render(
                         options.getWorkspace(),
@@ -229,10 +234,12 @@ public final class LocalAgent {
                             contextSize,
                             inputTokens,
                             estimated,
-                            terminal);
+                            terminal,
+                            callLog);
                     continue;
                 }
-                ConsoleSession completed = turn(runner, fileSystem, line, history, terminal);
+                turnNumber++;
+                ConsoleSession completed = turn(runner, fileSystem, line, history, terminal, callLog, turnNumber);
                 estimated = completed.inputTokens() == 0;
                 inputTokens = estimated ? estimateTokens(systemPrompt(options), history) : completed.inputTokens();
             }
@@ -264,6 +271,7 @@ public final class LocalAgent {
      * @param options the agent options, for the workspace
      * @param mode the approval mode, possibly switched to auto here
      * @param arguments everything after {@code /loop}
+     * @param callLog records the steps' tool calls for {@code /calls}
      * @throws InterruptedException if interrupted while a step runs
      */
     private static void loop(
@@ -272,7 +280,8 @@ public final class LocalAgent {
             AgentTerminal terminal,
             AgentOptions options,
             AtomicReference<ApprovalMode> mode,
-            String arguments)
+            String arguments,
+            ToolCallLog callLog)
             throws InterruptedException {
         LoopOptions loopOptions;
         try {
@@ -301,7 +310,8 @@ public final class LocalAgent {
                 options.getWorkspace(),
                 loopOptions,
                 () -> false,
-                TaskLoop.DEFAULT_BUDGET);
+                TaskLoop.DEFAULT_BUDGET,
+                callLog);
         terminal.line(
                 outcome.completed()
                         ? terminal.ansi().green("loop: " + outcome.reason())
@@ -313,19 +323,66 @@ public final class LocalAgent {
             AgentFileSystem fileSystem,
             String message,
             List<ChatMessage> history,
-            AgentTerminal terminal)
+            AgentTerminal terminal,
+            ToolCallLog callLog,
+            int turnNumber)
             throws InterruptedException {
         ConsoleSession session = new ConsoleSession(terminal, fileSystem);
         runner.run(message, history, session);
         boolean finished = awaitWithActivity(session, terminal);
         history.add(ChatMessage.user(message));
-        if (!session.text().isEmpty()) {
-            history.add(ChatMessage.assistant(session.text()));
+        callLog.add(turnNumber, session.rounds());
+        String answer = withToolNotes(session.rounds(), session.text());
+        if (!answer.isEmpty()) {
+            history.add(ChatMessage.assistant(answer));
         }
         if (!finished) {
             session.error(new IllegalStateException("turn did not finish within " + TURN_TIMEOUT));
         }
         return session;
+    }
+
+    /**
+     * Put this turn's tool calls in front of its answer, so the next turn can see they happened.
+     *
+     * <p><b>Why this matters more than it looks.</b> Without it the history holds the user's messages
+     * and the model's prose, and nothing else — so from the third or fourth turn on, a small model
+     * sees only its own paragraphs and no evidence that it ever used a tool. It then continues that
+     * pattern: it <em>describes</em> creating a file and running a build, reports an exit code, and
+     * writes nothing at all. That is not hypothetical; it happened on a real session, with the model
+     * inventing test results and a jar that never existed.
+     *
+     * <p><b>Why a note rather than real {@code tool_calls} messages.</b> Atmosphere's
+     * {@code AbstractAgentRuntime.assembleMessages} rebuilds every history entry as
+     * {@code new ChatMessage(role, content)} — the tool-call array and the tool-call id are dropped on
+     * the way out. Protocol-faithful replay is therefore impossible through the framework's history;
+     * what survives is the content, so the evidence goes there. It is also cheaper: one line per call
+     * instead of a message pair, with the result cut to {@value #HISTORY_RESULT_CHARS} characters.
+     *
+     * @param rounds the tool calls of the finished turn
+     * @param text the model's answer
+     * @return the answer with the calls noted above it
+     */
+    static String withToolNotes(List<ConsoleSession.ToolRound> rounds, String text) {
+        if (rounds.isEmpty()) {
+            return text;
+        }
+        StringBuilder note = new StringBuilder("(tools I actually ran this turn:");
+        for (ConsoleSession.ToolRound round : rounds) {
+            String result = round.result().replace("\r\n", " ").replace('\n', ' ');
+            note.append(System.lineSeparator())
+                    .append("- ")
+                    .append(round.name())
+                    .append(" ")
+                    .append(round.argumentsJson())
+                    .append(" -> ")
+                    .append(
+                            result.length() <= HISTORY_RESULT_CHARS
+                                    ? result
+                                    : result.substring(0, HISTORY_RESULT_CHARS) + " …[cut]");
+        }
+        note.append(")");
+        return text.isEmpty() ? note.toString() : note + System.lineSeparator() + System.lineSeparator() + text;
     }
 
     /**
@@ -341,6 +398,7 @@ public final class LocalAgent {
      * @param inputTokens the input tokens of the last turn
      * @param estimated whether that number is an estimate
      * @param terminal the console
+     * @param callLog every tool call of the session, for {@code /calls}
      * @return the input tokens to show from now on (unchanged, or the summary's after {@code /compact})
      * @throws InterruptedException if interrupted while a summary is generated
      */
@@ -354,7 +412,8 @@ public final class LocalAgent {
             int contextSize,
             long inputTokens,
             boolean estimated,
-            AgentTerminal terminal)
+            AgentTerminal terminal,
+            ToolCallLog callLog)
             throws InterruptedException {
         switch (command.command()) {
             case HELP -> prompt(HELP_TEXT).lines().forEach(terminal::line);
@@ -362,6 +421,7 @@ public final class LocalAgent {
                 history.clear();
                 terminal.line("(history cleared)");
             }
+            case CALLS -> callLog.render().lines().forEach(terminal::line);
             case TOOLS -> {
                 terminal.line("tools: " + String.join(", ", runner.toolNames()));
                 terminal.line("asks before running (manual mode): "
@@ -393,7 +453,7 @@ public final class LocalAgent {
             case COMPACT -> {
                 return compact(runner, fileSystem, history, command.arguments(), terminal);
             }
-            case LOOP -> loop(runner, fileSystem, terminal, options, mode, command.arguments());
+            case LOOP -> loop(runner, fileSystem, terminal, options, mode, command.arguments(), callLog);
             case EXIT -> {
                 // handled by the caller, which has to return from the loop
             }

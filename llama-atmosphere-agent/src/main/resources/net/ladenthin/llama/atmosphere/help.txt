@@ -3,6 +3,7 @@ Commands (everything else is sent to the model):
   /help                  this overview                              (/?, /commands)
   /status                endpoint, model, tools, mode, context use
   /tools                 the tools offered to the model
+  /calls                 every tool call of this session, with its result  (/log)
   /mode [manual|auto]    show or set the approval mode              (/approve)
   /compact [focus]       summarize the history and continue with the summary
   /loop [--every 5m] [--max 20] [--check '<cmd>'] <task>

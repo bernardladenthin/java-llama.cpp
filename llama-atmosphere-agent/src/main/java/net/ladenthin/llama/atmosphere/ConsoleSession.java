@@ -39,6 +39,7 @@ public final class ConsoleSession implements StreamingSession {
     private volatile @Nullable Throwable failure;
     private volatile int toolCalls;
     private volatile long inputTokens;
+    private final List<ToolRound> rounds = new CopyOnWriteArrayList<>();
 
     /**
      * Create a session writing to {@code terminal}.
@@ -51,6 +52,24 @@ public final class ConsoleSession implements StreamingSession {
         this.ansi = terminal.ansi();
         this.markdown = new MarkdownConsole(terminal::line, ansi);
         this.injectables = Map.of(AgentFileSystem.class, fileSystem);
+    }
+
+    /**
+     * One tool call of this turn, kept so the next turn can see that it happened.
+     *
+     * @param name the tool
+     * @param argumentsJson the arguments as JSON
+     * @param result what the tool returned, already shortened
+     */
+    public record ToolRound(String name, String argumentsJson, String result) {}
+
+    /**
+     * The tool calls of this turn, in order.
+     *
+     * @return the rounds, empty when the model only wrote text
+     */
+    public List<ToolRound> rounds() {
+        return List.copyOf(rounds);
     }
 
     @Override
@@ -132,17 +151,31 @@ public final class ConsoleSession implements StreamingSession {
         switch (event) {
             case AiEvent.ToolStart start -> {
                 toolCalls++;
+                rounds.add(new ToolRound(start.toolName(), String.valueOf(start.arguments()), ""));
                 markdown.flush();
                 terminal.line(ansi.green("●") + " " + ansi.bold(start.toolName()) + " "
                         + ansi.dim(String.valueOf(start.arguments())));
             }
             case AiEvent.ToolResult result -> {
+                recordResult(String.valueOf(result.result()));
                 terminal.line(ansi.dim("  ↳ " + preview(String.valueOf(result.result()))));
             }
             case AiEvent.ToolError error -> {
+                recordResult("error: " + error.error());
                 terminal.line(ansi.red("  ↳ error: " + error.error()));
             }
             default -> StreamingSession.super.emit(event);
+        }
+    }
+
+    /** Attach a result to the round that is still waiting for one. */
+    private void recordResult(String result) {
+        for (int i = rounds.size() - 1; i >= 0; i--) {
+            ToolRound round = rounds.get(i);
+            if (round.result().isEmpty()) {
+                rounds.set(i, new ToolRound(round.name(), round.argumentsJson(), result));
+                return;
+            }
         }
     }
 

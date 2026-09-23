@@ -142,6 +142,7 @@ public final class TaskLoop {
      * @param options what to work on and for how long
      * @param stopped polled between steps; {@code true} ends the loop (Ctrl-C)
      * @param budget the wall-clock limit
+     * @param callLog records every tool call of every step, so /calls shows what the loop did
      * @return why it ended
      * @throws InterruptedException if interrupted while waiting for a step or an interval
      */
@@ -152,7 +153,8 @@ public final class TaskLoop {
             Path workspace,
             LoopOptions options,
             java.util.function.BooleanSupplier stopped,
-            Duration budget)
+            Duration budget,
+            ToolCallLog callLog)
             throws InterruptedException {
         Path file = ensureLoopFile(workspace, options.task());
         terminal.line("loop: " + options.task());
@@ -180,7 +182,13 @@ public final class TaskLoop {
 
             // A fresh history every step: the file is the memory, so the context cannot grow.
             ConsoleSession session = LocalAgent.turn(
-                    runner, fileSystem, stepPrompt(options) + extra, new java.util.ArrayList<>(), terminal);
+                    runner,
+                    fileSystem,
+                    stepPrompt(options) + extra,
+                    new java.util.ArrayList<>(),
+                    terminal,
+                    callLog,
+                    step);
             extra = "";
             if (session.failure() != null) {
                 return new Outcome("step " + step + " failed: " + session.failure(), false);

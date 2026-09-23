@@ -184,6 +184,7 @@ unknown `/command` included — goes to the model:
 | `/help` (`/?`, `/commands`) | the overview below |
 | `/status` | mode, context use, tools, model, workspace, history size |
 | `/tools` | the tools offered, and which of them ask first |
+| `/calls` (`/log`) | every tool call of this session with its result — the receipt |
 | `/mode [manual\|auto]` (`/approve`) | show or set the approval mode |
 | `/compact [focus]` | summarize the conversation and continue from the summary |
 | `/loop [--every 5m] [--max 20] [--check '<cmd>'] <task>` | keep working on one task until it is done |
@@ -213,6 +214,19 @@ Reading tools (`ls`, `read_file`, `glob`, `grep`) never ask. **In one-shot mode 
 can answer, so a gated call is denied** — pass `--auto` to run unattended. The gate itself is
 Atmosphere's (`ToolApprovalPolicy` + `ApprovalStrategy`); the agent only supplies the question and
 the answer.
+
+**`/calls` is the receipt.** It lists every tool call of the session, one line each, with the
+arguments and a short result. Use it when an answer sounds too good: a model that has drifted starts
+*describing* work — "the tests passed, the jar was created" — while calling nothing at all. The
+scrollback reads the same either way; this list only grows when something really ran.
+
+To make that drift less likely, each turn's calls are also carried into the conversation as a short
+note above the answer (`(tools I actually ran this turn: …)`). Without it the history holds only the
+user's messages and the model's own prose, and a small model then continues the pattern it sees —
+prose. This is not theoretical: in a real session a 4B model invented JUnit tests, a Maven build and a
+`.bat` script it had never written, three turns in a row. The note is plain text rather than proper
+`tool_calls` messages because Atmosphere's `assembleMessages` rebuilds every history entry as
+`new ChatMessage(role, content)` and drops the rest; the content is what survives.
 
 **`/compact`** asks the model to summarize the conversation (goal, facts, work done, problems, state,
 next step; `/compact <focus>` adds an emphasis), then replaces the history with that summary. Use it
@@ -420,6 +434,8 @@ starter are the *deployment* layer on top of the same runtime — not needed for
   Atmosphere's `ApprovalResolution` also supports approve-with-edited-arguments, which the console
   does not offer.
 - No auto-compaction when the context fills up; `/compact` is manual.
+- A small model still drifts into describing instead of doing, especially after several turns;
+  `/calls` makes it visible, the note in the history makes it rarer, a bigger model makes it go away.
 - `/loop` cannot be interrupted in the middle of a step — Ctrl-C ends the process; the loop file
   survives, so restarting the same `/loop` continues where it left off.
 - An engine error after the stream started ends the turn silently (see the table).

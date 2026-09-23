@@ -58,7 +58,7 @@ class TaskLoopTest {
                             5)
                     .retryPolicy(RetryPolicy.NONE);
             AgentFileSystem fs = new WorkspaceAgentFileSystem(workspace, AgentFileSystem.Limits.defaults());
-            return TaskLoop.run(runner, fs, terminal(), workspace, options, () -> false, BUDGET);
+            return TaskLoop.run(runner, fs, terminal(), workspace, options, () -> false, BUDGET, new ToolCallLog());
         }
     }
 

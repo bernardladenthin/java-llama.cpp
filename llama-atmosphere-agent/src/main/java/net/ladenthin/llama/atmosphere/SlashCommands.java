@@ -40,6 +40,8 @@ public record SlashCommands(Command command, String arguments) {
         STATUS("/status"),
         /** List the tools offered to the model. */
         TOOLS("/tools"),
+        /** Show every tool call of this session — the receipt for what really happened. */
+        CALLS("/calls", "/log"),
         /** Leave the REPL. */
         EXIT("/exit", "/quit");
 

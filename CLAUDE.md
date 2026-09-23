@@ -2303,7 +2303,19 @@ are decisions, not details:
    an embedding index (Cursor's production effect is +0.3 %), and LSP tools (the one isolation study
    finds them token-negative and *worse* at multi-file rename, because renames touch comments and
    strings that semantic references exclude).
-7. **The context number in the status line is an estimate, marked `~`.** llama.cpp emits its usage
+7. **Tool calls are carried into the conversation as a text note, and logged for `/calls`.**
+   `LocalAgent.withToolNotes` prefixes each turn's answer in the history with
+   `(tools I actually ran this turn: <tool> <args> -> <result, cut at 400 chars>)`, and `ToolCallLog`
+   keeps the same data for the `/calls` command. **Why it is a note and not real `tool_calls`
+   messages:** `AbstractAgentRuntime.assembleMessages` rebuilds every history entry as
+   `new ChatMessage(h.role(), h.content())` — the tool-call array and the tool-call id never leave the
+   framework, so protocol-faithful replay through `context.history()` is impossible; content is what
+   survives. **Why it exists at all:** with only user text and assistant prose in the history, a 4B
+   model stopped calling tools after the third turn of a real session and *described* the work instead
+   — inventing JUnit tests, a Maven build and a `.bat` script, complete with exit codes, while the
+   workspace stayed empty. The system prompt also forbids claiming an action without the call.
+   Pinned by `LocalAgentTest.aToolCallStaysInTheHistorySoTheNextTurnSeesItHappened`.
+8. **The context number in the status line is an estimate, marked `~`.** llama.cpp emits its usage
    chunk only when the client sets `stream_options.include_usage`, and Atmosphere's client does not;
    `ConsoleSession.usage()` takes the real count when one arrives, otherwise `LocalAgent.estimateTokens`
    uses four characters per token. The window size is `--ctx-size` (in-process) or the server's
