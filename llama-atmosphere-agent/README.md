@@ -341,10 +341,12 @@ network. Each is an icon, a space, its value. Rows are cut by **screen columns**
 because an icon is one character and two columns — counting characters lets a row come out wider than
 the window, wrap, and push the pinned block out of place.
 
-**Resizing the window** is handled explicitly: the pinned region keeps the size it was created with, so
-without a `WINCH` handler its reserved rows stop matching the window and a prompt redraw lands beside
-the previous one (a row of `> > > > >` across the screen). The block is then re-rendered from the text
-it was built from, not from the rows that were cut for the old width.
+**Resizing the window** is left to JLine, which resizes the pinned region and re-cuts its rows itself.
+A handler of our own was tried for a reported row of `> > > > >` after dragging the window smaller and
+made it worse: the line reader installs its own handler for as long as it is reading, so ours only
+added a second writer on the terminal while the reader was redrawing. That report is **not currently
+reproducible** here — a probe raising a real resize signal shows a clean redraw with one prompt — so it
+is listed as open rather than claimed as fixed.
 
 **Three threads write to this console** and all of them had to be brought into line, because a write that
 goes around the line reader scrolls the screen without JLine noticing and the pinned block ends up

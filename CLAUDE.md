@@ -2440,23 +2440,32 @@ are decisions, not details:
    session, which is what a program that wants its input at the bottom *without* taking over the
    screen has to pay.
 
-   **A window resize has to be handled, and it is the one signal nothing else covers.** `Status` keeps
-   the size it was built with, so after the window is made narrower its reserved rows no longer match
-   it, everything below them is drawn in the wrong place, and a prompt redraw lands next to the
-   previous one instead of over it — a row of `> > > > >` across the screen. A `Signal.WINCH` handler
-   calls `status.resize()` + `reset()` and re-renders the block **from the text it was built from**
-   (`requested`), never from the rendered rows: those were cut to a width that no longer exists, and a
-   row too wide wraps onto a second screen line, which is precisely what the reserved region cannot
-   survive. Both halves are pinned by tests that go red when the handler is reduced to `redraw()`.
-   `fit()` measures in **screen columns** (`AttributedString.columnLength`), not characters, for the
-   same reason — an icon is one character and two columns.
+   **Do not add a `WINCH` handler, and the reason is measured.** A resize drawing a row of
+   `> > > > >` across the screen looks like the pinned region not being told about the new size, so a
+   `Signal.WINCH` handler that resized and re-rendered it was added — and the user reported it
+   **worse**, not better. `LineReaderImpl.handleSignal(WINCH)` already calls `Status.resize(Size)`,
+   and the reader installs its own handler for as long as it is reading, which is the whole session;
+   ours therefore either never ran or ran *in addition*, putting a second writer on the terminal from
+   the signal thread at the exact moment the reader was redrawing. A probe driving a real
+   `terminal.raise(WINCH)` against a pipe-backed terminal shows JLine doing it correctly on its own:
+   scroll region reset, the rule re-cut to the new width, **one** prompt. So the remaining report is
+   not reproducible in the harness and has no fix here yet — stated rather than papered over.
+   `fit()` measuring in **screen columns** (`AttributedString.columnLength`) rather than characters is
+   ours and does matter: an icon is one character and two columns, and a row wider than the window
+   wraps onto a second screen line, which the reserved region cannot survive.
 
-   **What was tried and removed: skipping an unchanged block.** It looked like the fix for the `?1h`
-   fragment (fewer writes, fewer chances to collide with the reader's own setup sequence). Removing
-   the guard again left the emitted bytes identical, because **JLine already skips a block whose
-   content has not changed**. It was deleted rather than kept with a comment claiming a benefit it
-   does not have — and the `?1h` therefore still has no established cause; the lock covers our writes,
-   the reader's own are inside JLine.
+   **Two things tried and removed, both because measurement said they did nothing.** (1) Skipping a
+   status write when the block is unchanged — removing the guard again left the emitted bytes
+   identical, because JLine already skips an unchanged block. (2) Re-cutting the rows when the window
+   width changed — `Status.resize()` re-cuts the rows it holds itself. Neither was kept with a comment
+   claiming a benefit it does not have. The stray `?1h` consequently still has **no established
+   cause**: the lock covers our writes, the reader's own are inside JLine.
+
+   **Restoring the block after a wipe takes three steps, found by measurement not by reading**:
+   `status.reset()`, then `status.update(List.of())`, then render it again from `requested` (the text
+   the caller gave, not the rendered rows). With only the first two, `Status` draws the difference it
+   computes against a belief the wipe invalidated — observed as a single character emitted where a
+   whole block was missing. `JLineTerminalTest.theBlockIsBackOnScreenAfterAClear` is what says so.
 
    **A blank line must not count as pending input.** `hasPendingInput()` ignores blank lines but leaves
    them queued: counting them meant that holding Enter cancelled one turn per keystroke and produced

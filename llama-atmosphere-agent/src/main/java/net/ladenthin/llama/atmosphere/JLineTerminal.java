@@ -80,11 +80,12 @@ public final class JLineTerminal implements AgentTerminal {
     private volatile List<AttributedString> block = List.of();
 
     /**
-     * The block as it was asked for, before being cut to the window.
+     * The block as the caller asked for it, before being cut to the window.
      *
-     * <p>A resize changes what "cut to the window" means, so the rendered rows cannot be reused — they
-     * were shortened for a width that no longer exists. What is kept is the text the caller handed
-     * over, which is re-rendered at the new size.
+     * <p>Kept so it can be drawn from scratch after the screen is wiped. Handing the rendered rows
+     * back is not enough: {@code Status} draws the difference between them and what it believes is on
+     * screen, and after a wipe that belief is wrong in a way it cannot detect — measured, it emitted a
+     * single character where a whole block was missing.
      */
     private volatile List<String> requested = List.of();
 
@@ -142,32 +143,12 @@ public final class JLineTerminal implements AgentTerminal {
                 // silently rewrites a request like: git commit -m "fixed!"
                 .option(LineReader.Option.DISABLE_EVENT_EXPANSION, true)
                 .build();
-        JLineTerminal console = new JLineTerminal(terminal, reader, Status.getStatus(terminal), Ansi.detect());
-        // Without this the pinned region keeps the size it was built with: its reserved rows no longer
-        // match the window, everything below is drawn in the wrong place, and a redraw of the prompt
-        // lands next to the previous one instead of over it -- a row of "> > > > >" across the screen
-        // was the window being made narrower.
-        terminal.handle(Terminal.Signal.WINCH, ignored -> console.resized());
-        return console;
-    }
-
-    /**
-     * Redraw everything that was sized for the old window.
-     *
-     * <p>The rows are re-rendered from the text they were built from rather than reused: they were cut
-     * to a width that no longer exists, and a row that is too wide wraps onto a second screen line,
-     * which is exactly what the reserved region cannot survive.
-     */
-    void resized() {
-        synchronized (writing) {
-            status.resize();
-            status.reset();
-            List<String> lines = requested;
-            block = List.of(); // whatever is on screen was drawn for another size
-            if (!lines.isEmpty()) {
-                updateStatus(lines);
-            }
-        }
+        // No WINCH handler here on purpose. The line reader installs its own for as long as it is
+        // reading -- which is the whole session -- and it already resizes the pinned region itself
+        // (LineReaderImpl.handleSignal calls Status.resize). Adding one of ours only put a second
+        // writer on the terminal, on the signal thread, at the exact moment the reader was redrawing:
+        // the row of "> > > > >" after a resize got worse, not better, when it was tried.
+        return new JLineTerminal(terminal, reader, Status.getStatus(terminal), Ansi.detect());
     }
 
     @Override
@@ -271,10 +252,18 @@ public final class JLineTerminal implements AgentTerminal {
             reader.printAbove(clear + System.lineSeparator().repeat(blankRows()));
             // reset() makes it forget what it believes is on screen; without that the update below is
             // a no-op, because the content it would draw is the content it thinks is already there.
+            List<String> lines = requested;
+            // Three steps, and all three were needed to make the block come back after a wipe:
+            // forget the drawing state, hand over an empty block so nothing is believed to be on
+            // screen, then render it again. With only the first two, Status drew the difference it
+            // computed against a belief the wipe had invalidated -- measured as a single character
+            // where a whole block was missing.
             status.reset();
-            // A fresh list every time: JLine keeps the one it is given and works on it, so handing it
-            // the kept copy makes that copy its own and the next update trips over it.
-            status.update(new java.util.ArrayList<>(block));
+            block = List.of();
+            status.update(List.of());
+            if (!lines.isEmpty()) {
+                updateStatus(lines);
+            }
         }
     }
 

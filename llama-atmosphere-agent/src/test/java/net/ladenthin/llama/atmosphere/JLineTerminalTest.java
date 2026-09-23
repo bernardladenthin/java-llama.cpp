@@ -182,16 +182,18 @@ class JLineTerminalTest {
 
     @Test
     void makingTheWindowNarrowerRedrawsTheBlockAtTheNewWidth() throws Exception {
-        // Reported as a row of "> > > > >" across the screen after dragging the window smaller. The
-        // pinned region keeps the size it was built with unless it is told, so its reserved rows stop
-        // matching the window and everything below them is drawn in the wrong place.
+        // This pins an assumption about JLine rather than logic of ours: it re-cuts the rows it holds
+        // when the window shrinks, so nothing here has to. That is worth a test because the whole
+        // bottom block depends on it -- a row wider than the window wraps onto a second screen line,
+        // and the reserved region cannot survive that. An upgrade that changed it would show up here
+        // instead of on somebody's screen.
         try (Terminal terminal = terminal("\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
             console.status(List.of("state"));
             int before = screen().length();
 
             terminal.setSize(new Size(30, 10));
-            console.resized();
+            console.status(List.of("state"));
 
             String afterResize = screen().substring(before);
             assertThat("the block was drawn again", afterResize.isEmpty(), is(false));
@@ -209,7 +211,7 @@ class JLineTerminalTest {
             console.status(List.of("x".repeat(50)));
 
             terminal.setSize(new Size(20, 10));
-            console.resized();
+            console.status(List.of("x".repeat(50)));
 
             assertThat(
                     "the row that was rendered for the wide window is not reused", occurrences("x".repeat(50)), is(1));
