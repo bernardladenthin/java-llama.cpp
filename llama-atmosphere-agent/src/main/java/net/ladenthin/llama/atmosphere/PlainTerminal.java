@@ -65,6 +65,11 @@ public final class PlainTerminal implements AgentTerminal {
     }
 
     @Override
+    public boolean pinsStatus() {
+        return false;
+    }
+
+    @Override
     public Ansi ansi() {
         return ansi;
     }

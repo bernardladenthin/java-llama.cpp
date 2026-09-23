@@ -55,6 +55,15 @@ public interface AgentTerminal extends AutoCloseable {
     void status(String text);
 
     /**
+     * Whether {@link #status} really pins the line to the bottom of the window.
+     *
+     * <p>{@code false} on a plain stream, where the caller has to print the status itself.
+     *
+     * @return {@code true} on a real terminal
+     */
+    boolean pinsStatus();
+
+    /**
      * The styles to use for this console.
      *
      * @return a colouring instance on a terminal, a plain one otherwise

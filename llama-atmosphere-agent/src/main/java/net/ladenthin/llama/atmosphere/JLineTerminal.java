@@ -129,6 +129,11 @@ public final class JLineTerminal implements AgentTerminal {
     }
 
     @Override
+    public boolean pinsStatus() {
+        return true;
+    }
+
+    @Override
     public Ansi ansi() {
         return ansi;
     }

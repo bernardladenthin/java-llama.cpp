@@ -278,11 +278,12 @@ output **line by line while it runs** (dimmed, `│ `-prefixed) instead of dumpi
 also keeps the pipe drained; a process whose output nobody reads blocks once the buffer is full, and
 on Windows that buffer is about 4 KB.
 
-**Where the two lines live.** The status is printed **above the prompt**, as an ordinary line, every
-time you are asked for input — JLine can pin a line to the bottom of the window, but in a tall
-terminal with little output that bottom edge is nowhere near the cursor and the line goes unnoticed.
-The pinned area is used only while a turn runs, where it works well because the streamed output fills
-the screen right down to it.
+**Where the two lines live.** On a real terminal both are pinned to the bottom of the window, below a
+rule: the status while you type, the activity while a turn runs. Note where "the bottom" is — the
+bottom of the *window*, not the line under the cursor; in a tall terminal with only a few lines of
+output there is a gap between your prompt and the pinned block. On a plain stream (piped input, a
+one-shot run) nothing can be pinned, so the status is printed above the prompt instead and the
+activity line is dropped rather than repeated into the log.
 
 **The status line** above the prompt reads
 `[manual · ctx ~3.1k/16k · 9 tools · local-model]`: the approval mode, the context used out of the
