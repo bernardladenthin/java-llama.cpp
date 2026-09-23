@@ -294,35 +294,35 @@ output **line by line while it runs** (dimmed, `│ `-prefixed) instead of dumpi
 also keeps the pipe drained; a process whose output nobody reads blocks once the buffer is full, and
 on Windows that buffer is about 4 KB.
 
-**The bottom of the window is one framed block**: the input line between two rules, then what the agent
-is doing and the session state.
+**The bottom of the window is a pinned block**: the input line, then a rule, then what the agent is
+doing and the session state.
 
 ```
-────────────────────────────────────────────────────────────────────
-> add a test for the parser
+› add a test for the parser
+… the answer …
+> 
 ────────────────────────────────────────────────────────────────────
 ⠙ Fettling… (run_command 47s of 61s · 2 tool calls)
 [/path/to/project · ⏸ manual · ctx ~3.1k/16k · 9 tools · local-model]
 ```
 
-The top rule is ordinary output, printed once before each read; the three rows below are the pinned
-block. There is no `you>`: the box already says where the input is. On Enter the input line is erased
-and echoed above as `› your text`, so the transcript keeps what was asked. (`!` history expansion is
+There is no `you>`: the block already says where the input is. On Enter the input line is erased and
+echoed above as `› your text`, so the transcript keeps what was asked. (`!` history expansion is
 switched off in the same place, or a request like `git commit -m "fixed!"` would be rewritten silently.)
 
-**Why the top rule is not part of the prompt**, although that is the obvious way to draw it: the line
-reader erases exactly **one** line when the input is submitted, so a two-line prompt leaves its rule
-behind on every Enter — hold Enter and you get a column of them. It was built that way first and the
-symptom was reported within the hour. `JLineTerminalTest` now drives a real line reader over a pair of
-streams and counts the rules in the bytes it emits, which is the only way to see this without a
-console. Note what that test had to learn: a box character goes out as UTF-8 `─` from ordinary output
-but as the DEC line-drawing set (`ESC(0` + a row of `q`) inside a prompt, so counting only the first
-form passed against the very bug it was written for.
+**Why there is no second rule above the input**, although that is what this looked like at first: JLine's
+pinned region sits below the prompt and never above it, so a rule above the input can only be part of the
+prompt or part of the scrollback — and both were tried and both were wrong. In the prompt it survives
+every Enter, because the reader erases exactly one line (hold Enter, get a column of rules). As output it
+leaves one rule per turn behind, travelling up the scrollback. One rule, below the input, is the shape
+that has neither problem.
 
-The two lower rows are always both present: the activity row — `… waiting for input …` when it is your
-turn, the spinner with the running tool and its elapsed time while it works — and the session's state.
-Two fixed rows rather than one changing one: a block that changes height makes the output above it jump
-on every refresh.
+**Three threads write to this console** and all of them had to be brought into line, because a write that
+goes around the line reader scrolls the screen without JLine noticing and the pinned block ends up
+somewhere else than it believes — first as a stray `1H` drawn into the rule, then as no block at all.
+The turn thread and the console thread share a lock; llama.cpp's own log, which with `--model` goes to
+stderr and therefore straight past everything, is routed through the console with `LlamaModel.setLogger`.
+
 
 **On scrolling.** The block stays put while the agent writes: JLine keeps those lines out of the
 terminal's scroll region. It cannot stay while *you* scroll the terminal's own scrollback with the

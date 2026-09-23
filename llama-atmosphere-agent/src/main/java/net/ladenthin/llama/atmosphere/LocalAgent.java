@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import net.ladenthin.llama.LlamaModel;
+import net.ladenthin.llama.args.LogFormat;
 import net.ladenthin.llama.parameters.ModelParameters;
 import net.ladenthin.llama.server.OpenAiCompatServer;
 import net.ladenthin.llama.server.OpenAiServerConfig;
@@ -199,6 +200,7 @@ public final class LocalAgent {
             if (terminal == null) {
                 terminal = new PlainTerminal(out, reader, Ansi.detect());
             }
+            captureNativeLog(terminal, options);
             // One-shot runs have nobody at the keyboard, so the strategy gets no console and denies
             // gated calls unless --auto was passed (see ConsoleApprovalStrategy).
             TurnActivity activity = new TurnActivity();
@@ -271,7 +273,6 @@ public final class LocalAgent {
                 } else {
                     terminal.line(terminal.ansi().dim(status));
                 }
-                terminal.separator();
                 String line = terminal.readLine("you> ");
                 if (line == null) {
                     return 0;
@@ -406,6 +407,36 @@ public final class LocalAgent {
                 outcome.completed()
                         ? terminal.ansi().green("loop: " + outcome.reason())
                         : terminal.ansi().yellow("loop: " + outcome.reason()));
+    }
+
+    /**
+     * Route llama.cpp's own log through the console instead of letting it write to stderr.
+     *
+     * <p>**This is what destroys a pinned block, and nothing on the Java side can defend against it.**
+     * With an in-process model the server logs to stderr, which is the same console; those writes go
+     * around the line reader, so the terminal scrolls lines JLine never sees and its reserved region
+     * ends up somewhere else than it believes. What that looks like: a warning printed into the middle
+     * of the input line (`&gt; d1.19.029.542 W srv stop: cancel task`), and after a few of them the
+     * block is gone. Routing the log through {@link AgentTerminal#line} puts it under the same lock as
+     * everything else, so it scrolls in above the prompt like any other output.
+     *
+     * <p>Only for an in-process model: with {@code --base-url} the server is another process and its
+     * log is its own business, and calling this would load the native library for nothing.
+     *
+     * @param terminal where the log lines go
+     * @param options the parsed command line
+     */
+    private static void captureNativeLog(AgentTerminal terminal, AgentOptions options) {
+        if (options.getModelPath() == null) {
+            return;
+        }
+        Ansi ansi = terminal.ansi();
+        LlamaModel.setLogger(LogFormat.TEXT, (level, message) -> {
+            String text = message == null ? "" : message.strip();
+            if (!text.isEmpty()) {
+                terminal.line(ansi.dim(text));
+            }
+        });
     }
 
     static ConsoleSession turn(

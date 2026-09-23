@@ -72,21 +72,6 @@ public interface AgentTerminal extends AutoCloseable {
     boolean pinsStatus();
 
     /**
-     * Draw the rule that separates the conversation from the input line, unless it is already there.
-     *
-     * <p>It is ordinary output rather than part of the prompt, and that is the whole point: a prompt
-     * of two lines is erased as one when the line is submitted, so a rule carried in the prompt
-     * survives every Enter and stacks up. Written once and never touched again, like everything else
-     * on this console.
-     *
-     * <p>Callers ask for it before every read; asking again with nothing printed in between draws
-     * nothing, so holding Enter does not produce a column of rules.
-     */
-    default void separator() {
-        // nothing to frame on a plain stream
-    }
-
-    /**
      * Whether the user has already typed a line that nobody has read yet.
      *
      * <p>This is what makes the prompt useful during a turn: a console that keeps reading while the

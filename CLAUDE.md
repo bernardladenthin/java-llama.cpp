@@ -2376,14 +2376,16 @@ are decisions, not details:
 11. **The input is framed into the pinned block, and the prompt stays there during a turn; typing
    stops the turn.** The frame is two halves that must be read together: the **top** rule is the first
    line of the reader's *prompt* (`rule() + newline + "> "`, rebuilt on every read because the window
-   can be resized) — **no.** That is how it was built and it was wrong: `ERASE_LINE_ON_FINISH` erases
-   exactly **one** line, so a two-line prompt leaves its rule behind on every Enter, and holding Enter
-   draws a column of them. The **top** rule is therefore ordinary output (`AgentTerminal.separator()`,
-   printed before each read, suppressed when nothing has been printed since so repeated Enters draw
-   nothing), the **bottom** rule is the first line of the *status* block — JLine draws the status below
-   the prompt, so that is the only way to get the input inside a frame at all. Both call the same
-   `rule()`, or the two edges drift apart on a resize. The prompt is `"> "`, one line, and
-   `AgentTerminal.readLine`'s `prompt` argument is consequently **ignored** here.
+   can be resized) — **no, and the second attempt was wrong too.** Both are recorded because the
+   obvious fix is the one that fails. (1) Rule as the first line of a **two-line prompt**:
+   `ERASE_LINE_ON_FINISH` erases exactly **one** line, so every Enter leaves the rule behind and
+   holding Enter draws a column of them. (2) Rule as **ordinary output before each read**: nothing is
+   left behind on Enter any more, but one rule now stays in the scrollback per turn and travels up
+   with it. **There is no third option** — JLine's status region is below the prompt and never above
+   it, so a rule above the input can only be part of the prompt (1) or part of the scrollback (2).
+   The settled shape is therefore **one** rule, the first line of the status block, directly under the
+   input line; the prompt is `"> "`, one line, and `AgentTerminal.readLine`'s `prompt` argument is
+   consequently **ignored** here.
    `ERASE_LINE_ON_FINISH` removes the input line on Enter and the reader thread echoes it above as
    `› text`, so the transcript keeps what was asked.
 
@@ -2395,10 +2397,27 @@ are decisions, not details:
    inside a *prompt*, so a counter that looks only for `─` passes against the exact bug it was
    written for — verified by putting the two-line prompt back and watching the test go from 1 rule to 5.
 
-   **The `[?1h` that appeared as text above the prompt** was a second, separate defect: `line()` wrote
-   straight to the terminal whenever the reader was not inside `readLine`, and that instant is exactly
-   when the next read is emitting its init sequence, so the two interleaved and half an escape sequence
-   landed in the scrollback. Once the reader thread exists, **everything** goes through `printAbove`.
+   **Escape sequences drawn as text** (`[?1h` above the prompt, then a `1H` inside the rule) were two
+   further defects of the same family, and the second is the one that eventually **destroyed the
+   block**. First: `line()` wrote straight to the terminal whenever the reader was not inside
+   `readLine`, which is exactly when the next read emits its init sequence — once the reader thread
+   exists, **everything** now goes through `printAbove`. Second: three threads write to this terminal
+   as a matter of course — the turn (Atmosphere's thread) prints tool lines, the console thread
+   refreshes the block four times a second, and with an in-process model **llama.cpp logs to stderr**,
+   which is the same console and goes around JLine entirely. The first two are serialised by a
+   `writing` lock held across `line()` and `status()`; the third is fixed by
+   `LocalAgent.captureNativeLog`, which routes the native log through `LlamaModel.setLogger`
+   (the callback sink `patches/0014` added) into `terminal.line`, so it scrolls in above the prompt
+   like any other output instead of scrolling lines JLine never sees. **Honest limit:** the lock is
+   reasoned, not test-covered. Two attempts to pin it are recorded in the history of
+   `JLineTerminalTest` and both passed with the lock removed — even one that sliced every
+   `OutputStream.write` in half — because `PrintWriter` already makes a single call atomic and the
+   interleaving happens *between* calls, inside JLine. A test that is green either way is worse than
+   none, so it was deleted rather than kept.
+
+   **A blank line must not count as pending input.** `hasPendingInput()` ignores blank lines but leaves
+   them queued: counting them meant that holding Enter cancelled one turn per keystroke and produced
+   nothing, while dropping them would break the approval prompt, where an empty answer means yes.
    `DISABLE_EVENT_EXPANSION` is set in the same builder because the reader's default treats `!` as a
    shell history expansion, which silently rewrites a request like `git commit -m "fixed!"`.
    **What cannot be done, asked and answered:** keep the block visible while the *user* scrolls the

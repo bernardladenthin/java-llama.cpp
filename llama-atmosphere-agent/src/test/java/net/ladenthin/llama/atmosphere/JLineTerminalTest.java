@@ -7,6 +7,7 @@ package net.ladenthin.llama.atmosphere;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.nullValue;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -27,7 +28,10 @@ import org.junit.jupiter.api.Test;
  *
  * <p>The bug these tests were written for: the rule above the input used to be the first line of a
  * two-line prompt, while {@code ERASE_LINE_ON_FINISH} erases exactly <b>one</b> line — so every Enter
- * left a rule behind, and holding Enter drew a column of them.
+ * left a rule behind, and holding Enter drew a column of them. Drawing it as ordinary output instead
+ * only moved the problem: then one rule stayed in the scrollback per turn and travelled up with it.
+ * There is now exactly one rule, the first line of the pinned block, and these tests hold the console
+ * to writing none at all.
  */
 class JLineTerminalTest {
 
@@ -67,7 +71,7 @@ class JLineTerminalTest {
      */
     private int rules() {
         int width = SIZE.getColumns() - 1;
-        return occurrences("─".repeat(width)) + occurrences("(0" + "q".repeat(width));
+        return occurrences("─".repeat(width)) + occurrences("\u001b(0" + "q".repeat(width));
     }
 
     private int occurrences(String needle) {
@@ -79,43 +83,59 @@ class JLineTerminalTest {
     }
 
     @Test
-    void pressingEnterOnAnEmptyLineSeveralTimesDrawsTheRuleOnlyOnce() throws Exception {
+    void pressingEnterSeveralTimesLeavesNoRuleInTheScrollback() throws Exception {
         try (Terminal terminal = terminal("\n\n\n\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
             for (int i = 0; i < 4; i++) {
-                console.separator();
                 assertThat("an empty line is still a line", console.readLine("ignored"), is(""));
             }
 
-            assertThat("nothing was printed in between, so nothing needs separating again", rules(), is(1));
+            assertThat("the only rule is the pinned one, and it is never written as output", rules(), is(0));
         }
     }
 
     @Test
-    void whatWasTypedSurvivesAboveTheInputAndTheNextTurnIsSeparatedAgain() throws Exception {
+    void whatWasTypedSurvivesAboveTheInputLine() throws Exception {
         try (Terminal terminal = terminal("hello\nworld\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
-            console.separator();
             assertThat(console.readLine("ignored"), is("hello"));
-            console.separator();
             assertThat(console.readLine("ignored"), is("world"));
 
             // the input line itself is erased on Enter, so the echo is what keeps the transcript
             assertThat(screen(), containsString("hello"));
             assertThat(screen(), containsString("world"));
-            assertThat("the echo printed something, so the next read is separated again", rules(), is(2));
+            assertThat("and still no rule travels along with it", rules(), is(0));
         }
     }
 
     @Test
-    void outputPrintedWhileTheAgentWorksSeparatesTheNextInputAgain() throws Exception {
-        try (Terminal terminal = terminal("\n");
+    void anEmptyLineIsNotAPendingRequest() throws Exception {
+        try (Terminal terminal = terminal("\n   \nreal\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
-            console.separator();
-            console.line("some output from a tool");
-            console.separator();
+            console.readLine("ignored"); // starts the reader; the rest queues up behind it
 
-            assertThat("the rule is no longer next to the input, so it is drawn again", rules(), is(2));
+            waitFor(console::hasPendingInput);
+            // Two blank lines are queued in front of it, and it is still the real one that counts:
+            // otherwise holding Enter cancels one turn per keystroke and produces nothing.
+            assertThat(console.hasPendingInput(), is(true));
+            assertThat(console.readLine("ignored").isBlank(), is(true));
+            assertThat(console.readLine("ignored"), is("real"));
+            // End of input is pending too, and has to be: a session whose console has closed must
+            // stop waiting rather than keep a turn running for nobody.
+            assertThat(console.hasPendingInput(), is(true));
+            assertThat("and it reads as no line at all", console.readLine("ignored"), is(nullValue()));
+        }
+    }
+
+    /**
+     * Wait for the reader thread to have caught up.
+     *
+     * @param condition what to wait for
+     * @throws InterruptedException if interrupted while waiting
+     */
+    private void waitFor(java.util.function.BooleanSupplier condition) throws InterruptedException {
+        for (int attempt = 0; attempt < 200 && !condition.getAsBoolean(); attempt++) {
+            Thread.sleep(10);
         }
     }
 

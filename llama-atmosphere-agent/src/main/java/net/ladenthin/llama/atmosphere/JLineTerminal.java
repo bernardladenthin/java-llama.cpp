@@ -58,7 +58,18 @@ public final class JLineTerminal implements AgentTerminal {
     private final Status status;
     private final Ansi ansi;
     private final BlockingQueue<String> typed = new LinkedBlockingQueue<>();
-    private volatile boolean ruleOnScreen;
+    /**
+     * Held for the length of every write this class makes.
+     *
+     * <p>Two threads write here as a matter of course: the turn runs on a thread of Atmosphere's and
+     * prints its tool lines and streamed text, while the console thread refreshes the pinned block
+     * four times a second. Neither JLine's {@code printAbove} nor {@code Status.update} knows about
+     * the other, so without this their escape sequences interleave and a fragment lands on screen as
+     * text — a stray {@code 1H}, the tail of a cursor-position sequence, drawn into the middle of the
+     * rule.
+     */
+    private final Object writing = new Object();
+
     private volatile boolean closed;
     private @Nullable Thread input;
 
@@ -118,7 +129,6 @@ public final class JLineTerminal implements AgentTerminal {
 
     @Override
     public void line(String text) {
-        ruleOnScreen = false;
         if (text.indexOf('\n') >= 0 || text.indexOf('\r') >= 0) {
             // One call must be one screen line: the status block is sized in lines, so a multi-line
             // string handed over as "a line" desynchronises the reserved region. Callers fold their
@@ -126,30 +136,18 @@ public final class JLineTerminal implements AgentTerminal {
             text.lines().forEach(this::line);
             return;
         }
-        if (input != null) {
-            // Once the reader thread exists it owns the screen, and nothing may write around it --
-            // not even in the instant between two reads. A direct write there cuts into the escape
-            // sequence the next read is emitting and half of it lands in the scrollback as text:
-            // a stray "[?1h" above the prompt was exactly that.
-            reader.printAbove(text);
-        } else {
-            terminal.writer().println(text);
-            terminal.writer().flush();
+        synchronized (writing) {
+            if (input != null) {
+                // Once the reader thread exists it owns the screen, and nothing may write around it --
+                // not even in the instant between two reads. A direct write there cuts into the escape
+                // sequence the next read is emitting and half of it lands in the scrollback as text:
+                // a stray "[?1h" above the prompt was exactly that.
+                reader.printAbove(text);
+            } else {
+                terminal.writer().println(text);
+                terminal.writer().flush();
+            }
         }
-    }
-
-    @Override
-    public void separator() {
-        if (ruleOnScreen) {
-            // Already drawn, with nothing printed since: it is still directly above the input line.
-            return;
-        }
-        // Starts the reader if this is the first call: the rule belongs above a prompt, so drawing it
-        // is also the moment the prompt has to exist. Without this the very first box had no top edge
-        // -- the reader only started on the first read, which comes after.
-        startReading();
-        reader.printAbove(rule());
-        ruleOnScreen = true;
     }
 
     /**
@@ -175,10 +173,8 @@ public final class JLineTerminal implements AgentTerminal {
                         try {
                             // One line, and it has to stay one line: the reader erases a single line
                             // when the input is submitted, so a two-line prompt -- the rule above the
-                            // input, which is where this started -- leaves the rule behind on every
-                            // Enter, a column of them after a few. separator() draws the rule as
-                            // ordinary output instead, which cannot be left behind because it was
-                            // never part of the prompt.
+                            // input, which is what was tried first -- leaves that rule behind on
+                            // every Enter, a column of them after a few.
                             String line = reader.readLine("> ");
                             if (!line.isBlank()) {
                                 // The input line is erased on Enter, so the conversation would lose
@@ -244,7 +240,10 @@ public final class JLineTerminal implements AgentTerminal {
 
     @Override
     public boolean hasPendingInput() {
-        return !typed.isEmpty();
+        // A blank line is not a request, so it must not count: the REPL skips it, and counting it
+        // meant that holding Enter cancelled one turn per keystroke and produced nothing. It stays in
+        // the queue, because an empty answer to an approval question means yes.
+        return typed.stream().anyMatch(line -> !line.isBlank());
     }
 
     @Override
@@ -267,13 +266,20 @@ public final class JLineTerminal implements AgentTerminal {
 
     @Override
     public void status(List<String> lines) {
+        synchronized (writing) {
+            updateStatus(lines);
+        }
+    }
+
+    private void updateStatus(List<String> lines) {
         if (lines.isEmpty()) {
             status.update(List.of());
             return;
         }
-        // The rule on top of this block is the bottom edge of the input box: the reader draws the top
-        // edge as the first line of its prompt, so the two together frame the input the way the
-        // established terminal agents do.
+        // The rule on top of this block is the one that separates the conversation from the input.
+        // It is the ONLY one drawn: a rule above the input line cannot be pinned (JLine's status
+        // region is below the prompt, never above it) and drawing it as output leaves one behind in
+        // the scrollback per turn, which is what "the line keeps travelling along" was.
         // One row must never wrap: a wrapped row occupies two screen lines, the reserved region is
         // sized in lines, and everything below it is then drawn in the wrong place -- which is how a
         // long summary tore the block apart.
