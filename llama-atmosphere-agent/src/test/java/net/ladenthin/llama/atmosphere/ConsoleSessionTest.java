@@ -35,6 +35,12 @@ class ConsoleSessionTest {
     /** A terminal that records what it was told to print. */
     private static final class RecordingTerminal implements AgentTerminal {
         private final List<String> lines = new ArrayList<>();
+        private volatile boolean pending;
+
+        @Override
+        public boolean hasPendingInput() {
+            return pending;
+        }
 
         @Override
         public void line(String text) {
@@ -105,6 +111,61 @@ class ConsoleSessionTest {
         session.emit(new AiEvent.ToolError("run_command", "boom\nand more"));
 
         assertEveryLineIsOneLine();
+    }
+
+    /** A cancellable turn that only records whether it was stopped. */
+    private static final class RecordingHandle implements org.atmosphere.ai.ExecutionHandle {
+        private final java.util.concurrent.CompletableFuture<Void> done =
+                new java.util.concurrent.CompletableFuture<>();
+        private volatile boolean cancelled;
+
+        @Override
+        public void cancel() {
+            cancelled = true;
+            done.complete(null);
+        }
+
+        @Override
+        public boolean isDone() {
+            return done.isDone();
+        }
+
+        @Override
+        public java.util.concurrent.CompletableFuture<Void> whenDone() {
+            return done;
+        }
+    }
+
+    @Test
+    void typingWhileTheAgentWorksStopsTheTurnAndTheLineIsNotConsumed() throws InterruptedException {
+        // the whole point of a prompt that is there during a turn: a request that has been overtaken
+        // must not keep running, and what was typed stays queued to become the next message
+        ConsoleSession session = session(); // never completed: only the typing can end this wait
+        RecordingHandle handle = new RecordingHandle();
+        terminal.pending = true;
+
+        LocalAgent.TurnEnd end =
+                LocalAgent.awaitWithActivity(session, terminal, () -> "state", new TurnActivity(), handle);
+
+        assertThat(end, is(LocalAgent.TurnEnd.INTERRUPTED));
+        assertThat("the stream the model is answering on is closed", handle.cancelled, is(true));
+        assertThat(
+                "and it says so rather than looking like a finished answer",
+                terminal.lines.stream().anyMatch(l -> l.contains("interrupted")),
+                is(true));
+    }
+
+    @Test
+    void aTurnThatFinishesOnItsOwnIsNotCancelled() throws InterruptedException {
+        ConsoleSession session = session();
+        RecordingHandle handle = new RecordingHandle();
+        session.complete();
+
+        LocalAgent.TurnEnd end =
+                LocalAgent.awaitWithActivity(session, terminal, () -> "state", new TurnActivity(), handle);
+
+        assertThat(end, is(LocalAgent.TurnEnd.FINISHED));
+        assertThat(handle.cancelled, is(false));
     }
 
     @Test

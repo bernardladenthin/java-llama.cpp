@@ -15,7 +15,8 @@ Commands (everything else is sent to the model):
   /clear                 drop the history                           (/reset, /new)
   /exit                  leave                                      (/quit)
 
-Shift+Tab at the prompt switches the approval mode without typing a command.
+The prompt stays at the bottom while the agent works: you can type at any time. A line typed
+during a turn stops it and is sent as the next message. Shift+Tab switches the approval mode.
 
 In manual mode every tool that writes or runs a command asks first: [y]es runs it once,
 [n]o tells the model the user cancelled it, [a]uto stops asking for the rest of the session.

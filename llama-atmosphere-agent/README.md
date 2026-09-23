@@ -331,6 +331,20 @@ that ask for them (`stream_options.include_usage`), which Atmosphere's client do
 comes from `--ctx-size` with `--model`, and from the server's `/props` with `--base-url`; when neither
 answers, the line shows the count alone.
 
+**The prompt is at the bottom the whole time, and you can type while the agent works.** One thread owns
+the keyboard and sits in the line reader for the entire session; everything else is written *above* the
+prompt. A line typed **during** a turn **stops that turn** — Atmosphere's cancellable entry point closes
+the HTTP stream the model is answering on — and is then sent as the next message, with whatever the model
+had already produced kept in the history. That is not quite what Claude Code does (it feeds the message
+into the running loop); Atmosphere builds its request once from the message plus the history and has no
+place to append to, so stop-and-resend is the honest equivalent, and it is immediate rather than waiting
+out a tool loop that may run for minutes.
+
+The cost is one keystroke: the approval question is answered in that same input line, so it is
+`y` + Enter rather than a bare `y`. A single-key read needs a second reader on the same keyboard, and two
+readers on one terminal take turns at random. While a question is open the typing-interrupts rule is
+suspended, so an answer is an answer and not an interruption.
+
 **One printed line is one screen line.** A tool call and its result are shown as
 `● write_file {file_path=notes.md, content=# Notes  ## Build  … (4812 chars)}` — every argument is
 folded onto one line and cut *on its own* before the whole thing is cut, so a call carrying a whole
@@ -367,6 +381,7 @@ Then, in this order:
 | ask again, answer `y` | the command runs and its output goes back to the model |
 | `/mode auto` | the status line flips to `⏵⏵ auto`; nothing asks any more |
 | press Shift+Tab at the prompt | the same switch without a command; the status line updates immediately |
+| type a sentence while it is still working, press Enter | the turn stops at once and your message is the next one |
 | `explain Markdown with a heading, a list, bold text and a code block` | the answer arrives rendered: heading bold, `•` bullets, code in colour |
 | press ↑ | the previous line comes back; Tab after `/` completes the commands |
 | `/compact` | the conversation is summarized and replaces the history; `ctx` drops |

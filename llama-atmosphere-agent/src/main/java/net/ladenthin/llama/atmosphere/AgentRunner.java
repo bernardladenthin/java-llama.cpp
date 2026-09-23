@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import org.atmosphere.ai.AgentExecutionContext;
 import org.atmosphere.ai.AiConfig;
+import org.atmosphere.ai.ExecutionHandle;
 import org.atmosphere.ai.RetryPolicy;
 import org.atmosphere.ai.StreamingSession;
 import org.atmosphere.ai.approval.ApprovalStrategy;
@@ -133,7 +134,25 @@ public final class AgentRunner {
      * @param session receives streamed text, tool events and the terminal complete/error
      */
     public void run(String message, List<ChatMessage> history, StreamingSession session) {
-        run(message, history, session, tools, systemPrompt);
+        runtime.execute(context(message, history, tools, systemPrompt, session), session);
+    }
+
+    /**
+     * Start one user turn and return at once, with a handle that can stop it.
+     *
+     * <p>This is the same turn {@link #run} performs, on Atmosphere's cancellation-aware entry point:
+     * the turn runs on a virtual thread of the framework's, and {@link ExecutionHandle#cancel()}
+     * closes the HTTP stream the model is answering on, which unblocks the read loop. That is what
+     * lets a request typed while the agent is working take effect immediately instead of at the end
+     * of a tool loop that may run for minutes.
+     *
+     * @param message the user message
+     * @param history prior turns, replayed before the message
+     * @param session receives streamed text, tool events and the terminal complete/error
+     * @return the handle; the session's own completion stays the signal that the turn is over
+     */
+    public ExecutionHandle start(String message, List<ChatMessage> history, StreamingSession session) {
+        return runtime.executeWithHandle(context(message, history, tools, systemPrompt, session), session);
     }
 
     /**
@@ -147,15 +166,15 @@ public final class AgentRunner {
      */
     public void runWithoutTools(
             String message, List<ChatMessage> history, StreamingSession session, String systemPrompt) {
-        run(message, history, session, List.of(), systemPrompt);
+        runtime.execute(context(message, history, List.of(), systemPrompt, session), session);
     }
 
-    private void run(
+    private AgentExecutionContext context(
             String message,
             List<ChatMessage> history,
-            StreamingSession session,
             List<ToolDefinition> tools,
-            String systemPrompt) {
+            String systemPrompt,
+            StreamingSession session) {
         AgentExecutionContext context = new AgentExecutionContext(
                 message,
                 systemPrompt,
@@ -176,7 +195,6 @@ public final class AgentRunner {
         if (approvalStrategy != null && approvalPolicy != null) {
             context = context.withApprovalStrategy(approvalStrategy).withApprovalPolicy(approvalPolicy);
         }
-        context = ToolLoopPolicies.attach(context, ToolLoopPolicy.maxIterations(maxToolRounds));
-        runtime.execute(context, session);
+        return ToolLoopPolicies.attach(context, ToolLoopPolicy.maxIterations(maxToolRounds));
     }
 }

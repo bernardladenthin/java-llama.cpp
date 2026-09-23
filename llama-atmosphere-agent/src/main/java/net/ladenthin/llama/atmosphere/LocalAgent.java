@@ -419,29 +419,25 @@ public final class LocalAgent {
             TurnActivity activity)
             throws InterruptedException {
         ConsoleSession session = new ConsoleSession(terminal, fileSystem);
-        // Atmosphere's execute() is synchronous: it returns only once the whole turn, tool rounds
-        // included, has finished. Running it on this thread would leave nobody to drive the activity
-        // line -- which is exactly what happened: the block sat on "… waiting for input …" for the
-        // entire turn, so the spinner and its word were never seen.
-        Thread worker = new Thread(
-                () -> {
-                    try {
-                        runner.run(message, history, session);
-                    } catch (RuntimeException e) {
-                        session.error(e);
-                    }
-                },
-                "agent-turn");
-        worker.setDaemon(true);
-        worker.start();
-        boolean finished = awaitWithActivity(session, terminal, () -> stateLine.apply(session), activity);
-        worker.join(Duration.ofSeconds(5).toMillis());
+        // The turn runs on a thread of Atmosphere's, not this one: execute() blocks until the whole
+        // turn including every tool round is done, which would leave nobody to drive the activity
+        // line -- the block sat on "… waiting for input …" for entire turns until this changed.
+        // start() adds the half that makes the always-present prompt worth having: the handle can
+        // close the stream the model is answering on, so a request typed mid-turn takes effect now.
+        org.atmosphere.ai.ExecutionHandle handle;
+        try {
+            handle = runner.start(message, history, session);
+        } catch (RuntimeException e) {
+            session.error(e);
+            handle = org.atmosphere.ai.ExecutionHandle.completed();
+        }
+        TurnEnd end = awaitWithActivity(session, terminal, () -> stateLine.apply(session), activity, handle);
         history.add(ChatMessage.user(message));
         callLog.add(turnNumber, session.rounds());
         if (!session.text().isEmpty()) {
             history.add(ChatMessage.assistant(session.text()));
         }
-        if (!finished) {
+        if (end == TurnEnd.TIMED_OUT) {
             session.error(new IllegalStateException("turn did not finish within " + TURN_TIMEOUT));
         }
         return session;
@@ -585,14 +581,26 @@ public final class LocalAgent {
      * @param stateLine the second row of the block, asked again on every redraw so the context figure
      *     moves while the turn runs rather than standing still until the next prompt
      * @param activity paused while an approval question is open
-     * @return {@code true} when the turn finished within {@link #TURN_TIMEOUT}
+     * @param handle stops the running turn when the user types instead of waiting
+     * @return how the turn ended
      * @throws InterruptedException if interrupted while waiting
      */
-    private static boolean awaitWithActivity(
+    /** How a turn ended: on its own, because the user typed something, or because it ran too long. */
+    enum TurnEnd {
+        /** The model produced its final answer (or errored). */
+        FINISHED,
+        /** The user typed while it was working; the turn was cut short and that line is next. */
+        INTERRUPTED,
+        /** Nothing arrived within {@link #TURN_TIMEOUT}. */
+        TIMED_OUT
+    }
+
+    static TurnEnd awaitWithActivity(
             ConsoleSession session,
             AgentTerminal terminal,
             java.util.function.Supplier<String> stateLine,
-            TurnActivity activity)
+            TurnActivity activity,
+            org.atmosphere.ai.ExecutionHandle handle)
             throws InterruptedException {
         long start = System.nanoTime();
         int frame = 0;
@@ -601,10 +609,20 @@ public final class LocalAgent {
         while (!session.await(ACTIVITY_INTERVAL)) {
             long seconds = (System.nanoTime() - start) / 1_000_000_000L;
             if (seconds > TURN_TIMEOUT.toSeconds()) {
-                return false;
+                return TurnEnd.TIMED_OUT;
             }
             if (activity.isPaused()) {
-                continue; // an approval question owns the terminal until it is answered
+                continue; // an approval question is waiting for its answer
+            }
+            if (terminal.hasPendingInput()) {
+                // Something was typed while the agent was working. Stop the turn rather than finish a
+                // request that has been overtaken: the handle closes the stream the model is answering
+                // on. The line itself stays queued and becomes the next message, so what the model
+                // produced so far is kept and the new instruction follows it.
+                handle.cancel();
+                terminal.line(terminal.ansi().yellow("(interrupted — taking your message)"));
+                terminal.status(List.of(IDLE_LINE, stateLine.get()));
+                return TurnEnd.INTERRUPTED;
             }
             terminal.status(List.of(
                     activityLine(
@@ -617,7 +635,7 @@ public final class LocalAgent {
                     stateLine.get()));
         }
         terminal.status(List.of(IDLE_LINE, stateLine.get()));
-        return true;
+        return TurnEnd.FINISHED;
     }
 
     /**
@@ -783,7 +801,13 @@ public final class LocalAgent {
                 "agent-compact");
         worker.setDaemon(true);
         worker.start();
-        if (!awaitWithActivity(session, terminal, () -> "/compact", new TurnActivity())
+        if (awaitWithActivity(
+                                session,
+                                terminal,
+                                () -> "/compact",
+                                new TurnActivity(),
+                                org.atmosphere.ai.ExecutionHandle.completed())
+                        != TurnEnd.FINISHED
                 || session.text().isBlank()) {
             terminal.line("(compact failed; history kept)");
             return 0;

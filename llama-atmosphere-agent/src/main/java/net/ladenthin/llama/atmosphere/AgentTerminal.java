@@ -38,11 +38,15 @@ public interface AgentTerminal extends AutoCloseable {
     String readLine(String prompt);
 
     /**
-     * Read a single answer, without waiting for Enter where the terminal allows it.
+     * Ask a question and read the answer.
+     *
+     * <p>The answer is a line, terminated with Enter, on both consoles. A real terminal could read a
+     * single key instead, but only by opening a second reader on the keyboard, and the one reader it
+     * has is busy offering the prompt that stays visible while the agent works — which is worth more
+     * than saving an Enter on a question that is asked a few times a session.
      *
      * @param prompt the question to show
-     * @return the answer in lower case (a single key, or a whole line on a plain stream), or
-     *     {@code null} at end of input
+     * @return the answer in lower case, or {@code null} at end of input
      */
     @Nullable
     String readKey(String prompt);
@@ -66,6 +70,22 @@ public interface AgentTerminal extends AutoCloseable {
      * @return {@code true} on a real terminal
      */
     boolean pinsStatus();
+
+    /**
+     * Whether the user has already typed a line that nobody has read yet.
+     *
+     * <p>This is what makes the prompt useful during a turn: a console that keeps reading while the
+     * agent works can say so, and the turn is then cut short and the line answered instead of being
+     * made to wait for an answer nobody wants any more. The line stays queued — the caller reads it
+     * with {@link #readLine} as usual.
+     *
+     * <p>A console that reads only when asked has nothing pending by definition, which is the default.
+     *
+     * @return {@code true} when a line is waiting
+     */
+    default boolean hasPendingInput() {
+        return false;
+    }
 
     /**
      * Ask the terminal to run {@code action} when the user presses shift+tab at the prompt.

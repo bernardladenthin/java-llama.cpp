@@ -7,6 +7,8 @@ package net.ladenthin.llama.atmosphere;
 import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import org.jline.keymap.KeyMap;
 import org.jline.reader.Binding;
 import org.jline.reader.EndOfFileException;
@@ -15,7 +17,6 @@ import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.Reference;
 import org.jline.reader.UserInterruptException;
 import org.jline.reader.impl.completer.StringsCompleter;
-import org.jline.terminal.Attributes;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.jline.utils.AttributedString;
@@ -26,12 +27,15 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * An {@link AgentTerminal} on a real terminal, via JLine: line editing and history at the prompt, tab
- * completion of the commands, a status line pinned to the bottom of the window, and single-key
- * answers.
+ * completion of the commands, a status line pinned to the bottom of the window, and a prompt that is
+ * there at all times — including while the agent is working.
  *
- * <p>Streamed output goes through {@link LineReader#printAbove(String)}, which scrolls it in above
- * the prompt while the bottom block stays where it is — the one thing a plain {@code println} cannot
- * do. Nothing is ever redrawn above that block, so the scrollback stays exactly as it was written.
+ * <p>That last part is why a thread of its own owns the keyboard (see {@code startReading}): it sits
+ * in {@code readLine} for the whole session and puts what is typed on a queue, and every read in this
+ * class is served from that queue. Streamed output goes through {@link LineReader#printAbove(String)},
+ * which scrolls it in above the prompt while the bottom block stays where it is — the one thing a
+ * plain {@code println} cannot do. Nothing is ever redrawn above that block, so the scrollback stays
+ * exactly as it was written.
  *
  * <p>{@link #open} returns {@code null} instead of throwing when there is no usable terminal (piped
  * input, a "dumb" terminal, a missing native provider); the caller then uses {@link PlainTerminal}.
@@ -40,11 +44,23 @@ import org.jspecify.annotations.Nullable;
  */
 public final class JLineTerminal implements AgentTerminal {
 
+    /**
+     * What is queued in place of a line when input ends.
+     *
+     * <p>A queue of lines cannot carry "no more lines" as a value, and the reader thread is the only
+     * one that learns it. The sentinel is put back on every take, so end of input stays end of input
+     * for every later caller instead of turning back into "nothing typed yet".
+     */
+    private static final String END_OF_INPUT = "\u0000end-of-input";
+
     private final Terminal terminal;
     private final LineReader reader;
     private final Status status;
     private final Ansi ansi;
+    private final BlockingQueue<String> typed = new LinkedBlockingQueue<>();
     private volatile boolean reading;
+    private volatile boolean closed;
+    private @Nullable Thread input;
 
     private JLineTerminal(Terminal terminal, LineReader reader, Status status, Ansi ansi) {
         this.terminal = terminal;
@@ -97,43 +113,96 @@ public final class JLineTerminal implements AgentTerminal {
         }
     }
 
+    /**
+     * Start the one thread that owns the keyboard, if it is not running yet.
+     *
+     * <p><b>Why a thread of its own.</b> The prompt is supposed to be there at all times — while the
+     * agent is working, not only between turns — and only a thread that sits in {@code readLine} can
+     * offer that. Everything else then writes through {@link LineReader#printAbove}, which scrolls
+     * text in above the prompt and leaves it where it is.
+     *
+     * <p><b>Why exactly one.</b> A terminal has one keyboard, and two threads reading it take turns at
+     * random. So every read in this class — a request, an approval answer — is served from the one
+     * queue this thread fills, and nothing else ever reads the terminal.
+     *
+     * @param prompt the prompt, kept for the whole session (the first caller decides it)
+     */
+    private synchronized void startReading(String prompt) {
+        if (input != null) {
+            return;
+        }
+        input = new Thread(
+                () -> {
+                    while (!closed) {
+                        reading = true;
+                        try {
+                            typed.put(reader.readLine(prompt));
+                        } catch (UserInterruptException e) {
+                            // Ctrl-C: drop what was typed and ask again, as before.
+                        } catch (EndOfFileException e) {
+                            typed.offer(END_OF_INPUT); // Ctrl-D
+                            return;
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        } catch (RuntimeException e) {
+                            typed.offer(END_OF_INPUT); // the terminal is gone; stop reading it
+                            return;
+                        } finally {
+                            reading = false;
+                        }
+                    }
+                },
+                "agent-input");
+        input.setDaemon(true);
+        input.start();
+    }
+
     @Override
     public @Nullable String readLine(String prompt) {
-        reading = true;
+        startReading(prompt);
         try {
-            return reader.readLine(prompt);
-        } catch (UserInterruptException e) {
-            return ""; // Ctrl-C: drop the line, ask again
-        } catch (EndOfFileException e) {
-            return null; // Ctrl-D
-        } finally {
-            reading = false;
+            return take(typed.take());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
         }
+    }
+
+    /**
+     * Hand out a queued line, keeping the end-of-input marker in the queue.
+     *
+     * @param line what came off the queue
+     * @return the line, or {@code null} when input has ended
+     */
+    private @Nullable String take(String line) {
+        if (END_OF_INPUT.equals(line)) {
+            typed.offer(END_OF_INPUT);
+            return null;
+        }
+        return line;
+    }
+
+    @Override
+    public boolean hasPendingInput() {
+        return !typed.isEmpty();
     }
 
     @Override
     public @Nullable String readKey(String prompt) {
-        terminal.writer().print(prompt);
-        terminal.writer().flush();
-        Attributes saved = terminal.enterRawMode();
+        // The prompt belongs to the input thread and cannot be changed while it is waiting, so the
+        // question is printed as an ordinary line above it and answered in the same input line as
+        // everything else. That costs an Enter, and buys the one thing worth more: a prompt that is
+        // there while the agent works. A single-key read here would need a second reader on the same
+        // terminal, and the two would take turns at random.
+        line(prompt);
+        startReading("you> ");
         try {
-            int key = terminal.reader().read();
-            if (key < 0 || key == 4) { // end of input, Ctrl-D
-                return null;
-            }
-            if (key == 3) { // Ctrl-C: treat as "no", the safe answer
-                terminal.writer().print("^C" + System.lineSeparator());
-                terminal.writer().flush();
-                return "n";
-            }
-            String answer = String.valueOf((char) key).toLowerCase(Locale.ROOT);
-            terminal.writer().print(answer + System.lineSeparator());
-            terminal.writer().flush();
-            return answer;
-        } catch (IOException e) {
+            String answer = take(typed.take());
+            return answer == null ? null : answer.trim().toLowerCase(Locale.ROOT);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             return null;
-        } finally {
-            terminal.setAttributes(saved);
         }
     }
 
@@ -213,6 +282,11 @@ public final class JLineTerminal implements AgentTerminal {
 
     @Override
     public void close() {
+        closed = true;
+        Thread reading = input;
+        if (reading != null) {
+            reading.interrupt();
+        }
         try {
             status.update(List.of());
             status.close();

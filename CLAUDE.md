@@ -2366,6 +2366,27 @@ are decisions, not details:
    status numbers in an `AtomicLong`/`AtomicBoolean` rather than locals, so the widget (which runs
    inside the reader) can re-render the pinned row with what the last turn left behind.
 
+11. **The prompt stays at the bottom during a turn, and typing stops the turn.** One thread inside
+   `JLineTerminal` (`startReading`) sits in `readLine` for the whole session and fills a queue;
+   **every** read in that class is served from it, because a terminal has one keyboard and two threads
+   reading it take turns at random. That is why `readKey` no longer reads a single key in raw mode: the
+   question is printed above the prompt and answered in the same input line (`y` + Enter). End of input
+   cannot be a queue value, so a sentinel is queued and **put back on every take** — otherwise the
+   second reader after Ctrl-D would see "nothing typed yet" instead of "no more input".
+   `AgentTerminal.hasPendingInput()` is the peek the turn loop peeks with; it deliberately does **not**
+   consume, so the line the interruption was triggered by is still there for the next `readLine` and
+   becomes the next message. The stop itself is `AgentRunner.start(...)` →
+   `runtime.executeWithHandle(...)`, whose handle closes the in-flight SSE stream (Atmosphere's own
+   "D-6 built-in hard-cancel"); that also replaced `turn()`'s hand-rolled worker thread, since
+   `executeWithHandle` dispatches on a virtual thread and returns at once. `awaitWithActivity` returns a
+   three-valued `TurnEnd` rather than a boolean, because *interrupted* must not be reported as the
+   *timed out* error the old `false` produced. **Order in that loop is load-bearing and a test pins the
+   behaviour**: the `activity.isPaused()` check comes first, so while an approval question is open a
+   typed line is its answer and not an interruption. **What this is not:** Claude Code injects a
+   mid-turn message into the running loop; `AgentExecutionContext` is a record whose request is built
+   once from `message()` + `history()`, with nothing to append to, so stop-and-resend is the achievable
+   equivalent — and it acts immediately instead of waiting out a tool loop.
+
 **The default system prompt is general-purpose on purpose — do not narrow it back.** Every model-facing
 text is a resource, not a Java literal: `src/main/resources/net/ladenthin/llama/atmosphere/` holds
 `system-prompt.txt`, `system-prompt-shell.txt`, `system-prompt-no-shell.txt` and `run-command-tool.txt`
