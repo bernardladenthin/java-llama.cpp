@@ -287,4 +287,42 @@ class LocalAgentTest {
         assertThat(note, containsString("3 matches in 2 files"));
         assertThat(LocalAgent.toolNote(List.of()), is(""));
     }
+
+    @Test
+    void compactionIsDecidedBeforeTheRequestAndOnlyWhenTheWindowIsKnown() {
+        AgentOptions on = AgentOptions.parse(new String[] {"--base-url", "u"});
+        assertThat("on by default", on.isAutoCompact(), is(true));
+        assertThat(on.getCompactAt(), is(AgentOptions.DEFAULT_COMPACT_AT));
+
+        // 70 % of 1000 tokens: 699 still fits, 700 does not
+        assertThat(LocalAgent.needsCompaction(on, 1000, 699), is(false));
+        assertThat(LocalAgent.needsCompaction(on, 1000, 700), is(true));
+
+        // an unknown window is never guessed at
+        assertThat(LocalAgent.needsCompaction(on, StatusLine.UNKNOWN_CONTEXT, 1_000_000), is(false));
+
+        AgentOptions off = AgentOptions.parse(new String[] {"--base-url", "u", "--auto-compact", "false"});
+        assertThat(off.isAutoCompact(), is(false));
+        assertThat(LocalAgent.needsCompaction(off, 1000, 999), is(false));
+
+        AgentOptions early = AgentOptions.parse(new String[] {"--base-url", "u", "--compact-at", "50"});
+        assertThat(LocalAgent.needsCompaction(early, 1000, 500), is(true));
+        assertThat(LocalAgent.needsCompaction(early, 1000, 499), is(false));
+    }
+
+    @Test
+    void aMalformedCompactionFlagIsRejectedWithItsReason() {
+        assertThat(
+                org.junit.jupiter.api.Assertions.assertThrows(
+                                IllegalArgumentException.class,
+                                () -> AgentOptions.parse(new String[] {"--base-url", "u", "--auto-compact", "maybe"}))
+                        .getMessage(),
+                containsString("Expected true or false"));
+        assertThat(
+                org.junit.jupiter.api.Assertions.assertThrows(
+                                IllegalArgumentException.class,
+                                () -> AgentOptions.parse(new String[] {"--base-url", "u", "--compact-at", "99"}))
+                        .getMessage(),
+                containsString("between 10 and 95"));
+    }
 }

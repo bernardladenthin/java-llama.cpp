@@ -6,6 +6,8 @@ Commands (everything else is sent to the model):
   /calls                 every tool call of this session, with its result  (/log)
   /mode [manual|auto]    show or set the approval mode              (/approve)
   /compact [focus]       summarize the history and continue with the summary
+                         (happens on its own once the context is ~70% full; --auto-compact false
+                         turns that off, --compact-at <percent> moves the threshold)
   /loop [--every 5m] [--max 20] [--check '<cmd>'] <task>
                          keep working on <task> until the model answers <<TASK_COMPLETE>>;
                          the state lives in AGENT-LOOP.md, not in the conversation

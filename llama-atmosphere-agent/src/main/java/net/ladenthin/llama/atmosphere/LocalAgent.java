@@ -263,6 +263,14 @@ public final class LocalAgent {
                     continue;
                 }
                 turnNumber++;
+                // Compact BEFORE the request that would overflow, not after it: afterwards the
+                // oversized request has already been sent, which is the one thing to avoid.
+                if (needsCompaction(
+                        options, contextSize, estimateTokens(systemPrompt(options), history) + line.length() / 4)) {
+                    terminal.line(terminal.ansi().yellow("(context nearly full — compacting first)"));
+                    inputTokens = compact(runner, fileSystem, history, "", terminal);
+                    estimated = true;
+                }
                 ConsoleSession completed = turn(
                         runner,
                         fileSystem,
@@ -602,6 +610,26 @@ public final class LocalAgent {
         return words.isEmpty()
                 ? "Thinking"
                 : words.get(java.util.concurrent.ThreadLocalRandom.current().nextInt(words.size()));
+    }
+
+    /**
+     * Whether the history has to be summarized before the next request is sent.
+     *
+     * <p>The threshold is on the low side ({@link AgentOptions#DEFAULT_COMPACT_AT} %) because the
+     * number it is compared against is usually an estimate, and because the model's reply has to fit
+     * next to the prompt. With an unknown context size — a foreign endpoint whose {@code /props} says
+     * nothing — nothing is decided at all rather than guessed.
+     *
+     * @param options the options, for the switch and the threshold
+     * @param contextSize the context window, or {@link StatusLine#UNKNOWN_CONTEXT}
+     * @param estimatedTokens what the next request is expected to carry
+     * @return {@code true} when the history should be summarized first
+     */
+    static boolean needsCompaction(AgentOptions options, int contextSize, long estimatedTokens) {
+        if (!options.isAutoCompact() || contextSize <= StatusLine.UNKNOWN_CONTEXT) {
+            return false;
+        }
+        return estimatedTokens * 100 >= (long) contextSize * options.getCompactAt();
     }
 
     /**

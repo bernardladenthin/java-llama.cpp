@@ -152,6 +152,7 @@ irrelevant: inference stays in the running server, the agent's JVM loads no mode
 | `--workspace <dir>` | directory the file tools are confined to, and where `run_command` starts | cwd |
 | `--allow-shell` | register `run_command`: any command line, starting in the workspace | off |
 | `--auto` | run tools without asking (otherwise every write and command is confirmed) | off |
+| `--auto-compact <bool>` / `--compact-at <percent>` | summarize the history before it overflows the context, and how full it may get first | `true` / `70` |
 | `--system <text>` | replace the default system prompt | built-in |
 | `--prompt <text>`, `-p` | one turn, then exit | interactive |
 | `--temperature <t>` / `--max-tokens <n>` | sampling / per-call budget | `0.2` / `2048` |
@@ -232,6 +233,15 @@ as real `tool_calls` messages (impossible — Atmosphere's `assembleMessages` re
 entry as `new ChatMessage(role, content)` and drops the rest). A system message mid-history would be
 cleaner, but Mistral's template requires strict user/assistant alternation and Gemma has no system
 role at all.
+
+**Auto-compaction.** Once the next request would fill more than `--compact-at` percent of the context
+(70 by default), the history is summarized **before that request is sent** rather than after it — the
+oversized request is the one thing worth avoiding, and afterwards it has already gone out. You see
+`(context nearly full — compacting first)`, then your message is answered with the summary as its
+context. `--auto-compact false` turns it off; `/compact` remains available at any time. With an
+unknown context size — a foreign endpoint whose `/props` answers nothing — nothing is triggered at
+all rather than guessed. The threshold sits below the ~85 % a hosted agent uses because our token
+number is usually an estimate and the reply still has to fit next to the prompt.
 
 **`/compact`** asks the model to summarize the conversation (goal, facts, work done, problems, state,
 next step; `/compact <focus>` adds an emphasis), then replaces the history with that summary. Use it

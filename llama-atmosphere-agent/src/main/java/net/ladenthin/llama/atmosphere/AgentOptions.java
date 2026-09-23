@@ -37,6 +37,18 @@ public final class AgentOptions {
     /** Context size for the in-process model ({@code --model}). */
     public static final int DEFAULT_CTX_SIZE = 8192;
 
+    /** Whether the history is summarized on its own before it overflows the context. */
+    public static final boolean DEFAULT_AUTO_COMPACT = true;
+
+    /**
+     * How full the context may get before that happens, in percent.
+     *
+     * <p>Lower than the ~85 % a hosted agent uses, and deliberately so: this number is usually an
+     * estimate from the text length (llama.cpp reports its own count only to clients that ask for it),
+     * and the reply still has to fit next to the prompt.
+     */
+    public static final int DEFAULT_COMPACT_AT = 70;
+
     /**
      * Log verbosity threshold of the in-process model ({@code --model}): llama.cpp's {@code -lv}
      * scale, {@code 0} output only, {@code 1} errors, {@code 2} warnings, {@code 3} info, {@code 4}
@@ -57,6 +69,8 @@ public final class AgentOptions {
     private final Path workspace;
     private final boolean allowShell;
     private final boolean auto;
+    private final boolean autoCompact;
+    private final int compactAt;
     private final double temperature;
     private final int maxTokens;
     private final int maxToolRounds;
@@ -76,6 +90,8 @@ public final class AgentOptions {
         this.workspace = b.workspace;
         this.allowShell = b.allowShell;
         this.auto = b.auto;
+        this.autoCompact = b.autoCompact;
+        this.compactAt = b.compactAt;
         this.temperature = b.temperature;
         this.maxTokens = b.maxTokens;
         this.maxToolRounds = b.maxToolRounds;
@@ -100,6 +116,8 @@ public final class AgentOptions {
                 case "-h", "--help" -> b.help = true;
                 case "--allow-shell" -> b.allowShell = true;
                 case "--auto" -> b.auto = true;
+                case "--auto-compact" -> b.autoCompact = booleanValue(args, ++i, a);
+                case "--compact-at" -> b.compactAt = percentValue(args, ++i, a);
                 case "--base-url" -> b.baseUrl = stripTrailingSlash(value(args, ++i, a));
                 case "--model" -> b.modelPath = value(args, ++i, a);
                 case "--ngl", "--gpu-layers" -> b.gpuLayers = intValue(args, ++i, a);
@@ -132,6 +150,25 @@ public final class AgentOptions {
             throw new IllegalArgumentException("Missing value for " + flag);
         }
         return args[index];
+    }
+
+    private static boolean booleanValue(String[] args, int index, String flag) {
+        String raw = value(args, index, flag).trim();
+        if ("true".equalsIgnoreCase(raw) || "yes".equalsIgnoreCase(raw) || "on".equalsIgnoreCase(raw)) {
+            return true;
+        }
+        if ("false".equalsIgnoreCase(raw) || "no".equalsIgnoreCase(raw) || "off".equalsIgnoreCase(raw)) {
+            return false;
+        }
+        throw new IllegalArgumentException("Expected true or false for " + flag + ", got: " + raw);
+    }
+
+    private static int percentValue(String[] args, int index, String flag) {
+        int percent = intValue(args, index, flag);
+        if (percent < 10 || percent > 95) {
+            throw new IllegalArgumentException(flag + " must be between 10 and 95, got: " + percent);
+        }
+        return percent;
     }
 
     private static int intValue(String[] args, int index, String flag) {
@@ -172,6 +209,9 @@ public final class AgentOptions {
                 "  --workspace <dir>       directory the file tools are confined to (default: cwd)",
                 "  --allow-shell           add the run_command tool (runs any command line, starting in the workspace)",
                 "  --auto                  run tools without asking (default: ask before writes and commands)",
+                "  --auto-compact <bool>   summarize the history before it overflows the context (default "
+                        + DEFAULT_AUTO_COMPACT + ")",
+                "  --compact-at <percent>  how full the context may get first (default " + DEFAULT_COMPACT_AT + ")",
                 "  --system <text>         replace the default system prompt",
                 "  --prompt <text>, -p     run one turn and exit (default: interactive; /exit to quit)",
                 "  --temperature <t>       sampling temperature (default " + DEFAULT_TEMPERATURE + ")",
@@ -264,6 +304,24 @@ public final class AgentOptions {
     }
 
     /**
+     * Whether the history is summarized before it overflows the context.
+     *
+     * @return {@code true} when auto-compaction is on
+     */
+    public boolean isAutoCompact() {
+        return autoCompact;
+    }
+
+    /**
+     * How full the context may get before the history is summarized.
+     *
+     * @return the threshold in percent
+     */
+    public int getCompactAt() {
+        return compactAt;
+    }
+
+    /**
      * Whether tool calls run without asking.
      *
      * @return {@code true} when {@code --auto} was given, i.e. the session starts in
@@ -341,7 +399,8 @@ public final class AgentOptions {
         return "AgentOptions{baseUrl=" + baseUrl + ", modelPath=" + modelPath + ", gpuLayers=" + gpuLayers
                 + ", ctxSize=" + ctxSize + ", logVerbosity=" + (verbose ? "verbose" : logVerbosity)
                 + ", modelId=" + modelId + ", workspace=" + workspace
-                + ", allowShell=" + allowShell + ", auto=" + auto + ", temperature=" + temperature + ", maxTokens="
+                + ", allowShell=" + allowShell + ", auto=" + auto + ", autoCompact=" + autoCompact + ", temperature="
+                + temperature + ", maxTokens="
                 + maxTokens
                 + ", maxToolRounds=" + maxToolRounds + ", prompt=" + (prompt == null ? "<interactive>" : "<set>")
                 + "}";
@@ -363,6 +422,8 @@ public final class AgentOptions {
         Path workspace = Paths.get("").toAbsolutePath().normalize();
         boolean allowShell;
         boolean auto;
+        boolean autoCompact = DEFAULT_AUTO_COMPACT;
+        int compactAt = DEFAULT_COMPACT_AT;
         double temperature = DEFAULT_TEMPERATURE;
         int maxTokens = DEFAULT_MAX_TOKENS;
         int maxToolRounds = DEFAULT_MAX_TOOL_ROUNDS;
