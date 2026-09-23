@@ -84,6 +84,9 @@ public final class LocalAgent {
     /** The spinner shown in the activity line. */
     private static final String ACTIVITY_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 
+    /** The whimsical words the activity line picks from, one per turn. */
+    static final String SPINNER_WORDS = "spinner-words.txt";
+
     private static final Duration SHELL_TIMEOUT = Duration.ofSeconds(120);
     private static final int SHELL_MAX_OUTPUT_CHARS = 20_000;
 
@@ -500,6 +503,8 @@ public final class LocalAgent {
             throws InterruptedException {
         long start = System.nanoTime();
         int frame = 0;
+        // one word per turn, not per frame: a word that changes ten times a second is noise
+        String word = spinnerWord();
         while (!session.await(ACTIVITY_INTERVAL)) {
             long seconds = (System.nanoTime() - start) / 1_000_000_000L;
             if (seconds > TURN_TIMEOUT.toSeconds()) {
@@ -507,6 +512,7 @@ public final class LocalAgent {
             }
             terminal.status(activityLine(
                     ACTIVITY_FRAMES.charAt(frame++ % ACTIVITY_FRAMES.length()),
+                    word,
                     seconds,
                     session.runningTool(),
                     session.runningSeconds(),
@@ -531,11 +537,30 @@ public final class LocalAgent {
      * @return the line
      */
     static String activityLine(
-            char frame, long seconds, @Nullable String runningTool, long toolSeconds, int toolCalls) {
-        String what = runningTool == null
-                ? "thinking… (" + seconds + "s"
-                : runningTool + "… (" + toolSeconds + "s of " + seconds + "s";
-        return frame + " " + what + (toolCalls == 0 ? "" : " · " + toolCalls + " tool calls") + ")";
+            char frame, String word, long seconds, @Nullable String runningTool, long toolSeconds, int toolCalls) {
+        String inside = runningTool == null ? seconds + "s" : runningTool + " " + toolSeconds + "s of " + seconds + "s";
+        return frame + " " + word + "… (" + inside + (toolCalls == 0 ? "" : " · " + toolCalls + " tool calls") + ")";
+    }
+
+    /**
+     * A word for the activity line, drawn once per turn.
+     *
+     * <p>Our own list ({@value #SPINNER_WORDS}), not the one Claude Code ships: that one is extracted
+     * from a proprietary binary, and the public collections of it are either unlicensed or
+     * CC BY-NC-SA — neither is compatible with this project's MIT licence or with REUSE. Edit the
+     * resource to change them; no Java involved.
+     *
+     * @return one word, or {@code "Thinking"} when the list cannot be read
+     */
+    static String spinnerWord() {
+        List<String> words = prompt(SPINNER_WORDS)
+                .lines()
+                .map(String::strip)
+                .filter(word -> !word.isEmpty())
+                .toList();
+        return words.isEmpty()
+                ? "Thinking"
+                : words.get(java.util.concurrent.ThreadLocalRandom.current().nextInt(words.size()));
     }
 
     /**

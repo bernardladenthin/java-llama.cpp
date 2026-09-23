@@ -244,11 +244,35 @@ class LocalAgentTest {
 
     @Test
     void theActivityLineNamesTheRunningToolSoALongBuildLooksAlive() {
-        // "working… (90s)" during a two-minute mvn test is indistinguishable from a hang.
+        // "working… (90s)" during a two-minute mvn test is indistinguishable from a hang, so the line
+        // names the tool and how long IT has been running, next to the turn's total.
         assertThat(
-                LocalAgent.activityLine('x', 12, "run_command", 9, 2), is("x run_command… (9s of 12s · 2 tool calls)"));
-        assertThat(LocalAgent.activityLine('x', 5, null, 0, 0), is("x thinking… (5s)"));
-        assertThat(LocalAgent.activityLine('x', 30, null, 0, 3), is("x thinking… (30s · 3 tool calls)"));
+                LocalAgent.activityLine('x', "Fettling", 12, "run_command", 9, 2),
+                is("x Fettling… (run_command 9s of 12s · 2 tool calls)"));
+        assertThat(LocalAgent.activityLine('x', "Fettling", 5, null, 0, 0), is("x Fettling… (5s)"));
+        assertThat(LocalAgent.activityLine('x', "Fettling", 30, null, 0, 3), is("x Fettling… (30s · 3 tool calls)"));
+    }
+
+    @Test
+    void theSpinnerWordsAreOursAndHarmless() {
+        List<String> words = LocalAgent.prompt(LocalAgent.SPINNER_WORDS)
+                .lines()
+                .map(String::strip)
+                .filter(word -> !word.isEmpty())
+                .toList();
+
+        assertThat("enough variety to not repeat every other turn", words.size() > 15, is(true));
+        assertThat("no duplicates", words.size(), is((int)
+                words.stream().distinct().count()));
+        for (String word : words) {
+            assertThat(word, word.matches("[A-Z][a-z-]+"), is(true));
+        }
+        // Claude Code's own list is extracted from a proprietary binary and the public copies of it are
+        // unlicensed or CC BY-NC-SA; none of its words may appear here.
+        for (String theirs : List.of("Razzmatazzing", "Clauding", "Flibbertigibbeting", "Simmering", "Vibing")) {
+            assertThat(words.contains(theirs), is(false));
+        }
+        assertThat(words.contains(LocalAgent.spinnerWord()), is(true));
     }
 
     @Test

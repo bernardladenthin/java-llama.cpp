@@ -265,8 +265,14 @@ the model: `--max` steps (20 by default), a two-hour wall-clock budget, a stall 
 in a row that write nothing and call no tool), and `--every <duration>` for a paced run. A loop needs
 the `auto` approval mode — it asks once and switches, or leaves you alone if you say no.
 
-**While a turn runs, the pinned line says what is happening**: `⠙ thinking… (5s)` while the model
-generates, and `⠙ run_command… (47s of 61s · 2 tool calls)` while a tool is executing. A build that
+**While a turn runs, the pinned line says what is happening**: `⠙ Fettling… (5s)` while the model
+generates, and `⠙ Fettling… (run_command 47s of 61s · 2 tool calls)` while a tool is executing. The
+word is drawn once per turn from
+[`spinner-words.txt`](src/main/resources/net/ladenthin/llama/atmosphere/spinner-words.txt) — our own
+two dozen, because Claude Code's list is extracted from a proprietary binary and the public copies of
+it are either unlicensed or CC BY-NC-SA, neither of which fits an MIT project. Edit the file to
+change them. The numbers stay next to the word on purpose: with a local model, "which tool, for how
+long" is worth more than the joke. A build that
 takes two minutes is otherwise indistinguishable from a hang. `run_command` additionally prints its
 output **line by line while it runs** (dimmed, `│ `-prefixed) instead of dumping it at the end — which
 also keeps the pipe drained; a process whose output nobody reads blocks once the buffer is full, and
