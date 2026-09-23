@@ -181,6 +181,27 @@ class JLineTerminalTest {
     }
 
     @Test
+    void theBlockIsBackOnScreenAfterAClear() throws Exception {
+        // Clearing erases the block along with everything else, and the pinned region is redrawn only
+        // when its content changes -- so after a clear it believes it is still on screen and draws
+        // nothing, leaving the bottom of the window empty.
+        try (Terminal terminal = terminal("go\n");
+                JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            // As in a session: the reader owns the screen before anything is drawn into the block.
+            console.readLine("ignored");
+            console.status(List.of("a distinctive state row"));
+            int before = screen().length();
+
+            console.clearScreen();
+
+            assertThat(
+                    "the block is drawn again after the wipe",
+                    screen().substring(before),
+                    containsString("a distinctive state row"));
+        }
+    }
+
+    @Test
     void controlLIsBoundToTheReadersOwnClearScreen() throws Exception {
         // 0x0C is Ctrl-L. It is bound by JLine itself, so /cls is the second way to do this rather
         // than the only one -- worth pinning, because a keymap option could silently take it away.

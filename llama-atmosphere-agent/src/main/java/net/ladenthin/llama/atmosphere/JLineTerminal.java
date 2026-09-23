@@ -70,6 +70,15 @@ public final class JLineTerminal implements AgentTerminal {
      */
     private final Object writing = new Object();
 
+    /**
+     * The block as it was last handed over, so it can be put back after the screen is wiped.
+     *
+     * <p>{@code Status} draws only what has changed, and a wipe does not change its content — it just
+     * removes it from the screen. Without keeping a copy there is nothing to redraw it from, and the
+     * bottom of the window stays empty until the next refresh happens to differ.
+     */
+    private volatile List<AttributedString> block = List.of();
+
     private volatile boolean closed;
     private @Nullable Thread input;
 
@@ -226,7 +235,10 @@ public final class JLineTerminal implements AgentTerminal {
             // around it would not. The blank rows put the input back on the last row, where clearing
             // to the top-left corner has just moved it away from.
             reader.printAbove(clear + System.lineSeparator().repeat(blankRows()));
-            status.redraw();
+            // reset() makes it forget what it believes is on screen; without that the update below is
+            // a no-op, because the content it would draw is the content it thinks is already there.
+            status.reset();
+            status.update(block);
         }
     }
 
@@ -334,6 +346,7 @@ public final class JLineTerminal implements AgentTerminal {
 
     private void updateStatus(List<String> lines) {
         if (lines.isEmpty()) {
+            block = List.of();
             status.update(List.of());
             return;
         }
@@ -345,13 +358,14 @@ public final class JLineTerminal implements AgentTerminal {
         // sized in lines, and everything below it is then drawn in the wrong place -- which is how a
         // long summary tore the block apart.
         int width = Math.max(10, terminal.getSize().getColumns() - 1);
-        List<AttributedString> block = new java.util.ArrayList<>();
-        block.add(new AttributedString(rule(), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
+        List<AttributedString> rows = new java.util.ArrayList<>();
+        rows.add(new AttributedString(rule(), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
         for (String line : lines) {
-            block.add(
+            rows.add(
                     new AttributedString(fit(line, width), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
         }
-        status.update(block);
+        block = List.copyOf(rows);
+        status.update(rows);
     }
 
     /**

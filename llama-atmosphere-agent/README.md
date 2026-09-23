@@ -323,7 +323,9 @@ Ctrl-L does the same, bound by the line reader itself rather than by this projec
 a keymap change cannot quietly take it away). `/clear` wipes the screen *and* drops the history: what is
 still on screen after a `/clear` is a conversation the model no longer has, which reads as if it were
 still in play. Neither touches the terminal emulator's own scrollback — what was written stays where
-the scrollbar can reach it.
+the scrollbar can reach it. The block at the bottom is redrawn from a kept copy afterwards: JLine draws
+the pinned region only when its *content* changes, and a wipe does not change the content, it only takes
+it off the screen — so asking it to redraw does nothing and the bottom of the window stays empty.
 
 **Why the screen is scrolled once at startup.** The line reader draws its prompt where the cursor is,
 which is directly after the last thing printed; only the block below it is pinned to the window. On a

@@ -2420,7 +2420,13 @@ are decisions, not details:
    `clear_screen` capability and sends it **through `printAbove`**, like every other write, then
    refills the blank rows and redraws the block. One trap, caught by the test rather than by reading:
    `getStringCapability` returns **terminfo source** (`\E[H\E[2J`, with the escape spelled out), so
-   writing it as it comes prints that text on the screen — `Curses.tputs` expands it. Ctrl-L already
+   writing it as it comes prints that text on the screen — `Curses.tputs` expands it. A second one, and
+   the reason the bar went missing after a `/cls`: **`Status.redraw()` writes nothing after a wipe.**
+   It draws what has *changed*, and a wipe changes nothing about its content — it only removes it from
+   the screen, which the object has no way of knowing. So the block is kept in a field as it was last
+   rendered and put back with `status.reset()` (forget what is believed to be on screen) followed by
+   `status.update(block)`; `redraw()` alone is a no-op, verified by putting it back and watching the
+   test go red. Ctrl-L already
    did this before the command existed, bound by JLine's own keymap; a test pins that too, so a keymap
    option cannot quietly remove it.
 
