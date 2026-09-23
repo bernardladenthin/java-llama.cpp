@@ -317,6 +317,14 @@ every Enter, because the reader erases exactly one line (hold Enter, get a colum
 leaves one rule per turn behind, travelling up the scrollback. One rule, below the input, is the shape
 that has neither problem.
 
+**Why the screen is scrolled once at startup.** The line reader draws its prompt where the cursor is,
+which is directly after the last thing printed; only the block below it is pinned to the window. On a
+half-empty screen that leaves the input floating in the middle with the block far below, and the two
+only meet once enough output has scrolled the cursor down by itself — which is why it looks right after
+a few turns and wrong at the start. Pushing the cursor to the last row before the first prompt makes
+that the state from the beginning. The cost is a screen of blank lines above the session: the
+alternative is taking over the whole screen (alternate buffer), which costs the scrollback.
+
 **Three threads write to this console** and all of them had to be brought into line, because a write that
 goes around the line reader scrolls the screen without JLine noticing and the pinned block ends up
 somewhere else than it believes — first as a stray `1H` drawn into the rule, then as no block at all.

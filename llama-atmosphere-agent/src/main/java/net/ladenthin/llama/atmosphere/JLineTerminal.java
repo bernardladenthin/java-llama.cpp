@@ -167,6 +167,7 @@ public final class JLineTerminal implements AgentTerminal {
         if (input != null) {
             return;
         }
+        scrollToBottom();
         input = new Thread(
                 () -> {
                     while (!closed) {
@@ -199,6 +200,33 @@ public final class JLineTerminal implements AgentTerminal {
                 "agent-input");
         input.setDaemon(true);
         input.start();
+    }
+
+    /**
+     * Push the cursor to the last usable row, once, before the first prompt is drawn.
+     *
+     * <p>The line reader draws its prompt wherever the cursor happens to be, which is directly after
+     * the last thing printed; only the status block is pinned to the bottom of the window. On a
+     * half-empty screen that leaves the input floating in the middle with the block far below it, and
+     * it only looks like one piece once enough output has scrolled the cursor down by itself — which
+     * is why it looked right after a few turns and wrong at the start.
+     *
+     * <p>Scrolling the screen once at startup makes that the state from the first prompt on: from
+     * then on every line printed scrolls, so the cursor stays on the last row for the rest of the
+     * session. The cost is a screen of blank lines above the session, which is what any program that
+     * wants its input at the bottom without taking over the whole screen has to pay.
+     */
+    private void scrollToBottom() {
+        int rows = terminal.getSize().getRows();
+        if (rows <= 1) {
+            return; // no size to speak of (a pipe, a terminal that will not say): nothing to scroll
+        }
+        synchronized (writing) {
+            for (int row = 0; row < rows - 1; row++) {
+                terminal.writer().println();
+            }
+            terminal.writer().flush();
+        }
     }
 
     /**

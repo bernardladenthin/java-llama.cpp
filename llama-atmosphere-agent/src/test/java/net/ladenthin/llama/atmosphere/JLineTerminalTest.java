@@ -140,6 +140,24 @@ class JLineTerminalTest {
     }
 
     @Test
+    void theScreenIsScrolledSoTheInputStartsAtTheBottom() throws Exception {
+        // The reader draws its prompt where the cursor is, and only the block below is pinned to the
+        // window. Without this the input floats after the output with the block far below it, and the
+        // two only meet once enough output has scrolled the cursor down on its own.
+        try (Terminal terminal = terminal("\n");
+                JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            console.readLine("ignored");
+
+            long blankLines =
+                    screen().chars().filter(character -> character == '\n').count();
+            assertThat(
+                    "the cursor is pushed to the last row before the first prompt",
+                    blankLines >= SIZE.getRows() - 1,
+                    is(true));
+        }
+    }
+
+    @Test
     void aMultiLineStringIsStillPrintedAsSeveralLines() throws Exception {
         try (Terminal terminal = terminal("\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {

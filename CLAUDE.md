@@ -2415,6 +2415,16 @@ are decisions, not details:
    interleaving happens *between* calls, inside JLine. A test that is green either way is worse than
    none, so it was deleted rather than kept.
 
+   **The screen is scrolled to the bottom once, before the first prompt** (`scrollToBottom`). The
+   reader draws its prompt at the cursor, i.e. after the last line printed, while only the status
+   block is pinned to the window — so on a half-empty screen the input floats in the middle with the
+   block far below it, and they only meet once output has scrolled the cursor down by itself. That is
+   why it looked right after a few turns and like an ordinary prompt at the start. Emitting
+   `rows - 1` newlines once makes it the state from the first prompt on; from then on every printed
+   line scrolls and the cursor stays on the last row. The cost is a screenful of blank lines above the
+   session, which is what a program that wants its input at the bottom *without* taking over the
+   screen has to pay.
+
    **A blank line must not count as pending input.** `hasPendingInput()` ignores blank lines but leaves
    them queued: counting them meant that holding Enter cancelled one turn per keystroke and produced
    nothing, while dropping them would break the approval prompt, where an empty answer means yes.
