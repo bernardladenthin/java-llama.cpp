@@ -214,14 +214,19 @@ public final class LocalAgent {
             int turnNumber = 0;
             String pendingNote = "";
             while (true) {
-                terminal.status(StatusLine.render(
-                        options.getWorkspace(),
-                        mode.get(),
-                        inputTokens,
-                        estimated,
-                        contextSize,
-                        tools.size(),
-                        options.getModelId()));
+                // Printed right above the prompt, not pinned: JLine pins to the bottom of the WINDOW,
+                // which in a tall terminal with little output sits far below the cursor and is easy to
+                // miss entirely. The pinned area is worth more while a turn runs (see awaitWithActivity),
+                // because output then fills the screen down to it.
+                terminal.line(terminal.ansi()
+                        .dim(StatusLine.render(
+                                options.getWorkspace(),
+                                mode.get(),
+                                inputTokens,
+                                estimated,
+                                contextSize,
+                                tools.size(),
+                                options.getModelId())));
                 String line = terminal.readLine("you> ");
                 if (line == null) {
                     return 0;

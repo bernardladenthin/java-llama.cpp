@@ -23,7 +23,6 @@ public final class PlainTerminal implements AgentTerminal {
     private final PrintStream out;
     private final @Nullable BufferedReader in;
     private final Ansi ansi;
-    private String status = "";
 
     /**
      * Create a plain console.
@@ -46,9 +45,6 @@ public final class PlainTerminal implements AgentTerminal {
 
     @Override
     public @Nullable String readLine(String prompt) {
-        if (!status.isEmpty()) {
-            out.println(ansi.dim(status));
-        }
         out.print(prompt);
         out.flush();
         return read();
@@ -64,7 +60,8 @@ public final class PlainTerminal implements AgentTerminal {
 
     @Override
     public void status(String text) {
-        this.status = text;
+        // Nothing can be pinned on a plain stream, and the caller already prints the status line above
+        // the prompt. Dropping it here is what keeps a piped session free of half-drawn spinner lines.
     }
 
     @Override

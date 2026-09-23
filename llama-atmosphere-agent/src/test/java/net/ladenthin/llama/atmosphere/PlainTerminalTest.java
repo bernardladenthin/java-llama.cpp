@@ -8,6 +8,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.nullValue;
 
 import java.io.BufferedReader;
@@ -48,16 +49,17 @@ class PlainTerminalTest {
     }
 
     @Test
-    void theStatusLineIsPrintedBeforeThePromptBecauseNothingCanBePinned() {
+    void aPinnedStatusIsDroppedRatherThanPrintedRepeatedly() {
+        // Nothing can be pinned on a plain stream: a spinner refreshed four times a second would
+        // otherwise produce four lines a second in a piped log. The caller prints the status itself,
+        // once, above the prompt.
         PlainTerminal terminal = terminal("x" + System.lineSeparator());
-        terminal.status("[manual · ctx 0/16k]");
+        terminal.status("⠙ Fettling… (5s)");
 
         terminal.readLine("you> ");
 
-        assertThat(written(), containsString("[manual · ctx 0/16k]"));
-        assertThat(
-                written().indexOf("[manual"),
-                is(org.hamcrest.Matchers.lessThan(written().indexOf("you> "))));
+        assertThat(written(), not(containsString("Fettling")));
+        assertThat(written(), containsString("you> "));
     }
 
     @Test
