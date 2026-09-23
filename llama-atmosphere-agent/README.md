@@ -186,7 +186,7 @@ unknown `/command` included — goes to the model:
 | `/status` | mode, context use, tools, model, workspace, history size |
 | `/tools` | the tools offered, and which of them ask first |
 | `/calls` (`/log`) | every tool call of this session with its result — the receipt |
-| `/mode [manual\|auto]` (`/approve`) | show or set the approval mode |
+| `/mode [manual\|auto]` (`/approve`) | show or set the approval mode (`⏸ manual` / `⏵⏵ auto`) |
 | `/compact [focus]` | summarize the conversation and continue from the summary |
 | `/loop [--every 5m] [--max 20] [--check '<cmd>'] <task>` | keep working on one task until it is done |
 | `/clear` (`/reset`, `/new`) | drop the history |
@@ -299,7 +299,7 @@ on Windows that buffer is about 4 KB.
 ```
 ────────────────────────────────────────────────────────────────────
 ⠙ Fettling… (run_command 47s of 61s · 2 tool calls)
-[/path/to/project · manual · ctx ~3.1k/16k · 9 tools · local-model]
+[/path/to/project · ⏸ manual · ctx ~3.1k/16k · 9 tools · local-model]
 ```
 
 The first row is what the agent is doing — `… waiting for input …` when it is your turn, the spinner
@@ -313,12 +313,28 @@ stream (piped input, a one-shot run) nothing can be pinned, so the state line is
 prompt instead and the activity row is dropped rather than repeated into the log.
 
 **The status line** above the prompt reads
-`[manual · ctx ~3.1k/16k · 9 tools · local-model]`: the approval mode, the context used out of the
-window, the number of tools and the model id. A `~` means the number is an estimate from the text
-length: llama.cpp reports token counts only to clients that ask for them
-(`stream_options.include_usage`), which Atmosphere's client does not. The window size comes from
-`--ctx-size` with `--model`, and from the server's `/props` with `--base-url`; when neither answers,
-the line shows the count alone.
+`[/path/to/project · ⏸ manual · ctx ~3.1k/16k · 9 tools · local-model]`: the workspace, the approval
+mode, the context used out of the window, the number of tools and the model id.
+
+The mode carries a glyph as well as its name — **`⏸ manual`** stops at every gated call, **`⏵⏵ auto`**
+runs through — so the one thing that decides whether the next command asks first is findable without
+reading the line.
+
+The context figure **moves while the turn runs**, not only at the next prompt: every tool round appends
+the call and its output to the conversation the next model call of the same turn is sent, so a turn that
+reads three files and runs a build can add thousands of tokens before you get the prompt back. A `~`
+means the number is an estimate from the text length: llama.cpp reports token counts only to clients
+that ask for them (`stream_options.include_usage`), which Atmosphere's client does not. The window size
+comes from `--ctx-size` with `--model`, and from the server's `/props` with `--base-url`; when neither
+answers, the line shows the count alone.
+
+**One printed line is one screen line.** A tool call and its result are shown as
+`● write_file {file_path=notes.md, content=# Notes  ## Build  … (4812 chars)}` — every argument is
+folded onto one line and cut *on its own* before the whole thing is cut, so a call carrying a whole
+file still shows the file *name*. The reason is not tidiness: the block at the bottom is reserved in
+*lines*, so a single "line" carrying twenty newlines moves the screen twenty rows further than the
+terminal accounted for and the block ends up drawn across the output — which is what a `write_file`
+call did. The model still receives every argument and every result in full; only the console is cut.
 
 **Colours and Markdown.** The answer is rendered line by line as it streams: headings, bullets,
 fenced code blocks and inline `**bold**` / `` `code` ``. Nothing is ever redrawn, so piping the output
@@ -346,7 +362,7 @@ Then, in this order:
 | `docker is running locally, list the images` | `? run_command {command=docker images}` and the prompt `[y]es / [n]o / [a]uto` |
 | answer `n` | the command does **not** run; the model is told it was cancelled and offers an alternative |
 | ask again, answer `y` | the command runs and its output goes back to the model |
-| `/mode auto` | the status line flips to `auto`; nothing asks any more |
+| `/mode auto` | the status line flips to `⏵⏵ auto`; nothing asks any more |
 | `explain Markdown with a heading, a list, bold text and a code block` | the answer arrives rendered: heading bold, `•` bullets, code in colour |
 | press ↑ | the previous line comes back; Tab after `/` completes the commands |
 | `/compact` | the conversation is summarized and replaces the history; `ctx` drops |

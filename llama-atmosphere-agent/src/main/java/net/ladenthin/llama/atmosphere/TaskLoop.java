@@ -179,6 +179,8 @@ public final class TaskLoop {
                         "budget of " + budget.toMinutes() + " min used up after " + (step - 1) + " steps", false);
             }
             terminal.line(terminal.ansi().dim("── loop step " + step + "/" + options.maxSteps() + " ──"));
+            // the status row is rendered on every redraw, and a lambda may not close over the counter
+            String stepLabel = "loop step " + step + "/" + options.maxSteps() + " · " + options.task();
 
             // A fresh history every step: the file is the memory, so the context cannot grow.
             ConsoleSession session = LocalAgent.turn(
@@ -189,7 +191,7 @@ public final class TaskLoop {
                     terminal,
                     callLog,
                     step,
-                    "loop step " + step + "/" + options.maxSteps() + " · " + options.task(),
+                    ignored -> stepLabel,
                     new TurnActivity());
             extra = "";
             if (session.failure() != null) {

@@ -53,7 +53,17 @@ class ConsoleFormattingTest {
         String line = StatusLine.render(
                 java.nio.file.Path.of("/tmp/ws"), ApprovalMode.MANUAL, 1234, false, 16384, 9, "local-model");
 
-        assertThat(line, containsString("ws · manual · ctx 1.2k/16k · 9 tools · local-model]"));
+        assertThat(line, containsString("ws · ⏸ manual · ctx 1.2k/16k · 9 tools · local-model]"));
+    }
+
+    @Test
+    void eachModeCarriesItsOwnSymbol() {
+        // the glyph is what makes the mode findable at a glance; the word stays next to it
+        assertThat(ApprovalMode.MANUAL.badge(), is("⏸ manual"));
+        assertThat(ApprovalMode.AUTO.badge(), is("⏵⏵ auto"));
+        assertThat(
+                StatusLine.render(java.nio.file.Path.of("/tmp/ws"), ApprovalMode.AUTO, 0, true, 0, 1, "m"),
+                containsString("⏵⏵ auto"));
     }
 
     @Test

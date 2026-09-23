@@ -2330,11 +2330,33 @@ are decisions, not details:
    prompt then reads a key in raw mode on that worker thread while the console thread redraws four
    times a second, so `TurnActivity` pauses the redraw for as long as the question is open. Reading the pipe incrementally is not only cosmetic — an unread pipe blocks the child once
    it is full, which on Windows is roughly 4 KB.
-8. **The context number in the status line is an estimate, marked `~`.** llama.cpp emits its usage
-   chunk only when the client sets `stream_options.include_usage`, and Atmosphere's client does not;
-   `ConsoleSession.usage()` takes the real count when one arrives, otherwise `LocalAgent.estimateTokens`
-   uses four characters per token. The window size is `--ctx-size` (in-process) or the server's
-   `/props` (`ServerProps`), and is omitted rather than guessed when neither answers.
+8. **The context number in the status line is an estimate, marked `~`, and it moves during the turn.**
+   llama.cpp emits its usage chunk only when the client sets `stream_options.include_usage`, and
+   Atmosphere's client does not; `ConsoleSession.usage()` takes the real count when one arrives,
+   otherwise `LocalAgent.estimateTokens` uses four characters per token. The window size is
+   `--ctx-size` (in-process) or the server's `/props` (`ServerProps`), and is omitted rather than
+   guessed when neither answers. **The state row is a `Function<ConsoleSession, String>`, not a
+   string**, and `awaitWithActivity` asks it again on every redraw: it used to be rendered once before
+   the turn and handed over fixed, so the figure stood still through every tool round and only moved
+   at the next `you>` — which is exactly when it no longer helps anyone decide whether to `/compact`.
+   `LocalAgent.liveTokens` adds `ConsoleSession.producedChars()` (streamed text **plus** every tool
+   call and result — all of it is in the prompt of the next model call of the *same* turn) to what the
+   request carried when it was sent, and yields to the server's own count as soon as one arrives.
+   `TaskLoop` passes a constant function, and its step label must be copied into a local first: a
+   lambda may not close over the loop counter.
+9. **One call to `AgentTerminal.line` is one screen line**, and `ConsoleSessionTest` is what defends
+   it. The pinned block is reserved in **lines**, so a single "line" carrying twenty newlines moves the
+   screen twenty rows further than the terminal accounted for and the block is then drawn across the
+   output — reported twice, both times from a `write_file` call whose `content` argument was the file.
+   `ConsoleSession.describeArguments` folds and cuts **each argument value on its own** (80 chars)
+   before cutting the whole rendering (200), so a call carrying a whole file still shows the file
+   *name*; results and errors are folded the same way. `JLineTerminal.line` splits a multi-line string
+   as a backstop for a caller that forgets. Only the console is cut — the model gets everything, and
+   `ConsoleSession.rounds()` keeps the full arguments for the history note and `/calls`.
+10. **The approval mode carries a glyph**: `ApprovalMode.symbol()` / `badge()` render `⏸ manual` and
+   `⏵⏵ auto` on the status line and in `/mode`, the transport symbols the established terminal agents
+   use for the same distinction. The word stays next to it; the glyph is what makes the one setting
+   that decides whether the next command asks first findable at a glance.
 
 **The default system prompt is general-purpose on purpose — do not narrow it back.** Every model-facing
 text is a resource, not a Java literal: `src/main/resources/net/ladenthin/llama/atmosphere/` holds

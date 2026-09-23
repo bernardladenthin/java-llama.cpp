@@ -75,6 +75,13 @@ public final class JLineTerminal implements AgentTerminal {
 
     @Override
     public void line(String text) {
+        if (text.indexOf('\n') >= 0 || text.indexOf('\r') >= 0) {
+            // One call must be one screen line: the status block is sized in lines, so a multi-line
+            // string handed over as "a line" desynchronises the reserved region. Callers fold their
+            // text themselves; this is the backstop for the ones that forget.
+            text.lines().forEach(this::line);
+            return;
+        }
         if (reading) {
             // Only while the line reader owns the screen: printAbove scrolls the text in above the
             // prompt and redraws that prompt afterwards. Calling it when nobody is reading redraws a

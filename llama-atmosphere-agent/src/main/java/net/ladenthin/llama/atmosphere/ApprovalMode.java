@@ -17,10 +17,16 @@ import java.util.Locale;
 public enum ApprovalMode {
 
     /** Ask before every gated tool call. */
-    MANUAL,
+    MANUAL("⏸"),
 
     /** Run every tool call without asking. */
-    AUTO;
+    AUTO("⏵⏵");
+
+    private final String symbol;
+
+    ApprovalMode(String symbol) {
+        this.symbol = symbol;
+    }
 
     /**
      * The lower-case name used on the console and in {@code /mode}.
@@ -29,6 +35,29 @@ public enum ApprovalMode {
      */
     public String label() {
         return name().toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * The glyph shown in front of the name on the status line.
+     *
+     * <p>Two transport symbols, the way the established terminal agents mark the same distinction:
+     * {@code ⏸} for a session that stops at every gated call, {@code ⏵⏵} for one that runs through. The
+     * name stays next to it — the glyph makes the mode findable at a glance, it does not replace the
+     * word.
+     *
+     * @return {@code "⏸"} or {@code "⏵⏵"}
+     */
+    public String symbol() {
+        return symbol;
+    }
+
+    /**
+     * Symbol and name together, as the status line and {@code /mode} print them.
+     *
+     * @return e.g. {@code "⏸ manual"}
+     */
+    public String badge() {
+        return symbol + " " + label();
     }
 
     /**

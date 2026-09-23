@@ -84,6 +84,9 @@ public final class LocalAgent {
     /** How often the activity line is refreshed while a turn runs. */
     private static final Duration ACTIVITY_INTERVAL = Duration.ofMillis(250);
 
+    /** The usual rule of thumb, used wherever a token count has to be guessed from text. */
+    private static final int CHARS_PER_TOKEN = 4;
+
     /** The spinner shown in the activity line. */
     private static final String ACTIVITY_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 
@@ -207,7 +210,16 @@ public final class LocalAgent {
                     : ServerProps.contextSize(baseUrl, options.getApiKey());
 
             if (options.getPrompt() != null) {
-                return turn(runner, fileSystem, options.getPrompt(), history, terminal, callLog, 1, "", activity)
+                return turn(
+                                                runner,
+                                                fileSystem,
+                                                options.getPrompt(),
+                                                history,
+                                                terminal,
+                                                callLog,
+                                                1,
+                                                ignored -> "",
+                                                activity)
                                         .failure()
                                 == null
                         ? 0
@@ -274,6 +286,8 @@ public final class LocalAgent {
                     inputTokens = compact(runner, fileSystem, history, "", terminal);
                     estimated = true;
                 }
+                // What the request carries before the model has answered anything; the turn adds to it.
+                long baseTokens = estimateTokens(systemPrompt(options), history) + line.length() / CHARS_PER_TOKEN;
                 ConsoleSession completed = turn(
                         runner,
                         fileSystem,
@@ -284,7 +298,14 @@ public final class LocalAgent {
                         terminal,
                         callLog,
                         turnNumber,
-                        status,
+                        running -> StatusLine.render(
+                                options.getWorkspace(),
+                                mode.get(),
+                                liveTokens(baseTokens, running),
+                                running.inputTokens() == 0,
+                                contextSize,
+                                tools.size(),
+                                options.getModelId()),
                         activity);
                 pendingNote = toolNote(completed.rounds());
                 estimated = completed.inputTokens() == 0;
@@ -373,7 +394,7 @@ public final class LocalAgent {
             AgentTerminal terminal,
             ToolCallLog callLog,
             int turnNumber,
-            String stateLine,
+            java.util.function.Function<ConsoleSession, String> stateLine,
             TurnActivity activity)
             throws InterruptedException {
         ConsoleSession session = new ConsoleSession(terminal, fileSystem);
@@ -392,7 +413,7 @@ public final class LocalAgent {
                 "agent-turn");
         worker.setDaemon(true);
         worker.start();
-        boolean finished = awaitWithActivity(session, terminal, stateLine, activity);
+        boolean finished = awaitWithActivity(session, terminal, () -> stateLine.apply(session), activity);
         worker.join(Duration.ofSeconds(5).toMillis());
         history.add(ChatMessage.user(message));
         callLog.add(turnNumber, session.rounds());
@@ -506,7 +527,7 @@ public final class LocalAgent {
                         return inputTokens;
                     }
                 }
-                terminal.line("approval mode: " + mode.get().label());
+                terminal.line("approval mode: " + mode.get().badge());
             }
             case STATUS -> {
                 terminal.line(StatusLine.render(
@@ -540,13 +561,17 @@ public final class LocalAgent {
      *
      * @param session the running turn
      * @param terminal the console
-     * @param stateLine the second line of the block, kept in place so it does not change height
+     * @param stateLine the second row of the block, asked again on every redraw so the context figure
+     *     moves while the turn runs rather than standing still until the next prompt
      * @param activity paused while an approval question is open
      * @return {@code true} when the turn finished within {@link #TURN_TIMEOUT}
      * @throws InterruptedException if interrupted while waiting
      */
     private static boolean awaitWithActivity(
-            ConsoleSession session, AgentTerminal terminal, String stateLine, TurnActivity activity)
+            ConsoleSession session,
+            AgentTerminal terminal,
+            java.util.function.Supplier<String> stateLine,
+            TurnActivity activity)
             throws InterruptedException {
         long start = System.nanoTime();
         int frame = 0;
@@ -568,9 +593,9 @@ public final class LocalAgent {
                             session.runningTool(),
                             session.runningSeconds(),
                             session.toolCalls()),
-                    stateLine));
+                    stateLine.get()));
         }
-        terminal.status(List.of(IDLE_LINE, stateLine));
+        terminal.status(List.of(IDLE_LINE, stateLine.get()));
         return true;
     }
 
@@ -664,7 +689,26 @@ public final class LocalAgent {
         for (ChatMessage message : history) {
             characters += message.content() == null ? 0 : message.content().length();
         }
-        return characters / 4;
+        return characters / CHARS_PER_TOKEN;
+    }
+
+    /**
+     * The context figure while a turn is running.
+     *
+     * <p>The count shown before the turn started is not the count during it: every tool round appends
+     * the call and its output to the conversation the next model call of the same turn is sent, so a
+     * turn that reads three files and runs a build can add thousands of tokens before the prompt comes
+     * back. The status row used to be rendered once and handed to the redraw loop as a fixed string, so
+     * it stood still for the whole turn and only moved at the next {@code you>} — which is precisely
+     * when it no longer matters.
+     *
+     * @param baseTokens what the request carried when it was sent
+     * @param session the running turn
+     * @return the server's own count once it reported one, else the base plus what the turn produced
+     */
+    static long liveTokens(long baseTokens, ConsoleSession session) {
+        long reported = session.inputTokens();
+        return reported > 0 ? reported : baseTokens + session.producedChars() / CHARS_PER_TOKEN;
     }
 
     /**
@@ -718,7 +762,7 @@ public final class LocalAgent {
                 "agent-compact");
         worker.setDaemon(true);
         worker.start();
-        if (!awaitWithActivity(session, terminal, "/compact", new TurnActivity())
+        if (!awaitWithActivity(session, terminal, () -> "/compact", new TurnActivity())
                 || session.text().isBlank()) {
             terminal.line("(compact failed; history kept)");
             return 0;

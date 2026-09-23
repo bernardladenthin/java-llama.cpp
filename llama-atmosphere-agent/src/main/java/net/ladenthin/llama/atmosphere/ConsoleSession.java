@@ -29,6 +29,12 @@ public final class ConsoleSession implements StreamingSession {
 
     private static final int RESULT_PREVIEW_CHARS = 400;
 
+    /** How much of a call's arguments the console shows; the model still gets them in full. */
+    private static final int ARGUMENT_PREVIEW_CHARS = 200;
+
+    /** How much of a single argument value survives, so one big one cannot hide the others. */
+    private static final int ARGUMENT_VALUE_PREVIEW_CHARS = 80;
+
     private final AgentTerminal terminal;
     private final Ansi ansi;
     private final MarkdownConsole markdown;
@@ -108,6 +114,25 @@ public final class ConsoleSession implements StreamingSession {
     }
 
     /**
+     * Everything this turn has produced so far, in characters: the streamed text plus every tool call
+     * with its result.
+     *
+     * <p>All of it is in the prompt of the <em>next</em> model call of the same turn — a tool round
+     * appends the call and its output to the conversation the server is sent. So this is what makes the
+     * context grow while the turn runs, and the status line adds it to the count it showed before the
+     * turn started instead of standing still until the next prompt.
+     *
+     * @return the character count
+     */
+    public long producedChars() {
+        long chars = text.length();
+        for (ToolRound round : rounds) {
+            chars += round.argumentsJson().length() + round.result().length();
+        }
+        return chars;
+    }
+
+    /**
      * The input tokens of the last model call of this turn.
      *
      * @return the count, or {@code 0} when the endpoint reported no usage
@@ -158,7 +183,7 @@ public final class ConsoleSession implements StreamingSession {
                 rounds.add(new ToolRound(start.toolName(), String.valueOf(start.arguments()), ""));
                 markdown.flush();
                 terminal.line(ansi.green("●") + " " + ansi.bold(start.toolName()) + " "
-                        + ansi.dim(String.valueOf(start.arguments())));
+                        + ansi.dim(describeArguments(start.arguments())));
             }
             case AiEvent.ToolResult result -> {
                 runningTool = null;
@@ -168,7 +193,7 @@ public final class ConsoleSession implements StreamingSession {
             case AiEvent.ToolError error -> {
                 runningTool = null;
                 recordResult("error: " + error.error());
-                terminal.line(ansi.red("  ↳ error: " + error.error()));
+                terminal.line(ansi.red("  ↳ error: " + cut(String.valueOf(error.error()), RESULT_PREVIEW_CHARS)));
             }
             default -> StreamingSession.super.emit(event);
         }
@@ -204,10 +229,51 @@ public final class ConsoleSession implements StreamingSession {
     }
 
     private static String preview(String value) {
-        String oneLine = value.replace("\r\n", "\n").replace('\n', ' ');
-        return oneLine.length() <= RESULT_PREVIEW_CHARS
-                ? oneLine
-                : oneLine.substring(0, RESULT_PREVIEW_CHARS) + " … (" + value.length() + " chars)";
+        return cut(value, RESULT_PREVIEW_CHARS);
+    }
+
+    /**
+     * The arguments of a call, short enough for one console line.
+     *
+     * <p>Every value is cut <em>on its own</em> before the whole thing is. Cutting only the rendered
+     * map would let one big argument push the others out of the line — a {@code write_file} call would
+     * then show half of the file and not the name of the file, which is the one thing worth seeing.
+     *
+     * @param arguments what the model passed, usually a map
+     * @return one line
+     */
+    private static String describeArguments(Object arguments) {
+        if (!(arguments instanceof Map<?, ?> map)) {
+            return cut(String.valueOf(arguments), ARGUMENT_PREVIEW_CHARS);
+        }
+        StringBuilder rendered = new StringBuilder("{");
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (rendered.length() > 1) {
+                rendered.append(", ");
+            }
+            rendered.append(entry.getKey())
+                    .append('=')
+                    .append(cut(String.valueOf(entry.getValue()), ARGUMENT_VALUE_PREVIEW_CHARS));
+        }
+        return cut(rendered.append('}').toString(), ARGUMENT_PREVIEW_CHARS);
+    }
+
+    /**
+     * Fold a value onto one line and cut it.
+     *
+     * <p>Both halves matter. The cut keeps a whole file out of the scrollback, and the folding keeps
+     * the pinned block intact: that block is sized in <em>lines</em>, so a single printed "line"
+     * carrying twenty newlines moves the screen twenty rows further than the terminal accounted for,
+     * and the block ends up drawn across the output. A {@code write_file} call whose arguments contain
+     * the file did exactly that.
+     *
+     * @param value the raw text
+     * @param max how many characters survive
+     * @return one line, with a note about what was left out
+     */
+    private static String cut(String value, int max) {
+        String oneLine = value.replace("\r\n", " ").replace('\n', ' ').replace('\r', ' ');
+        return oneLine.length() <= max ? oneLine : oneLine.substring(0, max) + " … (" + value.length() + " chars)";
     }
 
     /**

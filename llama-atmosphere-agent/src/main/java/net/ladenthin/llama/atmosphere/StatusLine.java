@@ -54,7 +54,7 @@ public final class StatusLine {
             int contextSize,
             int tools,
             String modelId) {
-        return "[" + shorten(workspace) + " · " + mode.label() + " · " + context(inputTokens, estimated, contextSize)
+        return "[" + shorten(workspace) + " · " + mode.badge() + " · " + context(inputTokens, estimated, contextSize)
                 + " · " + tools + " tools · " + modelId + "]";
     }
 
