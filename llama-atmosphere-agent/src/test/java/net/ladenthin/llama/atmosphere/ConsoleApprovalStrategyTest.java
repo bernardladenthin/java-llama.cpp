@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Test;
 class ConsoleApprovalStrategyTest {
 
     private final ByteArrayOutputStream console = new ByteArrayOutputStream();
+    private final TurnActivity activity = new TurnActivity();
 
     private PendingApproval approval() {
         return new PendingApproval(
@@ -42,7 +43,7 @@ class ConsoleApprovalStrategyTest {
         AgentTerminal terminal =
                 new PlainTerminal(new PrintStream(console, true, StandardCharsets.UTF_8), reader, Ansi.PLAIN);
         // The strategy never touches the session; Atmosphere passes it only so a UI can emit events.
-        return new ConsoleApprovalStrategy(mode, terminal, typed != null).awaitApproval(approval(), null);
+        return new ConsoleApprovalStrategy(mode, terminal, typed != null, activity).awaitApproval(approval(), null);
     }
 
     private String consoleText() {
@@ -116,6 +117,19 @@ class ConsoleApprovalStrategyTest {
         assertThat(
                 ConsoleApprovalStrategy.gated(java.util.List.of("ls", "write_file", ShellTool.TOOL_NAME)),
                 is(java.util.List.of("write_file", ShellTool.TOOL_NAME)));
+    }
+
+    @Test
+    void theSpinnerIsPausedWhileTheQuestionIsOpen() {
+        // The turn runs on its own thread while the console thread redraws the status block four times
+        // a second. A redraw arriving in the middle of a raw-mode key read writes escape sequences
+        // across the question, so the prompt owns the terminal until it has an answer.
+        assertThat(activity.isPaused(), is(false));
+
+        ask(new AtomicReference<>(ApprovalMode.MANUAL), "y" + System.lineSeparator());
+
+        assertThat("and hands it back afterwards", activity.isPaused(), is(false));
+        assertThat(consoleText(), containsString("allow?"));
     }
 
     private static ToolDefinition stub(String name) {

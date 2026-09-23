@@ -195,13 +195,16 @@ public final class LocalAgent {
             }
             // One-shot runs have nobody at the keyboard, so the strategy gets no console and denies
             // gated calls unless --auto was passed (see ConsoleApprovalStrategy).
-            runner.approval(new ConsoleApprovalStrategy(mode, terminal, interactive), ConsoleApprovalStrategy.policy());
+            TurnActivity activity = new TurnActivity();
+            runner.approval(
+                    new ConsoleApprovalStrategy(mode, terminal, interactive, activity),
+                    ConsoleApprovalStrategy.policy());
             int contextSize = options.getModelPath() != null
                     ? options.getCtxSize()
                     : ServerProps.contextSize(baseUrl, options.getApiKey());
 
             if (options.getPrompt() != null) {
-                return turn(runner, fileSystem, options.getPrompt(), history, terminal, callLog, 1, "")
+                return turn(runner, fileSystem, options.getPrompt(), history, terminal, callLog, 1, "", activity)
                                         .failure()
                                 == null
                         ? 0
@@ -270,7 +273,8 @@ public final class LocalAgent {
                         terminal,
                         callLog,
                         turnNumber,
-                        status);
+                        status,
+                        activity);
                 pendingNote = toolNote(completed.rounds());
                 estimated = completed.inputTokens() == 0;
                 inputTokens = estimated ? estimateTokens(systemPrompt(options), history) : completed.inputTokens();
@@ -358,11 +362,27 @@ public final class LocalAgent {
             AgentTerminal terminal,
             ToolCallLog callLog,
             int turnNumber,
-            String stateLine)
+            String stateLine,
+            TurnActivity activity)
             throws InterruptedException {
         ConsoleSession session = new ConsoleSession(terminal, fileSystem);
-        runner.run(message, history, session);
-        boolean finished = awaitWithActivity(session, terminal, stateLine);
+        // Atmosphere's execute() is synchronous: it returns only once the whole turn, tool rounds
+        // included, has finished. Running it on this thread would leave nobody to drive the activity
+        // line -- which is exactly what happened: the block sat on "… waiting for input …" for the
+        // entire turn, so the spinner and its word were never seen.
+        Thread worker = new Thread(
+                () -> {
+                    try {
+                        runner.run(message, history, session);
+                    } catch (RuntimeException e) {
+                        session.error(e);
+                    }
+                },
+                "agent-turn");
+        worker.setDaemon(true);
+        worker.start();
+        boolean finished = awaitWithActivity(session, terminal, stateLine, activity);
+        worker.join(Duration.ofSeconds(5).toMillis());
         history.add(ChatMessage.user(message));
         callLog.add(turnNumber, session.rounds());
         if (!session.text().isEmpty()) {
@@ -510,10 +530,12 @@ public final class LocalAgent {
      * @param session the running turn
      * @param terminal the console
      * @param stateLine the second line of the block, kept in place so it does not change height
+     * @param activity paused while an approval question is open
      * @return {@code true} when the turn finished within {@link #TURN_TIMEOUT}
      * @throws InterruptedException if interrupted while waiting
      */
-    private static boolean awaitWithActivity(ConsoleSession session, AgentTerminal terminal, String stateLine)
+    private static boolean awaitWithActivity(
+            ConsoleSession session, AgentTerminal terminal, String stateLine, TurnActivity activity)
             throws InterruptedException {
         long start = System.nanoTime();
         int frame = 0;
@@ -523,6 +545,9 @@ public final class LocalAgent {
             long seconds = (System.nanoTime() - start) / 1_000_000_000L;
             if (seconds > TURN_TIMEOUT.toSeconds()) {
                 return false;
+            }
+            if (activity.isPaused()) {
+                continue; // an approval question owns the terminal until it is answered
             }
             terminal.status(List.of(
                     activityLine(
@@ -632,8 +657,19 @@ public final class LocalAgent {
         int before = history.size();
         terminal.line("(compacting " + before + " messages …)");
         ConsoleSession session = new ConsoleSession(terminal, fileSystem);
-        runner.runWithoutTools(instructions, List.copyOf(history), session, COMPACT_SYSTEM_PROMPT);
-        if (!awaitWithActivity(session, terminal, "/compact") || session.text().isBlank()) {
+        Thread worker = new Thread(
+                () -> {
+                    try {
+                        runner.runWithoutTools(instructions, List.copyOf(history), session, COMPACT_SYSTEM_PROMPT);
+                    } catch (RuntimeException e) {
+                        session.error(e);
+                    }
+                },
+                "agent-compact");
+        worker.setDaemon(true);
+        worker.start();
+        if (!awaitWithActivity(session, terminal, "/compact", new TurnActivity())
+                || session.text().isBlank()) {
             terminal.line("(compact failed; history kept)");
             return 0;
         }

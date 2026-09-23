@@ -2322,8 +2322,13 @@ are decisions, not details:
    user message**, which every template accepts.
    Pinned by `LocalAgentTest.aToolCallStaysInTheHistorySoTheNextTurnSeesItHappened`.
    **Live feedback while a turn runs** (`LocalAgent.activityLine`, `ShellTool`'s line-by-line output):
-   the pinned line names the running tool and its own elapsed time, and shell output is printed as it
-   arrives. Reading the pipe incrementally is not only cosmetic — an unread pipe blocks the child once
+   the block's first row names the running tool and its own elapsed time, and shell output is printed
+   as it arrives. **The turn runs on its own thread, and it has to:** Atmosphere's `execute()` is
+   synchronous — it returns only once the whole turn including every tool round is done — so running
+   it on the console thread leaves nobody to refresh the line, and the block sits on
+   "… waiting for input …" for the entire turn (exactly the symptom that was reported). The approval
+   prompt then reads a key in raw mode on that worker thread while the console thread redraws four
+   times a second, so `TurnActivity` pauses the redraw for as long as the question is open. Reading the pipe incrementally is not only cosmetic — an unread pipe blocks the child once
    it is full, which on Windows is roughly 4 KB.
 8. **The context number in the status line is an estimate, marked `~`.** llama.cpp emits its usage
    chunk only when the client sets `stream_options.include_usage`, and Atmosphere's client does not;

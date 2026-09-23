@@ -48,6 +48,7 @@ public final class ConsoleApprovalStrategy implements ApprovalStrategy {
     private final AgentTerminal terminal;
     private final boolean interactive;
     private final Ansi ansi;
+    private final TurnActivity activity;
 
     /**
      * Create the strategy.
@@ -56,12 +57,15 @@ public final class ConsoleApprovalStrategy implements ApprovalStrategy {
      *     {@code [a]} answer)
      * @param terminal where the question is asked
      * @param interactive whether anybody can answer at all ({@code false} for a one-shot run)
+     * @param activity paused while the question is open, so the spinner does not redraw over it
      */
-    public ConsoleApprovalStrategy(AtomicReference<ApprovalMode> mode, AgentTerminal terminal, boolean interactive) {
+    public ConsoleApprovalStrategy(
+            AtomicReference<ApprovalMode> mode, AgentTerminal terminal, boolean interactive, TurnActivity activity) {
         this.mode = mode;
         this.terminal = terminal;
         this.interactive = interactive;
         this.ansi = terminal.ansi();
+        this.activity = activity;
     }
 
     /**
@@ -99,6 +103,15 @@ public final class ConsoleApprovalStrategy implements ApprovalStrategy {
             return ApprovalResolution.deny();
         }
         terminal.line(ansi.yellow("? " + approval.toolName()) + " " + ansi.dim(preview(approval)));
+        activity.pause();
+        try {
+            return ask(approval);
+        } finally {
+            activity.resume();
+        }
+    }
+
+    private ApprovalResolution ask(PendingApproval approval) {
         while (true) {
             String answer = terminal.readKey(ansi.yellow("  allow? [y]es / [n]o / [a]uto (no more questions): "));
             if (answer == null) {

@@ -189,7 +189,8 @@ public final class TaskLoop {
                     terminal,
                     callLog,
                     step,
-                    "loop step " + step + "/" + options.maxSteps() + " · " + options.task());
+                    "loop step " + step + "/" + options.maxSteps() + " · " + options.task(),
+                    new TurnActivity());
             extra = "";
             if (session.failure() != null) {
                 return new Outcome("step " + step + " failed: " + session.failure(), false);

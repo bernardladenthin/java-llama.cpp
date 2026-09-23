@@ -71,7 +71,9 @@ class ApprovalWireTest {
                         64,
                         10)
                 .retryPolicy(RetryPolicy.NONE)
-                .approval(new ConsoleApprovalStrategy(mode, terminal(typed), true), ConsoleApprovalStrategy.policy());
+                .approval(
+                        new ConsoleApprovalStrategy(mode, terminal(typed), true, new TurnActivity()),
+                        ConsoleApprovalStrategy.policy());
     }
 
     private ConsoleSession session() {
