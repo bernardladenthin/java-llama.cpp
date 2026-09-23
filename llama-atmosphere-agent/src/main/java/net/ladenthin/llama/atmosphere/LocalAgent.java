@@ -559,8 +559,12 @@ public final class LocalAgent {
             case HELP -> prompt(HELP_TEXT).lines().forEach(terminal::line);
             case CLEAR -> {
                 history.clear();
+                // The screen goes with it: what is still on it is a conversation the model no longer
+                // has, which reads as if it were still in play.
+                terminal.clearScreen();
                 terminal.line("(history cleared)");
             }
+            case CLS -> terminal.clearScreen();
             case CALLS -> callLog.render().lines().forEach(terminal::line);
             case TOOLS -> {
                 terminal.line("tools: " + String.join(", ", runner.toolNames()));

@@ -202,6 +202,43 @@ public final class JLineTerminal implements AgentTerminal {
         input.start();
     }
 
+    @Override
+    public void clearScreen() {
+        String capability = terminal.getStringCapability(InfoCmp.Capability.clear_screen);
+        if (capability == null) {
+            return; // a terminal that cannot clear: better nothing than a guessed escape sequence
+        }
+        // The capability is terminfo source, not the sequence itself: it reads "\E[H\E[2J", with the
+        // escape spelled out. Writing it as it comes prints that text on the screen, which is what a
+        // test caught. Curses expands it the way terminal.puts would, but into a string this class can
+        // hand to the reader instead of writing behind its back.
+        StringBuilder expanded = new StringBuilder();
+        org.jline.utils.Curses.tputs(expanded, capability);
+        String clear = expanded.toString();
+        synchronized (writing) {
+            if (input == null) {
+                terminal.writer().print(clear);
+                terminal.writer().flush();
+                return;
+            }
+            // Through the reader, like every other write once it exists: printAbove leaves the prompt
+            // redrawn and the reader's idea of the cursor intact, which writing the escape sequence
+            // around it would not. The blank rows put the input back on the last row, where clearing
+            // to the top-left corner has just moved it away from.
+            reader.printAbove(clear + System.lineSeparator().repeat(blankRows()));
+            status.redraw();
+        }
+    }
+
+    /**
+     * How many rows to fill so the cursor ends up on the last usable one.
+     *
+     * @return the count, never negative
+     */
+    private int blankRows() {
+        return Math.max(0, terminal.getSize().getRows() - 1);
+    }
+
     /**
      * Push the cursor to the last usable row, once, before the first prompt is drawn.
      *
@@ -217,12 +254,8 @@ public final class JLineTerminal implements AgentTerminal {
      * wants its input at the bottom without taking over the whole screen has to pay.
      */
     private void scrollToBottom() {
-        int rows = terminal.getSize().getRows();
-        if (rows <= 1) {
-            return; // no size to speak of (a pipe, a terminal that will not say): nothing to scroll
-        }
         synchronized (writing) {
-            for (int row = 0; row < rows - 1; row++) {
+            for (int row = 0; row < blankRows(); row++) {
                 terminal.writer().println();
             }
             terminal.writer().flush();

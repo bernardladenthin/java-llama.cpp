@@ -72,6 +72,18 @@ public interface AgentTerminal extends AutoCloseable {
     boolean pinsStatus();
 
     /**
+     * Wipe the window, leaving the input line and the block at the bottom.
+     *
+     * <p>The scrollback of the terminal emulator is not touched — what was written stays where the
+     * scrollbar can reach it. This only clears what is on screen, the way {@code clear} or Ctrl-L does.
+     *
+     * <p>A plain stream has no screen to clear, so the default does nothing.
+     */
+    default void clearScreen() {
+        // nothing to wipe on a stream
+    }
+
+    /**
      * Whether the user has already typed a line that nobody has read yet.
      *
      * <p>This is what makes the prompt useful during a turn: a console that keeps reading while the

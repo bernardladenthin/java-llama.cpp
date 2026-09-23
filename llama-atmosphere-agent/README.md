@@ -189,7 +189,8 @@ unknown `/command` included — goes to the model:
 | `/mode [manual\|auto]` (`/approve`) | show or set the approval mode (`⏸ manual` / `⏵⏵ auto`) |
 | `/compact [focus]` | summarize the conversation and continue from the summary |
 | `/loop [--every 5m] [--max 20] [--check '<cmd>'] <task>` | keep working on one task until it is done |
-| `/clear` (`/reset`, `/new`) | drop the history |
+| `/clear` (`/reset`, `/new`) | drop the history, and wipe the screen with it |
+| `/cls` (`/clear-screen`) | wipe the screen, keep the conversation — Ctrl-L does the same |
 | `/exit` (`/quit`) | leave |
 
 **The prompt.** On a real terminal the agent uses [JLine](https://github.com/jline/jline3): arrow keys
@@ -316,6 +317,13 @@ prompt or part of the scrollback — and both were tried and both were wrong. In
 every Enter, because the reader erases exactly one line (hold Enter, get a column of rules). As output it
 leaves one rule per turn behind, travelling up the scrollback. One rule, below the input, is the shape
 that has neither problem.
+
+**Wiping the screen.** `/cls` clears the window and leaves the input and the block at the bottom —
+Ctrl-L does the same, bound by the line reader itself rather than by this project (a test pins that, so
+a keymap change cannot quietly take it away). `/clear` wipes the screen *and* drops the history: what is
+still on screen after a `/clear` is a conversation the model no longer has, which reads as if it were
+still in play. Neither touches the terminal emulator's own scrollback — what was written stays where
+the scrollbar can reach it.
 
 **Why the screen is scrolled once at startup.** The line reader draws its prompt where the cursor is,
 which is directly after the last thing printed; only the block below it is pinned to the window. On a

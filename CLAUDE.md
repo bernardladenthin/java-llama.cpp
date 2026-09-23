@@ -2415,6 +2415,15 @@ are decisions, not details:
    interleaving happens *between* calls, inside JLine. A test that is green either way is worse than
    none, so it was deleted rather than kept.
 
+   **`/cls` wipes the screen, `/clear` wipes it and the history.** `AgentTerminal.clearScreen()`
+   defaults to doing nothing (a stream has no screen); `JLineTerminal` expands the terminal's
+   `clear_screen` capability and sends it **through `printAbove`**, like every other write, then
+   refills the blank rows and redraws the block. One trap, caught by the test rather than by reading:
+   `getStringCapability` returns **terminfo source** (`\E[H\E[2J`, with the escape spelled out), so
+   writing it as it comes prints that text on the screen — `Curses.tputs` expands it. Ctrl-L already
+   did this before the command existed, bound by JLine's own keymap; a test pins that too, so a keymap
+   option cannot quietly remove it.
+
    **The screen is scrolled to the bottom once, before the first prompt** (`scrollToBottom`). The
    reader draws its prompt at the cursor, i.e. after the last line printed, while only the status
    block is pinned to the window — so on a half-empty screen the input floats in the middle with the

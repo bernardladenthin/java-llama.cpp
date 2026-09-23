@@ -12,7 +12,8 @@ Commands (everything else is sent to the model):
   /loop [--every 5m] [--max 20] [--check '<cmd>'] <task>
                          keep working on <task> until the model answers <<TASK_COMPLETE>>;
                          the state lives in AGENT-LOOP.md, not in the conversation
-  /clear                 drop the history                           (/reset, /new)
+  /clear                 drop the history, and wipe the screen with it  (/reset, /new)
+  /cls                   wipe the screen, keep the conversation    (/clear-screen, or Ctrl-L)
   /exit                  leave                                      (/quit)
 
 The input line sits in the box at the bottom and is there while the agent works: you can type at

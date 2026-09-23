@@ -7,6 +7,7 @@ package net.ladenthin.llama.atmosphere;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
 import java.io.ByteArrayInputStream;
@@ -37,6 +38,9 @@ class JLineTerminalTest {
 
     /** As many columns as a narrow window, so a wrapped line would be obvious. */
     private static final Size SIZE = new Size(60, 10);
+
+    /** What a cleared screen looks like on the wire: erase the whole display. */
+    private static final String ERASE_DISPLAY = "\u001b[2J";
 
     private final ByteArrayOutputStream emitted = new ByteArrayOutputStream();
 
@@ -154,6 +158,36 @@ class JLineTerminalTest {
                     "the cursor is pushed to the last row before the first prompt",
                     blankLines >= SIZE.getRows() - 1,
                     is(true));
+        }
+    }
+
+    @Test
+    void clearingTheScreenWipesItAndLeavesTheReaderWorking() throws Exception {
+        try (Terminal terminal = terminal("first\nsecond\n");
+                JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            assertThat(console.readLine("ignored"), is("first"));
+            int before = screen().length();
+
+            console.clearScreen();
+
+            // The capability is terminfo source ("\E[H\E[2J"), so what must reach the screen is the
+            // expanded form. Writing the capability as it comes prints it as text, which is what this
+            // assertion caught the first time it ran.
+            assertThat(
+                    terminal.getStringCapability(org.jline.utils.InfoCmp.Capability.clear_screen), is(notNullValue()));
+            assertThat("erase display reached the screen", screen().substring(before), containsString(ERASE_DISPLAY));
+            assertThat("and the prompt still reads afterwards", console.readLine("ignored"), is("second"));
+        }
+    }
+
+    @Test
+    void controlLIsBoundToTheReadersOwnClearScreen() throws Exception {
+        // 0x0C is Ctrl-L. It is bound by JLine itself, so /cls is the second way to do this rather
+        // than the only one -- worth pinning, because a keymap option could silently take it away.
+        try (Terminal terminal = terminal("\u000cstill here\n");
+                JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            assertThat(console.readLine("ignored"), is("still here"));
+            assertThat("Ctrl-L cleared rather than being typed into the line", screen(), containsString(ERASE_DISPLAY));
         }
     }
 

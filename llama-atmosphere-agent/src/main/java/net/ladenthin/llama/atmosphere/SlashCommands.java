@@ -28,8 +28,10 @@ public record SlashCommands(Command command, String arguments) {
     public enum Command {
         /** Print the command overview. */
         HELP("/help", "/?", "/commands"),
-        /** Drop the conversation history. */
+        /** Drop the conversation history, and wipe the screen with it. */
         CLEAR("/clear", "/reset", "/new"),
+        /** Wipe the screen, keeping the conversation. */
+        CLS("/cls", "/clear-screen"),
         /** Summarize the history and continue with the summary; the argument steers the summary. */
         COMPACT("/compact"),
         /** Keep working on one task until it is done; see {@link TaskLoop}. */
