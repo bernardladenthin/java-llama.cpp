@@ -1,0 +1,12 @@
+Work on this task, one step at a time:
+
+{task}
+
+The file {file} is your memory between steps — the conversation itself is not kept, so anything you do not write down is lost. Read that file first. Then do exactly ONE concrete step: make the change, run the command, check the result. Afterwards update {file}: tick off what you finished, note what you learned or what failed, and write down what the next step is.
+
+When the whole task is finished and you have verified it, answer with exactly this line and nothing else:
+
+<<TASK_COMPLETE>>
+
+Never write that line for any other reason, never write it while planning, and never explain it.
+{check_hint}

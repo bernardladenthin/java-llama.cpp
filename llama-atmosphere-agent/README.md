@@ -15,9 +15,10 @@ offline:
   you start yourself, or the GGUF loaded **in this process**.
 - **Agent:** [Atmosphere](https://github.com/Atmosphere/atmosphere)'s built-in OpenAI-compatible
   runtime (`org.atmosphere:atmosphere-ai`): streaming, the model→tool→model loop, and its
-  workspace-confined file tools (`ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`,
-  `delete`, `rename`). Driven **headless** — no Spring Boot, no servlet container, no `@Agent`
-  scanning — through `BuiltInAgentRuntime`.
+  workspace-confined file tools (`ls`, `write_file`, `glob`, `delete`, `rename`). Driven **headless**
+  — no Spring Boot, no servlet container, no `@Agent` scanning — through `BuiltInAgentRuntime`.
+  `read_file`, `edit_file` and `grep` are this project's own (see [Tools](#tools)), on the same
+  workspace-confined filesystem.
 - **Shell:** an opt-in `run_command` tool (`--allow-shell`) that runs any command line through the
   system shell (`cmd.exe` on Windows, `sh` elsewhere).
 
@@ -27,10 +28,10 @@ run it. Its `pom.xml` pins `llama.version` to the release these instructions des
 pass `-Dllama.version=…` to run against another core, e.g. a `-SNAPSHOT` before a release.
 
 > [!WARNING]
-> With `--allow-shell` the model runs **any** command it decides to run, with **your** user's
-> rights, without asking — deleting files, pushing to git, stopping containers included. Start it on
-> a machine and account you are willing to hand to the model, and point `--workspace` at a copy of
-> a project, not your only one. Without the flag it can only use the file tools inside `--workspace`.
+> `--allow-shell` lets the model run **any** command with **your** user's rights. By default it asks
+> first (`[y]es / [n]o / [a]uto` per call) and only writes and commands are gated — but `--auto`, and
+> the `[a]` answer, turn that off for the rest of the session. Point `--workspace` at a copy of a
+> project, not your only one.
 
 ## Getting started from scratch
 
@@ -102,9 +103,9 @@ Metal with the default jar already. The root README's classifier table lists eve
        -Dexec.args="--base-url http://127.0.0.1:8080/v1 --workspace /path/to/project --allow-shell"
    ```
 
-A `you>` prompt appears. Type a request; the answer streams as it is generated, and every tool call
-and its result are printed as `⚙ read_file {path=…}` / `↳ …` lines. `/clear` drops the history,
-`/exit` quits.
+A `you>` prompt appears, with a status line pinned to the bottom of the window. The answer streams as it is generated, and every
+tool call and its result are printed as `● read_file {path=…}` / `↳ …` lines. See
+[Commands, approval and the status line](#commands-approval-and-the-status-line).
 
 A single turn without the REPL:
 
@@ -150,6 +151,8 @@ irrelevant: inference stays in the running server, the agent's JVM loads no mode
 | `--log-verbosity <n>` / `--verbose` | llama.cpp log threshold for `--model` (1 errors, 2 warnings, 3 info, 4 trace, 5 debug) / log everything | `2` / off |
 | `--workspace <dir>` | directory the file tools are confined to, and where `run_command` starts | cwd |
 | `--allow-shell` | register `run_command`: any command line, starting in the workspace | off |
+| `--auto` | run tools without asking (otherwise every write and command is confirmed) | off |
+| `--auto-compact <bool>` / `--compact-at <percent>` | summarize the history before it overflows the context, and how full it may get first | `true` / `70` |
 | `--system <text>` | replace the default system prompt | built-in |
 | `--prompt <text>`, `-p` | one turn, then exit | interactive |
 | `--temperature <t>` / `--max-tokens <n>` | sampling / per-call budget | `0.2` / `2048` |
@@ -171,6 +174,404 @@ UTF-8 (llama.cpp calls `SetConsoleOutputCP(CP_UTF8)`), while the JVM keeps encod
 code page it saw at startup, so umlauts and emoji in the answer would turn into `�` / `?`; the
 project's `.mvn/jvm.config` pins `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` for the `mvn`
 JVM so both sides agree.
+
+### Two consoles: the full one, and `--plain`
+
+There are two, and both stay. The default is the **full console** described below: a block pinned to
+the bottom of the window, an input line that is there while the agent works, a spinner, single-key
+navigation. It positions the cursor, so it needs a terminal that reports its size and understands the
+sequences.
+
+`--plain` chooses the **line-oriented console** instead. It only ever appends lines: the status is
+printed as an ordinary line before the prompt and scrolls away with everything else, there is no
+pinned block and no spinner, and nothing on screen is ever rewritten. That makes a session readable
+when it is piped, logged, recorded, or carried by anything that forwards lines rather than a screen:
+
+```bash
+mvn -q compile exec:java -Dexec.args="--base-url http://127.0.0.1:8080/v1 --plain" | tee session.log
+```
+
+The same console is what the agent falls back to on its own when there is no usable terminal — a pipe,
+a `dumb` terminal, an editor's run window — so `--plain` only *forces* what would otherwise be
+detected. Note that a normal SSH session does **not** need it: a remote terminal reports its size and
+handles cursor control like a local one. It is for the cases where that is not true.
+
+What the line-oriented console gives up, so the choice is an informed one:
+
+| | full (default) | `--plain` |
+|---|---|---|
+| input while the agent works | yes, and a typed line stops the turn | no, the prompt appears between turns |
+| status | pinned at the bottom | printed once before each prompt |
+| activity / spinner | yes | dropped rather than repeated into the log |
+| approvals | `y` + Enter | `y` + Enter |
+| history, Tab completion, Ctrl-L, Shift+Tab | yes | no |
+| correct when the output is a file | — | yes |
+
+### Asking again, and your own system prompt
+
+`/retry` (`/again`) sends the last question once more and **drops the answer that came back** from the
+conversation first. That is the whole point: leaving it in place would show the model what it said
+last time, and a model that sees its own answer repeats it. Before anything has been asked it says so
+rather than sending an empty turn.
+
+`--system-file <file>` replaces the system prompt with the content of a file — the same as `--system`
+but without fighting the shell over quoting and newlines. It is read at startup, so a wrong path is a
+usage error immediately instead of a surprise on the first turn.
+
+### Multi-line input
+
+A console sends on Enter, so pasting a stack trace or a function into the prompt would turn it into
+several questions. A line that is exactly `"""` opens a block and the next one closes it; everything
+between is **one** message, newlines and all:
+
+```
+you> """
+...  public int add(int a, int b) {
+...      return a - b;
+...  }
+...  """
+```
+
+Chosen over a key combination because it works in both consoles, survives a paste — the fences arrive
+as part of the pasted text — and asks nothing of the terminal. End of input inside an unfinished block
+ends the session without sending it.
+
+### The session transcript
+
+What was said is recorded separately from the conversation the model is sent, because those are two
+different things: `/compact` **rewrites** the model's conversation (a summary replaces the turns it
+summarises) and it never carried a timestamp at all. The transcript only grows.
+
+- `/save [name]` writes it into the workspace, one stamped line per entry:
+  `[2026-09-24 18:41:07] you: what does hello.txt say?`. Without a name the file is named after the
+  time.
+- `--transcript <file>` appends every entry **as it is said**, so a session that is killed still
+  leaves what it had. A failure to write is swallowed on purpose: a record that exists to survive a
+  bad ending must not cause one.
+- `/compact` keeps the record and notes that it happened. `/clear` empties it, because that command
+  means "forget this session" and leaving the text behind would make that untrue.
+- `/calls` is the shorter, tool-only receipt and is unchanged.
+
+`/load <file>` (`/resume`) reads one back **as the conversation**: the questions and the answers
+become messages again, so the model can be asked to carry on rather than to start over. Tool calls and
+session notes stay in the record but are **not** replayed — a tool result outside its round is not
+something a chat template has a place for, and inventing one would be worse than letting the model
+call the tool again. A path without a directory is resolved in the workspace, so `/load session.txt`
+finds what `/save session.txt` wrote; a file that cannot be read, or that is not a transcript, says so
+and changes nothing.
+
+It is a list, not a map keyed by the timestamp: a tool result and the answer that follows it regularly
+land in the same millisecond, and a map would keep one and drop the other silently. Insertion order
+already is time order.
+
+### Commands, approval and the status line
+
+A line that starts with `/` and names a command is answered by the agent itself; anything else — an
+unknown `/command` included — goes to the model:
+
+| Command | |
+|---|---|
+| `/help` (`/?`, `/commands`) | the overview below |
+| `/status` | mode, context use, tools, model, workspace, history size |
+| `/tools` | the tools offered, and which of them ask first |
+| `/calls` (`/log`) | every tool call of this session with its result — the receipt |
+| `/mode [manual\|auto]` (`/approve`) | show or set the approval mode (`⏸ manual` / `⏵⏵ auto`) |
+| `/compact [focus]` | summarize the conversation and continue from the summary |
+| `/loop [--every 5m] [--max 20] [--check '<cmd>'] <task>` | keep working on one task until it is done |
+| `/clear` (`/reset`, `/new`) | drop the history, and wipe the screen with it |
+| `/cls` (`/clear-screen`) | wipe the screen, keep the conversation — Ctrl-L does the same |
+| `/exit` (`/quit`) | leave |
+
+**The prompt.** On a real terminal the agent uses [JLine](https://github.com/jline/jline3): arrow keys
+and the usual editing shortcuts work, ↑ recalls earlier lines, Tab completes the commands, Ctrl-C
+drops the current line and Ctrl-D leaves. The status line and the rule above it stay at the bottom
+while the answer scrolls past, and while a turn runs that line shows what is going on
+(`⠙ working… (12s · 2 tool calls)`). With piped input, in one-shot mode and wherever JLine finds no
+terminal, everything falls back to plain `println`/`readLine` — same features, no cursor tricks.
+
+**Approval.** In the default `manual` mode every tool that writes or runs a command —
+`run_command`, `write_file`, `edit_file`, `delete`, `rename` — asks before it runs:
+
+```
+● run_command {command=rm -rf build}
+? run_command {command=rm -rf build}
+  allow? [y]es / [n]o / [a]uto (no more questions):
+```
+
+`[y]` runs it once, `[n]` cancels it *and tells the model*, so it replans instead of assuming the
+command ran, `[a]` switches to `auto` for the rest of the session (`/mode manual` switches back). On a
+terminal a single key is enough — no Enter; Enter alone also means yes, and Ctrl-C means no.
+Reading tools (`ls`, `read_file`, `glob`, `grep`) never ask. **In one-shot mode (`--prompt`) nobody
+can answer, so a gated call is denied** — pass `--auto` to run unattended. The gate itself is
+Atmosphere's (`ToolApprovalPolicy` + `ApprovalStrategy`); the agent only supplies the question and
+the answer.
+
+**`/calls` is the receipt.** It lists every tool call of the session, one line each, with the
+arguments and a short result. Use it when an answer sounds too good: a model that has drifted starts
+*describing* work — "the tests passed, the jar was created" — while calling nothing at all. The
+scrollback reads the same either way; this list only grows when something really ran.
+
+To make that drift less likely, each turn's calls ride along with the **next** message as a short
+record. Without it the history holds only the user's messages and the model's own prose, and a small
+model then continues the pattern it sees — prose. This is not theoretical: in a real session a 4B
+model invented JUnit tests, a Maven build and a `.bat` script it had never written, three turns in a
+row.
+
+Two placements were tried and discarded, both visible failures: in front of the assistant's answer
+(the model copied it into its next reply, so the record appeared as the first line of an answer), and
+as real `tool_calls` messages (impossible — Atmosphere's `assembleMessages` rebuilds every history
+entry as `new ChatMessage(role, content)` and drops the rest). A system message mid-history would be
+cleaner, but Mistral's template requires strict user/assistant alternation and Gemma has no system
+role at all.
+
+**Auto-compaction.** Once the next request would fill more than `--compact-at` percent of the context
+(70 by default), the history is summarized **before that request is sent** rather than after it — the
+oversized request is the one thing worth avoiding, and afterwards it has already gone out. You see
+`(context nearly full — compacting first)`, then your message is answered with the summary as its
+context. `--auto-compact false` turns it off; `/compact` remains available at any time. With an
+unknown context size — a foreign endpoint whose `/props` answers nothing — nothing is triggered at
+all rather than guessed. The threshold sits below the ~85 % a hosted agent uses because our token
+number is usually an estimate and the reply still has to fit next to the prompt.
+
+Calling `/compact` twice in a row answers `(the history is already a summary — nothing to compact)`:
+after a compaction the history *is* the summary plus its acknowledgement, so summarizing it again
+returns the same text for another model call. It also re-sends a byte-identical prompt, which is what
+makes llama.cpp log `need to evaluate at least 1 token for each active slot` — a harmless note from
+the server about a prompt it has already cached in full, not an error on our side.
+
+**`/compact`** asks the model to summarize the conversation (goal, facts, work done, problems, state,
+next step; `/compact <focus>` adds an emphasis), then replaces the history with that summary. Use it
+when the context fills up. Note the history only ever held the user texts and the final answers —
+tool rounds are not replayed across turns — so nothing else is lost.
+
+**`/loop`** keeps working on one task without you typing anything between steps:
+
+```
+/loop --check 'mvn -q test' make ShellToolTest pass on Windows
+```
+
+Every step sends the **same** message — the task verbatim plus "read `AGENT-LOOP.md`, do one concrete
+step, write down what happened". The conversation history is **dropped between steps**: the file in
+the workspace is the memory, so the context never grows and the loop can run for a long time. The
+loop ends when a line of the answer is exactly
+
+```
+<<TASK_COMPLETE>>
+```
+
+A marker *mentioned* inside a sentence does not count, only a line of its own. This is a text marker
+rather than a "done" tool on purpose: small local models produce a well-formed tool call far less
+reliably than a line of text — mini-SWE-agent reaches its SWE-bench results with a plain sentinel and
+no tool-call API at all, and Claude Code's own ralph-wiggum plugin matches an exact string too.
+
+With `--check '<command>'` the marker is only believed when that command succeeds; otherwise its
+output goes into the next step. That is the cheapest defence against a small model declaring victory
+after one edit. Four limits stop a runaway loop, all enforced by the agent, none of them trusted to
+the model: `--max` steps (20 by default), a two-hour wall-clock budget, a stall detector (three steps
+in a row that write nothing and call no tool), and `--every <duration>` for a paced run. A loop needs
+the `auto` approval mode — it asks once and switches, or leaves you alone if you say no.
+
+**While a turn runs, the pinned line says what is happening**: `⠙ Fettling… (5s)` while the model
+generates, and `⠙ Fettling… (run_command 47s of 61s · 2 tool calls)` while a tool is executing. The
+word is drawn once per turn from
+[`spinner-words.txt`](src/main/resources/net/ladenthin/llama/atmosphere/spinner-words.txt) — our own
+two dozen, because Claude Code's list is extracted from a proprietary binary and the public copies of
+it are either unlicensed or CC BY-NC-SA, neither of which fits an MIT project. Edit the file to
+change them. The numbers stay next to the word on purpose: with a local model, "which tool, for how
+long" is worth more than the joke. A build that
+takes two minutes is otherwise indistinguishable from a hang. `run_command` additionally prints its
+output **line by line while it runs** (dimmed, `│ `-prefixed) instead of dumping it at the end — which
+also keeps the pipe drained; a process whose output nobody reads blocks once the buffer is full, and
+on Windows that buffer is about 4 KB.
+
+**The bottom of the window is a pinned block**: the input line, then a rule, then what the agent is
+doing and the session state.
+
+```
+› add a test for the parser
+… the answer …
+> 
+────────────────────────────────────────────────────────────────────
+⠙ Fettling… (run_command 47s of 61s · 2 tool calls)
+[/path/to/project · ⏸ manual · ctx ~3.1k/16k · 9 tools · local-model]
+```
+
+There is no `you>`: the block already says where the input is. On Enter the input line is erased and
+echoed above as `› your text`, so the transcript keeps what was asked. (`!` history expansion is
+switched off in the same place, or a request like `git commit -m "fixed!"` would be rewritten silently.)
+
+**Why there is no second rule above the input**, although that is what this looked like at first: JLine's
+pinned region sits below the prompt and never above it, so a rule above the input can only be part of the
+prompt or part of the scrollback — and both were tried and both were wrong. In the prompt it survives
+every Enter, because the reader erases exactly one line (hold Enter, get a column of rules). As output it
+leaves one rule per turn behind, travelling up the scrollback. One rule, below the input, is the shape
+that has neither problem.
+
+**Wiping the screen.** `/cls` clears the window and leaves the input and the block at the bottom —
+Ctrl-L does the same, bound by the line reader itself rather than by this project (a test pins that, so
+a keymap change cannot quietly take it away). `/clear` wipes the screen *and* drops the history: what is
+still on screen after a `/clear` is a conversation the model no longer has, which reads as if it were
+still in play. Neither touches the terminal emulator's own scrollback — what was written stays where
+the scrollbar can reach it. The block at the bottom is redrawn from a kept copy afterwards: JLine draws
+the pinned region only when its *content* changes, and a wipe does not change the content, it only takes
+it off the screen — so asking it to redraw does nothing and the bottom of the window stays empty.
+
+**Why the screen is scrolled once at startup.** The line reader draws its prompt where the cursor is,
+which is directly after the last thing printed; only the block below it is pinned to the window. On a
+half-empty screen that leaves the input floating in the middle with the block far below, and the two
+only meet once enough output has scrolled the cursor down by itself — which is why it looks right after
+a few turns and wrong at the start. Pushing the cursor to the last row before the first prompt makes
+that the state from the beginning. The cost is a screen of blank lines above the session: the
+alternative is taking over the whole screen (alternate buffer), which costs the scrollback.
+
+**The status line is icons and values**: `📁` workspace, the mode glyph, `📊` context,
+`🔧` tools, and `🤖` for a model this process loaded or `🌐` for one reached over the
+network. Each is an icon, a space, its value. Rows are cut by **screen columns** rather than characters,
+because an icon is one character and two columns — counting characters lets a row come out wider than
+the window, wrap, and push the pinned block out of place.
+
+**Resizing the window** is left to JLine, which resizes the pinned region and re-cuts its rows itself.
+A handler of our own was tried for a reported row of `> > > > >` after dragging the window smaller and
+made it worse: the line reader installs its own handler for as long as it is reading, so ours only
+added a second writer on the terminal while the reader was redrawing. A test drives the real path — a
+size change plus the resize signal, with the reader reading as it does all session — across shrinking,
+growing and a changed row count, and every one draws exactly one prompt. The leftover `> ` row that is
+still reported is therefore not produced there; the remaining suspect is the console reflowing its own
+screen buffer on a resize, which moves lines the program never wrote again and which nothing on this
+side can reproduce. `/cls` or Ctrl-L cleans it up.
+
+**Three threads write to this console** and all of them had to be brought into line, because a write that
+goes around the line reader scrolls the screen without JLine noticing and the pinned block ends up
+somewhere else than it believes — first as a stray `1H` drawn into the rule, then as no block at all.
+The turn thread and the console thread share a lock; llama.cpp's own log, which with `--model` goes to
+stderr and therefore straight past everything, is routed through the console with `LlamaModel.setLogger`.
+
+
+**On scrolling.** The block stays put while the agent writes: JLine keeps those lines out of the
+terminal's scroll region. It cannot stay while *you* scroll the terminal's own scrollback with the
+mouse — then the whole viewport moves and no program on this side of the terminal has a say. Staying
+visible through that needs the alternate screen buffer, i.e. a full-screen application, which would
+trade away the scrollback and the "written once, never redrawn" property this console is built on. The
+established terminal agents behave the same way.
+
+On a plain stream (piped input, a one-shot run) nothing can be pinned, so the state line is printed
+above the prompt instead and the activity row is dropped rather than repeated into the log.
+
+**The status line** above the prompt reads
+`[/path/to/project · ⏸ manual · ctx ~3.1k/16k · 9 tools · local-model]`: the workspace, the approval
+mode, the context used out of the window, the number of tools and the model id.
+
+The mode carries a glyph as well as its name — **`⏸ manual`** stops at every gated call, **`⏵⏵ auto`**
+runs through — so the one thing that decides whether the next command asks first is findable without
+reading the line. **Shift+Tab at the prompt switches it**, without typing `/mode`; the status line
+updates on the key. The shortcut needs a real terminal and works between turns (while the prompt is
+waiting), which is when the mode matters — during a turn nobody is reading keys. Where the terminal
+does not send backtab, the startup line simply does not offer it and `/mode` still works.
+
+The context figure **moves while the turn runs**, not only at the next prompt: every tool round appends
+the call and its output to the conversation the next model call of the same turn is sent, so a turn that
+reads three files and runs a build can add thousands of tokens before you get the prompt back. A `~`
+means the number is an estimate from the text length: llama.cpp reports token counts only to clients
+that ask for them (`stream_options.include_usage`), which Atmosphere's client does not. The window size
+comes from `--ctx-size` with `--model`, and from the server's `/props` with `--base-url`; when neither
+answers, the line shows the count alone.
+
+**The prompt is at the bottom the whole time, and you can type while the agent works.** One thread owns
+the keyboard and sits in the line reader for the entire session; everything else is written *above* the
+prompt. A line typed **during** a turn **stops that turn** — Atmosphere's cancellable entry point closes
+the HTTP stream the model is answering on — and is then sent as the next message, with whatever the model
+had already produced kept in the history. That is not quite what Claude Code does (it feeds the message
+into the running loop); Atmosphere builds its request once from the message plus the history and has no
+place to append to, so stop-and-resend is the honest equivalent, and it is immediate rather than waiting
+out a tool loop that may run for minutes.
+
+The cost is one keystroke: the approval question is answered in that same input line, so it is
+`y` + Enter rather than a bare `y`. A single-key read needs a second reader on the same keyboard, and two
+readers on one terminal take turns at random. While a question is open the typing-interrupts rule is
+suspended, so an answer is an answer and not an interruption.
+
+**One printed line is one screen line.** A tool call and its result are shown as
+`● write_file {file_path=notes.md, content=# Notes  ## Build  … (4812 chars)}` — every argument is
+folded onto one line and cut *on its own* before the whole thing is cut, so a call carrying a whole
+file still shows the file *name*. The reason is not tidiness: the block at the bottom is reserved in
+*lines*, so a single "line" carrying twenty newlines moves the screen twenty rows further than the
+terminal accounted for and the block ends up drawn across the output — which is what a `write_file`
+call did. The model still receives every argument and every result in full; only the console is cut.
+
+**Colours and Markdown.** The answer is rendered line by line as it streams: headings, bullets,
+fenced code blocks and inline `**bold**` / `` `code` ``. Nothing is ever redrawn, so piping the output
+into a file stays correct. Colour is on only on a real terminal and obeys `NO_COLOR`, `TERM=dumb`,
+`CLICOLOR=0` and `CLICOLOR_FORCE=1`. On the classic Windows `conhost.exe` escape sequences may show up
+literally unless `HKCU\Console\VirtualTerminalLevel` is 1 — Windows Terminal needs nothing.
+
+### Try it
+
+Start the agent with shell access (add `-Dllama.classifier=…` and `--ngl 99` for a GPU; leave both
+out to stay on the CPU):
+
+```bash
+mvn -q compile exec:java \
+    -Dexec.args="--model models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ctx-size 16384 --workspace /path/to/project --allow-shell"
+```
+
+Then, in this order:
+
+| Type this | What should happen |
+|---|---|
+| `/help` | the command overview — the agent answers, the model never sees the line |
+| `/status` | mode, context use, tools, model, workspace, history size |
+| `/tools` | every tool, and which of them ask before running |
+| `docker is running locally, list the images` | `? run_command {command=docker images}` and the prompt `[y]es / [n]o / [a]uto` |
+| answer `n` | the command does **not** run; the model is told it was cancelled and offers an alternative |
+| ask again, answer `y` | the command runs and its output goes back to the model |
+| `/mode auto` | the status line flips to `⏵⏵ auto`; nothing asks any more |
+| press Shift+Tab at the prompt | the same switch without a command; the status line updates immediately |
+| type a sentence while it is still working, press Enter | the turn stops at once and your message is the next one |
+| `explain Markdown with a heading, a list, bold text and a code block` | the answer arrives rendered: heading bold, `•` bullets, code in colour |
+| press ↑ | the previous line comes back; Tab after `/` completes the commands |
+| `/compact` | the conversation is summarized and replaces the history; `ctx` drops |
+| `/loop --max 3 add a line with the current date to notes.txt, then stop` | three steps at most, with `AGENT-LOOP.md` appearing in the workspace |
+| `/exit` | leave |
+
+`--auto` starts in auto mode, `--verbose` brings llama.cpp's own log back, and `NO_COLOR=1` turns
+the styling off.
+
+### Tools
+
+Eight file tools plus the optional shell. Five are Atmosphere's; three are replaced here because what
+they return decides how well a model can work:
+
+| Tool | | |
+|---|---|---|
+| `ls`, `write_file`, `glob`, `delete`, `rename` | Atmosphere | unchanged |
+| `read_file(file_path, offset, limit)` | **ours** | a numbered window, `  12: text`, 400 lines at a time, and it says what it left out. Reading whole files costs context and measurably lowers task success (SWE-agent: 12.7 % with whole files against 18.0 % with a 100-line window) |
+| `edit_file(file_path, old_string, new_string, replace_all, edits[])` | **ours** | see below |
+| `grep(pattern, dir, glob, files_only)` | **ours** | skips `.git`, `target`, `build`, `node_modules` and friends, groups matches by file with line numbers, caps at 100 matches and **says so** when it truncates |
+| `run_command` | ours | opt-in via `--allow-shell` |
+
+**Why `edit_file` is not Atmosphere's.** Four things it does that the framework's does not, each for a
+measured reason:
+
+1. **Line endings.** The framework compares the raw file content, so a model's LF text never matches a
+   CRLF file — on Windows every edit fails silently. Here the file is normalized before matching and
+   written back in its own ending (byte-order mark included).
+2. **A miss explains itself.** Instead of "not found", it shows the closest lines in the file with
+   their numbers. A failed edit is not a free retry: measured on SWE-agent trajectories, an edit
+   attempt eventually succeeds in 90.5 % of cases, but only 57.2 % once one edit has failed.
+3. **An ambiguous match names the lines** (`occurs 2 times, on lines 1, 3`) instead of asking for
+   "more context", and `replace_all` is offered.
+4. **Several edits in one call** via `edits: [{old_string, new_string}]`, applied **all or nothing** —
+   every shipping agent applies them sequentially and leaves a half-edited file behind.
+
+`edit_file` also **refuses to edit a file that was not read** in this session, so `old_string` comes
+from the file rather than from the model's memory.
+
+**Formats that were considered and rejected.** A unified-diff or patch tool: Meta's ablation measures
+search-replace at 42–53 % against 26–30 % for unified diff and 20–26 % for line diffs on the same
+model, and a 7B model drops from 54 % to 33 % to 14 % across those three. Fuzzy matching (a similarity
+threshold instead of an exact match): it turns a loud "not found" into a silent edit in the wrong
+place. Whole-file rewriting stays available as `write_file` — for a small model that is often the most
+reliable route, and the system prompt says so.
 
 ### The system prompt
 
@@ -261,7 +662,14 @@ starter are the *deployment* layer on top of the same runtime — not needed for
 ## Limitations / next steps
 
 - Tool rounds are not kept in the cross-turn history (only `user`/`assistant` text is replayed).
-- No approval prompts for destructive tools yet (`ToolDefinition.requiresApproval` exists in Atmosphere).
+- Approval is per call, not per command prefix: there is no "always allow `git status`" rule yet.
+  Atmosphere's `ApprovalResolution` also supports approve-with-edited-arguments, which the console
+  does not offer.
+- No auto-compaction when the context fills up; `/compact` is manual.
+- A small model still drifts into describing instead of doing, especially after several turns;
+  `/calls` makes it visible, the note in the history makes it rarer, a bigger model makes it go away.
+- `/loop` cannot be interrupted in the middle of a step — Ctrl-C ends the process; the loop file
+  survives, so restarting the same `/loop` continues where it left off.
 - An engine error after the stream started ends the turn silently (see the table).
 - **One in-process agent per machine at a time.** The core extracts its native library to a fixed
   name (`jllama.dll` / `libjllama.so` in the temp directory); on Windows a second JVM cannot replace

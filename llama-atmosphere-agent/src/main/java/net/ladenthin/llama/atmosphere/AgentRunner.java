@@ -8,13 +8,17 @@ import java.util.List;
 import java.util.Map;
 import org.atmosphere.ai.AgentExecutionContext;
 import org.atmosphere.ai.AiConfig;
+import org.atmosphere.ai.ExecutionHandle;
 import org.atmosphere.ai.RetryPolicy;
 import org.atmosphere.ai.StreamingSession;
+import org.atmosphere.ai.approval.ApprovalStrategy;
+import org.atmosphere.ai.approval.ToolApprovalPolicy;
 import org.atmosphere.ai.llm.BuiltInAgentRuntime;
 import org.atmosphere.ai.llm.ChatMessage;
 import org.atmosphere.ai.llm.ToolLoopPolicies;
 import org.atmosphere.ai.llm.ToolLoopPolicy;
 import org.atmosphere.ai.tool.ToolDefinition;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The minimal wiring between Atmosphere's built-in OpenAI-compatible agent runtime and an
@@ -36,6 +40,8 @@ public final class AgentRunner {
     private final String systemPrompt;
     private final int maxToolRounds;
     private RetryPolicy retryPolicy = RetryPolicy.DEFAULT;
+    private @Nullable ApprovalStrategy approvalStrategy;
+    private @Nullable ToolApprovalPolicy approvalPolicy;
 
     /**
      * Configure the runtime for one endpoint.
@@ -84,6 +90,24 @@ public final class AgentRunner {
     }
 
     /**
+     * Gate the tools {@code policy} selects behind {@code strategy}: Atmosphere's tool loop then blocks
+     * on the strategy before such a tool runs, and turns a denial into a {@code cancelled} tool result
+     * for the model on its own.
+     *
+     * <p>Without this, no tool is gated — Atmosphere's default policy honours a tool's own
+     * {@code requiresApproval()}, and none of this agent's tools set it.
+     *
+     * @param strategy what asks the user, e.g. {@link ConsoleApprovalStrategy}
+     * @param policy which tools it is asked about, e.g. {@link ConsoleApprovalStrategy#policy()}
+     * @return this runner
+     */
+    public AgentRunner approval(ApprovalStrategy strategy, ToolApprovalPolicy policy) {
+        this.approvalStrategy = strategy;
+        this.approvalPolicy = policy;
+        return this;
+    }
+
+    /**
      * The model ids the endpoint advertises on {@code GET /v1/models}, falling back to the configured
      * id when enumeration fails.
      *
@@ -110,6 +134,47 @@ public final class AgentRunner {
      * @param session receives streamed text, tool events and the terminal complete/error
      */
     public void run(String message, List<ChatMessage> history, StreamingSession session) {
+        runtime.execute(context(message, history, tools, systemPrompt, session), session);
+    }
+
+    /**
+     * Start one user turn and return at once, with a handle that can stop it.
+     *
+     * <p>This is the same turn {@link #run} performs, on Atmosphere's cancellation-aware entry point:
+     * the turn runs on a virtual thread of the framework's, and {@link ExecutionHandle#cancel()}
+     * closes the HTTP stream the model is answering on, which unblocks the read loop. That is what
+     * lets a request typed while the agent is working take effect immediately instead of at the end
+     * of a tool loop that may run for minutes.
+     *
+     * @param message the user message
+     * @param history prior turns, replayed before the message
+     * @param session receives streamed text, tool events and the terminal complete/error
+     * @return the handle; the session's own completion stays the signal that the turn is over
+     */
+    public ExecutionHandle start(String message, List<ChatMessage> history, StreamingSession session) {
+        return runtime.executeWithHandle(context(message, history, tools, systemPrompt, session), session);
+    }
+
+    /**
+     * Run one turn with no tools at all and a system prompt of its own — what {@code /compact} needs:
+     * a summary must not read files or run commands, it must only condense what is already there.
+     *
+     * @param message the user message
+     * @param history prior turns, replayed before the message
+     * @param session receives the streamed summary
+     * @param systemPrompt the system prompt for this one turn
+     */
+    public void runWithoutTools(
+            String message, List<ChatMessage> history, StreamingSession session, String systemPrompt) {
+        runtime.execute(context(message, history, List.of(), systemPrompt, session), session);
+    }
+
+    private AgentExecutionContext context(
+            String message,
+            List<ChatMessage> history,
+            List<ToolDefinition> tools,
+            String systemPrompt,
+            StreamingSession session) {
         AgentExecutionContext context = new AgentExecutionContext(
                 message,
                 systemPrompt,
@@ -127,7 +192,9 @@ public final class AgentRunner {
                 null,
                 null);
         context = context.withRetryPolicy(retryPolicy);
-        context = ToolLoopPolicies.attach(context, ToolLoopPolicy.maxIterations(maxToolRounds));
-        runtime.execute(context, session);
+        if (approvalStrategy != null && approvalPolicy != null) {
+            context = context.withApprovalStrategy(approvalStrategy).withApprovalPolicy(approvalPolicy);
+        }
+        return ToolLoopPolicies.attach(context, ToolLoopPolicy.maxIterations(maxToolRounds));
     }
 }

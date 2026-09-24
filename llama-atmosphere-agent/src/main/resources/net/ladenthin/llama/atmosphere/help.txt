@@ -1,0 +1,29 @@
+Commands (everything else is sent to the model):
+
+  /help                  this overview                              (/?, /commands)
+  /status                endpoint, model, tools, mode, context use
+  /tools                 the tools offered to the model
+  /calls                 every tool call of this session, with its result  (/log)
+  /mode [manual|auto]    show or set the approval mode: manual asks first (shown as
+                         the mode symbol on the status line), auto runs through  (/approve)
+  /compact [focus]       summarize the history and continue with the summary
+                         (happens on its own once the context is ~70% full; --auto-compact false
+                         turns that off, --compact-at <percent> moves the threshold)
+  /loop [--every 5m] [--max 20] [--check '<cmd>'] <task>
+                         keep working on <task> until the model answers <<TASK_COMPLETE>>;
+                         the state lives in AGENT-LOOP.md, not in the conversation
+  /clear                 drop the history, and wipe the screen with it  (/reset, /new)
+  /cls                   wipe the screen, keep the conversation    (/clear-screen, or Ctrl-L)
+  /save [name]           write what was said, with timestamps, into the workspace  (/transcript)
+  /retry                 ask the last question again, dropping the answer      (/again)
+  /load <file>           read a saved transcript back in as the conversation   (/resume)
+  /exit                  leave                                      (/quit)
+
+The input line sits in the box at the bottom and is there while the agent works: you can type at
+any time. A line typed
+during a turn stops it and is sent as the next message. Shift+Tab switches the approval mode.
+
+In manual mode every tool that writes or runs a command asks first: [y]es runs it once,
+[n]o tells the model the user cancelled it, [a]uto stops asking for the rest of the session.
+Reading tools (ls, read_file, glob, grep) never ask — they cannot change anything.
+An unknown /command is sent to the model, not rejected.

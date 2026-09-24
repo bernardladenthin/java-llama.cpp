@@ -2233,6 +2233,306 @@ a `jvm.config` takes no comments, so REUSE can only read its metadata from that 
 `REUSE Compliance Check` job fails on `main` — which is how it was found, the PR run having been cancelled.
 Spotless (palantir) is configured in its own pom; the model-free CI job runs `spotless:check`.
 
+**The REPL layer (commands, approval, status line, rendering).** Eight small classes and one dependency
+(`org.jline:jline`, one jar, no transitive deps):
+`SlashCommands` (a line starting with `/` whose first word names a command is handled locally —
+`/help /status /tools /mode /compact /clear /exit`; **an unknown `/command` goes to the model**, which
+is why no escape syntax is needed for `/usr/bin/…`), `ApprovalMode` + `ConsoleApprovalStrategy`
+(`[y]es/[n]o/[a]uto` per gated call), `StatusLine`, and `Ansi` + `MarkdownConsole`. Four points that
+are decisions, not details:
+
+1. **The approval gate is Atmosphere's, not ours.** `AgentRunner.approval(strategy, policy)` attaches
+   `ToolApprovalPolicy.custom(...)` (gating `run_command`, `write_file`, `edit_file`, `delete`,
+   `rename` — reading tools never ask) and a `ConsoleApprovalStrategy`; `ToolExecutionHelper` then
+   blocks the tool loop before the executor runs and turns a denial into the tool result
+   `{"status":"cancelled","message":"Action cancelled by user"}` for the model. Do not reimplement
+   that message. `ApprovalWireTest` pins both halves over the real server. **The reading tools
+   (`ls`, `read_file`, `glob`, `grep`) never ask, and that is a decision, not an omission**: gating
+   them would make the question so frequent it stops being read. Because the gate is a list of
+   *names*, a tool upstream adds or renames would drop out of it and then run unasked — so
+   `READ_ONLY_TOOLS` names the other half explicitly and
+   `ConsoleApprovalStrategyTest.everyOfferedToolIsEitherGatedOrDeclaredReadOnly` asserts every offered
+   tool is in exactly one of the two sets, and that neither set names a tool nobody offers. Same class
+   as the stale `spotbugs-exclude.xml` entries: an allowlist that silently stops matching.
+2. **One-shot (`--prompt`) denies a gated call** instead of auto-approving it — `--auto` is the
+   deliberate opt-in. Atmosphere itself fails closed when no strategy is wired, and this keeps that
+   direction: an unattended run must not be the most permissive one.
+3. **`AgentTerminal` has exactly two implementations, chosen once at startup, and `--plain` picks the
+   line-oriented one on purpose.** `LocalAgent.usesFullTerminal(options, interactive)` is the single
+   place that decides: the cursor-controlling console needs someone typing **and** permission to move
+   the cursor, and `--plain` withholds the second even on a real terminal. That is not a fallback but
+   a supported mode — for a session that is piped, logged, recorded, or carried by something that
+   forwards lines rather than a screen. It gives up the pinned block, the spinner, history/completion
+   and typing-during-a-turn (`PlainTerminal.hasPendingInput()` is always false), and gains being
+   correct when the output is a file. A normal SSH session needs none of this: a remote terminal
+   reports its size and handles cursor control like a local one. `JLineTerminal` (a real
+   terminal: line editing, history, Tab completion of the command names, a status line pinned to the
+   bottom via JLine's `Status`, single-key answers through `enterRawMode`, streamed output via
+   `LineReader.printAbove` so the bottom block stays put) and `PlainTerminal` (a `PrintStream` plus a
+   `BufferedReader`: no cursor control at all, correct when the output is a file). `JLineTerminal.open`
+   returns **null** instead of throwing when there is no usable terminal — piped input, a dumb
+   terminal, a missing native provider — and the caller falls back. Every test drives `PlainTerminal`,
+   which is why none of them needs a TTY. Verified on Windows: JLine picks the `windows-vtp` provider,
+   so ANSI works there without the registry caveat.
+4. **The answer is rendered append-only, one completed line at a time** (`MarkdownConsole`). Redrawing
+   on every token is what produces the known overdraw/truncation bugs in the Ink/Bubble-Tea based
+   clients and breaks when the output is piped. Only headings, bullets, fences and inline
+   `**bold**`/`` `code` `` are handled; italics deliberately are not (`*` is more often a glob than
+   emphasis). Colour is decided once in `Ansi.detect()` — `CLICOLOR_FORCE`, then `NO_COLOR`, then
+   `TERM=dumb`/`CLICOLOR=0`, else "is a terminal" via `Console.isTerminal()` (reflective: JDK 22+;
+   below that `System.console() != null`).
+5. **`/loop` keeps its state in a file, not in the context, and stops on a text marker** (`TaskLoop`,
+   `LoopOptions`). Every step re-sends the task verbatim and drops the history, so the context cannot
+   grow (Claude Code's ralph-wiggum plugin does the same, and `AGENT-LOOP.md` in the workspace is the
+   memory). The stop signal is a line that is **exactly** `<<TASK_COMPLETE>>`, never a substring —
+   deliberately **not** a "done" tool: below 7B a model emits a malformed tool call far more often
+   than a malformed line, and mini-SWE-agent's SWE-bench results come from exactly this plain-sentinel
+   design. `--check '<cmd>'` re-verifies the claim and feeds a failure back. Four guards, none of them
+   trusted to the model: step cap, wall-clock budget, stall detection (three steps with no file change
+   and no tool call), interval. **Order matters and a test pins it**: the marker is checked *before*
+   the stall detector, because the step that only answers "done" changes nothing and would otherwise
+   be reported as no progress.
+6. **Three of the file tools are this project's, not Atmosphere's** (`WorkspaceTools`, `TextEdits`,
+   `WorkspaceSearch`) — `read_file`, `edit_file`, `grep`. They are **replacements, not additions**:
+   two tools that both claim to read a file is the worst case for tool selection. They call the same
+   `AgentFileSystem`, so workspace confinement, path validation and size limits stay Atmosphere's.
+   Each replacement has a measured reason, and all three are pinned by tests:
+   - `edit_file`: the framework matches against the **raw** file content, so a model's LF text never
+     matches a CRLF file — on Windows *every* edit fails silently. `TextEdits` normalizes before
+     matching and restores the file's own ending and byte-order mark. It also shows the nearest lines
+     on a miss and the line numbers on an ambiguous match (a failed edit drops the eventual success
+     rate from 90.5 % to 57.2 %), offers `replace_all`, and applies a batch of edits **all-or-nothing**
+     — a deviation from every shipping agent, which apply sequentially and leave a half-edited file.
+   - `grep`: the framework walks **alphabetically** with one global 2-second deadline and one global
+     500-hit budget, so `.git`, `target` and `node_modules` consume both before `src` is reached.
+     `WorkspaceSearch` excludes them, groups by file with line numbers, and **states** truncation.
+   - `read_file`: `offset`/`limit` and numbered lines (whole-file reads measure 12.7 % against 18.0 %
+     task success in the SWE-agent ablations). The numbers are display only, which both the tool
+     description and the system prompt say — leaked line numbers in `old_string` are a known failure.
+   - `edit_file` **refuses a file that was not read** in this session (`WorkspaceTools.ReadTracker`).
+     Not a staleness check: an exact unambiguous match is safe regardless; this catches the model
+     inventing the text.
+   **Rejected on evidence, do not add later without new numbers:** a unified-diff/patch tool (Meta's
+   ablation: search-replace 42–53 % vs 26–30 % unified diff vs 20–26 % line diff on one model; a 7B
+   model collapses 54 → 33 → 14 %), fuzzy matching (turns a loud miss into a silent wrong-place edit),
+   an embedding index (Cursor's production effect is +0.3 %), and LSP tools (the one isolation study
+   finds them token-negative and *worse* at multi-file rename, because renames touch comments and
+   strings that semantic references exclude).
+7. **The session transcript (`Transcript`) is not the conversation the model is sent, and must not be
+   merged with it.** The model's history is rewritten by `/compact` — a summary replaces the turns —
+   and has never carried a timestamp; the transcript only grows and stamps every entry. `/compact`
+   adds a note to it and changes nothing else, `/clear` empties it (the command means "forget this
+   session"), `/save [name]` writes it into the workspace, and `--transcript <file>` appends live so a
+   killed session still leaves what it had — that write failing is swallowed, because a record that
+   exists to survive a bad ending may not cause one. **A list, not a map keyed by the timestamp**: a
+   tool result and the answer after it regularly share a millisecond and a map would drop one
+   silently; insertion order already is time order. `ToolCallLog` stays as the separate, hard-cut
+   receipt for `/calls` — it answers "did that really run", which prose cannot.
+   **`/load` replays only `USER` and `AGENT` entries** as messages: a tool result outside its round is
+   not something a chat template has a place for, and inventing a shape for it would be worse than
+   letting the model call the tool again. The parser treats a line without a stamp as a continuation
+   of the entry above it, because an entry is not a line — an answer keeps its newlines when written,
+   and reading line by line would turn one answer into several. A file that is not a transcript yields
+   **no** entries rather than one wrong one, since anything it yielded would be replayed to the model
+   as if it had been said.
+
+8. **Tool calls are carried into the conversation as a text note, and logged for `/calls`.**
+   `LocalAgent.withToolNotes` prefixes each turn's answer in the history with
+   `(tools I actually ran this turn: <tool> <args> -> <result, cut at 400 chars>)`, and `ToolCallLog`
+   keeps the same data for the `/calls` command. **Why it is a note and not real `tool_calls`
+   messages:** `AbstractAgentRuntime.assembleMessages` rebuilds every history entry as
+   `new ChatMessage(h.role(), h.content())` — the tool-call array and the tool-call id never leave the
+   framework, so protocol-faithful replay through `context.history()` is impossible; content is what
+   survives. **Why it exists at all:** with only user text and assistant prose in the history, a 4B
+   model stopped calling tools after the third turn of a real session and *described* the work instead
+   — inventing JUnit tests, a Maven build and a `.bat` script, complete with exit codes, while the
+   workspace stayed empty. The system prompt also forbids claiming an action without the call.
+   **Placement was found by failing twice, so do not "simplify" it:** in front of the assistant's
+   answer made the model copy the record into its own replies (the user saw `(tools I actually ran
+   this turn: …)` as the first line of an answer); real `tool_calls` messages are impossible (see
+   above); a mid-history system message is cleanest but Mistral's template requires strict
+   user/assistant alternation and Gemma has no system role. It therefore rides in front of the **next
+   user message**, which every template accepts.
+   Pinned by `LocalAgentTest.aToolCallStaysInTheHistorySoTheNextTurnSeesItHappened`.
+   **Live feedback while a turn runs** (`LocalAgent.activityLine`, `ShellTool`'s line-by-line output):
+   the block's first row names the running tool and its own elapsed time, and shell output is printed
+   as it arrives. **The turn runs on its own thread, and it has to:** Atmosphere's `execute()` is
+   synchronous — it returns only once the whole turn including every tool round is done — so running
+   it on the console thread leaves nobody to refresh the line, and the block sits on
+   "… waiting for input …" for the entire turn (exactly the symptom that was reported). The approval
+   prompt then reads a key in raw mode on that worker thread while the console thread redraws four
+   times a second, so `TurnActivity` pauses the redraw for as long as the question is open. Reading the pipe incrementally is not only cosmetic — an unread pipe blocks the child once
+   it is full, which on Windows is roughly 4 KB.
+9. **The context number in the status line is an estimate, marked `~`, and it moves during the turn.**
+   llama.cpp emits its usage chunk only when the client sets `stream_options.include_usage`, and
+   Atmosphere's client does not; `ConsoleSession.usage()` takes the real count when one arrives,
+   otherwise `LocalAgent.estimateTokens` uses four characters per token. The window size is
+   `--ctx-size` (in-process) or the server's `/props` (`ServerProps`), and is omitted rather than
+   guessed when neither answers. **The state row is a `Function<ConsoleSession, String>`, not a
+   string**, and `awaitWithActivity` asks it again on every redraw: it used to be rendered once before
+   the turn and handed over fixed, so the figure stood still through every tool round and only moved
+   at the next `you>` — which is exactly when it no longer helps anyone decide whether to `/compact`.
+   `LocalAgent.liveTokens` adds `ConsoleSession.producedChars()` (streamed text **plus** every tool
+   call and result — all of it is in the prompt of the next model call of the *same* turn) to what the
+   request carried when it was sent, and yields to the server's own count as soon as one arrives.
+   `TaskLoop` passes a constant function, and its step label must be copied into a local first: a
+   lambda may not close over the loop counter.
+10. **One call to `AgentTerminal.line` is one screen line**, and `ConsoleSessionTest` is what defends
+   it. The pinned block is reserved in **lines**, so a single "line" carrying twenty newlines moves the
+   screen twenty rows further than the terminal accounted for and the block is then drawn across the
+   output — reported twice, both times from a `write_file` call whose `content` argument was the file.
+   `ConsoleSession.describeArguments` folds and cuts **each argument value on its own** (80 chars)
+   before cutting the whole rendering (200), so a call carrying a whole file still shows the file
+   *name*; results and errors are folded the same way. `JLineTerminal.line` splits a multi-line string
+   as a backstop for a caller that forgets. Only the console is cut — the model gets everything, and
+   `ConsoleSession.rounds()` keeps the full arguments for the history note and `/calls`.
+11. **The approval mode carries a glyph, and shift+tab switches it**: `ApprovalMode.symbol()` /
+   `badge()` render `⏸ manual` and `⏵⏵ auto` on the status line and in `/mode`, the transport symbols
+   the established terminal agents use for the same distinction; `ApprovalMode.next()` is the cycle
+   the key walks. The binding is `AgentTerminal.onCycleMode(Runnable)`, which **defaults to declining**
+   — only `JLineTerminal` overrides it, and the startup line advertises the key only when the bind
+   succeeded. Two details are not obvious: it is bound **both** through terminfo
+   (`InfoCmp.Capability.key_btab`) **and** to the literal `ESC [ Z`, because JLine's
+   `windows-vtp.caps` declares no `key_btab` at all while the terminal in virtual-terminal input mode
+   does send the sequence; and the shortcut fires **only while a line is being read**, so it switches
+   the mode between turns — which is when it is decided anyway. The REPL therefore holds the two
+   status numbers in an `AtomicLong`/`AtomicBoolean` rather than locals, so the widget (which runs
+   inside the reader) can re-render the pinned row with what the last turn left behind.
+
+12. **The input is framed into the pinned block, and the prompt stays there during a turn; typing
+   stops the turn.** The frame is two halves that must be read together: the **top** rule is the first
+   line of the reader's *prompt* (`rule() + newline + "> "`, rebuilt on every read because the window
+   can be resized) — **no, and the second attempt was wrong too.** Both are recorded because the
+   obvious fix is the one that fails. (1) Rule as the first line of a **two-line prompt**:
+   `ERASE_LINE_ON_FINISH` erases exactly **one** line, so every Enter leaves the rule behind and
+   holding Enter draws a column of them. (2) Rule as **ordinary output before each read**: nothing is
+   left behind on Enter any more, but one rule now stays in the scrollback per turn and travels up
+   with it. **There is no third option** — JLine's status region is below the prompt and never above
+   it, so a rule above the input can only be part of the prompt (1) or part of the scrollback (2).
+   The settled shape is therefore **one** rule, the first line of the status block, directly under the
+   input line; the prompt is `"> "`, one line, and `AgentTerminal.readLine`'s `prompt` argument is
+   consequently **ignored** here.
+   `ERASE_LINE_ON_FINISH` removes the input line on Enter and the reader thread echoes it above as
+   `› text`, so the transcript keeps what was asked.
+
+   **`JLineTerminalTest` is how any of this is checkable**: `JLineTerminal.over(Terminal, …)` takes a
+   terminal built over two streams, which renders exactly like a TTY, so the screen can be asserted on
+   the emitted bytes. Two things that cost an hour each and are not guessable: the test terminal needs
+   **`stdoutEncoding`** as well as `encoding`, or every `─` arrives as `?`; and a box character is
+   written as UTF-8 from `printAbove` but as the **DEC line-drawing set** (`ESC(0` + `q`s + `ESC(B`)
+   inside a *prompt*, so a counter that looks only for `─` passes against the exact bug it was
+   written for — verified by putting the two-line prompt back and watching the test go from 1 rule to 5.
+
+   **Escape sequences drawn as text** (`[?1h` above the prompt, then a `1H` inside the rule) were two
+   further defects of the same family, and the second is the one that eventually **destroyed the
+   block**. First: `line()` wrote straight to the terminal whenever the reader was not inside
+   `readLine`, which is exactly when the next read emits its init sequence — once the reader thread
+   exists, **everything** now goes through `printAbove`. Second: three threads write to this terminal
+   as a matter of course — the turn (Atmosphere's thread) prints tool lines, the console thread
+   refreshes the block four times a second, and with an in-process model **llama.cpp logs to stderr**,
+   which is the same console and goes around JLine entirely. The first two are serialised by a
+   `writing` lock held across `line()` and `status()`; the third is fixed by
+   `LocalAgent.captureNativeLog`, which routes the native log through `LlamaModel.setLogger`
+   (the callback sink `patches/0014` added) into `terminal.line`, so it scrolls in above the prompt
+   like any other output instead of scrolling lines JLine never sees. **Honest limit:** the lock is
+   reasoned, not test-covered. Two attempts to pin it are recorded in the history of
+   `JLineTerminalTest` and both passed with the lock removed — even one that sliced every
+   `OutputStream.write` in half — because `PrintWriter` already makes a single call atomic and the
+   interleaving happens *between* calls, inside JLine. A test that is green either way is worse than
+   none, so it was deleted rather than kept.
+
+   **`/cls` wipes the screen, `/clear` wipes it and the history.** `AgentTerminal.clearScreen()`
+   defaults to doing nothing (a stream has no screen); `JLineTerminal` expands the terminal's
+   `clear_screen` capability and sends it **through `printAbove`**, like every other write, then
+   refills the blank rows and redraws the block. One trap, caught by the test rather than by reading:
+   `getStringCapability` returns **terminfo source** (`\E[H\E[2J`, with the escape spelled out), so
+   writing it as it comes prints that text on the screen — `Curses.tputs` expands it. A second one, and
+   the reason the bar went missing after a `/cls`: **`Status.redraw()` writes nothing after a wipe.**
+   It draws what has *changed*, and a wipe changes nothing about its content — it only removes it from
+   the screen, which the object has no way of knowing. So the block is kept in a field as it was last
+   rendered and put back with `status.reset()` (forget what is believed to be on screen) followed by
+   `status.update(block)`; `redraw()` alone is a no-op, verified by putting it back and watching the
+   test go red. Ctrl-L already
+   did this before the command existed, bound by JLine's own keymap; a test pins that too, so a keymap
+   option cannot quietly remove it.
+
+   **The screen is scrolled to the bottom once, before the first prompt** (`scrollToBottom`). The
+   reader draws its prompt at the cursor, i.e. after the last line printed, while only the status
+   block is pinned to the window — so on a half-empty screen the input floats in the middle with the
+   block far below it, and they only meet once output has scrolled the cursor down by itself. That is
+   why it looked right after a few turns and like an ordinary prompt at the start. Emitting
+   `rows - 1` newlines once makes it the state from the first prompt on; from then on every printed
+   line scrolls and the cursor stays on the last row. The cost is a screenful of blank lines above the
+   session, which is what a program that wants its input at the bottom *without* taking over the
+   screen has to pay.
+
+   **Do not add a `WINCH` handler, and the reason is measured.** A resize drawing a row of
+   `> > > > >` across the screen looks like the pinned region not being told about the new size, so a
+   `Signal.WINCH` handler that resized and re-rendered it was added — and the user reported it
+   **worse**, not better. `LineReaderImpl.handleSignal(WINCH)` already calls `Status.resize(Size)`,
+   and the reader installs its own handler for as long as it is reading, which is the whole session;
+   ours therefore either never ran or ran *in addition*, putting a second writer on the terminal from
+   the signal thread at the exact moment the reader was redrawing. A probe driving a real
+   `terminal.raise(WINCH)` against a pipe-backed terminal shows JLine doing it correctly on its own:
+   scroll region reset, the rule re-cut to the new width, **one** prompt. So the remaining report is
+   not reproducible in the harness and has no fix here yet — stated rather than papered over.
+   `fit()` measuring in **screen columns** (`AttributedString.columnLength`) rather than characters is
+   ours and does matter: an icon is one character and two columns, and a row wider than the window
+   wraps onto a second screen line, which the reserved region cannot survive.
+
+   **Two things tried and removed, both because measurement said they did nothing.** (1) Skipping a
+   status write when the block is unchanged — removing the guard again left the emitted bytes
+   identical, because JLine already skips an unchanged block. (2) Re-cutting the rows when the window
+   width changed — `Status.resize()` re-cuts the rows it holds itself. Neither was kept with a comment
+   claiming a benefit it does not have. The stray `?1h` consequently still has **no established
+   cause**: the lock covers our writes, the reader's own are inside JLine.
+
+   **Restoring the block after a wipe takes three steps, found by measurement not by reading**:
+   `status.reset()`, then `status.update(List.of())`, then render it again from `requested` (the text
+   the caller gave, not the rendered rows). With only the first two, `Status` draws the difference it
+   computes against a belief the wipe invalidated — observed as a single character emitted where a
+   whole block was missing. `JLineTerminalTest.theBlockIsBackOnScreenAfterAClear` is what says so.
+
+   **The turn after an interrupted one is pinned end to end** (`InterruptedTurnTest`): with a scripted
+   backend behind the real `OpenAiCompatServer`, a turn is cut short by pending input and the next one
+   is then driven through — it reaches the server, carries the interrupted question in its history,
+   and answers. Reported as "it does not carry on by itself"; the mechanism works, so the cause of
+   that report is elsewhere and is **not** claimed to be fixed. Two things the writing of it settled:
+   a turn that finishes inside one activity tick is never even looked at for interruption (correct —
+   there is nothing to cut short), which is why the scripted backend has to be made slow or the test
+   proves nothing; and a second line typed during the replacement turn stops that one too, which is
+   the design and not a defect, but looks from the outside exactly like a turn that never started.
+
+   **A blank line must not count as pending input.** `hasPendingInput()` ignores blank lines but leaves
+   them queued: counting them meant that holding Enter cancelled one turn per keystroke and produced
+   nothing, while dropping them would break the approval prompt, where an empty answer means yes.
+   `DISABLE_EVENT_EXPANSION` is set in the same builder because the reader's default treats `!` as a
+   shell history expansion, which silently rewrites a request like `git commit -m "fixed!"`.
+   **What cannot be done, asked and answered:** keep the block visible while the *user* scrolls the
+   terminal's scrollback. That needs the alternate screen buffer, i.e. a full-screen application, which
+   would give up the scrollback and the append-only property the whole console design rests on.
+
+   **The prompt stays at the bottom during a turn, and typing stops the turn.** One thread inside
+   `JLineTerminal` (`startReading`) sits in `readLine` for the whole session and fills a queue;
+   **every** read in that class is served from it, because a terminal has one keyboard and two threads
+   reading it take turns at random. That is why `readKey` no longer reads a single key in raw mode: the
+   question is printed above the prompt and answered in the same input line (`y` + Enter). End of input
+   cannot be a queue value, so a sentinel is queued and **put back on every take** — otherwise the
+   second reader after Ctrl-D would see "nothing typed yet" instead of "no more input".
+   `AgentTerminal.hasPendingInput()` is the peek the turn loop peeks with; it deliberately does **not**
+   consume, so the line the interruption was triggered by is still there for the next `readLine` and
+   becomes the next message. The stop itself is `AgentRunner.start(...)` →
+   `runtime.executeWithHandle(...)`, whose handle closes the in-flight SSE stream (Atmosphere's own
+   "D-6 built-in hard-cancel"); that also replaced `turn()`'s hand-rolled worker thread, since
+   `executeWithHandle` dispatches on a virtual thread and returns at once. `awaitWithActivity` returns a
+   three-valued `TurnEnd` rather than a boolean, because *interrupted* must not be reported as the
+   *timed out* error the old `false` produced. **Order in that loop is load-bearing and a test pins the
+   behaviour**: the `activity.isPaused()` check comes first, so while an approval question is open a
+   typed line is its answer and not an interruption. **What this is not:** Claude Code injects a
+   mid-turn message into the running loop; `AgentExecutionContext` is a record whose request is built
+   once from `message()` + `history()`, with nothing to append to, so stop-and-resend is the achievable
+   equivalent — and it acts immediately instead of waiting out a tool loop.
+
 **The default system prompt is general-purpose on purpose — do not narrow it back.** Every model-facing
 text is a resource, not a Java literal: `src/main/resources/net/ladenthin/llama/atmosphere/` holds
 `system-prompt.txt`, `system-prompt-shell.txt`, `system-prompt-no-shell.txt` and `run-command-tool.txt`
