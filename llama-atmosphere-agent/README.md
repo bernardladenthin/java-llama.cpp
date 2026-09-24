@@ -218,6 +218,24 @@ rather than sending an empty turn.
 but without fighting the shell over quoting and newlines. It is read at startup, so a wrong path is a
 usage error immediately instead of a surprise on the first turn.
 
+### Multi-line input
+
+A console sends on Enter, so pasting a stack trace or a function into the prompt would turn it into
+several questions. A line that is exactly `"""` opens a block and the next one closes it; everything
+between is **one** message, newlines and all:
+
+```
+you> """
+...  public int add(int a, int b) {
+...      return a - b;
+...  }
+...  """
+```
+
+Chosen over a key combination because it works in both consoles, survives a paste — the fences arrive
+as part of the pasted text — and asks nothing of the terminal. End of input inside an unfinished block
+ends the session without sending it.
+
 ### The session transcript
 
 What was said is recorded separately from the conversation the model is sent, because those are two

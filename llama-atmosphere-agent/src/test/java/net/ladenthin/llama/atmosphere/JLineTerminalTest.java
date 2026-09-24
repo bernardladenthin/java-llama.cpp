@@ -262,8 +262,12 @@ class JLineTerminalTest {
         // nothing, leaving the bottom of the window empty.
         try (Terminal terminal = terminal("go\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
-            // As in a session: the reader owns the screen before anything is drawn into the block.
+            // As in a session: the reader owns the screen before anything is drawn into the block. The
+            // pause is not decoration -- the reader thread starts the next prompt as soon as one
+            // returns, and clearing while that is in flight makes what JLine emits depend on which of
+            // the two got there first. This test is about the block coming back, not about that race.
             console.readLine("ignored");
+            Thread.sleep(200);
             console.status(List.of("a distinctive state row"));
             int before = screen().length();
 

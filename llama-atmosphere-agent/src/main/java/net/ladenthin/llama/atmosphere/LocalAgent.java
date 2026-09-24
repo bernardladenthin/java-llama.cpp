@@ -98,6 +98,10 @@ public final class LocalAgent {
     static final String SPINNER_WORDS = "spinner-words.txt";
 
     private static final Duration SHELL_TIMEOUT = Duration.ofSeconds(120);
+
+    /** A line that is exactly this opens and closes a multi-line message. */
+    static final String BLOCK_FENCE = "\"\"\"";
+
     private static final int SHELL_MAX_OUTPUT_CHARS = 20_000;
 
     private LocalAgent() {}
@@ -282,6 +286,12 @@ public final class LocalAgent {
                 String line = terminal.readLine("you> ");
                 if (line == null) {
                     return 0;
+                }
+                if (BLOCK_FENCE.equals(line.strip())) {
+                    line = readBlock(terminal);
+                    if (line == null) {
+                        return 0;
+                    }
                 }
                 if (line.trim().isEmpty()) {
                     continue;
@@ -504,6 +514,39 @@ public final class LocalAgent {
             if ("user".equals(last.role()) && message.equals(last.content())) {
                 history.remove(history.size() - 1);
             }
+        }
+    }
+
+    /**
+     * Read a block of lines, the way a fenced code block is written.
+     *
+     * <p>A console reads a line at a time, and Enter sends it — which makes pasting a stack trace or a
+     * function into the prompt impossible without it becoming several questions. A line that is
+     * exactly {@value #BLOCK_FENCE} starts a block and the next one closes it; everything between is
+     * one message, newlines and all.
+     *
+     * <p>Chosen over a key combination because it works in both consoles, survives a paste (the fence
+     * arrives as part of the pasted text), and needs nothing from the terminal.
+     *
+     * @param terminal where the lines come from
+     * @return the block, or {@code null} at end of input
+     */
+    static @Nullable String readBlock(AgentTerminal terminal) {
+        StringBuilder block = new StringBuilder();
+        while (true) {
+            String line = terminal.readLine("... ");
+            if (line == null) {
+                // End of input inside a block: what was collected is still a question worth asking,
+                // but there is nobody left to answer it, so the session ends as it would anyway.
+                return null;
+            }
+            if (BLOCK_FENCE.equals(line.strip())) {
+                return block.toString();
+            }
+            if (block.length() > 0) {
+                block.append(System.lineSeparator());
+            }
+            block.append(line);
         }
     }
 

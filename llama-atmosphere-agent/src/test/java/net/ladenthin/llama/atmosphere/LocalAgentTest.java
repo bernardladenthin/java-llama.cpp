@@ -261,6 +261,58 @@ class LocalAgentTest {
     }
 
     @Test
+    void aFencedBlockIsOneMessageWithItsNewlinesKept() throws Exception {
+        // A console sends on Enter, so a stack trace pasted into the prompt would become several
+        // questions. Between two fences it is one.
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("ok"));
+        try (OpenAiCompatServer server = server(backend)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url", "http://127.0.0.1:" + server.getPort() + "/v1", "--workspace", workspace.toString()
+            });
+
+            LocalAgent.run(
+                    options,
+                    new StringReader(
+                            LocalAgent.BLOCK_FENCE + "\nline one\nline two\n" + LocalAgent.BLOCK_FENCE + "\n/exit\n"),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        }
+        assertThat("one question, not two", backend.requests(), hasSize(1));
+        String asked = backend.requests()
+                .get(0)
+                .path("messages")
+                .get(1)
+                .path("content")
+                .asText();
+        assertThat(asked, containsString("line one"));
+        assertThat(asked, containsString("line two"));
+        assertThat(
+                "the newline between them survived",
+                asked.contains("line one") && asked.indexOf("line two") > asked.indexOf("line one"),
+                is(true));
+        assertThat("and the fences are not part of it", asked.contains("\"\"\""), is(false));
+    }
+
+    @Test
+    void endOfInputInsideABlockEndsTheSession() throws Exception {
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("never"));
+        try (OpenAiCompatServer server = server(backend)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url", "http://127.0.0.1:" + server.getPort() + "/v1", "--workspace", workspace.toString()
+            });
+
+            int exit = LocalAgent.run(
+                    options,
+                    new StringReader(LocalAgent.BLOCK_FENCE + "\nhalf a thought\n"),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+
+            assertThat("an unfinished block is not sent", exit, is(0));
+        }
+        assertThat(backend.requests(), hasSize(0));
+    }
+
+    @Test
     void failedTurnExitsNonZero() throws Exception {
         ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("never"));
         try (OpenAiCompatServer server = server(backend)) {
