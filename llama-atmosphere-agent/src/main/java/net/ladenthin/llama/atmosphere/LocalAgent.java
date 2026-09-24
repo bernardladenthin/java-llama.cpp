@@ -550,6 +550,69 @@ public final class LocalAgent {
         }
     }
 
+    /**
+     * Read a saved transcript back in, as the conversation and as the record.
+     *
+     * <p>Only the questions and the answers become messages again. Tool calls and session notes are
+     * kept in the record but <b>not</b> replayed to the model: a tool result out of its round is not
+     * something any chat template has a place for, and inventing one would be worse than leaving the
+     * model to call the tool again if it needs to.
+     *
+     * <p>The file is resolved against the workspace when it is not an absolute path, so {@code /load
+     * session.txt} finds what {@code /save session.txt} wrote.
+     *
+     * @param name the file
+     * @param options the parsed command line, for the workspace
+     * @param history the conversation, replaced
+     * @param transcript the record, replaced
+     * @param terminal where to report
+     * @return the estimated input tokens of the loaded conversation
+     */
+    private static long load(
+            String name,
+            AgentOptions options,
+            List<ChatMessage> history,
+            Transcript transcript,
+            AgentTerminal terminal) {
+        java.nio.file.Path file = java.nio.file.Path.of(name.strip());
+        if (!file.isAbsolute()) {
+            file = options.getWorkspace().resolve(file);
+        }
+        List<Transcript.Entry> loaded;
+        try {
+            loaded = Transcript.parse(java.nio.file.Files.readString(file, java.nio.charset.StandardCharsets.UTF_8));
+        } catch (java.io.IOException e) {
+            terminal.line("cannot read " + file + ": " + e.getMessage());
+            return estimateTokens(systemPrompt(options), history);
+        }
+        if (loaded.isEmpty()) {
+            terminal.line(file + " holds no transcript entries");
+            return estimateTokens(systemPrompt(options), history);
+        }
+        history.clear();
+        int messages = 0;
+        for (Transcript.Entry entry : loaded) {
+            switch (entry.kind()) {
+                case USER -> {
+                    history.add(ChatMessage.user(entry.text()));
+                    messages++;
+                }
+                case AGENT -> {
+                    history.add(ChatMessage.assistant(entry.text()));
+                    messages++;
+                }
+                default -> {
+                    // kept in the record, not replayed as a message
+                }
+            }
+        }
+        transcript.replaceWith(loaded);
+        transcript.add(Transcript.Kind.NOTE, "loaded " + file);
+        terminal.line("loaded " + loaded.size() + " entries from " + file + " (" + messages
+                + " of them replayed to the model)");
+        return estimateTokens(systemPrompt(options), history);
+    }
+
     static boolean usesFullTerminal(AgentOptions options, boolean interactive) {
         return interactive && !options.isPlain();
     }
@@ -684,6 +747,13 @@ public final class LocalAgent {
                 terminal.line("(history cleared)");
             }
             case CLS -> terminal.clearScreen();
+            case LOAD -> {
+                if (!command.hasArguments()) {
+                    terminal.line("say which file: /load <name>");
+                    return inputTokens;
+                }
+                return load(command.arguments(), options, history, transcript, terminal);
+            }
             case SAVE -> {
                 try {
                     java.nio.file.Path written = transcript.save(

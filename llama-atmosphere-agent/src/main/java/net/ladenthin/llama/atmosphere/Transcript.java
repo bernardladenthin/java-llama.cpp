@@ -37,6 +37,10 @@ public final class Transcript {
 
     private static final DateTimeFormatter FILE_STAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss");
 
+    /** The shape {@link #format} writes: {@code [stamp] kind: text}. */
+    private static final java.util.regex.Pattern HEAD =
+            java.util.regex.Pattern.compile("\\[(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2})\\] (\\w+): (.*)");
+
     /** Who said it. */
     public enum Kind {
         /** What the user typed. */
@@ -162,6 +166,66 @@ public final class Transcript {
         Files.createDirectories(file.toAbsolutePath().getParent());
         Files.writeString(file, render(), StandardCharsets.UTF_8);
         return file;
+    }
+
+    /**
+     * Read back a transcript that was written by {@link #save} or by {@code --transcript}.
+     *
+     * <p>A line that does not start with a stamp belongs to the entry above it: an answer keeps its
+     * newlines when it is written, so an entry is not the same thing as a line. Reading line by line
+     * would turn one answer into several, each of them nonsense on its own.
+     *
+     * <p>Anything before the first stamped line is ignored rather than guessed at — a file that is not
+     * a transcript yields no entries instead of one wrong one.
+     *
+     * @param text the file content
+     * @return the entries, oldest first
+     */
+    public static List<Entry> parse(String text) {
+        List<Entry> parsed = new java.util.ArrayList<>();
+        StringBuilder pending = new StringBuilder();
+        LocalDateTime at = null;
+        Kind kind = null;
+        for (String line : text.split("\\r?\\n", -1)) {
+            java.util.regex.Matcher head = HEAD.matcher(line);
+            if (head.matches()) {
+                flush(parsed, at, kind, pending);
+                at = LocalDateTime.parse(head.group(1), STAMP);
+                kind = kindOf(head.group(2));
+                pending.setLength(0);
+                pending.append(head.group(3));
+            } else if (kind != null) {
+                pending.append(System.lineSeparator()).append(line);
+            }
+        }
+        flush(parsed, at, kind, pending);
+        return List.copyOf(parsed);
+    }
+
+    private static void flush(
+            List<Entry> parsed, @Nullable LocalDateTime at, @Nullable Kind kind, StringBuilder pending) {
+        if (at != null && kind != null && !pending.toString().isBlank()) {
+            parsed.add(new Entry(at, kind, pending.toString().strip()));
+        }
+    }
+
+    private static Kind kindOf(String label) {
+        for (Kind candidate : Kind.values()) {
+            if (candidate.label().equals(label)) {
+                return candidate;
+            }
+        }
+        return Kind.NOTE;
+    }
+
+    /**
+     * Replace everything recorded with what was read from a file.
+     *
+     * @param loaded the entries to keep
+     */
+    public void replaceWith(List<Entry> loaded) {
+        entries.clear();
+        entries.addAll(loaded);
     }
 
     private void appendLive(Entry entry) {

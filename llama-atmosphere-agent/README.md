@@ -252,6 +252,14 @@ summarises) and it never carried a timestamp at all. The transcript only grows.
   means "forget this session" and leaving the text behind would make that untrue.
 - `/calls` is the shorter, tool-only receipt and is unchanged.
 
+`/load <file>` (`/resume`) reads one back **as the conversation**: the questions and the answers
+become messages again, so the model can be asked to carry on rather than to start over. Tool calls and
+session notes stay in the record but are **not** replayed — a tool result outside its round is not
+something a chat template has a place for, and inventing one would be worse than letting the model
+call the tool again. A path without a directory is resolved in the workspace, so `/load session.txt`
+finds what `/save session.txt` wrote; a file that cannot be read, or that is not a transcript, says so
+and changes nothing.
+
 It is a list, not a map keyed by the timestamp: a tool result and the answer that follows it regularly
 land in the same millisecond, and a map would keep one and drop the other silently. Insertion order
 already is time order.

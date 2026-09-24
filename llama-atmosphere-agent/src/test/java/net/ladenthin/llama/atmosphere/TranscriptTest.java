@@ -22,6 +22,8 @@ import org.junit.jupiter.api.io.TempDir;
  */
 class TranscriptTest {
 
+    private static final String LINE_SEPARATOR = System.lineSeparator();
+
     @TempDir
     Path directory;
 
@@ -128,6 +130,49 @@ class TranscriptTest {
         transcript.add(Transcript.Kind.USER, "the path is a directory, not a file");
 
         assertThat("kept in memory regardless", transcript.size(), is(1));
+    }
+
+    @Test
+    void whatWasWrittenCanBeReadBack() {
+        Transcript written = new Transcript();
+        written.add(Transcript.Kind.USER, "the question");
+        written.add(Transcript.Kind.AGENT, "the answer");
+
+        List<Transcript.Entry> read = Transcript.parse(written.render());
+
+        assertThat(read.size(), is(2));
+        assertThat(read.get(0).kind(), is(Transcript.Kind.USER));
+        assertThat(read.get(0).text(), is("the question"));
+        assertThat(read.get(1).kind(), is(Transcript.Kind.AGENT));
+        assertThat(read.get(1).text(), is("the answer"));
+        assertThat(
+                "the time survives, to the second the file records it in",
+                read.get(0).at(),
+                is(written.entries().get(0).at().truncatedTo(java.time.temporal.ChronoUnit.SECONDS)));
+    }
+
+    @Test
+    void anAnswerWithNewlinesComesBackAsOneEntry() {
+        // An entry is not a line: an answer keeps its newlines when it is written, so reading line by
+        // line would turn one answer into several, each of them nonsense on its own.
+        Transcript written = new Transcript();
+        written.add(Transcript.Kind.AGENT, "first line" + LINE_SEPARATOR + "second line");
+
+        List<Transcript.Entry> read = Transcript.parse(written.render());
+
+        assertThat(read.size(), is(1));
+        assertThat(read.get(0).text(), containsString("first line"));
+        assertThat(read.get(0).text(), containsString("second line"));
+    }
+
+    @Test
+    void aFileThatIsNotATranscriptYieldsNothing() {
+        // Rather than one wrong entry: a guess here would be replayed to the model as if it were said.
+        assertThat(
+                Transcript.parse("just some notes" + LINE_SEPARATOR + "and more")
+                        .size(),
+                is(0));
+        assertThat(Transcript.parse("").size(), is(0));
     }
 
     @Test

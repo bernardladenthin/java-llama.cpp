@@ -2328,6 +2328,13 @@ are decisions, not details:
    tool result and the answer after it regularly share a millisecond and a map would drop one
    silently; insertion order already is time order. `ToolCallLog` stays as the separate, hard-cut
    receipt for `/calls` — it answers "did that really run", which prose cannot.
+   **`/load` replays only `USER` and `AGENT` entries** as messages: a tool result outside its round is
+   not something a chat template has a place for, and inventing a shape for it would be worse than
+   letting the model call the tool again. The parser treats a line without a stamp as a continuation
+   of the entry above it, because an entry is not a line — an answer keeps its newlines when written,
+   and reading line by line would turn one answer into several. A file that is not a transcript yields
+   **no** entries rather than one wrong one, since anything it yielded would be replayed to the model
+   as if it had been said.
 
 8. **Tool calls are carried into the conversation as a text note, and logged for `/calls`.**
    `LocalAgent.withToolNotes` prefixes each turn's answer in the history with

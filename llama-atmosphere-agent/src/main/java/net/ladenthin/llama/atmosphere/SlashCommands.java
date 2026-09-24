@@ -36,6 +36,8 @@ public record SlashCommands(Command command, String arguments) {
         SAVE("/save", "/transcript"),
         /** Ask the last question again, without the answer that came back. */
         RETRY("/retry", "/again"),
+        /** Read a saved transcript back in as the conversation. */
+        LOAD("/load", "/resume"),
         /** Summarize the history and continue with the summary; the argument steers the summary. */
         COMPACT("/compact"),
         /** Keep working on one task until it is done; see {@link TaskLoop}. */

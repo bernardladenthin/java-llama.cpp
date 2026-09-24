@@ -36,6 +36,8 @@ import org.junit.jupiter.api.io.TempDir;
  */
 class LocalAgentTest {
 
+    private static final String NL = System.lineSeparator();
+
     @TempDir
     Path workspace;
 
@@ -310,6 +312,67 @@ class LocalAgentTest {
             assertThat("an unfinished block is not sent", exit, is(0));
         }
         assertThat(backend.requests(), hasSize(0));
+    }
+
+    @Test
+    void loadingASavedTranscriptMakesItTheConversationAgain() throws Exception {
+        // Save in one session, load in the next: the model is sent what was said before, so it can be
+        // asked to carry on rather than to start over.
+        ScriptedBackend first = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("the earlier answer"));
+        try (OpenAiCompatServer server = server(first)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url", "http://127.0.0.1:" + server.getPort() + "/v1", "--workspace", workspace.toString()
+            });
+            LocalAgent.run(
+                    options,
+                    new StringReader("the earlier question" + NL + "/save earlier.txt" + NL + "/exit" + NL),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        }
+
+        ScriptedBackend second = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("carrying on"));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (OpenAiCompatServer server = server(second)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url", "http://127.0.0.1:" + server.getPort() + "/v1", "--workspace", workspace.toString()
+            });
+            LocalAgent.run(
+                    options,
+                    new StringReader("/load earlier.txt" + NL + "and then?" + NL + "/exit" + NL),
+                    new PrintStream(out, true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        }
+
+        assertThat(out.toString(StandardCharsets.UTF_8), containsString("loaded"));
+        JsonNode messages = second.requests().get(0).path("messages");
+        assertThat("system, the earlier pair, and the new question", messages.size(), is(4));
+        assertThat(messages.get(1).path("content").asText(), is("the earlier question"));
+        assertThat(messages.get(2).path("role").asText(), is("assistant"));
+        assertThat(messages.get(2).path("content").asText(), is("the earlier answer"));
+        assertThat(messages.get(3).path("content").asText(), is("and then?"));
+    }
+
+    @Test
+    void loadingSomethingThatIsNotThereSaysSoAndChangesNothing() throws Exception {
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("ok"));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (OpenAiCompatServer server = server(backend)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url", "http://127.0.0.1:" + server.getPort() + "/v1", "--workspace", workspace.toString()
+            });
+
+            LocalAgent.run(
+                    options,
+                    new StringReader("/load nowhere.txt" + NL + "still working?" + NL + "/exit" + NL),
+                    new PrintStream(out, true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        }
+        assertThat(out.toString(StandardCharsets.UTF_8), containsString("cannot read"));
+        assertThat("the session carries on", backend.requests(), hasSize(1));
+        assertThat(
+                "with nothing loaded into it",
+                backend.requests().get(0).path("messages").size(),
+                is(2));
     }
 
     @Test
