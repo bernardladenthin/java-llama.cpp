@@ -175,6 +175,38 @@ code page it saw at startup, so umlauts and emoji in the answer would turn into 
 project's `.mvn/jvm.config` pins `-Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8` for the `mvn`
 JVM so both sides agree.
 
+### Two consoles: the full one, and `--plain`
+
+There are two, and both stay. The default is the **full console** described below: a block pinned to
+the bottom of the window, an input line that is there while the agent works, a spinner, single-key
+navigation. It positions the cursor, so it needs a terminal that reports its size and understands the
+sequences.
+
+`--plain` chooses the **line-oriented console** instead. It only ever appends lines: the status is
+printed as an ordinary line before the prompt and scrolls away with everything else, there is no
+pinned block and no spinner, and nothing on screen is ever rewritten. That makes a session readable
+when it is piped, logged, recorded, or carried by anything that forwards lines rather than a screen:
+
+```bash
+mvn -q compile exec:java -Dexec.args="--base-url http://127.0.0.1:8080/v1 --plain" | tee session.log
+```
+
+The same console is what the agent falls back to on its own when there is no usable terminal — a pipe,
+a `dumb` terminal, an editor's run window — so `--plain` only *forces* what would otherwise be
+detected. Note that a normal SSH session does **not** need it: a remote terminal reports its size and
+handles cursor control like a local one. It is for the cases where that is not true.
+
+What the line-oriented console gives up, so the choice is an informed one:
+
+| | full (default) | `--plain` |
+|---|---|---|
+| input while the agent works | yes, and a typed line stops the turn | no, the prompt appears between turns |
+| status | pinned at the bottom | printed once before each prompt |
+| activity / spinner | yes | dropped rather than repeated into the log |
+| approvals | `y` + Enter | `y` + Enter |
+| history, Tab completion, Ctrl-L, Shift+Tab | yes | no |
+| correct when the output is a file | — | yes |
+
 ### Commands, approval and the status line
 
 A line that starts with `/` and names a command is answered by the agent itself; anything else — an

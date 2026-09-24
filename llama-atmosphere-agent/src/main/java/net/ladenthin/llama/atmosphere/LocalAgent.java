@@ -196,7 +196,7 @@ public final class LocalAgent {
                     new AtomicReference<>(options.isAuto() ? ApprovalMode.AUTO : ApprovalMode.MANUAL);
             boolean interactive = options.getPrompt() == null && input != null;
             BufferedReader reader = input == null ? null : new BufferedReader(input);
-            terminal = interactive ? JLineTerminal.open(commandNames()) : null;
+            terminal = usesFullTerminal(options, interactive) ? JLineTerminal.open(commandNames()) : null;
             if (terminal == null) {
                 terminal = new PlainTerminal(out, reader, Ansi.detect());
             }
@@ -440,6 +440,23 @@ public final class LocalAgent {
                 terminal.line(ansi.dim(text));
             }
         });
+    }
+
+    /**
+     * Whether to drive the cursor-controlling console rather than the line-oriented one.
+     *
+     * <p>Both consoles are kept, and this is the only place that decides between them. The rich one
+     * needs someone at a terminal <em>and</em> permission to position the cursor; {@code --plain}
+     * withholds the second even when the first is true, which is what a session that is piped,
+     * logged, recorded, or run through something that only forwards lines needs. A run without an
+     * interactive input has no use for it either way.
+     *
+     * @param options the parsed command line
+     * @param interactive whether there is someone typing
+     * @return {@code true} to try the full terminal
+     */
+    static boolean usesFullTerminal(AgentOptions options, boolean interactive) {
+        return interactive && !options.isPlain();
     }
 
     static ConsoleSession turn(

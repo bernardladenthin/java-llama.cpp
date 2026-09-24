@@ -68,6 +68,7 @@ public final class AgentOptions {
     private final String modelId;
     private final Path workspace;
     private final boolean allowShell;
+    private final boolean plain;
     private final boolean auto;
     private final boolean autoCompact;
     private final int compactAt;
@@ -89,6 +90,7 @@ public final class AgentOptions {
         this.modelId = b.modelId;
         this.workspace = b.workspace;
         this.allowShell = b.allowShell;
+        this.plain = b.plain;
         this.auto = b.auto;
         this.autoCompact = b.autoCompact;
         this.compactAt = b.compactAt;
@@ -115,6 +117,7 @@ public final class AgentOptions {
             switch (a) {
                 case "-h", "--help" -> b.help = true;
                 case "--allow-shell" -> b.allowShell = true;
+                case "--plain" -> b.plain = true;
                 case "--auto" -> b.auto = true;
                 case "--auto-compact" -> b.autoCompact = booleanValue(args, ++i, a);
                 case "--compact-at" -> b.compactAt = percentValue(args, ++i, a);
@@ -208,6 +211,7 @@ public final class AgentOptions {
                 "Agent:",
                 "  --workspace <dir>       directory the file tools are confined to (default: cwd)",
                 "  --allow-shell           add the run_command tool (runs any command line, starting in the workspace)",
+                "  --plain                 line-oriented console: no pinned block, no cursor control",
                 "  --auto                  run tools without asking (default: ask before writes and commands)",
                 "  --auto-compact <bool>   summarize the history before it overflows the context (default "
                         + DEFAULT_AUTO_COMPACT + ")",
@@ -341,6 +345,22 @@ public final class AgentOptions {
     }
 
     /**
+     * Whether to use the line-oriented console even when a full terminal is available.
+     *
+     * <p>The rich console positions the cursor: it pins a block to the bottom of the window and keeps
+     * the input line there while output scrolls above it. That needs a terminal that reports its size
+     * and understands the sequences, which is the normal case over SSH as well — but not in a plain
+     * pipe, a CI log, a `dumb` terminal, an editor's run window or a serial console, and not when the
+     * session is being recorded as text. This flag chooses the console that only ever appends lines,
+     * which is also what the agent falls back to on its own when there is no usable terminal.
+     *
+     * @return {@code true} when {@code --plain} was passed
+     */
+    public boolean isPlain() {
+        return plain;
+    }
+
+    /**
      * Sampling temperature.
      *
      * @return the temperature
@@ -399,7 +419,8 @@ public final class AgentOptions {
         return "AgentOptions{baseUrl=" + baseUrl + ", modelPath=" + modelPath + ", gpuLayers=" + gpuLayers
                 + ", ctxSize=" + ctxSize + ", logVerbosity=" + (verbose ? "verbose" : logVerbosity)
                 + ", modelId=" + modelId + ", workspace=" + workspace
-                + ", allowShell=" + allowShell + ", auto=" + auto + ", autoCompact=" + autoCompact + ", temperature="
+                + ", allowShell=" + allowShell + ", plain=" + plain + ", auto=" + auto + ", autoCompact=" + autoCompact
+                + ", temperature="
                 + temperature + ", maxTokens="
                 + maxTokens
                 + ", maxToolRounds=" + maxToolRounds + ", prompt=" + (prompt == null ? "<interactive>" : "<set>")
@@ -421,6 +442,7 @@ public final class AgentOptions {
         String modelId = DEFAULT_MODEL_ID;
         Path workspace = Paths.get("").toAbsolutePath().normalize();
         boolean allowShell;
+        boolean plain;
         boolean auto;
         boolean autoCompact = DEFAULT_AUTO_COMPACT;
         int compactAt = DEFAULT_COMPACT_AT;

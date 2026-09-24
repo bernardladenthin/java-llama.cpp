@@ -2257,7 +2257,15 @@ are decisions, not details:
 2. **One-shot (`--prompt`) denies a gated call** instead of auto-approving it — `--auto` is the
    deliberate opt-in. Atmosphere itself fails closed when no strategy is wired, and this keeps that
    direction: an unattended run must not be the most permissive one.
-3. **`AgentTerminal` has exactly two implementations, chosen once at startup.** `JLineTerminal` (a real
+3. **`AgentTerminal` has exactly two implementations, chosen once at startup, and `--plain` picks the
+   line-oriented one on purpose.** `LocalAgent.usesFullTerminal(options, interactive)` is the single
+   place that decides: the cursor-controlling console needs someone typing **and** permission to move
+   the cursor, and `--plain` withholds the second even on a real terminal. That is not a fallback but
+   a supported mode — for a session that is piped, logged, recorded, or carried by something that
+   forwards lines rather than a screen. It gives up the pinned block, the spinner, history/completion
+   and typing-during-a-turn (`PlainTerminal.hasPendingInput()` is always false), and gains being
+   correct when the output is a file. A normal SSH session needs none of this: a remote terminal
+   reports its size and handles cursor control like a local one. `JLineTerminal` (a real
    terminal: line editing, history, Tab completion of the command names, a status line pinned to the
    bottom via JLine's `Status`, single-key answers through `enterRawMode`, streamed output via
    `LineReader.printAbove` so the bottom block stays put) and `PlainTerminal` (a `PrintStream` plus a
