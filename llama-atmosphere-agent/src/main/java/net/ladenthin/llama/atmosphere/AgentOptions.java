@@ -69,6 +69,7 @@ public final class AgentOptions {
     private final Path workspace;
     private final boolean allowShell;
     private final boolean plain;
+    private final java.nio.file.@org.jspecify.annotations.Nullable Path transcript;
     private final boolean auto;
     private final boolean autoCompact;
     private final int compactAt;
@@ -91,6 +92,7 @@ public final class AgentOptions {
         this.workspace = b.workspace;
         this.allowShell = b.allowShell;
         this.plain = b.plain;
+        this.transcript = b.transcript;
         this.auto = b.auto;
         this.autoCompact = b.autoCompact;
         this.compactAt = b.compactAt;
@@ -118,6 +120,7 @@ public final class AgentOptions {
                 case "-h", "--help" -> b.help = true;
                 case "--allow-shell" -> b.allowShell = true;
                 case "--plain" -> b.plain = true;
+                case "--transcript" -> b.transcript = java.nio.file.Path.of(value(args, ++i, a));
                 case "--auto" -> b.auto = true;
                 case "--auto-compact" -> b.autoCompact = booleanValue(args, ++i, a);
                 case "--compact-at" -> b.compactAt = percentValue(args, ++i, a);
@@ -212,6 +215,7 @@ public final class AgentOptions {
                 "  --workspace <dir>       directory the file tools are confined to (default: cwd)",
                 "  --allow-shell           add the run_command tool (runs any command line, starting in the workspace)",
                 "  --plain                 line-oriented console: no pinned block, no cursor control",
+                "  --transcript <file>     append what is said, with timestamps, as it happens",
                 "  --auto                  run tools without asking (default: ask before writes and commands)",
                 "  --auto-compact <bool>   summarize the history before it overflows the context (default "
                         + DEFAULT_AUTO_COMPACT + ")",
@@ -361,6 +365,19 @@ public final class AgentOptions {
     }
 
     /**
+     * Where to append the session transcript as it happens, if anywhere.
+     *
+     * <p>{@code /save} writes the whole thing on request; this writes each line as it is said, so a
+     * session that is killed still leaves what it had. A failure to write is swallowed: a record that
+     * exists to survive a bad ending must not cause one.
+     *
+     * @return the file, or {@code null} when the transcript is kept in memory only
+     */
+    public java.nio.file.@org.jspecify.annotations.Nullable Path getTranscript() {
+        return transcript;
+    }
+
+    /**
      * Sampling temperature.
      *
      * @return the temperature
@@ -419,7 +436,8 @@ public final class AgentOptions {
         return "AgentOptions{baseUrl=" + baseUrl + ", modelPath=" + modelPath + ", gpuLayers=" + gpuLayers
                 + ", ctxSize=" + ctxSize + ", logVerbosity=" + (verbose ? "verbose" : logVerbosity)
                 + ", modelId=" + modelId + ", workspace=" + workspace
-                + ", allowShell=" + allowShell + ", plain=" + plain + ", auto=" + auto + ", autoCompact=" + autoCompact
+                + ", allowShell=" + allowShell + ", plain=" + plain + ", transcript=" + transcript + ", auto=" + auto
+                + ", autoCompact=" + autoCompact
                 + ", temperature="
                 + temperature + ", maxTokens="
                 + maxTokens
@@ -443,6 +461,7 @@ public final class AgentOptions {
         Path workspace = Paths.get("").toAbsolutePath().normalize();
         boolean allowShell;
         boolean plain;
+        java.nio.file.@org.jspecify.annotations.Nullable Path transcript;
         boolean auto;
         boolean autoCompact = DEFAULT_AUTO_COMPACT;
         int compactAt = DEFAULT_COMPACT_AT;

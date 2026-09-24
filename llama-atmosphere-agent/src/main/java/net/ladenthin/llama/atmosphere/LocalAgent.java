@@ -192,6 +192,9 @@ public final class LocalAgent {
 
             List<ChatMessage> history = new ArrayList<>();
             ToolCallLog callLog = new ToolCallLog();
+            // What was said, with the time, kept apart from the conversation the model is sent: that
+            // one is rewritten by /compact and has no timestamps at all.
+            Transcript transcript = new Transcript(options.getTranscript());
             AtomicReference<ApprovalMode> mode =
                     new AtomicReference<>(options.isAuto() ? ApprovalMode.AUTO : ApprovalMode.MANUAL);
             boolean interactive = options.getPrompt() == null && input != null;
@@ -298,9 +301,11 @@ public final class LocalAgent {
                             inputTokens.get(),
                             estimated.get(),
                             terminal,
-                            callLog));
+                            callLog,
+                            transcript));
                     continue;
                 }
+                transcript.add(Transcript.Kind.USER, line);
                 turnNumber++;
                 // Compact BEFORE the request that would overflow, not after it: afterwards the
                 // oversized request has already been sent, which is the one thing to avoid.
@@ -332,6 +337,11 @@ public final class LocalAgent {
                                 options.getModelId(),
                                 options.getModelPath() == null),
                         activity);
+                for (ConsoleSession.ToolRound round : completed.rounds()) {
+                    transcript.add(
+                            Transcript.Kind.TOOL, round.name() + " " + round.argumentsJson() + " -> " + round.result());
+                }
+                transcript.add(Transcript.Kind.AGENT, completed.text());
                 pendingNote = toolNote(completed.rounds());
                 estimated.set(completed.inputTokens() == 0);
                 inputTokens.set(
@@ -559,6 +569,7 @@ public final class LocalAgent {
      * @param estimated whether that number is an estimate
      * @param terminal the console
      * @param callLog every tool call of the session, for {@code /calls}
+     * @param transcript what was said, with the time, for {@code /save}
      * @return the input tokens to show from now on (unchanged, or the summary's after {@code /compact})
      * @throws InterruptedException if interrupted while a summary is generated
      */
@@ -573,18 +584,30 @@ public final class LocalAgent {
             long inputTokens,
             boolean estimated,
             AgentTerminal terminal,
-            ToolCallLog callLog)
+            ToolCallLog callLog,
+            Transcript transcript)
             throws InterruptedException {
         switch (command.command()) {
             case HELP -> prompt(HELP_TEXT).lines().forEach(terminal::line);
             case CLEAR -> {
                 history.clear();
+                // "Forget this session" has to mean the record too, or the word is not true.
+                transcript.clear();
                 // The screen goes with it: what is still on it is a conversation the model no longer
                 // has, which reads as if it were still in play.
                 terminal.clearScreen();
                 terminal.line("(history cleared)");
             }
             case CLS -> terminal.clearScreen();
+            case SAVE -> {
+                try {
+                    java.nio.file.Path written = transcript.save(
+                            options.getWorkspace(), command.hasArguments() ? command.arguments() : null);
+                    terminal.line("transcript: " + transcript.size() + " entries -> " + written);
+                } catch (java.io.IOException e) {
+                    terminal.line("could not write the transcript: " + e.getMessage());
+                }
+            }
             case CALLS -> callLog.render().lines().forEach(terminal::line);
             case TOOLS -> {
                 terminal.line("tools: " + String.join(", ", runner.toolNames()));
@@ -616,6 +639,9 @@ public final class LocalAgent {
                 terminal.line("history: " + history.size() + " messages");
             }
             case COMPACT -> {
+                // The record is deliberately untouched: compacting rewrites what the model is sent,
+                // not what happened. Only the fact that it happened is worth a line.
+                transcript.add(Transcript.Kind.NOTE, "compacted the conversation");
                 return compact(runner, fileSystem, history, command.arguments(), terminal);
             }
             case LOOP -> loop(runner, fileSystem, terminal, options, mode, command.arguments(), callLog);

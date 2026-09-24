@@ -2318,7 +2318,18 @@ are decisions, not details:
    an embedding index (Cursor's production effect is +0.3 %), and LSP tools (the one isolation study
    finds them token-negative and *worse* at multi-file rename, because renames touch comments and
    strings that semantic references exclude).
-7. **Tool calls are carried into the conversation as a text note, and logged for `/calls`.**
+7. **The session transcript (`Transcript`) is not the conversation the model is sent, and must not be
+   merged with it.** The model's history is rewritten by `/compact` — a summary replaces the turns —
+   and has never carried a timestamp; the transcript only grows and stamps every entry. `/compact`
+   adds a note to it and changes nothing else, `/clear` empties it (the command means "forget this
+   session"), `/save [name]` writes it into the workspace, and `--transcript <file>` appends live so a
+   killed session still leaves what it had — that write failing is swallowed, because a record that
+   exists to survive a bad ending may not cause one. **A list, not a map keyed by the timestamp**: a
+   tool result and the answer after it regularly share a millisecond and a map would drop one
+   silently; insertion order already is time order. `ToolCallLog` stays as the separate, hard-cut
+   receipt for `/calls` — it answers "did that really run", which prose cannot.
+
+8. **Tool calls are carried into the conversation as a text note, and logged for `/calls`.**
    `LocalAgent.withToolNotes` prefixes each turn's answer in the history with
    `(tools I actually ran this turn: <tool> <args> -> <result, cut at 400 chars>)`, and `ToolCallLog`
    keeps the same data for the `/calls` command. **Why it is a note and not real `tool_calls`
@@ -2345,7 +2356,7 @@ are decisions, not details:
    prompt then reads a key in raw mode on that worker thread while the console thread redraws four
    times a second, so `TurnActivity` pauses the redraw for as long as the question is open. Reading the pipe incrementally is not only cosmetic — an unread pipe blocks the child once
    it is full, which on Windows is roughly 4 KB.
-8. **The context number in the status line is an estimate, marked `~`, and it moves during the turn.**
+9. **The context number in the status line is an estimate, marked `~`, and it moves during the turn.**
    llama.cpp emits its usage chunk only when the client sets `stream_options.include_usage`, and
    Atmosphere's client does not; `ConsoleSession.usage()` takes the real count when one arrives,
    otherwise `LocalAgent.estimateTokens` uses four characters per token. The window size is
@@ -2359,7 +2370,7 @@ are decisions, not details:
    request carried when it was sent, and yields to the server's own count as soon as one arrives.
    `TaskLoop` passes a constant function, and its step label must be copied into a local first: a
    lambda may not close over the loop counter.
-9. **One call to `AgentTerminal.line` is one screen line**, and `ConsoleSessionTest` is what defends
+10. **One call to `AgentTerminal.line` is one screen line**, and `ConsoleSessionTest` is what defends
    it. The pinned block is reserved in **lines**, so a single "line" carrying twenty newlines moves the
    screen twenty rows further than the terminal accounted for and the block is then drawn across the
    output — reported twice, both times from a `write_file` call whose `content` argument was the file.
@@ -2368,7 +2379,7 @@ are decisions, not details:
    *name*; results and errors are folded the same way. `JLineTerminal.line` splits a multi-line string
    as a backstop for a caller that forgets. Only the console is cut — the model gets everything, and
    `ConsoleSession.rounds()` keeps the full arguments for the history note and `/calls`.
-10. **The approval mode carries a glyph, and shift+tab switches it**: `ApprovalMode.symbol()` /
+11. **The approval mode carries a glyph, and shift+tab switches it**: `ApprovalMode.symbol()` /
    `badge()` render `⏸ manual` and `⏵⏵ auto` on the status line and in `/mode`, the transport symbols
    the established terminal agents use for the same distinction; `ApprovalMode.next()` is the cycle
    the key walks. The binding is `AgentTerminal.onCycleMode(Runnable)`, which **defaults to declining**
@@ -2381,7 +2392,7 @@ are decisions, not details:
    status numbers in an `AtomicLong`/`AtomicBoolean` rather than locals, so the widget (which runs
    inside the reader) can re-render the pinned row with what the last turn left behind.
 
-11. **The input is framed into the pinned block, and the prompt stays there during a turn; typing
+12. **The input is framed into the pinned block, and the prompt stays there during a turn; typing
    stops the turn.** The frame is two halves that must be read together: the **top** rule is the first
    line of the reader's *prompt* (`rule() + newline + "> "`, rebuilt on every read because the window
    can be resized) — **no, and the second attempt was wrong too.** Both are recorded because the

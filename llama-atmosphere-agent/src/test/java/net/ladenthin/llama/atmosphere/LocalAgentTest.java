@@ -129,6 +129,53 @@ class LocalAgentTest {
     }
 
     @Test
+    void theSessionIsRecordedAndSavedWhereTheToolsWork() throws Exception {
+        // End to end through the real server: what was typed, what came back, written by /save with a
+        // timestamp on every line. /compact keeps the record -- it rewrites what the model is sent,
+        // not what happened -- and only /clear empties it.
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("answer " + call));
+        try (OpenAiCompatServer server = server(backend)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url", "http://127.0.0.1:" + server.getPort() + "/v1", "--workspace", workspace.toString()
+            });
+
+            int exit = LocalAgent.run(
+                    options,
+                    new StringReader("what is two plus two\n/compact\n/save session.txt\n/exit\n"),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+
+            assertThat(exit, is(0));
+            java.nio.file.Path written = workspace.resolve("session.txt");
+            assertThat("the file lands in the workspace", java.nio.file.Files.exists(written), is(true));
+            String text = java.nio.file.Files.readString(written, StandardCharsets.UTF_8);
+            assertThat(text, containsString("you: what is two plus two"));
+            assertThat("the answer survived the compaction", text, containsString("agent: answer 1"));
+            assertThat("and the compaction is noted rather than hidden", text, containsString("compacted"));
+            assertThat("every line is stamped", text.startsWith("["), is(true));
+        }
+    }
+
+    @Test
+    void clearingEmptiesTheRecordAsWell() throws Exception {
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("answer " + call));
+        try (OpenAiCompatServer server = server(backend)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url", "http://127.0.0.1:" + server.getPort() + "/v1", "--workspace", workspace.toString()
+            });
+
+            LocalAgent.run(
+                    options,
+                    new StringReader("remember this\n/clear\n/save after-clear.txt\n/exit\n"),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+
+            String text = java.nio.file.Files.readString(workspace.resolve("after-clear.txt"), StandardCharsets.UTF_8);
+            assertThat("forget the session means the record too", text, not(containsString("remember this")));
+        }
+    }
+
+    @Test
     void failedTurnExitsNonZero() throws Exception {
         ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("never"));
         try (OpenAiCompatServer server = server(backend)) {

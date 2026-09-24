@@ -32,6 +32,8 @@ public record SlashCommands(Command command, String arguments) {
         CLEAR("/clear", "/reset", "/new"),
         /** Wipe the screen, keeping the conversation. */
         CLS("/cls", "/clear-screen"),
+        /** Write what was said, with the time, to a file in the workspace. */
+        SAVE("/save", "/transcript"),
         /** Summarize the history and continue with the summary; the argument steers the summary. */
         COMPACT("/compact"),
         /** Keep working on one task until it is done; see {@link TaskLoop}. */

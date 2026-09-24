@@ -14,6 +14,7 @@ Commands (everything else is sent to the model):
                          the state lives in AGENT-LOOP.md, not in the conversation
   /clear                 drop the history, and wipe the screen with it  (/reset, /new)
   /cls                   wipe the screen, keep the conversation    (/clear-screen, or Ctrl-L)
+  /save [name]           write what was said, with timestamps, into the workspace  (/transcript)
   /exit                  leave                                      (/quit)
 
 The input line sits in the box at the bottom and is there while the agent works: you can type at

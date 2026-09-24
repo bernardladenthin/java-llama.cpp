@@ -207,6 +207,26 @@ What the line-oriented console gives up, so the choice is an informed one:
 | history, Tab completion, Ctrl-L, Shift+Tab | yes | no |
 | correct when the output is a file | — | yes |
 
+### The session transcript
+
+What was said is recorded separately from the conversation the model is sent, because those are two
+different things: `/compact` **rewrites** the model's conversation (a summary replaces the turns it
+summarises) and it never carried a timestamp at all. The transcript only grows.
+
+- `/save [name]` writes it into the workspace, one stamped line per entry:
+  `[2026-09-24 18:41:07] you: what does hello.txt say?`. Without a name the file is named after the
+  time.
+- `--transcript <file>` appends every entry **as it is said**, so a session that is killed still
+  leaves what it had. A failure to write is swallowed on purpose: a record that exists to survive a
+  bad ending must not cause one.
+- `/compact` keeps the record and notes that it happened. `/clear` empties it, because that command
+  means "forget this session" and leaving the text behind would make that untrue.
+- `/calls` is the shorter, tool-only receipt and is unchanged.
+
+It is a list, not a map keyed by the timestamp: a tool result and the answer that follows it regularly
+land in the same millisecond, and a map would keep one and drop the other silently. Insertion order
+already is time order.
+
 ### Commands, approval and the status line
 
 A line that starts with `/` and names a command is answered by the agent itself; anything else — an
