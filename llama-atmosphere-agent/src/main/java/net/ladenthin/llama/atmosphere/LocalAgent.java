@@ -260,6 +260,7 @@ public final class LocalAgent {
                     + (shortcut ? " shift+tab switches the approval mode." : ""));
             int turnNumber = 0;
             String pendingNote = "";
+            String lastMessage = "";
             while (true) {
                 // Pinned to the bottom of the window on a real terminal; printed above the prompt on a
                 // plain stream, where there is nothing to pin and a repeatedly refreshed line would
@@ -290,22 +291,37 @@ public final class LocalAgent {
                     if (command.get().command() == SlashCommands.Command.EXIT) {
                         return 0;
                     }
-                    inputTokens.set(handleCommand(
-                            command.get(),
-                            runner,
-                            fileSystem,
-                            history,
-                            mode,
-                            options,
-                            contextSize,
-                            inputTokens.get(),
-                            estimated.get(),
-                            terminal,
-                            callLog,
-                            transcript));
-                    continue;
+                    if (command.get().command() == SlashCommands.Command.RETRY) {
+                        // Handled here rather than with the other commands, because it is not a command
+                        // that answers something: it runs a turn, which only this loop can do.
+                        if (lastMessage.isEmpty()) {
+                            terminal.line("nothing to retry yet");
+                            continue;
+                        }
+                        dropLastExchange(history, lastMessage);
+                        transcript.add(Transcript.Kind.NOTE, "retrying: " + lastMessage);
+                        line = lastMessage;
+                    } else {
+                        inputTokens.set(handleCommand(
+                                command.get(),
+                                runner,
+                                fileSystem,
+                                history,
+                                mode,
+                                options,
+                                contextSize,
+                                inputTokens.get(),
+                                estimated.get(),
+                                terminal,
+                                callLog,
+                                transcript));
+                        continue;
+                    }
                 }
-                transcript.add(Transcript.Kind.USER, line);
+                if (!line.equals(lastMessage)) {
+                    transcript.add(Transcript.Kind.USER, line);
+                }
+                lastMessage = line;
                 turnNumber++;
                 // Compact BEFORE the request that would overflow, not after it: afterwards the
                 // oversized request has already been sent, which is the one thing to avoid.
@@ -465,6 +481,32 @@ public final class LocalAgent {
      * @param interactive whether there is someone typing
      * @return {@code true} to try the full terminal
      */
+    /**
+     * Take the last exchange out of the conversation, so a retry asks again instead of following on.
+     *
+     * <p>Leaving the failed answer in place would be the opposite of a retry: the model would see what
+     * it said last time and, being a model, would say it again. The question is removed with it,
+     * because the turn that follows adds it back.
+     *
+     * <p>Only a trailing exchange that really is the one being retried is touched — a history that was
+     * just replaced by a summary, or one that never got an answer, is left alone.
+     *
+     * @param history the conversation, modified in place
+     * @param message the question being asked again
+     */
+    static void dropLastExchange(List<ChatMessage> history, String message) {
+        if (!history.isEmpty()
+                && "assistant".equals(history.get(history.size() - 1).role())) {
+            history.remove(history.size() - 1);
+        }
+        if (!history.isEmpty()) {
+            ChatMessage last = history.get(history.size() - 1);
+            if ("user".equals(last.role()) && message.equals(last.content())) {
+                history.remove(history.size() - 1);
+            }
+        }
+    }
+
     static boolean usesFullTerminal(AgentOptions options, boolean interactive) {
         return interactive && !options.isPlain();
     }

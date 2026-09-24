@@ -176,6 +176,91 @@ class LocalAgentTest {
     }
 
     @Test
+    void retryAsksAgainWithoutTheAnswerThatCameBack() throws Exception {
+        // The point of a retry: the model must not see what it said last time, or it says it again.
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("answer " + call));
+        try (OpenAiCompatServer server = server(backend)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url", "http://127.0.0.1:" + server.getPort() + "/v1", "--workspace", workspace.toString()
+            });
+
+            LocalAgent.run(
+                    options,
+                    new StringReader("the question\n/retry\n/exit\n"),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        }
+        List<JsonNode> requests = backend.requests();
+        assertThat("it was asked twice", requests, hasSize(2));
+        JsonNode second = requests.get(1).path("messages");
+        assertThat("system and the question, and nothing else", second.size(), is(2));
+        assertThat(second.get(1).path("content").asText(), is("the question"));
+        assertThat(
+                "the first answer is gone from the conversation", second.toString(), not(containsString("answer 1")));
+    }
+
+    @Test
+    void retryBeforeAnythingWasAskedSaysSo() throws Exception {
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("never"));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (OpenAiCompatServer server = server(backend)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url", "http://127.0.0.1:" + server.getPort() + "/v1", "--workspace", workspace.toString()
+            });
+
+            LocalAgent.run(
+                    options,
+                    new StringReader("/retry\n/exit\n"),
+                    new PrintStream(out, true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        }
+        assertThat(out.toString(StandardCharsets.UTF_8), containsString("nothing to retry"));
+        assertThat("and nothing was sent", backend.requests(), hasSize(0));
+    }
+
+    @Test
+    void aSystemPromptCanComeFromAFile() throws Exception {
+        java.nio.file.Path promptFile = workspace.resolve("persona.txt");
+        java.nio.file.Files.writeString(promptFile, "You answer only in haiku.");
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("ok"));
+        try (OpenAiCompatServer server = server(backend)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url",
+                "http://127.0.0.1:" + server.getPort() + "/v1",
+                "--workspace",
+                workspace.toString(),
+                "--system-file",
+                promptFile.toString()
+            });
+
+            LocalAgent.run(
+                    options,
+                    new StringReader("hello\n/exit\n"),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        }
+        JsonNode system = backend.requests().get(0).path("messages").get(0);
+        assertThat(system.path("role").asText(), is("system"));
+        assertThat(system.path("content").asText(), containsString("only in haiku"));
+    }
+
+    @Test
+    void aSystemFileThatIsNotThereIsAUsageError() {
+        // Read at startup rather than at first use: a typo in a path is easy to miss, and a prompt long
+        // enough to be worth a file is long enough that its absence should not be a surprise mid-turn.
+        IllegalArgumentException thrown = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class,
+                () -> AgentOptions.parse(new String[] {
+                    "--base-url",
+                    "http://localhost:1/v1",
+                    "--system-file",
+                    workspace.resolve("gone.txt").toString()
+                }));
+
+        assertThat(thrown.getMessage(), containsString("--system-file cannot be read"));
+    }
+
+    @Test
     void failedTurnExitsNonZero() throws Exception {
         ScriptedBackend backend = new ScriptedBackend((call, request) -> ScriptedBackend.textTurn("never"));
         try (OpenAiCompatServer server = server(backend)) {

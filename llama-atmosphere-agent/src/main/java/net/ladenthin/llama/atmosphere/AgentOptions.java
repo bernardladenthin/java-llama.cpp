@@ -139,6 +139,7 @@ public final class AgentOptions {
                 case "--max-tokens" -> b.maxTokens = intValue(args, ++i, a);
                 case "--max-tool-rounds" -> b.maxToolRounds = intValue(args, ++i, a);
                 case "--system" -> b.systemPrompt = value(args, ++i, a);
+                case "--system-file" -> b.systemPrompt = readSystemPrompt(value(args, ++i, a));
                 case "--prompt", "-p" -> b.prompt = value(args, ++i, a);
                 default -> throw new IllegalArgumentException("Unknown argument: " + a);
             }
@@ -214,6 +215,7 @@ public final class AgentOptions {
                 "Agent:",
                 "  --workspace <dir>       directory the file tools are confined to (default: cwd)",
                 "  --allow-shell           add the run_command tool (runs any command line, starting in the workspace)",
+                "  --system-file <file>    replace the system prompt with the content of a file",
                 "  --plain                 line-oriented console: no pinned block, no cursor control",
                 "  --transcript <file>     append what is said, with timestamps, as it happens",
                 "  --auto                  run tools without asking (default: ask before writes and commands)",
@@ -411,6 +413,25 @@ public final class AgentOptions {
      */
     public @Nullable String getSystemPrompt() {
         return systemPrompt;
+    }
+
+    /**
+     * Read a system prompt from a file.
+     *
+     * <p>Read here rather than when it is used, so a path that does not exist is a usage error at
+     * startup instead of a surprise on the first turn. A prompt long enough to be worth a file is also
+     * long enough that a typo in the path is easy to miss.
+     *
+     * @param path the file
+     * @return its content
+     * @throws IllegalArgumentException when it cannot be read
+     */
+    private static String readSystemPrompt(String path) {
+        try {
+            return java.nio.file.Files.readString(java.nio.file.Path.of(path), java.nio.charset.StandardCharsets.UTF_8);
+        } catch (java.io.IOException | RuntimeException e) {
+            throw new IllegalArgumentException("--system-file cannot be read: " + path + " (" + e.getMessage() + ")");
+        }
     }
 
     /**

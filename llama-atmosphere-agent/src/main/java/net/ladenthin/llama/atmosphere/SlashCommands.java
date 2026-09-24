@@ -34,6 +34,8 @@ public record SlashCommands(Command command, String arguments) {
         CLS("/cls", "/clear-screen"),
         /** Write what was said, with the time, to a file in the workspace. */
         SAVE("/save", "/transcript"),
+        /** Ask the last question again, without the answer that came back. */
+        RETRY("/retry", "/again"),
         /** Summarize the history and continue with the summary; the argument steers the summary. */
         COMPACT("/compact"),
         /** Keep working on one task until it is done; see {@link TaskLoop}. */

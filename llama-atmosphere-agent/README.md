@@ -207,6 +207,17 @@ What the line-oriented console gives up, so the choice is an informed one:
 | history, Tab completion, Ctrl-L, Shift+Tab | yes | no |
 | correct when the output is a file | — | yes |
 
+### Asking again, and your own system prompt
+
+`/retry` (`/again`) sends the last question once more and **drops the answer that came back** from the
+conversation first. That is the whole point: leaving it in place would show the model what it said
+last time, and a model that sees its own answer repeats it. Before anything has been asked it says so
+rather than sending an empty turn.
+
+`--system-file <file>` replaces the system prompt with the content of a file — the same as `--system`
+but without fighting the shell over quoting and newlines. It is read at startup, so a wrong path is a
+usage error immediately instead of a surprise on the first turn.
+
 ### The session transcript
 
 What was said is recorded separately from the conversation the model is sent, because those are two
