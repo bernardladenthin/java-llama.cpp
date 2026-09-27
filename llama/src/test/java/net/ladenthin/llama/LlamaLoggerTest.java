@@ -80,8 +80,16 @@ class LlamaLoggerTest {
         }
     }
 
+    /**
+     * Runs after the skipped tests too: JUnit calls {@code @AfterEach} even when the test body was
+     * aborted by an assumption. Without the guard, a build without {@code libjllama} (the SonarQube
+     * job) fails here on {@code LlamaModel}'s static initializer instead of skipping.
+     */
     @AfterEach
     void restoreConsoleLogging() {
+        if (!nativeLibraryOnClasspath()) {
+            return;
+        }
         LlamaModel.setLogger(LogFormat.TEXT, null);
     }
 
