@@ -1039,6 +1039,12 @@ What to know:
   `llama-android` AAR does not request it, so an app that wants RPC must declare it itself.
 - `RpcServer.startLocal(port, threads, cacheDir)` enables upstream's tensor cache: a client that
   loads the same model again sends the large tensors only once.
+- **Choose the served devices when the default is wrong.** `RpcServer.startLocal(port, threads,
+  cacheDir, Arrays.asList("CPU"))` (or `--device CPU` on the command line; names as llama.cpp
+  prints them, e.g. `CUDA0`, `Vulkan1`, `MTL0`) replaces the default of every accelerator. It
+  matters because llama.cpp's RPC client treats every operation as supported by the remote device:
+  a served GPU that cannot run one terminates the server process on the first graph that needs it.
+  The paravirtual GPU of a macOS virtual machine is such a device — serve `CPU` there.
 
 ### LangChain4j integration
 

@@ -49,7 +49,7 @@ cleanup() {
 trap cleanup EXIT
 
 # --- JVM A: the RPC server ----------------------------------------------------------------------
-java -cp "$JAR" net.ladenthin.llama.RpcServer --port "$RPC_PORT" --threads 2 > rpc-server.log 2>&1 &
+java -cp "$JAR" net.ladenthin.llama.RpcServer --port "$RPC_PORT" --threads 2 --device CPU > rpc-server.log 2>&1 &
 PIDS+=($!)
 SERVER_PID=$!
 for _ in $(seq 1 60); do
@@ -58,6 +58,7 @@ for _ in $(seq 1 60); do
     sleep 1
 done
 grep -q "RpcServer listening on 127.0.0.1:$RPC_PORT" rpc-server.log || fail "RpcServer never reported listening"
+grep -q "serving \[CPU\]" rpc-server.log || fail "RpcServer --device CPU did not serve exactly the CPU"
 echo "RPC server up: $(grep 'RpcServer listening' rpc-server.log)"
 
 # --- JVM B: the model, offloaded over RPC --------------------------------------------------------

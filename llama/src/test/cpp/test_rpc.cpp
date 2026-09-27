@@ -135,8 +135,11 @@ namespace {
 // (a fixed port would collide with parallel jobs on one runner). stop() + the destructor end it.
 class loopback_server {
   public:
+    // Serves the CPU: ggml-rpc's client reports every operation as supported, so a served GPU that
+    // cannot run one aborts the server -- the paravirtual Metal device of the macOS CI runners has
+    // no MUL_MAT. The transport is what these tests are about, not the device behind it.
     loopback_server() {
-        devices_ = jllama::rpc::server_devices();
+        devices_ = jllama::rpc::server_devices({"CPU"});
         for (int attempt = 0; attempt < 50 && !listening_; ++attempt) {
             port_ = 42000 +
                     static_cast<int>(
@@ -213,6 +216,31 @@ std::vector<float> mul_mat_on(ggml_backend_t backend) {
 
 } // namespace
 
+TEST(RpcServerDevices, NamedDevicesAreFoundWithoutRegardToCaseAndDeduplicated) {
+    const auto devices = jllama::rpc::server_devices({"cpu", "CPU"});
+    ASSERT_EQ(devices.size(), 1u);
+    EXPECT_EQ(ggml_backend_dev_type(devices[0]), GGML_BACKEND_DEVICE_TYPE_CPU);
+}
+
+TEST(RpcServerDevices, NoNamesMeansTheDefaultChoice) {
+    const auto named = jllama::rpc::server_devices(std::vector<std::string>{});
+    const auto fallback = jllama::rpc::server_devices();
+    EXPECT_EQ(named, fallback);
+    EXPECT_FALSE(named.empty());
+}
+
+TEST(RpcServerDevices, AnUnknownNameListsTheAvailableDevices) {
+    try {
+        (void)jllama::rpc::server_devices({"CPU", "NO-SUCH-DEVICE"});
+        FAIL() << "expected std::invalid_argument";
+    } catch (const std::invalid_argument &e) {
+        const std::string what = e.what();
+        EXPECT_NE(what.find("unknown device 'NO-SUCH-DEVICE'"), std::string::npos) << what;
+        EXPECT_NE(what.find("available: "), std::string::npos) << what;
+        EXPECT_NE(what.find("CPU"), std::string::npos) << what;
+    }
+}
+
 TEST(RpcLoopback, ServerComputesTheSameResultAsTheLocalCpu) {
     loopback_server server;
     ASSERT_TRUE(server.listening()) << "no free port found for the loopback RPC server";
@@ -241,7 +269,7 @@ TEST(RpcLoopback, StopEndsTheServerAndFreesThePort) {
     EXPECT_FALSE(ggml_backend_rpc_server_listening());
     // the port is free again: a new server can bind the very same endpoint
     const std::string endpoint = server.endpoint();
-    auto devices = jllama::rpc::server_devices();
+    auto devices = jllama::rpc::server_devices({"CPU"});
     std::thread again(
         [&]() { ggml_backend_rpc_start_server(endpoint.c_str(), nullptr, 1, devices.size(), devices.data()); });
     for (int i = 0; i < 500 && !ggml_backend_rpc_server_listening(); ++i) {
@@ -302,6 +330,21 @@ TEST(RpcClient, AStaleServerIsKeptOutOfALaterLoadThatDidNotAskForIt) {
     // an explicit --device from the caller is never overridden
     const auto explicit_devices = jllama::rpc::prepare_argv({"llama", "-dev", "none"});
     EXPECT_EQ(explicit_devices, (std::vector<std::string>{"llama", "-dev", "none"}));
+
+    // and a registered RPC device can never be served back out by name (it would forward to itself)
+    size_t checked = 0;
+    for (const auto &info : jllama::rpc::registered_devices()) {
+        if (!info.endpoint.empty()) {
+            try {
+                (void)jllama::rpc::server_devices({info.name});
+                ADD_FAILURE() << "served the RPC device " << info.name;
+            } catch (const std::invalid_argument &e) {
+                EXPECT_NE(std::string(e.what()).find("itself a remote RPC device"), std::string::npos) << e.what();
+            }
+            ++checked;
+        }
+    }
+    EXPECT_GT(checked, 0u);
 }
 
 TEST(RpcClient, ARegisteredServerThatWentAwayIsReportedOnTheNextRegistration) {

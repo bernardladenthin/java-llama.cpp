@@ -19,6 +19,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.loader.OSInfo;
 import net.ladenthin.llama.parameters.ModelParameters;
@@ -117,6 +118,26 @@ public class RpcServerTest {
         assertThat(RpcServer.servedDevices(), is(not(empty())));
         for (String device : RpcServer.servedDevices()) {
             assertThat(device, not(containsString("RPC")));
+        }
+    }
+
+    @Test
+    public void theCpuCanBeServedByNameAndAnUnknownNameIsRejected() throws IOException {
+        try (RpcServer server = RpcServer.startLocal(freePort(), 1, null, Arrays.asList("cpu", "CPU"))) {
+            assertThat(
+                    "matched without regard to case, duplicates dropped",
+                    server.getDevices(),
+                    is(Arrays.asList("CPU")));
+        }
+        LlamaException e = assertThrows(
+                LlamaException.class, () -> RpcServer.startLocal(freePort(), 1, null, Arrays.asList("NO-SUCH-DEVICE")));
+        assertThat(e.getMessage(), containsString("unknown device 'NO-SUCH-DEVICE'"));
+        assertThat(e.getMessage(), containsString("available: "));
+        assertThat(e.getMessage(), containsString("CPU"));
+        // the failed attempt left the single-instance slot free
+        try (RpcServer server = RpcServer.startLocal(freePort())) {
+            assertThat(server.isRunning(), is(true));
+            assertThat(server.getDevices(), is(RpcServer.servedDevices()));
         }
     }
 

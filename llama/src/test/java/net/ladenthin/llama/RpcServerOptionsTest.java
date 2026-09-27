@@ -6,6 +6,7 @@ package net.ladenthin.llama;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
@@ -13,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.file.Paths;
+import java.util.Arrays;
 import net.ladenthin.llama.value.RpcEndpoint;
 import org.junit.jupiter.api.Test;
 
@@ -29,6 +31,7 @@ public class RpcServerOptionsTest {
         assertThat(options.port, is(RpcEndpoint.DEFAULT_PORT));
         assertThat(options.threads, is(RpcServer.Options.defaultThreads()));
         assertThat(options.cacheDir, is(nullValue()));
+        assertThat(options.devices, is(empty()));
         assertThat(options.help, is(false));
     }
 
@@ -42,18 +45,24 @@ public class RpcServerOptionsTest {
     @Test
     public void everyOptionInBothSpellings() {
         RpcServer.Options longForm = RpcServer.Options.parse(
-                new String[] {"--host", "0.0.0.0", "--port", "6000", "--threads", "3", "--cache", "c"});
+                new String[] {"--host", "0.0.0.0", "--port", "6000", "--threads", "3", "--cache", "c", "--device", "CPU"
+                });
         assertThat(longForm.host, is("0.0.0.0"));
         assertThat(longForm.port, is(6000));
         assertThat(longForm.threads, is(3));
         assertThat(longForm.cacheDir, is(Paths.get("c")));
+        assertThat(longForm.devices, is(Arrays.asList("CPU")));
 
-        RpcServer.Options shortForm =
-                RpcServer.Options.parse(new String[] {"-H", "10.1.2.3", "-p", "7", "-t", "1", "-c", "d"});
+        RpcServer.Options shortForm = RpcServer.Options.parse(
+                new String[] {"-H", "10.1.2.3", "-p", "7", "-t", "1", "-c", "d", "-d", " CUDA0, ,CUDA1", "-d", "CPU"});
         assertThat(shortForm.host, is("10.1.2.3"));
         assertThat(shortForm.port, is(7));
         assertThat(shortForm.threads, is(1));
         assertThat(shortForm.cacheDir, is(Paths.get("d")));
+        assertThat(
+                "lists split, trimmed, empties dropped, repeats accumulate",
+                shortForm.devices,
+                is(Arrays.asList("CUDA0", "CUDA1", "CPU")));
     }
 
     @Test

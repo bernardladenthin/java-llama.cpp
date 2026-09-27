@@ -37,20 +37,25 @@ namespace {
 
 jclass rpc_exception_class(JNIEnv *env) { return env->FindClass("net/ladenthin/llama/exception/LlamaException"); }
 
+// The comma-separated device names RpcServer passes ("" = the default selection).
+std::vector<ggml_backend_dev_t> selected_devices(JNIEnv *env, jstring jdevices) {
+    return jllama::rpc::server_devices(jllama::rpc::split_endpoints(parse_jstring(env, jdevices)));
+}
+
 } // namespace
 
 extern "C" {
 
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_RpcServerNative_serveNative(JNIEnv *env, jclass, jstring jhost,
-                                                                            jint port, jint threads,
-                                                                            jstring jcache_dir) {
+                                                                            jint port, jint threads, jstring jcache_dir,
+                                                                            jstring jdevices) {
     return jni_guard_impl(env, rpc_exception_class(env), [&]() -> void {
         const std::string endpoint = parse_jstring(env, jhost) + ":" + std::to_string(port);
         std::string cache_dir;
         if (jcache_dir != nullptr) {
             cache_dir = parse_jstring(env, jcache_dir);
         }
-        auto devices = jllama::rpc::server_devices();
+        auto devices = selected_devices(env, jdevices);
         if (devices.empty()) {
             throw std::runtime_error("no device to serve over RPC");
         }
@@ -70,9 +75,10 @@ JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_RpcServerNative_serverListen
                           [&]() -> jboolean { return ggml_backend_rpc_server_listening() ? JNI_TRUE : JNI_FALSE; });
 }
 
-JNIEXPORT jobjectArray JNICALL Java_net_ladenthin_llama_RpcServerNative_serverDevicesNative(JNIEnv *env, jclass) {
+JNIEXPORT jobjectArray JNICALL Java_net_ladenthin_llama_RpcServerNative_serverDevicesNative(JNIEnv *env, jclass,
+                                                                                            jstring jdevices) {
     return jni_guard_impl(env, rpc_exception_class(env), [&]() -> jobjectArray {
-        const auto devices = jllama::rpc::server_devices();
+        const auto devices = selected_devices(env, jdevices);
         jclass string_class = env->FindClass("java/lang/String");
         if (string_class == nullptr) {
             return nullptr;

@@ -15,6 +15,8 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -37,6 +39,8 @@ public class RpcServerLifecycleTest {
 
     private static final RpcEndpoint ENDPOINT = RpcEndpoint.of("127.0.0.1", 50052);
 
+    private static final List<String> NO_DEVICES = Collections.emptyList();
+
     @TempDir
     Path tempDir;
 
@@ -47,11 +51,14 @@ public class RpcServerLifecycleTest {
         volatile boolean listening;
         volatile @Nullable String cacheDir;
         volatile int threads;
+        volatile @Nullable String served;
+        volatile @Nullable String asked;
 
         @Override
-        public void serve(String host, int port, int threads, @Nullable String cacheDir) {
+        public void serve(String host, int port, int threads, @Nullable String cacheDir, String devices) {
             this.threads = threads;
             this.cacheDir = cacheDir;
+            this.served = devices;
             listening = true;
             try {
                 stopped.await();
@@ -73,25 +80,28 @@ public class RpcServerLifecycleTest {
         }
 
         @Override
-        public String @Nullable [] devices() {
-            return new String[] {"CPU"};
+        public String @Nullable [] devices(String devices) {
+            asked = devices;
+            return devices.isEmpty() ? new String[] {"CPU"} : devices.split(",");
         }
     }
 
     /** serve() returns at once without listening -- the port could not be bound. */
     static class UnboundBackend extends WorkingBackend {
         @Override
-        public void serve(String host, int port, int threads, @Nullable String cacheDir) {}
+        public void serve(String host, int port, int threads, @Nullable String cacheDir, String devices) {}
     }
 
     @Test
     public void startsListeningAndStopsOnClose() throws Exception {
         WorkingBackend backend = new WorkingBackend();
-        RpcServer server = RpcServer.start(ENDPOINT, 3, null, backend, 5_000);
+        RpcServer server = RpcServer.start(ENDPOINT, 3, null, NO_DEVICES, backend, 5_000);
         assertThat(server.isRunning(), is(true));
         assertThat(server.getEndpoint(), is(ENDPOINT));
         assertThat(backend.threads, is(3));
         assertThat(backend.cacheDir, is((String) null));
+        assertThat("no names means the default choice", backend.served, is(""));
+        assertThat(server.getDevices(), is(Arrays.asList("CPU")));
         assertThat(server.toString(), is("RpcServer[127.0.0.1:50052, running]"));
 
         server.close();
@@ -105,13 +115,14 @@ public class RpcServerLifecycleTest {
 
     @Test
     public void onlyOneServerAtATimeAndTheSlotIsReleasedOnClose() {
-        try (RpcServer first = RpcServer.start(ENDPOINT, 1, null, new WorkingBackend(), 5_000)) {
+        try (RpcServer first = RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, new WorkingBackend(), 5_000)) {
             IllegalStateException e = assertThrows(
-                    IllegalStateException.class, () -> RpcServer.start(ENDPOINT, 1, null, new WorkingBackend(), 5_000));
+                    IllegalStateException.class,
+                    () -> RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, new WorkingBackend(), 5_000));
             assertThat(e.getMessage(), containsString("already running"));
             assertThat(e.getMessage(), containsString(ENDPOINT.toString()));
         }
-        try (RpcServer second = RpcServer.start(ENDPOINT, 1, null, new WorkingBackend(), 5_000)) {
+        try (RpcServer second = RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, new WorkingBackend(), 5_000)) {
             assertThat(second.isRunning(), is(true));
         }
     }
@@ -119,7 +130,8 @@ public class RpcServerLifecycleTest {
     @Test
     public void aSocketThatCannotBeBoundIsALlamaExceptionAndReleasesTheSlot() {
         LlamaException e = assertThrows(
-                LlamaException.class, () -> RpcServer.start(ENDPOINT, 1, null, new UnboundBackend(), 5_000));
+                LlamaException.class,
+                () -> RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, new UnboundBackend(), 5_000));
         assertThat(e.getMessage(), containsString("could not listen on 127.0.0.1:50052"));
         assertThat(e.getMessage(), containsString("already in use"));
         assertSlotIsFree();
@@ -129,12 +141,12 @@ public class RpcServerLifecycleTest {
     public void aServeThatThrowsReportsItsMessage() {
         RpcServer.Backend throwing = new UnboundBackend() {
             @Override
-            public void serve(String host, int port, int threads, @Nullable String cacheDir) {
+            public void serve(String host, int port, int threads, @Nullable String cacheDir, String devices) {
                 throw new LlamaException("no device to serve over RPC");
             }
         };
-        LlamaException e =
-                assertThrows(LlamaException.class, () -> RpcServer.start(ENDPOINT, 1, null, throwing, 5_000));
+        LlamaException e = assertThrows(
+                LlamaException.class, () -> RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, throwing, 5_000));
         assertThat(e.getMessage(), containsString("no device to serve over RPC"));
         assertSlotIsFree();
     }
@@ -148,7 +160,8 @@ public class RpcServerLifecycleTest {
                 return false;
             }
         };
-        LlamaException e = assertThrows(LlamaException.class, () -> RpcServer.start(ENDPOINT, 1, null, hanging, 200));
+        LlamaException e =
+                assertThrows(LlamaException.class, () -> RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, hanging, 200));
         assertThat(e.getMessage(), containsString("could not listen"));
         assertThat("the hanging serve was stopped", hanging.stops.get(), is(1));
         assertSlotIsFree();
@@ -164,7 +177,7 @@ public class RpcServerLifecycleTest {
         };
         Thread.currentThread().interrupt();
         try {
-            assertThrows(LlamaException.class, () -> RpcServer.start(ENDPOINT, 1, null, hanging, 60_000));
+            assertThrows(LlamaException.class, () -> RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, hanging, 60_000));
             assertThat(Thread.currentThread().isInterrupted(), is(true));
         } finally {
             Thread.interrupted();
@@ -177,7 +190,7 @@ public class RpcServerLifecycleTest {
     public void theCacheDirectoryIsCreatedAndPassedOn() throws Exception {
         Path cache = tempDir.resolve("a").resolve("b");
         WorkingBackend backend = new WorkingBackend();
-        try (RpcServer server = RpcServer.start(ENDPOINT, 1, cache, backend, 5_000)) {
+        try (RpcServer server = RpcServer.start(ENDPOINT, 1, cache, NO_DEVICES, backend, 5_000)) {
             assertThat(Files.isDirectory(cache), is(true));
             assertThat(backend.cacheDir, is(cache.toString()));
         }
@@ -188,7 +201,7 @@ public class RpcServerLifecycleTest {
         Path file = Files.createFile(tempDir.resolve("not-a-directory"));
         UncheckedIOException e = assertThrows(
                 UncheckedIOException.class,
-                () -> RpcServer.start(ENDPOINT, 1, file.resolve("cache"), new WorkingBackend(), 5_000));
+                () -> RpcServer.start(ENDPOINT, 1, file.resolve("cache"), NO_DEVICES, new WorkingBackend(), 5_000));
         assertThat(e.getMessage(), containsString("cannot create the RPC tensor cache directory"));
         assertSlotIsFree();
     }
@@ -196,29 +209,30 @@ public class RpcServerLifecycleTest {
     @Test
     public void lessThanOneThreadIsRejectedBeforeAnythingStarts() {
         IllegalArgumentException e = assertThrows(
-                IllegalArgumentException.class, () -> RpcServer.start(ENDPOINT, 0, null, new WorkingBackend(), 5_000));
+                IllegalArgumentException.class,
+                () -> RpcServer.start(ENDPOINT, 0, null, NO_DEVICES, new WorkingBackend(), 5_000));
         assertThat(e.getMessage(), containsString("threads must be at least 1, was 0"));
         assertSlotIsFree();
     }
 
     @Test
     public void servedDevicesWrapsTheBackendsList() {
-        assertThat(RpcServer.servedDevices(new WorkingBackend()), is(Arrays.asList("CPU")));
+        assertThat(RpcServer.servedDevices(new WorkingBackend(), ""), is(Arrays.asList("CPU")));
         RpcServer.Backend none = new WorkingBackend() {
             @Override
-            public String @Nullable [] devices() {
+            public String @Nullable [] devices(String devices) {
                 return null;
             }
         };
-        assertThat(RpcServer.servedDevices(none), is(empty()));
+        assertThat(RpcServer.servedDevices(none, ""), is(empty()));
         assertThrows(
                 UnsupportedOperationException.class,
-                () -> RpcServer.servedDevices(new WorkingBackend()).add("x"));
+                () -> RpcServer.servedDevices(new WorkingBackend(), "").add("x"));
     }
 
     @Test
     public void awaitTerminationReturnsOnceClosed() throws Exception {
-        RpcServer server = RpcServer.start(ENDPOINT, 1, null, new WorkingBackend(), 5_000);
+        RpcServer server = RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, new WorkingBackend(), 5_000);
         Thread closer = new Thread(server::close);
         closer.start();
         server.awaitTermination();
@@ -226,8 +240,47 @@ public class RpcServerLifecycleTest {
         assertThat(server.isRunning(), is(false));
     }
 
+    @Test
+    public void namedDevicesAreResolvedBeforeStartingAndServed() {
+        WorkingBackend backend = new WorkingBackend();
+        try (RpcServer server = RpcServer.start(ENDPOINT, 1, null, Arrays.asList(" CPU ", "CUDA0"), backend, 5_000)) {
+            assertThat("names are trimmed and joined", backend.asked, is("CPU,CUDA0"));
+            assertThat(backend.served, is("CPU,CUDA0"));
+            assertThat(server.getDevices(), is(Arrays.asList("CPU", "CUDA0")));
+        }
+    }
+
+    @Test
+    public void anUnknownDeviceFailsTheStartAndReleasesTheSlot() {
+        WorkingBackend unknown = new WorkingBackend() {
+            @Override
+            public String @Nullable [] devices(String devices) {
+                throw new LlamaException("unknown device '" + devices + "' to serve over RPC");
+            }
+        };
+        LlamaException e = assertThrows(
+                LlamaException.class, () -> RpcServer.start(ENDPOINT, 1, null, Arrays.asList("NOPE"), unknown, 5_000));
+        assertThat(e.getMessage(), containsString("unknown device 'NOPE'"));
+        assertThat("never started", unknown.stops.get(), is(0));
+        assertSlotIsFree();
+    }
+
+    @Test
+    public void aDeviceNameThatWouldSplitDifferentlyIsRejected() {
+        for (String bad : new String[] {"", " ", "CPU,CUDA0"}) {
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> RpcServer.start(ENDPOINT, 1, null, Arrays.asList("CPU", bad), new WorkingBackend(), 5_000),
+                    bad);
+            assertThat(e.getMessage(), containsString("invalid device name '" + bad + "'"));
+        }
+        assertThat(RpcServer.joinDevices(NO_DEVICES), is(""));
+        assertThat(RpcServer.joinDevices(Arrays.asList("A")), is("A"));
+        assertSlotIsFree();
+    }
+
     private static void assertSlotIsFree() {
-        try (RpcServer probe = RpcServer.start(ENDPOINT, 1, null, new WorkingBackend(), 5_000)) {
+        try (RpcServer probe = RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, new WorkingBackend(), 5_000)) {
             assertThat(probe.isRunning(), is(true));
         }
     }

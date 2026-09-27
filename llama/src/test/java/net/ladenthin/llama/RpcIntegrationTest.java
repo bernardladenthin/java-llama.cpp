@@ -11,6 +11,7 @@ import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.File;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import net.ladenthin.llama.args.LogFormat;
@@ -42,7 +43,11 @@ public class RpcIntegrationTest {
         List<String> log = new CopyOnWriteArrayList<>();
         String viaRpc;
         String endpoint;
-        try (RpcServer server = RpcServer.startLocal(RpcServerTest.freePort(), 2, null)) {
+        // CPU, not the default choice: ggml-rpc's client treats every operation as supported, so a
+        // GPU that cannot run one (the paravirtual Metal device of the macOS CI runners has no
+        // MUL_MAT) would abort this JVM. Which device serves is not what this test is about.
+        try (RpcServer server =
+                RpcServer.startLocal(RpcServerTest.freePort(), 2, null, Collections.singletonList("CPU"))) {
             endpoint = server.getEndpoint().toString();
             LlamaModel.setLogger(LogFormat.TEXT, (level, text) -> log.add(text));
             try (LlamaModel model = new LlamaModel(new ModelParameters()

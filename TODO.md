@@ -38,6 +38,14 @@ so everything below is genuinely still open.
   upstream change: carry a failed-state flag through the dispatcher, fail the pending futures, and
   surface it as a `GGML_STATUS_FAILED` at the next `graph_compute`, which llama.cpp already turns into
   a decode error. File upstream first; do not carry it downstream.
+- **A served device that cannot run an operation aborts the server process.** ggml-rpc's client
+  answers every `supports_op` with `true` (upstream `//TODO: call the remote backend and cache the
+  results` in `ggml_backend_rpc_device_supports_op`), so the scheduler never falls back and the
+  server hits `GGML_ABORT("unsupported op")` in the device's graph compute. Seen on the macOS CI
+  runners, whose paravirtual Metal GPU has no `MUL_MAT`: an in-JVM `RpcServer` serving it takes the
+  JVM down on the first inference. Mitigated, not fixed: `RpcServer`'s device list (`--device CPU`)
+  and the tests serve the CPU. The fix is upstream — forward `supports_op` over the protocol (a new
+  command, with a per-op cache on the client) — and belongs there, not in `0015`.
 - **File patch `0015` upstream** (non-aborting registration, `ggml_backend_rpc_stop_server()`,
   `ggml_backend_rpc_server_listening()`, the transport fd/SIGPIPE fixes) and drop it once merged.
 - **Android RPC is untested on a device.** Bionic sockets build (upstream ships RPC in its Android

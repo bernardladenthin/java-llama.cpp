@@ -9,7 +9,9 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -35,9 +37,14 @@ import org.slf4j.LoggerFactory;
  * }
  * }</pre>
  *
- * <p>The server offers every accelerator this library found (CUDA, Vulkan, Metal, ...), or the
- * CPU when there is none; see {@link #servedDevices()}. It runs on a daemon thread of its own until
- * {@link #close()}.
+ * <p>By default the server offers every accelerator this library found (CUDA, Vulkan, Metal, ...),
+ * or the CPU when there is none; see {@link #servedDevices()}. The overloads taking a device list
+ * choose them by name instead, like upstream's {@code rpc-server --device}. That choice matters
+ * more than it looks: llama.cpp's RPC client treats every operation as supported by the remote
+ * device, so a served device that cannot run one aborts this process on the first graph that
+ * needs it (the paravirtual GPU of a macOS virtual machine cannot multiply matrices, for
+ * example). Serve {@code CPU} on such a machine. The server runs on a daemon thread of its own
+ * until {@link #close()}.
  *
  * <p><strong>Security.</strong> The RPC protocol has no authentication and no encryption: anyone
  * who reaches the port can use the devices and read or write the tensors on them. The factories
@@ -69,8 +76,11 @@ public final class RpcServer implements AutoCloseable {
      * always uses {@link RpcServerNative}.
      */
     interface Backend {
-        /** Blocks for the life of the server, or returns at once when the socket cannot be bound. */
-        void serve(String host, int port, int threads, @Nullable String cacheDir);
+        /**
+         * Blocks for the life of the server, or returns at once when the socket cannot be bound.
+         * {@code devices} is a comma-separated list of device names, empty for the default choice.
+         */
+        void serve(String host, int port, int threads, @Nullable String cacheDir, String devices);
 
         /** Makes a running {@link #serve} return. */
         void stop();
@@ -78,19 +88,24 @@ public final class RpcServer implements AutoCloseable {
         /** Whether {@link #serve} is accepting connections. */
         boolean listening();
 
-        /** Names of the devices {@link #serve} would offer. */
-        String @Nullable [] devices();
+        /**
+         * Names of the devices {@link #serve} would offer for the same {@code devices} argument;
+         * throws when a name is unknown.
+         */
+        String @Nullable [] devices(String devices);
     }
 
     private final RpcEndpoint endpoint;
     private final Thread thread;
     private final Backend backend;
+    private final List<String> devices;
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    private RpcServer(RpcEndpoint endpoint, Thread thread, Backend backend) {
+    private RpcServer(RpcEndpoint endpoint, Thread thread, Backend backend, List<String> devices) {
         this.endpoint = endpoint;
         this.thread = thread;
         this.backend = backend;
+        this.devices = devices;
     }
 
     /**
@@ -118,7 +133,30 @@ public final class RpcServer implements AutoCloseable {
      * @throws IllegalStateException when a server is already running in this process
      */
     public static RpcServer startLocal(int port, int threads, @Nullable Path cacheDir) {
-        return start(RpcEndpoint.of(LOOPBACK, port), threads, cacheDir, RpcServerNative.INSTANCE, START_TIMEOUT_MILLIS);
+        return startLocal(port, threads, cacheDir, Collections.<String>emptyList());
+    }
+
+    /**
+     * Starts a server on loopback that offers the named devices.
+     *
+     * @param port the TCP port
+     * @param threads CPU threads the served CPU device uses, at least 1
+     * @param cacheDir tensor cache directory, or {@code null}
+     * @param devices device names as llama.cpp reports them, e.g. {@code [CPU]} or
+     *     {@code [CUDA0, CUDA1]}; empty for the default choice
+     * @return the running server
+     * @throws LlamaException when the port cannot be bound or a device name is unknown
+     * @throws IllegalArgumentException when a device name is empty or contains a comma
+     * @throws IllegalStateException when a server is already running in this process
+     */
+    public static RpcServer startLocal(int port, int threads, @Nullable Path cacheDir, List<String> devices) {
+        return start(
+                RpcEndpoint.of(LOOPBACK, port),
+                threads,
+                cacheDir,
+                devices,
+                RpcServerNative.INSTANCE,
+                START_TIMEOUT_MILLIS);
     }
 
     /**
@@ -135,6 +173,26 @@ public final class RpcServer implements AutoCloseable {
      * @throws IllegalStateException when a server is already running in this process
      */
     public static RpcServer startOnNetwork(String bindAddress, int port, int threads, @Nullable Path cacheDir) {
+        return startOnNetwork(bindAddress, port, threads, cacheDir, Collections.<String>emptyList());
+    }
+
+    /**
+     * Starts a server on another interface that offers the named devices; see
+     * {@link #startOnNetwork(String, int, int, Path)} for the security caveat.
+     *
+     * @param bindAddress an IPv4 address of this machine, or {@code 0.0.0.0} for every interface
+     * @param port the TCP port
+     * @param threads CPU threads the served CPU device uses, at least 1
+     * @param cacheDir tensor cache directory, or {@code null}
+     * @param devices device names, e.g. {@code [CPU]}; empty for the default choice
+     * @return the running server
+     * @throws LlamaException when the port cannot be bound or a device name is unknown
+     * @throws IllegalArgumentException when the address is not an IPv4 literal, or a device name is
+     *     empty or contains a comma
+     * @throws IllegalStateException when a server is already running in this process
+     */
+    public static RpcServer startOnNetwork(
+            String bindAddress, int port, int threads, @Nullable Path cacheDir, List<String> devices) {
         Options.requireIpv4Literal(bindAddress);
         if (!LOOPBACK.equals(bindAddress)) {
             LOGGER.warn(
@@ -144,27 +202,40 @@ public final class RpcServer implements AutoCloseable {
                     port);
         }
         return start(
-                RpcEndpoint.of(bindAddress, port), threads, cacheDir, RpcServerNative.INSTANCE, START_TIMEOUT_MILLIS);
+                RpcEndpoint.of(bindAddress, port),
+                threads,
+                cacheDir,
+                devices,
+                RpcServerNative.INSTANCE,
+                START_TIMEOUT_MILLIS);
     }
 
     /** The lifecycle of {@link #startLocal}/{@link #startOnNetwork}, on an explicit backend and timeout. */
     static RpcServer start(
-            RpcEndpoint endpoint, int threads, @Nullable Path cacheDir, Backend backend, long startTimeoutMillis) {
+            RpcEndpoint endpoint,
+            int threads,
+            @Nullable Path cacheDir,
+            List<String> devices,
+            Backend backend,
+            long startTimeoutMillis) {
         if (threads < 1) {
             throw new IllegalArgumentException("threads must be at least 1, was " + threads);
         }
+        String deviceList = joinDevices(devices);
         if (!ACTIVE.compareAndSet(false, true)) {
             throw new IllegalStateException("cannot start an RPC server on " + endpoint
                     + ": an RpcServer is already running in this process; close it first");
         }
         boolean started = false;
         try {
+            // resolved before the thread starts, so an unknown name fails here and not in the thread
+            List<String> served = servedDevices(backend, deviceList);
             String cache = cacheDir == null ? null : createDirectories(cacheDir).toString();
             AtomicReference<Throwable> failure = new AtomicReference<>();
             Thread thread = new Thread(
                     () -> {
                         try {
-                            backend.serve(endpoint.getHost(), endpoint.getPort(), threads, cache);
+                            backend.serve(endpoint.getHost(), endpoint.getPort(), threads, cache, deviceList);
                         } catch (Throwable t) {
                             failure.set(t);
                         }
@@ -178,7 +249,7 @@ public final class RpcServer implements AutoCloseable {
                 throw new LlamaException("RPC server could not listen on " + endpoint
                         + (cause == null ? " (is the port already in use?)" : ": " + cause.getMessage()));
             }
-            RpcServer server = new RpcServer(endpoint, thread, backend);
+            RpcServer server = new RpcServer(endpoint, thread, backend, served);
             started = true;
             return server;
         } finally {
@@ -205,6 +276,15 @@ public final class RpcServer implements AutoCloseable {
      */
     public RpcEndpoint getEndpoint() {
         return endpoint;
+    }
+
+    /**
+     * The devices this server offers.
+     *
+     * @return device names as llama.cpp reports them, e.g. {@code [CPU]}
+     */
+    public List<String> getDevices() {
+        return Collections.unmodifiableList(devices);
     }
 
     /**
@@ -247,17 +327,33 @@ public final class RpcServer implements AutoCloseable {
      * @return device names as llama.cpp reports them, e.g. {@code [CUDA0]} or {@code [CPU]}
      */
     public static List<String> servedDevices() {
-        return servedDevices(RpcServerNative.INSTANCE);
+        return servedDevices(RpcServerNative.INSTANCE, "");
     }
 
-    static List<String> servedDevices(Backend backend) {
-        String[] devices = backend.devices();
+    static List<String> servedDevices(Backend backend, String deviceList) {
+        String[] devices = backend.devices(deviceList);
         return devices == null ? Collections.<String>emptyList() : Collections.unmodifiableList(Arrays.asList(devices));
+    }
+
+    /** The comma-separated form the native layer takes; rejects what would split differently. */
+    static String joinDevices(List<String> devices) {
+        StringBuilder joined = new StringBuilder();
+        for (String device : devices) {
+            if (device.trim().isEmpty() || device.indexOf(',') >= 0) {
+                throw new IllegalArgumentException("invalid device name '" + device + "' in " + devices);
+            }
+            if (joined.length() > 0) {
+                joined.append(',');
+            }
+            joined.append(device.trim());
+        }
+        return joined.toString();
     }
 
     /**
      * Command-line entry: {@code java -cp <jar> net.ladenthin.llama.RpcServer [--host 127.0.0.1]
-     * [--port 50052] [--threads N] [--cache DIR]}. Runs until the process is stopped.
+     * [--port 50052] [--threads N] [--cache DIR] [--device NAME[,NAME...]]}. Runs until the process
+     * is stopped.
      *
      * @param args the command line
      * @throws InterruptedException when interrupted while serving
@@ -269,10 +365,10 @@ public final class RpcServer implements AutoCloseable {
             return;
         }
         RpcServer server = LOOPBACK.equals(options.host)
-                ? startLocal(options.port, options.threads, options.cacheDir)
-                : startOnNetwork(options.host, options.port, options.threads, options.cacheDir);
+                ? startLocal(options.port, options.threads, options.cacheDir, options.devices)
+                : startOnNetwork(options.host, options.port, options.threads, options.cacheDir, options.devices);
         Runtime.getRuntime().addShutdownHook(new Thread(server::close, "jllama-rpc-server-shutdown"));
-        System.out.println("RpcServer listening on " + server.getEndpoint() + ", serving " + servedDevices());
+        System.out.println("RpcServer listening on " + server.getEndpoint() + ", serving " + server.getDevices());
         server.awaitTermination();
     }
 
@@ -280,7 +376,8 @@ public final class RpcServer implements AutoCloseable {
     static final class Options {
 
         static final String USAGE = "usage: java -cp <jar> net.ladenthin.llama.RpcServer"
-                + " [--host 127.0.0.1] [--port " + RpcEndpoint.DEFAULT_PORT + "] [--threads N] [--cache DIR]";
+                + " [--host 127.0.0.1] [--port " + RpcEndpoint.DEFAULT_PORT + "] [--threads N] [--cache DIR]"
+                + " [--device NAME[,NAME...]]";
 
         String host = LOOPBACK;
         int port = RpcEndpoint.DEFAULT_PORT;
@@ -289,39 +386,69 @@ public final class RpcServer implements AutoCloseable {
         @Nullable
         Path cacheDir;
 
+        List<String> devices = new ArrayList<>();
+
         boolean help;
 
         static Options parse(String... args) {
             Options options = new Options();
             for (int i = 0; i < args.length; i++) {
                 String arg = args[i];
-                switch (arg) {
-                    case "-h":
+                switch (longForm(arg)) {
                     case "--help":
                         options.help = true;
                         break;
-                    case "-H":
                     case "--host":
                         options.host = value(args, ++i, arg);
                         requireIpv4Literal(options.host);
                         break;
-                    case "-p":
                     case "--port":
                         options.port = number(value(args, ++i, arg), arg);
                         break;
-                    case "-t":
                     case "--threads":
                         options.threads = number(value(args, ++i, arg), arg);
                         break;
-                    case "-c":
                     case "--cache":
                         options.cacheDir = Paths.get(value(args, ++i, arg));
+                        break;
+                    case "--device":
+                        addDevices(options.devices, value(args, ++i, arg));
                         break;
                     default:
                         throw new IllegalArgumentException("unknown argument: " + arg + "\n" + USAGE);
                 }
             }
             return options;
+        }
+
+        /** The long spelling of a short option; anything else is returned as it is. */
+        private static String longForm(String arg) {
+            switch (arg) {
+                case "-h":
+                    return "--help";
+                case "-H":
+                    return "--host";
+                case "-p":
+                    return "--port";
+                case "-t":
+                    return "--threads";
+                case "-c":
+                    return "--cache";
+                case "-d":
+                    return "--device";
+                default:
+                    return arg;
+            }
+        }
+
+        /** Adds a comma-separated device list; repeated options accumulate, empty entries are dropped. */
+        private static void addDevices(Collection<String> devices, String list) {
+            for (String device : list.split(",", -1)) {
+                String name = device.trim();
+                if (!name.isEmpty()) {
+                    devices.add(name);
+                }
+            }
         }
 
         /** Upstream's rpc-server default: half the hardware threads, at least one. */

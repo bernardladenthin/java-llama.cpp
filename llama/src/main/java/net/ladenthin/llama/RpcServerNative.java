@@ -24,8 +24,8 @@ final class RpcServerNative implements RpcServer.Backend {
     private RpcServerNative() {}
 
     @Override
-    public void serve(String host, int port, int threads, @Nullable String cacheDir) {
-        serveNative(host, port, threads, cacheDir);
+    public void serve(String host, int port, int threads, @Nullable String cacheDir, String devices) {
+        serveNative(host, port, threads, cacheDir, devices);
     }
 
     @Override
@@ -39,15 +39,16 @@ final class RpcServerNative implements RpcServer.Backend {
     }
 
     @Override
-    public String @Nullable [] devices() {
-        return serverDevicesNative();
+    public String @Nullable [] devices(String devices) {
+        return serverDevicesNative(devices);
     }
 
-    private static native void serveNative(String host, int port, int threads, @Nullable String cacheDir);
+    private static native void serveNative(
+            String host, int port, int threads, @Nullable String cacheDir, String devices);
 
     private static native void stopNative();
 
     private static native boolean serverListeningNative();
 
-    private static native String @Nullable [] serverDevicesNative();
+    private static native String @Nullable [] serverDevicesNative(String devices);
 }

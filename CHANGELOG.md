@@ -50,6 +50,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   stopped server's registered device from aborting later loads. Because llama.cpp never forgets a
   registered RPC server, a load that does not ask for one gets an explicit device list without it.
   A server lost in the middle of inference still terminates the process (upstream limitation).
+  The served devices can be chosen by name (`RpcServer.startLocal(…, List<String> devices)`,
+  `--device CPU`), because a served device that cannot run an operation terminates the server
+  (llama.cpp's RPC client reports every operation as supported).
 - **`.github/verify-native-deps.py`** holds every shipped native library to its known runtime
   dependencies (ELF, PE incl. Windows arm64, Mach-O). It found that the macOS dylib has always
   linked Homebrew's `openssl@3` (see `TODO.md`).

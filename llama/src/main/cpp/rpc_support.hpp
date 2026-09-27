@@ -51,7 +51,7 @@ struct device_info {
 };
 
 // Splits a comma-separated `--rpc` value the way upstream's add_rpc_devices does (empty entries
-// are kept out, so "a:1,,b:2" is two endpoints).
+// are kept out, so "a:1,,b:2" is two endpoints). RpcServer's device-name list uses it too.
 [[nodiscard]] inline std::vector<std::string> split_endpoints(const std::string &value) {
     std::vector<std::string> out;
     std::string current;
@@ -241,6 +241,44 @@ inline void register_server(const std::string &endpoint) {
         ggml_backend_dev_t cpu = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
         if (cpu != nullptr) {
             devices.push_back(cpu);
+        }
+    }
+    return devices;
+}
+
+// Devices an in-process RPC server offers when the caller names them (upstream rpc-server's
+// `--device`); an empty list means the default above. Naming them matters because ggml-rpc's client
+// reports every operation as supported (upstream TODO in ggml_backend_rpc_device_supports_op), so a
+// served device that cannot run an operation aborts the server process on the first graph that
+// uses it -- e.g. the MUL_MAT-less paravirtual Metal GPU of a macOS VM. Serving the CPU instead is
+// then the only way to use such a machine.
+[[nodiscard]] inline std::vector<ggml_backend_dev_t> server_devices(const std::vector<std::string> &names) {
+    if (names.empty()) {
+        return server_devices();
+    }
+    std::vector<ggml_backend_dev_t> devices;
+    for (const auto &name : names) {
+        ggml_backend_dev_t dev = ggml_backend_dev_by_name(name.c_str());
+        if (dev == nullptr) {
+            std::string available;
+            for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+                ggml_backend_dev_t candidate = ggml_backend_dev_get(i);
+                if (!is_rpc_device(candidate)) {
+                    available += (available.empty() ? "" : ", ") + std::string(ggml_backend_dev_name(candidate));
+                }
+            }
+            throw std::invalid_argument("unknown device '" + name + "' to serve over RPC; available: " + available);
+        }
+        if (is_rpc_device(dev)) {
+            throw std::invalid_argument("device '" + name +
+                                        "' is itself a remote RPC device and cannot be served over RPC");
+        }
+        bool duplicate = false;
+        for (auto *seen : devices) {
+            duplicate = duplicate || seen == dev;
+        }
+        if (!duplicate) {
+            devices.push_back(dev);
         }
     }
     return devices;
