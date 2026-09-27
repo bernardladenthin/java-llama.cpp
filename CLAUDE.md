@@ -2532,6 +2532,20 @@ are decisions, not details:
    session, which is what a program that wants its input at the bottom *without* taking over the
    screen has to pay.
 
+   **The repeated `> Hallo` on Windows is a JLine defect, isolated and written up.** Typing without
+   Enter and then widening the window showed the prompt and buffer once per keystroke, side by side.
+   It is **not** the resize: the repeats are written while typing, clipped past the right edge, and
+   widening only reveals them — which is why it was reported as a resize symptom and why the count
+   follows keystrokes rather than drags. A probe with a three-row `Status` and nothing else
+   reproduces it; the same probe **without** the status block does not. Ruled out along the way:
+   project code, JLine 4.4.6, `nativeSignals(false)`, a missing terminfo capability. The mechanism it
+   points at is `LineReaderImpl.redisplay()`, which re-syncs its cursor tracking only when the status
+   **size** changes (`lastStatusSize`) while `Status.redraw()` moves the real cursor on every call — so
+   a constant-height block never re-syncs again. Full record, including the two measurements that were
+   *inconclusive rather than negative*, in
+   [`docs/upstream-investigation-jline-status-windows-redraw.md`](docs/upstream-investigation-jline-status-windows-redraw.md).
+   **Nothing here can honestly fix it**; `--plain` pins nothing and is unaffected.
+
    **Do not add a `WINCH` handler, and the reason is measured.** A resize drawing a row of
    `> > > > >` across the screen looks like the pinned region not being told about the new size, so a
    `Signal.WINCH` handler that resized and re-rendered it was added — and the user reported it

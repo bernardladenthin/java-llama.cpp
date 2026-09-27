@@ -463,6 +463,14 @@ still reported is therefore not produced there; the remaining suspect is the con
 screen buffer on a resize, which moves lines the program never wrote again and which nothing on this
 side can reproduce. `/cls` or Ctrl-L cleans it up.
 
+**A known JLine defect on Windows.** With a pinned block, typing without pressing Enter and then
+widening the window shows the prompt and the typed text once per keystroke, side by side. The repeats
+are written *while typing* — clipped past the right edge, so widening merely reveals them. It is
+reproducible with plain JLine and a three-row status block and **no** code from this project, is not
+fixed in JLine 4.4.6, and is not caused by resize signals; the write-up is in
+[`../docs/upstream-investigation-jline-status-windows-redraw.md`](../docs/upstream-investigation-jline-status-windows-redraw.md).
+Nothing on this side can honestly fix it. `--plain` pins nothing and is unaffected.
+
 **Three threads write to this console** and all of them had to be brought into line, because a write that
 goes around the line reader scrolls the screen without JLine noticing and the pinned block ends up
 somewhere else than it believes — first as a stray `1H` drawn into the rule, then as no block at all.
