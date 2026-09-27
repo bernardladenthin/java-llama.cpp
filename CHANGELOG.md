@@ -70,6 +70,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   without a native library or model.
 
 ### Changed
+- **llama.cpp `b11211` → `b11214`.** Three upstream commits, version-only from this project's side:
+  a HIP flash-attention kernel choice for CDNA (#28907), a Vulkan argsort fix for Adreno (#29469), and
+  **#29516**, which makes `common_sampler_init` *throw* `failed to parse grammar: llguidance is not
+  enabled` instead of calling `GGML_ABORT` when a `%llguidance` grammar reaches a build without
+  llguidance. That one matters in a JVM: these builds do not enable llguidance, so such a grammar used
+  to abort the whole process; it now surfaces as an ordinary request error. All patches apply unchanged.
 - **BREAKING (runtime): the shipped SLF4J binding is now `slf4j-simple`, not `logback-classic`.**
   Two independent reasons, and the first is a hard failure rather than a preference:
 
