@@ -577,6 +577,71 @@ class ScreenUseCasesTest {
     }
 
     @Test
+    void refreshingTheBlockWhileTheReaderRedrawsNeverThrows() throws Exception {
+        // The race that is actually behind the remaining reports, conserved. Status and Display are not
+        // thread-safe: a run of this suite caught a ConcurrentModificationException inside JLine's
+        // Display.cost -- a plain HashMap in computeIfAbsent -- raised from Status$MovingCursorDisplay
+        // while the reader was redrawing. The agent refreshes the pinned block four times a second while
+        // a turn runs and again on every size change, so that collision is the normal case, not an edge.
+        //
+        // This is reachable in the harness even though its output stream is synchronized, because the
+        // unprotected state is JLine's own map rather than the byte stream: locking the stream does not
+        // help. Whatever the screen ends up looking like, an exception must not escape into the turn loop,
+        // which is what this pins.
+        java.util.List<Throwable> escaped = java.util.Collections.synchronizedList(new ArrayList<>());
+        ScreenTerminalHarness terminal = terminal(WIDE);
+        try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
+            java.util.List<Thread> writers = new ArrayList<>();
+            for (int writer = 0; writer < 3; writer++) {
+                Thread thread = new Thread(() -> {
+                    long deadline = System.currentTimeMillis() + 1500;
+                    while (System.currentTimeMillis() < deadline) {
+                        try {
+                            console.status(realBlockWithBasicPlaneIcons());
+                        } catch (RuntimeException e) {
+                            escaped.add(e);
+                            return;
+                        }
+                    }
+                });
+                thread.setDaemon(true);
+                writers.add(thread);
+            }
+            writers.forEach(Thread::start);
+
+            // Keep the reader redrawing at the same time. Keystrokes alone are not enough -- three runs of
+            // that version were green: a keystroke is a small redisplay, while a SIZE change makes the
+            // reader resize its display, resize the pinned region and redisplay, which is far more of the
+            // shared state at once and is where the exception was actually observed.
+            long deadline = System.currentTimeMillis() + 1500;
+            boolean wide = false;
+            while (System.currentTimeMillis() < deadline) {
+                terminal.type("x");
+                wide = !wide;
+                try {
+                    // The size change is delivered on this thread here, so the exception surfaces here.
+                    // In the application it is raised on JLine's own input pump, where it would kill that
+                    // thread instead -- and a dead pump means no further size change is ever reported,
+                    // which is why a block can keep a width for the rest of a session.
+                    terminal.resize(wide ? WIDE : WIDE - 7, ROWS);
+                } catch (RuntimeException e) {
+                    escaped.add(e);
+                    break;
+                }
+                Thread.sleep(5);
+            }
+            for (Thread thread : writers) {
+                thread.join(3000);
+            }
+
+            assertThat(
+                    "a block refresh raced the reader and threw: " + escaped + NEWLINE + terminal.describe(),
+                    escaped.isEmpty(),
+                    is(true));
+        }
+    }
+
+    @Test
     void theModeBadgeKeepsItsSpaceOnScreen() throws Exception {
         // Reported: "beim auto mode hat immer ein leerzeichen gefehlt: [pause] manual". The badge is
         // built as symbol + " " + name, so the space is there in the string -- the question is whether it
