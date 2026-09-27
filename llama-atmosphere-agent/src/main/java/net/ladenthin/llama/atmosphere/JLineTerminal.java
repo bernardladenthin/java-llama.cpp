@@ -418,6 +418,13 @@ public final class JLineTerminal implements AgentTerminal {
                 pendingSize = size;
                 status.resize(size);
                 updateStatus(lines);
+                // NOT followed by a redisplay, and the attempt is recorded because it looks obvious.
+                // Re-establishing the region CLEARS rows, and on a shrink it clears a band above the region
+                // too -- the prompt's row. Asking the reader to redisplay() there writes nothing: its own
+                // display still believes the prompt is on screen, so the diff is empty. Invalidating that
+                // belief needs Display.reset(), which is not reachable from outside the reader, and
+                // printAbove -- the one call documented as safe from another thread -- would print a line and
+                // scroll. So the row stays blank, which thePromptItselfStaysVisibleAfterEnlarging records.
             }
             return true;
         } catch (RuntimeException e) {

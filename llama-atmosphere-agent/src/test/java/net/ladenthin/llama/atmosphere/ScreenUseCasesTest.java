@@ -869,6 +869,57 @@ class ScreenUseCasesTest {
     }
 
     @Test
+    @Disabled(
+            "Reproduced and open. Re-establishing the reserved region clears rows, and on a shrink it clears a band above the region too -- the prompt row. The reader writes nothing back, because its own display believes the prompt is still there, so the row stays blank: reported as the > of the input being invisible. Measured here: the block sits exactly right on rows 17-19 of 20 while row 16 is empty. redisplay() does not help (the diff is empty), Display.reset() is not reachable from outside the reader, and printAbove -- the only call documented as safe from another thread -- would print a line and scroll. Delete the annotation to see it.")
+    void thePromptItselfStaysVisibleAfterEnlarging() throws Exception {
+        // A gap in every assertion above, and it is why they were all green while the console was not.
+        // They ask that no row carries the prompt AND the rule -- but when the rule is drawn ON the prompt's
+        // row it OVERWRITES it, so the row carries only the rule and the check is satisfied. Reported as
+        // "darueber erscheint aber immer noch ein strich, auf gleicher hoehe wie die eingabe" together with
+        // "das > zeichen bei der eingabe ist aber unsichtbar" -- one screen, two halves, and the second half
+        // is the one nothing was looking for.
+        //
+        // What has to hold is simply that the prompt is still on the screen somewhere.
+        int rows = 20;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", NARROW, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+            assertThat(
+                    "the prompt is on screen before any resize" + NEWLINE + terminal.describe(),
+                    count(terminal.rows(), row -> row.contains(">")),
+                    is(1));
+
+            List<Thread> pumps = new ArrayList<>();
+            for (int columns : new int[] {WIDE, NARROW, WIDE, NARROW + 10, WIDE}) {
+                pumps.add(terminal.resizeAsynchronously(columns, rows));
+                console.refreshBlockForCurrentSize();
+                Thread.sleep(40);
+            }
+            for (Thread pump : pumps) {
+                pump.join(2000);
+            }
+            Thread.sleep(400);
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(300);
+
+            String screen = terminal.describe();
+            assertThat(
+                    "the prompt is still on screen after the resizes" + NEWLINE + screen,
+                    count(terminal.rows(), row -> row.contains(">")),
+                    is(1));
+            assertThat(
+                    "and it is on the row above the block, not overwritten by the rule" + NEWLINE + screen,
+                    terminal.rows()[rows - 4].contains(">"),
+                    is(true));
+        }
+    }
+
+    @Test
     void theModeBadgeKeepsItsSpaceOnScreen() throws Exception {
         // Reported: "beim auto mode hat immer ein leerzeichen gefehlt: [pause] manual". The badge is
         // built as symbol + " " + name, so the space is there in the string -- the question is whether it
