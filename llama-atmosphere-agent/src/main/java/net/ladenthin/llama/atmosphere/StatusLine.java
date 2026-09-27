@@ -26,20 +26,29 @@ import java.util.Locale;
  */
 public final class StatusLine {
 
+    // The icons are all from the BASIC MULTILINGUAL PLANE, and that is the whole point of them being
+    // these and not emoji. An emoji is a surrogate pair -- two UTF-16 chars for one glyph -- and inside
+    // JLine's pinned region that breaks the column arithmetic: the row's assumed width stops matching
+    // its real width, the next row starts in the wrong place, and the rule and the state row end up
+    // written into one screen line character by character. Measured, not suspected: with the emoji
+    // version of this line ScreenUseCasesTest fails on a wide drag, a narrow drag and /cls, and the same
+    // line with basic-plane glyphs of the same shape passes all three. Anything added here has to stay
+    // in that plane; test it with the emoji cases in that class, which stay as the record of the limit.
+
     /** In front of the workspace path. */
-    private static final String WORKSPACE_ICON = "📁";
+    private static final String WORKSPACE_ICON = "▤";
 
     /** In front of the context figure. */
-    private static final String CONTEXT_ICON = "📊";
+    private static final String CONTEXT_ICON = "▦";
 
     /** In front of the tool count. */
-    private static final String TOOLS_ICON = "🔧";
+    private static final String TOOLS_ICON = "⚒";
 
     /** In front of a model this process loaded itself. */
-    private static final String LOCAL_MODEL_ICON = "🤖";
+    private static final String LOCAL_MODEL_ICON = "◆";
 
     /** In front of a model served by something else over the network. */
-    private static final String REMOTE_MODEL_ICON = "🌐";
+    private static final String REMOTE_MODEL_ICON = "◇";
 
     /** Above this many characters the workspace path is shortened to its last two segments. */
     private static final int MAX_PATH_CHARS = 40;

@@ -54,10 +54,20 @@ public enum ApprovalMode {
     /**
      * Symbol and name together, as the status line and {@code /mode} print them.
      *
-     * @return e.g. {@code "⏸ manual"}
+     * <p><b>Two spaces, and it is not a typo.</b> Reported as "beim auto mode hat immer ein Leerzeichen
+     * gefehlt": the transport symbols are drawn two columns wide by Windows Terminal while the column
+     * arithmetic counts them as one, so the glyph covers the single space that follows it and the name
+     * ends up touching it. The space is genuinely in the string — the screen-backed tests in
+     * {@link ScreenUseCasesTest} assert the badge survives to the rendered row, and they pass — so the
+     * disagreement is between the terminal's font and the width table, not in this code. A second space
+     * is the fix that works on both: where the glyph really is two columns wide the result looks like one
+     * space, and where it is one there is a wider gap, which is harmless. The same disagreement in a less
+     * harmless form is why {@link StatusLine}'s icons are basic-plane rather than emoji.
+     *
+     * @return e.g. {@code "⏸  manual"}
      */
     public String badge() {
-        return symbol + " " + label();
+        return symbol + "  " + label();
     }
 
     /**

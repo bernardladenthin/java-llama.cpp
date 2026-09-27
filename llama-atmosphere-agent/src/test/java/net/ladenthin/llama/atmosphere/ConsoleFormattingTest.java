@@ -54,8 +54,8 @@ class ConsoleFormattingTest {
                 java.nio.file.Path.of("/tmp/ws"), ApprovalMode.MANUAL, 1234, false, 16384, 9, "local-model", false);
 
         // an icon, a space, its value -- the same shape for every part of the line
-        assertThat(line, containsString("📁 "));
-        assertThat(line, containsString("ws · ⏸ manual · 📊 1.2k/16k · 🔧 9 · 🤖 local-model]"));
+        assertThat(line, containsString("▤ "));
+        assertThat(line, containsString("ws · ⏸  manual · ▦ 1.2k/16k · ⚒ 9 · ◆ local-model]"));
     }
 
     @Test
@@ -80,18 +80,18 @@ class ConsoleFormattingTest {
     @Test
     void eachModeCarriesItsOwnSymbol() {
         // the glyph is what makes the mode findable at a glance; the word stays next to it
-        assertThat(ApprovalMode.MANUAL.badge(), is("⏸ manual"));
-        assertThat(ApprovalMode.AUTO.badge(), is("⏵⏵ auto"));
+        assertThat(ApprovalMode.MANUAL.badge(), is("⏸  manual"));
+        assertThat(ApprovalMode.AUTO.badge(), is("⏵⏵  auto"));
         assertThat(
                 StatusLine.render(java.nio.file.Path.of("/tmp/ws"), ApprovalMode.AUTO, 0, true, 0, 1, "m", false),
-                containsString("⏵⏵ auto"));
+                containsString("⏵⏵  auto"));
     }
 
     @Test
     void aRemoteEndpointIsMarkedDifferentlyFromAModelLoadedHere() {
         java.nio.file.Path ws = java.nio.file.Path.of("/tmp/ws");
-        assertThat(StatusLine.render(ws, ApprovalMode.MANUAL, 0, true, 0, 1, "m", false), containsString("🤖 m"));
-        assertThat(StatusLine.render(ws, ApprovalMode.MANUAL, 0, true, 0, 1, "m", true), containsString("🌐 m"));
+        assertThat(StatusLine.render(ws, ApprovalMode.MANUAL, 0, true, 0, 1, "m", false), containsString("◆ m"));
+        assertThat(StatusLine.render(ws, ApprovalMode.MANUAL, 0, true, 0, 1, "m", true), containsString("◇ m"));
     }
 
     @Test
