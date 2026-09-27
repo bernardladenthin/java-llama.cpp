@@ -117,6 +117,7 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - **Model metadata** access (`getModelMeta()`) and **server management** (metrics, slot save/restore, runtime thread reconfiguration).
 - **Conversation checkpoints** — `Session.checkpoint(...)` / `rewind(...)` / `fork(...)` branch and roll back a chat (KV-cache slot save/restore + transcript snapshot) without re-prefilling.
 - **GGUF metadata inspection** without loading the model (`GgufInspector` — pure Java, reads header + key/value table only, big-endian aware).
+- **Distributed inference over RPC** — offload a model's layers to llama.cpp RPC servers on other machines (`ModelParameters.setRpcServers(...)` / `--rpc host:port`), and serve this machine's devices to them with `RpcServer` (the in-JVM `rpc-server`). See [Distributed inference over RPC](#distributed-inference-over-rpc).
 - **Multi-model router mode** (`--models-dir` + per-request model selection, managed via the typed `RouterClient`) and **attach mode** (`NativeServer(LlamaModel, ...)` serves an already-loaded model over the full upstream HTTP frontend — one copy of the weights).
 - Pre-built native binaries in the default JAR for Linux (x86-64, aarch64, s390x), macOS (x86-64, arm64 — Metal included), Windows (x86-64, x86, arm64) and Android (arm64, x86-64); GPU backends (CUDA, Vulkan, OpenCL, ROCm/HIP, SYCL, OpenVINO) ship as Maven classifiers — see [Choosing the right classifier](#choosing-the-right-classifier). Android additionally ships as the [`llama-android` AAR](#importing-in-android) with the optional `llama-kotlin` coroutines façade.
 
@@ -978,6 +979,66 @@ RouterClient client = new RouterClient(8080, System.getenv("LLAMA_API_KEY"));
 > deliberately hides from that listing — a cache model deduplicated by a preset with
 > `dedup-cache-models` still loads and still serves by name, but never appears. For those, skip the
 > await and issue the request directly; with autoload the router waits for the worker itself.
+
+### Distributed inference over RPC
+
+llama.cpp's RPC backend spreads one model over the devices of several machines: every machine
+that contributes runs an **RPC server**, and the machine that loads the model names them with
+`--rpc`. Layers are then distributed over local and remote devices exactly as over several local
+GPUs (`setGpuLayers`, `setTensorSplit`). Both halves are in every artifact — the default JAR and
+every GPU classifier — with **no additional runtime dependency** (plain TCP over the system socket
+library the library already links).
+
+Serve this machine's devices (every GPU this library found, else the CPU):
+
+```java
+try (RpcServer server = RpcServer.startLocal(RpcEndpoint.DEFAULT_PORT)) {   // 127.0.0.1:50052
+    server.awaitTermination();
+}
+```
+
+or from the command line, with the fat jar:
+
+```bash
+java -cp llama-<version>-jar-with-dependencies.jar net.ladenthin.llama.RpcServer --port 50052
+```
+
+Use the servers from a model:
+
+```java
+ModelParameters params = new ModelParameters()
+        .setModel("models/big-model.gguf")
+        .setGpuLayers(99)
+        .setRpcServers(RpcEndpoint.parse("10.0.0.2:50052"), RpcEndpoint.parse("10.0.0.3:50052"));
+```
+
+The same works for both HTTP servers: `--rpc 10.0.0.2:50052,10.0.0.3:50052` is forwarded to the
+native server as-is, and `OpenAiCompatServer` accepts it too. Any upstream `rpc-server` works as a
+server, and this library's `RpcServer` works for any llama.cpp client.
+
+> [!WARNING]
+> The RPC protocol has **no authentication and no encryption**: whoever reaches the port can use the
+> devices and read or write the tensors on them. `RpcServer.startLocal` therefore binds to loopback
+> only; `RpcServer.startOnNetwork(address, …)` (or `--host` on the command line) is the explicit
+> opt-in for another interface and logs a warning. Across machines, use a trusted network or a
+> tunnel (SSH, WireGuard).
+
+What to know:
+
+- **An unreachable server fails the load** with a `LlamaException` naming it, instead of reaching
+  llama.cpp. A server that disappears **after** the model loaded still terminates the process —
+  llama.cpp has no error path for a device lost mid-inference.
+- **One `RpcServer` per process.** A second `start` while one runs throws `IllegalStateException`.
+- **Endpoints are IPv4 addresses or host names** (`host:port`); llama.cpp's RPC transport has no
+  IPv6. `RpcServer` binds to an IPv4 literal (`127.0.0.1`, `0.0.0.0`, an interface address).
+- **Registered servers stay registered.** llama.cpp keeps RPC devices in a process-wide registry
+  with no way to remove them; this library therefore gives every later load that does not ask for a
+  server an explicit device list without it, so a model loaded without `--rpc` never offloads to a
+  server an earlier model used. An explicit `setDevices(...)` / `--device` is never overridden.
+- **Android** needs the `android.permission.INTERNET` permission for RPC, even over loopback — the
+  `llama-android` AAR does not request it, so an app that wants RPC must declare it itself.
+- `RpcServer.startLocal(port, threads, cacheDir)` enables upstream's tensor cache: a client that
+  loads the same model again sends the large tensors only once.
 
 ### LangChain4j integration
 

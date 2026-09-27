@@ -23,12 +23,14 @@
 #include "jni_helpers.hpp"
 
 #include "native_server_bridge.h"
+#include "rpc_support.hpp"
 
 #include <jni.h>
 
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -68,7 +70,11 @@ void fill_native_server_args(JNIEnv *env, jobjectArray jargs, native_server *srv
             srv->args.emplace_back("");
         }
     }
+}
 
+// Points srv->argv into srv->args. Called once, after the last change to srv->args.
+void bind_native_server_argv(native_server *srv) {
+    srv->argv.clear();
     srv->argv.reserve(srv->args.size());
     for (auto &arg : srv->args) {
         srv->argv.push_back(const_cast<char *>(arg.c_str()));
@@ -96,8 +102,14 @@ extern "C" {
 JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_server_NativeServer_startNativeServer(JNIEnv *env, jclass,
                                                                                        jobjectArray jargs) {
     return jni_guard_impl(env, llama_exception_class(env), [&]() -> jlong {
-        auto *srv = new native_server();
-        fill_native_server_args(env, jargs, srv);
+        std::unique_ptr<native_server> owned(new native_server());
+        fill_native_server_args(env, jargs, owned.get());
+        // Same RPC preparation as LlamaModel's load (rpc_support.hpp): an unreachable `--rpc`
+        // server fails here with a clear message, and RPC devices another model registered in
+        // this JVM stay out of this server's model. Throws std::invalid_argument -> LlamaException.
+        owned->args = jllama::rpc::prepare_argv(owned->args);
+        bind_native_server_argv(owned.get());
+        auto *srv = owned.release();
 
         // Embedded mode: no process signal handlers, honor the forwarded argv (see patches/0006).
         llama_server_set_embedded(true);
@@ -180,6 +192,7 @@ JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_server_NativeServer_startAttach
         // either assumption, this attach path needs revisiting.
         auto *srv = new native_server();
         fill_native_server_args(env, jargs, srv);
+        bind_native_server_argv(srv);
 
         // The attach entry always parses the forwarded argv; set the embedded flag anyway so any
         // shared embedded-mode behavior in server.cpp stays consistent with startNativeServer.

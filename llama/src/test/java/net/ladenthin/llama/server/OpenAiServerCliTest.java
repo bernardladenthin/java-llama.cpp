@@ -10,6 +10,7 @@ import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import net.ladenthin.llama.args.CacheType;
+import net.ladenthin.llama.value.RpcEndpoint;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -104,6 +105,45 @@ public class OpenAiServerCliTest {
                 is("CUDA1"));
         assertThat(OpenAiServerCli.parse("-m", "m.gguf", "-mmdev", "CUDA1").getMmprojDevice(), is("CUDA1"));
         assertThat(OpenAiServerCli.parse("-m", "m.gguf").getMmprojDevice(), is((String) null));
+    }
+
+    @Test
+    public void rpcFlagParsesAListAndIsRepeatable() {
+        OpenAiServerCli.Options options =
+                OpenAiServerCli.parse("-m", "m.gguf", "--rpc", "10.0.0.2:50052,10.0.0.3:1", "--rpc", "host:2");
+        assertThat(
+                options.getRpcServers(),
+                is(java.util.Arrays.asList(
+                        RpcEndpoint.of("10.0.0.2", 50052), RpcEndpoint.of("10.0.0.3", 1), RpcEndpoint.of("host", 2))));
+        assertThat(OpenAiServerCli.parse("-m", "m.gguf").getRpcServers().isEmpty(), is(true));
+    }
+
+    @Test
+    public void rpcFlagReachesModelParameters() {
+        assertThat(
+                OpenAiServerCli.parse("-m", "m.gguf", "--rpc", "10.0.0.2:50052")
+                        .toModelParameters()
+                        .toString(),
+                containsString("--rpc"));
+        assertThat(
+                OpenAiServerCli.parse("-m", "m.gguf")
+                        .toModelParameters()
+                        .toString()
+                        .contains("--rpc"),
+                is(false));
+    }
+
+    @Test
+    public void rpcFlagWithAnInvalidEndpointNamesTheFlag() {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", "--rpc", "no-port"));
+        assertThat(e.getMessage(), containsString("--rpc"));
+        assertThat(e.getMessage(), containsString("no port"));
+    }
+
+    @Test
+    public void rpcFlagIsInTheUsage() {
+        assertThat(OpenAiServerCli.usage(), containsString("--rpc"));
     }
 
     @Test

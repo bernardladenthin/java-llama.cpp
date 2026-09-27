@@ -3544,6 +3544,17 @@ jobs:
         with:
           name: Windows-x86_64-openvino
           path: ${{ github.workspace }}/llama/src/main/resources_windows_openvino/net/ladenthin/llama/
+      # Runtime dependencies of every shipped native library, read from the file itself (ELF
+      # DT_NEEDED, PE imports incl. Windows arm64, Mach-O load commands). The default tree must
+      # match an exact per-{OS}/{ARCH} allowlist -- a new dependency is a load failure on every
+      # machine that lacks it. The classifier trees legitimately need their vendor runtime, so
+      # there only the denylist applies. The case this was written for: ggml-rpc's RDMA
+      # transport, which upstream enables whenever the build host has libibverbs/librdma
+      # (llama/CMakeLists.txt forces it off).
+      - name: Verify native runtime dependencies
+        run: |
+          python3 .github/verify-native-deps.py --default llama/src/main/resources
+          python3 .github/verify-native-deps.py --deny llama/src/main/resources_*
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -3679,6 +3690,12 @@ jobs:
         run: .github/verify-bytecode-version.sh --max-major 52 fatjars
       - name: Run fat-jar server smoke test
         run: .github/smoke-test-fatjar.sh fatjars 'llama-*-all-linux-x86-64-jar-with-dependencies.jar' "models/${DRAFT_MODEL_NAME}"
+      # RPC over two JVMs from the same release asset: RpcServer in one, the default NativeServer
+      # with --rpc in the other. Requires a chat completion, the model buffer on the RPC endpoint in
+      # the load log (the layers really went over RPC), an accepted client on the server, and a clean
+      # non-SIGABRT failure naming the endpoint when --rpc names a server nobody runs.
+      - name: Run fat-jar RPC smoke test (two JVMs)
+        run: .github/smoke-rpc-fatjar.sh fatjars 'llama-*-all-linux-x86-64-jar-with-dependencies.jar' "models/${DRAFT_MODEL_NAME}"
       - name: Upload server logs
         if: failure()
         uses: actions/upload-artifact@v7
@@ -3687,6 +3704,10 @@ jobs:
           path: |
             server-out.log
             server-err.log
+            rpc-server.log
+            rpc-client-out.log
+            rpc-client-err.log
+            rpc-unreachable.log
           if-no-files-found: warn
 
   # The agent release asset, launched the way the README tells a user to: `java -jar` on the agent

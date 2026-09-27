@@ -27,6 +27,7 @@ import net.ladenthin.llama.args.GpuSplitMode;
 import net.ladenthin.llama.args.MiroStat;
 import net.ladenthin.llama.args.NumaStrategy;
 import net.ladenthin.llama.args.RopeScalingType;
+import net.ladenthin.llama.value.RpcEndpoint;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -549,6 +550,26 @@ public class ModelParametersExtendedTest {
     public void testSetDevices() {
         ModelParameters p = new ModelParameters().setDevices("cuda0,cuda1");
         assertThat(p.parameters.get("--device"), is("cuda0,cuda1"));
+    }
+
+    @Test
+    public void setRpcServersJoinsTheEndpointsInOrder() {
+        ModelParameters p = new ModelParameters()
+                .setRpcServers(RpcEndpoint.of("10.0.0.2", 50052), RpcEndpoint.parse("gpu-box:6000"));
+        assertThat(p.parameters.get("--rpc"), is("10.0.0.2:50052,gpu-box:6000"));
+    }
+
+    @Test
+    public void setRpcServersWithOneServer() {
+        ModelParameters p = new ModelParameters().setRpcServers(RpcEndpoint.of("127.0.0.1", 1));
+        assertThat(p.parameters.get("--rpc"), is("127.0.0.1:1"));
+    }
+
+    @Test
+    public void setRpcServersWithoutAServerIsRejected() {
+        IllegalArgumentException e = org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalArgumentException.class, () -> new ModelParameters().setRpcServers());
+        assertThat(e.getMessage(), containsString("at least one RPC server"));
     }
 
     // -------------------------------------------------------------------------

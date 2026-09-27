@@ -667,6 +667,32 @@ SPDX-License-Identifier: MIT
     </Match>
 
     <!--
+        RpcServer (net.ladenthin.llama.RpcServer) is the in-JVM llama.cpp rpc-server: a lifecycle
+        class around a native blocking server loop, with a command-line main(). Its findings are the
+        same categories already accepted for NativeServer and the server package's CLI entry points:
+          - IMC_IMMATURE_CLASS_NO_EQUALS: a lifecycle handle with identity semantics (one per process),
+            not a value type; same rationale as NativeServer.
+          - MDM_WAIT_WITHOUT_TIMEOUT: awaitTermination() is the documented "block until closed" call
+            main() and embedding callers use; a timeout would defeat its purpose.
+          - EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS: createDirectories() turns the IOException of the
+            optional tensor-cache directory into an UncheckedIOException (cause kept) so the factory
+            methods do not force a checked exception on every caller for an optional feature.
+          - PATH_TRAVERSAL_IN / CRLF_INJECTION_LOGS: the cache directory and the bind address come from
+            the operator's own command line or code, and the one warn() line echoes the bind address
+            the operator chose; the same threat model as the server-package suppression below.
+    -->
+    <Match>
+        <Class name="~net\.ladenthin\.llama\.RpcServer(\$Options)?"/>
+        <Or>
+            <Bug pattern="IMC_IMMATURE_CLASS_NO_EQUALS"/>
+            <Bug pattern="MDM_WAIT_WITHOUT_TIMEOUT"/>
+            <Bug pattern="EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"/>
+            <Bug pattern="PATH_TRAVERSAL_IN"/>
+            <Bug pattern="CRLF_INJECTION_LOGS"/>
+        </Or>
+    </Match>
+
+    <!--
         ServerLauncher.main(String[]) is the fat-jar dispatcher: it forwards to
         OpenAiCompatServer.main / NativeServer.main, both of which declare `throws Exception` (they
         block until server shutdown and surface whatever the underlying server throws). Declaring

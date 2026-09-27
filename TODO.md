@@ -17,6 +17,41 @@ so everything below is genuinely still open.
 
 ## Open — jllama-specific
 
+### macOS dylib links Homebrew OpenSSL (found by `verify-native-deps.py`)
+
+- **The shipped `Mac/aarch64/libjllama.dylib` needs `/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib`
+  and `libcrypto.3.dylib`** (verified on the published 5.1.0 jar and the current snapshot). The macOS
+  build finds the runner's Homebrew OpenSSL and links it dynamically, so the default JAR does not load
+  on a Mac without `brew install openssl@3` — and the macOS smoke cannot see it, because the runner
+  has it. Likely fix: build BoringSSL statically on macOS as on Windows
+  (`LLAMA_BUILD_BORINGSSL`, `llama/CMakeLists.txt`), or turn HTTPS off there (`-DLLAMA_OPENSSL=OFF`;
+  the library only needs it for URL model downloads). Then delete the two allowlist lines marked
+  KNOWN DEFECT in `.github/verify-native-deps.py`. Needs a macOS CI run to verify, which is why it is
+  not folded into the RPC PR that surfaced it.
+
+### RPC backend — follow-ups
+
+- **A server lost mid-inference still aborts the JVM.** Patch `0015` makes *registration* fail
+  softly; every call after it (`get_dispatcher()`, `RPC_STATUS_ASSERT` in the dispatcher's `work()`)
+  still ends in `GGML_ABORT`, because the ggml backend interface has no error return for a lost
+  device (`graph_compute` returns a status, but buffer `set/get_tensor` are `void`). A real fix is an
+  upstream change: carry a failed-state flag through the dispatcher, fail the pending futures, and
+  surface it as a `GGML_STATUS_FAILED` at the next `graph_compute`, which llama.cpp already turns into
+  a decode error. File upstream first; do not carry it downstream.
+- **File patch `0015` upstream** (non-aborting registration, `ggml_backend_rpc_stop_server()`,
+  `ggml_backend_rpc_server_listening()`, the transport fd/SIGPIPE fixes) and drop it once merged.
+- **Android RPC is untested on a device.** Bionic sockets build (upstream ships RPC in its Android
+  release too), but the app needs `android.permission.INTERNET` even for loopback, which the AAR
+  deliberately does not declare and the emulator fixture does not have. A loopback test on the
+  emulator needs that permission in the fixture's manifest only.
+- **RPC smoke on the other fat-jar platforms.** `smoke-rpc-fatjar.sh` runs in `smoke-fatjar-linux`
+  only; the Java `RpcServerTest`/`RpcIntegrationTest` already run on every `test-java-*` job
+  (Windows and macOS included), so this is about the packaged asset, not the code path.
+- **Authentication / TLS.** Upstream has none; the documented answer is a trusted network or a
+  tunnel. Only worth doing if it lands upstream.
+- **RDMA transport** (`GGML_RPC_RDMA`) as its own classifier, since it needs `libibverbs` at runtime.
+- **Several clients at once.** Upstream's server serves one connection at a time.
+
 ### Logging sink (`patches/0014`) — follow-ups
 
 - **Keep the log worker attached instead of attaching per line.** `LlamaModel.setLogger`'s trampoline
