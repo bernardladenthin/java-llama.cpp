@@ -332,13 +332,14 @@ matching GPU) and bundle **no** vendor runtime.
 builds and releases ROCm through [TheRock](https://github.com/ROCm/TheRock); both ROCm jobs install
 its Python wheels (`rocm[libraries,devel]` from `stable.repo.amd.com/rocm/whl-next/`) exactly as
 llama.cpp's own `ubuntu-rocm` / `windows-rocm` release jobs do, and read the paths back with
-`rocm-sdk path`. The ROCm version and the `GPU_TARGETS` list are copied from upstream's
-`release.yml` at the pinned `GIT_TAG` — **re-check both on every llama.cpp bump**. The one deliberate
-deviation: the Linux job additionally keeps **gfx900/gfx906**, which this classifier shipped before
-and which TheRock still builds ("build passing", never release-ready) although upstream dropped them.
-The rule for such extras: carry them only while they build without problems and without local
-patches; the moment one needs a patch or holds back a newer ROCm/llama.cpp, drop it — hardware
-llama.cpp itself does not ship for is never worth blocking something newer.
+`rocm-sdk path`. The ROCm version follows upstream's `release.yml` at the pinned `GIT_TAG` —
+**re-check it on every llama.cpp bump**. The `GPU_TARGETS` lists deliberately go **further than
+upstream's**: they are every target TheRock builds for that OS (its `SUPPORTED_GPUS.md`), which adds
+gfx900/gfx906/gfx90c/gfx1153 — "build passing" there, not release-ready, and omitted by llama.cpp.
+Supporting more rather than fewer is the policy, with one limit: an extra stays only while it builds
+without problems and without local patches; the moment one needs a patch or holds back a newer
+ROCm/llama.cpp, drop it. The two lists differ **only** by the Instinct parts
+(gfx908/gfx90a/gfx942/gfx950), which ROCm supports on Linux alone.
 
 Two routing notes mirror existing precedent: **Linux SYCL** ships two precision variants at the *same*
 arch, so `CMakeLists.txt` routes them to two *distinct* trees by `GGML_SYCL_F16` (fp16 vs fp32).

@@ -117,11 +117,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 - **BREAKING (runtime): the ROCm classifiers are built against ROCm 10.0 (TheRock), not 6.3.**
   AMD now releases ROCm through [TheRock](https://github.com/ROCm/TheRock); both `rocm-*` jobs install
   its wheels the way upstream llama.cpp's own release jobs do, replacing the `repo.radeon.com` 6.3.4 apt
-  repo (Linux) and the HIP SDK 26.Q1 installer (Windows). The GPU target lists now follow upstream too:
-  newer architectures are added (Linux: gfx942/gfx950, RDNA1–RDNA4 incl. gfx1150–1152 and
-  gfx1200/1201; Windows: RDNA1–RDNA4). gfx900/gfx906 stay in the Linux build on a best-effort basis:
-  llama.cpp no longer ships them and TheRock marks them build-passing only, so they are kept exactly
-  as long as they build without patches. Consumers need a ROCm 10 runtime.
+  repo (Linux) and the HIP SDK 26.Q1 installer (Windows). The GPU target lists are now every target
+  TheRock builds per OS — a superset of upstream llama.cpp's: Linux adds gfx90c, gfx942/gfx950, RDNA1,
+  the rest of RDNA2/RDNA3, RDNA3.5 (gfx1150–1153) and RDNA4 (gfx1200/1201) to the previous eight;
+  Windows goes from four RDNA2/3 targets to 23, gfx900 through RDNA4. The extras upstream omits
+  (gfx900/gfx906/gfx90c/gfx1153, build-passing only in TheRock) are kept as long as they build
+  without patches. Consumers need a ROCm 10 runtime.
 - **CUDA 13.3 → 13.4** for both `cuda13-*` classifiers, matching upstream llama.cpp. Linux installs
   `cuda-toolkit-13-4`; Windows assembles the toolkit from NVIDIA's redist archives (upstream's
   component list) because `Jimver/cuda-toolkit` never shipped 13.4. Classifier names are unchanged.

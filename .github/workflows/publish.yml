@@ -2090,8 +2090,8 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
       - name: Install ROCm/HIP (TheRock wheels)
-        # KEEP IN SYNC WITH UPSTREAM: ROCM_VERSION and the GPU target list track the ubuntu-rocm
-        # job in llama.cpp's .github/workflows/release.yml at the pinned GIT_TAG. Since ROCm 7.14
+        # KEEP IN SYNC WITH UPSTREAM: ROCM_VERSION tracks the ubuntu-rocm job in llama.cpp's
+        # .github/workflows/release.yml at the pinned GIT_TAG (GPU targets: see the build step). Since ROCm 7.14
         # AMD builds and releases ROCm through TheRock (https://github.com/ROCm/TheRock), replacing
         # the monolithic releases behind the repo.radeon.com apt repo this job used before (it was
         # pinned at 6.3.4). The wheels carry the HIP runtime + CMake configs ("libraries") and the
@@ -2113,13 +2113,15 @@ jobs:
       - name: Build libraries
         shell: bash
         # Native CMake HIP language (upstream's form): the HIP compiler is ROCm's clang, the C/C++
-        # TUs stay on the runner's gcc. The target list is upstream's plus gfx900/gfx906, which this
-        # classifier shipped before and which TheRock 10 still builds ("build passing", not
-        # release-ready) although upstream dropped them from its own list. Keep them only while
-        # they cost nothing: drop them the moment they need a patch or block a newer ROCm.
+        # TUs stay on the runner's gcc. The target list is every Linux target TheRock builds
+        # (its SUPPORTED_GPUS.md) — a superset of upstream llama.cpp's list, which omits
+        # gfx900/gfx906/gfx90c/gfx1153 ("build passing" only, not release-ready). Better too many
+        # than too few, but only while they cost nothing: drop an extra the moment it needs a
+        # patch or blocks a newer ROCm. Linux alone has the Instinct parts (gfx908/90a/942/950):
+        # ROCm does not support them on Windows.
         run: |
           mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DGGML_HIP=ON -DCMAKE_HIP_COMPILER=$(hipconfig -l)/clang -DGPU_TARGETS=gfx900;gfx906;gfx908;gfx90a;gfx942;gfx950;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1200;gfx1201 -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
+          .github/build.sh "-DGGML_HIP=ON -DCMAKE_HIP_COMPILER=$(hipconfig -l)/clang -DGPU_TARGETS=gfx900;gfx906;gfx908;gfx90a;gfx90c;gfx942;gfx950;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201 -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2176,10 +2178,12 @@ jobs:
           "C:\TheRock\build\.venv\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Build libraries
         shell: cmd
-        # Upstream's compiler wiring for TheRock (clang under lib\llvm\bin, not bin\) and its
-        # GPU target list; -Wno-error=incompatible-pointer-types is upstream's too.
+        # Upstream's compiler wiring for TheRock (clang under lib\llvm\bin, not bin\);
+        # -Wno-error=incompatible-pointer-types is upstream's too. Targets: every Windows target
+        # TheRock builds — the Linux list minus the Instinct parts, which ROCm has no Windows
+        # support for. Same rule for the extras upstream omits as on Linux.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DGGML_HIP=ON -DGPU_TARGETS=gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201 -DCMAKE_PREFIX_PATH="%HIP_PATH%" -DHIP_PATH="%HIP_PATH%" -DCMAKE_C_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_CXX_COMPILER="%HIP_PATH%\lib\llvm\bin\clang++.exe" -DCMAKE_HIP_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_C_FLAGS="-Wno-error=incompatible-pointer-types" -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DGGML_HIP=ON -DGPU_TARGETS=gfx900;gfx906;gfx90c;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201 -DCMAKE_PREFIX_PATH="%HIP_PATH%" -DHIP_PATH="%HIP_PATH%" -DCMAKE_C_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_CXX_COMPILER="%HIP_PATH%\lib\llvm\bin\clang++.exe" -DCMAKE_HIP_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_C_FLAGS="-Wno-error=incompatible-pointer-types" -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
