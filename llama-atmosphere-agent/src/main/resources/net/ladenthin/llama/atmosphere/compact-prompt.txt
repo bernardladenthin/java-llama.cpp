@@ -1,0 +1,11 @@
+Summarize the conversation so far so that it can continue in a fresh context with nothing important lost. Write the summary as plain text with these sections, and leave out a section only when it would be empty:
+
+1. Goal — what the user wants, in their own words where possible.
+2. Facts — what was established about the project: paths, file names, commands, versions, decisions and their reasons.
+3. Work done — what was changed or produced, file by file.
+4. Problems — what failed, and what fixed it or is still open.
+5. State — where things stand right now.
+6. Next step — the single most obvious continuation, or "none" when the task is finished.
+
+Quote exact names, paths, commands and error messages verbatim; they are the part that cannot be reconstructed. Do not add advice, do not repeat the instructions, and do not use any tool — answer with the summary only.
+{focus}

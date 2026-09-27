@@ -12,6 +12,7 @@ import static org.hamcrest.Matchers.startsWith;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import org.atmosphere.ai.tool.ToolDefinition;
 import org.junit.jupiter.api.Test;
@@ -89,5 +90,23 @@ class ShellToolTest {
                 workspace, shell("sleep 30", "ping -n 30 127.0.0.1 >nul"), Duration.ofMillis(300), 10_000);
 
         assertThat(result, startsWith("exit code: (killed after 0 s)"));
+    }
+
+    @Test
+    void outputIsReportedLineByLineWhileTheCommandStillRuns() throws Exception {
+        List<String> live = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        String result = ShellTool.run(
+                workspace,
+                shell("echo one; echo two", "echo one& echo two"),
+                Duration.ofSeconds(30),
+                10_000,
+                live::add);
+
+        // the same lines reach the console while the process runs and the model afterwards
+        assertThat(live, is(java.util.List.of("one", "two")));
+        assertThat(result, containsString("one"));
+        assertThat(result, containsString("two"));
+        assertThat(result, startsWith("exit code: 0"));
     }
 }

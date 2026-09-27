@@ -18,6 +18,24 @@ import org.junit.jupiter.api.Test;
 class AgentOptionsTest {
 
     @Test
+    void plainChoosesTheLineOrientedConsoleEvenWithATerminal() {
+        // Both consoles stay; this is the only switch between them. A run with no one typing never
+        // uses the rich one anyway, which is why the flag is not the whole answer.
+        AgentOptions rich = AgentOptions.parse(new String[] {"--base-url", "http://localhost:1/v1"});
+        AgentOptions plain = AgentOptions.parse(new String[] {"--base-url", "http://localhost:1/v1", "--plain"});
+
+        assertThat(rich.isPlain(), is(false));
+        assertThat(plain.isPlain(), is(true));
+        assertThat(LocalAgent.usesFullTerminal(rich, true), is(true));
+        assertThat("asked for plain, so not even with a terminal", LocalAgent.usesFullTerminal(plain, true), is(false));
+        assertThat(
+                "nobody typing, so there is nothing to pin either way",
+                LocalAgent.usesFullTerminal(rich, false),
+                is(false));
+        assertThat(LocalAgent.usesFullTerminal(plain, false), is(false));
+    }
+
+    @Test
     void baseUrlModeWithDefaults() {
         AgentOptions options = AgentOptions.parse(new String[] {"--base-url", "http://127.0.0.1:8080/v1/"});
 

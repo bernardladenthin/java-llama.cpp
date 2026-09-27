@@ -48,6 +48,7 @@ SPDX-License-Identifier: MIT
 		     e.g. -Dllama.classifier=cuda13-linux-x86-64 or vulkan-windows-x86-64 (runtime on PATH). -->
 		<llama.classifier></llama.classifier>
 		<atmosphere.version>4.0.70</atmosphere.version>
+		<jline.version>4.4.5</jline.version>
 		<slf4j.version>2.0.19</slf4j.version>
 		<jspecify.version>1.0.1</jspecify.version>
 		<junit.version>6.1.3</junit.version>
@@ -89,6 +90,15 @@ SPDX-License-Identifier: MIT
 			<groupId>org.atmosphere</groupId>
 			<artifactId>atmosphere-ai</artifactId>
 			<version>${atmosphere.version}</version>
+		</dependency>
+
+		<!-- The terminal: line editing, history, tab completion, a pinned status line and single-key
+		     answers. One jar, no transitive dependencies; the agent falls back to a plain stream
+		     whenever JLine finds no usable terminal (piped input, tests, one-shot runs). -->
+		<dependency>
+			<groupId>org.jline</groupId>
+			<artifactId>jline</artifactId>
+			<version>${jline.version}</version>
 		</dependency>
 
 		<dependency>

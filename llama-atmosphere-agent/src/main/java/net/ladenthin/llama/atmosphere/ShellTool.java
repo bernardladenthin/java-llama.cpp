@@ -4,7 +4,9 @@
 
 package net.ladenthin.llama.atmosphere;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -12,6 +14,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Consumer;
 import org.atmosphere.ai.tool.ToolDefinition;
 
 /**
@@ -41,6 +44,20 @@ public final class ShellTool {
      * @return the definition
      */
     public static ToolDefinition definition(Path workspace, Duration defaultTimeout, int maxOutputChars) {
+        return definition(workspace, defaultTimeout, maxOutputChars, line -> {});
+    }
+
+    /**
+     * Build the tool definition with live output.
+     *
+     * @param workspace the working directory of every command
+     * @param defaultTimeout the timeout applied when the model does not pass {@code timeout_seconds}
+     * @param maxOutputChars output is truncated to this many characters (tail kept, head marked)
+     * @param liveOutput receives each output line while the command is still running
+     * @return the definition
+     */
+    public static ToolDefinition definition(
+            Path workspace, Duration defaultTimeout, int maxOutputChars, Consumer<String> liveOutput) {
         return ToolDefinition.builder(
                         TOOL_NAME, LocalAgent.prompt(DESCRIPTION_RESOURCE).replace("{shell}", shellName()))
                 .parameter(PARAM_COMMAND, "The command line to run through " + shellName(), "string", true)
@@ -51,7 +68,7 @@ public final class ShellTool {
                         return "Error: '" + PARAM_COMMAND + "' is required";
                     }
                     Duration timeout = timeoutOf(args.get(PARAM_TIMEOUT), defaultTimeout);
-                    return run(workspace, command.toString(), timeout, maxOutputChars);
+                    return run(workspace, command.toString(), timeout, maxOutputChars, liveOutput);
                 })
                 .build();
     }
@@ -106,18 +123,47 @@ public final class ShellTool {
      */
     static String run(Path workspace, String command, Duration timeout, int maxOutputChars)
             throws IOException, InterruptedException {
+        return run(workspace, command, timeout, maxOutputChars, line -> {});
+    }
+
+    /**
+     * Run one command through the platform shell, reporting its output as it arrives.
+     *
+     * <p>The output is read line by line rather than in one go at the end. That is what lets the
+     * console show a long build while it runs — a silent minute is indistinguishable from a hang — and
+     * it is also what keeps the pipe drained: a process whose output nobody reads blocks once the
+     * pipe buffer is full, which on Windows is roughly 4 KB.
+     *
+     * @param workspace the working directory
+     * @param command the command line
+     * @param timeout kill the process after this long
+     * @param maxOutputChars truncate the captured output to this many characters
+     * @param liveOutput receives each line as it is read
+     * @return a text block starting with {@code exit code: N}, followed by the output
+     * @throws IOException if the process cannot be started
+     * @throws InterruptedException if interrupted while waiting
+     */
+    static String run(Path workspace, String command, Duration timeout, int maxOutputChars, Consumer<String> liveOutput)
+            throws IOException, InterruptedException {
         ProcessBuilder builder =
                 isWindows() ? new ProcessBuilder("cmd.exe", "/c", command) : new ProcessBuilder("sh", "-c", command);
         builder.directory(workspace.toFile());
         builder.redirectErrorStream(true);
         Process process = builder.start();
         process.getOutputStream().close();
-        CompletableFuture<byte[]> output = CompletableFuture.supplyAsync(() -> {
-            try {
-                return process.getInputStream().readAllBytes();
+        CompletableFuture<String> output = CompletableFuture.supplyAsync(() -> {
+            StringBuilder collected = new StringBuilder();
+            try (BufferedReader reader =
+                    new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    collected.append(line).append(System.lineSeparator());
+                    liveOutput.accept(line);
+                }
             } catch (IOException e) {
-                return ("[output unreadable: " + e.getMessage() + "]").getBytes(StandardCharsets.UTF_8);
+                collected.append("[output unreadable: ").append(e.getMessage()).append("]");
             }
+            return collected.toString();
         });
         boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
         if (!finished) {
@@ -129,7 +175,7 @@ public final class ShellTool {
         }
         String text;
         try {
-            text = new String(output.get(5, TimeUnit.SECONDS), StandardCharsets.UTF_8);
+            text = output.get(5, TimeUnit.SECONDS);
         } catch (ExecutionException | TimeoutException e) {
             text = "[output unavailable: " + e.getMessage() + "]";
         }
