@@ -97,6 +97,9 @@ public final class JLineTerminal implements AgentTerminal {
     private @Nullable Thread input;
     private @Nullable Thread sizes;
 
+    /** The size the pinned region was just told about, so the rows are built for the same one. */
+    private volatile @Nullable Size pendingSize;
+
     private JLineTerminal(Terminal terminal, LineReader reader, Status status, Ansi ansi) {
         this.terminal = terminal;
         this.reader = reader;
@@ -411,7 +414,9 @@ public final class JLineTerminal implements AgentTerminal {
                 // refreshingTheBlockWhileTheReaderRedrawsNeverThrows is what holds it -- red 2/2 without
                 // that fix, green 3/3 with it. So this line depends on that fix and must not be kept
                 // without it.
-                status.resize(terminal.getSize());
+                Size size = terminal.getSize();
+                pendingSize = size;
+                status.resize(size);
                 updateStatus(lines);
             }
             return true;
@@ -478,8 +483,32 @@ public final class JLineTerminal implements AgentTerminal {
      *
      * @return a line of {@code ─}
      */
-    private String rule() {
-        return "─".repeat(Math.max(10, terminal.getSize().getColumns() - 1));
+    /**
+     * The size the block is built from, so every part of it agrees.
+     *
+     * <p>Set by {@link #refreshBlockForCurrentSize()} right before it tells the pinned region the new
+     * geometry, and consumed once: any other caller reads the terminal as before. The point is that the
+     * region and the rows it holds are never built from two different reads of the window.
+     *
+     * @return the size to build the block for
+     */
+    private Size sizeForBlock() {
+        Size pending = pendingSize;
+        pendingSize = null;
+        return pending != null ? pending : terminal.getSize();
+    }
+
+    private String rule(int columns) {
+        // TWO columns short, not one, and the second one is a measured defence rather than taste. A row as
+        // wide as the window risks wrapping, and a wrapped row costs a second screen line while the region
+        // is reserved in lines -- the row the wrap eats is the prompt's, which is the reported pair "nur die
+        // Eingabe wandert hoch" and "wenn ich groesser ziehe kommen viel mehr Striche", and the probe's
+        // cursor drifting up by one to three rows. A console being dragged reports a width it has not
+        // finished applying, so the size the rule is built from can be ahead of the screen by a column;
+        // aWindowThatReportsMoreColumnsThanItHasMustNotCostThePromptItsRow forces exactly that and is red
+        // with one column of slack. It cannot defend against an arbitrarily large overshoot -- nothing
+        // built from a reported width can -- but one column is the lag that actually occurs.
+        return "─".repeat(Math.max(10, columns - 2));
     }
 
     @Override
@@ -560,9 +589,18 @@ public final class JLineTerminal implements AgentTerminal {
         // One row must never wrap: a wrapped row occupies two screen lines, the reserved region is
         // sized in lines, and everything below it is then drawn in the wrong place -- which is how a
         // long summary tore the block apart.
-        int width = Math.max(10, terminal.getSize().getColumns() - 1);
+        // ONE read of the size for the whole block, and for the region it is pinned in. There used to be
+        // three -- one for the reserved region, one for this width, one inside rule() -- and during a drag
+        // they can each see a different window: a rule built from a size the console has not applied yet is
+        // wider than the window, wraps onto a second screen line, and the region then needs four lines
+        // where three are reserved. Which is exactly the pair of reports "nur die Eingabe wandert hoch" and
+        // "wenn ich groesser ziehe kommen viel mehr Striche": the wrap costs the prompt its row, and the
+        // rule looks far too long. Whatever the size is, the rows and the region are now built from the
+        // same one.
+        int columns = sizeForBlock().getColumns();
+        int width = Math.max(10, columns - 1);
         List<AttributedString> rows = new java.util.ArrayList<>();
-        rows.add(new AttributedString(rule(), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
+        rows.add(new AttributedString(rule(columns), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
         for (String line : lines) {
             rows.add(
                     new AttributedString(fit(line, width), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));

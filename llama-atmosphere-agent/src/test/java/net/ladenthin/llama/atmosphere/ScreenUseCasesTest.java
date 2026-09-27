@@ -138,8 +138,8 @@ class ScreenUseCasesTest {
                 .count();
         int width = terminal.getSize().getColumns();
         assertThat(
-                "the rule spans the window it is in now: " + dashes + " of " + (width - 1) + ":\n" + screen,
-                dashes >= width - 1L,
+                "the rule spans the window it is in now: " + dashes + " of " + (width - 2) + ":\n" + screen,
+                dashes >= width - 2L,
                 is(true));
     }
 
@@ -403,7 +403,7 @@ class ScreenUseCasesTest {
             assertThat(
                     "the rule follows the new window: " + dashes + " characters in a " + NARROW + "-column window"
                             + NEWLINE + screen,
-                    dashes <= NARROW && dashes >= NARROW - 2L,
+                    dashes <= NARROW && dashes >= NARROW - 3L,
                     is(true));
         }
     }
@@ -457,7 +457,7 @@ class ScreenUseCasesTest {
             assertThat(
                     "the poll kept working after one failed read: rule is " + dashes + " wide in a " + NARROW
                             + "-column window" + NEWLINE + screen,
-                    dashes <= NARROW && dashes >= NARROW - 2L,
+                    dashes <= NARROW && dashes >= NARROW - 3L,
                     is(true));
             // The discriminator, and counting alone is not it: a rule built for the old window is CUT by
             // the pinned region, which ends the row in an ellipsis and leaves the same number of dashes a
@@ -768,6 +768,103 @@ class ScreenUseCasesTest {
                             + "-row block" + NEWLINE + terminal.describe(),
                     terminal.cursorRow(),
                     is(expected));
+        }
+    }
+
+    @Test
+    void theRuleIsExactlyTwoColumnsShortOfTheWindowAndStaysThere() throws Exception {
+        // Reported as "der Strich wird gefuehlt minimal kleiner". Two columns short is by DESIGN -- a row as
+        // wide as the window risks wrapping, a wrapped row costs a second screen line, and the region is
+        // reserved in lines, which is how a long row tore the block apart before. What would not be by
+        // design is the rule losing a column per resize, so this returns to the SAME width several times
+        // over and requires the exact same length every time.
+        int rows = 20;
+        int wide = 118;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", wide, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+
+            List<Long> lengths = new ArrayList<>();
+            for (int round = 0; round < 4; round++) {
+                Thread pump = terminal.resizeAsynchronously(wide - 20, rows);
+                console.refreshBlockForCurrentSize();
+                pump.join(2000);
+                Thread.sleep(150);
+                pump = terminal.resizeAsynchronously(wide, rows);
+                console.refreshBlockForCurrentSize();
+                pump.join(2000);
+                Thread.sleep(250);
+                lengths.add(terminal.rows()[rows - 3]
+                        .chars()
+                        .filter(character -> character == '─' || character == 'q')
+                        .count());
+            }
+
+            String screen = terminal.describe();
+            assertThat(
+                    "the rule is the same length every time it comes back to " + wide + " columns: " + lengths + NEWLINE
+                            + screen,
+                    lengths.stream().distinct().count(),
+                    is(1L));
+            assertThat(
+                    "and that length is two columns short of the window, deliberately: " + lengths + NEWLINE + screen,
+                    lengths.get(0),
+                    is((long) wide - 2));
+        }
+    }
+
+    @Test
+    void aWindowThatReportsMoreColumnsThanItHasMustNotCostThePromptItsRow() throws Exception {
+        // The mechanism this has been narrowing towards, forced instead of waited for. Two reports arrived
+        // together -- "nur die Eingabe wandert hoch" and "wenn ich groesser ziehe kommen viel mehr Striche"
+        // -- and one cause explains both: a rule built for a width the console has not applied yet is wider
+        // than the window, so it WRAPS, the region needs four screen lines where three are reserved, and
+        // the row the wrap eats is the prompt's. That also matches the probe's number exactly: the cursor
+        // drifted up by one to three rows, never more than the block's height.
+        //
+        // A console reporting a size it has not finished applying cannot be arranged by waiting, so here
+        // the terminal simply lies: the screen is REAL_COLUMNS wide and getSize() claims more.
+        int rows = 20;
+        int realColumns = 80;
+        // ONE column, because that is the lag a console being dragged actually shows -- it reports a width
+        // it has not finished applying. A larger overshoot cannot be defended against by anything built
+        // from a reported width, and this test would be a wish rather than a contract.
+        int claimedExtra = 1;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", realColumns, rows) {
+            @Override
+            public Size getSize() {
+                Size real = super.getSize();
+                return Size.of(real.getColumns() + claimedExtra, real.getRows());
+            }
+        };
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(300);
+
+            String screen = terminal.describe();
+            String[] screenRows = terminal.rows();
+            assertThat("the rule is on screen once" + NEWLINE + screen, count(screenRows, this::isRule), is(1));
+            for (int row = 0; row < screenRows.length; row++) {
+                assertThat(
+                        "row " + row + " carries the prompt AND the rule" + NEWLINE + screen,
+                        screenRows[row].contains(">") && isRule(screenRows[row]),
+                        is(false));
+            }
+            assertThat(
+                    "the cursor still has the row the block leaves for it" + NEWLINE + screen,
+                    terminal.cursorRow(),
+                    is(rows - 1 - 3));
         }
     }
 
