@@ -504,6 +504,79 @@ class ScreenUseCasesTest {
     }
 
     @Test
+    void theRuleNeverSharesARowWithThePrompt() throws Exception {
+        // Reported after enlarging with text in the input: "> Hallo" and the rule on ONE screen line, the
+        // activity and state rows below it. The rule is the first row of the reserved region, so sharing a
+        // row with the prompt means the region starts one row too high and everything in it is off by one.
+        // This is the exact block the agent pins, with the icons it pins now.
+        ScreenTerminalHarness terminal = terminal(NARROW);
+        try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
+            terminal.type("Hallo");
+            Thread.sleep(200);
+
+            resizeOnce(terminal, console, WIDE);
+
+            String screen = terminal.describe();
+            String[] rows = terminal.rows();
+            for (int row = 0; row < rows.length; row++) {
+                boolean carriesBoth = rows[row].contains("Hallo") && isRule(rows[row]);
+                assertThat(
+                        "row " + row + " carries the prompt AND the rule, so the region starts a row too high" + NEWLINE
+                                + screen,
+                        carriesBoth,
+                        is(false));
+            }
+            assertThat("the rule is on screen once" + NEWLINE + screen, count(rows, this::isRule), is(1));
+            assertThat(
+                    "the rule is the third row from the bottom" + NEWLINE + screen, isRule(rows[ROWS - 3]), is(true));
+        }
+    }
+
+    @Test
+    void clearingTheScreenAfterAWholeTurnHasScrolledIt() throws Exception {
+        // Reported in this exact order: type, Enter, the answer looked fine, then /cls -- and the three
+        // block rows ended up running together on one screen line with a stray character above the prompt.
+        // What every green /cls case above was missing is that the screen had SCROLLED first: a turn prints
+        // more lines than the window holds and refreshes the block as it goes, so the wipe happens in a
+        // state none of those tests reach.
+        ScreenTerminalHarness terminal = terminal(WIDE);
+        try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
+            // A turn's worth of output: more rows than the window has, with the block refreshed between
+            // them the way the activity line is refreshed four times a second while a turn runs.
+            for (int line = 0; line < ROWS * 2; line++) {
+                console.line("answer line " + line);
+                if (line % 3 == 0) {
+                    console.refreshBlockForCurrentSize();
+                }
+            }
+            Thread.sleep(300);
+
+            console.clearScreen();
+            Thread.sleep(400);
+
+            String screen = terminal.describe();
+            String[] rows = terminal.rows();
+            assertThat(
+                    "nothing from before the wipe is left" + NEWLINE + screen,
+                    count(rows, row -> row.contains("answer line")),
+                    is(0));
+            assertThat("the rule is on screen once" + NEWLINE + screen, count(rows, this::isRule), is(1));
+            assertThat(
+                    "the rule has a row to itself, the third from the bottom" + NEWLINE + screen,
+                    isRule(rows[ROWS - 3]),
+                    is(true));
+            assertThat(
+                    "the activity row has a row to itself" + NEWLINE + screen,
+                    rows[ROWS - 2].contains("waiting for input") && !isRule(rows[ROWS - 2]),
+                    is(true));
+            assertThat(
+                    "the state row is the bottom row" + NEWLINE + screen,
+                    rows[ROWS - 1].contains("local-model") && !isRule(rows[ROWS - 1]),
+                    is(true));
+        }
+    }
+
+    @Test
     void theModeBadgeKeepsItsSpaceOnScreen() throws Exception {
         // Reported: "beim auto mode hat immer ein leerzeichen gefehlt: [pause] manual". The badge is
         // built as symbol + " " + name, so the space is there in the string -- the question is whether it
