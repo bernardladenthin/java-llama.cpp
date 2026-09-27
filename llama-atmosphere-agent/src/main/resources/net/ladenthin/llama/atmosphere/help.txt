@@ -19,9 +19,9 @@ Commands (everything else is sent to the model):
   /load <file>           read a saved transcript back in as the conversation   (/resume)
   /exit                  leave                                      (/quit)
 
-The input line sits in the box at the bottom and is there while the agent works: you can type at
-any time. A line typed
-during a turn stops it and is sent as the next message. Shift+Tab switches the approval mode.
+The input line sits in the box at the bottom and is there while the agent works: you can type
+at any time. A line typed during a turn stops it and is sent as the next message.
+Shift+Tab switches the approval mode.
 
 In manual mode every tool that writes or runs a command asks first: [y]es runs it once,
 [n]o tells the model the user cancelled it, [a]uto stops asking for the rest of the session.
