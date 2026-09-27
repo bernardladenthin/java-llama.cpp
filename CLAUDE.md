@@ -2563,9 +2563,16 @@ are decisions, not details:
    been measured and discarded (buffer-vs-window width, reflow by joining the rows, a
    wide→narrow→wide drag, an accumulating cursor drift), and with that probe recording window and
    buffer at identical widths throughout and one size event per ~125 ms for a single drag.
-   `JLineTerminalTest.theBlockIsRebuiltAtTheNewWidthWhenTheWindowChangesSize` counts the columns the
-   rule grew by (the region writes a *diff*, so a test searching for one full-width run fails against a
-   working rebuild — verified at `wrote 0` with the poll disabled).
+   **It carries no test, and a written one was deleted rather than kept:** the stream-backed harness
+   has no screen model, so all it can observe after a size change is that JLine re-emits the rule at
+   its *old* width without the poll and emits nothing with it — neither says the rule was redrawn at
+   the new width, and the first assertion built on that passed with the poll disabled. Green either
+   way is worse than none (the same call already made for two write-lock tests). The evidence is the
+   probe, on the console where it happens. **And the poll must do nothing but rebuild the rows:**
+   adding `status.resize(size)` to it — which the deleted test appeared to require, because no reader
+   runs in it — writes to the terminal directly, lands inside what the reader is drawing for the same
+   size change, and printed `36;1H` as text on the real console with the block doubled. The reader has
+   already done that resize by the time the poll notices.
 
    **Do not add a `WINCH` handler, and the reason is measured.** A resize drawing a row of
    `> > > > >` across the screen looks like the pinned region not being told about the new size, so a

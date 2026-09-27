@@ -175,6 +175,15 @@ public final class JLineTerminal implements AgentTerminal {
      * an accumulating cursor drift) — and the same probe recorded window and buffer at identical
      * widths throughout, so it is not the one the terminal's own API could explain.
      *
+     * <p><b>Not covered by a test, and a written one was deleted rather than kept.</b> The
+     * stream-backed harness has no screen model, so all it can observe after a size change is that
+     * JLine re-emits the rule at its OLD width without this poll (59 columns, in the prompt's DEC
+     * line-drawing form) and emits nothing with it. Neither says the rule was redrawn at the new
+     * width, so every assertion built on them was satisfiable by the broken behaviour -- the first
+     * version passed with the poll disabled. Green either way is worse than none, the same call
+     * already made for two write-lock tests in this class's history. What this rests on is the probe
+     * above, which ran on the console where the defect appears.
+     *
      * <p>A poll, not a signal: the reader owns WINCH for the whole session. This writes through the
      * same lock as every other write, which is what the turn loop already does four times a second.
      * The probe recorded one size event per ~125 ms for a single drag, so the interval follows a drag
@@ -201,17 +210,16 @@ public final class JLineTerminal implements AgentTerminal {
                         last = now;
                         List<String> lines = requested;
                         if (!lines.isEmpty()) {
-                            synchronized (writing) {
-                                // Both halves are needed, and the second one is easy to miss: the
-                                // pinned region has to be told the new geometry, or it cuts the rebuilt
-                                // rule straight back to the old width with an ellipsis. JLine's reader
-                                // does this itself while it is reading; doing it here makes the block
-                                // correct whether or not a read is in flight, and it is a no-op inside
-                                // Status when the grid has not actually changed.
-                                status.resize(now);
-                                // Then re-cut every row and re-make the rule at the new width.
-                                updateStatus(lines);
-                            }
+                            // Rebuild the rows, and NOTHING else. Telling the pinned region the new
+                            // geometry here (Status.resize) is what a unit test appeared to require,
+                            // because no reader runs in one -- and it destroyed the real console:
+                            // "36;1H" and a stray "1" printed as text inside the rule, a "[" in front
+                            // of the state row, the block drawn twice. Status.resize writes to the
+                            // terminal directly, so it lands in the middle of what the reader is
+                            // drawing for the same size change and an ESC byte is lost. The reader has
+                            // already done that resize (LineReaderImpl.handleSignal) by the time this
+                            // poll notices, so it was redundant as well as harmful.
+                            status(lines);
                         }
                     }
                 },
