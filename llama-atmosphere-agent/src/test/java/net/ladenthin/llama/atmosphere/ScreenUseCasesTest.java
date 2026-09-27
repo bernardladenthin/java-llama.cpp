@@ -689,6 +689,45 @@ class ScreenUseCasesTest {
     }
 
     @Test
+    void justEnlargingAFreshSessionKeepsThePromptOffTheRuleRow() throws Exception {
+        // The smallest form the report ever took: start, type NOTHING, enlarge -- and ">" shares a screen
+        // line with the rule. No turn, no scrolling, no text in the buffer. The geometry is the reporter's
+        // rather than this class's default, because the window there is 34 rows and ~150 columns and the
+        // block is three rows, and the row count is the one variable that had never been varied.
+        int rows = 34;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", 100, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+
+            Thread pump = terminal.resizeAsynchronously(150, rows);
+            console.refreshBlockForCurrentSize();
+            pump.join(2000);
+            Thread.sleep(400);
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(300);
+
+            String[] screenRows = terminal.rows();
+            String screen = terminal.describe();
+            for (int row = 0; row < screenRows.length; row++) {
+                assertThat(
+                        "row " + row + " carries the prompt AND the rule" + NEWLINE + screen,
+                        screenRows[row].contains(">") && isRule(screenRows[row]),
+                        is(false));
+            }
+            assertThat("the rule is on screen once" + NEWLINE + screen, count(screenRows, this::isRule), is(1));
+            assertThat(
+                    "the rule is the third row from the bottom" + NEWLINE + screen,
+                    isRule(screenRows[rows - 3]),
+                    is(true));
+        }
+    }
+
+    @Test
     void theModeBadgeKeepsItsSpaceOnScreen() throws Exception {
         // Reported: "beim auto mode hat immer ein leerzeichen gefehlt: [pause] manual". The badge is
         // built as symbol + " " + name, so the space is there in the string -- the question is whether it
