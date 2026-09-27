@@ -2223,7 +2223,7 @@ CI wiring (`publish.yml`): the model-free job builds it, writes the `.sha256` an
 directory next to `llama-fatjars`, so `sign-fatjars.sh` signs it (`*-jar-with-dependencies*.jar`) and
 the one upload attaches it. **`smoke-agent-linux`** (`.github/smoke-agent-jar.sh`) runs the asset the
 way the README tells a user to — `java -jar` next to the real `all-linux-x86-64` fat jar — and checks:
-bytecode ≤ 65 (Java 21, unlike the core's 52), that the jar started **alone** fails with
+bytecode ≤ 65 (Java 21, unlike the core's 52 — with one `--allow` for JLine's FFM terminal provider `org/jline/terminal/impl/ffm/*`, 25 classes shipped as Java 22 bytecode that JLine discovers through `META-INF/jline/providers/ffm` and never loads on 21, where it picks its JNI provider; the first CI run of the smoke caught them), that the jar started **alone** fails with
 `NoClassDefFoundError: net/ladenthin/llama/LlamaModel` (i.e. it really carries no core), `--help`, a
 one-shot `2 + 2` answer and a `read_file` round that must surface a marker from `--workspace`, all on
 the cached `TOOL_MODEL_NAME` with `--ngl 0`. **All three agent jobs gate both publish jobs**
