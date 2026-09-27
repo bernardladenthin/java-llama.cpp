@@ -67,7 +67,7 @@ public class ToolCallingIntegrationTest {
         ChatResponse response = model.chat(toolRequest());
 
         List<ToolCall> calls = response.getFirstMessage().orElseThrow().getToolCalls();
-        assertThat(calls, hasSize(1));
+        assertThat("tool calls of " + response, calls, hasSize(1));
         assertThat(calls.get(0).getName(), is("test"));
         assertThat(
                 MAPPER.readTree(calls.get(0).getArgumentsJson()).path("success").asBoolean(), is(true));
@@ -87,9 +87,17 @@ public class ToolCallingIntegrationTest {
 
         StringBuilder name = new StringBuilder();
         StringBuilder arguments = new StringBuilder();
+        StringBuilder content = new StringBuilder();
+        String finishReason = null;
         for (String chunk : chunks) {
-            JsonNode toolCalls =
-                    MAPPER.readTree(chunk).path("choices").path(0).path("delta").path("tool_calls");
+            JsonNode choice = MAPPER.readTree(chunk).path("choices").path(0);
+            if (choice.path("delta").path("content").isTextual()) {
+                content.append(choice.path("delta").path("content").asText());
+            }
+            if (choice.path("finish_reason").isTextual()) {
+                finishReason = choice.path("finish_reason").asText();
+            }
+            JsonNode toolCalls = choice.path("delta").path("tool_calls");
             if (!toolCalls.isArray()) {
                 continue;
             }
@@ -104,14 +112,26 @@ public class ToolCallingIntegrationTest {
             }
         }
 
-        assertThat(name.toString(), is("test"));
-        assertThat(MAPPER.readTree(arguments.toString()).path("success").asBoolean(), is(true));
+        // Everything the stream carried, so a failure says what the model did instead of only that
+        // no tool name arrived (the first Windows failure after the b11211 bump reported just "").
+        String diagnostics = chunks.size() + " chunks, finish_reason=" + finishReason + ", arguments=" + arguments
+                + ", content=" + content;
+        assertThat(diagnostics, name.toString(), is("test"));
+        assertThat(
+                diagnostics,
+                MAPPER.readTree(arguments.toString()).path("success").asBoolean(),
+                is(true));
     }
 
     private static ChatRequest toolRequest() {
         return ChatRequest.empty()
                 .appendMessage("system", "You are a coding assistant.")
-                .appendMessage("user", "Write an example")
+                // Ask for the call outright. This test pins how a tool call is parsed and streamed,
+                // not whether a 1.5B model infers one from a vague request: with "Write an example"
+                // the constrained output was a whitespace-heavy ~90-token call that, under greedy
+                // decoding, a numerically different CPU path (b11211 on the Windows runners) turned
+                // into 512 tokens with no tool call at all.
+                .appendMessage("user", "Call the test tool with success set to true.")
                 .appendTool(TEST_TOOL)
                 .withToolChoice("required")
                 .withParallelToolCalls(Boolean.FALSE)

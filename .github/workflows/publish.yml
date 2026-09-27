@@ -533,17 +533,19 @@ jobs:
   # job — never in the dockcross cross-compilers (which have no node) or per-platform.
   # ---------------------------------------------------------------------------
   # ---------------------------------------------------------------------------
-  # llama-atmosphere-agent: the standalone (non-reactor, unpublished) local coding-agent
-  # project that wires Atmosphere's built-in OpenAI-compatible agent runtime to this
-  # project's OpenAiCompatServer. Two jobs, mirroring the langchain4j pair:
+  # llama-atmosphere-agent: the standalone (non-reactor, never on Maven Central) local
+  # coding-agent project that wires Atmosphere's built-in OpenAI-compatible agent runtime to
+  # this project's OpenAiCompatServer. Three jobs, all publish gates:
   #   - model-free: unit tests + the wire-contract tests, which drive the REAL
   #     OpenAiCompatServer over a loopback socket with a scripted backend (no native lib,
   #     no GGUF) and pin the streamed tool_calls / role=tool / multi-round shape — seconds,
-  #     on every PR.
+  #     on every PR. It also builds the GitHub Release asset (the agent jar WITHOUT the core).
   #   - model-backed: the same loop against the cached Qwen2.5-1.5B tool model through the
   #     downloaded Linux native library (chat, streaming, tool call + result, read/write/read
-  #     loop). Validation-only, not a publish gate: a small model's wording is not a release
-  #     signal, the deterministic contract is the model-free job.
+  #     loop). A gate since its assertions stopped pinning wording (content checks are limited
+  #     to facts no instruct model gets wrong and to tool results) and it ran green throughout.
+  #   - smoke-agent-linux (further down, after package-fatjars): the release asset itself,
+  #     started next to the real core fat jar.
   # The project is built with -Dllama.version=<reactor version> against the core that was just
   # installed to the local repo, so it always tests the code of this checkout.
   # ---------------------------------------------------------------------------
@@ -569,6 +571,28 @@ jobs:
         run: mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" spotless:check
       - name: Build and test (unit + model-free wire contract against the real OpenAiCompatServer)
         run: mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" verify
+      # The GitHub Release asset llama-atmosphere-agent-<core version>-jar-with-dependencies.jar:
+      # the agent plus Atmosphere/JLine, WITHOUT the core (src/assembly/agent-jar.xml), so it is a
+      # few MB and the natives are not in the release twice. Never deployed to Maven Central.
+      # smoke-agent-linux launches it next to the real core fat jar; the attach jobs sign it.
+      - name: Build the agent release jar (without the core)
+        run: >
+          mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}"
+          -P assembly -DskipTests package
+      - name: Collect the agent release jar + sha256
+        run: |
+          mkdir -p agent-jar
+          cp "llama-atmosphere-agent/target/llama-atmosphere-agent-${VERSION}-jar-with-dependencies.jar" agent-jar/
+          (cd agent-jar && for f in *.jar; do sha256sum "$f" > "$f.sha256"; done)
+          ls -la agent-jar
+      - name: Upload the agent release jar
+        uses: actions/upload-artifact@v7
+        with:
+          name: llama-atmosphere-agent-jar
+          path: agent-jar/
+          compression-level: 0 # jars are already deflated
+          retention-days: 7
+          if-no-files-found: error
 
   test-java-llama-atmosphere-agent-integration:
     name: Integration Test llama-atmosphere-agent (model-backed)
@@ -3665,6 +3689,50 @@ jobs:
             server-err.log
           if-no-files-found: warn
 
+  # The agent release asset, launched the way the README tells a user to: `java -jar` on the agent
+  # jar lying next to the real all-backends Linux fat jar, so the core is found only through the
+  # agent manifest's Class-Path. Proves the two assets fit together (matching version in the file
+  # names, nothing missing on either side), that the agent jar carries no core, and that a
+  # one-shot answer and a read_file tool round work through the shipped jars.
+  smoke-agent-linux:
+    name: Smoke test the agent release jar (Linux)
+    needs: [test-java-llama-atmosphere-agent, package-fatjars, verify-model-cache]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: llama-atmosphere-agent-jar
+          path: agent-assets/
+      - uses: actions/download-artifact@v8
+        with:
+          name: llama-fatjar-smoke-linux
+          path: agent-assets/
+      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
+        uses: actions/cache/restore@v6
+        with:
+          path: models/
+          key: gguf-models-${{ hashFiles('.github/models.csv') }}
+          enableCrossOsArchive: true
+      - name: Validate model files
+        run: .github/validate-models.sh
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+      # The agent is Java 21 (Atmosphere's floor), unlike the Java 8 core: its ceiling is 65.
+      - name: Verify Java 21 bytecode (no class newer than major 65)
+        run: .github/verify-bytecode-version.sh --max-major 65 agent-assets/llama-atmosphere-agent-*-jar-with-dependencies.jar
+      - name: Run the agent release-jar smoke test
+        run: .github/smoke-agent-jar.sh agent-assets "models/${TOOL_MODEL_NAME}"
+      - name: Upload agent logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-smoke-linux-logs
+          path: agent-*.log
+          if-no-files-found: warn
+
   smoke-fatjar-windows:
     name: Smoke test all-backends fat jar (Windows)
     needs: [package-fatjars, verify-model-cache]
@@ -3880,7 +3948,7 @@ jobs:
 
   publish-snapshot:
     name: Publish Snapshot to Central
-    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows, smoke-fatjar-linux-aarch64, smoke-fatjar-windows-arm64, smoke-fatjar-macos]
+    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows, smoke-fatjar-linux-aarch64, smoke-fatjar-windows-arm64, smoke-fatjar-macos, smoke-agent-linux]
     if: needs.check-snapshot.result == 'success' && inputs.publish_to_central
     runs-on: ubuntu-latest
     environment: maven-central
@@ -4059,11 +4127,11 @@ jobs:
 
   github-snapshot:
     name: Update Snapshot Pre-release on GitHub
-    needs: [publish-snapshot, package-fatjars]
+    needs: [publish-snapshot, package-fatjars, test-java-llama-atmosphere-agent]
     # Also runs when publish-snapshot FAILED (not when skipped/cancelled): a Central
     # publish-poll timeout reds that job after the artifacts were already uploaded —
     # the GitHub pre-release assets must not be lost in that case.
-    if: ${{ !cancelled() && (needs.publish-snapshot.result == 'success' || needs.publish-snapshot.result == 'failure') && needs.package-fatjars.result == 'success' }}
+    if: ${{ !cancelled() && (needs.publish-snapshot.result == 'success' || needs.publish-snapshot.result == 'failure') && needs.package-fatjars.result == 'success' && needs.test-java-llama-atmosphere-agent.result == 'success' }}
     runs-on: ubuntu-latest
     # maven-central so the GPG_PRIVATE_KEY / GPG_PASSPHRASE secret is delivered (it is
     # scoped to this environment) for signing the fat jars below. This environment has
@@ -4085,6 +4153,12 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: llama-fatjars
+          path: snapshot-assets/
+      # The agent jar (+ sha256) — built without the core, run next to one of the fat jars above.
+      # Same directory, so sign-fatjars.sh signs it and the upload glob attaches it.
+      - uses: actions/download-artifact@v8
+        with:
+          name: llama-atmosphere-agent-jar
           path: snapshot-assets/
       # GPG-sign the fat jars so each carries a detached .asc signature alongside its
       # .sha256 checksum — signature parity with the thin jars (which maven-gpg signs at
@@ -4147,7 +4221,7 @@ jobs:
   publish-release:
     name: Publish Release to Central
     if: needs.check-tag.result == 'success' && inputs.publish_to_central
-    needs: [check-tag, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows, smoke-fatjar-linux-aarch64, smoke-fatjar-windows-arm64, smoke-fatjar-macos]
+    needs: [check-tag, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows, smoke-fatjar-linux-aarch64, smoke-fatjar-windows-arm64, smoke-fatjar-macos, smoke-agent-linux]
     runs-on: ubuntu-latest
     environment: maven-central
     permissions:
@@ -4326,11 +4400,11 @@ jobs:
 
   github-release-signed:
     name: Attach Signed Binaries to GitHub Release
-    needs: [publish-release, package-fatjars]
+    needs: [publish-release, package-fatjars, test-java-llama-atmosphere-agent]
     # Also runs when publish-release FAILED (not when skipped/cancelled): a Central
     # publish-poll timeout reds that job after the artifacts were already uploaded —
     # the GitHub release assets must not be lost in that case.
-    if: ${{ !cancelled() && (needs.publish-release.result == 'success' || needs.publish-release.result == 'failure') && needs.package-fatjars.result == 'success' }}
+    if: ${{ !cancelled() && (needs.publish-release.result == 'success' || needs.publish-release.result == 'failure') && needs.package-fatjars.result == 'success' && needs.test-java-llama-atmosphere-agent.result == 'success' }}
     runs-on: ubuntu-latest
     # maven-central so the GPG_PRIVATE_KEY / GPG_PASSPHRASE secret is delivered (it is
     # scoped to this environment) for signing the fat jars below. This environment has
@@ -4352,6 +4426,12 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: llama-fatjars
+          path: release-assets/
+      # The agent jar (+ sha256) — built without the core, run next to one of the fat jars above.
+      # Same directory, so sign-fatjars.sh signs it and the upload glob attaches it.
+      - uses: actions/download-artifact@v8
+        with:
+          name: llama-atmosphere-agent-jar
           path: release-assets/
       # GPG-sign the fat jars so each carries a detached .asc signature alongside its
       # .sha256 checksum — signature parity with the thin jars (which maven-gpg signs at

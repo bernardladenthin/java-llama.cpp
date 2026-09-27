@@ -22,9 +22,9 @@ offline:
 - **Shell:** an opt-in `run_command` tool (`--allow-shell`) that runs any command line through the
   system shell (`cmd.exe` on Windows, `sh` elsewhere).
 
-This folder is a **standalone Maven project**, deliberately *not* a reactor module and *not*
-published: CI builds and tests it against the core of the same checkout; you copy the folder and
-run it. Its `pom.xml` pins `llama.version` to the release these instructions describe (**5.2.0**);
+This folder is a **standalone Maven project**, deliberately *not* a reactor module and *never* on
+Maven Central: CI builds and tests it against the core of the same checkout; you copy the folder and
+run it — or download the ready-built jar from a release (see below). Its `pom.xml` pins `llama.version` to the release these instructions describe (**5.2.0**);
 pass `-Dllama.version=…` to run against another core, e.g. a `-SNAPSHOT` before a release.
 
 > [!WARNING]
@@ -39,7 +39,25 @@ You need **JDK 21+** and **Maven** (`mvn -v` must report Java 21 or newer). No C
 CMake and no separate llama.cpp install: the core jar from Maven Central ships the native libraries
 for Windows, Linux and macOS.
 
-**1. Get this folder.** It is not published as an artifact; clone the repository (or download it
+**Or skip Maven entirely.** Every [GitHub release](https://github.com/bernardladenthin/java-llama.cpp/releases)
+carries `llama-atmosphere-agent-<version>-jar-with-dependencies.jar` (+ `.sha256`, GPG `.asc`). It holds
+**no core** — that is why it is a few MB — so download it together with a core fat jar of the same
+release (`llama-<version>-all-<os>-<arch>-jar-with-dependencies.jar`, or the CPU-only
+`llama-<version>-jar-with-dependencies.jar`) into one directory, and `java -jar` finds the core through
+its manifest:
+
+```bash
+java -jar llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar \
+    --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --workspace /path/to/project
+# any other layout: name both on the classpath (`;` instead of `:` on Windows)
+java -cp llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar:/downloads/llama-5.2.0-all-linux-x86-64-jar-with-dependencies.jar \
+    net.ladenthin.llama.atmosphere.LocalAgent --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --workspace /path/to/project
+```
+
+Every option below works the same way; only `mvn -q compile exec:java -Dexec.args="…"` becomes
+`java -jar llama-atmosphere-agent-….jar …`.
+
+**1. Get this folder.** To build it yourself instead, clone the repository (or download it
 as a ZIP from GitHub) and work in `llama-atmosphere-agent/`. The folder is self-contained — you can
 copy it anywhere, `.mvn/jvm.config` included:
 
@@ -626,7 +644,10 @@ bearer auth, `/v1/models`, SSE framing) over a loopback socket with a scripted e
 llama.cpp-shaped chunks; no native library, no model, seconds, on every PR. *model* =
 `AtmosphereToolLoopIntegrationTest`: the same loop against the Qwen2.5-1.5B-Instruct tool model in
 CI (plain chat, streaming, a tool call whose result is answered, a read→write→read loop that
-changes a temp file). It self-skips without the GGUF:
+changes a temp file). It self-skips without the GGUF. Both gate every publish, together with
+`smoke-agent-linux`, which starts the **release jar** next to the real Linux fat jar (`java -jar`,
+the core found only through the manifest `Class-Path`) and runs a one-shot answer and a `read_file`
+round on the same model:
 
 ```bash
 mvn -f llama-atmosphere-agent/pom.xml test -Dtest=AtmosphereToolLoopIntegrationTest \

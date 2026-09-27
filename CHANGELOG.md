@@ -10,6 +10,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Fixed
+- **`ToolCallingIntegrationTest#requiredToolCallIsParsedFromStreamingResponse` failed on both Windows
+  x86-64 jobs after the b11211 bump** (the Ubuntu run and the blocking twin stayed green). The streamed
+  request generated its full 512 tokens without a tool call. The prompt ("Write an example") never asked
+  for the tool, so the grammar-constrained answer was a fragile ~90-token call even when it worked, and a
+  numerically different CPU path on those runners (most likely upstream's new tiled k-quant matmul,
+  which picks its microkernel by ISA) tipped greedy decoding over. The test pins how a tool call is
+  parsed and streamed, not whether a 1.5B model infers one, so the user message now asks for the call
+  outright; both assertions carry the streamed content, `finish_reason` and chunk count, so a future
+  failure says what the model did instead of `but: was ""`.
 - **`LlamaModel.setLogger` was silently overridden by every model load, and never saw the server's own
   log lines.** llama.cpp's `common_init()` — run on each load — re-points `llama_log_set()` at its own
   default callback, so a logger set *before* `new LlamaModel(…)` (the natural order) stopped receiving
@@ -30,6 +39,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   documented as the no-ops they are (`common_init()` forces both on), `setLogFile` as additive.
 
 ### Added
+- **The agent is a release asset: `llama-atmosphere-agent-<version>-jar-with-dependencies.jar`**, with
+  `.sha256` and a GPG `.asc`, on every GitHub release and the rolling `snapshot` pre-release — never on
+  Maven Central. It carries **no core** (~7 MB instead of hundreds, natives not in the release twice):
+  put it next to a core fat jar of the same version and `java -jar` finds the core through its manifest
+  `Class-Path`, or name both with `java -cp`. A new CI job, `smoke-agent-linux`, launches exactly that
+  pair (bytecode ≤ Java 21, the jar alone must fail for the missing core, `--help`, a one-shot answer and
+  a `read_file` round on the cached tool model), and it, the model-free agent job and the model-backed
+  agent integration test now gate both publish jobs.
 - **`llama-atmosphere-agent`: `--log-verbosity <n>` (default `2`) and `--verbose`** for the in-process
   `--model` mode. llama.cpp's per-request INFO lines go to stderr, the console the streamed answer is
   printed to, and interleaved with it; the agent now loads the model with warnings-and-errors only. A

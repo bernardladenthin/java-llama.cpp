@@ -1026,8 +1026,9 @@ essentials, fully offline; it edits files and, with `--allow-shell`, runs any co
 (`docker`, `git`, build tools) — built from [Atmosphere](https://github.com/Atmosphere/atmosphere)'s
 built-in OpenAI-compatible agent runtime (streaming, tool loop, workspace file tools) driven
 **headless** against this project's OpenAI-compatible server. It is a standalone Maven project (not a
-reactor module, not published); you clone the repository and run it from that folder. It needs only
-JDK 21+ and Maven — the core jar from Maven Central ships the natives:
+reactor module, never on Maven Central). Either download it from a release (below, JDK 21+ only), or
+clone the repository and run it from that folder, which needs only JDK 21+ and Maven — the core jar
+from Maven Central ships the natives:
 
 ```bash
 # get the folder and a tool-capable model (Qwen3-4B-Instruct-2507, 2.3 GB)
@@ -1040,6 +1041,27 @@ curl -L --create-dirs -o models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf \
 mvn -q compile exec:java \
     -Dexec.args="--model models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ctx-size 16384 --workspace /path/to/project --allow-shell"
 ```
+
+**Download instead of cloning.** Every [GitHub release](https://github.com/bernardladenthin/java-llama.cpp/releases)
+carries `llama-atmosphere-agent-<version>-jar-with-dependencies.jar` (with `.sha256` and a GPG `.asc`,
+like the other fat jars). It is a few MB because it holds **no core**: it runs next to one of the core
+fat jars of the same release, so the natives are downloaded once. Put both in one directory and
+`java -jar` finds the core through the agent's manifest (the all-backends jars are tried before the
+CPU-only default jar):
+
+```bash
+# e.g. Linux x86-64: the agent + the all-backends core fat jar of the same version
+java -jar llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar \
+    --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ctx-size 16384 --workspace /path/to/project --allow-shell
+
+# or with the classpath spelled out (any directory layout; `;` instead of `:` on Windows)
+java -cp llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar:llama-5.2.0-all-linux-x86-64-jar-with-dependencies.jar \
+    net.ladenthin.llama.atmosphere.LocalAgent --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --workspace /path/to/project
+```
+
+Started without a core jar next to it, the agent stops with `NoClassDefFoundError:
+net/ladenthin/llama/LlamaModel`. CI launches exactly this pair on every run (`smoke-agent-linux`)
+before anything is published.
 
 > [!WARNING]
 > `--allow-shell` lets the model run any command with your user's rights. By default every write and
@@ -1081,7 +1103,8 @@ mvn -q compile exec:java \
 
 The full streaming tool-calling loop (tools → `delta.tool_calls` → Java tool → `role:"tool"` result →
 next turn, over several rounds) is verified on every PR against the real `OpenAiCompatServer` with
-no model, and in CI against the Qwen2.5-1.5B tool model. See
+no model, and in CI against the Qwen2.5-1.5B tool model — both gate every publish, as does the
+release-jar smoke above. See
 [`llama-atmosphere-agent/README.md`](llama-atmosphere-agent/) for the options and the verified
 compatibility matrix.
 

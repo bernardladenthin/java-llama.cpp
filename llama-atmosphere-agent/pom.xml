@@ -10,11 +10,12 @@ SPDX-License-Identifier: MIT
 	<modelVersion>4.0.0</modelVersion>
 
 	<!--
-		Standalone (NOT a reactor module, NOT published): a copy-and-run local coding agent that
-		wires Atmosphere's built-in OpenAI-compatible agent runtime to java-llama.cpp. CI builds and
-		tests it against the freshly installed core (-Dllama.version=<reactor version>); a user copies
-		the folder and runs it with `mvn compile exec:java` against the released core the
-		llama.version default names.
+		Standalone (NOT a reactor module, NEVER on Maven Central): a local coding agent that wires
+		Atmosphere's built-in OpenAI-compatible agent runtime to java-llama.cpp. CI builds and tests
+		it against the freshly installed core (-Dllama.version=<reactor version>) and attaches the
+		`-P assembly` jar (without the core, see src/assembly/agent-jar.xml) to the GitHub Release
+		next to the core fat jars. A user either downloads that jar or copies the folder and runs
+		it with `mvn compile exec:java` against the released core the llama.version default names.
 		See README.md.
 	-->
 	<groupId>net.ladenthin</groupId>
@@ -56,6 +57,7 @@ SPDX-License-Identifier: MIT
 		<compiler.plugin.version>3.16.0</compiler.plugin.version>
 		<surefire.version>3.6.0</surefire.version>
 		<exec.plugin.version>3.6.4</exec.plugin.version>
+		<assembly.plugin.version>3.8.0</assembly.plugin.version>
 		<spotless.version>3.10.3</spotless.version>
 		<palantir-java-format.version>2.99.0</palantir-java-format.version>
 		<agent.main>net.ladenthin.llama.atmosphere.LocalAgent</agent.main>
@@ -171,4 +173,52 @@ SPDX-License-Identifier: MIT
 			</plugin>
 		</plugins>
 	</build>
+	<profiles>
+		<!--
+			`mvn -P assembly package`: the GitHub Release asset
+			llama-atmosphere-agent-<llama.version>-jar-with-dependencies.jar. Named after the core
+			version it was built and tested against (the agent's own 1.0.0-SNAPSHOT is not a
+			release line anyone downloads by). It carries NO core: run it next to a core fat jar of
+			the same version, either on one explicit classpath
+			  java -cp agent.jar:llama-<v>-all-linux-x86-64-jar-with-dependencies.jar ...LocalAgent
+			or with `java -jar agent.jar`, which picks the core up through the Class-Path below when
+			it lies in the same directory. Class-Path entries that do not exist are ignored; the
+			all-backends jars come first so a GPU backend is found before the CPU-only default.
+		-->
+		<profile>
+			<id>assembly</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-assembly-plugin</artifactId>
+						<version>${assembly.plugin.version}</version>
+						<configuration>
+							<finalName>llama-atmosphere-agent-${llama.version}</finalName>
+							<descriptors>
+								<descriptor>src/assembly/agent-jar.xml</descriptor>
+							</descriptors>
+							<archive>
+								<manifest>
+									<mainClass>${agent.main}</mainClass>
+								</manifest>
+								<manifestEntries>
+									<Class-Path>llama-${llama.version}-all-linux-x86-64-jar-with-dependencies.jar llama-${llama.version}-all-linux-aarch64-jar-with-dependencies.jar llama-${llama.version}-all-windows-x86-64-jar-with-dependencies.jar llama-${llama.version}-all-windows-aarch64-jar-with-dependencies.jar llama-${llama.version}-jar-with-dependencies.jar</Class-Path>
+								</manifestEntries>
+							</archive>
+						</configuration>
+						<executions>
+							<execution>
+								<id>build-agent-jar</id>
+								<phase>package</phase>
+								<goals>
+									<goal>single</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
 </project>
