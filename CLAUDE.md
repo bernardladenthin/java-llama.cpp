@@ -2532,17 +2532,17 @@ are decisions, not details:
    session, which is what a program that wants its input at the bottom *without* taking over the
    screen has to pay.
 
-   **The repeated `> Hallo` on Windows is a JLine defect, isolated and written up.** Typing without
-   Enter and then widening the window showed the prompt and buffer once per keystroke, side by side.
-   It is **not** the resize: the repeats are written while typing, clipped past the right edge, and
-   widening only reveals them — which is why it was reported as a resize symptom and why the count
-   follows keystrokes rather than drags. A probe with a three-row `Status` and nothing else
-   reproduces it; the same probe **without** the status block does not. Ruled out along the way:
-   project code, JLine 4.4.6, `nativeSignals(false)`, a missing terminfo capability. The mechanism it
-   points at is `LineReaderImpl.redisplay()`, which re-syncs its cursor tracking only when the status
-   **size** changes (`lastStatusSize`) while `Status.redraw()` moves the real cursor on every call — so
-   a constant-height block never re-syncs again. Full record, including the two measurements that were
-   *inconclusive rather than negative*, in
+   **The repeated `> Hallo` is a JLine defect, reproduced and fixed upstream-side.** Typing without
+   Enter and then dragging the window showed the prompt and buffer a dozen times side by side. It is
+   **one copy per size event** — a drag reports a new size per step — and an earlier reading of this
+   ("the repeats are written while typing and widening only reveals them, so the count follows
+   keystrokes") was an inference from a number rather than a measurement, and wrong. A three-row
+   `Status` is equally necessary: the same drag without one is clean, and typing without a resize is
+   clean too. Ruled out along the way: project code, JLine 4.4.6, `nativeSignals(false)`, a missing
+   terminfo capability, Windows itself (it reproduces on a virtual `xterm`), and the `lastStatusSize`
+   guard in `redisplay()` that was the documented hypothesis before the resize path was measured. The
+   cause is `handleSignal(WINCH)`'s status branch — see the next paragraph. Full record, including the
+   two measurements that were *inconclusive rather than negative*, in
    [`docs/upstream-investigation-jline-status-windows-redraw.md`](docs/upstream-investigation-jline-status-windows-redraw.md).
    **Nothing here can honestly fix it**; `--plain` pins nothing and is unaffected.
 
@@ -2553,9 +2553,16 @@ are decisions, not details:
    and the reader installs its own handler for as long as it is reading, which is the whole session;
    ours therefore either never ran or ran *in addition*, putting a second writer on the terminal from
    the signal thread at the exact moment the reader was redrawing. A probe driving a real
-   `terminal.raise(WINCH)` against a pipe-backed terminal shows JLine doing it correctly on its own:
-   scroll region reset, the rule re-cut to the new width, **one** prompt. So the remaining report is
-   not reproducible in the harness and has no fix here yet — stated rather than papered over.
+   `terminal.raise(WINCH)` against a **pipe-backed** terminal shows JLine doing it correctly on its
+   own: scroll region reset, the rule re-cut to the new width, **one** prompt — but that probe was
+   measuring the wrong thing, because a pipe has no screen to redraw onto. Against JLine's own
+   `VirtualTerminal` (a real VT interpreter over a virtual screen) the same drag reproduces the report
+   exactly, on `xterm` and `windows-vtp` alike, and the cause is a **one-line JLine defect**:
+   `handleSignal(WINCH)`'s status branch calls `doDisplay()`, which replaces the `Display` with a fresh
+   one that believes the screen is blank, so the following `redisplay()` paints the prompt as new
+   content once per size event instead of as a diff (`display.resize(size)` is the fix, verified with
+   three new tests plus JLine's 72 existing ones). Still nothing to fix *here*, and no project test may
+   assert the fixed behaviour while the build depends on an unfixed release.
    `fit()` measuring in **screen columns** (`AttributedString.columnLength`) rather than characters is
    ours and does matter: an icon is one character and two columns, and a row wider than the window
    wraps onto a second screen line, which the reserved region cannot survive.
