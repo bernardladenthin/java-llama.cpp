@@ -70,6 +70,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   without a native library or model.
 
 ### Changed
+- **llama.cpp `b11214` → `b11222`.** Eight upstream commits. Two touch argument parsing:
+  **#29518** makes `string_split<T>` throw `invalid value: "…"` for a list element that does not parse
+  (only the benchmark options `-npp`/`-ntg`/`-npl` use a numeric split, so nothing a server or `jllama`
+  argument reaches changes); and **#29537** registers `--rpc`
+  in every build and rejects it at parse time with `RPC not supported in this build` (this project builds
+  with `GGML_RPC=OFF`), where before the option did not exist at all. The rest is CUDA/SYCL/OpenCL kernel
+  work, a Jinja `dict` builtin and conversion scripts. `patches/0001` and `0006` were refreshed for a
+  moved log line in `tools/server/server.cpp`; their content is unchanged.
 - **llama.cpp `b11211` → `b11214`.** Three upstream commits, version-only from this project's side:
   a HIP flash-attention kernel choice for CDNA (#28907), a Vulkan argsort fix for Adreno (#29469), and
   **#29516**, which makes `common_sampler_init` *throw* `failed to parse grammar: llguidance is not

@@ -486,9 +486,9 @@ diff --git a/tools/server/server.cpp b/tools/server/server.cpp
 index 1167c0aea..28f18c1bb 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -104,7 +104,7 @@ int llama_server(int argc, char ** argv) {
- 
-     SRV_INF("%s", "initializing ...\n");
+@@ -102,7 +102,7 @@ int llama_server(int argc, char ** argv) {
+     // touch it. lifecycle is symmetric, stop_gc() runs in clean_up() before backend free
+     server_stream_session_manager_start();
  
 -    if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_SERVER)) {
 +    if (!common_params_parse_main(argc, argv, params, LLAMA_EXAMPLE_SERVER)) {

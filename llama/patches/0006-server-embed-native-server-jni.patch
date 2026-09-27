@@ -31,9 +31,9 @@ index 28f18c1bb..8aeed4b99 100644
  static inline void signal_handler(int signal) {
      if (is_terminating.test_and_set()) {
          // in case it hangs, we can force terminate the server by hitting Ctrl+C twice
-@@ -104,7 +126,13 @@ int llama_server(int argc, char ** argv) {
- 
-     SRV_INF("%s", "initializing ...\n");
+@@ -102,7 +124,13 @@ int llama_server(int argc, char ** argv) {
+     // touch it. lifecycle is symmetric, stop_gc() runs in clean_up() before backend free
+     server_stream_session_manager_start();
  
 -    if (!common_params_parse_main(argc, argv, params, LLAMA_EXAMPLE_SERVER)) {
 +    // [jllama] embedded (JNI) callers forward a clean UTF-8 argv, so honor it exactly via
