@@ -101,9 +101,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   where the backend cannot provide it, `OFF` disables it.
 
 ### Changed
-- **llama.cpp `b11080` → `b11209`, in five steps sized by what they change here.** 129 upstream
-  commits. Four steps are version-only from this project's side (`b11103`, `b11160`, `b11163`,
-  `b11209`); the one incompatible change got a step of its own: **`b11104`** (llama.cpp #28690)
+- **llama.cpp `b11080` → `b11211`, in six steps sized by what they change here.** 131 upstream
+  commits. Five steps are version-only from this project's side (`b11103`, `b11160`, `b11163`,
+  `b11209`, `b11211`); the one incompatible change got a step of its own: **`b11104`** (llama.cpp #28690)
   lets `--host` take a comma-separated list of addresses and removed `server_http_context::thread`
   and `::listening_address`. `patches/0007` still applied cleanly there but named both members, so
   it was refreshed to upstream's new `join()` / `listening_addresses` shape; and
