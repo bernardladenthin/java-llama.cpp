@@ -2466,6 +2466,29 @@ are decisions, not details:
    `ERASE_LINE_ON_FINISH` removes the input line on Enter and the reader thread echoes it above as
    `› text`, so the transcript keeps what was asked.
 
+   **`ScreenUseCasesTest` + `ScreenTerminalHarness` are how the resize and `/cls` cases are checkable,
+   and they are what every byte-level attempt before them could not do.** The harness subclasses JLine's
+   `LineDisciplineTerminal` and puts its own `ScreenTerminal` (a real VT interpreter, public API in the
+   shipped jar) behind it, so a test reads the **screen** — "the block is smeared across the output",
+   "an escape sequence is printed as text", "the block is drawn twice" are indistinguishable from
+   correct output in a byte stream, which is why two byte-level assertions in `JLineTerminalTest` had to
+   be deleted, one of them green with the fix it was written for switched off. Six cases: drag wider
+   with nothing typed / with text in the input, drag narrower, a three-row block, `/cls`, and `/cls`
+   after a drag. Three things are load-bearing. **(1) A reader runs in every test** — it runs for the
+   whole session in the application and owns the resize signal, so a test without one is a state the
+   application cannot be in. **(2) The block rebuild is invoked directly, not waited for**
+   (`refreshBlockForCurrentSize`): sleeping for the 120 ms poll passed alone and failed in a full run,
+   and a flaky test is worse than none — what that leaves uncovered is the polling thread itself, a loop
+   that compares two sizes and calls that method. **(3) A rule shows as `q` when it went out through a
+   *prompt*** (the DEC line-drawing set, which this screen renders literally) and as `─` through the
+   status region, so both forms count as a rule and a row of `q` also says which path it took.
+   **The JLine fixes are demonstrated red/green through it**, the library being just a property:
+   `mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6` fails all four active cases,
+   `-Djline.version=4.4.6-statusfix3` passes them (169/169 for the whole module). Two cases carry
+   `@Disabled` as the record of a defect that is still open — a narrower drag loses the edit line, and a
+   *three*-row block ends a wide drag with the rule three columns short, the state row shifted one
+   column and the prompt on two rows, while a two-row block comes out clean.
+
    **`JLineTerminalTest` is how any of this is checkable**: `JLineTerminal.over(Terminal, …)` takes a
    terminal built over two streams, which renders exactly like a TTY, so the screen can be asserted on
    the emitted bytes. Two things that cost an hour each and are not guessable: the test terminal needs

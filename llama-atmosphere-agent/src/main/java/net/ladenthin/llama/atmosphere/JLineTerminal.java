@@ -203,23 +203,20 @@ public final class JLineTerminal implements AgentTerminal {
                             Thread.currentThread().interrupt();
                             return;
                         }
-                        Size now = terminal.getSize();
+                        Size now;
+                        try {
+                            now = terminal.getSize();
+                        } catch (RuntimeException e) {
+                            // The session ended while this was between two polls: reading a closed
+                            // terminal throws, and a poll must not turn a normal exit into an error.
+                            return;
+                        }
                         if (now.getColumns() == last.getColumns() && now.getRows() == last.getRows()) {
                             continue;
                         }
                         last = now;
-                        List<String> lines = requested;
-                        if (!lines.isEmpty()) {
-                            // Rebuild the rows, and NOTHING else. Telling the pinned region the new
-                            // geometry here (Status.resize) is what a unit test appeared to require,
-                            // because no reader runs in one -- and it destroyed the real console:
-                            // "36;1H" and a stray "1" printed as text inside the rule, a "[" in front
-                            // of the state row, the block drawn twice. Status.resize writes to the
-                            // terminal directly, so it lands in the middle of what the reader is
-                            // drawing for the same size change and an ESC byte is lost. The reader has
-                            // already done that resize (LineReaderImpl.handleSignal) by the time this
-                            // poll notices, so it was redundant as well as harmful.
-                            status(lines);
+                        if (!refreshBlockForCurrentSize() && closed) {
+                            return;
                         }
                     }
                 },
@@ -352,6 +349,41 @@ public final class JLineTerminal implements AgentTerminal {
             if (!lines.isEmpty()) {
                 updateStatus(lines);
             }
+        }
+    }
+
+    /**
+     * Rebuild the pinned block for the size the window has now.
+     *
+     * <p>The one thing the size poll does, and a method rather than three lines inside the thread so a
+     * test can drive it at a known moment. The tests that read an interpreted screen call this directly
+     * after changing the size: waiting for the poll made them pass alone and fail in a full run, and a
+     * flaky test is worse than none. What that leaves uncovered is the thread itself — a loop that
+     * compares two sizes and calls this — and that is the trade, stated rather than implied.
+     *
+     * <p>It rebuilds the rows and does <b>nothing else</b>. Telling the pinned region the new geometry
+     * here ({@code Status.resize}) is what an earlier unit test appeared to require, because no reader
+     * runs in one — and it destroyed the real console: {@code 36;1H} and a stray {@code 1} printed as
+     * text inside the rule, a {@code [} in front of the state row, the block drawn twice. That call
+     * writes to the terminal directly, so it lands in the middle of what the reader is drawing for the
+     * same size change and an {@code ESC} byte is lost. The reader has already done that resize
+     * ({@code LineReaderImpl.handleSignal}) by the time a poll notices the change.
+     *
+     * @return {@code false} when the redraw threw, which a caller in a loop should treat as "skip this
+     *     size" rather than as a reason to stop: a redraw colliding with the reader's own throws, and
+     *     giving up on the first one froze the block at whatever width it had reached — measured on an
+     *     interpreted screen as a rule 62 columns wide in a 100-column window
+     */
+    boolean refreshBlockForCurrentSize() {
+        List<String> lines = requested;
+        if (lines.isEmpty()) {
+            return true;
+        }
+        try {
+            status(lines);
+            return true;
+        } catch (RuntimeException e) {
+            return false;
         }
     }
 
