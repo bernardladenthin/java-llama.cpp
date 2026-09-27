@@ -10,33 +10,29 @@ Current llama.cpp pinned version: **b11209**
 
 ## Upgrading CUDA Version
 
-Current CUDA version: **13.3**
+Current CUDA version: **13.4** (Linux `cuda-toolkit-13-4` from NVIDIA's rhel8 repo; Windows 13.4 redist archives)
 
-To change the CUDA version, update the following **three** places:
+To change the CUDA version, update the following places:
 
-1. **`.github/build_cuda_linux.sh`** — Line 16: `sudo dnf install -y cuda-toolkit-13-3`
-2. **`.github/build_cuda_linux.sh`** — Line 41: `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.3/bin/nvcc`
-3. **`llama/pom.xml`** — The `<classifier>` tag in the `cuda` jar execution: `cuda13-linux-x86-64`
-
-Also update the header comment in `build_cuda_linux.sh` and the job name in `.github/workflows/release.yaml` for clarity.
+1. **`.github/build_cuda_linux.sh`** — the `sudo dnf install -y cuda-toolkit-13-4` line and the
+   `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.4/bin/nvcc` line (plus the header comment).
+2. **`.github/workflows/publish.yml`** — the `build-windows-x86_64-cuda` job's
+   "Install CUDA Toolkit … (NVIDIA redist archives)" step: the `v13.x` directory, `CUDA_PATH_V13_x`,
+   and the per-component archive list. **Copy that list from upstream's
+   `.github/actions/windows-setup-cuda/action.yml` at the pinned `GIT_TAG`** — the component versions
+   differ per component (cuBLAS and CCCL have their own numbering) and cannot be derived from the CUDA
+   version. (This replaced `Jimver/cuda-toolkit`, which never shipped 13.4.)
+3. **`llama/pom.xml`** — the `<classifier>`s `cuda13-linux-x86-64` / `cuda13-windows-x86-64`
+   (major version only — no change for a minor bump).
+4. **`CLAUDE.md`** — the "Current CUDA version" line above.
 
 Available CUDA versions for RHEL8/Manylinux_2_28 can be browsed at:
 ```
 https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/
 ```
+and the Windows redist components at `https://developer.download.nvidia.com/compute/cuda/redist/`.
 
 **Note:** Each CUDA version supports only certain GCC versions. If the dockcross container uses a newer GCC than CUDA supports, the build will fail with `unsupported GNU version`. Check NVIDIA's compatibility table before downgrading CUDA.
-
-Example: To upgrade from 13.3 to a hypothetical 13.4:
-```bash
-# Edit .github/build_cuda_linux.sh:
-#   line 10: cuda-toolkit-13-3 -> cuda-toolkit-13-4
-#   line 12: /usr/local/cuda-13.3/bin/nvcc -> /usr/local/cuda-13.4/bin/nvcc
-# Edit llama/pom.xml classifier: cuda13-linux-x86-64 (major version only, no need to change for minor bumps)
-# Edit CLAUDE.md line: Current CUDA version: **13.3** -> **13.4**
-git add .github/build_cuda_linux.sh llama/pom.xml CLAUDE.md
-git commit -m "Upgrade CUDA from 13.3 to 13.4"
-```
 
 ### Fast local CUDA builds (`CUDA_FAST_BUILD`) — single-arch speed knob
 
@@ -217,7 +213,8 @@ Wiring (mirrors the CUDA-Linux / OpenCL-Android classifier pattern):
    - `build-windows-x86_64` / `build-windows-x86` — **Ninja CPU**, artifacts `Windows-{arch}-libraries`
      → picked up by the `package` job's `pattern: "*-libraries"` into the **default** tree.
    - `build-windows-x86_64-msvc` / `build-windows-x86-msvc` — **MSVC CPU**, artifacts `Windows-{arch}-msvc`.
-   - `build-windows-x86_64-cuda` — `Jimver/cuda-toolkit@v0.2.36` (CUDA `13.3.1`) + `-DGGML_CUDA=ON`,
+   - `build-windows-x86_64-cuda` — CUDA `13.4` assembled from NVIDIA's redist archives (upstream's
+     `windows-setup-cuda` component list; `Jimver/cuda-toolkit` stops at 13.3.1) + `-DGGML_CUDA=ON`,
      artifact `Windows-x86_64-cuda`.
    - `build-windows-x86_64-vulkan` — `jakoch/install-vulkan-sdk-action` + `-DGGML_VULKAN=ON`, artifact
      `Windows-x86_64-vulkan`.
@@ -336,16 +333,22 @@ builds and releases ROCm through [TheRock](https://github.com/ROCm/TheRock); bot
 its Python wheels (`rocm[libraries,devel]` from `stable.repo.amd.com/rocm/whl-next/`) exactly as
 llama.cpp's own `ubuntu-rocm` / `windows-rocm` release jobs do, and read the paths back with
 `rocm-sdk path`. The ROCm version and the `GPU_TARGETS` list are copied from upstream's
-`release.yml` at the pinned `GIT_TAG` — **re-check both on every llama.cpp bump**. Architectures
-upstream no longer builds are deliberately **not** carried along (gfx900/gfx906 were dropped at the
-switch from the old 6.3.4 apt repo: TheRock marks them "build passing" only, never release-ready):
-supporting hardware llama.cpp itself does not ship for is not worth holding back a newer toolchain.
+`release.yml` at the pinned `GIT_TAG` — **re-check both on every llama.cpp bump**. The one deliberate
+deviation: the Linux job additionally keeps **gfx900/gfx906**, which this classifier shipped before
+and which TheRock still builds ("build passing", never release-ready) although upstream dropped them.
+The rule for such extras: carry them only while they build without problems and without local
+patches; the moment one needs a patch or holds back a newer ROCm/llama.cpp, drop it — hardware
+llama.cpp itself does not ship for is never worth blocking something newer.
 
 Two routing notes mirror existing precedent: **Linux SYCL** ships two precision variants at the *same*
 arch, so `CMakeLists.txt` routes them to two *distinct* trees by `GGML_SYCL_F16` (fp16 vs fp32).
 **Windows OpenCL** now holds both `x86_64` (desktop ICD) and `aarch64` (Snapdragon/Adreno) in the one
 `resources_windows_opencl` tree, split by the `opencl-windows` / `opencl-windows-aarch64` profiles'
 arch-scoped `<includes>` — exactly like the `vulkan-linux` / `vulkan-linux-aarch64` split.
+
+The Linux jobs that install a multi-GB vendor toolchain (CUDA, ROCm, both SYCL) start with
+`ggml-org/free-disk-space` — the same guard upstream llama.cpp's CUDA/ROCm jobs use (ROCm also clears the
+tool cache, as upstream does, which is safe only because the step runs before `setup-java`).
 
 The vendor toolchain install steps in `publish.yml` are **first-pass** (apt repos / vendor installers
 pinned to a specific version): if a URL/version 404s in CI, the job fails loud and the step is adjusted
@@ -2675,7 +2678,8 @@ native jobs; the test job additionally `needs: verify-model-cache`), so the inst
 
 Both emulator jobs (`test-android-llmservice` + `test-android-emulator`) prepend a **free-disk step**
 before the emulator (delete every restored model except `DRAFT_MODEL_NAME` + large unused preinstalled
-toolchains) because the AVD userdata partition needs ~7.4 GB and the full ~10 GB GGUF cache restore
+toolchains — the latter via `ggml-org/free-disk-space` with `android`, `large-packages`, `tool-cache`
+and `swap-storage` switched **off**, since the emulator needs the SDK, mesa and the JDK) because the AVD userdata partition needs ~7.4 GB and the full ~10 GB GGUF cache restore
 otherwise FATALs the emulator ("Not enough space to create userdata partition"). Neither
 llmservice job is **yet a publish gate** (not in the `publish-snapshot`/`publish-release` `needs:`
 graphs) so a Compose/AGP version-pin hiccup can't block a library release.

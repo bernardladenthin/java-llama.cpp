@@ -119,8 +119,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   its wheels the way upstream llama.cpp's own release jobs do, replacing the `repo.radeon.com` 6.3.4 apt
   repo (Linux) and the HIP SDK 26.Q1 installer (Windows). The GPU target lists now follow upstream too:
   newer architectures are added (Linux: gfx942/gfx950, RDNA1–RDNA4 incl. gfx1150–1152 and
-  gfx1200/1201; Windows: RDNA1–RDNA4), and gfx900/gfx906 are dropped — llama.cpp no longer ships them
-  and TheRock never marks them release-ready. Consumers need a ROCm 10 runtime.
+  gfx1200/1201; Windows: RDNA1–RDNA4). gfx900/gfx906 stay in the Linux build on a best-effort basis:
+  llama.cpp no longer ships them and TheRock marks them build-passing only, so they are kept exactly
+  as long as they build without patches. Consumers need a ROCm 10 runtime.
+- **CUDA 13.3 → 13.4** for both `cuda13-*` classifiers, matching upstream llama.cpp. Linux installs
+  `cuda-toolkit-13-4`; Windows assembles the toolkit from NVIDIA's redist archives (upstream's
+  component list) because `Jimver/cuda-toolkit` never shipped 13.4. Classifier names are unchanged.
 - **llama.cpp `b11069` → `b11080`, and local patch `0010` dropped — upstream fixed the
   enum-to-JSON-boolean trap at its root.** Eleven upstream commits, 1244 KiB, no project-source
   change. The size is one commit that does not concern this project (llama.cpp #29197 rewrites 46

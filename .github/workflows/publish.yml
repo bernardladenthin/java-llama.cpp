@@ -743,6 +743,11 @@ jobs:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
+      - name: Free up disk space
+        # The GPU toolkit this job installs runs to several GB on top of the llama.cpp build tree;
+        # same guard upstream llama.cpp's CUDA/ROCm jobs use. Linux-only action; the tool cache is
+        # kept (default) so nothing a later setup-* step relies on is removed.
+        uses: ggml-org/free-disk-space@v1.3.1
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@v8
@@ -1252,6 +1257,16 @@ jobs:
     needs: [crosscompile-android-aarch64, crosscompile-android-x86_64, verify-model-cache]
     runs-on: ubuntu-latest
     steps:
+      - name: Free up disk space
+        # The AVD userdata partition needs ~7.4 GB. Android SDK and the apt "large packages"
+        # (it removes libgl1-mesa-dri among others) are kept for the emulator, and so is the swap
+        # file it may lean on; the tool cache is kept because setup-java/setup-gradle install into it.
+        uses: ggml-org/free-disk-space@v1.3.1
+        with:
+          android: false
+          large-packages: false
+          tool-cache: false
+          swap-storage: false
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
@@ -1300,12 +1315,12 @@ jobs:
       - name: Free disk space for the emulator (only the draft model is needed on-device)
         # Same guard as test-android-llmservice: the AVD userdata partition needs ~7.4 GB; drop the
         # rest of the restored ~10 GB GGUF cache (this job adb-pushes only the tiny draft model) plus
-        # large preinstalled toolchains so the emulator can create userdata and boot.
+        # the few preinstalled toolchains the free-disk-space step leaves, so the emulator can create
+        # userdata and boot.
         run: |
           echo "Disk before cleanup:"; df -h / | tail -1
           find models -type f ! -name "${DRAFT_MODEL_NAME}" -delete 2>/dev/null || true
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/powershell /opt/hostedtoolcache/CodeQL 2>/dev/null || true
-          docker image prune -af 2>/dev/null || true
+          sudo rm -rf /usr/local/share/powershell /opt/hostedtoolcache/CodeQL 2>/dev/null || true
           echo "Disk after cleanup:"; df -h / | tail -1
       - name: Run on-emulator instrumentation (connectedDebugAndroidTest)
         uses: reactivecircus/android-emulator-runner@v2
@@ -1432,6 +1447,16 @@ jobs:
     needs: [crosscompile-android-aarch64, crosscompile-android-x86_64, verify-model-cache]
     runs-on: ubuntu-latest
     steps:
+      - name: Free up disk space
+        # The AVD userdata partition needs ~7.4 GB. Android SDK and the apt "large packages"
+        # (it removes libgl1-mesa-dri among others) are kept for the emulator, and so is the swap
+        # file it may lean on; the tool cache is kept because setup-java/setup-gradle install into it.
+        uses: ggml-org/free-disk-space@v1.3.1
+        with:
+          android: false
+          large-packages: false
+          tool-cache: false
+          swap-storage: false
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
@@ -1477,12 +1502,11 @@ jobs:
         # The AVD userdata partition needs ~7.4 GB; the full ~10 GB GGUF cache restore leaves too
         # little free, so the emulator FATALs ("Not enough space to create userdata partition") and
         # the boot poll loops until timeout. This job only adb-pushes the tiny draft model, so drop
-        # the rest of the restored cache plus large preinstalled toolchains it never uses.
+        # the rest of the restored cache plus what the free-disk-space step leaves (PowerShell, CodeQL).
         run: |
           echo "Disk before cleanup:"; df -h / | tail -1
           find models -type f ! -name "${DRAFT_MODEL_NAME}" -delete 2>/dev/null || true
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/powershell /opt/hostedtoolcache/CodeQL 2>/dev/null || true
-          docker image prune -af 2>/dev/null || true
+          sudo rm -rf /usr/local/share/powershell /opt/hostedtoolcache/CodeQL 2>/dev/null || true
           echo "Disk after cleanup:"; df -h / | tail -1
       - name: Run LLM Service UI test on emulator (connectedDebugAndroidTest)
         uses: reactivecircus/android-emulator-runner@v2
@@ -1871,15 +1895,44 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Install CUDA Toolkit
-        # Full toolkit install (default method: local, no sub-packages restriction).
-        # A reduced network sub-package set ("nvcc","cudart","cublas",…) omitted the
-        # nvcc crt headers (crt/host_config.h), so cmake's CUDA compiler detection
-        # failed at configure. The full installer ships every header reliably.
-        uses: Jimver/cuda-toolkit@v0.2.36
-        id: cuda-toolkit
-        with:
-          cuda: '13.3.1'
+      - name: Install CUDA Toolkit 13.4 (NVIDIA redist archives)
+        # KEEP IN SYNC WITH UPSTREAM: the component set and versions mirror llama.cpp's
+        # .github/actions/windows-setup-cuda ("Install Cuda Toolkit 13.4 for x64") at the pinned
+        # GIT_TAG. Jimver/cuda-toolkit (used here up to CUDA 13.3.1) has no 13.4 in any release or
+        # on master, so the toolkit is assembled from NVIDIA's per-component redist zips instead —
+        # which is also how upstream builds its own Windows CUDA release. cuda_crt is listed
+        # explicitly: since 13.x the nvcc crt headers (crt/host_config.h) ship in their own
+        # archive, and without them CMake's CUDA compiler detection fails at configure.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.4"
+          $base = "https://developer.download.nvidia.com/compute/cuda/redist"
+          $parts = @(
+            "cuda_crt/cuda_crt-windows-x86_64-13.4.59",
+            "cuda_cudart/cuda_cudart-windows-x86_64-13.4.49",
+            "cuda_nvcc/cuda_nvcc-windows-x86_64-13.4.59",
+            "cuda_nvrtc/cuda_nvrtc-windows-x86_64-13.4.59",
+            "libcublas/libcublas-windows-x86_64-13.7.0.27",
+            "libnvvm/libnvvm-windows-x86_64-13.4.59",
+            "cuda_nvtx/cuda_nvtx-windows-x86_64-13.4.49",
+            "cuda_profiler_api/cuda_profiler_api-windows-x86_64-13.4.49",
+            "visual_studio_integration/visual_studio_integration-windows-x86_64-13.4.49",
+            "cccl/cccl-windows-x86_64-13.3.4.2.1"
+          )
+          New-Item -ItemType Directory -Force -Path $cuda | Out-Null
+          foreach ($p in $parts) {
+            $dir, $name = $p.Split("/")
+            $url = "$base/$dir/windows-x86_64/$name-archive.zip"
+            $zip = "$env:RUNNER_TEMP\$name.zip"
+            Write-Host "Downloading $url"
+            Invoke-WebRequest -Uri $url -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\cuda-redist" -Force
+            Copy-Item -Path "$env:RUNNER_TEMP\cuda-redist\$name-archive\*" -Destination $cuda -Recurse -Force
+          }
+          "$cuda\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "CUDA_PATH=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CUDA_PATH_V13_4=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -2060,12 +2113,13 @@ jobs:
       - name: Build libraries
         shell: bash
         # Native CMake HIP language (upstream's form): the HIP compiler is ROCm's clang, the C/C++
-        # TUs stay on the runner's gcc. The target list is upstream's; architectures llama.cpp no
-        # longer ships (gfx900/gfx906 — "build passing" only in TheRock, never release-ready) are
-        # not carried here.
+        # TUs stay on the runner's gcc. The target list is upstream's plus gfx900/gfx906, which this
+        # classifier shipped before and which TheRock 10 still builds ("build passing", not
+        # release-ready) although upstream dropped them from its own list. Keep them only while
+        # they cost nothing: drop them the moment they need a patch or block a newer ROCm.
         run: |
           mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DGGML_HIP=ON -DCMAKE_HIP_COMPILER=$(hipconfig -l)/clang -DGPU_TARGETS=gfx908;gfx90a;gfx942;gfx950;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1200;gfx1201 -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
+          .github/build.sh "-DGGML_HIP=ON -DCMAKE_HIP_COMPILER=$(hipconfig -l)/clang -DGPU_TARGETS=gfx900;gfx906;gfx908;gfx90a;gfx942;gfx950;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1200;gfx1201 -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2142,6 +2196,11 @@ jobs:
       SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
+      - name: Free up disk space
+        # The GPU toolkit this job installs runs to several GB on top of the llama.cpp build tree;
+        # same guard upstream llama.cpp's CUDA/ROCm jobs use. Linux-only action; the tool cache is
+        # kept (default) so nothing a later setup-* step relies on is removed.
+        uses: ggml-org/free-disk-space@v1.3.1
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@v8
@@ -2180,6 +2239,11 @@ jobs:
       SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
+      - name: Free up disk space
+        # The GPU toolkit this job installs runs to several GB on top of the llama.cpp build tree;
+        # same guard upstream llama.cpp's CUDA/ROCm jobs use. Linux-only action; the tool cache is
+        # kept (default) so nothing a later setup-* step relies on is removed.
+        uses: ggml-org/free-disk-space@v1.3.1
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@v8
