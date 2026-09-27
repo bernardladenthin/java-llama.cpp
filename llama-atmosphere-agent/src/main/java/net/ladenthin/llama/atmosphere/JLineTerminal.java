@@ -247,9 +247,18 @@ public final class JLineTerminal implements AgentTerminal {
             }
             // Through the reader, like every other write once it exists: printAbove leaves the prompt
             // redrawn and the reader's idea of the cursor intact, which writing the escape sequence
-            // around it would not. The blank rows put the input back on the last row, where clearing
-            // to the top-left corner has just moved it away from.
-            reader.printAbove(clear + System.lineSeparator().repeat(blankRows()));
+            // around it would not.
+            //
+            // Nothing follows the wipe, and that is the fix for a reported defect rather than an
+            // omission. Blank rows used to follow it, to push the input back to the last row the way
+            // startup does -- but erasing the display clears the *visible* area and leaves those lines
+            // in the terminal's scrollback, so scrolling afterwards pulls them straight back into
+            // view: the screen came back with text above the prompt, which is exactly what was
+            // reported. Wipe and stop is what the shell's own `clear` and Ctrl-L do; the prompt sits
+            // at the top until output fills the window again. Erasing the scrollback as well
+            // (ESC[3J) would allow the blank rows, and is refused: this console promises that what
+            // was written stays reachable with the scrollbar.
+            reader.printAbove(clear);
             // reset() makes it forget what it believes is on screen; without that the update below is
             // a no-op, because the content it would draw is the content it thinks is already there.
             List<String> lines = requested;

@@ -2507,6 +2507,21 @@ are decisions, not details:
    did this before the command existed, bound by JLine's own keymap; a test pins that too, so a keymap
    option cannot quietly remove it.
 
+   **A wipe must not scroll afterwards, and the prompt therefore sits at the top until output fills
+   the window.** `/cls` used to print blank rows after the erase, to push the input back to the last
+   row the way startup does. Measured on the emitted bytes: that is 9 `CR CR LF` groups for a 10-row
+   window — and `ESC[2J` clears the **visible** area while leaving those lines in the terminal's
+   scrollback, so scrolling right afterwards pulls them back into view. The report was "after /cls
+   there is text above the prompt", and that was it. Wipe and stop is what the shell's own `clear` and
+   Ctrl-L do. Erasing the scrollback as well (`ESC[3J`) would allow the blank rows and is refused:
+   this console promises that what was written stays reachable with the scrollbar.
+   `JLineTerminalTest.aClearDoesNotScrollAfterWiping` counts the line feeds a clear emits and fails
+   above a window's worth — verified by restoring the blank rows and watching it report 12 for a
+   10-row window. **The first version of that assertion did not catch it** (it looked for `
+`
+   where the terminal emits `CR CR LF`), which is why the count is tied to the measurement rather than
+   to a guessed shape.
+
    **The screen is scrolled to the bottom once, before the first prompt** (`scrollToBottom`). The
    reader draws its prompt at the cursor, i.e. after the last line printed, while only the status
    block is pinned to the window — so on a half-empty screen the input floats in the middle with the

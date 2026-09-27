@@ -281,6 +281,69 @@ class JLineTerminalTest {
     }
 
     @Test
+    void aClearDoesNotScrollAfterWiping() throws Exception {
+        // Reported: after /cls the prompt sat near the top with text above it that should have been
+        // wiped. The wipe was fine; what followed it was not. Erasing the display (ESC[2J) clears the
+        // visible area but leaves those lines in the terminal's scrollback -- so printing blank rows
+        // afterwards to push the input back to the bottom SCROLLS the viewport, and scrolling pulls
+        // that scrollback straight back into view. Hence: wipe and stop, which is what the shell's
+        // own `clear` and Ctrl-L do. The prompt then sits at the top, cleanly, until output fills the
+        // window again.
+        //
+        // A pipe has no scrollback, so this cannot be asserted as "no old text reappears" -- what is
+        // assertable, and is what actually differs, is that the clear emits no line feeds of its own.
+        try (Terminal terminal = terminal("go\n");
+                JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            console.readLine("ignored");
+            Thread.sleep(200);
+            console.status(List.of("state row"));
+            int before = screen().length();
+
+            console.clearScreen();
+
+            String drawn = screen().substring(before);
+            assertThat("the screen is wiped", drawn, containsString(ERASE_DISPLAY));
+            // Measured rather than assumed: with the blank rows the clear emitted nine CR CR LF
+            // groups for a ten-row window. Redrawing the block needs a couple of line feeds of its
+            // own, so the discriminator is a window's worth of them, not zero.
+            long lineFeeds =
+                    drawn.chars().filter(character -> character == '\n').count();
+            assertThat(
+                    "a clear must not scroll: it emitted " + lineFeeds + " line feeds for a " + SIZE.getRows()
+                            + "-row window",
+                    lineFeeds < SIZE.getRows(),
+                    is(true));
+        }
+    }
+
+    @Test
+    void leavingReleasesTheReservedRowsAndTheScrollRegion() throws Exception {
+        // Reported: after /exit the block was still on screen, and resizing the window then reflowed it
+        // into a mess. The pinned block is a *reserved scroll region* -- ESC[1;<n>r keeps the bottom
+        // rows out of it -- so a session that ends without resetting that region leaves the terminal
+        // restricted, and everything the shell prints afterwards, or any resize, is laid out inside a
+        // window that no longer matches.
+        Terminal terminal = terminal("go" + System.lineSeparator());
+        JLineTerminal console = JLineTerminal.over(terminal, List.of());
+        try {
+            console.readLine("ignored");
+            Thread.sleep(200);
+            console.status(List.of("state row"));
+            int before = screen().length();
+
+            console.close();
+
+            String drawn = screen().substring(before);
+            assertThat(
+                    "the reserved region is handed back, so the next program gets the whole window",
+                    drawn.contains("\u001b[1;" + SIZE.getRows() + "r") || drawn.contains("\u001b[r"),
+                    is(true));
+        } finally {
+            terminal.close();
+        }
+    }
+
+    @Test
     void controlLIsBoundToTheReadersOwnClearScreen() throws Exception {
         // 0x0C is Ctrl-L. It is bound by JLine itself, so /cls is the second way to do this rather
         // than the only one -- worth pinning, because a keymap option could silently take it away.

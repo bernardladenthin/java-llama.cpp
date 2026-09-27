@@ -430,7 +430,12 @@ Ctrl-L does the same, bound by the line reader itself rather than by this projec
 a keymap change cannot quietly take it away). `/clear` wipes the screen *and* drops the history: what is
 still on screen after a `/clear` is a conversation the model no longer has, which reads as if it were
 still in play. Neither touches the terminal emulator's own scrollback — what was written stays where
-the scrollbar can reach it. The block at the bottom is redrawn from a kept copy afterwards: JLine draws
+the scrollbar can reach it. After a wipe the prompt sits at the **top** until output fills the window again — the same as the
+shell's own `clear`. It deliberately does not scroll itself back down: erasing the display clears the
+visible area but leaves those lines in the scrollback, so scrolling afterwards pulls them back into
+view, which showed up as text above the prompt after a `/cls`.
+
+The block at the bottom is redrawn from a kept copy afterwards: JLine draws
 the pinned region only when its *content* changes, and a wipe does not change the content, it only takes
 it off the screen — so asking it to redraw does nothing and the bottom of the window stays empty.
 
