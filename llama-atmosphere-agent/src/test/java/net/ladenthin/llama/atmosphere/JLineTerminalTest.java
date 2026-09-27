@@ -228,8 +228,15 @@ class JLineTerminalTest {
         // The reported artefact is a second, stale "> " left on screen after dragging the window.
         // This drives the path that redraws it -- a real size change plus the signal, with the reader
         // sitting in readLine as it does all session -- and pins that shrinking, growing and changing
-        // the row count each produce one prompt and not two. It holds for every size tried, which is
-        // what says the remaining artefact is not in this path.
+        // the row count never produce a SECOND prompt. It holds for every size tried, which is what
+        // says the remaining artefact is not in this path.
+        //
+        // At most one, not exactly one, and the difference is measured: on a JLine whose resize path
+        // keeps its display model (the fix filed upstream for the duplication) widening the window
+        // emits no prompt at all, because the terminal has already reflowed the line itself -- which
+        // is the very reasoning JLine's own no-status-bar branch states. Requiring exactly one pinned
+        // the repainting behaviour rather than the property, and went red against the fixed library
+        // with "was <0L>". Zero is not the defect; two is.
         java.io.PipedOutputStream keys = new java.io.PipedOutputStream();
         try (Terminal terminal = terminal(new java.io.PipedInputStream(keys));
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
@@ -250,7 +257,10 @@ class JLineTerminalTest {
                 String drawn = screen().substring(before);
                 long prompts =
                         drawn.chars().filter(character -> character == '>').count();
-                assertThat("one prompt after resizing to " + size[0] + "x" + size[1], prompts, is(1L));
+                assertThat(
+                        "at most one prompt after resizing to " + size[0] + "x" + size[1] + ", drew " + prompts,
+                        prompts <= 1L,
+                        is(true));
             }
         }
     }
@@ -310,6 +320,39 @@ class JLineTerminalTest {
                     drawn.chars().filter(character -> character == '\n').count();
             assertThat(
                     "a clear must not scroll: it emitted " + lineFeeds + " line feeds for a " + SIZE.getRows()
+                            + "-row window",
+                    lineFeeds < SIZE.getRows(),
+                    is(true));
+        }
+    }
+
+    @Test
+    void aClearPutsTheInputBackOnTheLastRowWithoutScrolling() throws Exception {
+        // The other half of the report, and the two halves pull against each other: the input has to
+        // end up at the bottom again (it sat at the top left after a /cls), but the blank rows that
+        // would push it there are exactly what scrolls the wiped scrollback back into view.
+        //
+        // Both at once is possible because a wiped screen needs no scrolling to reach its last row --
+        // the cursor can simply be ADDRESSED there. Nothing is written, so nothing enters the
+        // scrollback, and the reader then draws its prompt where the cursor is.
+        try (Terminal terminal = terminal("go\n");
+                JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            console.readLine("ignored");
+            Thread.sleep(200);
+            console.status(List.of("state row"));
+            int before = screen().length();
+
+            console.clearScreen();
+
+            String drawn = screen().substring(before);
+            // cursor_address is 1-based on the wire: the last usable row of a ten-row window, with a
+            // two-row block reserved below it, is row 8 -> ESC[8;1H.
+            String expected = "\u001b[" + (SIZE.getRows() - 2) + ";1H";
+            assertThat("the cursor is addressed to the last usable row", drawn, containsString(expected));
+            long lineFeeds =
+                    drawn.chars().filter(character -> character == '\n').count();
+            assertThat(
+                    "and it still must not scroll: " + lineFeeds + " line feeds for a " + SIZE.getRows()
                             + "-row window",
                     lineFeeds < SIZE.getRows(),
                     is(true));

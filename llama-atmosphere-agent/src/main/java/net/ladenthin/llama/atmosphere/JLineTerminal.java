@@ -249,16 +249,18 @@ public final class JLineTerminal implements AgentTerminal {
             // redrawn and the reader's idea of the cursor intact, which writing the escape sequence
             // around it would not.
             //
-            // Nothing follows the wipe, and that is the fix for a reported defect rather than an
-            // omission. Blank rows used to follow it, to push the input back to the last row the way
-            // startup does -- but erasing the display clears the *visible* area and leaves those lines
-            // in the terminal's scrollback, so scrolling afterwards pulls them straight back into
-            // view: the screen came back with text above the prompt, which is exactly what was
-            // reported. Wipe and stop is what the shell's own `clear` and Ctrl-L do; the prompt sits
-            // at the top until output fills the window again. Erasing the scrollback as well
-            // (ESC[3J) would allow the blank rows, and is refused: this console promises that what
-            // was written stays reachable with the scrollbar.
-            reader.printAbove(clear);
+            // The wipe is followed by ADDRESSING the cursor to the last usable row, never by blank
+            // rows, and the difference between those two is a reported defect in each direction.
+            // Blank rows were the first attempt, to push the input back down the way startup does:
+            // erasing the display clears the *visible* area and leaves those lines in the terminal's
+            // scrollback, so scrolling afterwards pulls them straight back into view -- the screen
+            // came back with text above the prompt. Wipe and stop was the second, and left the input
+            // at the top left, which was reported just as often. A wiped screen needs no scrolling to
+            // reach its last row: cursor_address goes there directly, nothing is written, so nothing
+            // enters the scrollback and the reader draws its prompt where the cursor now is. Erasing
+            // the scrollback as well (ESC[3J) would also allow the blank rows, and stays refused:
+            // this console promises that what was written stays reachable with the scrollbar.
+            reader.printAbove(clear + cursorToLastUsableRow());
             // reset() makes it forget what it believes is on screen; without that the update below is
             // a no-op, because the content it would draw is the content it thinks is already there.
             List<String> lines = requested;
@@ -283,6 +285,27 @@ public final class JLineTerminal implements AgentTerminal {
      */
     private int blankRows() {
         return Math.max(0, terminal.getSize().getRows() - 1);
+    }
+
+    /**
+     * The sequence that puts the cursor on the last row the prompt may use.
+     *
+     * <p>Counted from the bottom rather than from the top: the pinned block occupies the rows below
+     * the prompt, so the prompt's own row is the last one above it. An empty block reserves nothing
+     * and the prompt may use the very last row.
+     *
+     * @return the expanded {@code cursor_address} sequence, or an empty string on a terminal that
+     *     cannot address the cursor (then the caller simply leaves it where the wipe put it)
+     */
+    private String cursorToLastUsableRow() {
+        String capability = terminal.getStringCapability(InfoCmp.Capability.cursor_address);
+        if (capability == null) {
+            return "";
+        }
+        int row = Math.max(0, terminal.getSize().getRows() - 1 - block.size());
+        StringBuilder expanded = new StringBuilder();
+        org.jline.utils.Curses.tputs(expanded, capability, row, 0);
+        return expanded.toString();
     }
 
     /**

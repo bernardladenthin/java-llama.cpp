@@ -179,6 +179,36 @@ alongside `am`. With it the bottom row renders whole and all of JLine's existing
 unchanged before and after), plus the three new ones in `StatusDelayedWrapTest` — verified red without
 the change (2 of 3 failing on `[state]` vs `state]`) and green with it.
 
+## Third defect: the status bar is sized by the buffer, not by the window
+
+`LineReaderImpl.handleSignal(WINCH)` reads `terminal.getBufferSize()` and hands that size to
+`Status.resize(...)`, so every status row is padded to the **buffer** width. JLine's own contract on
+`Terminal.getBufferSize()` says the opposite: it exists for line editing, where a buffer wider than
+the window is what avoids a wrap, *"while the `getSize()` method should be used when using full screen
+mode"* — and a pinned region is a full-screen construct, positioned in window rows. `Status` itself
+uses `terminal.getSize()` when it is created; only the resize path disagrees.
+
+On Windows the two differ as a matter of course: `NativeWinSysTerminal.getSize()` returns
+`srWindow` (the visible window) and `getBufferSize()` returns `dwSize` (the screen buffer).
+
+Reproduced with a `VirtualTerminal` subclass whose `getBufferSize()` reports 40 columns more than its
+screen, one size event, text in the buffer:
+
+```
+window 64 cols, buffer 104 cols
+7|─────────────────────────────────────────────────────────    |   rule, still in place
+8|                                        … waiting for input …|   shifted right by exactly 40
+9|                                                             |   the state row is gone
+```
+
+The rows are padded past the right edge, each wraps onto a second screen line, and the block smears
+across the output — which is what "rule, activity row and state row all on one line, with a gap that
+grows" looks like. With `status.resize(terminal.getSize())` the same run puts all three rows back on
+their own screen rows with the state row on the last one.
+
+Together the three fixes take JLine's own resize/status/display tests from 74 passing + 5 failing (the
+new assertions) to **79 passing**, with the 74 unchanged in both directions.
+
 ## What remains on the real console after the fix: fragments of the rule
 
 With the patched jar the prompt is drawn once, which is the defect above. What is still visible on a
