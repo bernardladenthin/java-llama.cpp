@@ -17,6 +17,7 @@ import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.Reference;
 import org.jline.reader.UserInterruptException;
 import org.jline.reader.impl.completer.StringsCompleter;
+import org.jline.terminal.Size;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.jline.utils.AttributedString;
@@ -89,8 +90,12 @@ public final class JLineTerminal implements AgentTerminal {
      */
     private volatile List<String> requested = List.of();
 
+    /** How often the window size is polled; one drag emits an event roughly every 125 ms. */
+    private static final long WATCH_INTERVAL_MILLIS = 120;
+
     private volatile boolean closed;
     private @Nullable Thread input;
+    private @Nullable Thread sizes;
 
     private JLineTerminal(Terminal terminal, LineReader reader, Status status, Ansi ansi) {
         this.terminal = terminal;
@@ -147,8 +152,72 @@ public final class JLineTerminal implements AgentTerminal {
         // reading -- which is the whole session -- and it already resizes the pinned region itself
         // (LineReaderImpl.handleSignal calls Status.resize). Adding one of ours only put a second
         // writer on the terminal, on the signal thread, at the exact moment the reader was redrawing:
-        // the row of "> > > > >" after a resize got worse, not better, when it was tried.
-        return new JLineTerminal(terminal, reader, Status.getStatus(terminal), Ansi.detect());
+        // the row of "> > > > >" after a resize got worse, not better, when it was tried. The block is
+        // rebuilt from a poll instead -- see startWatchingSize.
+        JLineTerminal console = new JLineTerminal(terminal, reader, Status.getStatus(terminal), Ansi.detect());
+        console.startWatchingSize();
+        return console;
+    }
+
+    /**
+     * Rebuild the pinned block whenever the window changes size.
+     *
+     * <p>What JLine holds are the rows it was handed, so a rule built for a 113-column window stays
+     * 113 columns wide: on a resize the row is padded with spaces or cut with an ellipsis, never
+     * re-made. The next row then continues on the same screen line and the three rows run together
+     * with growing gaps — which is what was reported, repeatedly. Only the caller knows that a rule is
+     * meant to span the window, so only the caller can fix it.
+     *
+     * <p>Measured on a real Windows console rather than reasoned: a probe that left the block alone on
+     * a resize reproduced the report, and the same probe rebuilding all three rows at the new width on
+     * every size event rendered cleanly. Four theories had been measured and discarded in the harness
+     * before that (buffer-vs-window width, reflow by joining the rows, a wide-to-narrow-to-wide drag,
+     * an accumulating cursor drift) — and the same probe recorded window and buffer at identical
+     * widths throughout, so it is not the one the terminal's own API could explain.
+     *
+     * <p>A poll, not a signal: the reader owns WINCH for the whole session. This writes through the
+     * same lock as every other write, which is what the turn loop already does four times a second.
+     * The probe recorded one size event per ~125 ms for a single drag, so the interval follows a drag
+     * without redrawing between two of its events.
+     */
+    private synchronized void startWatchingSize() {
+        if (sizes != null) {
+            return;
+        }
+        sizes = new Thread(
+                () -> {
+                    Size last = terminal.getSize();
+                    while (!closed) {
+                        try {
+                            Thread.sleep(WATCH_INTERVAL_MILLIS);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                        Size now = terminal.getSize();
+                        if (now.getColumns() == last.getColumns() && now.getRows() == last.getRows()) {
+                            continue;
+                        }
+                        last = now;
+                        List<String> lines = requested;
+                        if (!lines.isEmpty()) {
+                            synchronized (writing) {
+                                // Both halves are needed, and the second one is easy to miss: the
+                                // pinned region has to be told the new geometry, or it cuts the rebuilt
+                                // rule straight back to the old width with an ellipsis. JLine's reader
+                                // does this itself while it is reading; doing it here makes the block
+                                // correct whether or not a read is in flight, and it is a no-op inside
+                                // Status when the grid has not actually changed.
+                                status.resize(now);
+                                // Then re-cut every row and re-make the rule at the new width.
+                                updateStatus(lines);
+                            }
+                        }
+                    }
+                },
+                "agent-size-watch");
+        sizes.setDaemon(true);
+        sizes.start();
     }
 
     @Override
@@ -496,6 +565,10 @@ public final class JLineTerminal implements AgentTerminal {
         Thread reading = input;
         if (reading != null) {
             reading.interrupt();
+        }
+        Thread watching = sizes;
+        if (watching != null) {
+            watching.interrupt();
         }
         try {
             status.update(List.of());

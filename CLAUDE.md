@@ -2551,6 +2551,22 @@ are decisions, not details:
    [`docs/upstream-investigation-jline-status-windows-redraw.md`](docs/upstream-investigation-jline-status-windows-redraw.md).
    **Nothing here can honestly fix it**; `--plain` pins nothing and is unaffected.
 
+   **The pinned block is rebuilt whenever the window changes size, from a poll** (`startWatchingSize`,
+   every 120 ms). What JLine holds are the rows it was handed, so a rule built for a 113-column window
+   stays 113 columns wide: on a resize the row is padded with spaces or cut with an ellipsis, never
+   re-made, and the next row then continues on the same screen line — the three rows run together with
+   growing gaps, which is what was reported three times. Only the caller knows a rule is meant to span
+   the window. **Both halves are needed and the second is easy to miss:** `status.resize(size)` first,
+   or the pinned region cuts the rebuilt rule straight back to the old width. **Measured, not
+   reasoned:** a probe on the real console reproduced the report when it left the block alone and
+   rendered cleanly when it rebuilt all three rows per size event — after four harness theories had
+   been measured and discarded (buffer-vs-window width, reflow by joining the rows, a
+   wide→narrow→wide drag, an accumulating cursor drift), and with that probe recording window and
+   buffer at identical widths throughout and one size event per ~125 ms for a single drag.
+   `JLineTerminalTest.theBlockIsRebuiltAtTheNewWidthWhenTheWindowChangesSize` counts the columns the
+   rule grew by (the region writes a *diff*, so a test searching for one full-width run fails against a
+   working rebuild — verified at `wrote 0` with the poll disabled).
+
    **Do not add a `WINCH` handler, and the reason is measured.** A resize drawing a row of
    `> > > > >` across the screen looks like the pinned region not being told about the new size, so a
    `Signal.WINCH` handler that resized and re-rendered it was added — and the user reported it

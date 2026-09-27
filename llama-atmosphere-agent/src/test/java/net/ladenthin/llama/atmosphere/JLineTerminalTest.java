@@ -91,6 +91,46 @@ class JLineTerminalTest {
     }
 
     @Test
+    void theBlockIsRebuiltAtTheNewWidthWhenTheWindowChangesSize() throws Exception {
+        // Measured on a real Windows console with a probe, after four harness theories had been
+        // measured and discarded: with the block left alone on a resize the rule, the activity row and
+        // the state row end up running together on one logical line with growing gaps, and rebuilding
+        // all three rows at the new width on every size event renders cleanly. The rows JLine holds
+        // are the ones it was given, so a rule built for a 113-column window stays 113 columns wide
+        // and the row is padded with spaces rather than re-cut -- the next row then continues on the
+        // same screen line. Only the caller knows a rule is meant to span the window.
+        //
+        // Not a WINCH handler, and that is deliberate (see CLAUDE.md): the line reader owns that
+        // signal for as long as it is reading, which is the whole session. A poll writing through the
+        // same lock as every other write is the same kind of writer the turn loop already is. The
+        // probe recorded one size event per ~125 ms for a single drag, so the interval is chosen to
+        // follow a drag without redrawing between two events of it.
+        try (Terminal terminal = terminal("go\n");
+                JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            console.status(List.of("state row"));
+            int before = screen().length();
+
+            int wider = SIZE.getColumns() + 40;
+            terminal.setSize(new Size(wider, SIZE.getRows()));
+            Thread.sleep(600);
+
+            String drawn = screen().substring(before);
+            // Counted, not searched for as one run: the pinned region writes a DIFF, and the rule's
+            // first 59 columns are already on screen, so what goes out for a 99-column rule is the 40
+            // columns it grew by. A test looking for a 99-character run therefore fails against a
+            // working rebuild -- which it did, and is why this counts instead.
+            long extra = drawn.chars().filter(character -> character == '─').count()
+                    + drawn.chars().filter(character -> character == 'q').count();
+            long grew = (long) wider - SIZE.getColumns();
+            assertThat(
+                    "the rule grew by the " + grew + " columns the window did, wrote " + extra + " (" + drawn.length()
+                            + " bytes)",
+                    extra >= grew,
+                    is(true));
+        }
+    }
+
+    @Test
     void pressingEnterSeveralTimesLeavesNoRuleInTheScrollback() throws Exception {
         try (Terminal terminal = terminal("\n\n\n\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
