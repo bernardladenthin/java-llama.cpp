@@ -3721,8 +3721,16 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
       # The agent is Java 21 (Atmosphere's floor), unlike the Java 8 core: its ceiling is 65.
+      # One waiver: JLine ships its FFM terminal provider (org/jline/terminal/impl/ffm, 25 classes)
+      # as Java 22 bytecode. It is discovered through META-INF/jline/providers/ffm, not loaded
+      # eagerly: on Java 21 JLine picks its JNI provider, and a forced FFM provider falls back to a
+      # dumb terminal instead of failing (verified on 21.0.10). Only that package is waived, so
+      # any other class above 65 still fails the gate.
       - name: Verify Java 21 bytecode (no class newer than major 65)
-        run: .github/verify-bytecode-version.sh --max-major 65 agent-assets/llama-atmosphere-agent-*-jar-with-dependencies.jar
+        run: >
+          .github/verify-bytecode-version.sh --max-major 65
+          --allow 'llama-atmosphere-agent-*:org/jline/terminal/impl/ffm/*'
+          agent-assets/llama-atmosphere-agent-*-jar-with-dependencies.jar
       - name: Run the agent release-jar smoke test
         run: .github/smoke-agent-jar.sh agent-assets "models/${TOOL_MODEL_NAME}"
       - name: Upload agent logs
