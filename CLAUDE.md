@@ -2178,7 +2178,7 @@ installed (`-Dllama.version=<reactor version>`); a user copies the folder and ru
 **released** core the READMEs describe (currently `5.2.0`, written as if released so the docs are
 right the moment the release lands).
 
-**What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.70) ships
+**What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.71) ships
 `BuiltInAgentRuntime` + `OpenAiCompatibleClient`: a zero-framework OpenAI client that *always*
 streams (`stream:true`), accumulates `delta.tool_calls` by `index`, executes `ToolDefinition`
 executors, re-submits the conversation (assistant `tool_calls` message **without** a `content` key,
@@ -2581,7 +2581,7 @@ domain is the only string that must be globally unique.
 
 Structure (mirrors the consumer-test's plumbing):
 - **`settings.gradle.kts`** — `rootProject.name = "android-llmservice"`; pins AGP `9.4.0` + the
-  Compose compiler plugin (`2.4.10`); `mavenLocal()` first so the freshly-built AAR + façade
+  Compose compiler plugin (`2.4.20`); `mavenLocal()` first so the freshly-built AAR + façade
   resolve there in CI (Maven Central for real users). Stay at `>= 9.2.1`: `9.2.1` (not `9.2.0`)
   first fixed a real R8 regression (`ClassNotFoundException` on `com.android.tools.r8.RecordTag`
   after upgrading Gradle to 9.x with AGP 9.2.0) that hits this project directly since
@@ -2589,11 +2589,11 @@ Structure (mirrors the consumer-test's plumbing):
   `.github/android-consumer-test` fixture is pinned the same way. AGP 9.4.x requires Gradle >= 9.6.0
   and JDK 17+; CI already runs JDK 21 everywhere (`env.JAVA_VERSION`), so only the `gradle-version`
   pin on the jobs that build this project (and the `.github/android-consumer-test` fixture)
-  needed bumping (currently `9.7.1`). AGP 9.0+ has **built-in Kotlin support** (a runtime dependency on
+  needed bumping (currently `9.8.0`). AGP 9.0+ has **built-in Kotlin support** (a runtime dependency on
   Kotlin Gradle plugin 2.2.10+), so the standalone `org.jetbrains.kotlin.android` plugin is no longer
   applied — applying it now fails the build with "no longer required for Kotlin support since
   AGP 9.0" (`app/build.gradle.kts` line 7). The Compose compiler plugin still applies
-  separately and its 2.4.10 pin exceeds AGP's 2.2.10 floor, so no other version changed.
+  separately and its 2.4.20 pin exceeds AGP's 2.2.10 floor, so no other version changed.
 - **`app/build.gradle.kts`** — `namespace`/`applicationId` `net.ladenthin.android.llmservice`,
   `minSdk 28` (AAR floor), `compileSdk 37` (raised from 35 — Compose/lifecycle/activity AAR
   metadata now requires it), `targetSdk 35`, Jetpack Compose, `androidx.appcompat` (only for
