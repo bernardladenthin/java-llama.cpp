@@ -642,6 +642,53 @@ class ScreenUseCasesTest {
     }
 
     @Test
+    void theBlockStaysWholeWhenSizeEventsArriveOnAnotherThread() throws Exception {
+        // The difference between this harness and the console the reports come from, and it took far too
+        // long to notice: resize() raises the signal on the CALLER's thread, so the reader's handler runs
+        // serialised with the test. A real console delivers it on its own input pump, at the same time as
+        // every other writer. Reported as many rules of different lengths stacked up after a shrink and a
+        // grow, which is the block drawn once per size event at whatever width each one saw.
+        ScreenTerminalHarness terminal = terminal(NARROW);
+        try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
+            terminal.type("hallo");
+            Thread.sleep(200);
+
+            List<Thread> pumps = new ArrayList<>();
+            for (int columns = NARROW; columns <= WIDE; columns += 5) {
+                pumps.add(terminal.resizeAsynchronously(columns, ROWS));
+                console.refreshBlockForCurrentSize();
+                Thread.sleep(10);
+            }
+            for (int columns = WIDE; columns >= NARROW; columns -= 5) {
+                pumps.add(terminal.resizeAsynchronously(columns, ROWS));
+                console.refreshBlockForCurrentSize();
+                Thread.sleep(10);
+            }
+            for (Thread pump : pumps) {
+                pump.join(2000);
+            }
+            Thread.sleep(300);
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(300);
+
+            String screen = terminal.describe();
+            String[] rows = terminal.rows();
+            assertThat("the rule is on screen once" + NEWLINE + screen, count(rows, this::isRule), is(1));
+            // Counted by its LEADING glyph, not its tail: a narrow window cuts the row and ends it in an
+            // ellipsis, so looking for "local-model" reports zero on a perfectly correct screen -- which
+            // is how the first version of this failed three runs out of three while the block was intact.
+            assertThat(
+                    "the state row is on screen once" + NEWLINE + screen, count(rows, row -> row.contains("▤")), is(1));
+            for (int row = 0; row < rows.length; row++) {
+                assertThat(
+                        "row " + row + " carries the prompt AND the rule" + NEWLINE + screen,
+                        rows[row].contains("hallo") && isRule(rows[row]),
+                        is(false));
+            }
+        }
+    }
+
+    @Test
     void theModeBadgeKeepsItsSpaceOnScreen() throws Exception {
         // Reported: "beim auto mode hat immer ein leerzeichen gefehlt: [pause] manual". The badge is
         // built as symbol + " " + name, so the space is there in the string -- the question is whether it

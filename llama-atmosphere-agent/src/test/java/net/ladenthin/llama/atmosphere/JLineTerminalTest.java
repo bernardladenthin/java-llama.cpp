@@ -300,6 +300,15 @@ class JLineTerminalTest {
         // own `clear` and Ctrl-L do. The prompt then sits at the top, cleanly, until output fills the
         // window again.
         //
+        // Putting the input back at the bottom afterwards is spent in both directions, which is why this
+        // test's subject is "moves nothing". Blank rows scroll the erased content back into view. Then
+        // addressing the cursor to the last usable row was tried, and taken back out: printAbove owns the
+        // cursor -- it moves up, writes, and redraws the prompt below -- so a cursor_address inside its
+        // argument leaves its bookkeeping wrong and the screen came back with a character stranded above
+        // the prompt, reported twice. A test for the absence of that sequence is not possible either: the
+        // reader emits cursor addressing of its own, and the byte stream does not say whose it is. So the
+        // prompt sits where a wipe leaves it, as it does after the shell's own `clear`.
+        //
         // A pipe has no scrollback, so this cannot be asserted as "no old text reappears" -- what is
         // assertable, and is what actually differs, is that the clear emits no line feeds of its own.
         try (Terminal terminal = terminal("go\n");
@@ -320,39 +329,6 @@ class JLineTerminalTest {
                     drawn.chars().filter(character -> character == '\n').count();
             assertThat(
                     "a clear must not scroll: it emitted " + lineFeeds + " line feeds for a " + SIZE.getRows()
-                            + "-row window",
-                    lineFeeds < SIZE.getRows(),
-                    is(true));
-        }
-    }
-
-    @Test
-    void aClearPutsTheInputBackOnTheLastRowWithoutScrolling() throws Exception {
-        // The other half of the report, and the two halves pull against each other: the input has to
-        // end up at the bottom again (it sat at the top left after a /cls), but the blank rows that
-        // would push it there are exactly what scrolls the wiped scrollback back into view.
-        //
-        // Both at once is possible because a wiped screen needs no scrolling to reach its last row --
-        // the cursor can simply be ADDRESSED there. Nothing is written, so nothing enters the
-        // scrollback, and the reader then draws its prompt where the cursor is.
-        try (Terminal terminal = terminal("go\n");
-                JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
-            console.readLine("ignored");
-            Thread.sleep(200);
-            console.status(List.of("state row"));
-            int before = screen().length();
-
-            console.clearScreen();
-
-            String drawn = screen().substring(before);
-            // cursor_address is 1-based on the wire: the last usable row of a ten-row window, with a
-            // two-row block reserved below it, is row 8 -> ESC[8;1H.
-            String expected = "\u001b[" + (SIZE.getRows() - 2) + ";1H";
-            assertThat("the cursor is addressed to the last usable row", drawn, containsString(expected));
-            long lineFeeds =
-                    drawn.chars().filter(character -> character == '\n').count();
-            assertThat(
-                    "and it still must not scroll: " + lineFeeds + " line feeds for a " + SIZE.getRows()
                             + "-row window",
                     lineFeeds < SIZE.getRows(),
                     is(true));

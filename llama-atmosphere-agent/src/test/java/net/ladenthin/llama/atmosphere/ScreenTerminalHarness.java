@@ -89,6 +89,36 @@ class ScreenTerminalHarness extends LineDisciplineTerminal {
     }
 
     /**
+     * Change the size and announce it from ANOTHER thread, the way a console does.
+     *
+     * <p>{@link #resize(int, int)} raises the signal on the caller's thread, so the reader's handler runs
+     * serialised with whatever the test is doing — which is not how it happens. A real console delivers
+     * the size change on its own input pump, concurrently with every other writer, and that
+     * interleaving is where the reports live: the same test that is green with a serialised signal shows
+     * the block drawn several times over when the signal arrives on its own thread.
+     *
+     * <p>Deliberately not joined: joining would serialise it again and defeat the point.
+     *
+     * @param columns the new width
+     * @param rows the new height
+     * @return the thread the signal was raised on, so a test can wait for it at the very end
+     */
+    Thread resizeAsynchronously(int columns, int rows) {
+        screen.setSize(Size.of(columns, rows));
+        setSize(Size.of(columns, rows));
+        Thread pump = new Thread(() -> {
+            try {
+                raise(Signal.WINCH);
+            } catch (RuntimeException e) {
+                // A console's pump swallows this too -- and that is part of the defect, not of the test.
+            }
+        });
+        pump.setDaemon(true);
+        pump.start();
+        return pump;
+    }
+
+    /**
      * The screen as a person would read it, one string per row, trailing blanks kept.
      *
      * @return the rows, top to bottom

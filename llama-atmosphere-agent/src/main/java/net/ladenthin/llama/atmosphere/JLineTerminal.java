@@ -343,7 +343,15 @@ public final class JLineTerminal implements AgentTerminal {
             // enters the scrollback and the reader draws its prompt where the cursor now is. Erasing
             // the scrollback as well (ESC[3J) would also allow the blank rows, and stays refused:
             // this console promises that what was written stays reachable with the scrollbar.
-            reader.printAbove(clear + cursorToLastUsableRow());
+            // The wipe and NOTHING else. Addressing the cursor to the last usable row was tried here and
+            // has been taken back out: printAbove owns the cursor -- it moves up, writes, and redraws the
+            // prompt below -- so a cursor_address smuggled into its argument leaves its bookkeeping wrong,
+            // and the screen came back with a single character stranded above the prompt. Reported twice,
+            // the second time as "nach cls weiterhin eingabe ueber dem eingabe > zeichen". Both ways of
+            // putting the input back at the bottom are now spent: blank rows scroll the wiped scrollback
+            // into view, and moving the cursor corrupts printAbove. So the prompt sits where a wipe leaves
+            // it, which is what the shell's own `clear` and Ctrl-L do, and output moves it down again.
+            reader.printAbove(clear);
             // reset() makes it forget what it believes is on screen; without that the update below is
             // a no-op, because the content it would draw is the content it thinks is already there.
             List<String> lines = requested;
