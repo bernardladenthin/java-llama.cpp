@@ -152,6 +152,33 @@ Reachable from this project, though rarely: the agent's block is always three ro
 changes only when it is taken down and put back — `/cls` and `/exit`. Both are tested and behave, so
 this is recorded as an upstream observation rather than a chased bug.
 
+## Second defect, reproduced minimally: `windows-vtp` loses the first character of the last row
+
+Found while chasing the fragments above, and it needs **no resize, no line reader and no project
+code** — a single `status.update()` of a three-row block on a `VirtualTerminal` of type
+`windows-vtp` renders the bottom row as `state]` instead of `[state]`. On `xterm` it is intact.
+
+The byte streams say why. At 40 columns `xterm` receives each row as exactly 40 characters written
+back to back, relying on the terminal to wrap. `windows-vtp` receives one character more per row,
+each followed by `ESC[D`:
+
+```
+xterm        ESC7 ESC[8;1H rule<36 spaces>waiting<33 spaces>[state]<33 spaces> ESC8
+windows-vtp  ESC7 ESC[8;1H rule<37 spaces>ESC[D waiting<34 spaces>ESC[D [state]<34 spaces>ESC[D ESC8
+```
+
+That is `Display`'s compensation for a terminal without `eat_newline_glitch` (delayed wrap), plus its
+separate rule of never writing the bottom-right cell (issue #2206). `windows-vtp.caps` declares `am`
+but not `xenl`, while `xterm.caps` declares both — yet Windows' virtual-terminal processing delays the
+wrap like any other VT, which the report's own screen confirms: on the real console no character is
+missing from the block.
+
+**The fix is one word in `terminal/src/main/resources/org/jline/utils/windows-vtp.caps`**: `xenl`
+alongside `am`. With it the bottom row renders whole and all of JLine's existing
+`LineReaderResizeTest` / `StatusTest` / `DisplayTest` / `InBandResizeTest` stay green (75 tests,
+unchanged before and after), plus the three new ones in `StatusDelayedWrapTest` — verified red without
+the change (2 of 3 failing on `[state]` vs `state]`) and green with it.
+
 ## What remains on the real console after the fix: fragments of the rule
 
 With the patched jar the prompt is drawn once, which is the defect above. What is still visible on a
