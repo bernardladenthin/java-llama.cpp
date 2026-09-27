@@ -151,3 +151,26 @@ line is lost, not repeated.
 Reachable from this project, though rarely: the agent's block is always three rows, so the height
 changes only when it is taken down and put back — `/cls` and `/exit`. Both are tested and behave, so
 this is recorded as an upstream observation rather than a chased bug.
+
+## What remains on the real console after the fix: fragments of the rule
+
+With the patched jar the prompt is drawn once, which is the defect above. What is still visible on a
+real Windows console after dragging a wide window is the **status block's own rows** — runs of the
+rule character at several widths, spread across one wrapped logical line, with the block itself
+correct at the bottom.
+
+**This does not reproduce in the harness**, and the variants were measured rather than assumed: a
+full-width rule (`─` × columns−1) plus the activity and state rows, on `windows-vtp`, dragged from
+140 columns down to 60 and back up, both with the block left alone and with all three rows rebuilt at
+the new width on **every** size event — every run ends with exactly one row carrying rule characters.
+
+So the emitted sequences are correct for a conformant VT, and what is left is the real console's own
+handling of lines drawn at earlier widths: Windows Terminal reflows wrapped lines on widening, and an
+`ESC[2J` erase leaves them in the scrollback (the same property that made `/cls` scroll old rows back
+into view — see `CLAUDE.md`). Nothing in this project draws those rows a second time: only
+`status()` and `clearScreen()` rebuild the block, and neither runs on a resize.
+
+**The workaround is Ctrl-L (or `/cls`)** — it wipes the visible area and redraws the block, which is
+already covered by `JLineTerminalTest`. A fix would need the byte stream of a real session, which on
+Windows cannot be captured from inside the same JVM (see the note above about JLine writing through
+the console API), so it is recorded here rather than guessed at.
