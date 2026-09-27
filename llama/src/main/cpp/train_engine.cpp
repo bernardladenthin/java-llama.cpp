@@ -7,6 +7,7 @@
 #include "common.h"
 #include "ggml-opt.h"
 #include "llama.h"
+#include "rpc_support.hpp"
 #include "train_params.hpp"
 
 #include <nlohmann/json.hpp>
@@ -40,6 +41,9 @@ bool finetune(const finetune_config &cfg, std::string &err) {
 
     llama_backend_init();
     llama_numa_init(params.numa);
+    // Keep RPC servers another load registered in this JVM out of this one (see rpc_support.hpp);
+    // training loads no multimodal projector, so the mmproj half of the answer does not apply.
+    (void)jllama::rpc::exclude_stale_devices(params.devices);
 
     common_init_result_ptr llama_init = common_init_from_params(params);
     llama_model *model = llama_init->model();

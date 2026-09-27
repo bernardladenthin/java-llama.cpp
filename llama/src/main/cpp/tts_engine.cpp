@@ -6,8 +6,9 @@
 
 #include "tts_engine.h"
 
-#include "tts_params.hpp" // build_tts_params
-#include "tts_wav.hpp"    // pcm_to_wav16_bytes
+#include "tts_params.hpp"  // build_tts_params
+#include "tts_wav.hpp"     // pcm_to_wav16_bytes
+#include "rpc_support.hpp" // exclude_stale_devices
 
 #include "common.h"
 #include "llama.h"
@@ -43,6 +44,8 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
     // Built by tts_params.hpp so the exact params the engine uses are unit-testable without a
     // model -- see the header for why the CPU-thread resolution there is load-bearing.
     common_params params = build_tts_params(model_path, n_gpu_layers, engine->n_threads, engine->n_batch);
+    // Keep RPC servers another load registered in this JVM out of this one (see rpc_support.hpp).
+    const auto mmproj_device = jllama::rpc::exclude_stale_devices(params.devices);
 
     engine->init = common_init_from_params(params);
     engine->model = engine->init ? engine->init->model() : nullptr;
@@ -55,6 +58,11 @@ tts_engine *engine_init(const std::string &model_path, const std::string &mmproj
 
     mtmd_context_params mtmd_params = mtmd_context_params_default();
     mtmd_params.use_gpu = n_gpu_layers != 0;
+    if (mmproj_device && mmproj_device->empty()) {
+        mtmd_params.use_gpu = false;
+    } else if (mmproj_device) {
+        mtmd_params.device = ggml_backend_dev_by_name(mmproj_device->c_str());
+    }
     engine->mctx.reset(mtmd_init_from_file(mmproj_path.c_str(), engine->model, mtmd_params));
     if (!engine->mctx) {
         err = "failed to load TTS mmproj: " + mmproj_path;

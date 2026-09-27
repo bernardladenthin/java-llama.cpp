@@ -165,6 +165,54 @@ struct device_info {
     return joined;
 }
 
+// true when the caller chose the multimodal projector's device (or kept it off the GPU) itself.
+[[nodiscard]] inline bool has_mmproj_device_option(const std::vector<std::string> &argv) {
+    for (const auto &arg : argv) {
+        if (arg == "--mmproj-device" || arg == "-mmdev" || arg == "--no-mmproj-offload") {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The multimodal projector does not go through the device list: when no device is named, clip
+// takes the FIRST registered device of type GPU, else IGPU (tools/mtmd/clip.cpp). RPC devices are
+// type GPU and are registered after every local backend, so on a host without a GPU a stale RPC
+// device is exactly what it would take. Returns the device name to pin, "" for "keep it on the
+// CPU", or nullopt when nothing is stale and the argv must be left alone.
+[[nodiscard]] inline std::optional<std::string> mmproj_device_override(const std::vector<device_info> &devices,
+                                                                       const std::vector<std::string> &requested) {
+    auto is_stale = [&requested](const device_info &d) {
+        if (d.endpoint.empty()) {
+            return false;
+        }
+        for (const auto &r : requested) {
+            if (r == d.endpoint) {
+                return false;
+            }
+        }
+        return true;
+    };
+    bool stale = false;
+    for (const auto &d : devices) {
+        stale = stale || is_stale(d);
+    }
+    if (!stale) {
+        return std::nullopt;
+    }
+    for (const auto &d : devices) {
+        if (d.is_gpu && !is_stale(d)) {
+            return d.name;
+        }
+    }
+    for (const auto &d : devices) {
+        if (d.is_igpu && !is_stale(d)) {
+            return d.name;
+        }
+    }
+    return std::string();
+}
+
 // ---- glue over the ggml registry ------------------------------------------------------------
 
 // ggml's RPC devices all belong to the one backend reg named "RPC"; their description is the
@@ -215,15 +263,47 @@ inline void register_server(const std::string &endpoint) {
     for (const auto &endpoint : requested) {
         register_server(endpoint);
     }
+    const auto devices = registered_devices();
+    if (!has_mmproj_device_option(argv)) {
+        auto mmproj = mmproj_device_override(devices, requested);
+        if (mmproj && mmproj->empty()) {
+            argv.emplace_back("--no-mmproj-offload");
+        } else if (mmproj) {
+            argv.emplace_back("--mmproj-device");
+            argv.push_back(*mmproj);
+        }
+    }
     if (has_device_option(argv)) {
         return argv;
     }
-    auto value = device_override(registered_devices(), requested);
+    auto value = device_override(devices, requested);
     if (value) {
         argv.emplace_back("--device");
         argv.push_back(*value);
     }
     return argv;
+}
+
+// The same guard for the entry points that build common_params themselves instead of parsing an
+// argv (TextToSpeech, LlamaTrainer): they never ask for an RPC server, so every registered one is
+// stale. Without it a TTS model loaded after an RPC load in the same JVM offloads to that server --
+// and aborts the process once it is gone (seen in CI: RpcIntegrationTest, then TtsIntegrationTest).
+// Leaves an explicit params.devices alone. Returns what the multimodal projector should use, in
+// mmproj_device_override's terms; the caller applies it to its own mtmd/clip parameters.
+inline std::optional<std::string> exclude_stale_devices(std::vector<ggml_backend_dev_t> &params_devices) {
+    const auto devices = registered_devices();
+    if (params_devices.empty()) {
+        auto value = device_override(devices, {});
+        if (value) {
+            if (*value != "none") {
+                for (const auto &name : split_endpoints(*value)) {
+                    params_devices.push_back(ggml_backend_dev_by_name(name.c_str()));
+                }
+            }
+            params_devices.push_back(nullptr); // the list is null-terminated, as parse_device_list builds it
+        }
+    }
+    return mmproj_device_override(devices, {});
 }
 
 // Devices an in-process RPC server offers: every accelerator, else the CPU (upstream rpc-server's

@@ -1034,7 +1034,8 @@ What to know:
 - **Registered servers stay registered.** llama.cpp keeps RPC devices in a process-wide registry
   with no way to remove them; this library therefore gives every later load that does not ask for a
   server an explicit device list without it, so a model loaded without `--rpc` never offloads to a
-  server an earlier model used. An explicit `setDevices(...)` / `--device` is never overridden.
+  server an earlier model used — the same holds for the multimodal projector, `TextToSpeech` and
+  `LlamaTrainer`. An explicit `setDevices(...)` / `--device` is never overridden.
 - **Android** needs the `android.permission.INTERNET` permission for RPC, even over loopback — the
   `llama-android` AAR does not request it, so an app that wants RPC must declare it itself.
 - `RpcServer.startLocal(port, threads, cacheDir)` enables upstream's tensor cache: a client that

@@ -5,9 +5,11 @@
 package net.ladenthin.llama;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.emptyOrNullString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.File;
@@ -15,6 +17,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import net.ladenthin.llama.args.LogFormat;
+import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
 import org.junit.jupiter.api.Test;
@@ -80,5 +83,15 @@ public class RpcIntegrationTest {
                 .setLogVerbosity(4))) {
             assertThat(local.complete(PROMPT), is(not(emptyOrNullString())));
         }
+
+        // TextToSpeech builds its common_params itself instead of parsing an argv, so the argv guard
+        // above never sees it. Before exclude_stale_devices() this load put the gone server into the
+        // backbone's device list and aborted the JVM while fitting the context (CI: this test, then
+        // TtsIntegrationTest). The draft model loads as a backbone; the missing mmproj then fails the
+        // load the ordinary way -- with an exception, in a JVM that is still alive.
+        LlamaException e = assertThrows(
+                LlamaException.class,
+                () -> new TextToSpeech(TestConstants.DRAFT_MODEL_PATH, "no-such-mmproj.gguf").close());
+        assertThat(e.getMessage(), containsString("no-such-mmproj.gguf"));
     }
 }

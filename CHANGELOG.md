@@ -48,7 +48,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   every client-side connection problem; the new `patches/0015` turns an unreachable, malformed or
   non-RPC endpoint into a `LlamaException` naming it, makes the server stoppable, and keeps a
   stopped server's registered device from aborting later loads. Because llama.cpp never forgets a
-  registered RPC server, a load that does not ask for one gets an explicit device list without it.
+  registered RPC server, a load that does not ask for one gets an explicit device list without it —
+  including the multimodal projector's device, and `TextToSpeech` / `LlamaTrainer` loads.
   A server lost in the middle of inference still terminates the process (upstream limitation).
   The served devices can be chosen by name (`RpcServer.startLocal(…, List<String> devices)`,
   `--device CPU`), because a served device that cannot run an operation terminates the server

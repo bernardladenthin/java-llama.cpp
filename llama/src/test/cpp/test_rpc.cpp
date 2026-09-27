@@ -22,6 +22,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -32,6 +33,8 @@
 
 using jllama::rpc::device_info;
 using jllama::rpc::device_override;
+using jllama::rpc::has_mmproj_device_option;
+using jllama::rpc::mmproj_device_override;
 
 namespace {
 
@@ -123,6 +126,27 @@ TEST(RpcSupport, GpusWithoutADeviceIdAreNeverTreatedAsDuplicates) {
 TEST(RpcSupport, IntegratedGpuOnlyWhenThereIsNoDiscreteOne) {
     EXPECT_EQ(device_override({rpc_dev("RPC0", "a:1"), igpu("iGPU0")}, {}).value(), "iGPU0");
     EXPECT_EQ(device_override({rpc_dev("RPC0", "a:1"), igpu("iGPU0"), gpu("CUDA0")}, {}).value(), "CUDA0");
+}
+
+TEST(RpcSupport, MmprojDeviceIsLeftAloneWithoutAStaleRpcDevice) {
+    EXPECT_FALSE(mmproj_device_override({cpu(), gpu("CUDA0")}, {}).has_value());
+    EXPECT_FALSE(mmproj_device_override({cpu(), rpc_dev("RPC0", "a:1")}, {"a:1"}).has_value());
+}
+
+TEST(RpcSupport, MmprojDeviceSkipsAStaleRpcDeviceTheWayClipWouldChoose) {
+    // clip takes the first GPU in registry order, else the first iGPU; RPC devices are type GPU
+    EXPECT_EQ(mmproj_device_override({cpu(), rpc_dev("RPC0", "a:1")}, {}).value(), "") << "CPU-only host";
+    EXPECT_EQ(mmproj_device_override({gpu("CUDA0"), cpu(), rpc_dev("RPC0", "a:1")}, {}).value(), "CUDA0");
+    EXPECT_EQ(mmproj_device_override({igpu("iGPU0"), cpu(), rpc_dev("RPC0", "a:1")}, {}).value(), "iGPU0");
+    // a requested RPC device is as eligible as it is upstream
+    EXPECT_EQ(mmproj_device_override({cpu(), rpc_dev("RPC0", "a:1"), rpc_dev("RPC1", "b:2")}, {"b:2"}).value(), "RPC1");
+}
+
+TEST(RpcSupport, MmprojDeviceOptionIsRecognisedInEverySpelling) {
+    EXPECT_TRUE(has_mmproj_device_option({"x", "--mmproj-device", "CUDA0"}));
+    EXPECT_TRUE(has_mmproj_device_option({"x", "-mmdev", "CUDA0"}));
+    EXPECT_TRUE(has_mmproj_device_option({"x", "--no-mmproj-offload"}));
+    EXPECT_FALSE(has_mmproj_device_option({"x", "--mmproj-offload", "--mmproj", "m.gguf"}));
 }
 
 // ---- the real client and server over loopback --------------------------------------------------
@@ -327,9 +351,39 @@ TEST(RpcClient, AStaleServerIsKeptOutOfALaterLoadThatDidNotAskForIt) {
         }
     }
 
-    // an explicit --device from the caller is never overridden
-    const auto explicit_devices = jllama::rpc::prepare_argv({"llama", "-dev", "none"});
-    EXPECT_EQ(explicit_devices, (std::vector<std::string>{"llama", "-dev", "none"}));
+    // ...and the multimodal projector is pinned too: clip would otherwise take the stale RPC device
+    // on a host without a local GPU
+    ASSERT_TRUE(jllama::rpc::has_mmproj_device_option(without));
+    for (const auto &info : jllama::rpc::registered_devices()) {
+        if (!info.endpoint.empty()) {
+            EXPECT_EQ(std::find(without.begin(), without.end(), info.name), without.end()) << info.name;
+        }
+    }
+
+    // an explicit --device from the caller is never overridden (the mmproj device still is pinned)
+    const auto explicit_devices = jllama::rpc::prepare_argv({"llama", "-dev", "none", "--no-mmproj-offload"});
+    EXPECT_EQ(explicit_devices, (std::vector<std::string>{"llama", "-dev", "none", "--no-mmproj-offload"}));
+
+    // the params-level guard for TextToSpeech / LlamaTrainer, which never parse an argv
+    std::vector<ggml_backend_dev_t> params_devices;
+    const auto mmproj = jllama::rpc::exclude_stale_devices(params_devices);
+    ASSERT_FALSE(params_devices.empty());
+    EXPECT_EQ(params_devices.back(), nullptr) << "null-terminated like parse_device_list";
+    for (size_t i = 0; i + 1 < params_devices.size(); ++i) {
+        ASSERT_NE(params_devices[i], nullptr);
+        EXPECT_FALSE(jllama::rpc::is_rpc_device(params_devices[i])) << ggml_backend_dev_name(params_devices[i]);
+    }
+    ASSERT_TRUE(mmproj.has_value());
+    if (!mmproj->empty()) {
+        ggml_backend_dev_t dev = ggml_backend_dev_by_name(mmproj->c_str());
+        ASSERT_NE(dev, nullptr);
+        EXPECT_FALSE(jllama::rpc::is_rpc_device(dev));
+    }
+    // an explicit device list is kept as it is
+    ggml_backend_dev_t cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
+    std::vector<ggml_backend_dev_t> chosen = {cpu_dev, nullptr};
+    (void)jllama::rpc::exclude_stale_devices(chosen);
+    EXPECT_EQ(chosen, (std::vector<ggml_backend_dev_t>{cpu_dev, nullptr}));
 
     // and a registered RPC device can never be served back out by name (it would forward to itself)
     size_t checked = 0;
