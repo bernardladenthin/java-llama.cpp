@@ -322,14 +322,24 @@ matching GPU) and bundle **no** vendor runtime.
 
 | Classifier | GGML flag(s) | Job runner / toolchain | Tree |
 |---|---|---|---|
-| `rocm-linux-x86-64` | `GGML_HIP=ON -DAMDGPU_TARGETS=…` | `ubuntu-latest` + ROCm apt repo (`/opt/rocm/llvm/bin/clang`) | `resources_linux_rocm` |
-| `rocm-windows-x86-64` | `GGML_HIP=ON` | `windows-2025-vs2026` + AMD HIP SDK | `resources_windows_rocm` |
+| `rocm-linux-x86-64` | `GGML_HIP=ON -DCMAKE_HIP_COMPILER=… -DGPU_TARGETS=…` | `ubuntu-latest` + ROCm 10 TheRock wheels (pip, `rocm-sdk path`) | `resources_linux_rocm` |
+| `rocm-windows-x86-64` | `GGML_HIP=ON` | `windows-2022` + ROCm 10 TheRock wheels (pip) | `resources_windows_rocm` |
 | `sycl-fp16-linux-x86-64` | `GGML_SYCL=ON -DGGML_SYCL_F16=ON` (`icx`/`icpx`) | `ubuntu-latest` + Intel oneAPI apt | `resources_linux_sycl_fp16` |
 | `sycl-fp32-linux-x86-64` | `GGML_SYCL=ON` (`icx`/`icpx`) | `ubuntu-latest` + Intel oneAPI apt | `resources_linux_sycl_fp32` |
 | `sycl-windows-x86-64` | `GGML_SYCL=ON` (`icx`) | `windows-2025-vs2026` + oneAPI installer | `resources_windows_sycl` |
 | `opencl-windows-aarch64` | `GGML_OPENCL=ON …ADRENO_KERNELS=ON` (clang-cl, `GGML_OPENMP=OFF`) | `windows-11-arm` (arm64 CPU job's toolchain) | `resources_windows_opencl` (arch subdir `aarch64`) |
 | `openvino-linux-x86-64` | `GGML_OPENVINO=ON` | `ubuntu-latest` + OpenVINO apt | `resources_linux_openvino` |
 | `openvino-windows-x86-64` | `GGML_OPENVINO=ON` | `windows-2025-vs2026` + OpenVINO archive | `resources_windows_openvino` |
+
+**ROCm comes from TheRock, and the version and GPU targets follow upstream.** Since ROCm 7.14 AMD
+builds and releases ROCm through [TheRock](https://github.com/ROCm/TheRock); both ROCm jobs install
+its Python wheels (`rocm[libraries,devel]` from `stable.repo.amd.com/rocm/whl-next/`) exactly as
+llama.cpp's own `ubuntu-rocm` / `windows-rocm` release jobs do, and read the paths back with
+`rocm-sdk path`. The ROCm version and the `GPU_TARGETS` list are copied from upstream's
+`release.yml` at the pinned `GIT_TAG` — **re-check both on every llama.cpp bump**. Architectures
+upstream no longer builds are deliberately **not** carried along (gfx900/gfx906 were dropped at the
+switch from the old 6.3.4 apt repo: TheRock marks them "build passing" only, never release-ready):
+supporting hardware llama.cpp itself does not ship for is not worth holding back a newer toolchain.
 
 Two routing notes mirror existing precedent: **Linux SYCL** ships two precision variants at the *same*
 arch, so `CMakeLists.txt` routes them to two *distinct* trees by `GGML_SYCL_F16` (fp16 vs fp32).

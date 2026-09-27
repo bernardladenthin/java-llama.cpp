@@ -2020,6 +2020,12 @@ jobs:
       SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
+      - name: Free up disk space
+        # The TheRock wheels unpack to several GB; upstream's ubuntu-rocm job frees the runner
+        # the same way. Runs first, before setup-java puts the JDK into the tool cache.
+        uses: ggml-org/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@v8
@@ -2030,21 +2036,36 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
-      - name: Install ROCm/HIP (AMD apt repo)
+      - name: Install ROCm/HIP (TheRock wheels)
+        # KEEP IN SYNC WITH UPSTREAM: ROCM_VERSION and the GPU target list track the ubuntu-rocm
+        # job in llama.cpp's .github/workflows/release.yml at the pinned GIT_TAG. Since ROCm 7.14
+        # AMD builds and releases ROCm through TheRock (https://github.com/ROCm/TheRock), replacing
+        # the monolithic releases behind the repo.radeon.com apt repo this job used before (it was
+        # pinned at 6.3.4). The wheels carry the HIP runtime + CMake configs ("libraries") and the
+        # compilers/headers ("devel"); rocm-sdk reports where they landed.
+        env:
+          ROCM_VERSION: "10.0.0"
         run: |
-          sudo mkdir --parents --mode=0755 /etc/apt/keyrings
-          wget -qO- https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.3.4 noble main" | sudo tee /etc/apt/sources.list.d/rocm.list
-          printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' | sudo tee /etc/apt/preferences.d/rocm-pin-600
-          sudo apt-get update
-          sudo apt-get install -y rocm-hip-sdk rocblas-dev hipblas-dev
-          echo "/opt/rocm/bin" >> "$GITHUB_PATH"
-          echo "ROCM_PATH=/opt/rocm" >> "$GITHUB_ENV"
+          python3 -m venv "$RUNNER_TEMP/rocm-venv"
+          source "$RUNNER_TEMP/rocm-venv/bin/activate"
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "rocm[libraries,devel]==${ROCM_VERSION}"
+          ROCM_PATH=$(rocm-sdk path --root)
+          echo "ROCM_PATH=$ROCM_PATH" >> "$GITHUB_ENV"
+          echo "HIP_PATH=$ROCM_PATH" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$(rocm-sdk path --cmake)" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$ROCM_PATH/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "$(rocm-sdk path --bin)" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/rocm-venv/bin" >> "$GITHUB_PATH"
       - name: Build libraries
         shell: bash
+        # Native CMake HIP language (upstream's form): the HIP compiler is ROCm's clang, the C/C++
+        # TUs stay on the runner's gcc. The target list is upstream's; architectures llama.cpp no
+        # longer ships (gfx900/gfx906 — "build passing" only in TheRock, never release-ready) are
+        # not carried here.
         run: |
           mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DGGML_HIP=ON -DAMDGPU_TARGETS=gfx900;gfx906;gfx908;gfx90a;gfx1030;gfx1100;gfx1101;gfx1102 -DCMAKE_C_COMPILER=/opt/rocm/llvm/bin/clang -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/clang++ -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
+          .github/build.sh "-DGGML_HIP=ON -DCMAKE_HIP_COMPILER=$(hipconfig -l)/clang -DGPU_TARGETS=gfx908;gfx90a;gfx942;gfx950;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1200;gfx1201 -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2059,7 +2080,7 @@ jobs:
     # HIP clang headers (__clang_hip_cmath.h) cannot overload the __host__ __device__
     # isgreater/isless/... that the very new MSVC <cmath> declares via _CLANG_BUILTIN2, so the
     # device-code compile fails. Upstream llama.cpp builds win-hip on windows-2022 for the same
-    # reason (it drives the HIP SDK's own clang and relies on the older MSVC STL).
+    # reason (it drives ROCm's own clang and relies on the older MSVC STL).
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v7
@@ -2072,23 +2093,39 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Install AMD HIP SDK for Windows
+      - name: Install ROCm/HIP (TheRock wheels)
         shell: pwsh
-        # Mirrors upstream llama.cpp's windows-hip release job: HIP SDK 26.Q1, then
-        # resolve HIP_PATH from the installed ROCm dir and point the compilers +
-        # CMAKE_PREFIX_PATH at it so ggml-hip's find_package(hip) resolves.
+        # KEEP IN SYNC WITH UPSTREAM: mirrors llama.cpp's windows-rocm release job
+        # (.github/actions/windows-setup-rocm at the pinned GIT_TAG) — the same TheRock wheels as
+        # the Linux job, in place of the former AMD-Software-PRO-Edition HIP SDK installer. The
+        # venv lives under C:\TheRock\build, the path upstream uses.
+        env:
+          ROCM_VERSION: "10.0.0"
         run: |
-          $url = "https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\rocm-install.exe"
-          $proc = Start-Process "$env:RUNNER_TEMP\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -PassThru -Wait
-          if ($proc.ExitCode -ne 0) { Write-Error "HIP SDK install failed with exit code $($proc.ExitCode)"; exit 1 }
-          $hip = $(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | Split-Path | Split-Path)
-          "HIP_PATH=$hip" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "$hip\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          $ErrorActionPreference = "Stop"
+          New-Item -Path "C:\TheRock\build" -ItemType Directory -Force | Out-Null
+          python -m venv C:\TheRock\build\.venv
+          & C:\TheRock\build\.venv\Scripts\Activate.ps1
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "rocm[libraries,devel]==$env:ROCM_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "ROCm wheel install failed with exit code $LASTEXITCODE" }
+          rocm-sdk init
+          if ($LASTEXITCODE -ne 0) { throw "rocm-sdk init failed with exit code $LASTEXITCODE" }
+          $rocm = (rocm-sdk path --root)
+          if (-not $rocm) { throw "rocm-sdk path --root returned empty - devel package may not be installed" }
+          $rocm = $rocm.Trim()
+          "HIP_PATH=$rocm" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "HIP_DEVICE_LIB_PATH=$rocm\lib\llvm\amdgcn\bitcode" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "HIP_PLATFORM=amd" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "LLVM_PATH=$rocm\lib\llvm" | Out-File -FilePath $env:GITHUB_ENV -Append
+          (rocm-sdk path --bin).Trim() | Out-File -FilePath $env:GITHUB_PATH -Append
+          "C:\TheRock\build\.venv\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Append
       - name: Build libraries
         shell: cmd
+        # Upstream's compiler wiring for TheRock (clang under lib\llvm\bin, not bin\) and its
+        # GPU target list; -Wno-error=incompatible-pointer-types is upstream's too.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DGGML_HIP=ON -DGPU_TARGETS=gfx1030;gfx1100;gfx1101;gfx1102 -DCMAKE_PREFIX_PATH="%HIP_PATH%" -DCMAKE_C_COMPILER="%HIP_PATH%\bin\clang.exe" -DCMAKE_CXX_COMPILER="%HIP_PATH%\bin\clang++.exe" -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DGGML_HIP=ON -DGPU_TARGETS=gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201 -DCMAKE_PREFIX_PATH="%HIP_PATH%" -DHIP_PATH="%HIP_PATH%" -DCMAKE_C_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_CXX_COMPILER="%HIP_PATH%\lib\llvm\bin\clang++.exe" -DCMAKE_HIP_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_C_FLAGS="-Wno-error=incompatible-pointer-types" -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
