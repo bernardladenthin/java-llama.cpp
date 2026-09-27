@@ -943,7 +943,11 @@ The selection rules are pure functions over a descriptor list (unit-tested with 
 pins the end-to-end reason: a model over RPC, the server stopped, then a load **without** `--rpc` in
 the same JVM — which would offload to the stopped server and abort without step 2.
 
-**`RpcServer` (root package, `rpc_bridge.cpp`).** The in-JVM `rpc-server`: ggml's blocking
+**`RpcServer` (root package) + `RpcServerNative` (`rpc_bridge.cpp`).** The native calls live in the
+package-private `RpcServerNative`, behind the `RpcServer.Backend` seam, so `RpcServer` itself loads
+without `libjllama` and its whole Java-side lifecycle is tested with a fake backend
+(`RpcServerLifecycleTest`) — the analysis build (SonarCloud, no native library) sees it covered, and a
+new lifecycle branch cannot hide behind "needs natives". The in-JVM `rpc-server`: ggml's blocking
 `ggml_backend_rpc_start_server()` runs on a daemon Java thread, `close()` calls
 `ggml_backend_rpc_stop_server()` (patch `0015`), and `start` waits for
 `ggml_backend_rpc_server_listening()` so a bind failure is a `LlamaException` rather than a silently
@@ -957,7 +961,8 @@ literal at its first colon). `main()` is the command-line form
 (`java -cp <jar> net.ladenthin.llama.RpcServer --port 50052`).
 
 **Tests, by layer.** C++ `test_rpc.cpp` (22, every platform in `C++ Tests`): selection rules plus the
-real client/server over loopback. Java: `RpcEndpointTest` and `RpcServerOptionsTest` (pure),
+real client/server over loopback. Java: `RpcEndpointTest`, `RpcServerOptionsTest` and `RpcServerLifecycleTest` (pure; the last one
+drives start/stop, bind failure, start timeout, interrupt and the single-instance slot over a fake backend),
 `RpcServerTest` (native, model-free: lifecycle, restart on the same port, single instance, bind
 failure, unreachable `--rpc` load), `RpcIntegrationTest` (draft model: layers on the RPC server
 proven from the load log's `model buffer size` line naming the endpoint, then the stale-server

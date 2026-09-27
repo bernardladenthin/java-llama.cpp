@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: MIT
 
-// JNI bridge for net.ladenthin.llama.RpcServer: serves this process's devices to llama.cpp RPC
-// clients (`--rpc host:port` on another llama.cpp / java-llama.cpp instance), the in-JVM
-// counterpart of upstream's rpc-server binary.
+// JNI bridge for net.ladenthin.llama.RpcServerNative, the native half of RpcServer: serves this
+// process's devices to llama.cpp RPC clients (`--rpc host:port` on another llama.cpp /
+// java-llama.cpp instance), the in-JVM counterpart of upstream's rpc-server binary.
 //
 // The server loop is ggml's own ggml_backend_rpc_start_server(), which blocks for the life of the
 // server; RpcServer runs it on a Java thread of its own and ends it with ggml_backend_rpc_stop_server()
@@ -41,8 +41,9 @@ jclass rpc_exception_class(JNIEnv *env) { return env->FindClass("net/ladenthin/l
 
 extern "C" {
 
-JNIEXPORT void JNICALL Java_net_ladenthin_llama_RpcServer_serveNative(JNIEnv *env, jclass, jstring jhost, jint port,
-                                                                      jint threads, jstring jcache_dir) {
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_RpcServerNative_serveNative(JNIEnv *env, jclass, jstring jhost,
+                                                                            jint port, jint threads,
+                                                                            jstring jcache_dir) {
     return jni_guard_impl(env, rpc_exception_class(env), [&]() -> void {
         const std::string endpoint = parse_jstring(env, jhost) + ":" + std::to_string(port);
         std::string cache_dir;
@@ -60,16 +61,16 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_RpcServer_serveNative(JNIEnv *en
     });
 }
 
-JNIEXPORT void JNICALL Java_net_ladenthin_llama_RpcServer_stopNative(JNIEnv *env, jclass) {
+JNIEXPORT void JNICALL Java_net_ladenthin_llama_RpcServerNative_stopNative(JNIEnv *env, jclass) {
     return jni_guard_impl(env, rpc_exception_class(env), [&]() -> void { ggml_backend_rpc_stop_server(); });
 }
 
-JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_RpcServer_serverListeningNative(JNIEnv *env, jclass) {
+JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_RpcServerNative_serverListeningNative(JNIEnv *env, jclass) {
     return jni_guard_impl(env, rpc_exception_class(env),
                           [&]() -> jboolean { return ggml_backend_rpc_server_listening() ? JNI_TRUE : JNI_FALSE; });
 }
 
-JNIEXPORT jobjectArray JNICALL Java_net_ladenthin_llama_RpcServer_serverDevicesNative(JNIEnv *env, jclass) {
+JNIEXPORT jobjectArray JNICALL Java_net_ladenthin_llama_RpcServerNative_serverDevicesNative(JNIEnv *env, jclass) {
     return jni_guard_impl(env, rpc_exception_class(env), [&]() -> jobjectArray {
         const auto devices = jllama::rpc::server_devices();
         jclass string_class = env->FindClass("java/lang/String");

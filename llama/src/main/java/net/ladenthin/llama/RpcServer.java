@@ -16,7 +16,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import net.ladenthin.llama.exception.LlamaException;
-import net.ladenthin.llama.loader.LlamaLoader;
 import net.ladenthin.llama.value.RpcEndpoint;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -51,10 +50,6 @@ import org.slf4j.LoggerFactory;
  */
 public final class RpcServer implements AutoCloseable {
 
-    static {
-        LlamaLoader.initialize();
-    }
-
     /** Loopback, the only address the non-explicit factories bind to. */
     public static final String LOOPBACK = "127.0.0.1";
 
@@ -68,13 +63,34 @@ public final class RpcServer implements AutoCloseable {
 
     private static final AtomicBoolean ACTIVE = new AtomicBoolean();
 
+    /**
+     * The native server operations. A seam of its own so the lifecycle here -- single instance,
+     * bind failure, start timeout, stop -- is testable without the native library; production code
+     * always uses {@link RpcServerNative}.
+     */
+    interface Backend {
+        /** Blocks for the life of the server, or returns at once when the socket cannot be bound. */
+        void serve(String host, int port, int threads, @Nullable String cacheDir);
+
+        /** Makes a running {@link #serve} return. */
+        void stop();
+
+        /** Whether {@link #serve} is accepting connections. */
+        boolean listening();
+
+        /** Names of the devices {@link #serve} would offer. */
+        String @Nullable [] devices();
+    }
+
     private final RpcEndpoint endpoint;
     private final Thread thread;
+    private final Backend backend;
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    private RpcServer(RpcEndpoint endpoint, Thread thread) {
+    private RpcServer(RpcEndpoint endpoint, Thread thread, Backend backend) {
         this.endpoint = endpoint;
         this.thread = thread;
+        this.backend = backend;
     }
 
     /**
@@ -102,7 +118,7 @@ public final class RpcServer implements AutoCloseable {
      * @throws IllegalStateException when a server is already running in this process
      */
     public static RpcServer startLocal(int port, int threads, @Nullable Path cacheDir) {
-        return start(RpcEndpoint.of(LOOPBACK, port), threads, cacheDir);
+        return start(RpcEndpoint.of(LOOPBACK, port), threads, cacheDir, RpcServerNative.INSTANCE, START_TIMEOUT_MILLIS);
     }
 
     /**
@@ -127,10 +143,13 @@ public final class RpcServer implements AutoCloseable {
                     bindAddress,
                     port);
         }
-        return start(RpcEndpoint.of(bindAddress, port), threads, cacheDir);
+        return start(
+                RpcEndpoint.of(bindAddress, port), threads, cacheDir, RpcServerNative.INSTANCE, START_TIMEOUT_MILLIS);
     }
 
-    private static RpcServer start(RpcEndpoint endpoint, int threads, @Nullable Path cacheDir) {
+    /** The lifecycle of {@link #startLocal}/{@link #startOnNetwork}, on an explicit backend and timeout. */
+    static RpcServer start(
+            RpcEndpoint endpoint, int threads, @Nullable Path cacheDir, Backend backend, long startTimeoutMillis) {
         if (threads < 1) {
             throw new IllegalArgumentException("threads must be at least 1, was " + threads);
         }
@@ -145,7 +164,7 @@ public final class RpcServer implements AutoCloseable {
             Thread thread = new Thread(
                     () -> {
                         try {
-                            serveNative(endpoint.getHost(), endpoint.getPort(), threads, cache);
+                            backend.serve(endpoint.getHost(), endpoint.getPort(), threads, cache);
                         } catch (Throwable t) {
                             failure.set(t);
                         }
@@ -153,13 +172,13 @@ public final class RpcServer implements AutoCloseable {
                     "jllama-rpc-server-" + endpoint.getPort());
             thread.setDaemon(true);
             thread.start();
-            if (!awaitListening(thread)) {
+            if (!awaitListening(thread, backend, startTimeoutMillis)) {
                 joinQuietly(thread, STOP_TIMEOUT_MILLIS);
                 Throwable cause = failure.get();
                 throw new LlamaException("RPC server could not listen on " + endpoint
                         + (cause == null ? " (is the port already in use?)" : ": " + cause.getMessage()));
             }
-            RpcServer server = new RpcServer(endpoint, thread);
+            RpcServer server = new RpcServer(endpoint, thread, backend);
             started = true;
             return server;
         } finally {
@@ -215,7 +234,7 @@ public final class RpcServer implements AutoCloseable {
             return;
         }
         try {
-            stopNative();
+            backend.stop();
             joinQuietly(thread, STOP_TIMEOUT_MILLIS);
         } finally {
             ACTIVE.set(false);
@@ -228,7 +247,11 @@ public final class RpcServer implements AutoCloseable {
      * @return device names as llama.cpp reports them, e.g. {@code [CUDA0]} or {@code [CPU]}
      */
     public static List<String> servedDevices() {
-        String[] devices = serverDevicesNative();
+        return servedDevices(RpcServerNative.INSTANCE);
+    }
+
+    static List<String> servedDevices(Backend backend) {
+        String[] devices = backend.devices();
         return devices == null ? Collections.<String>emptyList() : Collections.unmodifiableList(Arrays.asList(devices));
     }
 
@@ -342,10 +365,10 @@ public final class RpcServer implements AutoCloseable {
         }
     }
 
-    private static boolean awaitListening(Thread thread) {
-        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(START_TIMEOUT_MILLIS);
+    private static boolean awaitListening(Thread thread, Backend backend, long timeoutMillis) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
         while (System.nanoTime() < deadline) {
-            if (serverListeningNative()) {
+            if (backend.listening()) {
                 return true;
             }
             if (!thread.isAlive()) {
@@ -360,7 +383,7 @@ public final class RpcServer implements AutoCloseable {
             }
         }
         // still binding after the timeout, or interrupted: make sure the thread does not outlive us
-        stopNative();
+        backend.stop();
         return false;
     }
 
@@ -379,12 +402,4 @@ public final class RpcServer implements AutoCloseable {
             throw new UncheckedIOException("cannot create the RPC tensor cache directory " + dir, e);
         }
     }
-
-    private static native void serveNative(String host, int port, int threads, @Nullable String cacheDir);
-
-    private static native void stopNative();
-
-    private static native boolean serverListeningNative();
-
-    private static native String @Nullable [] serverDevicesNative();
 }
