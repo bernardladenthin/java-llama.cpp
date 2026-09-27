@@ -101,6 +101,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   where the backend cannot provide it, `OFF` disables it.
 
 ### Changed
+- **llama.cpp `b11080` → `b11209`, in five steps sized by what they change here.** 129 upstream
+  commits. Four steps are version-only from this project's side (`b11103`, `b11160`, `b11163`,
+  `b11209`); the one incompatible change got a step of its own: **`b11104`** (llama.cpp #28690)
+  lets `--host` take a comma-separated list of addresses and removed `server_http_context::thread`
+  and `::listening_address`. `patches/0007` still applied cleanly there but named both members, so
+  it was refreshed to upstream's new `join()` / `listening_addresses` shape; and
+  `NativeServer` gains **`getHosts()`**, with `getHost()` now returning the first address instead
+  of the raw comma-separated string. New upstream surface that needs no project change: the
+  extended batch API (`llama_batch_ext` + `llama_process`, #24669, additive), `input_image` accepted
+  as a Responses-API `function_call_output` and OpenAI's `video_url` as an alias of `input_video`
+  on the native server (#22575, #27921), cleanup of K/V and recurrent state after a failed state
+  restore (#27530), and new model support (Ling 3.0 VL, Gemma 4 DSpark draft, MiMo-V2.6).
+  cpp-httplib moves to 0.58.0. All eight local patches are still required.
 - **llama.cpp `b11069` → `b11080`, and local patch `0010` dropped — upstream fixed the
   enum-to-JSON-boolean trap at its root.** Eleven upstream commits, 1244 KiB, no project-source
   change. The size is one commit that does not concern this project (llama.cpp #29197 rewrites 46
