@@ -207,9 +207,18 @@ public final class JLineTerminal implements AgentTerminal {
                         try {
                             now = terminal.getSize();
                         } catch (RuntimeException e) {
-                            // The session ended while this was between two polls: reading a closed
-                            // terminal throws, and a poll must not turn a normal exit into an error.
-                            return;
+                            // A closed terminal throws here, and a poll must not turn a normal exit into
+                            // an error -- but ONLY a closed terminal ends this loop. Returning on any
+                            // failure was a defect with a very confusing symptom: one transient throw
+                            // killed the thread, the block then kept whatever width it had been built
+                            // for, and a window shrunk afterwards showed a rule WIDER than itself,
+                            // wrapping onto a second screen line and pushing everything below it one row
+                            // out of place. Reported as "beim Groesse veraendern geht es immer noch
+                            // kaputt" on a screen whose block was otherwise correct.
+                            if (closed) {
+                                return;
+                            }
+                            continue;
                         }
                         if (now.getColumns() == last.getColumns() && now.getRows() == last.getRows()) {
                             continue;

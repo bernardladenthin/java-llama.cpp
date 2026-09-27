@@ -34,11 +34,14 @@ import org.jline.utils.ScreenTerminalOutputStream;
  * terminal itself. A test therefore puts only the console in a try-with-resources and keeps the harness
  * in a plain local, or every test ends in an error about a terminal that is already closed.
  *
+ * <p>Not final: one test subclasses it to make {@code getSize()} throw once, which is how the size
+ * poll's resilience is driven through the real thread rather than around it.
+ *
  * <p>The terminal type is {@code windows-vtp} on purpose: it is where every report in this class's
  * history came from, and it differs from {@code xterm} in ways that matter here (no
  * {@code eat_newline_glitch} in older JLine, no {@code scroll_reverse}, no {@code key_btab}).
  */
-final class ScreenTerminalHarness extends LineDisciplineTerminal {
+class ScreenTerminalHarness extends LineDisciplineTerminal {
 
     private final ScreenTerminal screen;
 

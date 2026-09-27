@@ -10,6 +10,7 @@ import static org.hamcrest.Matchers.is;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import org.jline.terminal.Size;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
@@ -249,6 +250,16 @@ class ScreenUseCasesTest {
         return new ArrayList<>(Arrays.asList("… waiting for input …", REAL_STATE));
     }
 
+    /** A newline, spelled out so a heredoc cannot eat the escape. */
+    private static final String NEWLINE = System.lineSeparator();
+
+    /** The block the agent really pins now: basic-plane icons, the shape the reports came from. */
+    private List<String> realBlockWithBasicPlaneIcons() {
+        return new ArrayList<>(Arrays.asList(
+                "… waiting for input …",
+                "[▤ X:/tmp/agent-sandbox · " + ApprovalMode.MANUAL.badge() + " · ▦ 0/16k · ⚒ 8 · ◆ local-model]"));
+    }
+
     /** Rows carrying the real state row, found by its leading glyph rather than the whole string. */
     private int realStateRows(String[] rows) {
         return count(rows, row -> row.contains("📁"));
@@ -341,6 +352,154 @@ class ScreenUseCasesTest {
             String[] rows = terminal.rows();
             assertThat("the state row is on screen once:\n" + screen, realStateRows(rows), is(1));
             assertThat("the state row is the bottom row:\n" + screen, rows[ROWS - 1].contains("📁"), is(true));
+        }
+    }
+
+    @Test
+    void noBlockRowIsEverWiderThanTheWindow() throws Exception {
+        // The report this exists for: after resizing, the rule was WIDER than the window, wrapped onto a
+        // second screen line, and pushed the two rows below it one row out of place -- on a screen whose
+        // block was otherwise correct. A row of the pinned region may never exceed the window, whatever
+        // width it was originally built for, because the region is reserved in LINES: one wrapped row
+        // costs two of them and everything below lands wrong.
+        ScreenTerminalHarness terminal = terminal(WIDE);
+        try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
+            terminal.type("Hallo");
+            Thread.sleep(200);
+
+            resizeOnce(terminal, console, NARROW);
+
+            String screen = terminal.describe();
+            String[] rows = terminal.rows();
+            // A wrapped row shows up as the SAME row content continuing on the next screen line, so the
+            // direct check is that no row above the block carries rule characters: the rule belongs on
+            // exactly one row, the third from the bottom.
+            for (int row = 0; row < ROWS - 3; row++) {
+                assertThat(
+                        "row " + row + " carries part of the block, so a row below wrapped:" + NEWLINE + screen,
+                        isRule(rows[row]),
+                        is(false));
+            }
+            assertThat("the rule is on screen once:" + NEWLINE + screen, count(rows, this::isRule), is(1));
+            assertThat(
+                    "the rule is the third row from the bottom:" + NEWLINE + screen, isRule(rows[ROWS - 3]), is(true));
+        }
+    }
+
+    @Test
+    void theBlockIsRebuiltWhenTheWindowShrinksBelowTheRuleItWasBuiltFor() throws Exception {
+        // The other half of the same report: the rule is as wide as the window it was built for, so after
+        // a shrink it has to be REMADE, not merely cut. Measured as the number of rule characters on the
+        // bottom rows, which must follow the new window rather than the old one.
+        ScreenTerminalHarness terminal = terminal(WIDE);
+        try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
+            resizeOnce(terminal, console, NARROW);
+
+            String screen = terminal.describe();
+            long dashes = terminal.rows()[ROWS - 3]
+                    .chars()
+                    .filter(character -> character == '─' || character == 'q')
+                    .count();
+            assertThat(
+                    "the rule follows the new window: " + dashes + " characters in a " + NARROW + "-column window"
+                            + NEWLINE + screen,
+                    dashes <= NARROW && dashes >= NARROW - 2L,
+                    is(true));
+        }
+    }
+
+    @Test
+    void theSizeWatchSurvivesATerminalThatThrowsOnce() throws Exception {
+        // The defect behind "beim Groesse veraendern geht es immer noch kaputt" on a screen whose block was
+        // otherwise correct. The poll read the size, one read threw, and the thread returned -- so the
+        // block kept the width it had last been built for, and a window shrunk afterwards showed a rule
+        // WIDER than itself, wrapping and pushing the rows below it out of place. One transient failure
+        // must cost one poll, not the session.
+        //
+        // Driven through the real thread rather than around it, because the thread is the thing that was
+        // wrong: a terminal that throws once on getSize(), then behaves.
+        // Armed only after the console is up: the line reader reads the size while it is being built, and
+        // an unarmed-from-the-start version had its one throw consumed there instead of by the poll.
+        java.util.concurrent.atomic.AtomicBoolean armed = new java.util.concurrent.atomic.AtomicBoolean(false);
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", WIDE, ROWS) {
+            @Override
+            public Size getSize() {
+                if (armed.compareAndSet(true, false)) {
+                    throw new IllegalStateException("transient");
+                }
+                return super.getSize();
+            }
+        };
+        try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
+            armed.set(true);
+            // Give the poll time to hit the throwing read and carry on.
+            Thread.sleep(400);
+
+            terminal.resize(NARROW, ROWS);
+            // No refresh call here on purpose: this is the one case where the POLL has to do the work.
+            // Waited for by CONDITION, not by the clock: a fixed sleep made this the one flaky test in the
+            // class, failing about two runs in three under load. It cannot be shorter than the poll and
+            // there is no upper bound on how long a busy machine takes to get there.
+            long deadline = System.currentTimeMillis() + 5000;
+            while (System.currentTimeMillis() < deadline && terminal.rows()[ROWS - 3].contains("…")) {
+                Thread.sleep(100);
+            }
+
+            String screen = terminal.describe();
+            long dashes = terminal.rows()[ROWS - 3]
+                    .chars()
+                    .filter(character -> character == '─' || character == 'q')
+                    .count();
+            // Both bounds, and the lower one is the whole test: a rule that is too WIDE gets cut by the
+            // pinned region on its own, so "not wider than the window" passes even when nothing was
+            // rebuilt -- verified by reverting the fix and watching this go green with only that half.
+            // A rebuilt rule spans the new window; a cut one falls short of it and ends in an ellipsis.
+            assertThat(
+                    "the poll kept working after one failed read: rule is " + dashes + " wide in a " + NARROW
+                            + "-column window" + NEWLINE + screen,
+                    dashes <= NARROW && dashes >= NARROW - 2L,
+                    is(true));
+            // The discriminator, and counting alone is not it: a rule built for the old window is CUT by
+            // the pinned region, which ends the row in an ellipsis and leaves the same number of dashes a
+            // rebuilt one would have. Verified by reverting the fix -- the count-only version stayed green.
+            assertThat(
+                    "the rule was rebuilt, not cut down from the old width" + NEWLINE + screen,
+                    terminal.rows()[ROWS - 3].contains("…"),
+                    is(false));
+        }
+    }
+
+    @Test
+    void oneAstralGlyphAloneInTheBlockIsEnoughToBreakIt() throws Exception {
+        // Which glyph class actually breaks the pinned region, isolated to one character. The arithmetic
+        // that matters is "UTF-16 chars vs screen columns": an emoji is 2 chars and 2 columns, which
+        // AGREES, while a transport symbol is 1 char and 2 columns, which does not -- so by that reading
+        // the emoji should be harmless and the mode glyph should not be. The measured result was the
+        // opposite, which is why this pins each class on its own rather than in a whole status row.
+        ScreenTerminalHarness terminal = terminal(WIDE);
+        try (JLineTerminal console = start(terminal, List.of("x 📁 x", STATE))) {
+            resizeOnce(terminal, console, NARROW);
+
+            String screen = terminal.describe();
+            assertThat(
+                    "with one emoji in the block, the state row is still on screen once" + NEWLINE + screen,
+                    count(terminal.rows(), row -> row.contains(STATE)),
+                    is(1));
+        }
+    }
+
+    @Test
+    void oneDoubleWidthBasicPlaneGlyphAloneInTheBlockIsFine() throws Exception {
+        // The counterpart: a glyph that is one char and (on many terminals) two columns.
+        ScreenTerminalHarness terminal = terminal(WIDE);
+        try (JLineTerminal console = start(terminal, List.of("x ⏸ x", STATE))) {
+            resizeOnce(terminal, console, NARROW);
+
+            String screen = terminal.describe();
+            assertThat(
+                    "with one transport glyph in the block, the state row is still on screen once" + NEWLINE + screen,
+                    count(terminal.rows(), row -> row.contains(STATE)),
+                    is(1));
         }
     }
 
