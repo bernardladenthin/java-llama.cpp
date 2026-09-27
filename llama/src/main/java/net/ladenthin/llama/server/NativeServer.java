@@ -4,6 +4,9 @@
 
 package net.ladenthin.llama.server;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -190,17 +193,40 @@ public final class NativeServer implements AutoCloseable {
     /**
      * Returns the bind host parsed from the arguments ({@code --host}), or {@code 127.0.0.1} when
      * absent. Best-effort convenience for logging; the authoritative value is what the native server
-     * parsed.
+     * parsed. When {@code --host} lists several addresses, this is the first of them — see
+     * {@link #getHosts()}.
      *
      * @return the configured bind host
      */
     public String getHost() {
+        return getHosts().get(0);
+    }
+
+    /**
+     * Returns every bind address parsed from the arguments ({@code --host}), or a single
+     * {@code 127.0.0.1} when absent. Since llama.cpp b11104 {@code --host} takes a comma-separated
+     * list (IP addresses and/or UNIX socket paths ending in {@code .sock}) and the server listens on
+     * all of them; blanks around the commas are ignored, as upstream does. Best-effort convenience for
+     * logging, like {@link #getHost()}.
+     *
+     * @return the configured bind addresses, never empty
+     */
+    public List<String> getHosts() {
         for (int i = 0; i < args.length - 1; i++) {
             if ("--host".equals(args[i])) {
-                return args[i + 1];
+                final List<String> hosts = new ArrayList<>();
+                for (final String host : args[i + 1].split(",", -1)) {
+                    final String trimmed = host.trim();
+                    if (!trimmed.isEmpty()) {
+                        hosts.add(trimmed);
+                    }
+                }
+                if (!hosts.isEmpty()) {
+                    return Collections.unmodifiableList(hosts);
+                }
             }
         }
-        return DEFAULT_HOST;
+        return Collections.singletonList(DEFAULT_HOST);
     }
 
     /**

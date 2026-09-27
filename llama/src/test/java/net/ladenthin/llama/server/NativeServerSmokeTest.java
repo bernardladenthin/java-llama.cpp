@@ -5,6 +5,7 @@
 package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -28,6 +29,21 @@ public class NativeServerSmokeTest {
     }
 
     @Test
+    public void commaSeparatedHostsAreSplitAndTrimmedAndTheFirstIsTheHost() {
+        // since llama.cpp b11104, --host takes a comma-separated list and binds all of them
+        NativeServer server = new NativeServer("-m", "m.gguf", "--host", "127.0.0.1, ::1 ,,/tmp/l.sock");
+        assertThat(server.getHosts(), contains("127.0.0.1", "::1", "/tmp/l.sock"));
+        assertThat(server.getHost(), is("127.0.0.1"));
+    }
+
+    @Test
+    public void hostListOfOnlySeparatorsFallsBackToDefault() {
+        NativeServer server = new NativeServer("-m", "m.gguf", "--host", " , ");
+        assertThat(server.getHosts(), contains("127.0.0.1"));
+        assertThat(server.getHost(), is("127.0.0.1"));
+    }
+
+    @Test
     public void shortPortFlagParsed() {
         NativeServer server = new NativeServer("-m", "m.gguf", "-p", "9099");
         assertThat(server.getPort(), is(9099));
@@ -37,6 +53,7 @@ public class NativeServerSmokeTest {
     public void defaultsWhenFlagsAbsent() {
         NativeServer server = new NativeServer("-m", "m.gguf");
         assertThat(server.getHost(), is("127.0.0.1"));
+        assertThat(server.getHosts(), contains("127.0.0.1"));
         assertThat(server.getPort(), is(8080));
     }
 

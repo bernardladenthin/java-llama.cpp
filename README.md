@@ -11,7 +11,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b11080](https://img.shields.io/badge/llama.cpp-%23b11080-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11080)  
+[![llama.cpp b11211](https://img.shields.io/badge/llama.cpp-%23b11211-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11211)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.0%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -191,8 +191,8 @@ exclusive — and optionally a CPU Windows build.
 | `vulkan-linux-x86-64` | Vulkan | Linux x86-64 with a Vulkan 1.2+ GPU (NVIDIA / AMD / Intel) | A Vulkan runtime (`libvulkan.so.1`), which current GPU drivers install. No Vulkan SDK is needed at runtime. The most portable Linux GPU option (vendor-independent, no CUDA toolkit). Built natively on `ubuntu-latest`, so it shares the aarch64 build's higher glibc floor (≈ 2.39). |
 | `vulkan-linux-aarch64` | Vulkan | Linux aarch64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`libvulkan.so.1`) from the device/driver. glibc ≥ 2.39 (built on `ubuntu-24.04-arm`). |
 | `opencl-android-aarch64` | OpenCL (Adreno) | Android aarch64 with Qualcomm Adreno GPU | A device-supplied OpenCL ICD (`libOpenCL.so`). Devices without an ICD (e.g. most non-Snapdragon Android hardware) must use the default CPU JAR. |
-| `rocm-linux-x86-64` | ROCm / HIP | Linux x86-64 with AMD GPU | An installed AMD ROCm runtime (`libamdhip64.so`, `librocblas.so`, `libhipblas.so`) on the host. Not bundled; native load fails without it. No CPU fallback. |
-| `rocm-windows-x86-64` | ROCm / HIP | Windows x86-64 with AMD GPU | The AMD HIP SDK runtime DLLs (`amdhip64.dll`, `rocblas.dll`, `hipblas.dll`) on `PATH`. Not bundled. No CPU fallback. |
+| `rocm-linux-x86-64` | ROCm / HIP | Linux x86-64 with AMD GPU | An installed AMD ROCm **10** runtime (`libamdhip64.so`, `librocblas.so`, `libhipblas.so`) on the host — built against ROCm 10.0 (TheRock), the same version upstream llama.cpp ships; targets every GPU TheRock builds for Linux, Instinct included (gfx900/gfx906/gfx90c/gfx1153 best effort — built, but not release-ready in ROCm 10). Not bundled; native load fails without it. No CPU fallback. |
+| `rocm-windows-x86-64` | ROCm / HIP | Windows x86-64 with AMD GPU | The AMD ROCm **10** runtime DLLs (`amdhip64.dll`, `rocblas.dll`, `hipblas.dll`) on `PATH` — built against ROCm 10.0 (TheRock); every Radeon target TheRock builds for Windows, gfx900 through RDNA4 (gfx900/gfx906/gfx90c/gfx1153 best effort). Not bundled. No CPU fallback. |
 | `sycl-fp16-linux-x86-64` | SYCL (Intel oneAPI, fp16) | Linux x86-64 with Intel GPU (Arc / iGPU) | An installed Intel oneAPI / Level-Zero runtime. fp16 accumulation (faster, slightly lower precision). Not bundled. |
 | `sycl-fp32-linux-x86-64` | SYCL (Intel oneAPI, fp32) | Linux x86-64 with Intel GPU (Arc / iGPU) | An installed Intel oneAPI / Level-Zero runtime. fp32 accumulation (higher precision). Not bundled. |
 | `sycl-windows-x86-64` | SYCL (Intel oneAPI) | Windows x86-64 with Intel GPU (Arc / iGPU) | The Intel oneAPI / Level-Zero runtime DLLs on `PATH`. Not bundled. |

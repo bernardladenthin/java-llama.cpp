@@ -197,12 +197,12 @@ index 102692c74..8389fe6bf 100644
 +        ctx_http.stop();
 +    };
 +
-+    SRV_INF("attached to existing server context, listening on %s\n", ctx_http.listening_address.c_str());
-+
-+    // block until llama_server_request_shutdown() stops the HTTP thread
-+    if (ctx_http.thread.joinable()) {
-+        ctx_http.thread.join();
++    for (const auto & address : ctx_http.listening_addresses) {
++        SRV_INF("attached to existing server context, listening on %s\n", address.c_str());
 +    }
++
++    // block until llama_server_request_shutdown() stops the HTTP listener threads
++    ctx_http.join();
 +
 +    server_stream_session_manager_stop();
 +    return 0;

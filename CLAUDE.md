@@ -6,37 +6,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b11080**
+Current llama.cpp pinned version: **b11211**
 
 ## Upgrading CUDA Version
 
-Current CUDA version: **13.3**
+Current CUDA version: **13.4** (Linux `cuda-toolkit-13-4` from NVIDIA's rhel8 repo; Windows 13.4 redist archives)
 
-To change the CUDA version, update the following **three** places:
+To change the CUDA version, update the following places:
 
-1. **`.github/build_cuda_linux.sh`** — Line 16: `sudo dnf install -y cuda-toolkit-13-3`
-2. **`.github/build_cuda_linux.sh`** — Line 41: `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.3/bin/nvcc`
-3. **`llama/pom.xml`** — The `<classifier>` tag in the `cuda` jar execution: `cuda13-linux-x86-64`
-
-Also update the header comment in `build_cuda_linux.sh` and the job name in `.github/workflows/release.yaml` for clarity.
+1. **`.github/build_cuda_linux.sh`** — the `sudo dnf install -y cuda-toolkit-13-4` line and the
+   `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.4/bin/nvcc` line (plus the header comment).
+2. **`.github/workflows/publish.yml`** — the `build-windows-x86_64-cuda` job's
+   "Install CUDA Toolkit … (NVIDIA redist archives)" step: the `v13.x` directory, `CUDA_PATH_V13_x`,
+   and the per-component archive list. **Copy that list from upstream's
+   `.github/actions/windows-setup-cuda/action.yml` at the pinned `GIT_TAG`** — the component versions
+   differ per component (cuBLAS and CCCL have their own numbering) and cannot be derived from the CUDA
+   version. (This replaced `Jimver/cuda-toolkit`, which never shipped 13.4.)
+3. **`llama/pom.xml`** — the `<classifier>`s `cuda13-linux-x86-64` / `cuda13-windows-x86-64`
+   (major version only — no change for a minor bump).
+4. **`CLAUDE.md`** — the "Current CUDA version" line above.
 
 Available CUDA versions for RHEL8/Manylinux_2_28 can be browsed at:
 ```
 https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/
 ```
+and the Windows redist components at `https://developer.download.nvidia.com/compute/cuda/redist/`.
 
 **Note:** Each CUDA version supports only certain GCC versions. If the dockcross container uses a newer GCC than CUDA supports, the build will fail with `unsupported GNU version`. Check NVIDIA's compatibility table before downgrading CUDA.
-
-Example: To upgrade from 13.3 to a hypothetical 13.4:
-```bash
-# Edit .github/build_cuda_linux.sh:
-#   line 10: cuda-toolkit-13-3 -> cuda-toolkit-13-4
-#   line 12: /usr/local/cuda-13.3/bin/nvcc -> /usr/local/cuda-13.4/bin/nvcc
-# Edit llama/pom.xml classifier: cuda13-linux-x86-64 (major version only, no need to change for minor bumps)
-# Edit CLAUDE.md line: Current CUDA version: **13.3** -> **13.4**
-git add .github/build_cuda_linux.sh llama/pom.xml CLAUDE.md
-git commit -m "Upgrade CUDA from 13.3 to 13.4"
-```
 
 ### Fast local CUDA builds (`CUDA_FAST_BUILD`) — single-arch speed knob
 
@@ -217,7 +213,8 @@ Wiring (mirrors the CUDA-Linux / OpenCL-Android classifier pattern):
    - `build-windows-x86_64` / `build-windows-x86` — **Ninja CPU**, artifacts `Windows-{arch}-libraries`
      → picked up by the `package` job's `pattern: "*-libraries"` into the **default** tree.
    - `build-windows-x86_64-msvc` / `build-windows-x86-msvc` — **MSVC CPU**, artifacts `Windows-{arch}-msvc`.
-   - `build-windows-x86_64-cuda` — `Jimver/cuda-toolkit@v0.2.36` (CUDA `13.3.1`) + `-DGGML_CUDA=ON`,
+   - `build-windows-x86_64-cuda` — CUDA `13.4` assembled from NVIDIA's redist archives (upstream's
+     `windows-setup-cuda` component list; `Jimver/cuda-toolkit` stops at 13.3.1) + `-DGGML_CUDA=ON`,
      artifact `Windows-x86_64-cuda`.
    - `build-windows-x86_64-vulkan` — `jakoch/install-vulkan-sdk-action` + `-DGGML_VULKAN=ON`, artifact
      `Windows-x86_64-vulkan`.
@@ -242,6 +239,20 @@ way CMake's `FindVulkan` couldn't read → switched to `jakoch/install-vulkan-sd
 FindVulkan-compatible). Because all five Windows build jobs are in the `package`/publish `needs:` graph, a
 GPU-toolchain failure blocks packaging — the same release-gating policy the Linux-CUDA / Android-OpenCL
 jobs already follow.
+
+**sccache on every Windows Ninja job.** All ten Ninja build jobs install sccache (x86_64 or the
+native `aarch64` release) with the same `USE_CACHE` / `SCCACHE_WEBDAV_*` env; only the two MSVC-classifier
+jobs cannot, because the Visual Studio generator ignores compiler launchers. It cannot red a build, by
+three guards in `build.bat`: the install step is `continue-on-error`; a probe compiles through sccache
+before it is trusted; and — because that probe only proves `cl.exe`, while arm64 builds with `clang-cl`,
+ROCm with its own `clang` and SYCL with `icx` — **a configure or build that fails with sccache as the
+launcher is retried once from a clean build dir without it**. The retry is unconditional (cmd cannot
+tee the output to match an error signature the way `build.sh` does), so a genuine compile error costs
+one extra uncached attempt before it fails. Every configure also passes `-DGGML_CCACHE=OFF`: without
+it ggml self-enables any sccache it finds on `PATH` whenever no launcher is set — exactly the
+probe-failed and retry cases — and the "uncached" build silently goes through sccache after all (the
+same trap `build.sh`'s retry hit with nvcc). `build.bat` uses no `goto`/labels on purpose: it is
+checked out with LF line endings, where cmd's label search is unreliable.
 
 **Local sanity builds** (need MSVC + Ninja on PATH; sccache optional; GPU builds also need the matching SDK):
 ```bat
@@ -294,8 +305,8 @@ build + `ctest`). It emits to the **canonical** `resources/.../Windows/aarch64/`
 tree — so it ships in the **default** JAR alongside Windows x86-64 / x86 (like those, it is not a
 classifier). No Java change was needed: `OSInfo` already maps a Windows-on-ARM JVM (`os.arch=aarch64`)
 to `Windows/aarch64` (it isn't in `archMapping`, so it falls through `translateArchNameToFolderName`).
-sccache is intentionally omitted (the shared install step pulls the x86_64 sccache zip; not worth an
-arm64 path for one CPU job — `build.bat` just builds uncached). **Compiler: `clang-cl`, not MSVC
+sccache runs here too, from its native `aarch64-pc-windows-msvc` release (it wraps `clang-cl`; see
+"sccache on every Windows Ninja job" above). **Compiler: `clang-cl`, not MSVC
 `cl.exe`.** ggml's `ggml-cpu/CMakeLists.txt` aborts with *"MSVC is not supported for ARM, use clang"*
 via `if (MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")`; `clang-cl` (LLVM's MSVC-compatible driver)
 satisfies that guard (compiler id `"Clang"`) while keeping CMake's `MSVC=TRUE`, so the static `/MT` CRT
@@ -322,8 +333,8 @@ matching GPU) and bundle **no** vendor runtime.
 
 | Classifier | GGML flag(s) | Job runner / toolchain | Tree |
 |---|---|---|---|
-| `rocm-linux-x86-64` | `GGML_HIP=ON -DAMDGPU_TARGETS=…` | `ubuntu-latest` + ROCm apt repo (`/opt/rocm/llvm/bin/clang`) | `resources_linux_rocm` |
-| `rocm-windows-x86-64` | `GGML_HIP=ON` | `windows-2025-vs2026` + AMD HIP SDK | `resources_windows_rocm` |
+| `rocm-linux-x86-64` | `GGML_HIP=ON -DCMAKE_HIP_COMPILER=… -DGPU_TARGETS=…` | `ubuntu-latest` + ROCm 10 TheRock wheels (pip, `rocm-sdk path`) | `resources_linux_rocm` |
+| `rocm-windows-x86-64` | `GGML_HIP=ON` | `windows-2022` + ROCm 10 TheRock wheels (pip) | `resources_windows_rocm` |
 | `sycl-fp16-linux-x86-64` | `GGML_SYCL=ON -DGGML_SYCL_F16=ON` (`icx`/`icpx`) | `ubuntu-latest` + Intel oneAPI apt | `resources_linux_sycl_fp16` |
 | `sycl-fp32-linux-x86-64` | `GGML_SYCL=ON` (`icx`/`icpx`) | `ubuntu-latest` + Intel oneAPI apt | `resources_linux_sycl_fp32` |
 | `sycl-windows-x86-64` | `GGML_SYCL=ON` (`icx`) | `windows-2025-vs2026` + oneAPI installer | `resources_windows_sycl` |
@@ -331,11 +342,28 @@ matching GPU) and bundle **no** vendor runtime.
 | `openvino-linux-x86-64` | `GGML_OPENVINO=ON` | `ubuntu-latest` + OpenVINO apt | `resources_linux_openvino` |
 | `openvino-windows-x86-64` | `GGML_OPENVINO=ON` | `windows-2025-vs2026` + OpenVINO archive | `resources_windows_openvino` |
 
+**ROCm comes from TheRock, and the version and GPU targets follow upstream.** Since ROCm 7.14 AMD
+builds and releases ROCm through [TheRock](https://github.com/ROCm/TheRock); both ROCm jobs install
+its Python wheels (`rocm[libraries,devel]` from `stable.repo.amd.com/rocm/whl-next/`) exactly as
+llama.cpp's own `ubuntu-rocm` / `windows-rocm` release jobs do, and read the paths back with
+`rocm-sdk path`. The ROCm version follows upstream's `release.yml` at the pinned `GIT_TAG` —
+**re-check it on every llama.cpp bump**. The `GPU_TARGETS` lists deliberately go **further than
+upstream's**: they are every target TheRock builds for that OS (its `SUPPORTED_GPUS.md`), which adds
+gfx900/gfx906/gfx90c/gfx1153 — "build passing" there, not release-ready, and omitted by llama.cpp.
+Supporting more rather than fewer is the policy, with one limit: an extra stays only while it builds
+without problems and without local patches; the moment one needs a patch or holds back a newer
+ROCm/llama.cpp, drop it. The two lists differ **only** by the Instinct parts
+(gfx908/gfx90a/gfx942/gfx950), which ROCm supports on Linux alone.
+
 Two routing notes mirror existing precedent: **Linux SYCL** ships two precision variants at the *same*
 arch, so `CMakeLists.txt` routes them to two *distinct* trees by `GGML_SYCL_F16` (fp16 vs fp32).
 **Windows OpenCL** now holds both `x86_64` (desktop ICD) and `aarch64` (Snapdragon/Adreno) in the one
 `resources_windows_opencl` tree, split by the `opencl-windows` / `opencl-windows-aarch64` profiles'
 arch-scoped `<includes>` — exactly like the `vulkan-linux` / `vulkan-linux-aarch64` split.
+
+The Linux jobs that install a multi-GB vendor toolchain (CUDA, ROCm, both SYCL) start with
+`ggml-org/free-disk-space` — the same guard upstream llama.cpp's CUDA/ROCm jobs use (ROCm also clears the
+tool cache, as upstream does, which is safe only because the step runs before `setup-java`).
 
 The vendor toolchain install steps in `publish.yml` are **first-pass** (apt repos / vendor installers
 pinned to a specific version): if a URL/version 404s in CI, the job fails loud and the step is adjusted
@@ -510,7 +538,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network for the asset build; the embed step is plain cmake -P
-git clone --depth 1 --branch b11080 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b11211 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build )
 mkdir -p webui-generated /tmp/ui-gen
 cmake -DUI_SOURCE_DIR=/tmp/lc/tools/ui -DUI_BINARY_DIR=/tmp/ui-gen \
@@ -550,7 +578,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11080`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11211`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -751,7 +779,7 @@ Current patches:
 | `0001-win32-arg-parse-embed-guard.patch` | Windows JNI regression from llama.cpp **#24779** (introduced b9739): on Windows `common_params_parse` re-derived argv from the **process** command line (`GetCommandLineW`) and adopted it, so an embedded/JNI caller (`java.exe`) lost its `--model …` args → "Failed to parse model parameters". b9789 narrowed the unconditional override to a **count-guard** (`if (static_cast<int>(utf8.buf.size()) == argc) { argv = utf8.ptrs.data(); }`), but that is exactly the variant the project already found breaks its Windows server-integration tests (when the embedded argv length coincides with `java.exe`'s). The patch carries the **complete upstream change** (so it can be submitted to llama.cpp verbatim and then dropped here): **(1)** `common_params_parse` parses **exactly the argv it is given** (no `GetCommandLineW` magic) and a new `common_params_parse_main()` wrapper holds the UTF-8 recovery for the standalone tools' `main()` (`common/arg.{cpp,h}`); **(2)** the **~34 standalone `main()` call sites** (every `common_params_parse(argc, argv, …)` across `tools/*`, `examples/*` and the `tests/*` programs) flip to `common_params_parse_main()`; **(3)** a `tests/test-arg-parser.cpp` regression case pins that `common_params_parse` honors a caller-supplied argv. The embedded caller (`jllama.cpp`) keeps calling `common_params_parse` and is never overridden. **Our subproject build compiles only the `arg.{cpp,h}` core** — `LLAMA_BUILD_TOOLS`/`LLAMA_BUILD_TESTS` are OFF for a FetchContent subproject — so the flips + test are applied-but-not-compiled here; they were validated via a one-off `-DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_TESTS=ON` build (the new test compiles and its asserts pass; `test-arg-parser`'s only red there is the live `ggml.ai` download check, which is sandbox-network, not the patch). Because it spans **36 files** it must be refreshed on every llama.cpp bump (the applier fails loud). **Refreshed at the b10679 bump:** upstream rewrote `tests/test-save-load-state.cpp`'s `main()` to take a `--models DIR` option, which it strips itself into a `filtered_argv` before calling `common_params_parse(fargc, filtered_argv.data(), …)`. That call site therefore stopped qualifying for the `_main()` flip — by this patch's own rule a caller that builds its own argv must use `common_params_parse` directly, so its argv is kept — and the hunk was **dropped** rather than refreshed (37 → 36 files). Caveat for whoever submits this upstream: that `main()` now filters a possibly-mojibake Windows argv *before* any UTF-8 recovery, so the fully correct upstream form there is recover-then-filter, not a one-line flip. It is out of scope for the downstream carry because `LLAMA_BUILD_TESTS` is OFF here, so the file is never compiled. **Still required at b10679, verified rather than assumed:** `common_params_parse` in pristine `b10679:common/arg.cpp` still carries the `#ifdef _WIN32` count-guarded `argv = utf8.ptrs.data()` override, and `common_params_parse_main` appears nowhere in `b10679:common/arg.h` — upstream has not adopted the fix. The upstream-facing write-up, including a standalone reproducer that makes llama.cpp's own `test-arg-parser` fail on unmodified `master`, lives in [docs/upstream-investigation-win32-argv-substitution.md](docs/upstream-investigation-win32-argv-substitution.md). **Reported upstream as [ggml-org/llama.cpp#26416](https://github.com/ggml-org/llama.cpp/issues/26416)** (2026-08-01, label `bug-unconfirmed`, first bad commit `508a475`); the issue asks which of the two directions the maintainers prefer before a PR is opened, so this patch stays downstream until they answer. |
 | `0002-server-preserve-caller-load-progress-callback.patch` | Load-progress-callback regression introduced in llama.cpp **b9789**: `server_context::load_model` (`tools/server/server-context.cpp`) now **unconditionally** installs the server's own load-progress reporter on `params_base.load_progress_callback` immediately before `common_init_from_params`, clobbering any callback the embedding caller already set. libjllama's `LoadProgressCallback` feature wires `common_params.load_progress_callback` to a JNI trampoline *before* calling `load_model`, so the bump silently killed it — `LoadProgressCallbackTest` saw zero progress updates and the abort-on-`false` path never threw. The patch guards the assignment with `if (params_base.load_progress_callback == nullptr)`, so the server installs its own reporter **only when the caller hasn't** — a caller-supplied callback survives and fires during load. Standalone `llama-server` (no caller callback, so the field is null) is unaffected. Same JNI-vs-standalone divergence class as `0001`. **The guard is `== nullptr || == load_progress_callback`, and the second disjunct must never be dropped:** `load_progress_text` is a **local** of `load_model()`, and upstream re-assigns both fields on every call so the `user_data` always points at the current frame. `load_model()` runs a **second** time when resuming from the sleeping state (`--sleep-idle-seconds`), and by then `params_base` holds *our own* callback from the first load — a bare nullptr check skips the re-assignment and leaves `user_data` pointing into a **dead stack frame**, which segfaults inside `load_progress_callback()` on the first request after an idle window. That was a latent defect in this patch from the day it was written; only a second `load_model()` can reach it, and nothing exercised sleep until `IdleSleepWakeIntegrationTest` was added. |
 | `0003-pr22393-server-add-slot-prompt-similarity-getter-setter.patch` | **Upstream-PR carry** of [ggml-org/llama.cpp#22393](https://github.com/ggml-org/llama.cpp/pull/22393) ("server : add slot_prompt_similarity getter/setter"). Purely additive: adds `server_context::get_slot_prompt_similarity()` / `set_slot_prompt_similarity(float)` (`tools/server/server-context.{cpp,h}`) so an embedding/JNI caller can query and tune the slot-selection threshold at runtime without reloading the model. Verbatim copy of the PR, which **upstream closed without merging** (rejected as exposing unsafe internal state — see the patch header). Carried permanently; it will not be droppable via a version bump. |
-| `0007-server-attach-http-frontend.patch` | **Adds `llama_server_attach(argc, argv, server_context&)`** so the `NativeServer` *attach mode* can serve an **already-loaded `LlamaModel`** over the upstream HTTP frontend — no second model load, no `start_loop()`; the LlamaModel's worker keeps driving the shared `server_context` and the HTTP routes post tasks to its queue (the queue is the synchronization point). Mechanically: (1) extracts the **pure core route table** (`health` … `slots`) out of `llama_server()` into `static void llama_server_register_common_routes(ctx_http, routes)` (shared, so the two entry points cannot drift on the core endpoint set). **Scope note (narrowed at the b10154 bump):** the helper deliberately carries **only** the stable, state-independent route table — **not** the resumable-streaming routes (their handlers differ between router / non-router), the GCP-compat shim, or the experimental **CORS-proxy / MCP-server / built-in-tools** wiring. b10154 (upstream MCP-server support) moved the streaming routes into the middle of that block and coupled tools/CORS to a per-call `server_mcp mcp_mgr` lifecycle, so the earlier contiguous "route-table + CORS-proxy + tools" extraction is no longer possible; `llama_server()` keeps all of that inline, **byte-identical to upstream b10154** (only the route-table block is factored out). (2) adds `llama_server_attach`, which parses only the HTTP-side argv via `common_params_parse`, starts the stream-session GC + `server_http_context`, registers the common route table, the **non-router** resumable-streaming handlers (upstream b10154 paths `/v1/stream` GET/DEL + `/v1/streams/lookup` POST), the GCP-compat shim, and **403 "disabled" stubs for `/cors-proxy` + `/tools`** (attach mode does not wire the experimental CORS-proxy / MCP / built-in-tools host — those belong to a full `llama-server`, not an embedded model), marks ready immediately (model already loaded), and blocks on the HTTP thread until `llama_server_request_shutdown()` — never calling `common_init()`, backend init, `ctx_server.terminate()` or `llama_backend_free()` (the embedding caller owns those). Applies after `0001`+`0006` (same file); closes the "NativeServer — reuse an already-loaded LlamaModel" TODO. Upstream-submittable ("server: let embedding callers attach the HTTP frontend to an existing server_context"). **Refreshed at the b10519 bump:** upstream #26347 dropped the API key from the `/models` + `/v1/models` public-endpoint set and deleted the two trailing `// public endpoint (no API key check)` comments on those route registrations. Those two lines sit inside this patch's route-table removal block, so `git apply` failed ("patch does not apply", `server.cpp:258`) at **every** tag from b10519 on; the fix was to drop the now-wrong comment from all four affected lines (2 on the `-` side, 2 in the extracted helper on the `+` side), keeping the helper byte-identical to the block it replaces. **This is the invariant to re-check on every bump:** the `+` side of `llama_server_register_common_routes()` must stay a verbatim copy of the route table it factors out of `llama_server()`. |
+| `0007-server-attach-http-frontend.patch` | **Adds `llama_server_attach(argc, argv, server_context&)`** so the `NativeServer` *attach mode* can serve an **already-loaded `LlamaModel`** over the upstream HTTP frontend — no second model load, no `start_loop()`; the LlamaModel's worker keeps driving the shared `server_context` and the HTTP routes post tasks to its queue (the queue is the synchronization point). Mechanically: (1) extracts the **pure core route table** (`health` … `slots`) out of `llama_server()` into `static void llama_server_register_common_routes(ctx_http, routes)` (shared, so the two entry points cannot drift on the core endpoint set). **Scope note (narrowed at the b10154 bump):** the helper deliberately carries **only** the stable, state-independent route table — **not** the resumable-streaming routes (their handlers differ between router / non-router), the GCP-compat shim, or the experimental **CORS-proxy / MCP-server / built-in-tools** wiring. b10154 (upstream MCP-server support) moved the streaming routes into the middle of that block and coupled tools/CORS to a per-call `server_mcp mcp_mgr` lifecycle, so the earlier contiguous "route-table + CORS-proxy + tools" extraction is no longer possible; `llama_server()` keeps all of that inline, **byte-identical to upstream b10154** (only the route-table block is factored out). (2) adds `llama_server_attach`, which parses only the HTTP-side argv via `common_params_parse`, starts the stream-session GC + `server_http_context`, registers the common route table, the **non-router** resumable-streaming handlers (upstream b10154 paths `/v1/stream` GET/DEL + `/v1/streams/lookup` POST), the GCP-compat shim, and **403 "disabled" stubs for `/cors-proxy` + `/tools`** (attach mode does not wire the experimental CORS-proxy / MCP / built-in-tools host — those belong to a full `llama-server`, not an embedded model), marks ready immediately (model already loaded), and blocks on the HTTP thread until `llama_server_request_shutdown()` — never calling `common_init()`, backend init, `ctx_server.terminate()` or `llama_backend_free()` (the embedding caller owns those). Applies after `0001`+`0006` (same file); closes the "NativeServer — reuse an already-loaded LlamaModel" TODO. Upstream-submittable ("server: let embedding callers attach the HTTP frontend to an existing server_context"). **Refreshed at the b10519 bump:** upstream #26347 dropped the API key from the `/models` + `/v1/models` public-endpoint set and deleted the two trailing `// public endpoint (no API key check)` comments on those route registrations. Those two lines sit inside this patch's route-table removal block, so `git apply` failed ("patch does not apply", `server.cpp:258`) at **every** tag from b10519 on; the fix was to drop the now-wrong comment from all four affected lines (2 on the `-` side, 2 in the extracted helper on the `+` side), keeping the helper byte-identical to the block it replaces. **This is the invariant to re-check on every bump:** the `+` side of `llama_server_register_common_routes()` must stay a verbatim copy of the route table it factors out of `llama_server()`. **Refreshed at the b11104 bump** (upstream #28690, multi-address `--host`): `server_http_context` lost its single `thread` and `listening_address` members in favour of `join()` and a `listening_addresses` vector, one listener thread per bound address. The patch still *applied* cleanly there — only its own `+` lines named the removed members — so the applier could not see it; `llama_server_attach` now logs every address and blocks in `ctx_http.join()`, exactly as upstream's `llama_server()` does. |
 | `0008-server-models-worker-cmd-override.patch` | **Makes router mode usable in-JVM.** The router (`server-models.cpp`) spawns each model worker by re-executing its own binary (`get_server_exec_path()` = `/proc/self/exe` & friends) — inside a JVM that binary is `java`, not a llama-server, so embedded router workers could never start. The patch adds env `LLAMA_SERVER_WORKER_CMD` (whitespace-split; read in `server_model_meta::update_args`) which replaces only the leading binary-path token of the rendered worker args, letting an embedding host relaunch workers through its own bootstrap — e.g. `java -cp app.jar net.ladenthin.llama.server.NativeServer` (each worker is then a fresh JVM running the classic single-model `NativeServer`). Exposed in Java as `NativeServer.setWorkerCommand(String...)` (JNI `setenv`); exercised by `RouterModeIntegrationTest` (Linux CI). Upstream-submittable (also useful for containerized/wrapped deployments). |
 | `0006-server-embed-native-server-jni.patch` | **Makes `server.cpp`'s `llama_server` embeddable in the JVM** so the `NativeServer` JNI bridge can run the full upstream HTTP server (WebUI included) inside `libjllama` — see "Two server modes" below. b9870 already exposes `int llama_server(int, char**)` (non-static; no `main` in the file), so the patch only adds embedded-mode support: (1) a `g_llama_server_embedded` flag + `llama_server_set_embedded()` / `llama_server_request_shutdown()` (declared in the committed `src/main/cpp/native_server_bridge.h`); (2) skips installing the process-wide SIGINT/SIGTERM handlers when embedded (they would hijack the JVM's); (3) in embedded mode parses the **forwarded** argv via `common_params_parse` instead of `common_params_parse_main` (whose `GetCommandLineW` recovery would pick up `java.exe`'s command line — the same Windows class of bug `0001` fixes). `llama_server_request_shutdown()` mirrors the SIGTERM path (invokes the installed `shutdown_handler` → `ctx_server.terminate()` unblocks `start_loop()`), giving JNI an out-of-band stop since `ctx_server` is loop-local. Applies **after `0001`** (which flips this call site to `common_params_parse_main`), so its context is the post-`0001` tree; regenerate against `0001`+source on a bump. Only touches `tools/server/server.cpp`. |
 | `0012-model-guard-zero-split-sum-and-name-the-device-index.patch` | **A GPU that reports zero free memory makes every model load fail with the unactionable `error loading model: vector`.** `llama_model_base::load_tensors` (`src/llama-model.cpp`) weights the per-device layer split by `ggml_backend_dev_memory()`'s `free`, then normalises: `splits[i] /= split_sum`. With a single device reporting `free == 0` that is `0/0` → **NaN** in every split point; NaN compares false against everything, so the `std::upper_bound` below returns the end iterator, `layer_gpu == n_devices()`, and `devices.at(layer_gpu)` throws `std::out_of_range` — whose libc++ `what()` is the bare string `"vector"`, which `llama.cpp`'s `catch (const std::exception &)` prints verbatim. Upstream's `free == 0 && total == 0` host-memory fallback does **not** fire, because `total` is `recommendedMaxWorkingSetSize` and is non-zero. **Reachable since b10618..b10797**: upstream `8c0b9cd04` ("metal : fix memory query under low-memory conditions", [#27701](https://github.com/ggml-org/llama.cpp/pull/27701)) changed `ggml-metal-device.m` to `*free = *total > cur ? *total - cur : 0`; before that clamp an over-committed device (`currentAllocatedSize > recommendedMaxWorkingSetSize`) *underflowed* to a huge `size_t`, which normalised fine, so the same precondition was harmless. That is why the `Java Tests macOS …` jobs went red at the b10792→b10797 step while every Linux/Windows job stayed green — **and why only a GPU build can fail this way at all**: `act_gpu_layers` is `devices.empty() ? 0 : …`, so with no GPU backend `devices` is empty, every layer returns early on `cpu_dev`, and the `.at()` line is unreachable. **Shape:** the two blocks are lifted out of `load_tensors` into free functions declared in `src/llama-model.h`, purely so they can be driven by a test — the failing state needs a real over-committed GPU and cannot be arranged through any public API. `llama_model_splits_normalize()` carries **the fix**: on `split_sum == 0` it `LLAMA_LOG_WARN`s and falls back to an even split (`splits[i] = float(i+1)/splits.size()`), the only neutral choice when no device can be preferred and exactly right for a single device. `llama_model_splits_select_device()` carries **the diagnostic**: it bounds-checks the index and throws a `std::runtime_error` naming the function, the offloaded layer, the device index, the split-point count **and the split points themselves** — with NaN splits that message prints `nan` and names the cause outright, which is precisely what was missing when this had to be diagnosed by reading source. **A second, backend-independent trigger reaches the same line**, found while writing this up and verified against the unfixed library: `--tensor-split` values are parsed with `std::stof` and never range-checked (`common/arg.cpp`), so `-ts 1,-1` cancels out, `split_sum` is 0 again, the split points become `[inf, -nan]`, and every layer maps one past the last device — on CUDA, Vulkan or ROCm just as much as on Metal, with no memory pressure involved. That is what makes this an ordinary upstream defect rather than a Metal edge case, and the warning names both causes rather than only the memory one. Also adds upstream `tests/test-model-split.cpp` (5 cases in upstream's `testing.h` style) + its `llama_build_and_test` registration. Touches `src/llama-model.{cpp,h}`, `tests/test-model-split.cpp` and `tests/CMakeLists.txt` — **none** of which any other patch touches, so it is independent of all of them. Upstream-submittable ("model: fall back to an even split when no device reports free memory"); **not yet filed upstream**. **Runnable guard: `src/test/cpp/test_model_split.cpp`** — a FetchContent subproject builds with `LLAMA_BUILD_TESTS=OFF`, so the upstream test above is applied-but-never-compiled here (same as `0001`'s test). That file drives the same two functions from `jllama_test`, which runs on **every** platform in `C++ Tests`, so a bump that drops this patch fails the build at link time everywhere instead of surfacing as one red macOS Java job. **Verification limit — read before assuming this can be dropped:** the *failing path* still cannot be reached without a GPU backend, so the guard pins the arithmetic (what actually broke), not the end-to-end load; the end-to-end proof is the macOS CI job. On a bump, re-check whether upstream added its own `split_sum == 0` guard (grep `split_sum` in `src/llama-model.cpp`) and **drop this patch rather than refreshing it** if they did — the fail-loud applier detects "does not apply", never "upstream already fixed this". |
@@ -1655,7 +1683,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11080`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11211`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
@@ -2665,7 +2693,8 @@ native jobs; the test job additionally `needs: verify-model-cache`), so the inst
 
 Both emulator jobs (`test-android-llmservice` + `test-android-emulator`) prepend a **free-disk step**
 before the emulator (delete every restored model except `DRAFT_MODEL_NAME` + large unused preinstalled
-toolchains) because the AVD userdata partition needs ~7.4 GB and the full ~10 GB GGUF cache restore
+toolchains — the latter via `ggml-org/free-disk-space` with `android`, `large-packages`, `tool-cache`
+and `swap-storage` switched **off**, since the emulator needs the SDK, mesa and the JDK) because the AVD userdata partition needs ~7.4 GB and the full ~10 GB GGUF cache restore
 otherwise FATALs the emulator ("Not enough space to create userdata partition"). Neither
 llmservice job is **yet a publish gate** (not in the `publish-snapshot`/`publish-release` `needs:`
 graphs) so a Compose/AGP version-pin hiccup can't block a library release.

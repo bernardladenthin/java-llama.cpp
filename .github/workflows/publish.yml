@@ -743,6 +743,11 @@ jobs:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
+      - name: Free up disk space
+        # The GPU toolkit this job installs runs to several GB on top of the llama.cpp build tree;
+        # same guard upstream llama.cpp's CUDA/ROCm jobs use. Linux-only action; the tool cache is
+        # kept (default) so nothing a later setup-* step relies on is removed.
+        uses: ggml-org/free-disk-space@v1.3.1
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@v8
@@ -1252,6 +1257,16 @@ jobs:
     needs: [crosscompile-android-aarch64, crosscompile-android-x86_64, verify-model-cache]
     runs-on: ubuntu-latest
     steps:
+      - name: Free up disk space
+        # The AVD userdata partition needs ~7.4 GB. Android SDK and the apt "large packages"
+        # (it removes libgl1-mesa-dri among others) are kept for the emulator, and so is the swap
+        # file it may lean on; the tool cache is kept because setup-java/setup-gradle install into it.
+        uses: ggml-org/free-disk-space@v1.3.1
+        with:
+          android: false
+          large-packages: false
+          tool-cache: false
+          swap-storage: false
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
@@ -1300,12 +1315,12 @@ jobs:
       - name: Free disk space for the emulator (only the draft model is needed on-device)
         # Same guard as test-android-llmservice: the AVD userdata partition needs ~7.4 GB; drop the
         # rest of the restored ~10 GB GGUF cache (this job adb-pushes only the tiny draft model) plus
-        # large preinstalled toolchains so the emulator can create userdata and boot.
+        # the few preinstalled toolchains the free-disk-space step leaves, so the emulator can create
+        # userdata and boot.
         run: |
           echo "Disk before cleanup:"; df -h / | tail -1
           find models -type f ! -name "${DRAFT_MODEL_NAME}" -delete 2>/dev/null || true
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/powershell /opt/hostedtoolcache/CodeQL 2>/dev/null || true
-          docker image prune -af 2>/dev/null || true
+          sudo rm -rf /usr/local/share/powershell /opt/hostedtoolcache/CodeQL 2>/dev/null || true
           echo "Disk after cleanup:"; df -h / | tail -1
       - name: Run on-emulator instrumentation (connectedDebugAndroidTest)
         uses: reactivecircus/android-emulator-runner@v2
@@ -1432,6 +1447,16 @@ jobs:
     needs: [crosscompile-android-aarch64, crosscompile-android-x86_64, verify-model-cache]
     runs-on: ubuntu-latest
     steps:
+      - name: Free up disk space
+        # The AVD userdata partition needs ~7.4 GB. Android SDK and the apt "large packages"
+        # (it removes libgl1-mesa-dri among others) are kept for the emulator, and so is the swap
+        # file it may lean on; the tool cache is kept because setup-java/setup-gradle install into it.
+        uses: ggml-org/free-disk-space@v1.3.1
+        with:
+          android: false
+          large-packages: false
+          tool-cache: false
+          swap-storage: false
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
@@ -1477,12 +1502,11 @@ jobs:
         # The AVD userdata partition needs ~7.4 GB; the full ~10 GB GGUF cache restore leaves too
         # little free, so the emulator FATALs ("Not enough space to create userdata partition") and
         # the boot poll loops until timeout. This job only adb-pushes the tiny draft model, so drop
-        # the rest of the restored cache plus large preinstalled toolchains it never uses.
+        # the rest of the restored cache plus what the free-disk-space step leaves (PowerShell, CodeQL).
         run: |
           echo "Disk before cleanup:"; df -h / | tail -1
           find models -type f ! -name "${DRAFT_MODEL_NAME}" -delete 2>/dev/null || true
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/powershell /opt/hostedtoolcache/CodeQL 2>/dev/null || true
-          docker image prune -af 2>/dev/null || true
+          sudo rm -rf /usr/local/share/powershell /opt/hostedtoolcache/CodeQL 2>/dev/null || true
           echo "Disk after cleanup:"; df -h / | tail -1
       - name: Run LLM Service UI test on emulator (connectedDebugAndroidTest)
         uses: reactivecircus/android-emulator-runner@v2
@@ -1792,9 +1816,8 @@ jobs:
     # Native arm64 build on GitHub's free windows-11-arm runner. Goes into the DEFAULT JAR (no
     # classifier): OSInfo maps a Windows-on-ARM JVM (os.arch=aarch64) to Windows/aarch64, the same
     # path CMake emits here, and the `*-libraries` glob in the package/publish jobs merges it into
-    # src/main/resources. sccache is intentionally omitted (the existing install step pulls the
-    # x86_64 sccache zip; an arm64 build would need the aarch64 release — not worth the extra path
-    # for one CPU job, so build.bat just builds uncached when sccache is absent).
+    # src/main/resources. sccache: the native aarch64-pc-windows-msvc release, wrapping clang-cl
+    # (guarded by build.bat's probe + uncached retry like every other Windows job).
     #
     # Compiler: clang-cl, NOT MSVC cl.exe. ggml's ggml-cpu/CMakeLists.txt aborts with "MSVC is not
     # supported for ARM, use clang" via `if (MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")`.
@@ -1810,6 +1833,10 @@ jobs:
     # off makes ggml use its own std::thread threadpool, so the arm64 jllama.dll (and the test exe) are
     # self-contained with no libomp dependency to ship. The x86_64/x86 jobs keep OpenMP (MSVC vcomp).
     runs-on: windows-11-arm
+    env:
+      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
+      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
@@ -1821,6 +1848,21 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: arm64
+      - name: Install sccache (shared compiler cache)
+        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
+        continue-on-error: true
+        shell: pwsh
+        # sccache ships a native Windows-on-ARM build; it wraps clang-cl here.
+        # build.bat probes sccache before trusting it and, should a build fail with it as the
+        # launcher, retries once uncached -- so this can speed the job up but never red it.
+        run: |
+          $ver = "0.18.0"
+          $rel = "sccache-v$ver-aarch64-pc-windows-msvc"
+          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
       - name: Build libraries
         shell: cmd
         # No mvn compile needed: the JNI header (jllama.h) is committed and the native build
@@ -1871,15 +1913,44 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Install CUDA Toolkit
-        # Full toolkit install (default method: local, no sub-packages restriction).
-        # A reduced network sub-package set ("nvcc","cudart","cublas",…) omitted the
-        # nvcc crt headers (crt/host_config.h), so cmake's CUDA compiler detection
-        # failed at configure. The full installer ships every header reliably.
-        uses: Jimver/cuda-toolkit@v0.2.36
-        id: cuda-toolkit
-        with:
-          cuda: '13.3.1'
+      - name: Install CUDA Toolkit 13.4 (NVIDIA redist archives)
+        # KEEP IN SYNC WITH UPSTREAM: the component set and versions mirror llama.cpp's
+        # .github/actions/windows-setup-cuda ("Install Cuda Toolkit 13.4 for x64") at the pinned
+        # GIT_TAG. Jimver/cuda-toolkit (used here up to CUDA 13.3.1) has no 13.4 in any release or
+        # on master, so the toolkit is assembled from NVIDIA's per-component redist zips instead —
+        # which is also how upstream builds its own Windows CUDA release. cuda_crt is listed
+        # explicitly: since 13.x the nvcc crt headers (crt/host_config.h) ship in their own
+        # archive, and without them CMake's CUDA compiler detection fails at configure.
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.4"
+          $base = "https://developer.download.nvidia.com/compute/cuda/redist"
+          $parts = @(
+            "cuda_crt/cuda_crt-windows-x86_64-13.4.59",
+            "cuda_cudart/cuda_cudart-windows-x86_64-13.4.49",
+            "cuda_nvcc/cuda_nvcc-windows-x86_64-13.4.59",
+            "cuda_nvrtc/cuda_nvrtc-windows-x86_64-13.4.59",
+            "libcublas/libcublas-windows-x86_64-13.7.0.27",
+            "libnvvm/libnvvm-windows-x86_64-13.4.59",
+            "cuda_nvtx/cuda_nvtx-windows-x86_64-13.4.49",
+            "cuda_profiler_api/cuda_profiler_api-windows-x86_64-13.4.49",
+            "visual_studio_integration/visual_studio_integration-windows-x86_64-13.4.49",
+            "cccl/cccl-windows-x86_64-13.3.4.2.1"
+          )
+          New-Item -ItemType Directory -Force -Path $cuda | Out-Null
+          foreach ($p in $parts) {
+            $dir, $name = $p.Split("/")
+            $url = "$base/$dir/windows-x86_64/$name-archive.zip"
+            $zip = "$env:RUNNER_TEMP\$name.zip"
+            Write-Host "Downloading $url"
+            Invoke-WebRequest -Uri $url -OutFile $zip
+            Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\cuda-redist" -Force
+            Copy-Item -Path "$env:RUNNER_TEMP\cuda-redist\$name-archive\*" -Destination $cuda -Recurse -Force
+          }
+          "$cuda\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "CUDA_PATH=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "CUDA_PATH_V13_4=$cuda" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -2020,6 +2091,12 @@ jobs:
       SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
+      - name: Free up disk space
+        # The TheRock wheels unpack to several GB; upstream's ubuntu-rocm job frees the runner
+        # the same way. Runs first, before setup-java puts the JDK into the tool cache.
+        uses: ggml-org/free-disk-space@v1.3.1
+        with:
+          tool-cache: true
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@v8
@@ -2030,21 +2107,39 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
-      - name: Install ROCm/HIP (AMD apt repo)
+      - name: Install ROCm/HIP (TheRock wheels)
+        # KEEP IN SYNC WITH UPSTREAM: ROCM_VERSION tracks the ubuntu-rocm job in llama.cpp's
+        # .github/workflows/release.yml at the pinned GIT_TAG (GPU targets: see the build step). Since ROCm 7.14
+        # AMD builds and releases ROCm through TheRock (https://github.com/ROCm/TheRock), replacing
+        # the monolithic releases behind the repo.radeon.com apt repo this job used before (it was
+        # pinned at 6.3.4). The wheels carry the HIP runtime + CMake configs ("libraries") and the
+        # compilers/headers ("devel"); rocm-sdk reports where they landed.
+        env:
+          ROCM_VERSION: "10.0.0"
         run: |
-          sudo mkdir --parents --mode=0755 /etc/apt/keyrings
-          wget -qO- https://repo.radeon.com/rocm/rocm.gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
-          echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/6.3.4 noble main" | sudo tee /etc/apt/sources.list.d/rocm.list
-          printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' | sudo tee /etc/apt/preferences.d/rocm-pin-600
-          sudo apt-get update
-          sudo apt-get install -y rocm-hip-sdk rocblas-dev hipblas-dev
-          echo "/opt/rocm/bin" >> "$GITHUB_PATH"
-          echo "ROCM_PATH=/opt/rocm" >> "$GITHUB_ENV"
+          python3 -m venv "$RUNNER_TEMP/rocm-venv"
+          source "$RUNNER_TEMP/rocm-venv/bin/activate"
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "rocm[libraries,devel]==${ROCM_VERSION}"
+          ROCM_PATH=$(rocm-sdk path --root)
+          echo "ROCM_PATH=$ROCM_PATH" >> "$GITHUB_ENV"
+          echo "HIP_PATH=$ROCM_PATH" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$(rocm-sdk path --cmake)" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$ROCM_PATH/lib:${LD_LIBRARY_PATH:-}" >> "$GITHUB_ENV"
+          echo "$(rocm-sdk path --bin)" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/rocm-venv/bin" >> "$GITHUB_PATH"
       - name: Build libraries
         shell: bash
+        # Native CMake HIP language (upstream's form): the HIP compiler is ROCm's clang, the C/C++
+        # TUs stay on the runner's gcc. The target list is every Linux target TheRock builds
+        # (its SUPPORTED_GPUS.md) — a superset of upstream llama.cpp's list, which omits
+        # gfx900/gfx906/gfx90c/gfx1153 ("build passing" only, not release-ready). Better too many
+        # than too few, but only while they cost nothing: drop an extra the moment it needs a
+        # patch or blocks a newer ROCm. Linux alone has the Instinct parts (gfx908/90a/942/950):
+        # ROCm does not support them on Windows.
         run: |
           mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DGGML_HIP=ON -DAMDGPU_TARGETS=gfx900;gfx906;gfx908;gfx90a;gfx1030;gfx1100;gfx1101;gfx1102 -DCMAKE_C_COMPILER=/opt/rocm/llvm/bin/clang -DCMAKE_CXX_COMPILER=/opt/rocm/llvm/bin/clang++ -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
+          .github/build.sh "-DGGML_HIP=ON -DCMAKE_HIP_COMPILER=$(hipconfig -l)/clang -DGPU_TARGETS=gfx900;gfx906;gfx908;gfx90a;gfx90c;gfx942;gfx950;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201 -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2059,8 +2154,12 @@ jobs:
     # HIP clang headers (__clang_hip_cmath.h) cannot overload the __host__ __device__
     # isgreater/isless/... that the very new MSVC <cmath> declares via _CLANG_BUILTIN2, so the
     # device-code compile fails. Upstream llama.cpp builds win-hip on windows-2022 for the same
-    # reason (it drives the HIP SDK's own clang and relies on the older MSVC STL).
+    # reason (it drives ROCm's own clang and relies on the older MSVC STL).
     runs-on: windows-2022
+    env:
+      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
+      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
@@ -2072,23 +2171,56 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Install AMD HIP SDK for Windows
+      - name: Install ROCm/HIP (TheRock wheels)
         shell: pwsh
-        # Mirrors upstream llama.cpp's windows-hip release job: HIP SDK 26.Q1, then
-        # resolve HIP_PATH from the installed ROCm dir and point the compilers +
-        # CMAKE_PREFIX_PATH at it so ggml-hip's find_package(hip) resolves.
+        # KEEP IN SYNC WITH UPSTREAM: mirrors llama.cpp's windows-rocm release job
+        # (.github/actions/windows-setup-rocm at the pinned GIT_TAG) — the same TheRock wheels as
+        # the Linux job, in place of the former AMD-Software-PRO-Edition HIP SDK installer. The
+        # venv lives under C:\TheRock\build, the path upstream uses.
+        env:
+          ROCM_VERSION: "10.0.0"
         run: |
-          $url = "https://download.amd.com/developer/eula/rocm-hub/AMD-Software-PRO-Edition-26.Q1-Win11-For-HIP.exe"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\rocm-install.exe"
-          $proc = Start-Process "$env:RUNNER_TEMP\rocm-install.exe" -ArgumentList '-install' -NoNewWindow -PassThru -Wait
-          if ($proc.ExitCode -ne 0) { Write-Error "HIP SDK install failed with exit code $($proc.ExitCode)"; exit 1 }
-          $hip = $(Resolve-Path 'C:\Program Files\AMD\ROCm\*\bin\clang.exe' | Split-Path | Split-Path)
-          "HIP_PATH=$hip" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "$hip\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+          $ErrorActionPreference = "Stop"
+          New-Item -Path "C:\TheRock\build" -ItemType Directory -Force | Out-Null
+          python -m venv C:\TheRock\build\.venv
+          & C:\TheRock\build\.venv\Scripts\Activate.ps1
+          python -m pip install --upgrade pip
+          python -m pip install --index-url https://stable.repo.amd.com/rocm/whl-next/ "rocm[libraries,devel]==$env:ROCM_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw "ROCm wheel install failed with exit code $LASTEXITCODE" }
+          rocm-sdk init
+          if ($LASTEXITCODE -ne 0) { throw "rocm-sdk init failed with exit code $LASTEXITCODE" }
+          $rocm = (rocm-sdk path --root)
+          if (-not $rocm) { throw "rocm-sdk path --root returned empty - devel package may not be installed" }
+          $rocm = $rocm.Trim()
+          "HIP_PATH=$rocm" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "HIP_DEVICE_LIB_PATH=$rocm\lib\llvm\amdgcn\bitcode" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "HIP_PLATFORM=amd" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "LLVM_PATH=$rocm\lib\llvm" | Out-File -FilePath $env:GITHUB_ENV -Append
+          (rocm-sdk path --bin).Trim() | Out-File -FilePath $env:GITHUB_PATH -Append
+          "C:\TheRock\build\.venv\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Install sccache (shared compiler cache)
+        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
+        continue-on-error: true
+        shell: pwsh
+        # Wraps ROCm's clang (HIP is compiled as C++ on Windows, so the C/CXX launcher covers it).
+        # build.bat probes sccache before trusting it and, should a build fail with it as the
+        # launcher, retries once uncached -- so this can speed the job up but never red it.
+        run: |
+          $ver = "0.18.0"
+          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
+          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
       - name: Build libraries
         shell: cmd
+        # Upstream's compiler wiring for TheRock (clang under lib\llvm\bin, not bin\);
+        # -Wno-error=incompatible-pointer-types is upstream's too. Targets: every Windows target
+        # TheRock builds — the Linux list minus the Instinct parts, which ROCm has no Windows
+        # support for. Same rule for the extras upstream omits as on Linux.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DGGML_HIP=ON -DGPU_TARGETS=gfx1030;gfx1100;gfx1101;gfx1102 -DCMAKE_PREFIX_PATH="%HIP_PATH%" -DCMAKE_C_COMPILER="%HIP_PATH%\bin\clang.exe" -DCMAKE_CXX_COMPILER="%HIP_PATH%\bin\clang++.exe" -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DGGML_HIP=ON -DGPU_TARGETS=gfx900;gfx906;gfx90c;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201 -DCMAKE_PREFIX_PATH="%HIP_PATH%" -DHIP_PATH="%HIP_PATH%" -DCMAKE_C_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_CXX_COMPILER="%HIP_PATH%\lib\llvm\bin\clang++.exe" -DCMAKE_HIP_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_C_FLAGS="-Wno-error=incompatible-pointer-types" -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2105,6 +2237,11 @@ jobs:
       SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
+      - name: Free up disk space
+        # The GPU toolkit this job installs runs to several GB on top of the llama.cpp build tree;
+        # same guard upstream llama.cpp's CUDA/ROCm jobs use. Linux-only action; the tool cache is
+        # kept (default) so nothing a later setup-* step relies on is removed.
+        uses: ggml-org/free-disk-space@v1.3.1
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@v8
@@ -2143,6 +2280,11 @@ jobs:
       SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
+      - name: Free up disk space
+        # The GPU toolkit this job installs runs to several GB on top of the llama.cpp build tree;
+        # same guard upstream llama.cpp's CUDA/ROCm jobs use. Linux-only action; the tool cache is
+        # kept (default) so nothing a later setup-* step relies on is removed.
+        uses: ggml-org/free-disk-space@v1.3.1
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
         uses: actions/download-artifact@v8
@@ -2176,6 +2318,10 @@ jobs:
     name: Build Windows 2025 x86_64 SYCL (Intel oneAPI)
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
+    env:
+      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
+      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
@@ -2195,6 +2341,21 @@ jobs:
           curl -fSL -o "%RUNNER_TEMP%\oneapi.exe" "https://registrationcenter-download.intel.com/akdlm/IRC_NAS/b60765d1-2b85-4e85-86b6-cb0e9563a699/intel-deep-learning-essentials-2025.3.3.18_offline.exe"
           "%RUNNER_TEMP%\oneapi.exe" -s -x -f "%RUNNER_TEMP%\oneapi_extracted" --log "%RUNNER_TEMP%\extract.log"
           "%RUNNER_TEMP%\oneapi_extracted\bootstrapper.exe" -s --action install --components=intel.oneapi.win.cpp-dpcpp-common:intel.oneapi.win.mkl.devel:intel.oneapi.win.dnnl:intel.oneapi.win.tbb.devel --eula=accept -p=NEED_VS2022_INTEGRATION=0 --log-dir="%RUNNER_TEMP%"
+      - name: Install sccache (shared compiler cache)
+        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
+        continue-on-error: true
+        shell: pwsh
+        # Wraps cl.exe (C) and icx (C++); if sccache cannot handle icx the retry builds uncached.
+        # build.bat probes sccache before trusting it and, should a build fail with it as the
+        # launcher, retries once uncached -- so this can speed the job up but never red it.
+        run: |
+          $ver = "0.18.0"
+          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
+          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
       - name: Build libraries
         shell: cmd
         run: |
@@ -2216,6 +2377,10 @@ jobs:
     # Maven profile packages only that subtree. build_opencl_windows.bat stages the
     # OpenCL headers + ICD loader before delegating to build.bat.
     runs-on: windows-11-arm
+    env:
+      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
+      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
@@ -2227,6 +2392,21 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: arm64
+      - name: Install sccache (shared compiler cache)
+        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
+        continue-on-error: true
+        shell: pwsh
+        # sccache ships a native Windows-on-ARM build; it wraps clang-cl here.
+        # build.bat probes sccache before trusting it and, should a build fail with it as the
+        # launcher, retries once uncached -- so this can speed the job up but never red it.
+        run: |
+          $ver = "0.18.0"
+          $rel = "sccache-v$ver-aarch64-pc-windows-msvc"
+          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
       - name: Build libraries
         shell: cmd
         run: |
@@ -2293,6 +2473,10 @@ jobs:
     name: Build Windows 2025 x86_64 OpenVINO (Intel)
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
+    env:
+      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
+      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
@@ -2319,6 +2503,21 @@ jobs:
           # The archive extracts into a nested versioned folder; point OpenVINO_DIR at its runtime/cmake.
           $root = (Get-ChildItem "C:\openvino" -Directory | Select-Object -First 1).FullName
           "OpenVINO_DIR=$root\runtime\cmake" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Install sccache (shared compiler cache)
+        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
+        continue-on-error: true
+        shell: pwsh
+        # Plain cl.exe build, same as the Vulkan/OpenCL jobs.
+        # build.bat probes sccache before trusting it and, should a build fail with it as the
+        # launcher, retries once uncached -- so this can speed the job up but never red it.
+        run: |
+          $ver = "0.18.0"
+          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
+          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
       - name: Build libraries
         shell: cmd
         # vcpkg toolchain file wires in the OpenCL (incl. cl2.hpp) that ggml-openvino needs.

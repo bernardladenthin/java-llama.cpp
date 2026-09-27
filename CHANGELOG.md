@@ -101,6 +101,31 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   where the backend cannot provide it, `OFF` disables it.
 
 ### Changed
+- **llama.cpp `b11080` → `b11211`, in six steps sized by what they change here.** 131 upstream
+  commits. Five steps are version-only from this project's side (`b11103`, `b11160`, `b11163`,
+  `b11209`, `b11211`); the one incompatible change got a step of its own: **`b11104`** (llama.cpp #28690)
+  lets `--host` take a comma-separated list of addresses and removed `server_http_context::thread`
+  and `::listening_address`. `patches/0007` still applied cleanly there but named both members, so
+  it was refreshed to upstream's new `join()` / `listening_addresses` shape; and
+  `NativeServer` gains **`getHosts()`**, with `getHost()` now returning the first address instead
+  of the raw comma-separated string. New upstream surface that needs no project change: the
+  extended batch API (`llama_batch_ext` + `llama_process`, #24669, additive), `input_image` accepted
+  as a Responses-API `function_call_output` and OpenAI's `video_url` as an alias of `input_video`
+  on the native server (#22575, #27921), cleanup of K/V and recurrent state after a failed state
+  restore (#27530), and new model support (Ling 3.0 VL, Gemma 4 DSpark draft, MiMo-V2.6).
+  cpp-httplib moves to 0.58.0. All eight local patches are still required.
+- **BREAKING (runtime): the ROCm classifiers are built against ROCm 10.0 (TheRock), not 6.3.**
+  AMD now releases ROCm through [TheRock](https://github.com/ROCm/TheRock); both `rocm-*` jobs install
+  its wheels the way upstream llama.cpp's own release jobs do, replacing the `repo.radeon.com` 6.3.4 apt
+  repo (Linux) and the HIP SDK 26.Q1 installer (Windows). The GPU target lists are now every target
+  TheRock builds per OS — a superset of upstream llama.cpp's: Linux adds gfx90c, gfx942/gfx950, RDNA1,
+  the rest of RDNA2/RDNA3, RDNA3.5 (gfx1150–1153) and RDNA4 (gfx1200/1201) to the previous eight;
+  Windows goes from four RDNA2/3 targets to 23, gfx900 through RDNA4. The extras upstream omits
+  (gfx900/gfx906/gfx90c/gfx1153, build-passing only in TheRock) are kept as long as they build
+  without patches. Consumers need a ROCm 10 runtime.
+- **CUDA 13.3 → 13.4** for both `cuda13-*` classifiers, matching upstream llama.cpp. Linux installs
+  `cuda-toolkit-13-4`; Windows assembles the toolkit from NVIDIA's redist archives (upstream's
+  component list) because `Jimver/cuda-toolkit` never shipped 13.4. Classifier names are unchanged.
 - **llama.cpp `b11069` → `b11080`, and local patch `0010` dropped — upstream fixed the
   enum-to-JSON-boolean trap at its root.** Eleven upstream commits, 1244 KiB, no project-source
   change. The size is one commit that does not concern this project (llama.cpp #29197 rewrites 46
