@@ -2482,9 +2482,24 @@ are decisions, not details:
    that compares two sizes and calls that method. **(3) A rule shows as `q` when it went out through a
    *prompt*** (the DEC line-drawing set, which this screen renders literally) and as `─` through the
    status region, so both forms count as a rule and a row of `q` also says which path it took.
-   **The JLine fixes are demonstrated red/green through it**, the library being just a property:
-   `mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6` fails all four active cases,
-   `-Djline.version=4.4.6-statusfix3` passes them (169/169 for the whole module). Two cases carry
+   **The JLine fixes are demonstrated red/green through it**, the library being just a property, and the
+   staircase is monotone — 186 module tests against a JLine carrying **all four** fixes
+   (`-Djline.version=4.4.6-statusfix4`) are green, the same suite against fixes 1–3 fails **one** (the
+   concurrency case below), and against the released `4.4.6` it fails **eleven**.
+   **The fourth fix is a data race, and it is the one that explains the reports that survived the other
+   three.** `refreshingTheBlockWhileTheReaderRedrawsNeverThrows` refreshes the block from three threads
+   while the size changes, and fails with a `ConcurrentModificationException` whose stack names the
+   defect: `AttributedString.join` iterating `Display.oldLines` from `Status.resize` (called by
+   `LineReaderImpl.handleSignal`) while another thread is inside `Status.update` replacing that same
+   `ArrayList`. Neither is synchronized and both are reachable from different threads *by design* — this
+   console keeps its block current from its own thread four times a second. **Keystrokes do not provoke
+   it; a size change does**, because the reader then resizes its display, resizes the region and
+   redisplays. Raised on the input pump it ends that thread, after which no size change is ever reported
+   again and the block keeps its width — which is the "rule wider than the window, wrapped" screen,
+   reported as a separate problem. The fix is `synchronized` on `Status`'s nine public entry points.
+   **And it is why the screen harness could not reproduce the reports it was built for**:
+   `ScreenTerminalOutputStream.write` is synchronized, so it serialises the byte stream, while the
+   unprotected state is JLine's own list — no stream lock reaches it. Two cases carry
    `@Disabled` as the record of a defect that is still open — a narrower drag loses the edit line, and a
    *three*-row block ends a wide drag with the rule three columns short, the state row shifted one
    column and the prompt on two rows, while a two-row block comes out clean.
