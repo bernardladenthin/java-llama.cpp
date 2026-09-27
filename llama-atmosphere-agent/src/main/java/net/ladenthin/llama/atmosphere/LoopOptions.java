@@ -88,13 +88,12 @@ public record LoopOptions(
         } catch (NumberFormatException e) {
             throw new IllegalArgumentException("Not a duration: " + text + " (try 30s, 5m or 2h)", e);
         }
-        Duration duration =
-                switch (Character.isDigit(unit) ? 'm' : unit) {
-                    case 's' -> Duration.ofSeconds(amount);
-                    case 'm' -> Duration.ofMinutes(amount);
-                    case 'h' -> Duration.ofHours(amount);
-                    default -> throw new IllegalArgumentException("Unknown time unit in " + text + " (use s, m or h)");
-                };
+        Duration duration = switch (Character.isDigit(unit) ? 'm' : unit) {
+            case 's' -> Duration.ofSeconds(amount);
+            case 'm' -> Duration.ofMinutes(amount);
+            case 'h' -> Duration.ofHours(amount);
+            default -> throw new IllegalArgumentException("Unknown time unit in " + text + " (use s, m or h)");
+        };
         if (duration.isZero() || duration.isNegative()) {
             throw new IllegalArgumentException("The interval must be positive: " + text);
         }

@@ -120,10 +120,10 @@ dependencies {
 
     // AppCompat: only for its per-app language API (AppCompatDelegate.setApplicationLocales),
     // which powers the in-app flag language picker and persists the choice across restarts.
-    implementation("androidx.appcompat:appcompat:1.7.1")
+    implementation("androidx.appcompat:appcompat:1.8.0")
 
     // Jetpack Compose UI (BOM pins the mutually consistent runtime versions).
-    val composeBom = platform("androidx.compose:compose-bom:2026.06.01")
+    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
     implementation(composeBom)
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation("androidx.compose.material3:material3")
