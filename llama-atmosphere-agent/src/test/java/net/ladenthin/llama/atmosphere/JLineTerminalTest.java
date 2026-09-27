@@ -317,6 +317,49 @@ class JLineTerminalTest {
     }
 
     @Test
+    void resizingWithTextInTheInputDoesNotDrawThePromptBesideItself() throws Exception {
+        // Reported: start, type Hallo without pressing Enter, drag the window -- and "> Hallo" appears
+        // ten times side by side on one line. Each redraw lands NEXT to the previous one instead of
+        // over it. The existing resize test missed the case because its input buffer was empty, so
+        // there was nothing to redraw and one prompt per resize was the whole story.
+        //
+        // **This does not reproduce the report**, and it is kept for what it does cover: that an
+        // application-side regression cannot start appending redraws. The harness raises a synthetic
+        // WINCH, and Windows -- where all three resize reports come from -- has no SIGWINCH at all; the
+        // size change arrives as a console event on a path this terminal never takes. Said here rather
+        // than left to be inferred from a green run.
+        java.io.PipedOutputStream keys = new java.io.PipedOutputStream();
+        Terminal terminal = terminal(new java.io.PipedInputStream(keys));
+        JLineTerminal console = JLineTerminal.over(terminal, List.of());
+        try {
+            Thread reader = new Thread(() -> console.readLine("ignored"));
+            reader.setDaemon(true);
+            reader.start();
+            Thread.sleep(250);
+            console.status(List.of("state row"));
+            keys.write("Hallo".getBytes(StandardCharsets.UTF_8)); // typed, deliberately not submitted
+            keys.flush();
+            Thread.sleep(250);
+            int before = screen().length();
+
+            for (int resize = 0; resize < 4; resize++) {
+                terminal.setSize(new Size(SIZE.getColumns() - 10 * (resize + 1), SIZE.getRows()));
+                terminal.raise(Terminal.Signal.WINCH);
+                Thread.sleep(150);
+            }
+
+            String drawn = screen().substring(before);
+            assertThat(
+                    "a redraw overwrites the input line rather than appending to it",
+                    drawn.contains("Hallo> Hallo"),
+                    is(false));
+        } finally {
+            console.close();
+            terminal.close();
+        }
+    }
+
+    @Test
     void leavingReleasesTheReservedRowsAndTheScrollRegion() throws Exception {
         // Reported: after /exit the block was still on screen, and resizing the window then reflowed it
         // into a mess. The pinned block is a *reserved scroll region* -- ESC[1;<n>r keeps the bottom
