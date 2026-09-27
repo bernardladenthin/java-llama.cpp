@@ -397,7 +397,23 @@ public final class JLineTerminal implements AgentTerminal {
             return true;
         }
         try {
-            status(lines);
+            synchronized (writing) {
+                // Re-establish the reserved region, then rebuild the rows. The region is what keeps the
+                // block's rows off the prompt's row, and a probe on the reporter's console measured the
+                // console's own cursor drifting UP by one to three rows after dragging -- never more than
+                // the block's height -- while the content still looked plausible. Re-asserting the region
+                // is what JLine's own handleSignal does on a size change.
+                //
+                // This was here before, removed, and is back for a reason: it writes to the terminal
+                // directly, and without Status being synchronized that landed inside what the reader was
+                // drawing for the same size change, which put "36;1H" on screen as text. That race is the
+                // fourth fix carried against JLine (Status's public methods are synchronized there), and
+                // refreshingTheBlockWhileTheReaderRedrawsNeverThrows is what holds it -- red 2/2 without
+                // that fix, green 3/3 with it. So this line depends on that fix and must not be kept
+                // without it.
+                status.resize(terminal.getSize());
+                updateStatus(lines);
+            }
             return true;
         } catch (RuntimeException e) {
             return false;

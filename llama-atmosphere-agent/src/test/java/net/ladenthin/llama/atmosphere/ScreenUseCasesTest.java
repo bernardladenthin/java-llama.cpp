@@ -728,6 +728,50 @@ class ScreenUseCasesTest {
     }
 
     @Test
+    void theCursorStaysOnTheRowTheBlockLeavesForItWhenTheWindowIsEnlarged() throws Exception {
+        // The measurement that located the defect, taken from the reporter's console with a probe and now
+        // asked of this screen too. Every other assertion in this class is about the CONTENT of the rows,
+        // and content is exactly what still looked plausible while this was already wrong: in a 38-row
+        // window with a three-row block the prompt belongs on row 34, and the console reported 33, 32 and
+        // 31 after dragging -- drifting UP by one to three rows, never more than the block's own height.
+        // A pinned region is reserved in rows counted from the bottom, so that drift IS the defect.
+        int rows = 38;
+        int blockRows = 3;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", 118, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+
+            int expected = rows - 1 - blockRows;
+            assertThat(
+                    "before any resize the cursor is on the row the block leaves for it",
+                    terminal.cursorRow(),
+                    is(expected));
+
+            List<Thread> pumps = new ArrayList<>();
+            for (int columns : new int[] {116, 118, 116, 118, 112, 118}) {
+                pumps.add(terminal.resizeAsynchronously(columns, rows));
+                console.refreshBlockForCurrentSize();
+                Thread.sleep(30);
+            }
+            for (Thread pump : pumps) {
+                pump.join(2000);
+            }
+            Thread.sleep(400);
+
+            assertThat(
+                    "the cursor is still on row " + expected + " of a " + rows + "-row window with a " + blockRows
+                            + "-row block" + NEWLINE + terminal.describe(),
+                    terminal.cursorRow(),
+                    is(expected));
+        }
+    }
+
+    @Test
     void theModeBadgeKeepsItsSpaceOnScreen() throws Exception {
         // Reported: "beim auto mode hat immer ein leerzeichen gefehlt: [pause] manual". The badge is
         // built as symbol + " " + name, so the space is there in the string -- the question is whether it

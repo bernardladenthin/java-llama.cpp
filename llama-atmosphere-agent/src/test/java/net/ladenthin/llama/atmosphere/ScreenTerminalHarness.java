@@ -139,6 +139,39 @@ class ScreenTerminalHarness extends LineDisciplineTerminal {
     }
 
     /**
+     * Which screen row the cursor is on.
+     *
+     * <p>The measurement that finally located the defect, and the one this class never asked for: every
+     * earlier assertion here was about the CONTENT of the rows. A probe on the reporter's console showed
+     * the console's own cursor two and three rows above where a three-row block expects it -- 32 and 31 in
+     * a 38-row window where 34 is right -- while the content still looked plausible. A pinned region is
+     * reserved in rows counted from the bottom, so the cursor drifting up by the block's own height is
+     * the defect itself rather than a symptom of it.
+     *
+     * @return the cursor's row, counted from the top
+     */
+    int cursorRow() {
+        Size size = getSize();
+        long[] dump = new long[size.getRows() * size.getColumns()];
+        int[] cursor = new int[2];
+        screen.dump(dump, cursor);
+        return cursor[1];
+    }
+
+    /**
+     * Which screen column the cursor is on.
+     *
+     * @return the cursor's column, counted from the left
+     */
+    int cursorColumn() {
+        Size size = getSize();
+        long[] dump = new long[size.getRows() * size.getColumns()];
+        int[] cursor = new int[2];
+        screen.dump(dump, cursor);
+        return cursor[0];
+    }
+
+    /**
      * The whole screen as one string, rows separated by newlines — for a failure message.
      *
      * @return the screen, ready to print
