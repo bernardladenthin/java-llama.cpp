@@ -63,7 +63,7 @@ public final class RpcEndpoint {
         if (colon < 0) {
             throw new IllegalArgumentException("RPC endpoint '" + endpoint + "' has no port; expected host:port");
         }
-        if (text.indexOf(':', colon + 1) >= 0) {
+        if (text.lastIndexOf(':') != colon) {
             throw new IllegalArgumentException("RPC endpoint '" + endpoint
                     + "' contains more than one ':'; llama.cpp's RPC transport is IPv4-only, so an IPv6"
                     + " address cannot be used (expected host:port)");

@@ -56,10 +56,23 @@ public class RpcEndpointTest {
 
     @Test
     public void parseRejectsAnEmptyOrNonNumericPort() {
-        assertThrows(IllegalArgumentException.class, () -> RpcEndpoint.parse("host:"));
-        assertThrows(IllegalArgumentException.class, () -> RpcEndpoint.parse("host:5x"));
-        assertThrows(IllegalArgumentException.class, () -> RpcEndpoint.parse("host:-1"));
-        assertThrows(IllegalArgumentException.class, () -> RpcEndpoint.parse("host: 1"));
+        // the message matters: Integer.parseInt would also throw (NumberFormatException is an
+        // IllegalArgumentException), so only the message proves the digit check itself ran
+        for (String bad : new String[] {"host:", "host:5x", "host:x5", "host:-1", "host: 1", "host:1/", "host:1:"}) {
+            IllegalArgumentException e =
+                    assertThrows(IllegalArgumentException.class, () -> RpcEndpoint.parse(bad), bad);
+            assertThat(bad, e, is(not(org.hamcrest.Matchers.instanceOf(NumberFormatException.class))));
+        }
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> RpcEndpoint.parse("host:5x"));
+        assertThat(e.getMessage(), containsString("no valid port: '5x'"));
+    }
+
+    @Test
+    public void everyDigitIsAcceptedInAPort() {
+        assertThat(RpcEndpoint.parse("h:1234").getPort(), is(1234));
+        assertThat(RpcEndpoint.parse("h:5678").getPort(), is(5678));
+        assertThat(RpcEndpoint.parse("h:10").getPort(), is(10));
+        assertThat(RpcEndpoint.parse("h:9").getPort(), is(9));
     }
 
     @Test
