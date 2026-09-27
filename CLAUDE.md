@@ -2199,12 +2199,35 @@ releases as a signed Central Portal bundle upload (staging repo → zip → Publ
 A **copy-and-run general-purpose terminal agent** (Claude Code / OpenCode reduced to the essentials, offline)
 that pairs [Atmosphere](https://github.com/Atmosphere/atmosphere)'s built-in OpenAI-compatible
 agent runtime with this project's `OpenAiCompatServer`. Like `android-llmservice/` it is a
-**standalone Maven project, NOT a reactor module and NOT published** — it is an application, and it
+**standalone Maven project, NOT a reactor module and NEVER on Maven Central** — it is an application, and it
 needs Java 21 (Atmosphere's floor) while the core stays Java 8. CI builds it against the core it just
 installed (`-Dllama.version=<reactor version>`); a user copies the folder and runs
 `mvn compile exec:java -Dexec.args="…"` with no `-D` at all — the pom's `llama.version` names the
 **released** core the READMEs describe (currently `5.2.0`, written as if released so the docs are
 right the moment the release lands).
+
+**Release asset: the agent jar WITHOUT the core.** `mvn -P assembly package` (the pom's `assembly`
+profile, descriptor `src/assembly/agent-jar.xml`) builds
+`llama-atmosphere-agent-<llama.version>-jar-with-dependencies.jar` — named after the **core** version
+it was built against, not the agent's own `1.0.0-SNAPSHOT`, because it only runs next to that core.
+It excludes `net.ladenthin:llama` **with its whole runtime graph** (`useTransitiveFiltering`: Jackson 2,
+slf4j-api, and Jackson 3's `jackson-annotations`, which resolves through the core's trail) plus
+`jspecify` and `slf4j-simple`, all of which every core fat jar already bundles — so the asset is ~7 MB
+instead of hundreds, the natives are not in the release twice, and there are never two SLF4J providers.
+The manifest's `Class-Path` names the four `llama-<v>-all-<os>-<arch>-…` fat jars and then the default
+`llama-<v>-jar-with-dependencies.jar`, so `java -jar` works when the agent lies next to any of them
+(missing entries are ignored; note that a manifest `Class-Path` is honoured under `java -cp` too).
+**Rename a core fat jar and this list must follow** — `smoke-agent-linux` is what notices.
+CI wiring (`publish.yml`): the model-free job builds it, writes the `.sha256` and uploads artifact
+`llama-atmosphere-agent-jar`; `github-snapshot` / `github-release-signed` download it into the asset
+directory next to `llama-fatjars`, so `sign-fatjars.sh` signs it (`*-jar-with-dependencies*.jar`) and
+the one upload attaches it. **`smoke-agent-linux`** (`.github/smoke-agent-jar.sh`) runs the asset the
+way the README tells a user to — `java -jar` next to the real `all-linux-x86-64` fat jar — and checks:
+bytecode ≤ 65 (Java 21, unlike the core's 52), that the jar started **alone** fails with
+`NoClassDefFoundError: net/ladenthin/llama/LlamaModel` (i.e. it really carries no core), `--help`, a
+one-shot `2 + 2` answer and a `read_file` round that must surface a marker from `--workspace`, all on
+the cached `TOOL_MODEL_NAME` with `--ngl 0`. **All three agent jobs gate both publish jobs**
+(model-free, model-backed integration, smoke).
 
 **What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.71) ships
 `BuiltInAgentRuntime` + `OpenAiCompatibleClient`: a zero-framework OpenAI client that *always*
@@ -2234,7 +2257,7 @@ Spring Boot starter are a deployment layer on top of the same runtime.
   text so far instead of erroring. That is a SHOULD for Atmosphere's `OpenAiCompatibleClient`, not
   for this project.
 - `AtmosphereToolLoopIntegrationTest` — **model-backed, CI only** (`test-java-llama-atmosphere-agent-integration`,
-  validation-only, not a publish gate): the same loop against the cached Qwen2.5-1.5B tool model
+  a publish gate): the same loop against the cached Qwen2.5-1.5B tool model
   through the downloaded Linux natives — plain chat, streaming (≥ 2 chunks), a tool call whose result
   is answered, a read→write→read loop that changes a temp file. Self-skips without the GGUF.
 
