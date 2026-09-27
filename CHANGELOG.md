@@ -54,6 +54,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   The served devices can be chosen by name (`RpcServer.startLocal(…, List<String> devices)`,
   `--device CPU`), because a served device that cannot run an operation terminates the server
   (llama.cpp's RPC client reports every operation as supported).
+- **`LlamaLoader` no longer loads the native library twice** when the first class to load it is not
+  `LlamaModel` (e.g. `TextToSpeech`, `LlamaQuantizer`, `RpcServer`): `JNI_OnLoad` initializes
+  `LlamaModel`, whose static block re-entered the loader and ran a second full load — with an
+  all-backends fat jar that meant re-extracting every GPU backend over the library being loaded.
 - **`.github/verify-native-deps.py`** holds every shipped native library to its known runtime
   dependencies (ELF, PE incl. Windows arm64, Mach-O). It found that the macOS dylib has always
   linked Homebrew's `openssl@3` (see `TODO.md`).

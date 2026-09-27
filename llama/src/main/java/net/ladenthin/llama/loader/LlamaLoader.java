@@ -63,6 +63,10 @@ public class LlamaLoader {
     private static final Object INITIALIZE_LOCK = new Object();
 
     private static boolean extracted = false;
+
+    /** Whether {@link #initialize()} is running; only read and written under the lock. */
+    private static boolean initializing = false;
+
     private static final LlamaSystemProperties systemProperties = new LlamaSystemProperties();
     private static final NativeLibraryPermissionSetter permissionSetter = new NativeLibraryPermissionSetter(System.err);
 
@@ -123,23 +127,53 @@ public class LlamaLoader {
      * Loads the llama and jllama shared libraries
      */
     public static void initialize() {
+        runOnceOnThisThread(LlamaLoader::load);
+    }
+
+    /**
+     * Runs {@code body} under the initialization lock, unless this thread is already inside it.
+     *
+     * <p>Loading the library re-enters {@link #initialize()} on the same thread: the library's
+     * {@code JNI_OnLoad} calls {@code GetFieldID} on {@code LlamaModel}, which initializes that class,
+     * whose static block calls {@code initialize()}. The lock is reentrant, so without this guard the
+     * nested call ran a second, complete load while the first was still inside {@code System.load}:
+     * it deleted the extracted files and, with a multi-backend jar, probed every backend again and
+     * extracted over the library being loaded. Any class but {@code LlamaModel} as the first entry
+     * point reached it -- {@code RpcServer} hung its fat-jar start that way. Calls from other threads,
+     * and later calls from this one, still run the body; only the nested one returns at once.
+     *
+     * @param body what to run
+     */
+    static void runOnceOnThisThread(Runnable body) {
         synchronized (INITIALIZE_LOCK) {
-            // only cleanup before the first extract
-            if (!extracted) {
-                cleanup();
+            if (initializing) {
+                return;
             }
-            if ("Mac".equals(OSInfo.getOSName())) {
-                String nativeDirName = getNativeResourcePath();
-                String tempFolder = getTempDir().getAbsolutePath();
-                System.out.println(nativeDirName);
-                Path metalFilePath = extractFile(nativeDirName, "ggml-metal.metal", tempFolder);
-                if (metalFilePath == null) {
-                    System.err.println("'ggml-metal.metal' not found");
-                }
+            initializing = true;
+            try {
+                body.run();
+            } finally {
+                initializing = false;
             }
-            loadNativeLibrary("jllama");
-            extracted = true;
         }
+    }
+
+    private static void load() {
+        // only cleanup before the first extract
+        if (!extracted) {
+            cleanup();
+        }
+        if ("Mac".equals(OSInfo.getOSName())) {
+            String nativeDirName = getNativeResourcePath();
+            String tempFolder = getTempDir().getAbsolutePath();
+            System.out.println(nativeDirName);
+            Path metalFilePath = extractFile(nativeDirName, "ggml-metal.metal", tempFolder);
+            if (metalFilePath == null) {
+                System.err.println("'ggml-metal.metal' not found");
+            }
+        }
+        loadNativeLibrary("jllama");
+        extracted = true;
     }
 
     /**

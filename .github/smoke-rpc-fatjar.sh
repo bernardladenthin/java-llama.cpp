@@ -52,13 +52,22 @@ trap cleanup EXIT
 java -cp "$JAR" net.ladenthin.llama.RpcServer --port "$RPC_PORT" --threads 2 --device CPU > rpc-server.log 2>&1 &
 PIDS+=($!)
 SERVER_PID=$!
-for _ in $(seq 1 60); do
+# Up to 300 s, like the NativeServer smoke: an all-backends jar extracts every GPU backend's
+# library (CUDA, ROCm and SYCL are hundreds of MB) and fails to load each before it reaches one
+# this GPU-less runner can load. 60 s was too short for that on the first CI run.
+for _ in $(seq 1 100); do
     kill -0 "$SERVER_PID" 2> /dev/null || fail "RpcServer exited before listening"
     grep -q "RpcServer listening on 127.0.0.1:$RPC_PORT" rpc-server.log && break
-    sleep 1
+    sleep 3
 done
 grep -q "RpcServer listening on 127.0.0.1:$RPC_PORT" rpc-server.log || fail "RpcServer never reported listening"
 grep -q "serving \[CPU\]" rpc-server.log || fail "RpcServer --device CPU did not serve exactly the CPU"
+# The backend is chosen once. RpcServer is the one entry point that reaches the loader before
+# LlamaModel, and JNI_OnLoad initializes LlamaModel, whose static block re-entered the loader and
+# ran a second complete load over the library being loaded (LlamaLoader.runOnceOnThisThread).
+# A manifest-less jar prints the line zero times.
+[ "$(grep -c '\[jllama\] using native backend' rpc-server.log)" -le 1 ] \
+    || fail "the native library was loaded more than once: $(grep -c '\[jllama\] using native backend' rpc-server.log) backend selections"
 echo "RPC server up: $(grep 'RpcServer listening' rpc-server.log)"
 
 # --- JVM B: the model, offloaded over RPC --------------------------------------------------------

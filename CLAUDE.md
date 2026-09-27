@@ -975,6 +975,15 @@ every `supports_op` with `true` (upstream TODO), so a served device that cannot 
 **aborts the process** — the macOS CI runners' paravirtual Metal GPU has no `MUL_MAT` and took the
 first CI run down that way. **Every test that computes over RPC serves `CPU`** (C++ `loopback_server`,
 `RpcIntegrationTest`); do not switch one back to the default choice.
+**`RpcServer` is the first entry point that loads the library before `LlamaModel`, which exposed a
+loader defect** (fixed in `LlamaLoader.runOnceOnThisThread`): `JNI_OnLoad`'s `GetFieldID` on
+`LlamaModel` initializes that class, whose static block re-entered `LlamaLoader.initialize()` on the
+loading thread — the lock is reentrant, so a second complete load ran while the first was inside
+`System.load`, clearing the temp files and, with an all-backends jar, probing and extracting every
+backend again over the library being loaded. The fat-jar RPC smoke timed out on it (the doubled
+extraction of the CUDA/ROCm/SYCL libraries); it now waits 300 s like the other smoke and fails if the
+backend is selected more than once. Only the *nested* call is skipped — later calls still run the body,
+which `BackendManifestLoadTest` relies on.
 **Single instance per process** (ggml keeps the server state in globals). `startLocal` binds
 loopback only; `startOnNetwork` is the explicit, warned opt-in, and binding needs an IPv4 literal
 (the server uses `inet_addr`). Endpoints on the client side are `value.RpcEndpoint`
