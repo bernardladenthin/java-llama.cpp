@@ -133,3 +133,21 @@ console API rather than through `System.out`.
 - No project test asserts the fixed behaviour: it would fail against the JLine release the build
   depends on. `JLineTerminalTest` therefore keeps pinning what *is* true today.
 - `--plain` is unaffected and is the escape hatch: it pins nothing and redraws nothing.
+
+## A second defect in the same area, found while verifying this one — not fixed
+
+A bar whose **height changes** while a line is being edited makes the edit line disappear outright:
+
+```
+StatusRepro windows-vtp changing   -> "> Hallo" drawn 0 time(s)   (blank screen above the bar)
+StatusRepro xterm       changing   -> "> Hallo" drawn 0 time(s)
+```
+
+It is a different code path — `redisplay()`'s `lastStatusSize` branch, which also calls `doDisplay()`
+(after a `carriage_return`) — and the fix above does **not** address it: both counts stay 0 with the
+patched jar. It is not the same symptom the `lastStatusSize` hypothesis predicted (duplication); the
+line is lost, not repeated.
+
+Reachable from this project, though rarely: the agent's block is always three rows, so the height
+changes only when it is taken down and put back — `/cls` and `/exit`. Both are tested and behave, so
+this is recorded as an upstream observation rather than a chased bug.
