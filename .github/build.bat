@@ -49,11 +49,40 @@ REM nvcc command line (it dies with `sccache: error: Could not parse shell line`
 REM fails every .cu compile). So CUDA device code is built by nvcc directly (uncached)
 REM here; the cl.exe C/C++ TUs still cache via the C/CXX launcher set above.
 
+REM The probe above only proves sccache can wrap cl.exe. Several jobs compile with a
+REM different compiler (clang-cl on arm64, ROCm's clang, Intel icx), which sccache may
+REM refuse or mishandle -- so a configure or build that fails WITH the launcher is
+REM retried ONCE from a clean build dir WITHOUT it (the build.sh retry, but unconditional:
+REM cmd cannot tee the output to match an sccache error signature). A genuine compile
+REM error therefore still fails, just after one uncached attempt; a cache/compiler
+REM incompatibility ends green and uncached, never red.
+REM -DGGML_CCACHE=OFF on every configure: ggml otherwise self-enables any ccache/sccache it
+REM finds on PATH when no launcher is set -- i.e. exactly in the probe-failed and retry
+REM cases -- via the global RULE_LAUNCH_COMPILE, silently re-caching the uncached build.
+REM No goto/labels on purpose: this file is checked out with LF line endings
+REM (.gitattributes eol=lf), and cmd's label search is unreliable in LF-only scripts.
+set "RETRY="
 mkdir build
-cmake -Bbuild %LAUNCH% %*
-if errorlevel 1 exit /b 1
-cmake --build build --config Release
-set "BUILD_RC=!ERRORLEVEL!"
+cmake -Bbuild %LAUNCH% -DGGML_CCACHE=OFF %*
+if errorlevel 1 (
+    if not defined LAUNCH exit /b 1
+    set "RETRY=1"
+) else (
+    cmake --build build --config Release
+    set "BUILD_RC=!ERRORLEVEL!"
+    if not "!BUILD_RC!"=="0" if defined LAUNCH set "RETRY=1"
+)
+if defined RETRY (
+    echo build.bat: build WITH sccache failed -- retrying ONCE from scratch WITHOUT the cache.
+    sccache --show-stats
+    set "LAUNCH="
+    rmdir /s /q build
+    mkdir build
+    cmake -Bbuild -DGGML_CCACHE=OFF %*
+    if errorlevel 1 exit /b 1
+    cmake --build build --config Release
+    set "BUILD_RC=!ERRORLEVEL!"
+)
 
 REM Print cache stats (best-effort) regardless of build outcome -- only when sccache
 REM was wired in as the launcher.

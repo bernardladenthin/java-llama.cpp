@@ -1816,9 +1816,8 @@ jobs:
     # Native arm64 build on GitHub's free windows-11-arm runner. Goes into the DEFAULT JAR (no
     # classifier): OSInfo maps a Windows-on-ARM JVM (os.arch=aarch64) to Windows/aarch64, the same
     # path CMake emits here, and the `*-libraries` glob in the package/publish jobs merges it into
-    # src/main/resources. sccache is intentionally omitted (the existing install step pulls the
-    # x86_64 sccache zip; an arm64 build would need the aarch64 release — not worth the extra path
-    # for one CPU job, so build.bat just builds uncached when sccache is absent).
+    # src/main/resources. sccache: the native aarch64-pc-windows-msvc release, wrapping clang-cl
+    # (guarded by build.bat's probe + uncached retry like every other Windows job).
     #
     # Compiler: clang-cl, NOT MSVC cl.exe. ggml's ggml-cpu/CMakeLists.txt aborts with "MSVC is not
     # supported for ARM, use clang" via `if (MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")`.
@@ -1834,6 +1833,10 @@ jobs:
     # off makes ggml use its own std::thread threadpool, so the arm64 jllama.dll (and the test exe) are
     # self-contained with no libomp dependency to ship. The x86_64/x86 jobs keep OpenMP (MSVC vcomp).
     runs-on: windows-11-arm
+    env:
+      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
+      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
@@ -1845,6 +1848,21 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: arm64
+      - name: Install sccache (shared compiler cache)
+        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
+        continue-on-error: true
+        shell: pwsh
+        # sccache ships a native Windows-on-ARM build; it wraps clang-cl here.
+        # build.bat probes sccache before trusting it and, should a build fail with it as the
+        # launcher, retries once uncached -- so this can speed the job up but never red it.
+        run: |
+          $ver = "0.18.0"
+          $rel = "sccache-v$ver-aarch64-pc-windows-msvc"
+          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
       - name: Build libraries
         shell: cmd
         # No mvn compile needed: the JNI header (jllama.h) is committed and the native build
@@ -2138,6 +2156,10 @@ jobs:
     # device-code compile fails. Upstream llama.cpp builds win-hip on windows-2022 for the same
     # reason (it drives ROCm's own clang and relies on the older MSVC STL).
     runs-on: windows-2022
+    env:
+      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
+      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
@@ -2176,6 +2198,21 @@ jobs:
           "LLVM_PATH=$rocm\lib\llvm" | Out-File -FilePath $env:GITHUB_ENV -Append
           (rocm-sdk path --bin).Trim() | Out-File -FilePath $env:GITHUB_PATH -Append
           "C:\TheRock\build\.venv\Scripts" | Out-File -FilePath $env:GITHUB_PATH -Append
+      - name: Install sccache (shared compiler cache)
+        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
+        continue-on-error: true
+        shell: pwsh
+        # Wraps ROCm's clang (HIP is compiled as C++ on Windows, so the C/CXX launcher covers it).
+        # build.bat probes sccache before trusting it and, should a build fail with it as the
+        # launcher, retries once uncached -- so this can speed the job up but never red it.
+        run: |
+          $ver = "0.18.0"
+          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
+          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
       - name: Build libraries
         shell: cmd
         # Upstream's compiler wiring for TheRock (clang under lib\llvm\bin, not bin\);
@@ -2281,6 +2318,10 @@ jobs:
     name: Build Windows 2025 x86_64 SYCL (Intel oneAPI)
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
+    env:
+      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
+      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
@@ -2300,6 +2341,21 @@ jobs:
           curl -fSL -o "%RUNNER_TEMP%\oneapi.exe" "https://registrationcenter-download.intel.com/akdlm/IRC_NAS/b60765d1-2b85-4e85-86b6-cb0e9563a699/intel-deep-learning-essentials-2025.3.3.18_offline.exe"
           "%RUNNER_TEMP%\oneapi.exe" -s -x -f "%RUNNER_TEMP%\oneapi_extracted" --log "%RUNNER_TEMP%\extract.log"
           "%RUNNER_TEMP%\oneapi_extracted\bootstrapper.exe" -s --action install --components=intel.oneapi.win.cpp-dpcpp-common:intel.oneapi.win.mkl.devel:intel.oneapi.win.dnnl:intel.oneapi.win.tbb.devel --eula=accept -p=NEED_VS2022_INTEGRATION=0 --log-dir="%RUNNER_TEMP%"
+      - name: Install sccache (shared compiler cache)
+        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
+        continue-on-error: true
+        shell: pwsh
+        # Wraps cl.exe (C) and icx (C++); if sccache cannot handle icx the retry builds uncached.
+        # build.bat probes sccache before trusting it and, should a build fail with it as the
+        # launcher, retries once uncached -- so this can speed the job up but never red it.
+        run: |
+          $ver = "0.18.0"
+          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
+          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
       - name: Build libraries
         shell: cmd
         run: |
@@ -2321,6 +2377,10 @@ jobs:
     # Maven profile packages only that subtree. build_opencl_windows.bat stages the
     # OpenCL headers + ICD loader before delegating to build.bat.
     runs-on: windows-11-arm
+    env:
+      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
+      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
@@ -2332,6 +2392,21 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: arm64
+      - name: Install sccache (shared compiler cache)
+        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
+        continue-on-error: true
+        shell: pwsh
+        # sccache ships a native Windows-on-ARM build; it wraps clang-cl here.
+        # build.bat probes sccache before trusting it and, should a build fail with it as the
+        # launcher, retries once uncached -- so this can speed the job up but never red it.
+        run: |
+          $ver = "0.18.0"
+          $rel = "sccache-v$ver-aarch64-pc-windows-msvc"
+          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
       - name: Build libraries
         shell: cmd
         run: |
@@ -2398,6 +2473,10 @@ jobs:
     name: Build Windows 2025 x86_64 OpenVINO (Intel)
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
+    env:
+      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
+      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
@@ -2424,6 +2503,21 @@ jobs:
           # The archive extracts into a nested versioned folder; point OpenVINO_DIR at its runtime/cmake.
           $root = (Get-ChildItem "C:\openvino" -Directory | Select-Object -First 1).FullName
           "OpenVINO_DIR=$root\runtime\cmake" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Install sccache (shared compiler cache)
+        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
+        continue-on-error: true
+        shell: pwsh
+        # Plain cl.exe build, same as the Vulkan/OpenCL jobs.
+        # build.bat probes sccache before trusting it and, should a build fail with it as the
+        # launcher, retries once uncached -- so this can speed the job up but never red it.
+        run: |
+          $ver = "0.18.0"
+          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
+          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
+          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
       - name: Build libraries
         shell: cmd
         # vcpkg toolchain file wires in the OpenCL (incl. cl2.hpp) that ggml-openvino needs.

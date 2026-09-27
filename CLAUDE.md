@@ -240,6 +240,20 @@ FindVulkan-compatible). Because all five Windows build jobs are in the `package`
 GPU-toolchain failure blocks packaging — the same release-gating policy the Linux-CUDA / Android-OpenCL
 jobs already follow.
 
+**sccache on every Windows Ninja job.** All ten Ninja build jobs install sccache (x86_64 or the
+native `aarch64` release) with the same `USE_CACHE` / `SCCACHE_WEBDAV_*` env; only the two MSVC-classifier
+jobs cannot, because the Visual Studio generator ignores compiler launchers. It cannot red a build, by
+three guards in `build.bat`: the install step is `continue-on-error`; a probe compiles through sccache
+before it is trusted; and — because that probe only proves `cl.exe`, while arm64 builds with `clang-cl`,
+ROCm with its own `clang` and SYCL with `icx` — **a configure or build that fails with sccache as the
+launcher is retried once from a clean build dir without it**. The retry is unconditional (cmd cannot
+tee the output to match an error signature the way `build.sh` does), so a genuine compile error costs
+one extra uncached attempt before it fails. Every configure also passes `-DGGML_CCACHE=OFF`: without
+it ggml self-enables any sccache it finds on `PATH` whenever no launcher is set — exactly the
+probe-failed and retry cases — and the "uncached" build silently goes through sccache after all (the
+same trap `build.sh`'s retry hit with nvcc). `build.bat` uses no `goto`/labels on purpose: it is
+checked out with LF line endings, where cmd's label search is unreliable.
+
 **Local sanity builds** (need MSVC + Ninja on PATH; sccache optional; GPU builds also need the matching SDK):
 ```bat
 mvn -q compile
@@ -291,8 +305,8 @@ build + `ctest`). It emits to the **canonical** `resources/.../Windows/aarch64/`
 tree — so it ships in the **default** JAR alongside Windows x86-64 / x86 (like those, it is not a
 classifier). No Java change was needed: `OSInfo` already maps a Windows-on-ARM JVM (`os.arch=aarch64`)
 to `Windows/aarch64` (it isn't in `archMapping`, so it falls through `translateArchNameToFolderName`).
-sccache is intentionally omitted (the shared install step pulls the x86_64 sccache zip; not worth an
-arm64 path for one CPU job — `build.bat` just builds uncached). **Compiler: `clang-cl`, not MSVC
+sccache runs here too, from its native `aarch64-pc-windows-msvc` release (it wraps `clang-cl`; see
+"sccache on every Windows Ninja job" above). **Compiler: `clang-cl`, not MSVC
 `cl.exe`.** ggml's `ggml-cpu/CMakeLists.txt` aborts with *"MSVC is not supported for ARM, use clang"*
 via `if (MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")`; `clang-cl` (LLVM's MSVC-compatible driver)
 satisfies that guard (compiler id `"Clang"`) while keeping CMake's `MSVC=TRUE`, so the static `/MT` CRT
