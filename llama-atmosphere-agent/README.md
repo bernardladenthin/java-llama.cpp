@@ -472,6 +472,13 @@ climbing up the screen came from; narrowing does it in reverse and walks the inp
 never soft-wrapped has nothing to join. The price: text keeps the line breaks it was printed with, so widening
 the window does not re-flow the conversation — the same trade an append-only console already makes.
 
+**Making the window narrower no longer erases the conversation.** The status bar's own housekeeping used to
+clear a band of rows on a geometry change and pulled the start of that band upwards "to account for wrapped
+status lines" — six rows above a three-row bar in a halved window, straight through the answers on screen.
+Measured: three answers, halve the width, two gone. Since a bar row is padded one column short it cannot wrap at
+all, so there was nothing to account for. That was the report "after making it narrower I cannot see it any
+more": the output was never scrolled away, it was erased.
+
 **The pinned block never writes the last column of a row**, which is what stopped the stacks of bars. A row
 padded to the full reported width wraps when that width is not the screen's real one — a dragged window reports
 a width before it has applied it — and a wrapped row takes two screen rows where the bar reserves one, so the

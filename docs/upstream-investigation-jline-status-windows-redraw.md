@@ -614,3 +614,46 @@ against `4.4.6-statusfix7`.
 **What the harness still cannot show** is the *stack* itself: `ScreenTerminal` does not reflow, and JLine's diff
 skips a render whose content has not changed, so only the first bad render damages its screen. The damage it
 does show — a bottom row eaten by a wrap — is the same mechanism one render at a time.
+
+## An emulator that reflows, and the eighth fix it found on the first try
+
+The reporter's own conclusion after several rounds — *"wir müssen das irgendwie testbar bekommen. Zur Not müssen
+wir eine Art Terminal-Emulator"* — was right, and it is what this section delivers. Every automated
+reproduction had failed for one reason: JLine's `ScreenTerminal`, which the project's screen tests interpret,
+adjusts its buffer on a resize but **never reflows**. A real console does, and a model without it reports every
+drag case green.
+
+**`ReflowingScreenHarness`** adds exactly that one behaviour and nothing else. It does not parse VT — JLine's
+screen keeps doing that — it reads the screen it has on a width change, rebuilds the logical lines, re-wraps
+them and writes the result back **behind JLine's back**, which is the honest channel: a console's reflow changes
+the screen without telling the program. Two rules, both stated so they can be checked rather than believed: a
+row **continues** into the next one when its last cell is not blank (the terminal's own rule in practice — the
+flag can only be set if the last cell was written, which is also why the seventh fix matters), and which edge
+keeps its content when joining frees rows is an **explicit parameter** (`Anchor.BOTTOM` / `Anchor.TOP`) rather
+than a guess. `ReflowingScreenHarnessTest` puts the harness itself under test, and **`probe/ReflowProbe.java`**
+prints the same pattern on the reporter's real console so the rules can be confirmed against it.
+
+**The insight that came with it.** This console folds every output line to one column less than the window, so
+nothing it prints is soft-wrapped — *at the width it was printed at*. Making the window **narrower** turns those
+same lines into wrapped ones, and widening then joins them again. That is why enlarging alone looked fine while
+"ganz viel kleiner / größer abwechselnd zerhackt alles": **the shrink manufactures the wrapped lines the next
+widening moves everything with.**
+
+**And the first thing the emulator showed was not a reflow at all — it was an erase.** After a shrink-and-widen
+the conversation was simply *gone* from the screen. Reproduced without any reflow, on the ordinary harness:
+three answers on a 100-column window, halve the width, and **two of the three are erased**.
+
+The cause is in `Status.resize`. It clears a band of rows when the geometry changes, and when the width
+*decreased* it pulled the start of that band upwards by `(ceil(oldColumns / columns) - 1) * statusLines` rows —
+"to account for wrapped status lines". For a halved window with a three-row bar that is **six rows above the
+bar**, straight through the application's own output. It is not merely too eager: since the seventh fix a status
+row is padded to one column less than the width and **cannot wrap at all**, so there are no extra rows for it to
+have wrapped into. The rows above the bar belong to whoever wrote them.
+
+**The eighth fix removes it.** Red/green on both sides: `StatusRepaintTest.makingTheWindowNarrowerDoesNotEraseWhatIsAboveTheBar`
+fails with the compensation restored (`row 4 was erased: "                    "`) and passes without it;
+`ScreenUseCasesTest.makingTheWindowNARROWERmustNotERASETheConversation` is red against `4.4.6-statusfix7` and
+green against `4.4.6-statusfix8`. 103 of JLine's own tests stay green.
+
+**This is the answer to "nach dem kleiner ziehen sehe ich es nicht mehr"** — the answer was never scrolled away,
+it was erased by the status bar's own housekeeping.

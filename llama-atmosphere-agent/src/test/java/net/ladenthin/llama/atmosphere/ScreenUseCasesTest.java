@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
  * <p><b>Which JLine this needs.</b> The library is a property, and these cases need the patched one:
  *
  * <pre>
- * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix7   # runs
+ * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix8   # runs
  * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6              # every case SKIPS
  * </pre>
  *
@@ -101,7 +101,7 @@ class ScreenUseCasesTest {
      * <p><b>To see the library make the difference</b>, run this class twice:
      *
      * <pre>
-     * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix7   # green
+     * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix8   # green
      * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6              # skipped -- delete this
      *                                                                        # assumption to see it fail
      * </pre>
@@ -110,7 +110,7 @@ class ScreenUseCasesTest {
     void onlyWithAJLineThatCarriesTheFixes() {
         Assumptions.assumeTrue(
                 jlineCarriesTheFixes(),
-                "needs the patched JLine: mvn test -Djline.version=4.4.6-statusfix7"
+                "needs the patched JLine: mvn test -Djline.version=4.4.6-statusfix8"
                         + " (see docs/upstream-investigation-jline-status-windows-redraw.md)");
     }
 
@@ -2054,5 +2054,51 @@ class ScreenUseCasesTest {
                     is(0));
             assertThat("the state row is whole" + NEWLINE + screen, screenRows[rows - 1].startsWith("[▤"), is(true));
         }
+    }
+
+    @Test
+    void makingTheWindowNARROWERmustNotERASETheConversation() throws Exception {
+        // "nach dem kleiner ziehen sehe ich es nicht mehr" -- and the answer is not scrolled away, it is
+        // ERASED. Status.resize clears a band of rows when the geometry changes, and when the width DECREASES
+        // it pulls the start of that band upwards by as many rows as the old status lines would have wrapped
+        // into: extraRows = (ceil(oldColumns / columns) - 1) * statusLines. Halving the width of a window with
+        // a three-row bar therefore clears six rows ABOVE the region -- straight through the conversation.
+        int rows = 16;
+        int wide = 100;
+        ScreenTerminalHarness terminal = terminalWithRows(wide, rows);
+        try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
+            console.line("ANSWER-ONE the user wants to keep seeing");
+            console.line("ANSWER-TWO the user wants to keep seeing");
+            console.line("ANSWER-THREE the user wants to keep seeing");
+            Thread.sleep(300);
+            assertThat(
+                    "all three answers are on screen before the drag" + NEWLINE + terminal.describe(),
+                    count(terminal.rows(), row -> row.contains("the user wants to keep seeing")),
+                    is(3));
+
+            resizeOnceAt(terminal, console, wide / 2, rows);
+
+            String screen = terminal.describe();
+            assertThat(
+                    "and still after it" + NEWLINE + screen,
+                    count(terminal.rows(), row -> row.contains("the user wants")),
+                    is(3));
+        }
+    }
+
+    /**
+     * Change the window size once, at a row count that is not this class's constant.
+     *
+     * @param terminal the screen
+     * @param console the console under test
+     * @param columns the new width
+     * @param rows the new height
+     */
+    private void resizeOnceAt(ScreenTerminalHarness terminal, JLineTerminal console, int columns, int rows)
+            throws Exception {
+        terminal.resize(columns, rows);
+        Thread.sleep(300);
+        console.refreshBlockForCurrentSize();
+        Thread.sleep(300);
     }
 }

@@ -2488,13 +2488,13 @@ are decisions, not details:
    *prompt*** (the DEC line-drawing set, which this screen renders literally) and as `─` through the
    status region, so both forms count as a rule and a row of `q` also says which path it took.
    **The JLine fixes are demonstrated red/green through it**, the library being just a property — and since
-   there are **seven** of them, one of which adds a method, the wiring needs a paragraph of its own.
+   there are **eight** of them, one of which adds a method, the wiring needs a paragraph of its own.
    `ScreenUseCasesTest` **skips itself** on a JLine that does not carry them, keyed on
    `Status.repaint()` (the fifth fix and the only one that is a new method, so its presence stands in for the
    whole set). That is CLAUDE.md's own rule applied late — "no project test may assert the fixed behaviour
    while the build depends on an unfixed release" — and it had been broken: the pom's `jline.version` is the
    **released** one, which is what CI builds against, and against it these cases fail. Measured: the whole
-   module is green with `-Djline.version=4.4.6-statusfix7` (the screen cases run) and green with the
+   module is green with `-Djline.version=4.4.6-statusfix8` (the screen cases run) and green with the
    released `4.4.6` as well, where all 43 report as **skipped** rather than passing. The marker cannot tell
    the fifth build from the later ones (the sixth adds a *protected* method, the seventh changes only a padding
    width), so on an older patched jar one or two cases fail rather than skipping — stated in the test rather than worked around.
@@ -2512,7 +2512,7 @@ are decisions, not details:
    anything was shown is not an error) and `StatusWrongWidthTest` (3 cases on a screen wider than the width
    it reports: every reserved row keeps its own screen row, nothing is written beside the rule, and the rows
    above the block stay empty, and — the seventh fix — a reported width one column too LARGE does not wrap the
-   bottom row). 102 of JLine's own tests are green with all seven fixes, `DisplayTest` and `ScreenTerminalTest`
+   bottom row). 103 of JLine's own tests are green with all eight fixes, `DisplayTest` and `ScreenTerminalTest`
    included.
 
 
@@ -2723,6 +2723,35 @@ are decisions, not details:
    (`Status.repaint` for the fifth fix, `Display.addressesEveryRow` for the sixth), never by version string —
    the patched builds overlay classes into the released jar and keep its manifest version, so the string
    cannot tell them apart.
+
+   **A screen model that REFLOWS, because the one that does not reported every drag case green**
+   (`ReflowingScreenHarness` + `ReflowResizeTest`, and `probe/ReflowProbe.java` for the real console). JLine's
+   `ScreenTerminal` adjusts its buffer on a resize and **never reflows**; a real console does, and that single
+   missing behaviour is why several rounds of reproduction failed. The harness adds it and nothing else: it does
+   not parse VT (JLine's screen keeps doing that), it reads the screen on a width change, rebuilds the logical
+   lines, re-wraps them and writes the result back **behind JLine's back** — the honest channel, since a console's
+   reflow changes the screen without telling the program. Both of its rules are explicit so they can be checked:
+   a row **continues** into the next when its last cell is not blank (the terminal's own rule in practice), and
+   which edge keeps its content when joining frees rows is a **parameter** (`Anchor.BOTTOM`/`TOP`), not a guess.
+   `ReflowingScreenHarnessTest` puts the harness itself under test. **Its limit is stated:** the cursor is not
+   reflowed with the content, so it is evidence about what is ON the screen after a resize, not about where the
+   cursor lands — those cases stay with `ScreenTerminalHarness`.
+   **The insight that came with it:** folding makes nothing soft-wrapped *at the width it was printed at*, so
+   making the window NARROWER turns those same lines into wrapped ones and the next widening joins them. That is
+   why enlarging alone looked fine while alternating "zerhackt alles" — the shrink manufactures what the widening
+   then moves everything with.
+
+   **The eighth JLine fix: `Status.resize` must not erase the rows above the bar.** The first thing the emulator
+   showed was not a reflow but an **erase** — after a shrink the conversation was simply gone. Reproduced without
+   any reflow at all, on the ordinary harness: three answers on a 100-column window, halve the width, and **two
+   are erased**. `Status.resize` clears a band when the geometry changes and pulled its start upwards by
+   `(ceil(oldColumns / columns) - 1) * statusLines` rows "to account for wrapped status lines" — six rows above a
+   three-row bar in a halved window, straight through the application's output. Since the seventh fix a status row
+   is padded one column short and **cannot wrap**, so there are no extra rows to account for. Red/green both
+   sides: `StatusRepaintTest.makingTheWindowNarrowerDoesNotEraseWhatIsAboveTheBar` fails with the compensation
+   restored and passes without it; `makingTheWindowNARROWERmustNotERASETheConversation` is red against
+   `statusfix7` and green against `statusfix8`. **This is the answer to "nach dem kleiner ziehen sehe ich es nicht
+   mehr":** the output was never scrolled away, it was erased by the bar's own housekeeping.
 
    **A status row must not write the last column, which is the seventh JLine fix.** `Status.update` padded every
    row to the **full** reported width. A row padded to a width the screen does not have **wraps**: it occupies
