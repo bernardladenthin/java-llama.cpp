@@ -33,6 +33,16 @@ class ReflowResizeTest {
     private static final int WIDE = 100;
     private static final int NARROW = 50;
 
+    /**
+     * Run these cases even on a JLine without the fixes, so the staircase can be measured without editing.
+     *
+     * <p>Which of the fixes are still needed is a question that comes up — the console has changed a great deal
+     * around them — and answering it means running this class against each patched build <em>and</em> against the
+     * released one. The skip is what makes CI green; this property is what makes the measurement possible without
+     * turning the skip into an edit, which is how the counts in the investigation document were produced.
+     */
+    private static final String RUN_ANYWAY = "atmosphere.screen.tests.runAnyway";
+
     private static boolean jlineCarriesTheFixes() {
         try {
             org.jline.utils.Status.class.getMethod("repaint");
@@ -45,7 +55,8 @@ class ReflowResizeTest {
     @BeforeEach
     void onlyWithAJLineThatCarriesTheFixes() {
         Assumptions.assumeTrue(
-                jlineCarriesTheFixes(), "needs the patched JLine: mvn test -Djline.version=4.4.6-statusfix8");
+                jlineCarriesTheFixes() || Boolean.getBoolean(RUN_ANYWAY),
+                "needs the patched JLine: mvn test -Djline.version=4.4.6-statusfix8");
     }
 
     /** The block the application really pins, without astral glyphs. */

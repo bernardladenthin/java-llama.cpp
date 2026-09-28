@@ -2495,7 +2495,15 @@ are decisions, not details:
    while the build depends on an unfixed release" — and it had been broken: the pom's `jline.version` is the
    **released** one, which is what CI builds against, and against it these cases fail. Measured: the whole
    module is green with `-Djline.version=4.4.6-statusfix8` (the screen cases run) and green with the
-   released `4.4.6` as well, where all 43 report as **skipped** rather than passing. The marker cannot tell
+   released `4.4.6` as well, where they report as **skipped** rather than passing.
+   **Whether the fixes are still needed is measurable rather than arguable**, because the gate honours
+   `-Datmosphere.screen.tests.runAnyway=true`. Against the current console, 233 tests: released `4.4.6` **26
+   red**; `statusfix4` (fixes 1–4) 8; `statusfix5` (+`repaint`) 4; `statusfix6` (+addressing every row) 1;
+   `statusfix7` (+padding one column short) **0**; `statusfix8` 0. So they are needed, by a wide margin — and the
+   **eighth is carried on the merits, not on a failing test**: `Status.resize` still erases rows above the bar
+   without it, but this console wipes and redraws after a width change, so nothing here observes it. It stays
+   because the rows above a bar are not the bar's to clear, an erase is unrecoverable where a scroll is not, and
+   every consumer that does not wipe needs it; its guard lives where the defect does, in `StatusRepaintTest`. The marker cannot tell
    the fifth build from the later ones (the sixth adds a *protected* method, the seventh changes only a padding
    width), so on an older patched jar one or two cases fail rather than skipping — stated in the test rather than worked around.
    **The gate is the whole class and there is no fixed list of affected cases, which is itself a finding.**

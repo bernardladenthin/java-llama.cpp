@@ -762,3 +762,31 @@ does both while the redraw only prints — what it is redrawing is already remem
 green while the console was not.** After the first wipe the ring holds the line twice but only one copy has been
 printed; the doubling is only visible on the second. The new case drags three times and asserts the question and
 the answer appear exactly once.
+
+## Are the JLine fixes still needed? Measured against the finished console
+
+A fair question after everything the console gained on its own — folding, the wipe, the redraw, the prompt
+push-down — and one that only a measurement can answer, because the skip that keeps CI green also hides it. The
+gate now honours `-Datmosphere.screen.tests.runAnyway=true`, so the whole suite can be run against each build
+without editing anything. Against the **current** code, 233 tests:
+
+| JLine on the classpath | red |
+|---|---|
+| released `4.4.6` — no fixes | **26** |
+| `statusfix4` — fixes 1–4 (prompt duplication, `windows-vtp` caps, bar sized by the window, the `Status` race) | 8 |
+| `statusfix5` — plus `Status.repaint()` | 4 |
+| `statusfix6` — plus addressing every reserved row | 1 |
+| `statusfix7` — plus padding one column short | **0** |
+| `statusfix8` — plus not erasing above the bar | 0 |
+
+**So yes, and by a wide margin: 26 of 233 fail without them.** What each step carries is visible too — fix 5
+carries the repaint of a screen the console changed behind JLine's back; fix 6 carries the three cases where a
+wrong width ran the bar's rows together or left half a bar above the region; fix 7 carries the one where a row
+padded to a width the screen does not have wraps and eats the state row's head.
+
+**And one honest subtraction: the eighth fix is no longer needed by any test.** `Status.resize` still erases rows
+above the bar without it, but this console now wipes and redraws the conversation after a width change, so nothing
+observes the erase any more. It stays in the patch set because it is *right* — the rows above a status bar are not
+the bar's to clear, the erase is unrecoverable where a scroll is not, and every consumer that does not wipe needs
+it — but it is carried on the merits rather than on a failing test here. Its own guard lives where the defect
+does, in `StatusRepaintTest`.
