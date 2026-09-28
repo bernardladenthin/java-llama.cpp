@@ -277,11 +277,10 @@ class ScreenUseCasesTest {
     }
 
     @Test
-    @Disabled("Known defect, and this test is the record of it: dragging the window NARROWER loses the"
-            + " edit line entirely -- reported as \"beim kleiner ziehen ist der Text nicht mehr"
-            + " sichtbar\" and reproduced here as zero occurrences of \"> Hallo\" on an otherwise"
-            + " correct screen. Not caused by anything in this class: the block and the state row end up"
-            + " exactly where they belong. Delete the annotation to see it.")
+    // Was @Disabled as "a known defect" for most of this investigation: dragging the window narrower lost the
+    // edit line entirely. It passes now, and nothing was aimed at it -- it fell out of the console folding its own
+    // output, the settled width change wiping and reprinting, and the seven changes carried against JLine. Enabled
+    // after being re-measured rather than left as a record of something that is no longer true.
     void draggingNarrowerKeepsTheEditLine() throws Exception {
         ScreenTerminalHarness terminal = terminal(WIDE);
         try (JLineTerminal console = start(terminal, List.of(STATE))) {
@@ -314,11 +313,9 @@ class ScreenUseCasesTest {
     }
 
     @Test
-    @Disabled("Known defect, and this test is the record of it: with a THREE-row block a wide drag ends"
-            + " with the rule three columns short of the window (96 of 99, with a gap near its end), the"
-            + " state row shifted one column right, and the prompt on two rows. A two-row block comes"
-            + " out clean, which is what makes the row count the discriminator. Delete the annotation to"
-            + " see it.")
+    // Was @Disabled: with a THREE-row block a wide drag used to end with the rule three columns short, the state
+    // row shifted one column and the prompt on two rows, while a two-row block came out clean. Green now; the
+    // column shift was the off-by-one in the row addressing (columns vs columns + 1), the rest followed the wipe.
     void draggingWiderWithAThreeRowBlock() throws Exception {
         // The shape the agent actually pins: a rule plus an activity row plus a state row.
         List<String> block = new ArrayList<>(Arrays.asList("... waiting for input ...", STATE));
@@ -956,8 +953,9 @@ class ScreenUseCasesTest {
     }
 
     @Test
-    @Disabled(
-            "Reproduced and OPEN, with four candidates eliminated by bisection and one named. After a series of size changes the block sits exactly right while the prompt row is blank. Ruled out by measurement, each a separate run: this console re-establishing the region (Status.resize), this console rebuilding the rows at all, JLine handleSignal calling Status.resize, and JLine handleSignal calling redisplay -- red with every one of them switched off. Also ruled out: the screen model itself, which keeps text across resizes (ScreenTerminalHarnessTest). The candidate left is Status.update clearing excess rows from display.rows - oldLinesSize, which reaches ABOVE the region when that count is stale. Delete the annotation to see it.")
+    // Was @Disabled and OPEN for four rounds: after a series of size changes the block sat exactly right while the
+    // prompt's row was blank. Four candidates had been eliminated by bisection. Green now -- the prompt is printed
+    // back to its row after a height change, and a width change wipes and redraws instead of diffing.
     void thePromptItselfStaysVisibleAfterEnlarging() throws Exception {
         // A gap in every assertion above, and it is why they were all green while the console was not.
         // They ask that no row carries the prompt AND the rule -- but when the rule is drawn ON the prompt's
@@ -1007,8 +1005,9 @@ class ScreenUseCasesTest {
     }
 
     @Test
-    @Disabled(
-            "Reproduced and OPEN, the same defect from the other side: with a turn already on screen, shrinking and growing erases the answer while the rule assertions hold. Same bisection as the test above -- neither this console nor either half of JLine handleSignal is the writer that erases it, and the screen model keeps text across resizes. Delete the annotation to see it.")
+    // Was @Disabled and OPEN: with a turn already on screen, shrinking and growing left a rule wider than the
+    // window. Green now, and the reason is the one the reflowing harness finally showed -- the console re-wraps
+    // what is on screen, and the settled width change wipes rather than trying to repair it row by row.
     void afterATurnShrinkingAndGrowingKeepsOneRuleNoWiderThanTheWindow() throws Exception {
         // Both halves of the latest report in one case, because both are the same measurement from
         // different sides: shrinking moves the input area and the output up, and growing produces a rule
