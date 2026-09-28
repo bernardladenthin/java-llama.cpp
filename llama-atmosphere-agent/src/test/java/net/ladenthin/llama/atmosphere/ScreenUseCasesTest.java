@@ -976,6 +976,45 @@ class ScreenUseCasesTest {
     }
 
     @Test
+    void shrinkingOneStepAtATimeMustNotWalkTheInputUpOneRowPerStep() throws Exception {
+        // The report in its most precise form yet: "beim verkleinern wandert bei jedem Schritt die eingabe
+        // eine zeile weiter hoch". One row per size event, cumulative -- which is a different measurement
+        // from every cursor assertion here so far, all of which looked only at the END state after a mixture
+        // of shrinks and grows. A drift that accumulates and one that cancels out are indistinguishable
+        // there, and this walks down one column at a time and records the cursor row after EVERY step.
+        int rows = 24;
+        int blockRows = 3;
+        int expected = rows - 1 - blockRows;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", 120, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+            terminal.type("Hallo");
+            Thread.sleep(150);
+
+            List<Integer> cursorRows = new ArrayList<>();
+            cursorRows.add(terminal.cursorRow());
+            for (int columns = 119; columns >= 100; columns--) {
+                Thread pump = terminal.resizeAsynchronously(columns, rows);
+                console.refreshBlockForCurrentSize();
+                pump.join(2000);
+                Thread.sleep(40);
+                cursorRows.add(terminal.cursorRow());
+            }
+
+            String screen = terminal.describe();
+            assertThat(
+                    "the cursor stays on row " + expected + " through every step, saw " + cursorRows + NEWLINE + screen,
+                    cursorRows.stream().distinct().toList(),
+                    is(List.of(expected)));
+        }
+    }
+
+    @Test
     void theModeBadgeKeepsItsSpaceOnScreen() throws Exception {
         // Reported: "beim auto mode hat immer ein leerzeichen gefehlt: [pause] manual". The badge is
         // built as symbol + " " + name, so the space is there in the string -- the question is whether it
