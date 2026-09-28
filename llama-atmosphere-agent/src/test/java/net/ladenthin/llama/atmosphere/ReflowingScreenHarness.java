@@ -50,10 +50,25 @@ class ReflowingScreenHarness extends ScreenTerminalHarness {
      * rows, and where the slack appears decides everything that follows: with {@link #BOTTOM} the last row keeps
      * what it had and the freed rows appear at the top (a console that keeps the cursor's line in view, pulling
      * scrollback down), while with {@link #TOP} the first row keeps what it had and everything below moves up —
-     * which takes a pinned bar with it and leaves the rows it used to occupy behind. That second shape is what
-     * the reports look like, but "looks like" is not evidence, and guessing here would make every case built on
-     * this harness a proof of my own assumption. {@code ReflowProbe} prints the same pattern on the reporter's
-     * console so the answer comes from there.
+     * which takes a pinned bar with it and leaves the rows it used to occupy behind.
+     *
+     * <p><b>Measured, on the reporter's Windows console, and the default follows the measurement.</b>
+     * {@code ReflowProbe} filled a 32-row window, printed three lines twelve columns longer than the window (so
+     * each occupied two rows) and asked the console for the cursor's row after each drag — a number, because a
+     * pasted screen cannot answer this: Windows Terminal copies the whole scrollback and rejoins wrapped runs,
+     * so wrapping is invisible in a paste. The readings:
+     *
+     * <pre>
+     * widened   86 -> 111 columns:  cursor on row 28 of 32   (last row would be 31)
+     * narrowed 111 ->  72 columns:  cursor on row 31 of 32
+     * quickly back to 82 columns:   cursor on row 29 of 32
+     * </pre>
+     *
+     * So widening moved the content <b>up by exactly the three rows</b> that joining the three wrapped lines
+     * freed, while narrowing kept the cursor on the last row (the content grows downwards and the top falls into
+     * the scrollback). {@link #TOP} is therefore the default: the top keeps its content and everything below
+     * moves up — which is what carries a pinned bar away from its rows and leaves a copy behind, one per size
+     * event.
      */
     enum Anchor {
         /** The bottom row keeps its content; freed rows appear at the top. */
@@ -64,8 +79,25 @@ class ReflowingScreenHarness extends ScreenTerminalHarness {
 
     private final Anchor anchor;
 
+    /**
+     * Which screen rows this harness created by wrapping, i.e. which ones continue into the row below.
+     *
+     * <p><b>Inferring this was a real defect and it is worth keeping the reason.</b> The first version decided
+     * "this row continues" by looking at its last cell: not blank meant wrapped. A console does not guess — it
+     * sets a flag when output passes the right margin — and the inference fails exactly where a break lands on a
+     * space, which is most of the time for prose. Measured: an answer re-wrapped at 50 columns broke after
+     * "... Could you please ", the 50th character was a space, the two rows were then not recognised as one
+     * logical line, and widening did not join them. The harness reported the case green while the console did
+     * not.
+     *
+     * <p>So the rows this harness wraps itself carry a real flag, and only rows it has not touched fall back to
+     * the inference — which is sound there, because a row whose last cell the application filled is exactly the
+     * one a terminal flags.
+     */
+    private boolean[] continues;
+
     ReflowingScreenHarness(String type, int columns, int rows) throws IOException {
-        this(type, columns, rows, Anchor.BOTTOM);
+        this(type, columns, rows, Anchor.TOP);
     }
 
     ReflowingScreenHarness(String type, int columns, int rows, Anchor anchor) throws IOException {
@@ -117,6 +149,14 @@ class ReflowingScreenHarness extends ScreenTerminalHarness {
             rewrapped.remove(anchor == Anchor.BOTTOM ? 0 : rewrapped.size() - 1);
         }
         int firstRow = anchor == Anchor.BOTTOM ? rows - rewrapped.size() : 0;
+        continues = new boolean[rows];
+        for (int row = 0; row < rows; row++) {
+            int at = row - firstRow;
+            // A piece continues into the next row when it filled the width AND something follows it, which is
+            // precisely the flag a terminal sets.
+            continues[row] =
+                    at >= 0 && at + 1 < rewrapped.size() && rewrapped.get(at).length() == columns;
+        }
         // Saved and restored around it, because a reflow rearranges CONTENT: leaving the cursor somewhere
         // else would be a second thing to explain in every case built on this.
         StringBuilder painted = new StringBuilder("\u001b7");
@@ -145,8 +185,11 @@ class ReflowingScreenHarness extends ScreenTerminalHarness {
         List<String> logical = new ArrayList<>();
         StringBuilder current = new StringBuilder();
         boolean continuing = false;
-        for (String row : screen) {
-            boolean wrapped = !row.isEmpty() && row.charAt(row.length() - 1) != ' ';
+        for (int index = 0; index < screen.length; index++) {
+            String row = screen[index];
+            boolean wrapped = continues != null && index < continues.length
+                    ? continues[index]
+                    : !row.isEmpty() && row.charAt(row.length() - 1) != ' ';
             if (continuing) {
                 current.append(row);
             } else {

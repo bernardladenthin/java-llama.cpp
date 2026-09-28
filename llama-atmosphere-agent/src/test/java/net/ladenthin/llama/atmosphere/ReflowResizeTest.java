@@ -84,7 +84,8 @@ class ReflowResizeTest {
         pump.join(2000);
         Thread.sleep(300);
         console.refreshBlockForCurrentSize();
-        Thread.sleep(500);
+        // Long enough for the settle too, which wipes after a widening.
+        Thread.sleep(900);
     }
 
     @Test

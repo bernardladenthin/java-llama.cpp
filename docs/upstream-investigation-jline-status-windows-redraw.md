@@ -657,3 +657,51 @@ green against `4.4.6-statusfix8`. 103 of JLine's own tests stay green.
 
 **This is the answer to "nach dem kleiner ziehen sehe ich es nicht mehr"** — the answer was never scrolled away,
 it was erased by the status bar's own housekeeping.
+
+## The reflow rule, measured on the console, and the last artefact reproduced
+
+The anchoring question the emulator left open is answered, and it took a number rather than a screenshot. A
+pasted screen cannot answer it: Windows Terminal copies the whole **scrollback** and rejoins wrapped runs, so
+wrapping is invisible in a paste — the first version of `ReflowProbe` also built its wide lines exactly as wide
+as the window, which does not wrap at all, so it measured nothing. The corrected probe fills a 32-row window,
+prints three lines twelve columns longer than it, and asks the console for the **cursor's row** after each drag:
+
+```
+widened   86 -> 111 columns:  cursor on row 28 of 32   (last row would be 31)
+narrowed 111 ->  72 columns:  cursor on row 31 of 32
+quickly back to 82 columns:   cursor on row 29 of 32
+```
+
+**Widening moved the content up by exactly the three rows that joining the three wrapped lines freed.** Narrowing
+kept the cursor on the last row (the content grows downwards and the top falls into the scrollback). So the
+**top** edge keeps its content and everything below moves up — `Anchor.TOP` is the harness's default, by
+measurement.
+
+**With that set, the harness immediately showed the reported screen** — and it also caught a defect of its own
+first. Its continuation rule was "the last cell is not blank", and a real console does not guess: it sets a flag
+when output passes the margin. The inference fails exactly where a break lands on a space, which is most of the
+time for prose — measured: an answer re-wrapped at 50 columns broke after `"... Could you please "`, whose 50th
+character is a space, so the two rows were not recognised as one logical line and widening did not join them. The
+harness now carries the real flags for the rows it wraps itself and only infers for rows it has not touched.
+Then:
+
+```
+11|I do not understand the request. Could you please clarify what you would like me to do?
+12|────────────────────────────────────────────────                     <- LEFTOVER, at the old width
+13|──────────────────────────────────────────────────────────────────── <- the new one
+14|… waiting for input …
+```
+
+One leftover bar per reflow, at the old width. That is the reported staircase, in miniature, in a test.
+
+**It cannot be prevented, only removed, and both halves were measured.** Taking the block off the screen at the
+first event of a drag fixes an *alternating* drag but not a plain shrink-then-widen: the console reflows
+immediately while this console learns of the size up to 120 ms later, so the block is unavoidably on screen at
+that moment. Nothing can find the copy afterwards either, because a caller cannot read the screen. **Scrolling
+removes it**, which is exactly what `/cls` does and why that command has been the one repair that always worked.
+
+**So a settled WIDTH change now wipes the screen** and the block is drawn once, in the right place. A height
+change does not, because without a width change there is no reflow — there the prompt is printed back to its row
+instead. Both reflow cases are green with it and the screen is exact: prompt on its row, one rule, nothing above.
+The trade is the user's, taken knowingly: the visible conversation scrolls out of view on a width drag and stays
+reachable with the scrollbar.

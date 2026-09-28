@@ -2803,6 +2803,24 @@ are decisions, not details:
    `thePromptItselfStaysVisibleAfterEnlarging` records that. `/cls` and Ctrl-L do repair it, because they
    only print.
 
+   **A settled WIDTH change wipes the screen; a height change does not.** This is the last of the drag defects and
+   the only one that could not be prevented, only removed. A console **reflows** when the width changes — measured
+   on the reporter's, with a number rather than a screenshot, because a pasted screen cannot answer it (Windows
+   Terminal copies the scrollback and rejoins wrapped runs, so wrapping is invisible in a paste): a 32-row window
+   widened from 86 to 111 columns left the cursor on **row 28 of 32** where 31 is the last, exactly the three rows
+   that joining three wrapped lines freed; narrowed to 72 it stayed on 31. So the **top** keeps its content and
+   everything below moves **up** — and the block's rows are ordinary screen rows, so they are carried out of the
+   region while the next render draws a fresh block at the bottom. The carried-up copy then sits above the region
+   where nothing writes again: one per size event, one every ~125 ms during a drag, which is "beim größer ziehen
+   wieder hunderte male die Linie".
+   **Both halves of "cannot be prevented" were measured.** Taking the block off the screen at the first event of a
+   drag fixes an *alternating* drag but not a plain shrink-then-widen: the console reflows immediately while this
+   console learns of the size up to 120 ms later, so the block is unavoidably on screen then. Nothing can find the
+   copy afterwards either — a caller cannot read the screen. Scrolling removes it, which is what `/cls` does and
+   why that command was always the repair. The trade was the user's call: the visible conversation scrolls out of
+   view on a width drag and stays reachable with the scrollbar. A height change needs none of this (no width
+   change, no reflow) and keeps the conversation, with the prompt printed back to its row instead.
+
    **A height change moves the prompt off its row, and the settle prints it back**
    (`pushThePromptBackToItsRow`). Measured on the interpreted screen with the real three-row block: growing 20
    rows to 26 left the prompt on row 19 where 22 is right, shrinking 20 to 14 left it on row 13 where 10 is

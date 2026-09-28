@@ -256,6 +256,13 @@ public final class JLineTerminal implements AgentTerminal {
                     // The height the window had when the current run of changes started, so the settle knows
                     // how far the prompt can have drifted. Zero while nothing is in flight.
                     int rowsBeforeTheDrag = 0;
+                    // Whether the window got WIDER during the current run of events. Wider, not merely
+                    // different: joining wrapped lines is what frees rows and carries the block up, and that
+                    // happens when the width GROWS. Narrowing splits lines instead, the content grows downwards,
+                    // and the measurement agrees -- the cursor stayed on the last row there. Wiping on a
+                    // narrowing would also undo the eighth JLine fix, which exists precisely so that making the
+                    // window smaller no longer costs the conversation.
+                    boolean widthGrew = false;
                     while (!closed) {
                         try {
                             Thread.sleep(WATCH_INTERVAL_MILLIS);
@@ -283,6 +290,10 @@ public final class JLineTerminal implements AgentTerminal {
                         if (now.getColumns() != last.getColumns() || now.getRows() != last.getRows()) {
                             if (settleAt == 0) {
                                 rowsBeforeTheDrag = last.getRows();
+                                widthGrew = false;
+                            }
+                            if (now.getColumns() > last.getColumns()) {
+                                widthGrew = true;
                             }
                             last = now;
                             settleAt = System.currentTimeMillis() + SETTLE_MILLIS;
@@ -307,7 +318,14 @@ public final class JLineTerminal implements AgentTerminal {
                         // why holding Enter was what repaired it. See repaintBlockFromScratch.
                         if (settleAt != 0 && System.currentTimeMillis() >= settleAt) {
                             settleAt = 0;
-                            pushThePromptBackToItsRow(Math.abs(now.getRows() - rowsBeforeTheDrag));
+                            if (widthGrew) {
+                                // The screen is wiped, which is the only thing that removes what a reflow left
+                                // behind -- see wipeAfterAWidthChange.
+                                clearScreen();
+                            } else {
+                                pushThePromptBackToItsRow(Math.abs(now.getRows() - rowsBeforeTheDrag));
+                            }
+                            widthGrew = false;
                             rowsBeforeTheDrag = 0;
                             if (!repaintBlockFromScratch() && closed) {
                                 return;
@@ -515,6 +533,45 @@ public final class JLineTerminal implements AgentTerminal {
         terminal.writer().flush();
     }
 
+    /**
+     * Why a settled <b>width</b> change wipes the screen, and a height change does not.
+     *
+     * <p><b>Measured on the reporter's console, which is what settled it.</b> A console reflows when the width
+     * changes: rows it had marked as wrapped are joined again, the text above needs fewer rows, and everything
+     * below moves <b>up</b>. The probe filled a 32-row window, printed three lines twelve columns longer than the
+     * window and asked the console where the cursor was afterwards — a number, because a pasted screen cannot
+     * answer it (Windows Terminal copies the scrollback and rejoins wrapped runs, so wrapping is invisible in a
+     * paste):
+     *
+     * <pre>
+     * widened   86 -> 111 columns:  cursor on row 28 of 32   (last row would be 31)
+     * narrowed 111 ->  72 columns:  cursor on row 31 of 32
+     * </pre>
+     *
+     * <p>Widening moved the content up by exactly the three rows that joining the three wrapped lines freed;
+     * narrowing kept the cursor on the last row. The block's rows are ordinary screen rows, so the reflow carries
+     * them up out of the region while the next render draws a fresh block at the bottom — and the carried-up copy
+     * stays above it, where nothing ever writes again. One per size event, and a drag reports one every ~125 ms:
+     * the reported "beim größer ziehen wieder hunderte male die Linie".
+     *
+     * <p><b>It cannot be prevented, only removed.</b> The console reflows immediately; this console learns of the
+     * size up to 120 ms later, so the block is unavoidably on the screen at that moment. Taking it down on the
+     * first event of a drag was tried and measured: it fixes an alternating drag but not a plain
+     * shrink-then-widen, because the first event arrives after the reflow has already happened. Nothing can find
+     * the copy afterwards either — a caller cannot read the screen. Scrolling removes it, which is exactly what
+     * {@code /cls} does and why that command has been the one repair that always worked.
+     *
+     * <p>So a settled <b>widening</b> wipes, and the trade is stated rather than hidden: the visible conversation
+     * scrolls out of view, and stays reachable with the scrollbar. <b>Narrowing does not wipe</b>, and that is not
+     * an oversight: splitting lines makes the content grow downwards rather than freeing rows — the probe's cursor
+     * stayed on the last row there — and wiping would undo the eighth JLine fix, which exists precisely so that
+     * making the window smaller no longer costs the conversation. A height change does not wipe either, because
+     * without a width change there is no reflow; there the prompt is printed back to its row instead (see
+     * {@link #pushThePromptBackToItsRow(int)}).
+     *
+     * <p>Reproduced by {@code ReflowResizeTest} on a screen model that reflows. The ordinary model does not,
+     * which is why this defect survived so many rounds of testing.
+     */
     /**
      * Print as many blank lines as the prompt can have drifted, so it ends up on its row again.
      *

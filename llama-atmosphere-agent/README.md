@@ -486,6 +486,17 @@ bar's last row wraps past the bottom and scrolls it: the bar moves up and leaves
 render. Leaving the last column alone costs nothing, because each row is addressed rather than reached by
 wrapping, and it also stops the terminal from marking the row as wrapped at all.
 
+**Dragging the window WIDER clears the screen once you let go**, and that is deliberate. A console reflows when
+the width changes: lines it had wrapped are joined again, the text above needs fewer rows, and everything below
+moves up — measured on a real console, a 32-row window widened from 86 to 111 columns left the cursor three rows
+higher, exactly the rows that joining freed. The pinned block's rows move up with everything else, the next
+redraw puts a fresh block at the bottom, and the carried-up copy stays above it: one leftover rule per size
+event, and a drag reports one every ~125 ms. It cannot be prevented — the console reflows before the program is
+told the size — and nothing can find the copy afterwards, because a program cannot read the screen back.
+Scrolling removes it, which is what `/cls` does and why that was always the repair. So the agent does it itself
+once the size settles. The conversation scrolls out of view and stays reachable with the scrollbar. Dragging only
+the height keeps it, because without a width change there is no reflow.
+
 **After a height change the prompt is printed back down to its row.** JLine draws the prompt wherever the
 cursor happens to be, and a window whose height changes moves the screen's content by however many rows the
 console's buffer gives it — measured: growing a 20-row window to 26 left the input three rows too high, and

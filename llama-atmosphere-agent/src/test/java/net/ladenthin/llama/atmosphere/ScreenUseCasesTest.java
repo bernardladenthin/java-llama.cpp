@@ -177,7 +177,12 @@ class ScreenUseCasesTest {
         terminal.resize(to, ROWS);
         Thread.sleep(300);
         console.refreshBlockForCurrentSize();
-        Thread.sleep(300);
+        // Long enough for the SETTLE to have happened as well, which is 400 ms after the last size event. It used
+        // to be 300, and once a settled widening started wiping the screen that window straddled the wipe: the
+        // assertions then read a screen that was halfway through being cleared and redrawn, which showed up as one
+        // case failing in a full run and passing on its own. Waiting for the state the application ends up in is
+        // the only stable thing to assert.
+        Thread.sleep(800);
     }
 
     /**
@@ -1319,7 +1324,8 @@ class ScreenUseCasesTest {
         pump.join(2000);
         Thread.sleep(400);
         console.refreshBlockForCurrentSize();
-        Thread.sleep(400);
+        // See resizeOnce: long enough for the settle, which now wipes after a widening.
+        Thread.sleep(800);
     }
 
     /**
@@ -1828,33 +1834,32 @@ class ScreenUseCasesTest {
     }
 
     @Test
-    void aWindowThatONLYgetsWiderLeavesThePromptExactlyWhereItWas() throws Exception {
-        // The control, and it is the case folding made true: a width change moves no rows at all any more, so
-        // the prompt must not move either -- and nothing is printed to put it back, because there is nothing
-        // to put back.
+    void aWindowThatONLYgetsWiderWIPESandPutsThePromptOnItsRow() throws Exception {
+        // The trade, asserted so that the decision is visible in the suite rather than only in a document -- and
+        // so that changing it back fails a test.
+        //
+        // A widening makes the console reflow, which carries the pinned block out of its rows and leaves a copy
+        // above the region that nothing can find afterwards (ReflowResizeTest reproduces it; the console reflows
+        // before the program is told the size, so it cannot be prevented). Scrolling is the only thing that
+        // removes it, which is what /cls does, so a settled widening does it: the screen comes back with the
+        // prompt on its row and one block, and the conversation has scrolled out of view -- reachable with the
+        // scrollbar, which is the cost that was accepted for it.
         int rows = 20;
         int blockRows = 3;
         ScreenTerminalHarness terminal = terminalWithRows(100, rows);
-        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
-            Thread reading = new Thread(() -> console.readLine("ignored"));
-            reading.setDaemon(true);
-            reading.start();
-            Thread.sleep(200);
-            console.status(realBlockWithBasicPlaneIcons());
-            Thread.sleep(200);
-            console.line("an answer the user wants to keep seeing");
+        try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
+            console.line("AN-ANSWER the user was reading");
             Thread.sleep(200);
 
             growOnce(terminal, console, 150, rows);
 
+            String screen = terminal.describe();
+            assertThat("the prompt is on its row" + NEWLINE + screen, terminal.cursorRow(), is(rows - 1 - blockRows));
+            assertBlockIsIntactAt(terminal, rows, blockRows);
             assertThat(
-                    "the prompt is on its row" + NEWLINE + terminal.describe(),
-                    terminal.cursorRow(),
-                    is(rows - 1 - blockRows));
-            assertThat(
-                    "and the answer is still on screen" + NEWLINE + terminal.describe(),
-                    count(terminal.rows(), row -> row.contains("keep seeing")),
-                    is(1));
+                    "and the conversation has scrolled out of view, which is the accepted cost" + NEWLINE + screen,
+                    count(terminal.rows(), row -> row.contains("AN-ANSWER")),
+                    is(0));
         }
     }
 
