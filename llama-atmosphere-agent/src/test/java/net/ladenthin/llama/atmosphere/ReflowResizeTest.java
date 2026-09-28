@@ -56,7 +56,7 @@ class ReflowResizeTest {
     void onlyWithAJLineThatCarriesTheFixes() {
         Assumptions.assumeTrue(
                 jlineCarriesTheFixes() || Boolean.getBoolean(RUN_ANYWAY),
-                "needs the patched JLine: mvn test -Djline.version=4.4.6-statusfix8");
+                "needs the patched JLine: mvn test -Djline.version=4.4.6-atmosphere");
     }
 
     /** The block the application really pins, without astral glyphs. */

@@ -31,7 +31,7 @@ was wrong: a reproduction that emits exactly 20 size events produces exactly 19 
 
 ## Reproduction, without Windows and without any project code
 
-`ResizeStatusRepro` (session scratchpad) uses JLine's own `VirtualTerminal` — a real VT interpreter
+`ResizeStatusRepro` (a throwaway from the session, not kept) used JLine's own `VirtualTerminal` — a real VT interpreter
 over a virtual screen — attaches a three-row `Status`, starts `readLine`, types `Hallo`, then walks the
 width from 40 to 60 columns raising `WINCH` at each step, and counts `> Hallo` in the screen dump:
 
@@ -94,13 +94,18 @@ to become an upstream pull request.
 
 ## Trying it in this project
 
-A patched jar is installed in the local Maven repository as `org.jline:jline:4.4.6-statusfix`, and the
-agent's pom carries a `jline.version` property, so:
+The reviewed set of changes is built as `org.jline:jline:4.4.6-atmosphere` (see "Building the patched JLine"
+at the end of this document), and the agent's pom carries a `jline.version` property, so:
 
 ```bat
 cd llama-atmosphere-agent
-mvn compile exec:java -Djline.version=4.4.6-statusfix -Dexec.args="--model <model.gguf>"
+mvn compile exec:java -Djline.version=4.4.6-atmosphere -Dexec.args="--model <model.gguf>"
 ```
+
+Without the property the agent builds and runs against the **released** `4.4.6`; the symptoms come back and
+`/cls` repairs them. **The `statusfix1`…`statusfix8` versions named further down are history**, one per step of
+the investigation, and are not what to build today — the numbers in those measurements only make sense with the
+set each of them contained.
 
 ## What was ruled out along the way
 
@@ -234,7 +239,8 @@ the console API), so it is recorded here rather than guessed at.
 
 ## The drift, measured: our render path is innocent, and the screen loses rows
 
-A probe on the reporter's console (`DriftProbe`, session scratchpad) measures the cursor row **twice per
+A probe on the reporter's console (`DriftProbe`, a throwaway from the session; the probe that was kept is
+`ReflowProbe`, in the agent's test tree) measured the cursor row **twice per
 request** — once before rebuilding the pinned block and once after, with the rebuild doing exactly what
 the console does. Two results, and both are decisive.
 
@@ -630,7 +636,7 @@ the screen without telling the program. Two rules, both stated so they can be ch
 row **continues** into the next one when its last cell is not blank (the terminal's own rule in practice — the
 flag can only be set if the last cell was written, which is also why the seventh fix matters), and which edge
 keeps its content when joining frees rows is an **explicit parameter** (`Anchor.BOTTOM` / `Anchor.TOP`) rather
-than a guess. `ReflowingScreenHarnessTest` puts the harness itself under test, and **`probe/ReflowProbe.java`**
+than a guess. `ReflowingScreenHarnessTest` puts the harness itself under test, and **`ReflowProbe` (in the agent's test tree, `…/atmosphere/probe/`)**
 prints the same pattern on the reporter's real console so the rules can be confirmed against it.
 
 **The insight that came with it.** This console folds every output line to one column less than the window, so
@@ -653,7 +659,7 @@ have wrapped into. The rows above the bar belong to whoever wrote them.
 **The eighth fix removes it.** Red/green on both sides: `StatusRepaintTest.makingTheWindowNarrowerDoesNotEraseWhatIsAboveTheBar`
 fails with the compensation restored (`row 4 was erased: "                    "`) and passes without it;
 `ScreenUseCasesTest.makingTheWindowNARROWERmustNotERASETheConversation` is red against `4.4.6-statusfix7` and
-green against `4.4.6-statusfix8`. 103 of JLine's own tests stay green.
+green against `4.4.6-atmosphere`. 103 of JLine's own tests stay green.
 
 **This is the answer to "nach dem kleiner ziehen sehe ich es nicht mehr"** — the answer was never scrolled away,
 it was erased by the status bar's own housekeeping.
@@ -726,7 +732,7 @@ that an assertion was wrong rather than the code, which is worth counting.
 **Where this leaves the drag behaviour**, all of it measured rather than described: a width change in either
 direction wipes once the size settles and draws the block in place; a height change prints the prompt back to its
 row and keeps the conversation; the block itself is never carried anywhere because it is redrawn from scratch
-afterwards. 230 tests green twice in a row with `4.4.6-statusfix8`, and green against the released `4.4.6`, where
+afterwards. 230 tests green twice in a row with `4.4.6-atmosphere`, and green against the released `4.4.6`, where
 the 60 cases that need the patched library skip themselves.
 
 ## The wipe kept its job and gave back the conversation
@@ -818,3 +824,135 @@ on reads that were never going to arrive.
 where it exists (JDK 22+, where `System.console()` answers even for redirected streams), otherwise the presence of
 a console. Piped input reaches the same path and has always been served by the plain console, so nothing else
 changes — and `mvn verify` is green for the first time in this module's history.
+
+## Building the patched JLine, and running its tests on a JDK it does not support
+
+Everything above rests on a locally built `org.jline:jline:4.4.6-atmosphere`, which exists in one developer's
+Maven repository and nowhere else. Both recipes are written out here because neither is obvious and both were
+reconstructed more than once from a shell history — and because a session's scratch directory is not a place to
+keep them.
+
+**The changes live in a clone of JLine**, `https://github.com/jline/jline3`, on top of the `4.4.6` tag's content:
+`terminal/src/main/java/org/jline/utils/Status.java`, the same directory's `Display.java`, and two lines of
+`reader/src/main/java/org/jline/reader/impl/LineReaderImpl.java`, plus five test classes
+(`StatusRedisplayTest`, `StatusDelayedWrapTest`, `StatusConcurrencyTest`, `StatusRepaintTest`,
+`StatusWrongWidthTest`).
+
+**JLine's own Maven build cannot be used here.** It requires **JDK ≥ 22** — `-Xlint:...,-restricted` is hardcoded
+in its build — and this work was done on JDK 21. So the patched classes are compiled *against the released jar*
+and overlaid into a copy of it. Only the three changed files are compiled, which is why this works at all: every
+other class comes from the release untouched.
+
+```bash
+# 1. compile the three changed files against the RELEASED jar
+RELEASED="$HOME/.m2/repository/org/jline/jline/4.4.6/jline-4.4.6.jar"
+mkdir -p /tmp/patched
+javac -nowarn -encoding UTF-8 -cp "$RELEASED" -d /tmp/patched     terminal/src/main/java/org/jline/utils/Status.java     terminal/src/main/java/org/jline/utils/Display.java     reader/src/main/java/org/jline/reader/impl/LineReaderImpl.java
+
+# 2. overlay them into a copy of the release (16 class files, nested classes included)
+cp "$RELEASED" /tmp/jline-4.4.6-atmosphere.jar
+( cd /tmp/patched && jar uf /tmp/jline-4.4.6-atmosphere.jar $(cd /tmp/patched && find . -name '*.class' -printf '%P
+') )
+
+# 3. install it under its own version
+mvn install:install-file -Dfile=/tmp/jline-4.4.6-atmosphere.jar     -DgroupId=org.jline -DartifactId=jline -Dversion=4.4.6-atmosphere -Dpackaging=jar
+```
+
+**Running JLine's tests** needs one more piece, for the same JDK reason: a launcher that runs a JUnit 5 class
+without Maven. `VirtualTerminal` (JLine's own test helper, `terminal/src/test/java/org/jline/utils/`) has to be
+compiled alongside, and the classpath is the released jar plus the JUnit artifacts from the local repository.
+
+```bash
+CP="/tmp/classes;$RELEASED;$HOME/.m2/repository/org/junit/jupiter/junit-jupiter-api/6.1.3/junit-jupiter-api-6.1.3.jar;$HOME/.m2/repository/org/junit/jupiter/junit-jupiter-engine/6.1.3/junit-jupiter-engine-6.1.3.jar;$HOME/.m2/repository/org/junit/platform/junit-platform-commons/6.1.3/junit-platform-commons-6.1.3.jar;$HOME/.m2/repository/org/junit/platform/junit-platform-engine/6.1.3/junit-platform-engine-6.1.3.jar;$HOME/.m2/repository/org/junit/platform/junit-platform-launcher/6.1.3/junit-platform-launcher-6.1.3.jar;$HOME/.m2/repository/org/opentest4j/opentest4j/1.3.0/opentest4j-1.3.0.jar;$HOME/.m2/repository/org/apiguardian/apiguardian-api/1.1.2/apiguardian-api-1.1.2.jar"
+javac -nowarn -encoding UTF-8 -cp "$CP" -d /tmp/classes     terminal/src/main/java/org/jline/utils/{Status,Display}.java     reader/src/main/java/org/jline/reader/impl/LineReaderImpl.java     terminal/src/test/java/org/jline/utils/{StatusRepaintTest,StatusWrongWidthTest,StatusDelayedWrapTest,StatusConcurrencyTest,DisplayTest,ScreenTerminalTest,VirtualTerminal}.java     reader/src/test/java/org/jline/reader/impl/StatusRedisplayTest.java     RunTests.java
+java -cp "$CP" RunTests org.jline.utils.StatusRepaintTest org.jline.utils.StatusWrongWidthTest     org.jline.utils.StatusDelayedWrapTest org.jline.utils.StatusConcurrencyTest     org.jline.reader.impl.StatusRedisplayTest org.jline.utils.DisplayTest org.jline.utils.ScreenTerminalTest
+```
+
+**Two traps this cost, both worth stating.** The classpath must not contain a directory with *older* copies of the
+patched classes — a variant compiled into a second directory and layered in front does **not** reliably win, and a
+measurement made that way declared a fix unnecessary that two tests actually need. Compile the whole set into one
+directory instead. And when reverting a change by hand to see a test go red, **assert that the edit applied**: a
+string replacement that silently matches nothing produces a green run and looks like proof.
+
+`RunTests.java` in full, since it exists nowhere else:
+
+```java
+// SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+//
+// SPDX-License-Identifier: MIT
+
+import java.io.PrintWriter;
+import org.junit.platform.launcher.Launcher;
+import org.junit.platform.launcher.LauncherDiscoveryRequest;
+import org.junit.platform.launcher.core.LauncherDiscoveryRequestBuilder;
+import org.junit.platform.launcher.core.LauncherFactory;
+import org.junit.platform.launcher.listeners.SummaryGeneratingListener;
+import org.junit.platform.launcher.listeners.TestExecutionSummary;
+
+/** Runs a JUnit 5 test class without Maven, because JLine's own build needs a JDK this host lacks. */
+public final class RunTests {
+
+    private RunTests() {}
+
+    /**
+     * Run the named test classes.
+     *
+     * @param args fully qualified test class names
+     */
+    public static void main(String[] args) {
+        LauncherDiscoveryRequestBuilder builder = LauncherDiscoveryRequestBuilder.request();
+        for (String name : args) {
+            builder.selectors(org.junit.platform.engine.discovery.DiscoverySelectors.selectClass(name));
+        }
+        LauncherDiscoveryRequest request = builder.build();
+        Launcher launcher = LauncherFactory.create();
+        SummaryGeneratingListener listener = new SummaryGeneratingListener();
+        launcher.execute(request, listener);
+        TestExecutionSummary summary = listener.getSummary();
+        PrintWriter out = new PrintWriter(System.out, true);
+        summary.printTo(out);
+        summary.printFailuresTo(out, 40);
+        System.out.println("RESULT succeeded=" + summary.getTestsSucceededCount() + " failed="
+                + summary.getTestsFailedCount());
+        if (summary.getTestsFailedCount() > 0) {
+            System.exit(1);
+        }
+    }
+}
+```
+
+## The review before committing: every change reverted on its own
+
+Before the changes were written down anywhere permanent, each one was taken out again and JLine's own suite was
+run against the result. The point was to find out which of them still earn their place after everything the
+console gained on its own, and to make sure each is backed by a test in the library's own style rather than by an
+argument.
+
+| change | reverted → | caught by |
+|---|---|---|
+| `display.resize(size)` instead of `doDisplay()` in `handleSignal` | 2 red | `StatusRedisplayTest` (the prompt drawn once per size event) |
+| `xenl` for `windows-vtp` | **0 red** | **nothing any more** |
+| the bar sized by the window, not the buffer | 1 red | `aStatusBarIsSizedByTheWindowAndNotByTheBuffer` |
+| `synchronized` on `Status`'s public methods | 2 red | `StatusConcurrencyTest` |
+| `Status.repaint()` | it *is* the API | `StatusRepaintTest` (4 cases) |
+| every reserved row addressed | 4 red | `StatusWrongWidthTest` |
+| padding one column short | 1 red | `aReportedWidthOneColumnTooLARGEDoesNotWrapTheBottomRow` |
+| no clearing band above the bar | 1 red | `makingTheWindowNarrowerDoesNotEraseWhatIsAboveTheBar` |
+
+**The `xenl` entry was dropped.** It was necessary earlier — without it the last status row lost its first
+character, and `StatusDelayedWrapTest` was written for exactly that — but addressing every row and padding one
+column short removed the dependence on the terminal's wrap behaviour altogether, and nothing measures it now. It
+is a factual claim about Windows' virtual-terminal processing and may well be right; an unmeasured change does not
+belong in a patch set that is meant to be submitted. `StatusDelayedWrapTest` stays and now guards the other two
+on that entry.
+
+**And one measurement of mine was wrong, which is the more useful half of this record.** The first pass reported
+that the `doDisplay()` change was *also* unnecessary. It was not: the revert had been done with a string
+replacement that matched nothing, so the "reverted" build was the unchanged code, and it was compiled into a
+second directory layered in front of the first — which does not reliably win. Compiling the whole set into one
+directory and asserting that the edit applied showed two tests failing at once. **Both lessons are in the recipe
+section above**, because either of them can turn a review into a rubber stamp.
+
+**What the set is now:** seven changes in three files — two lines of `LineReaderImpl`, and `Status.java` plus
+`Display.java` — with five test classes, 108 of JLine's own tests green, and the consuming project's 233 green
+against it (and green against the released library, where the cases that need the patch skip themselves).

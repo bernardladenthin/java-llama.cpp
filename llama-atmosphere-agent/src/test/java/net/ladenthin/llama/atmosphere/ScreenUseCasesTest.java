@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
  * <p><b>Which JLine this needs.</b> The library is a property, and these cases need the patched one:
  *
  * <pre>
- * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix8   # runs
+ * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-atmosphere   # runs
  * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6              # every case SKIPS
  * </pre>
  *
@@ -111,7 +111,7 @@ class ScreenUseCasesTest {
      * <p><b>To see the library make the difference</b>, run this class twice:
      *
      * <pre>
-     * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix8   # green
+     * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-atmosphere   # green
      * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6              # skipped -- delete this
      *                                                                        # assumption to see it fail
      * </pre>
@@ -120,7 +120,7 @@ class ScreenUseCasesTest {
     void onlyWithAJLineThatCarriesTheFixes() {
         Assumptions.assumeTrue(
                 jlineCarriesTheFixes() || Boolean.getBoolean(RUN_ANYWAY),
-                "needs the patched JLine: mvn test -Djline.version=4.4.6-statusfix8"
+                "needs the patched JLine: mvn test -Djline.version=4.4.6-atmosphere"
                         + " (see docs/upstream-investigation-jline-status-windows-redraw.md)");
     }
 
