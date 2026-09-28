@@ -2753,6 +2753,30 @@ are decisions, not details:
    `thePromptItselfStaysVisibleAfterEnlarging` records that. `/cls` and Ctrl-L do repair it, because they
    only print.
 
+   **A height change moves the prompt off its row, and the settle prints it back**
+   (`pushThePromptBackToItsRow`). Measured on the interpreted screen with the real three-row block: growing 20
+   rows to 26 left the prompt on row 19 where 22 is right, shrinking 20 to 14 left it on row 13 where 10 is
+   right — **half the height change in both directions**, and "half" is an artefact of that buffer state rather
+   than a rule (the screen moves content by as many rows as it has scrollback to give or room to delete, which
+   is what a console does). **A width change moves nothing at all**, which is folding paying off, so nothing is
+   printed for one.
+   **The growing half is fixed and the reason it works is the direction:** the drift cannot be computed, but it
+   is bounded by the height change, and printing moves the cursor down one row per line until it reaches its row
+   and then merely scrolls — so printing that many lines lands it correctly without knowing where it was. It is
+   the same repair `/cls` performs with a whole window's worth, which is why that command always worked.
+   Measured 19 → 22; `aGrowingWindowLeavesThePromptOnTheRowTheBlockLeavesForIt` was the open reproduction and is
+   now green twice in a row. The price is bounded by the change: up to that many blank rows enter the
+   conversation and up to that many lines of it scroll out of view.
+   **The shrinking half stays open**, because there the prompt must move *up*: it lands inside the pinned band
+   and the block draws over it ("nach dem kleiner ziehen sehe ich es nicht mehr"). Nothing a caller can emit
+   moves the cursor up without breaking the reader's bookkeeping — `cursor_address` inside `printAbove` was tried
+   twice and stranded characters above the prompt both times.
+   `aWindowThatGetsSHORTERLeavesThePromptOnTheRowTheBlockLeavesForIt` carries it, `/cls` repairs it.
+   **Measuring the cursor was ruled out, not overlooked:** a cursor-position report is a round trip through the
+   terminal's input, which the reader owns all session, so it would race the keyboard and could swallow a
+   keystroke or leave `[24;1R` in the input line — the exact class of defect this whole investigation has been
+   about.
+
    **Do not add a `WINCH` handler, and the reason is measured.** A resize drawing a row of
    `> > > > >` across the screen looks like the pinned region not being told about the new size, so a
    `Signal.WINCH` handler that resized and re-rendered it was added — and the user reported it

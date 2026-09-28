@@ -539,3 +539,40 @@ append-only, and it is what every terminal agent that does not own the screen ac
 **What this does not fix** is the prompt's row after a resize — that is the open item above, where JLine draws
 the prompt wherever the cursor happens to be. It is a row or two, not a screen of debris, and `/cls` puts it
 back.
+
+## The prompt's row, measured in both directions, and half of it closed
+
+With folding in place the next report was no longer debris but the prompt itself: *"nach dem kleiner ziehen
+sehe ich es nicht mehr, es wandert die Eingabe nach oben"*, and after enlarging, several blank rows between
+the input and the rule. Measured on the interpreted screen, with the real three-row block and an answer on
+screen:
+
+| change | prompt row before | after | should be |
+|---|---|---|---|
+| 20 → 26 rows | 16 | **19** | 22 |
+| 20 → 14 rows | 16 | **13** | 10 |
+| width only | 16 | 16 | 16 |
+
+Three things at once. **The drift is half the height change, in both directions** — and "half" is an artefact of
+that particular buffer state, not a rule: the screen model moves content by as many rows as it has scrollback
+to give or room to delete, which is exactly what a real console does. **Too low is worse than too high**: the
+prompt then sits inside the pinned band and the block draws over it, which is the reported "I cannot see it any
+more". And **a width change now moves nothing at all**, which is folding paying off.
+
+**The growing half is fixed, by printing.** The drift cannot be computed, but it is bounded by the height
+change, and printing moves the cursor down one row per line until it reaches its row and then simply scrolls.
+So the settle prints that many blank lines (`pushThePromptBackToItsRow`) — the same repair `/cls` performs with
+a whole window's worth, which is why that command was always the thing that worked. Measured: 19 → **22**, and
+the width-only case still prints nothing. The reproduction that carried this as an open item is now enabled and
+green twice in a row.
+
+**The shrinking half stays open, and the reason is direction.** There the prompt must move *up*, and nothing a
+caller can emit does that without breaking the reader's own cursor bookkeeping — `cursor_address` smuggled into
+`printAbove`'s argument was tried twice and stranded characters above the prompt both times.
+`aWindowThatGetsSHORTERLeavesThePromptOnTheRowTheBlockLeavesForIt` carries it with the measurement in its
+`@Disabled` text. `/cls` repairs it in one keystroke.
+
+**Measuring the cursor instead was ruled out rather than overlooked.** A cursor-position report is a round trip
+through the terminal's input, which the reader owns for the whole session; issuing one from the poll would race
+the keyboard and could swallow a keystroke or leave `[24;1R` in the input line — which is precisely the class of
+defect this investigation has been chasing.

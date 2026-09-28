@@ -253,6 +253,9 @@ public final class JLineTerminal implements AgentTerminal {
         sizes = new Thread(
                 () -> {
                     Size last = terminal.getSize();
+                    // The height the window had when the current run of changes started, so the settle knows
+                    // how far the prompt can have drifted. Zero while nothing is in flight.
+                    int rowsBeforeTheDrag = 0;
                     while (!closed) {
                         try {
                             Thread.sleep(WATCH_INTERVAL_MILLIS);
@@ -278,6 +281,9 @@ public final class JLineTerminal implements AgentTerminal {
                             continue;
                         }
                         if (now.getColumns() != last.getColumns() || now.getRows() != last.getRows()) {
+                            if (settleAt == 0) {
+                                rowsBeforeTheDrag = last.getRows();
+                            }
                             last = now;
                             settleAt = System.currentTimeMillis() + SETTLE_MILLIS;
                             if (!refreshBlockForCurrentSize() && closed) {
@@ -301,6 +307,8 @@ public final class JLineTerminal implements AgentTerminal {
                         // why holding Enter was what repaired it. See repaintBlockFromScratch.
                         if (settleAt != 0 && System.currentTimeMillis() >= settleAt) {
                             settleAt = 0;
+                            pushThePromptBackToItsRow(Math.abs(now.getRows() - rowsBeforeTheDrag));
+                            rowsBeforeTheDrag = 0;
                             if (!repaintBlockFromScratch() && closed) {
                                 return;
                             }
@@ -505,6 +513,40 @@ public final class JLineTerminal implements AgentTerminal {
             }
         }
         terminal.writer().flush();
+    }
+
+    /**
+     * Print as many blank lines as the prompt can have drifted, so it ends up on its row again.
+     *
+     * <p><b>Why printing, and why exactly this many.</b> The prompt is drawn wherever the cursor happens to
+     * be; JLine relates it to nothing, and a window whose height changes moves the screen's content by
+     * however many rows the console's buffer happens to give it. Measured on an interpreted screen with a
+     * three-row block: growing 20 rows to 26 put the prompt on row 19 where 22 is right, and shrinking 20 to
+     * 14 put it on row 13 where 10 is right — <b>half the change, in both directions</b>, and half is an
+     * artefact of that particular buffer state rather than a rule. Too low is worse than too high: the prompt
+     * then sits inside the pinned band and the block draws over it, which is the reported "nach dem kleiner
+     * ziehen sehe ich es nicht mehr".
+     *
+     * <p>So the drift cannot be computed — but it is bounded by the height change, and printing moves the
+     * cursor down one row per line until it reaches its row and then simply scrolls. Printing that many lines
+     * therefore lands it correctly from either side without knowing where it was. It is the same repair
+     * {@code /cls} performs with a whole window's worth, which is why that command has been the one thing
+     * that always worked.
+     *
+     * <p><b>A width change costs nothing here</b>, and that matters: a drag that only widens the window does
+     * not move the prompt at all now that this console folds its own output (see {@link #fold}), so the count
+     * is zero and nothing is printed. The price is paid only for a height change, and it is bounded by that
+     * change: up to that many blank rows enter the conversation, and up to that many lines of it scroll out of
+     * view. Measuring the cursor instead was ruled out rather than overlooked — a cursor-position report is a
+     * round trip through the terminal's input, which the reader owns for the whole session, so it would race
+     * the keyboard and could drop a keystroke or leave "[24;1R" in the input line.
+     *
+     * @param rows how far the prompt can have drifted; zero prints nothing
+     */
+    private void pushThePromptBackToItsRow(int rows) {
+        for (int row = 0; row < rows; row++) {
+            write("");
+        }
     }
 
     /**

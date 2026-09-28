@@ -1681,17 +1681,6 @@ class ScreenUseCasesTest {
     }
 
     @Test
-    @Disabled("Reproduced and OPEN, and the bisection is in the body. A window that GROWS leaves the prompt a"
-            + " row too high: measured 19 where 20 is right, with a blank row between the input and the"
-            + " rule. It is JLine's WINCH handling alone -- the cursor is right after /cls (16 of 16),"
-            + " wrong after the signal (19 of 20), and neither this console's row rebuild nor its"
-            + " repaint changes it either way. The byte stream names the mechanism: the prompt is NEVER"
-            + " addressed. It is written wherever the cursor happens to be after the status region has"
-            + " restored it, and after a resize that is not necessarily the row the block leaves for"
-            + " it. Fixing it means deciding where a prompt belongs after a resize, which is a change"
-            + " to the library's contract rather than a defect in ours: see"
-            + " docs/upstream-investigation-jline-status-windows-redraw.md. Delete the annotation to"
-            + " see it.")
     void aGrowingWindowLeavesThePromptOnTheRowTheBlockLeavesForIt() throws Exception {
         // The sequence is the reported one -- /cls, then drag the corner bigger -- and every step is measured
         // rather than assumed, because three earlier rounds blamed the wrong writer.
@@ -1833,6 +1822,72 @@ class ScreenUseCasesTest {
                         rows[row].charAt(columns - 1) != ' ',
                         is(false));
             }
+        }
+    }
+
+    @Test
+    void aWindowThatONLYgetsWiderLeavesThePromptExactlyWhereItWas() throws Exception {
+        // The control, and it is the case folding made true: a width change moves no rows at all any more, so
+        // the prompt must not move either -- and nothing is printed to put it back, because there is nothing
+        // to put back.
+        int rows = 20;
+        int blockRows = 3;
+        ScreenTerminalHarness terminal = terminalWithRows(100, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+            console.line("an answer the user wants to keep seeing");
+            Thread.sleep(200);
+
+            growOnce(terminal, console, 150, rows);
+
+            assertThat(
+                    "the prompt is on its row" + NEWLINE + terminal.describe(),
+                    terminal.cursorRow(),
+                    is(rows - 1 - blockRows));
+            assertThat(
+                    "and the answer is still on screen" + NEWLINE + terminal.describe(),
+                    count(terminal.rows(), row -> row.contains("keep seeing")),
+                    is(1));
+        }
+    }
+
+    @Test
+    @Disabled("Reproduced and OPEN, the other half of the resize drift and the harder one. A window that gets"
+            + " SHORTER leaves the prompt BELOW its row -- measured 13 where 10 is right, shrinking 20"
+            + " rows to 14 -- which means inside the pinned band, where the block draws over it: the"
+            + " reported \"nach dem kleiner ziehen sehe ich es nicht mehr\". The growing side is fixed"
+            + " by printing (pushThePromptBackToItsRow), because printing moves the cursor DOWN; here it"
+            + " would have to move UP, and nothing a caller can emit does that without breaking the"
+            + " reader's own cursor bookkeeping -- cursor_address smuggled into printAbove was tried"
+            + " twice and stranded characters above the prompt both times. /cls repairs it in one"
+            + " keystroke. Delete the annotation to see it.")
+    void aWindowThatGetsSHORTERLeavesThePromptOnTheRowTheBlockLeavesForIt() throws Exception {
+        int rows = 20;
+        int blockRows = 3;
+        ScreenTerminalHarness terminal = terminalWithRows(100, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+            console.line("an answer the user wants to keep seeing");
+            Thread.sleep(200);
+
+            int shrunk = 14;
+            growOnce(terminal, console, 120, shrunk);
+
+            assertBlockIsIntactAt(terminal, shrunk, blockRows);
+            assertThat(
+                    "the prompt is on the row the block leaves for it" + NEWLINE + terminal.describe(),
+                    terminal.cursorRow(),
+                    is(shrunk - 1 - blockRows));
         }
     }
 }

@@ -472,6 +472,16 @@ climbing up the screen came from; narrowing does it in reverse and walks the inp
 never soft-wrapped has nothing to join. The price: text keeps the line breaks it was printed with, so widening
 the window does not re-flow the conversation — the same trade an append-only console already makes.
 
+**After a height change the prompt is printed back down to its row.** JLine draws the prompt wherever the
+cursor happens to be, and a window whose height changes moves the screen's content by however many rows the
+console's buffer gives it — measured: growing a 20-row window to 26 left the input three rows too high, and
+shrinking it to 14 left it three rows too *low*, which means inside the pinned block, where it is drawn over
+and vanishes. The amount cannot be computed, but it is bounded by the height change, and printing moves the
+cursor down one row per line until it reaches its row and then simply scrolls — so the agent prints that many
+blank lines once the size settles. A width change costs nothing, because folding means a width change moves no
+rows at all. Shrinking is not repaired this way (the prompt would have to move *up*, which nothing can do
+without breaking the reader's cursor bookkeeping); `/cls` puts it back.
+
 **Resizing the window.** The pinned region is JLine's, but the rows in it are this project's: a rule built
 for a 113-column window stays 113 columns wide until somebody re-makes it, so the block is rebuilt whenever
 the window changes size, from a poll. A resize handler of our own was tried and made things worse — the line
