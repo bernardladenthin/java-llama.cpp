@@ -39,6 +39,28 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   documented as the no-ops they are (`common_init()` forces both on), `setLogFile` as additive.
 
 ### Added
+- **Distributed inference over llama.cpp RPC**, client and server, in every artifact with no new
+  runtime dependency. `ModelParameters.setRpcServers(RpcEndpoint...)` (and `--rpc host:port[,…]` on
+  both HTTP servers) offloads layers to RPC servers on other machines; `RpcServer` serves this
+  machine's devices (every GPU found, else the CPU), loopback-only unless `startOnNetwork` is used,
+  also runnable as `java -cp <jar> net.ladenthin.llama.RpcServer`. `value.RpcEndpoint` validates
+  endpoints (IPv4 or host name; the transport has no IPv6). Upstream aborts the whole process on
+  every client-side connection problem; the new `patches/0015` turns an unreachable, malformed or
+  non-RPC endpoint into a `LlamaException` naming it, makes the server stoppable, and keeps a
+  stopped server's registered device from aborting later loads. Because llama.cpp never forgets a
+  registered RPC server, a load that does not ask for one gets an explicit device list without it —
+  including the multimodal projector's device, and `TextToSpeech` / `LlamaTrainer` loads.
+  A server lost in the middle of inference still terminates the process (upstream limitation).
+  The served devices can be chosen by name (`RpcServer.startLocal(…, List<String> devices)`,
+  `--device CPU`), because a served device that cannot run an operation terminates the server
+  (llama.cpp's RPC client reports every operation as supported).
+- **`LlamaLoader` no longer loads the native library twice** when the first class to load it is not
+  `LlamaModel` (e.g. `TextToSpeech`, `LlamaQuantizer`, `RpcServer`): `JNI_OnLoad` initializes
+  `LlamaModel`, whose static block re-entered the loader and ran a second full load — with an
+  all-backends fat jar that meant re-extracting every GPU backend over the library being loaded.
+- **`.github/verify-native-deps.py`** holds every shipped native library to its known runtime
+  dependencies (ELF, PE incl. Windows arm64, Mach-O). It found that the macOS dylib has always
+  linked Homebrew's `openssl@3` (see `TODO.md`).
 - **The agent is a release asset: `llama-atmosphere-agent-<version>-jar-with-dependencies.jar`**, with
   `.sha256` and a GPG `.asc`, on every GitHub release and the rolling `snapshot` pre-release — never on
   Maven Central. It carries **no core** (~7 MB instead of hundreds, natives not in the release twice):

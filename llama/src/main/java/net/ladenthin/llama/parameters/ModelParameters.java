@@ -7,6 +7,7 @@ package net.ladenthin.llama.parameters;
 
 import lombok.EqualsAndHashCode;
 import net.ladenthin.llama.args.*;
+import net.ladenthin.llama.value.RpcEndpoint;
 import org.jspecify.annotations.Nullable;
 
 /***
@@ -849,6 +850,39 @@ public final class ModelParameters extends CliParameters {
      */
     public ModelParameters setDevices(String devices) {
         putString(ModelOption.DEVICE, devices);
+        return this;
+    }
+
+    /**
+     * Offload layers to llama.cpp RPC servers on other machines (upstream {@code --rpc}).
+     *
+     * <p>Each server contributes its devices (GPUs, or its CPU) as additional offload targets;
+     * {@link #setGpuLayers(int)} and {@link #setTensorSplit(String)} then distribute the layers
+     * across local and remote devices exactly as across local GPUs. A server is an upstream
+     * {@code rpc-server} or a {@link net.ladenthin.llama.RpcServer} in another process.
+     *
+     * <p>Every server is contacted when the model loads: one that is not reachable fails the load
+     * with a {@link net.ladenthin.llama.exception.LlamaException} naming it. A server that
+     * disappears <em>after</em> the model loaded still terminates the process, because llama.cpp
+     * has no error path for a lost device mid-inference. The protocol is unauthenticated and
+     * unencrypted: use it on a trusted network or through a tunnel only.
+     *
+     * @param servers the servers, at least one
+     * @return this builder
+     * @throws IllegalArgumentException when no server is given
+     */
+    public ModelParameters setRpcServers(RpcEndpoint... servers) {
+        if (servers.length == 0) {
+            throw new IllegalArgumentException("at least one RPC server is required, got " + servers.length);
+        }
+        StringBuilder joined = new StringBuilder();
+        for (RpcEndpoint server : servers) {
+            if (joined.length() > 0) {
+                joined.append(',');
+            }
+            joined.append(server);
+        }
+        putString(ModelOption.RPC, joined.toString());
         return this;
     }
 

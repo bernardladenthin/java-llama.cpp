@@ -251,6 +251,9 @@ public enum ModelOption {
     /** CLI option {@code --rope-scaling}. */
     ROPE_SCALING("--rope-scaling"),
 
+    /** CLI option {@code --rpc}: comma-separated {@code host:port} list of llama.cpp RPC servers. */
+    RPC("--rpc"),
+
     /** CLI option {@code --samplers}. */
     SAMPLERS("--samplers"),
 

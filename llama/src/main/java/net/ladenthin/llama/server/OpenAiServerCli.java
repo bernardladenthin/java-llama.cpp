@@ -9,11 +9,15 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import net.ladenthin.llama.args.CacheType;
 import net.ladenthin.llama.parameters.ModelParameters;
+import net.ladenthin.llama.value.RpcEndpoint;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -73,6 +77,7 @@ public final class OpenAiServerCli {
         @Nullable String apiKey = null;
         @Nullable String mmproj = null;
         @Nullable String mmprojDevice = null;
+        List<RpcEndpoint> rpcServers = new ArrayList<>();
         int ctxSize = 0;
         int gpuLayers = 0;
         int threads = 0;
@@ -158,6 +163,9 @@ public final class OpenAiServerCli {
                 case "--mmproj-device":
                     mmprojDevice = nextValue(args, ++i, arg);
                     break;
+                case "--rpc":
+                    rpcServers.addAll(rpcValue(nextValue(args, ++i, arg), arg));
+                    break;
                 case "--embedding":
                 case "--embeddings":
                     embedding = true;
@@ -186,6 +194,7 @@ public final class OpenAiServerCli {
                 apiKey,
                 mmproj,
                 mmprojDevice,
+                rpcServers,
                 ctxSize,
                 gpuLayers,
                 threads,
@@ -236,6 +245,7 @@ public final class OpenAiServerCli {
                 "  --api-key <key>            Require an 'Authorization: Bearer <key>' header",
                 "  --mmproj <path>            Multimodal projector for vision models (enables image input)",
                 "  -mmdev, --mmproj-device <d>  Device for the multimodal projector ('none' = keep on CPU)",
+                "  --rpc <host:port,...>      Offload layers to llama.cpp RPC servers (repeatable)",
                 "  --embedding                Load in embedding mode (enables POST /v1/embeddings)",
                 "  --reranking                Load in reranking mode (enables POST /v1/rerank)",
                 "  -h,  --help                Show this help and exit",
@@ -255,6 +265,14 @@ public final class OpenAiServerCli {
             throw error("Missing value for " + flag);
         }
         return args[valueIndex];
+    }
+
+    private static List<RpcEndpoint> rpcValue(String value, String flag) {
+        try {
+            return RpcEndpoint.parseList(value);
+        } catch (IllegalArgumentException e) {
+            throw error("Invalid value for " + flag + ": " + e.getMessage(), e);
+        }
     }
 
     private static int intValue(String[] args, int valueIndex, String flag) {
@@ -338,6 +356,7 @@ public final class OpenAiServerCli {
         private final @Nullable String apiKey;
         private final @Nullable String mmproj;
         private final @Nullable String mmprojDevice;
+        private final List<RpcEndpoint> rpcServers;
         private final int ctxSize;
         private final int gpuLayers;
         private final int threads;
@@ -360,6 +379,7 @@ public final class OpenAiServerCli {
                 @Nullable String apiKey,
                 @Nullable String mmproj,
                 @Nullable String mmprojDevice,
+                Collection<RpcEndpoint> rpcServers,
                 int ctxSize,
                 int gpuLayers,
                 int threads,
@@ -380,6 +400,7 @@ public final class OpenAiServerCli {
             this.apiKey = apiKey;
             this.mmproj = mmproj;
             this.mmprojDevice = mmprojDevice;
+            this.rpcServers = Collections.unmodifiableList(new ArrayList<>(rpcServers));
             this.ctxSize = ctxSize;
             this.gpuLayers = gpuLayers;
             this.threads = threads;
@@ -461,6 +482,15 @@ public final class OpenAiServerCli {
          */
         public @Nullable String getMmprojDevice() {
             return mmprojDevice;
+        }
+
+        /**
+         * The llama.cpp RPC servers the model offloads layers to, from {@code --rpc}.
+         *
+         * @return the servers in command-line order; empty when {@code --rpc} was not given
+         */
+        public List<RpcEndpoint> getRpcServers() {
+            return rpcServers;
         }
 
         /**
@@ -593,6 +623,9 @@ public final class OpenAiServerCli {
                     new ModelParameters().setModel(modelPath).setGpuLayers(gpuLayers);
             if (mmprojDevice != null) {
                 params.setMmprojDevice(mmprojDevice);
+            }
+            if (!rpcServers.isEmpty()) {
+                params.setRpcServers(rpcServers.toArray(new RpcEndpoint[0]));
             }
             if (mmproj != null) {
                 params.setMmproj(mmproj);

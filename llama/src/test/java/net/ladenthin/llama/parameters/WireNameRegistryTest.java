@@ -365,6 +365,10 @@ public class WireNameRegistryTest {
                 Object array = java.lang.reflect.Array.newInstance(type.getComponentType(), 1);
                 java.lang.reflect.Array.set(array, 0, values[values.length - 1]);
                 args[i] = array;
+            } else if (type.isArray() && type.getComponentType() == net.ladenthin.llama.value.RpcEndpoint.class) {
+                args[i] = new net.ladenthin.llama.value.RpcEndpoint[] {
+                    net.ladenthin.llama.value.RpcEndpoint.of("127.0.0.1", 50052)
+                };
             } else if (type.isArray() && type.getComponentType() == String.class) {
                 args[i] = new String[] {"x"};
             } else if (type.isArray() && type.getComponentType() == int.class) {

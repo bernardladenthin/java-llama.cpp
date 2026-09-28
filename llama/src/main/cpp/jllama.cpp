@@ -18,6 +18,7 @@
 #include "server-chat.h"
 #include "utils.hpp"
 #include "jni_helpers.hpp"
+#include "rpc_support.hpp"
 #include "log_helpers.hpp"
 #include "tts_engine.h"
 
@@ -929,9 +930,24 @@ static void load_model_impl(JNIEnv *env, jobject obj, jobjectArray jparams, jobj
     // Strip --vocab-only before common_params_parse (not a common_params flag).
     bool vocab_only = false;
     std::vector<char *> filtered_argv = strip_flag_from_argv(argv, static_cast<int>(argc), "--vocab-only", &vocab_only);
-    int filtered_argc = static_cast<int>(filtered_argv.size());
-    const auto parsed_params = common_params_parse(filtered_argc, filtered_argv.data(), params, LLAMA_EXAMPLE_SERVER);
+    // Register the `--rpc` servers up front (a clear error for an unreachable one) and keep RPC
+    // devices another model registered in this JVM out of this load -- see rpc_support.hpp.
+    std::vector<std::string> rpc_argv;
+    try {
+        rpc_argv = jllama::rpc::prepare_argv(std::vector<std::string>(filtered_argv.begin(), filtered_argv.end()));
+    } catch (const std::invalid_argument &e) {
+        free_string_array(argv, argc);
+        env->ThrowNew(c_llama_error, e.what());
+        return;
+    }
     free_string_array(argv, argc);
+    std::vector<char *> parse_argv;
+    parse_argv.reserve(rpc_argv.size());
+    for (auto &arg : rpc_argv) {
+        parse_argv.push_back(const_cast<char *>(arg.c_str()));
+    }
+    const auto parsed_params =
+        common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params, LLAMA_EXAMPLE_SERVER);
     if (!parsed_params) {
         env->ThrowNew(c_llama_error, "Failed to parse model parameters");
         return;

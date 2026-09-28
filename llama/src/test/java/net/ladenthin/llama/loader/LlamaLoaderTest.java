@@ -476,4 +476,37 @@ public class LlamaLoaderTest {
         assertEquals(target, extracted);
         assertArrayEquals(testResourceBytes(), Files.readAllBytes(target));
     }
+
+    // The nested call is what JNI_OnLoad makes: GetFieldID on LlamaModel initializes it, and its
+    // static block calls initialize() again on the loading thread. It must not run a second load
+    // (with a multi-backend jar that deleted and re-extracted the library still being loaded).
+    @Test
+    public void aNestedInitializeOnTheLoadingThreadDoesNotRunTheBodyAgain() {
+        java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
+        LlamaLoader.runOnceOnThisThread(() -> {
+            runs.incrementAndGet();
+            LlamaLoader.runOnceOnThisThread(runs::incrementAndGet);
+        });
+        assertEquals(1, runs.get());
+    }
+
+    @Test
+    public void aLaterInitializeStillRunsTheBody() {
+        java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
+        LlamaLoader.runOnceOnThisThread(runs::incrementAndGet);
+        LlamaLoader.runOnceOnThisThread(runs::incrementAndGet);
+        assertEquals(2, runs.get(), "only a nested call is skipped; tests and later classes re-run it");
+    }
+
+    @Test
+    public void aFailingBodyDoesNotLeaveTheGuardSet() {
+        assertThrows(
+                IllegalStateException.class,
+                () -> LlamaLoader.runOnceOnThisThread(() -> {
+                    throw new IllegalStateException("load failed");
+                }));
+        java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
+        LlamaLoader.runOnceOnThisThread(runs::incrementAndGet);
+        assertEquals(1, runs.get(), "a failed load must be retryable");
+    }
 }

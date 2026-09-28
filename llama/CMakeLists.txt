@@ -159,6 +159,21 @@ endif()
 set(GGML_FMA     ON  CACHE BOOL "" FORCE)
 set(GGML_F16C    ON  CACHE BOOL "" FORCE)
 set(GGML_AVX512  OFF CACHE BOOL "" FORCE)
+# RPC backend (ggml-rpc): lets a model offload layers to rpc-servers on other machines
+# (--rpc host:port) and lets this library serve its own devices (RpcServer). It is a static
+# library linked into jllama like every other ggml backend, so the shipped artifact stays ONE
+# jllama library. TCP only: plain BSD sockets / Winsock, which jllama already links (cpp-httplib
+# pulls in ws2_32), so no new runtime dependency on any platform.
+#
+# GGML_RPC_RDMA must be forced OFF, not left to upstream's default: ggml-rpc's CMakeLists
+# switches it ON whenever the BUILD host has libibverbs (Linux) or librdma (Apple), which would
+# make libjllama.so NEED libibverbs.so.1 at load time -- it would then fail to load on every
+# machine without rdma-core. libibverbs cannot be linked statically in any useful way either
+# (it dlopens its hardware providers), and upstream notes the Apple weak link does not survive a
+# static ggml-rpc. CI asserts the resulting DT_NEEDED set, so a toolchain image that grows
+# rdma-core cannot turn this back on unnoticed.
+set(GGML_RPC      ON  CACHE BOOL "" FORCE)
+set(GGML_RPC_RDMA OFF CACHE BOOL "" FORCE)
 # b9305 removed the top-level LLAMA_BUILD_WEBUI -> LLAMA_BUILD_UI shim; set the
 # new name directly. (The old name no longer forwards at top level; the shim
 # survives in tools/ui/CMakeLists.txt but that subdir is not configured in
@@ -367,6 +382,7 @@ add_library(jllama SHARED
     src/main/cpp/jllama.cpp
     src/main/cpp/tts_engine.cpp
     src/main/cpp/train_engine.cpp
+    src/main/cpp/rpc_bridge.cpp
     src/main/cpp/utils.hpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp)
@@ -612,6 +628,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_model_split.cpp
         src/test/cpp/test_model_flags.cpp
         src/test/cpp/test_wire_contracts.cpp
+        src/test/cpp/test_rpc.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
