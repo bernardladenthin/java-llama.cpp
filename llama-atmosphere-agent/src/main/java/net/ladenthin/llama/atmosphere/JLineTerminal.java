@@ -97,6 +97,12 @@ public final class JLineTerminal implements AgentTerminal {
     private @Nullable Thread input;
     private @Nullable Thread sizes;
 
+    /** How long the window size must hold still before the block is drawn one last time. */
+    private static final long SETTLE_MILLIS = 400;
+
+    /** When to draw the settled block, or {@code 0} when nothing is pending. */
+    private long settleAt;
+
     /** The size the pinned region was just told about, so the rows are built for the same one. */
     private volatile @Nullable Size pendingSize;
 
@@ -223,12 +229,25 @@ public final class JLineTerminal implements AgentTerminal {
                             }
                             continue;
                         }
-                        if (now.getColumns() == last.getColumns() && now.getRows() == last.getRows()) {
+                        if (now.getColumns() != last.getColumns() || now.getRows() != last.getRows()) {
+                            last = now;
+                            settleAt = System.currentTimeMillis() + SETTLE_MILLIS;
+                            if (!refreshBlockForCurrentSize() && closed) {
+                                return;
+                            }
                             continue;
                         }
-                        last = now;
-                        if (!refreshBlockForCurrentSize() && closed) {
-                            return;
+                        // The size stopped changing: draw once more, a moment later. A console being
+                        // enlarged reports the new width before its screen has applied it, so the LAST
+                        // event of a drag is processed against a size the screen does not have yet -- the
+                        // rule then covers two screen rows and everything above it moves up. Nothing
+                        // re-renders afterwards, because the size no longer changes, so the too-wide rule
+                        // is what stays. Reported after enlarging, with the block otherwise in place.
+                        if (settleAt != 0 && System.currentTimeMillis() >= settleAt) {
+                            settleAt = 0;
+                            if (!refreshBlockForCurrentSize() && closed) {
+                                return;
+                            }
                         }
                     }
                 },
