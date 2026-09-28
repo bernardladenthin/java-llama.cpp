@@ -496,8 +496,10 @@ told the size — and nothing can find the copy afterwards, because a program ca
 Scrolling removes it, which is what `/cls` does and why that was always the repair. So the agent does it itself
 once the size settles. Narrowing needs the same treatment for the mirror-image reason: there the lines are split
 instead of joined, and the block's own rows — built for the old width — no longer fit and are re-wrapped across
-several screen rows. The conversation scrolls out of view and stays reachable with the scrollbar. Dragging only
-the height keeps it on screen, because without a width change nothing re-wraps.
+several screen rows. And then the conversation is **printed again**, folded for the width the window now has: the console remembers
+the lines it printed (the last few hundred, before folding), so after the wipe the recent ones come back and a
+paragraph that needed two rows in a narrow window takes one in a wide one. Dragging only the height changes
+nothing here, because without a width change nothing re-wraps.
 
 **After a height change the prompt is printed back down to its row.** JLine draws the prompt wherever the
 cursor happens to be, and a window whose height changes moves the screen's content by however many rows the

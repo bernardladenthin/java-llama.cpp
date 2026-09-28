@@ -728,3 +728,23 @@ direction wipes once the size settles and draws the block in place; a height cha
 row and keeps the conversation; the block itself is never carried anywhere because it is redrawn from scratch
 afterwards. 230 tests green twice in a row with `4.4.6-statusfix8`, and green against the released `4.4.6`, where
 the 60 cases that need the patched library skip themselves.
+
+## The wipe kept its job and gave back the conversation
+
+*"beim zusammenziehen repariert es sich jetzt nach einiger Zeit selbst … allerdings sehe ich den Verlauf nicht
+mehr."* The wipe does the one thing that removes the rows a re-wrap leaves behind, so it cannot be given up — but
+the conversation does not have to go with it, because **this console knows what it printed**.
+
+Every line handed to `line()` is now remembered **before** it is folded, in a bounded ring of the last 300. After
+the wipe, as many of the most recent as fit above the block are printed again, oldest first — counted in **screen
+rows** rather than in lines, because folding can turn one line into several and counting lines would push the
+first of them off the top again.
+
+Storing the text rather than the drawing buys the thing a reader actually expects from a window they just made
+bigger: **the conversation re-flows.** A line that needed two rows in a narrow window takes one in a wide one,
+because it is folded again for the width the window has now. Pinned by
+`whatIsPrintedAgainIsFoldedForTheWidthTheWindowHasNOW`, which measures both states: two rows before, one after.
+
+One test changed sides with it, and that is the useful record. It used to assert that the conversation had
+scrolled away — *"the accepted cost"* — and now asserts that the answer is back on screen, once. A cost that was
+accepted for one round turned out not to be necessary at all.

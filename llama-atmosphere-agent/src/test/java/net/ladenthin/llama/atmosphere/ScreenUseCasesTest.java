@@ -1837,16 +1837,15 @@ class ScreenUseCasesTest {
     }
 
     @Test
-    void aWindowThatONLYgetsWiderWIPESandPutsThePromptOnItsRow() throws Exception {
-        // The trade, asserted so that the decision is visible in the suite rather than only in a document -- and
-        // so that changing it back fails a test.
+    void aWindowThatONLYgetsWiderKeepsTheConversationAndPutsThePromptOnItsRow() throws Exception {
+        // This case changed sides once, and the reason is worth keeping because it was a cost that turned out not
+        // to be necessary.
         //
-        // A widening makes the console reflow, which carries the pinned block out of its rows and leaves a copy
-        // above the region that nothing can find afterwards (ReflowResizeTest reproduces it; the console reflows
-        // before the program is told the size, so it cannot be prevented). Scrolling is the only thing that
-        // removes it, which is what /cls does, so a settled widening does it: the screen comes back with the
-        // prompt on its row and one block, and the conversation has scrolled out of view -- reachable with the
-        // scrollbar, which is the cost that was accepted for it.
+        // A width change wipes the screen -- the only thing that removes the rows a console's re-wrap leaves
+        // behind -- and for one round that was all it did. The report came back in a sentence: "allerdings sehe
+        // ich den Verlauf nicht mehr". So the assertion here used to be that the conversation had scrolled away,
+        // "the accepted cost". It is not accepted any more: the console knows what it printed, so after the wipe
+        // it prints the recent lines again, folded for the width the window has now.
         int rows = 20;
         int blockRows = 3;
         ScreenTerminalHarness terminal = terminalWithRows(100, rows);
@@ -1860,9 +1859,9 @@ class ScreenUseCasesTest {
             assertThat("the prompt is on its row" + NEWLINE + screen, terminal.cursorRow(), is(rows - 1 - blockRows));
             assertBlockIsIntactAt(terminal, rows, blockRows);
             assertThat(
-                    "and the conversation has scrolled out of view, which is the accepted cost" + NEWLINE + screen,
+                    "and the answer is back on screen, once" + NEWLINE + screen,
                     count(terminal.rows(), row -> row.contains("AN-ANSWER")),
-                    is(0));
+                    is(1));
         }
     }
 
@@ -2111,5 +2110,64 @@ class ScreenUseCasesTest {
         Thread.sleep(300);
         console.refreshBlockForCurrentSize();
         Thread.sleep(300);
+    }
+
+    @Test
+    void aWidthChangeKeepsTheConversationVisibleByPrintingItAgain() throws Exception {
+        // "allerdings sehe ich den verlauf nicht mehr". The wipe is what removes the rows a reflow leaves
+        // behind, and it cannot be given up -- but the conversation does not have to go with it, because this
+        // console knows what it printed. After the wipe the recent lines are printed again, folded at the NEW
+        // width, so the screen comes back with the conversation on it and re-flowed to the window it now has.
+        int rows = 16;
+        ScreenTerminalHarness terminal = terminalWithRows(100, rows);
+        try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
+            console.line("ANSWER-ONE the user was reading");
+            console.line("ANSWER-TWO the user was reading");
+            console.line("ANSWER-THREE the user was reading");
+            Thread.sleep(300);
+
+            resizeOnceAt(terminal, console, 150, rows);
+
+            String screen = terminal.describe();
+            String[] screenRows = terminal.rows();
+            for (String answer : List.of("ANSWER-ONE", "ANSWER-TWO", "ANSWER-THREE")) {
+                assertThat(
+                        answer + " is on screen again after the width changed" + NEWLINE + screen,
+                        count(screenRows, row -> row.contains(answer)),
+                        is(1));
+            }
+            assertBlockIsIntactAt(terminal, rows, 3);
+        }
+    }
+
+    @Test
+    void whatIsPrintedAgainIsFoldedForTheWidthTheWindowHasNOW() throws Exception {
+        // The reason this is a reprint rather than a scroll-back: the lines are folded again, so a line that
+        // needed two rows in the old window uses one in a wider one. That is the behaviour a reader expects from
+        // a window they just made bigger, and it is only possible because the console keeps what it printed
+        // rather than what it drew.
+        int rows = 16;
+        int narrow = 60;
+        ScreenTerminalHarness terminal = terminalWithRows(narrow, rows);
+        try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
+            String longAnswer = "A-LONG-ANSWER " + "x".repeat(80) + " END-OF-THE-ANSWER";
+            console.line(longAnswer);
+            Thread.sleep(300);
+            assertThat(
+                    "at the narrow width it needed two rows" + NEWLINE + terminal.describe(),
+                    count(terminal.rows(), row -> row.contains("A-LONG-ANSWER")) == 1
+                            && count(terminal.rows(), row -> row.contains("END-OF-THE-ANSWER")) == 1
+                            && count(terminal.rows(), row -> row.contains("A-LONG-ANSWER") && row.contains("END-OF"))
+                                    == 0,
+                    is(true));
+
+            resizeOnceAt(terminal, console, 140, rows);
+
+            String screen = terminal.describe();
+            assertThat(
+                    "and after widening it is one row again" + NEWLINE + screen,
+                    count(terminal.rows(), row -> row.contains("A-LONG-ANSWER") && row.contains("END-OF-THE-ANSWER")),
+                    is(1));
+        }
     }
 }

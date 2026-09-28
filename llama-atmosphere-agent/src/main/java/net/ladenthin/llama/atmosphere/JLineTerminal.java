@@ -318,9 +318,11 @@ public final class JLineTerminal implements AgentTerminal {
                         if (settleAt != 0 && System.currentTimeMillis() >= settleAt) {
                             settleAt = 0;
                             if (widthMoved) {
-                                // The screen is wiped, which is the only thing that removes what a reflow left
-                                // behind -- see wipeAfterAWidthChange.
+                                // Wiped, because that is the only thing that removes what a re-wrap leaves
+                                // behind -- and then the conversation is put back, folded for the new width, so
+                                // the wipe does not cost what the reader came for. See printRecentLinesAgain.
                                 clearScreen();
+                                printRecentLinesAgain();
                             } else {
                                 pushThePromptBackToItsRow(Math.abs(now.getRows() - rowsBeforeTheDrag));
                             }
@@ -345,6 +347,13 @@ public final class JLineTerminal implements AgentTerminal {
             // text themselves; this is the backstop for the ones that forget.
             text.lines().forEach(this::line);
             return;
+        }
+        synchronized (writing) {
+            // Remembered BEFORE folding, so a redraw after a width change folds it for the window's new width.
+            recent.addLast(text);
+            while (recent.size() > REMEMBERED_LINES) {
+                recent.removeFirst();
+            }
         }
         for (String piece : fold(text, Math.max(20, terminal.getSize().getColumns() - 1))) {
             write(piece);
@@ -530,6 +539,57 @@ public final class JLineTerminal implements AgentTerminal {
             }
         }
         terminal.writer().flush();
+    }
+
+    /**
+     * The lines this console has printed, newest last, as they were handed over — <b>before</b> folding.
+     *
+     * <p>Kept so the conversation can be put back on the screen after a width change wipes it, which is the one
+     * thing that removes the rows a console's reflow leaves behind. Wiping without this was measured and
+     * reported in one sentence: "allerdings sehe ich den Verlauf nicht mehr". The wipe cannot be given up — see
+     * the size watch — but the conversation does not have to go with it, because this console knows what it
+     * printed.
+     *
+     * <p><b>Unfolded on purpose.</b> What is stored is the line a caller gave, not the pieces it was broken into,
+     * so printing it again folds it for the width the window has <em>now</em>: a line that needed two rows in a
+     * narrow window takes one in a wide one. That is what a reader expects from a window they have just made
+     * bigger, and it is only possible because what is kept is the text rather than the drawing.
+     *
+     * <p>Bounded, because a session is not: only the last {@link #REMEMBERED_LINES} are held, which is several
+     * screens' worth and costs a few tens of kilobytes. Anything older is in the terminal's own scrollback.
+     */
+    private final java.util.ArrayDeque<String> recent = new java.util.ArrayDeque<>();
+
+    /** How many printed lines are kept for redrawing after a wipe; several screens' worth. */
+    private static final int REMEMBERED_LINES = 300;
+
+    /**
+     * Print the tail of the conversation again, folded for the window's current width.
+     *
+     * <p>As many of the most recent lines as fit above the pinned block, oldest of them first. Counted in
+     * <b>screen rows</b> rather than in lines, because folding can turn one line into several — counting lines
+     * would overfill the screen and push the first of them off the top again.
+     */
+    private void printRecentLinesAgain() {
+        int columns = Math.max(20, terminal.getSize().getColumns() - 1);
+        int available = Math.max(0, terminal.getSize().getRows() - block.size() - 1);
+        List<String> lines = new java.util.ArrayList<>();
+        int used = 0;
+        synchronized (writing) {
+            java.util.Iterator<String> newestFirst = recent.descendingIterator();
+            while (newestFirst.hasNext() && used < available) {
+                String line = newestFirst.next();
+                int rows = fold(line, columns).size();
+                if (used + rows > available) {
+                    break;
+                }
+                used += rows;
+                lines.add(0, line);
+            }
+        }
+        for (String line : lines) {
+            line(line);
+        }
     }
 
     /**

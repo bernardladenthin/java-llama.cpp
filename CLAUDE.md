@@ -2818,8 +2818,16 @@ are decisions, not details:
    console learns of the size up to 120 ms later, so the block is unavoidably on screen then. Nothing can find the
    copy afterwards either — a caller cannot read the screen. Scrolling removes it, which is what `/cls` does and
    why that command was always the repair. The trade was the user's call: the visible conversation scrolls out of
-   view on a width drag and stays reachable with the scrollbar. A height change needs none of this (no width
-   change, nothing re-wraps) and keeps the conversation, with the prompt printed back to its row instead.
+   view on a width drag — and is then **printed again**, which is the part that makes the wipe affordable.
+   Every line handed to `line()` is remembered **before** folding (a bounded ring of the last 300), and after the
+   wipe as many of the most recent as fit above the block are printed again, oldest first, counted in **screen
+   rows** rather than lines because folding can turn one line into several. Storing the text rather than the
+   drawing buys what a reader expects from a window they just made bigger: the conversation **re-flows** — a line
+   that needed two rows in a narrow window takes one in a wide one
+   (`whatIsPrintedAgainIsFoldedForTheWidthTheWindowHasNOW` measures both states). It was wiped without this for
+   one round and the report was a single sentence: "allerdings sehe ich den Verlauf nicht mehr". A height change
+   needs none of this (no width change, nothing re-wraps) and keeps the conversation where it is, with the prompt
+   printed back to its row instead.
    **It was narrowed to "only when the width grew" once, on reasoning rather than evidence, and the next report
    came from the other direction:** narrowing does not join lines, it **splits** them, and the bar's own rows —
    built for the old width — no longer fit and are re-wrapped across several screen rows, so the bar needs more
