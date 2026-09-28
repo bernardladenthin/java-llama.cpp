@@ -72,6 +72,19 @@ public interface AgentTerminal extends AutoCloseable {
     boolean pinsStatus();
 
     /**
+     * What kind of terminal this is, for the startup line.
+     *
+     * <p>The terminfo entry name on a real terminal — {@code windows-vtp}, {@code xterm} — because the entry
+     * decides how the pinned block is drawn and two of the fixes carried against JLine are about exactly
+     * that. A report from a console is much easier to read when it says which one it came from.
+     *
+     * @return the type, or a word describing this implementation when there is no terminal
+     */
+    default String terminalType() {
+        return "plain stream";
+    }
+
+    /**
      * Wipe the window, leaving the input line and the block at the bottom.
      *
      * <p>The scrollback of the terminal emulator is not touched — what was written stays where the

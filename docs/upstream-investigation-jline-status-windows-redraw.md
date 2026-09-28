@@ -456,3 +456,56 @@ in the code:
 **Verified:** 101 tests in JLine's own suite green (its `DisplayTest` and `ScreenTerminalTest` included),
 with `StatusWrongWidthTest` red 2/3 against the unpatched library and green with the fix; the project's 206
 tests green against `4.4.6-statusfix6` and green against the released `4.4.6`, where the screen cases skip.
+
+## Two things the sixth fix got wrong, and the row the prompt loses
+
+The report after it: *"nach cls und wieder größer ziehen"*, with the prompt at the left of one row and the
+whole block far to the right of that same row. Reproducing the sequence found **two separate things**, and
+only one of them was mine to fix.
+
+**1. The sixth fix had an off-by-one per row, and JLine's own tests could not see it.** `Display` counts
+positions in **`columns + 1`** per row (`columns1`) throughout, and the new absolute address divided by
+`columns`. So row *N* was addressed at column *N*: rule at column 0, activity row at 1, state row at 2.
+Every existing test compares **trimmed** rows, which is exactly what hides it — it took an interpreted
+screen in the consuming project to see it. `StatusWrongWidthTest` now carries
+`everyRowStartsAtColumnZero`, which asserts on the raw row.
+
+**2. The prompt is never addressed at all, and that is the row the user keeps losing.** Bisected on the
+interpreted screen, with the block the application really pins:
+
+| after | cursor row | should be |
+|---|---|---|
+| `/cls` | 16 | 16 |
+| **JLine's WINCH handling alone** | **19** | 20 |
+| plus this console's row rebuild | 19 | 20 |
+| plus this console's repaint | 19 | 20 |
+
+So it is neither of ours. The byte stream for a growing window says why:
+
+```
+ESC7  ESC[8;1H ESC[K … ESC[14;1H ESC[K   ESC[1;11r  ESC8   CR
+ESC7 ESC[12;1H ------  ESC[13;1H working  ESC[14;1H [state]  ESC8
+>
+```
+
+The status region clears its band, re-establishes the scroll region and restores the cursor; the block is
+addressed row by row (the sixth fix); and then the prompt is written as a bare `>` — **wherever the cursor
+happens to be.** Nothing relates it to the region below it. When the window grows, the screen moves its
+content down by as many rows as it has scrollback to pull from, which need not equal the number of rows
+added, so the prompt ends up a row or two above the rule with a blank row between.
+
+**Why this is not a defect to patch blindly.** A prompt sitting directly above the pinned region is what
+*this* application wants — it scrolls to the bottom once at startup so the input is always on the last
+usable row. JLine makes no such promise: it draws the prompt at the cursor, which for a half-empty screen is
+correctly somewhere in the middle. "Move the cursor to the bottom of the scroll region on a resize" would be
+right here and wrong there, so it is a change to the library's contract rather than a bug fix, and it is
+recorded as the open question it is. `ScreenUseCasesTest.aGrowingWindowLeavesThePromptOnTheRowTheBlockLeavesForIt`
+carries the reproduction with the bisection in its `@Disabled` text.
+
+**What does repair it, and now says so at startup.** Printing moves the cursor back down one row per line, so
+`/cls` — a window's worth of blank lines — puts it back on its row in one keystroke, which the measurement
+above confirms (16 of 16 after a clear). And because two of these rounds chased a defect whose fix the jar in
+use did not contain, the agent now prints the terminal type and the **patch level of the JLine it is actually
+running with**, probed by method (`Status.repaint` for the fifth fix, `Display.addressesEveryRow` for the
+sixth) rather than by version string — the patched builds overlay classes into the released jar and keep its
+manifest version, so the version string cannot tell them apart.

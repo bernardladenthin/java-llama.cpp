@@ -1654,4 +1654,78 @@ class ScreenUseCasesTest {
             assertBlockIsIntactAt(terminal, rows, 3);
         }
     }
+
+    @Test
+    void clsAndThenAShrinkingCornerDragKeepsOneBlockOfThreeSeparateRows() throws Exception {
+        // The same in the other direction, because "größer und kleiner gemacht" is what the report says.
+        int rows = 24;
+        ScreenTerminalHarness terminal = terminalWithRows(150, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+            console.line("something said earlier");
+            Thread.sleep(200);
+
+            console.clearScreen();
+            Thread.sleep(400);
+
+            int shrunk = rows - 4;
+            growOnce(terminal, console, 100, shrunk);
+
+            assertBlockIsIntactAt(terminal, shrunk, 3);
+        }
+    }
+
+    @Test
+    @Disabled("Reproduced and OPEN, and the bisection is in the body. A window that GROWS leaves the prompt a"
+            + " row too high: measured 19 where 20 is right, with a blank row between the input and the"
+            + " rule. It is JLine's WINCH handling alone -- the cursor is right after /cls (16 of 16),"
+            + " wrong after the signal (19 of 20), and neither this console's row rebuild nor its"
+            + " repaint changes it either way. The byte stream names the mechanism: the prompt is NEVER"
+            + " addressed. It is written wherever the cursor happens to be after the status region has"
+            + " restored it, and after a resize that is not necessarily the row the block leaves for"
+            + " it. Fixing it means deciding where a prompt belongs after a resize, which is a change"
+            + " to the library's contract rather than a defect in ours: see"
+            + " docs/upstream-investigation-jline-status-windows-redraw.md. Delete the annotation to"
+            + " see it.")
+    void aGrowingWindowLeavesThePromptOnTheRowTheBlockLeavesForIt() throws Exception {
+        // The sequence is the reported one -- /cls, then drag the corner bigger -- and every step is measured
+        // rather than assumed, because three earlier rounds blamed the wrong writer.
+        int rows = 20;
+        int blockRows = 3;
+        ScreenTerminalHarness terminal = terminalWithRows(100, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+            console.line("something said earlier");
+            Thread.sleep(200);
+
+            console.clearScreen();
+            Thread.sleep(400);
+            assertThat(
+                    "a clear leaves the cursor on its row" + NEWLINE + terminal.describe(),
+                    terminal.cursorRow(),
+                    is(rows - 1 - blockRows));
+
+            int grown = rows + 4;
+            growOnce(terminal, console, 150, grown);
+
+            // The block itself is fine -- three separate rows, pinned at the bottom, the rule spanning the
+            // window. Only the prompt's row is wrong, which is why every assertion about CONTENT was green
+            // while the console was not.
+            assertBlockIsIntactAt(terminal, grown, blockRows);
+            assertThat(
+                    "the cursor is on the row the block leaves for the prompt" + NEWLINE + terminal.describe(),
+                    terminal.cursorRow(),
+                    is(grown - 1 - blockRows));
+        }
+    }
 }

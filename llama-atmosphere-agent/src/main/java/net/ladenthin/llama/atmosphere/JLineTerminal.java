@@ -388,6 +388,11 @@ public final class JLineTerminal implements AgentTerminal {
     }
 
     @Override
+    public String terminalType() {
+        return terminal.getType();
+    }
+
+    @Override
     public void clearScreen() {
         synchronized (writing) {
             scrollAWindowAway();

@@ -2673,6 +2673,34 @@ are decisions, not details:
    with the reader's writes and printed the typed text **one character per screen row** (deterministic, 2/2);
    addressing only row starts leaves a row that shares a prefix unaddressed, so the row above's pending wrap
    is never finished and the state row came out shifted one column, `" state]"` (deterministic, 3/3).
+   **And it shipped with an off-by-one that JLine's own tests structurally could not see:** `Display` counts
+   positions in `columns + 1` per row (`columns1`) throughout, the address divided by `columns`, so row *N*
+   landed at column *N* — rule at 0, activity row at 1, state row at 2. Every existing test compares
+   **trimmed** rows, which is exactly what hides it; it took the interpreted screen here to catch it, and
+   `StatusWrongWidthTest.everyRowStartsAtColumnZero` now asserts on the raw row.
+
+   **The prompt is never addressed at all, and that is the row that is still lost on a resize.** Bisected on
+   the interpreted screen with the real block: after `/cls` the cursor is right (16 of 16), after **JLine's
+   WINCH handling alone** it is wrong (19 of 20), and neither this console's row rebuild nor its repaint
+   changes it either way. The byte stream says why — the status region clears its band, re-establishes the
+   scroll region, restores the cursor, the block is addressed row by row, and then the prompt is written as a
+   bare `>` **wherever the cursor happens to be**. Nothing relates it to the region below. A growing window
+   moves the screen's content down by as many rows as it has scrollback to pull from, which need not be the
+   number of rows added, so the prompt ends up a row or two above the rule.
+   **Not patched, and the reason is a contract rather than cowardice:** a prompt directly above the pinned
+   region is what *this* application wants (it scrolls to the bottom once at startup), while JLine promises
+   only "the prompt is drawn at the cursor", which for a half-empty screen is correct. "Move the cursor to the
+   bottom of the scroll region on a resize" would be right here and wrong there.
+   `ScreenUseCasesTest.aGrowingWindowLeavesThePromptOnTheRowTheBlockLeavesForIt` carries the reproduction with
+   the bisection in its `@Disabled` text; `/cls` repairs it in one keystroke, which the same measurement
+   confirms.
+
+   **The startup line names the terminal and the JLine patch level** (`LocalAgent.describeTerminal`), because
+   its absence cost two rounds of testing: a screenshot from a console says nothing about which library
+   produced it, and twice a defect was chased whose fix the jar in use did not contain. Probed by **method**
+   (`Status.repaint` for the fifth fix, `Display.addressesEveryRow` for the sixth), never by version string —
+   the patched builds overlay classes into the released jar and keep its manifest version, so the string
+   cannot tell them apart.
 
    **The redraw after the size SETTLES is a repaint, not a diff** (`repaintBlockFromScratch`, 400 ms after
    the last size event). This is the fix for "kleiner ziehen sah gut aus, größer macht noch Probleme", and it
