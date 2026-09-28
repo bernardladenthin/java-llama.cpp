@@ -748,3 +748,17 @@ because it is folded again for the width the window has now. Pinned by
 One test changed sides with it, and that is the useful record. It used to assert that the conversation had
 scrolled away — *"the accepted cost"* — and now asserts that the answer is back on screen, once. A cost that was
 accepted for one round turned out not to be necessary at all.
+
+## The redraw remembered itself
+
+*"wenn man größer / kleiner macht erscheint der Text zwar wieder, aber mehrmals"* — one turn on screen four times
+over. The redraw after a wipe went through `line()`, and `line()` **remembers** what it prints. So every wipe put
+the whole visible conversation into the ring a second time, and the next one printed it twice, then four times.
+
+Fixed by separating the two jobs: `remember(text)` keeps a line, `print(text)` folds and writes it, and `line()`
+does both while the redraw only prints — what it is redrawing is already remembered.
+
+**The reproduction needed two width changes, not one, and that is why the case that went in with the redraw was
+green while the console was not.** After the first wipe the ring holds the line twice but only one copy has been
+printed; the doubling is only visible on the second. The new case drags three times and asserts the question and
+the answer appear exactly once.

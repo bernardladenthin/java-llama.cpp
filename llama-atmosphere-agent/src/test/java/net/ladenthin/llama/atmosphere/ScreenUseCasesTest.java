@@ -2170,4 +2170,38 @@ class ScreenUseCasesTest {
                     is(1));
         }
     }
+
+    @Test
+    void printingTheConversationAgainMustNotMULTIPLYit() throws Exception {
+        // "wenn man größer / kleiner macht erscheint der text zwar wieder, aber mehrmals": one turn on screen
+        // four times over. The redraw after a wipe went through line(), and line() REMEMBERS what it prints -- so
+        // every wipe put the whole visible conversation into the ring a second time and the next one printed it
+        // twice, then four times.
+        //
+        // TWO width changes, because one cannot show it: after the first wipe the ring holds the line twice but
+        // only one copy has been printed. The second is where it becomes visible, which is also why the first
+        // version of this case was green while the console was not.
+        int rows = 20;
+        ScreenTerminalHarness terminal = terminalWithRows(100, rows);
+        try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
+            console.line("› Hallo");
+            console.line("Hello! How can I assist you today?");
+            Thread.sleep(300);
+
+            resizeOnceAt(terminal, console, 130, rows);
+            resizeOnceAt(terminal, console, 110, rows);
+            resizeOnceAt(terminal, console, 140, rows);
+
+            String screen = terminal.describe();
+            String[] screenRows = terminal.rows();
+            assertThat(
+                    "the question is on screen once, not once per drag" + NEWLINE + screen,
+                    count(screenRows, row -> row.contains("› Hallo")),
+                    is(1));
+            assertThat(
+                    "and so is the answer" + NEWLINE + screen,
+                    count(screenRows, row -> row.contains("How can I assist")),
+                    is(1));
+        }
+    }
 }

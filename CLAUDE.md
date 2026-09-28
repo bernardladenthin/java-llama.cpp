@@ -2828,6 +2828,11 @@ are decisions, not details:
    one round and the report was a single sentence: "allerdings sehe ich den Verlauf nicht mehr". A height change
    needs none of this (no width change, nothing re-wraps) and keeps the conversation where it is, with the prompt
    printed back to its row instead.
+   **The redraw only prints; it must not remember.** `line()` does both, and routing the redraw through it put the
+   whole visible conversation into the ring a second time on every wipe — one turn ended up on screen four times
+   ("der Text erscheint zwar wieder, aber mehrmals"). `remember` and `print` are separate for that reason. It also
+   takes **two** width changes to see it: after the first wipe the ring holds the line twice but only one copy has
+   been printed, which is why the case that shipped with the redraw was green while the console was not.
    **It was narrowed to "only when the width grew" once, on reasoning rather than evidence, and the next report
    came from the other direction:** narrowing does not join lines, it **splits** them, and the bar's own rows —
    built for the old width — no longer fit and are re-wrapped across several screen rows, so the bar needs more

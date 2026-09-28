@@ -348,13 +348,37 @@ public final class JLineTerminal implements AgentTerminal {
             text.lines().forEach(this::line);
             return;
         }
+        remember(text);
+        print(text);
+    }
+
+    /**
+     * Keep a line for a later redraw, before it is folded.
+     *
+     * @param text the line as the caller gave it
+     */
+    private void remember(String text) {
         synchronized (writing) {
-            // Remembered BEFORE folding, so a redraw after a width change folds it for the window's new width.
+            // BEFORE folding, so a redraw after a width change folds it for the window's new width.
             recent.addLast(text);
             while (recent.size() > REMEMBERED_LINES) {
                 recent.removeFirst();
             }
         }
+    }
+
+    /**
+     * Fold a line for the window as it is now and write the pieces, <b>without</b> remembering it.
+     *
+     * <p>Separate from {@link #line(String)} for one reason, and it is a defect that shipped: the redraw after a
+     * width change went through {@code line()}, which remembers — so every wipe put the whole visible
+     * conversation into the ring a second time, and the next one printed it twice, then four times. Reported as
+     * "der Text erscheint zwar wieder, aber mehrmals", with one turn on screen four times over. What is being
+     * redrawn is already remembered; printing it again may only draw.
+     *
+     * @param text the line
+     */
+    private void print(String text) {
         for (String piece : fold(text, Math.max(20, terminal.getSize().getColumns() - 1))) {
             write(piece);
         }
@@ -588,7 +612,9 @@ public final class JLineTerminal implements AgentTerminal {
             }
         }
         for (String line : lines) {
-            line(line);
+            // print, not line: what is being redrawn is already in the ring, and putting it back would double
+            // the conversation on every wipe.
+            print(line);
         }
     }
 
