@@ -425,19 +425,29 @@ every Enter, because the reader erases exactly one line (hold Enter, get a colum
 leaves one rule per turn behind, travelling up the scrollback. One rule, below the input, is the shape
 that has neither problem.
 
-**Wiping the screen.** `/cls` clears the window and leaves the input and the block at the bottom —
-Ctrl-L does the same, bound by the line reader itself rather than by this project (a test pins that, so
-a keymap change cannot quietly take it away). `/clear` wipes the screen *and* drops the history: what is
-still on screen after a `/clear` is a conversation the model no longer has, which reads as if it were
-still in play. Neither touches the terminal emulator's own scrollback — what was written stays where
-the scrollbar can reach it. After a wipe the prompt sits at the **top** until output fills the window again — the same as the
-shell's own `clear`. It deliberately does not scroll itself back down: erasing the display clears the
-visible area but leaves those lines in the scrollback, so scrolling afterwards pulls them back into
-view, which showed up as text above the prompt after a `/cls`.
+**Wiping the screen.** `/cls` clears the window and leaves the input and the block at the bottom, and
+Ctrl-L does exactly the same — the key is bound to this command rather than to the line reader's own
+clear, because the reader's own leaves the input somewhere else. `/clear` wipes the screen *and* drops the
+history: what is still on screen after a `/clear` is a conversation the model no longer has, which reads
+as if it were still in play. Neither touches the terminal emulator's own scrollback — what was written
+stays where the scrollbar can reach it.
 
-The block at the bottom is redrawn from a kept copy afterwards: JLine draws
-the pinned region only when its *content* changes, and a wipe does not change the content, it only takes
-it off the screen — so asking it to redraw does nothing and the bottom of the window stays empty.
+**It clears by scrolling, not by erasing**, and that is the whole implementation: a window's worth of
+blank lines, printed above the prompt. Erasing was tried in three shapes and each was reported as a
+defect. Erase then print blank rows to push the input back down: erasing clears the *visible* area and
+leaves those lines in the scrollback, so scrolling pulls them straight back into view — text above the
+prompt. Erase then move the cursor: the reader owns the cursor while it prints above the prompt, so a
+cursor move smuggled in there leaves its bookkeeping wrong and stranded a character above the prompt.
+Erase and stop: the input then sat at the top left, and worse — the reader redraws its prompt as a
+*difference* against what it believes is on screen, an erase invalidates that belief, and the measured
+result was no prompt on screen at all. Scrolling has none of those problems, because it is nothing but
+output: the screen goes blank, the scrollback keeps everything, the pinned block is never touched, and
+the cursor ends on its row because printing is what puts it there.
+
+**A useful side effect**: a screen that has lost rows on its own (see the resize note below) is repaired
+by `/cls` or Ctrl-L, because printing walks the cursor back down one row per line. That is the same
+recovery as pressing Enter a dozen times, in one keystroke.
+
 
 **Why the screen is scrolled once at startup.** The line reader draws its prompt where the cursor is,
 which is directly after the last thing printed; only the block below it is pinned to the window. On a

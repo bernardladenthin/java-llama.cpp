@@ -270,3 +270,47 @@ never scrolled to the bottom at startup, so the prompt legitimately sat near the
 did not apply there. It also wrote its log lines with `terminal.writer().println` instead of
 `printAbove`, which corrupted its own block into three rules at three widths — the defect this project's
 console fixed long ago. Both are fixed; the readings above are from the corrected probe.
+
+## The clear was the same defect, and fixing it turned the recovery into a command
+
+Chasing the lost rows produced a second report that turned out to be the same mechanism from the other
+end: **after `/cls` the input sat at the top left instead of at the bottom.** It is worth recording here
+because it is the one piece of this investigation that had a fix entirely inside this project, and because
+the reproduction settled a question the byte-level tests could not.
+
+**Reproduced first, on an interpreted screen.** Four cases in `ScreenUseCasesTest` — a two-row block, the
+three-row block the application really pins, a screen with eight lines of output on it, and the same
+question asked through Ctrl-L. Every one of them measured the cursor on **row 0** of a 12-row window where
+row 9 is right, and — the part that was not expected — **no prompt anywhere on the screen**. The block was
+intact and pinned at the bottom, the erased output was gone, no escape tail was visible: every assertion
+the three existing `/cls` tests made was satisfied. One of them even looked at the input row and accepted a
+blank one (`rows[ROWS - 3].contains(">") || rows[ROWS - 3].isBlank()`), which is precisely the defect.
+
+**Why no prompt at all.** `LineReaderImpl.printAbove` calls `display.update(emptyList(), 0)`, prints, then
+`redisplay(false)` — a **diff** against what `Display` believes is on screen. An erase invalidates that
+belief exactly the way it invalidates `Status`'s, and `Status` has a documented three-step repair in this
+console (`reset`, empty update, render again) while the reader's own display has none that a caller can
+reach. So the erase did not merely misplace the prompt; it made the reader draw nothing.
+
+**The fix is to stop erasing.** A clear now prints a window's worth of blank lines through `printAbove`
+and does nothing else. Everything is pushed above the window, so the screen is blank; nothing is erased,
+so nothing can be pulled back into view (the defect that killed the first attempt, blank rows *after* an
+erase); the reader's bookkeeping stays right because printing above the prompt is what `printAbove` is
+for; the pinned block is never touched, so all three repair steps went away with the erase; and the cursor
+ends on its row **by construction**.
+
+**That last property is the interesting one for the open defect above.** The recovery the reporter found by
+hand — "nach ganz oft Enter sieht es wieder korrekt aus" — is the same mechanism: printing walks the cursor
+back down one row per line. A clear now performs a window's worth of it in one keystroke, so **a screen
+that has lost rows is repaired by `/cls` or Ctrl-L** instead of by holding Enter. That is not a fix for the
+lost rows; it is the manual recovery made explicit and reachable, and it needs no cursor-position report,
+which is what blocked the detection-based candidate.
+
+**Ctrl-L had to be taken over for this.** JLine's keymap dispatches it by *name* to the widget registered
+under `LineReader.CLEAR_SCREEN`, and JLine's own widget is `clear_screen` + `redrawLine()` — i.e. it
+reproduced the identical defect, which the harness measured. Replacing the map entry re-points the key
+without touching the keymap. It deliberately does not take this console's write lock: a widget runs on the
+reader's thread with the reader's own lock held, while `line()` takes the write lock first and the reader's
+lock second, so acquiring it there inverts the order and hangs the session. The reader's own lock
+serialises the widget against every other `printAbove`, which is what matters; a concurrent block refresh
+can still interleave, which is the exposure JLine's own widget has today as well.

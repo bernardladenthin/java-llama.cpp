@@ -7,7 +7,6 @@ package net.ladenthin.llama.atmosphere;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
 import java.io.ByteArrayInputStream;
@@ -166,20 +165,13 @@ class JLineTerminalTest {
     }
 
     @Test
-    void clearingTheScreenWipesItAndLeavesTheReaderWorking() throws Exception {
+    void clearingTheScreenLeavesTheReaderWorking() throws Exception {
         try (Terminal terminal = terminal("first\nsecond\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
             assertThat(console.readLine("ignored"), is("first"));
-            int before = screen().length();
 
             console.clearScreen();
 
-            // The capability is terminfo source ("\E[H\E[2J"), so what must reach the screen is the
-            // expanded form. Writing the capability as it comes prints it as text, which is what this
-            // assertion caught the first time it ran.
-            assertThat(
-                    terminal.getStringCapability(org.jline.utils.InfoCmp.Capability.clear_screen), is(notNullValue()));
-            assertThat("erase display reached the screen", screen().substring(before), containsString(ERASE_DISPLAY));
             assertThat("and the prompt still reads afterwards", console.readLine("ignored"), is("second"));
         }
     }
@@ -266,51 +258,27 @@ class JLineTerminalTest {
     }
 
     @Test
-    void theBlockIsBackOnScreenAfterAClear() throws Exception {
-        // Clearing erases the block along with everything else, and the pinned region is redrawn only
-        // when its content changes -- so after a clear it believes it is still on screen and draws
-        // nothing, leaving the bottom of the window empty.
-        try (Terminal terminal = terminal("go\n");
-                JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
-            // As in a session: the reader owns the screen before anything is drawn into the block. The
-            // pause is not decoration -- the reader thread starts the next prompt as soon as one
-            // returns, and clearing while that is in flight makes what JLine emits depend on which of
-            // the two got there first. This test is about the block coming back, not about that race.
-            console.readLine("ignored");
-            Thread.sleep(200);
-            console.status(List.of("a distinctive state row"));
-            int before = screen().length();
-
-            console.clearScreen();
-
-            assertThat(
-                    "the block is drawn again after the wipe",
-                    screen().substring(before),
-                    containsString("a distinctive state row"));
-        }
-    }
-
-    @Test
-    void aClearDoesNotScrollAfterWiping() throws Exception {
-        // Reported: after /cls the prompt sat near the top with text above it that should have been
-        // wiped. The wipe was fine; what followed it was not. Erasing the display (ESC[2J) clears the
-        // visible area but leaves those lines in the terminal's scrollback -- so printing blank rows
-        // afterwards to push the input back to the bottom SCROLLS the viewport, and scrolling pulls
-        // that scrollback straight back into view. Hence: wipe and stop, which is what the shell's
-        // own `clear` and Ctrl-L do. The prompt then sits at the top, cleanly, until output fills the
-        // window again.
+    void aClearScrollsAWindowAndErasesNothing() throws Exception {
+        // This test changed sides, and both sides are worth keeping on record because the wrong one was
+        // shipped twice. It used to assert the opposite -- that a clear ERASES and scrolls nothing -- and
+        // that was right for as long as a wipe was how the screen was cleared. Erasing has been given up:
+        // clear_screen puts the cursor home, the reader draws its prompt where the cursor is, and the
+        // prompt then sat at the top left while the block stayed pinned at the bottom ("nach /cls ist der
+        // cursor auch ganz oben und nicht unten"). Everything tried to put it back on top of an erase was
+        // reported as a new defect -- blank rows pulled the erased lines back into view, a cursor_address
+        // inside printAbove's argument stranded a character above the prompt -- and the screen tests then
+        // showed the erase is worse than it looks on its own: the reader redraws its prompt as a diff
+        // against a belief the erase invalidates, so the measured result was no prompt on screen at all.
         //
-        // Putting the input back at the bottom afterwards is spent in both directions, which is why this
-        // test's subject is "moves nothing". Blank rows scroll the erased content back into view. Then
-        // addressing the cursor to the last usable row was tried, and taken back out: printAbove owns the
-        // cursor -- it moves up, writes, and redraws the prompt below -- so a cursor_address inside its
-        // argument leaves its bookkeeping wrong and the screen came back with a character stranded above
-        // the prompt, reported twice. A test for the absence of that sequence is not possible either: the
-        // reader emits cursor addressing of its own, and the byte stream does not say whose it is. So the
-        // prompt sits where a wipe leaves it, as it does after the shell's own `clear`.
+        // Scrolling a window's worth of blank lines through printAbove does both halves at once and breaks
+        // neither: the screen goes blank, what was written stays reachable with the scrollbar, the block is
+        // never touched, and the cursor ends on its row because printing is what puts it there. Nothing is
+        // erased, so nothing can be pulled back into view -- which is exactly why the two assertions below
+        // are the pair they are.
         //
-        // A pipe has no scrollback, so this cannot be asserted as "no old text reappears" -- what is
-        // assertable, and is what actually differs, is that the clear emits no line feeds of its own.
+        // A pipe has no screen, so "the prompt is on its row afterwards" is not assertable here; that is
+        // what ScreenUseCasesTest asserts, on an interpreted screen. What a pipe does show is how much was
+        // scrolled and whether an erase was emitted at all.
         try (Terminal terminal = terminal("go\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
             console.readLine("ignored");
@@ -321,17 +289,17 @@ class JLineTerminalTest {
             console.clearScreen();
 
             String drawn = screen().substring(before);
-            assertThat("the screen is wiped", drawn, containsString(ERASE_DISPLAY));
-            // Measured rather than assumed: with the blank rows the clear emitted nine CR CR LF
-            // groups for a ten-row window. Redrawing the block needs a couple of line feeds of its
-            // own, so the discriminator is a window's worth of them, not zero.
             long lineFeeds =
                     drawn.chars().filter(character -> character == '\n').count();
             assertThat(
-                    "a clear must not scroll: it emitted " + lineFeeds + " line feeds for a " + SIZE.getRows()
+                    "a clear scrolls a whole window: it emitted " + lineFeeds + " line feeds for a " + SIZE.getRows()
                             + "-row window",
-                    lineFeeds < SIZE.getRows(),
+                    lineFeeds >= SIZE.getRows(),
                     is(true));
+            assertThat(
+                    "and it erases nothing, so nothing can be pulled back into view",
+                    drawn.contains(ERASE_DISPLAY),
+                    is(false));
         }
     }
 
@@ -406,13 +374,24 @@ class JLineTerminalTest {
     }
 
     @Test
-    void controlLIsBoundToTheReadersOwnClearScreen() throws Exception {
-        // 0x0C is Ctrl-L. It is bound by JLine itself, so /cls is the second way to do this rather
-        // than the only one -- worth pinning, because a keymap option could silently take it away.
+    void controlLClearsTheSameWayTheCommandDoes() throws Exception {
+        // 0x0C is Ctrl-L. JLine binds it itself, so /cls is the second way to do this rather than the
+        // only one -- and both must end with the prompt on the same row, which is why this console now
+        // owns the binding. Two things are pinned here: the key is still a clear rather than a character
+        // typed into the line (a keymap option could silently take that away), and it clears the way the
+        // command does, by scrolling. Whether the PROMPT lands on its row is asserted where it is
+        // visible, on the interpreted screen in ScreenUseCasesTest.
         try (Terminal terminal = terminal("\u000cstill here\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
             assertThat(console.readLine("ignored"), is("still here"));
-            assertThat("Ctrl-L cleared rather than being typed into the line", screen(), containsString(ERASE_DISPLAY));
+
+            long lineFeeds =
+                    screen().chars().filter(character -> character == '\n').count();
+            assertThat(
+                    "Ctrl-L scrolled rather than being typed into the line: " + lineFeeds + " line feeds",
+                    lineFeeds >= SIZE.getRows(),
+                    is(true));
+            assertThat("and it erased nothing", screen().contains(ERASE_DISPLAY), is(false));
         }
     }
 

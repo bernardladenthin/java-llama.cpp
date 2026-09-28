@@ -1102,4 +1102,128 @@ class ScreenUseCasesTest {
             assertBlockIsIntact(terminal, 2);
         }
     }
+
+    @Test
+    void clearingTheScreenLeavesThePromptOnTheRowTheBlockLeavesForIt() throws Exception {
+        // The report: "nach /cls ist der cursor auch ganz oben und nicht unten". A wipe puts the cursor
+        // home, and the reader then draws its prompt where the cursor is -- at the top left, with the
+        // block still pinned to the bottom and ten blank rows between them.
+        //
+        // Why this needs a test of its own although three /cls cases already exist: every one of them
+        // asks about the CONTENT of the rows, and content is exactly what a wipe leaves right. The
+        // block is intact, no escape tail is on screen, the erased output is gone -- and the prompt is
+        // ten rows too high. clearingTheScreenLeavesTheBlockAndPutsTheInputAboveIt even looks at the
+        // input row, but accepts a blank one ("|| isBlank()"), which is precisely the defect.
+        List<String> block = List.of(STATE);
+        int blockRows = 2; // the rule plus the state row
+        int promptRow = ROWS - 1 - blockRows;
+        ScreenTerminalHarness terminal = terminal(WIDE);
+        try (JLineTerminal console = start(terminal, block)) {
+            console.line("something written earlier");
+            Thread.sleep(200);
+
+            console.clearScreen();
+            Thread.sleep(400);
+
+            String[] rows = terminal.rows();
+            String screen = terminal.describe();
+            assertThat(
+                    "the cursor is on the row the block leaves for the prompt, not at the top:\n" + screen,
+                    terminal.cursorRow(),
+                    is(promptRow));
+            assertThat("the prompt is on that row:\n" + screen, rows[promptRow].contains(">"), is(true));
+            for (int row = 0; row < promptRow; row++) {
+                assertThat(
+                        "row " + row + " is above the prompt and must be empty after a wipe:\n" + screen,
+                        rows[row].isBlank(),
+                        is(true));
+            }
+        }
+    }
+
+    @Test
+    void clearingTheScreenWithAThreeRowBlockAlsoLeavesThePromptAtTheBottom() throws Exception {
+        // The same question with the block the application really pins, because the row count has been a
+        // discriminator in this class before: the two-row case came out clean where the three-row case
+        // did not.
+        List<String> block = new ArrayList<>(Arrays.asList("... waiting for input ...", STATE));
+        int blockRows = 3;
+        int promptRow = ROWS - 1 - blockRows;
+        ScreenTerminalHarness terminal = terminal(WIDE);
+        try (JLineTerminal console = start(terminal, block)) {
+            console.line("something written earlier");
+            Thread.sleep(200);
+
+            console.clearScreen();
+            Thread.sleep(400);
+
+            String screen = terminal.describe();
+            assertThat(
+                    "the cursor is on the row a three-row block leaves for the prompt:\n" + screen,
+                    terminal.cursorRow(),
+                    is(promptRow));
+            assertThat("the prompt is on that row:\n" + screen, terminal.rows()[promptRow].contains(">"), is(true));
+        }
+    }
+
+    @Test
+    void clearingTheScreenPutsNothingBackIntoTheScrollbackAboveThePrompt() throws Exception {
+        // The other direction of the same report, and the reason the obvious fix is not allowed: pushing
+        // the prompt back down with blank rows scrolls the erased lines back into view on the real
+        // console, and addressing the cursor from inside printAbove left a single character stranded
+        // above the prompt ("nach cls weiterhin eingabe ueber dem eingabe > zeichen"). So whatever puts
+        // the prompt on its row must leave every row above it blank -- which is what this asserts, one
+        // row at a time so a failure names the row.
+        ScreenTerminalHarness terminal = terminal(WIDE);
+        try (JLineTerminal console = start(terminal, List.of(STATE))) {
+            for (int line = 0; line < 8; line++) {
+                console.line("output line " + line);
+            }
+            Thread.sleep(300);
+
+            console.clearScreen();
+            Thread.sleep(400);
+
+            String[] rows = terminal.rows();
+            String screen = terminal.describe();
+            int promptRow = ROWS - 1 - 2;
+            for (int row = 0; row < promptRow; row++) {
+                assertThat(
+                        "row " + row + " must be blank after a wipe, it is \"" + rows[row].strip() + "\":\n" + screen,
+                        rows[row].isBlank(),
+                        is(true));
+            }
+            assertThat("the prompt is on its row:\n" + screen, rows[promptRow].contains(">"), is(true));
+        }
+    }
+
+    @Test
+    void controlLAlsoLeavesThePromptOnTheRowTheBlockLeavesForIt() throws Exception {
+        // The same question through the other door. Ctrl-L is bound by JLine, not by this class, and its
+        // own widget wipes the screen and redraws the line -- which is where the prompt at the top left
+        // comes from. Two ways into one command must not end on two different rows, so the binding is
+        // this console's to own once the command is.
+        List<String> block = List.of(STATE);
+        int promptRow = ROWS - 1 - 2;
+        ScreenTerminalHarness terminal = terminal(WIDE);
+        try (JLineTerminal console = start(terminal, block)) {
+            console.line("something written earlier");
+            Thread.sleep(200);
+
+            terminal.type("\u000c"); // Ctrl-L
+            Thread.sleep(400);
+
+            String[] rows = terminal.rows();
+            String screen = terminal.describe();
+            assertThat(
+                    "Ctrl-L cleared the screen:\n" + screen,
+                    count(rows, row -> row.contains("something written earlier")),
+                    is(0));
+            assertThat(
+                    "the cursor is on the row the block leaves for the prompt, not at the top:\n" + screen,
+                    terminal.cursorRow(),
+                    is(promptRow));
+            assertThat("the prompt is on that row:\n" + screen, rows[promptRow].contains(">"), is(true));
+        }
+    }
 }

@@ -2472,20 +2472,31 @@ are decisions, not details:
    shipped jar) behind it, so a test reads the **screen** — "the block is smeared across the output",
    "an escape sequence is printed as text", "the block is drawn twice" are indistinguishable from
    correct output in a byte stream, which is why two byte-level assertions in `JLineTerminalTest` had to
-   be deleted, one of them green with the fix it was written for switched off. Six cases: drag wider
-   with nothing typed / with text in the input, drag narrower, a three-row block, `/cls`, and `/cls`
-   after a drag. Three things are load-bearing. **(1) A reader runs in every test** — it runs for the
-   whole session in the application and owns the resize signal, so a test without one is a state the
-   application cannot be in. **(2) The block rebuild is invoked directly, not waited for**
+   be deleted, one of them green with the fix it was written for switched off. The cases are the reports:
+   dragging wider and narrower (with nothing typed, with text in the input, one step at a time, with a
+   two- and a three-row block, with the real block's glyphs), `/cls` and Ctrl-L (block intact, and the
+   cursor and prompt on the row the block leaves for them), a window that over-reports its width, size
+   events arriving on another thread, and a block refresh racing the reader. Several assert the **cursor
+   row** rather than the content, which is what finally located two of the defects: content can look
+   plausible while the cursor is rows away from where a region reserved from the bottom expects it.
+   Three things are load-bearing. **(1) A reader runs in every test** — it runs for the whole session in
+   the application and owns the resize signal, so a test without one is a state the application cannot
+   be in. **(2) The block rebuild is invoked directly, not waited for**
    (`refreshBlockForCurrentSize`): sleeping for the 120 ms poll passed alone and failed in a full run,
    and a flaky test is worse than none — what that leaves uncovered is the polling thread itself, a loop
    that compares two sizes and calls that method. **(3) A rule shows as `q` when it went out through a
    *prompt*** (the DEC line-drawing set, which this screen renders literally) and as `─` through the
    status region, so both forms count as a rule and a row of `q` also says which path it took.
    **The JLine fixes are demonstrated red/green through it**, the library being just a property, and the
-   staircase is monotone — 186 module tests against a JLine carrying **all four** fixes
-   (`-Djline.version=4.4.6-statusfix4`) are green, the same suite against fixes 1–3 fails **one** (the
-   concurrency case below), and against the released `4.4.6` it fails **eleven**.
+   staircase is monotone — the whole module (198 tests, 10 skipped) is green against a JLine carrying
+   **all four** fixes (`-Djline.version=4.4.6-statusfix4`); `ScreenUseCasesTest` alone (35 tests, 7
+   skipped) fails **13** against the released `4.4.6` and **6** against fixes 1–3. The middle number is
+   the one to read carefully: it is not stable, and has been measured as **1** as well. Fix 4 is a data
+   race (below), so how many of the cases it takes down with it varies per run — when the
+   `ConcurrentModificationException` lands on the reader's signal thread it ends that thread, and every
+   later size change then goes unreported, which is what turns one defect into six red cases. A count
+   that moves is the expected shape here, not a flaky test.
+
    **The fourth fix is a data race, and it is the one that explains the reports that survived the other
    three.** `refreshingTheBlockWhileTheReaderRedrawsNeverThrows` refreshes the block from three threads
    while the size changes, and fails with a `ConcurrentModificationException` whose stack names the
@@ -2530,40 +2541,55 @@ are decisions, not details:
    interleaving happens *between* calls, inside JLine. A test that is green either way is worse than
    none, so it was deleted rather than kept.
 
-   **`/cls` wipes the screen, `/clear` wipes it and the history.** `AgentTerminal.clearScreen()`
-   defaults to doing nothing (a stream has no screen); `JLineTerminal` expands the terminal's
-   `clear_screen` capability and sends it **through `printAbove`**, like every other write, then
-   refills the blank rows and redraws the block. One trap, caught by the test rather than by reading:
-   `getStringCapability` returns **terminfo source** (`\E[H\E[2J`, with the escape spelled out), so
-   writing it as it comes prints that text on the screen — `Curses.tputs` expands it. A second one, and
-   the reason the bar went missing after a `/cls`: **`Status.redraw()` writes nothing after a wipe.**
-   It draws what has *changed*, and a wipe changes nothing about its content — it only removes it from
-   the screen, which the object has no way of knowing. So the block is kept in a field as it was last
-   rendered and put back with `status.reset()` (forget what is believed to be on screen) followed by
-   `status.update(block)`; `redraw()` alone is a no-op, verified by putting it back and watching the
-   test go red. Ctrl-L already
-   did this before the command existed, bound by JLine's own keymap; a test pins that too, so a keymap
-   option cannot quietly remove it.
+   **`/cls` clears by SCROLLING, not by erasing, and `/clear` also wipes the history.**
+   `AgentTerminal.clearScreen()` defaults to doing nothing (a stream has no screen); `JLineTerminal`
+   prints a window's worth of blank lines through `printAbove`. That is the whole implementation, and it
+   replaces an erase-based one that took four attempts and produced a reported defect each time — which
+   is why the reasoning is kept in full.
 
-   **A wipe must not scroll afterwards, and the cursor is therefore ADDRESSED to the last usable row
-   instead.** `/cls` used to print blank rows after the erase, to push the input back to the last
-   row the way startup does. Measured on the emitted bytes: that is 9 `CR CR LF` groups for a 10-row
-   window — and `ESC[2J` clears the **visible** area while leaving those lines in the terminal's
-   scrollback, so scrolling right afterwards pulls them back into view. The report was "after /cls
-   there is text above the prompt", and that was it. Wipe and stop is what the shell's own `clear` and
-   Ctrl-L do. Erasing the scrollback as well (`ESC[3J`) would allow the blank rows and is refused:
-   this console promises that what was written stays reachable with the scrollbar.
-   Both halves of that report pull against each other and both are now satisfied:
-   `cursorToLastUsableRow()` emits `cursor_address` to the row above the pinned block, so the input is
-   back at the bottom while nothing is written and nothing enters the scrollback. Blank rows were the
-   first attempt and scrolled the wiped scrollback back into view; wipe-and-stop was the second and
-   left the input at the top left, which was reported just as often.
-   `JLineTerminalTest.aClearDoesNotScrollAfterWiping` counts the line feeds a clear emits and fails
-   above a window's worth — verified by restoring the blank rows and watching it report 12 for a
-   10-row window. **The first version of that assertion did not catch it** (it looked for `
-`
-   where the terminal emits `CR CR LF`), which is why the count is tied to the measurement rather than
-   to a guessed shape.
+   **What a clear has to do here is two things at once**: leave the screen blank *and* leave the input on
+   the row the pinned block leaves for it. Erasing does the first and undoes the second, because
+   `clear_screen` puts the cursor home and the reader draws its prompt where the cursor is. The
+   reports, in order: blank rows printed after the erase to push the input back down scrolled the
+   *erased* lines back into view (`ESC[2J` clears the visible area and leaves them in the scrollback);
+   a `cursor_address` smuggled into `printAbove`'s argument corrupted its bookkeeping — it moves up,
+   writes, and redraws the prompt below — and stranded a character above the prompt; and the erase on
+   its own left the input at the top left ("nach /cls ist der cursor auch ganz oben und nicht unten").
+   The screen tests then showed that last state is worse than it looks: the reader redraws its prompt
+   as a **diff** against what it believes is on screen, an erase invalidates that belief, and the
+   measured result is **no prompt on screen at all** — cursor on row 0, the block still pinned at the
+   bottom, ten blank rows between them.
+
+   **Scrolling has none of those problems because it is nothing but output.** Everything is pushed above
+   the window, so the screen is blank and what was written stays reachable with the scrollbar — which
+   erasing the scrollback (`ESC[3J`) would have broken anyway, and this console promises it. Nothing is
+   erased, so nothing can be pulled back into view. The reader's bookkeeping stays right, because
+   printing above the prompt is what `printAbove` is *for*. The block is never touched: it is pinned, so
+   it needs neither `status.reset()` nor a rebuild — three steps of erase-era repair went away with the
+   erase. And the cursor ends on its row **by construction**, since printing is what pushes it there —
+   which is also the mechanism behind "ein paar Mal Enter und alles sitzt wieder", so a screen that has
+   lost rows is repaired by a clear rather than left crooked.
+
+   **Ctrl-L is the same command through another door, and this console now owns the binding.** JLine's
+   keymap dispatches Ctrl-L by *name* to the widget registered under `LineReader.CLEAR_SCREEN`, and
+   JLine's own widget wipes and redraws the line — i.e. it reproduced the identical defect, measured on
+   an interpreted screen. Replacing the map entry re-points the key without touching the keymap. **It
+   deliberately does not take the `writing` lock**: a widget runs on the reader's thread with the
+   reader's own lock held, while `line()` takes `writing` first and the reader's lock second, so
+   acquiring `writing` there inverts the order and hangs the session. What serialises it instead is the
+   reader's lock, which every `printAbove` needs; a concurrent block refresh can still interleave, which
+   is the exposure JLine's own Ctrl-L widget has today as well.
+
+   **Where each half is pinned.** `ScreenUseCasesTest` asserts the part that is only visible on a screen
+   — after `/cls`, and again after Ctrl-L, the cursor is on `rows - 1 - blockRows`, the prompt is on that
+   row, and every row above it is blank (checked one row at a time, so a failure names the row). All four
+   were red before the change, with the cursor on row 0 and no prompt anywhere.
+   `JLineTerminalTest.aClearScrollsAWindowAndErasesNothing` pins the pair a pipe *can* see: a window's
+   worth of line feeds, and no `ESC[2J` at all. That test changed sides — it used to assert the exact
+   opposite ("a clear must not scroll") and was right for as long as clearing meant erasing; both sides
+   are recorded in it. Two byte-level assertions written for the erase (`erase display reached the
+   screen`, `the block is drawn again after the wipe`) were **deleted** rather than adapted: what they
+   described no longer happens, and the behaviour they were reaching for is asserted on the screen.
 
    **The screen is scrolled to the bottom once, before the first prompt** (`scrollToBottom`). The
    reader draws its prompt at the cursor, i.e. after the last line printed, while only the status
@@ -2640,11 +2666,14 @@ are decisions, not details:
    claiming a benefit it does not have. The stray `?1h` consequently still has **no established
    cause**: the lock covers our writes, the reader's own are inside JLine.
 
-   **Restoring the block after a wipe takes three steps, found by measurement not by reading**:
-   `status.reset()`, then `status.update(List.of())`, then render it again from `requested` (the text
-   the caller gave, not the rendered rows). With only the first two, `Status` draws the difference it
-   computes against a belief the wipe invalidated — observed as a single character emitted where a
-   whole block was missing. `JLineTerminalTest.theBlockIsBackOnScreenAfterAClear` is what says so.
+   **Restoring the block after a wipe took three steps — and the whole repair went away with the wipe.**
+   It is kept as a record because it is the same mechanism that eventually retired the wipe itself. The
+   steps were `status.reset()`, then `status.update(List.of())`, then rendering it again from `requested`
+   (the text the caller gave, not the rendered rows); with only the first two, `Status` drew the
+   difference it computed against a belief the wipe had invalidated — observed as a single character
+   emitted where a whole block was missing. The reader's own prompt has exactly that problem and no
+   equivalent repair, which is why an erase left no prompt on screen at all. A clear that only scrolls
+   invalidates nothing, so the block is simply left alone.
 
    **The turn after an interrupted one is pinned end to end** (`InterruptedTurnTest`): with a scripted
    backend behind the real `OpenAiCompatServer`, a turn is cut short by pending input and the next one

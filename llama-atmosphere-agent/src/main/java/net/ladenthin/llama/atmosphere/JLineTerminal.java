@@ -164,8 +164,26 @@ public final class JLineTerminal implements AgentTerminal {
         // the row of "> > > > >" after a resize got worse, not better, when it was tried. The block is
         // rebuilt from a poll instead -- see startWatchingSize.
         JLineTerminal console = new JLineTerminal(terminal, reader, Status.getStatus(terminal), Ansi.detect());
+        console.bindClearScreen();
         console.startWatchingSize();
         return console;
+    }
+
+    /**
+     * Make Ctrl-L do what {@code /cls} does.
+     *
+     * <p>Ctrl-L is the second way into this command, and the two have to end with the prompt on the same
+     * row. JLine's keymap dispatches the key by <em>name</em> to the widget registered under
+     * {@link LineReader#CLEAR_SCREEN}, and its own widget is {@code clear_screen} plus a line redraw — so
+     * it reproduced the identical defect, measured on an interpreted screen in {@code ScreenUseCasesTest}.
+     * Replacing the map entry re-points the key without touching the keymap, so a binding a user already
+     * knows keeps working and now does the same thing the command does.
+     */
+    private void bindClearScreen() {
+        reader.getWidgets().put(LineReader.CLEAR_SCREEN, () -> {
+            scrollAWindowAway();
+            return true;
+        });
     }
 
     /**
@@ -333,62 +351,55 @@ public final class JLineTerminal implements AgentTerminal {
 
     @Override
     public void clearScreen() {
-        String capability = terminal.getStringCapability(InfoCmp.Capability.clear_screen);
-        if (capability == null) {
-            return; // a terminal that cannot clear: better nothing than a guessed escape sequence
-        }
-        // The capability is terminfo source, not the sequence itself: it reads "\E[H\E[2J", with the
-        // escape spelled out. Writing it as it comes prints that text on the screen, which is what a
-        // test caught. Curses expands it the way terminal.puts would, but into a string this class can
-        // hand to the reader instead of writing behind its back.
-        StringBuilder expanded = new StringBuilder();
-        org.jline.utils.Curses.tputs(expanded, capability);
-        String clear = expanded.toString();
         synchronized (writing) {
+            scrollAWindowAway();
+        }
+    }
+
+    /**
+     * Scroll a window's worth of blank lines in above the prompt, which is how this console clears.
+     *
+     * <p><b>SCROLLED, not erased — and the difference is the whole history of this method.</b> What this
+     * console needs from a wipe is two things at once: a blank screen and the input back on the row the
+     * pinned block leaves for it. Erasing gives the first and takes the second, because
+     * {@code clear_screen} puts the cursor home and the reader draws its prompt where the cursor is —
+     * reported as "nach /cls ist der cursor auch ganz oben und nicht unten". Everything tried on top of
+     * an erase to put it back was reported as a new defect: blank rows after the erase scrolled the
+     * erased lines back into view, and a {@code cursor_address} smuggled into {@code printAbove}'s
+     * argument corrupted its bookkeeping and stranded a character above the prompt. The screen tests
+     * then showed the erase alone is worse than it looks: the reader redraws its prompt as a diff
+     * against what it believes is on screen, the erase invalidates that belief, and the measured result
+     * was no prompt on screen at all.
+     *
+     * <p>Scrolling has none of those problems because it is nothing but output. A window's worth of
+     * blank lines pushes everything above the window, so the screen is blank and what was written stays
+     * reachable with the scrollbar — which erasing the scrollback ({@code ESC[3J}) would have broken
+     * anyway. Nothing is erased, so nothing can be pulled back into view. The reader's bookkeeping stays
+     * right, because printing above the prompt is exactly what {@code printAbove} is for. The block is
+     * never touched at all: it is pinned, so it needs neither a reset nor a rebuild. And the cursor ends
+     * on its row by construction, since printing is what pushes it there — which is also why pressing
+     * Enter a few times repairs a screen that has lost rows.
+     *
+     * <p><b>It takes no lock of its own, and that is deliberate.</b> {@link #clearScreen()} holds
+     * {@code writing} around it, but the Ctrl-L widget cannot: a widget runs on the reader's thread with
+     * the reader's own lock held, and {@link #line(String)} takes {@code writing} first and the reader's
+     * lock second — so acquiring {@code writing} there inverts the order and hangs the session. What
+     * serialises the widget path instead is the reader's lock itself, which every {@code printAbove}
+     * needs, so no other output can interleave; a block refresh still can, which is the exposure JLine's
+     * own Ctrl-L widget has today as well.
+     */
+    private void scrollAWindowAway() {
+        int lines = Math.max(1, terminal.getSize().getRows());
+        for (int line = 0; line < lines; line++) {
             if (input == null) {
-                terminal.writer().print(clear);
-                terminal.writer().flush();
-                return;
-            }
-            // Through the reader, like every other write once it exists: printAbove leaves the prompt
-            // redrawn and the reader's idea of the cursor intact, which writing the escape sequence
-            // around it would not.
-            //
-            // The wipe is followed by ADDRESSING the cursor to the last usable row, never by blank
-            // rows, and the difference between those two is a reported defect in each direction.
-            // Blank rows were the first attempt, to push the input back down the way startup does:
-            // erasing the display clears the *visible* area and leaves those lines in the terminal's
-            // scrollback, so scrolling afterwards pulls them straight back into view -- the screen
-            // came back with text above the prompt. Wipe and stop was the second, and left the input
-            // at the top left, which was reported just as often. A wiped screen needs no scrolling to
-            // reach its last row: cursor_address goes there directly, nothing is written, so nothing
-            // enters the scrollback and the reader draws its prompt where the cursor now is. Erasing
-            // the scrollback as well (ESC[3J) would also allow the blank rows, and stays refused:
-            // this console promises that what was written stays reachable with the scrollbar.
-            // The wipe and NOTHING else. Addressing the cursor to the last usable row was tried here and
-            // has been taken back out: printAbove owns the cursor -- it moves up, writes, and redraws the
-            // prompt below -- so a cursor_address smuggled into its argument leaves its bookkeeping wrong,
-            // and the screen came back with a single character stranded above the prompt. Reported twice,
-            // the second time as "nach cls weiterhin eingabe ueber dem eingabe > zeichen". Both ways of
-            // putting the input back at the bottom are now spent: blank rows scroll the wiped scrollback
-            // into view, and moving the cursor corrupts printAbove. So the prompt sits where a wipe leaves
-            // it, which is what the shell's own `clear` and Ctrl-L do, and output moves it down again.
-            reader.printAbove(clear);
-            // reset() makes it forget what it believes is on screen; without that the update below is
-            // a no-op, because the content it would draw is the content it thinks is already there.
-            List<String> lines = requested;
-            // Three steps, and all three were needed to make the block come back after a wipe:
-            // forget the drawing state, hand over an empty block so nothing is believed to be on
-            // screen, then render it again. With only the first two, Status drew the difference it
-            // computed against a belief the wipe had invalidated -- measured as a single character
-            // where a whole block was missing.
-            status.reset();
-            block = List.of();
-            status.update(List.of());
-            if (!lines.isEmpty()) {
-                updateStatus(lines);
+                // Before the reader exists there is no prompt to print above and no bookkeeping to
+                // keep: writing straight to the terminal is both allowed and the only option.
+                terminal.writer().println();
+            } else {
+                reader.printAbove("");
             }
         }
+        terminal.writer().flush();
     }
 
     /**
@@ -458,27 +469,6 @@ public final class JLineTerminal implements AgentTerminal {
      */
     private int blankRows() {
         return Math.max(0, terminal.getSize().getRows() - 1);
-    }
-
-    /**
-     * The sequence that puts the cursor on the last row the prompt may use.
-     *
-     * <p>Counted from the bottom rather than from the top: the pinned block occupies the rows below
-     * the prompt, so the prompt's own row is the last one above it. An empty block reserves nothing
-     * and the prompt may use the very last row.
-     *
-     * @return the expanded {@code cursor_address} sequence, or an empty string on a terminal that
-     *     cannot address the cursor (then the caller simply leaves it where the wipe put it)
-     */
-    private String cursorToLastUsableRow() {
-        String capability = terminal.getStringCapability(InfoCmp.Capability.cursor_address);
-        if (capability == null) {
-            return "";
-        }
-        int row = Math.max(0, terminal.getSize().getRows() - 1 - block.size());
-        StringBuilder expanded = new StringBuilder();
-        org.jline.utils.Curses.tputs(expanded, capability, row, 0);
-        return expanded.toString();
     }
 
     /**
