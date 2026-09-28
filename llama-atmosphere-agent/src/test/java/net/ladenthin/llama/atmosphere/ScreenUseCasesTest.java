@@ -28,13 +28,18 @@ import org.junit.jupiter.api.Test;
  * for switched off. {@link ScreenTerminalHarness} puts JLine's own VT interpreter behind the terminal,
  * so the question is asked of a screen instead.
  *
- * <p><b>How to use it to demonstrate the JLine fixes.</b> The library is a property, so the same class
- * run twice is the red/green pair:
+ * <p><b>Which JLine this needs.</b> The library is a property, and these cases need the patched one:
  *
  * <pre>
- * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6              # the released library
- * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix3   # with the three fixes
+ * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix6   # runs
+ * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6              # every case SKIPS
  * </pre>
+ *
+ * <p>Six fixes are carried against JLine and the class skips itself without them — see
+ * {@code onlyWithAJLineThatCarriesTheFixes} for why the gate is the whole class and not a list. What proves
+ * the fixes themselves are JLine's own tests, in the clone: {@code StatusRedisplayTest},
+ * {@code StatusDelayedWrapTest}, {@code StatusConcurrencyTest}, {@code StatusRepaintTest} and
+ * {@code StatusWrongWidthTest}.
  *
  * <p><b>Two things the interpreted screen shows that the byte stream hid.</b> A rule written through
  * the status region arrives as {@code U+2500}, but one written through a <em>prompt</em> arrives as the
@@ -58,8 +63,12 @@ class ScreenUseCasesTest {
     /**
      * The marker that says the JLine on the classpath carries the fixes this console needs.
      *
-     * <p>{@code Status.repaint()} is the fifth of them and the only one that adds a method, so its presence
-     * is a usable stand-in for the whole set — it exists only in a build that has the other four as well.
+     * <p>{@code Status.repaint()} is the fifth of them and the first to add a method, so its presence is a
+     * usable stand-in for the set — it exists only in a build that has the others too. It does not
+     * distinguish the fifth build from the sixth: the sixth adds {@code Display.addressesEveryRow()}, which
+     * is protected and cannot be probed from here, and one case
+     * ({@code aWidthTheScreenDoesNotHaveMustNotRunTheBlockRowsTogether}) therefore fails rather than skips on
+     * a {@code statusfix5} jar. Stated rather than worked around: the message names the version to use.
      *
      * @return whether the patched library is on the classpath
      */
@@ -90,7 +99,7 @@ class ScreenUseCasesTest {
      * <p><b>To see the library make the difference</b>, run this class twice:
      *
      * <pre>
-     * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix5   # green
+     * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix6   # green
      * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6              # skipped -- delete this
      *                                                                        # assumption to see it fail
      * </pre>
@@ -99,7 +108,7 @@ class ScreenUseCasesTest {
     void onlyWithAJLineThatCarriesTheFixes() {
         Assumptions.assumeTrue(
                 jlineCarriesTheFixes(),
-                "needs the patched JLine: mvn test -Djline.version=4.4.6-statusfix5"
+                "needs the patched JLine: mvn test -Djline.version=4.4.6-statusfix6"
                         + " (see docs/upstream-investigation-jline-status-windows-redraw.md)");
     }
 
@@ -1451,26 +1460,23 @@ class ScreenUseCasesTest {
     }
 
     @Test
-    void aWidthTheScreenDoesNotHaveIsWhatRunsTheBlockRowsTogether() throws Exception {
-        // THE MECHANISM, pinned deliberately as the artefact rather than as its absence -- the one test here
-        // that asserts something broken, and it says why.
+    void aWidthTheScreenDoesNotHaveMustNotRunTheBlockRowsTogether() throws Exception {
+        // THE defect behind "beim größer ziehen wieder ganz viele Striche unten", and the one that had to be
+        // fixed in the library rather than here.
         //
-        // The reported screen is a rule with the activity row cut short beside it on ONE line, and the next
-        // rule starting where that left off. This is where it comes from: JLine pads every row of the pinned
-        // region to the width the terminal REPORTS, and writes the rows one after another, relying on the
-        // terminal wrapping at the right margin to start the next one. When the screen is wider than the
-        // reported width, the padding never reaches the margin, no wrap happens, and the next row continues
-        // on the same screen line. Here getSize() claims eight columns fewer than the screen has, which is
-        // the report's own arithmetic: a rule of 111 columns is rule(113), cut where a 121-column window ends.
+        // JLine pads every row of the pinned region to the width the terminal REPORTS and writes the rows
+        // one after another: the second begins on a new screen row only because writing the last column of
+        // the first one wrapped. A screen that is WIDER than the reported width therefore never wraps, and
+        // the whole block lands on one screen row, side by side -- rule, activity row and state row, which
+        // is exactly what the reported screens showed. Worse, what the collapse pushes past the window does
+        // not vanish: the block is reserved from the BOTTOM, so the overflow lands in the OUTPUT area above
+        // it, where nothing writes again. Hence the screen full of rule fragments after a dozen drags, and
+        // hence /cls being the only thing that cleaned it up -- it scrolls.
         //
-        // Nothing built from a reported width can defend against this, which is why the assertion is the
-        // artefact and not a contract -- the same call already made for the opposite lie in
-        // aWindowThatReportsMoreColumnsThanItHasMustNotCostThePromptItsRow, where one column is the most that
-        // can be absorbed. A real console lies only BRIEFLY, or changes the screen under JLine's feet by
-        // reflowing it; those are the two shapes that can be recovered from, and they are the two cases after
-        // this one. If this ever goes green -- JLine positioning each row instead of trusting the wrap -- that
-        // is a reason to revisit the repaint those cases rest on, so a failure here is a useful signal rather
-        // than a regression.
+        // Nothing built from a reported width can defend against this, which is why it is the sixth fix
+        // carried against JLine: the pinned region now ADDRESSES each of its rows instead of trusting the
+        // wrap. Proven red/green in the library's own suite as well (StatusWrongWidthTest), where without
+        // the fix the rule row reads "------  working" and the activity row's screen row holds "[state]".
         int rows = 20;
         int realColumns = 121;
         int claimedMissing = 8;
@@ -1489,18 +1495,22 @@ class ScreenUseCasesTest {
             String screen = terminal.describe();
             String[] screenRows = terminal.rows();
             assertThat(
-                    "a row carries the rule AND the activity row, which is the mechanism this documents" + NEWLINE
-                            + screen,
+                    "no row carries the rule AND the activity row" + NEWLINE + screen,
                     count(screenRows, row -> isRule(row) && row.contains("wait")),
-                    is(1));
-            // And the detail that makes the artefact so confusing to read: the LAST row still comes out
-            // right. The region addresses its first row and then writes on, so only the rows in between
-            // collapse -- the bottom row looks perfectly correct while the two above it are wreckage.
+                    is(0));
+            assertThat("the rule is on screen once" + NEWLINE + screen, count(screenRows, this::isRule), is(1));
             assertThat(
-                    "the state row is still the bottom row, which is why this reads as a partial defect" + NEWLINE
-                            + screen,
+                    "the rule has the row above the block" + NEWLINE + screen, isRule(screenRows[rows - 3]), is(true));
+            assertThat(
+                    "the state row is the bottom row" + NEWLINE + screen,
                     screenRows[rows - 1].contains("local-model"),
                     is(true));
+            for (int row = 0; row < rows - 3; row++) {
+                assertThat(
+                        "row " + row + " is above the block and must carry nothing" + NEWLINE + screen,
+                        screenRows[row].contains("─") || screenRows[row].contains("wait"),
+                        is(false));
+            }
         }
     }
 

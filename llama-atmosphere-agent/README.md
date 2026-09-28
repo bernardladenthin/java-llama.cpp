@@ -480,6 +480,15 @@ joining rows it had marked as wrapped, which is every region row. JLine is never
 matches what it wrote, every later update computes an empty difference and writes **nothing**, and the joined
 rows stay for the rest of the session — which is exactly why holding Enter repaired it and no redraw did.
 Once the size stops changing, the block is therefore repainted unconditionally instead of compared.
+
+**The deeper half of that was in the library.** One measurement: a status update sends a single cursor
+address and then writes its rows back to back, each padded to the reported width — the second row begins on
+a new screen row only because writing the last column of the first one made the terminal *wrap*. So a screen
+wider than the reported width does not merely truncate: **every row of the block lands on one screen row,
+side by side**. And since the block is reserved from the bottom, what that pushes past the window ends up in
+the output area *above* it, where nothing writes again — one fragment per drag, which is why a dozen drags
+left a screen full of rule fragments and why `/cls` was the only thing that cleared them. The pinned region
+now addresses each of its rows instead of trusting the wrap.
 That needs a way to ask for a repaint, which the library did not have — `redraw()` is the same diff under another name, and `reset()` forgets the scroll region as well, so the next update grows the region by scrolling and leaves the old rows *above* the block. So a fifth fix is carried against JLine: a `Status.repaint()` that clears the model and nothing else. It is the only one of the five that adds a method, so it is called reflectively and skipped when absent: the agent must stay buildable with whatever JLine a copy of it finds, and the pom names the released version on purpose.
 
 What that cannot reach: the prompt is drawn by a display of its own with the same difference logic and no way

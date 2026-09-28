@@ -411,3 +411,48 @@ thirteen of those cases fail — **a different set each run**, because the fourt
 `ConcurrentModificationException`, once it lands on the reader's signal thread, ends that thread and takes
 every later size change with it. There is therefore no fixed list to annotate, and the gate is the whole
 class, keyed on `Status.repaint()` being present.
+
+## The sixth fix, and the one that explains the screens full of rule fragments
+
+The report after the repaint: *"größer und kleiner gemacht, cursor ist dann nicht unten"*, *"beim größer
+ziehen wieder ganz viele striche unten"*, and after many drags a screen carrying **dozens** of rule
+fragments at different widths with pieces of `… waiting for input` between them. `/cls` cleaned it up.
+
+**One measurement settled it.** A status update emits this — on any terminal, at any width:
+
+```
+ESC[8;1H  ------------------------------------  <spaces>  ESC[D  working  <spaces>  ESC[D  [state]  <spaces>  ESC[D
+```
+
+**One cursor address for the whole bar.** The second row begins on a new screen row only because writing
+the last column of the first one made the terminal wrap. That is sound exactly as long as `columns` is the
+screen's real width — and while a window is being dragged it is not, nor after a terminal reflows its
+buffer. The padding then never reaches the right margin, nothing wraps, and **every reserved row lands on
+one screen row, side by side**. With a screen reporting eight columns fewer than it has, JLine's own test
+suite shows the rule row reading `------------------------------  working` while the activity row's screen
+row holds `[state]`.
+
+**And that is why it accumulated.** The bar is reserved in rows counted from the **bottom**, so what the
+collapse pushes past the window does not vanish — it lands in the **output area above** the bar, where
+nothing ever writes again. One fragment per drag, and only something that scrolls can clear them, which is
+exactly why `/cls` was the one thing that helped.
+
+**The fix: the pinned region addresses each of its rows.** `Display` gains an overridable
+`addressesEveryRow()` (false by default, so no other display changes) whose only effect in the update loop
+is to switch off the pending-wrap compensation; `Status.MovingCursorDisplay` returns true and turns every
+cursor move into an absolute address. Three variants were tried and two were measured wrong, both recorded
+in the code:
+
+- **Addressing each row at the top of the update loop.** Then an update whose content has not changed also
+  saves and restores the cursor, which interleaves with the line reader's own writes: the typed text came
+  out **one character per screen row** (`> H`, `a`, `l`, `l`, `o` down the screen). Deterministic, 2/2.
+- **Addressing only the moves that land on a row start.** A row sharing a prefix with what is on screen is
+  then not addressed, and since relying on the wrap is off, the pending wrap of the row above is never
+  finished: the state row came out shifted one column, reading `" state]"` instead of `"[state]"`.
+  Deterministic, 3/3.
+- **Every move absolute.** The only variant where the cursor is where the display believes it is. For a bar
+  of a few rows it is a handful of bytes per update.
+
+**Verified:** 101 tests in JLine's own suite green (its `DisplayTest` and `ScreenTerminalTest` included),
+with `StatusWrongWidthTest` red 2/3 against the unpatched library and green with the fix; the project's 206
+tests green against `4.4.6-statusfix6` and green against the released `4.4.6`, where the screen cases skip.

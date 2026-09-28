@@ -2488,14 +2488,16 @@ are decisions, not details:
    *prompt*** (the DEC line-drawing set, which this screen renders literally) and as `─` through the
    status region, so both forms count as a rule and a row of `q` also says which path it took.
    **The JLine fixes are demonstrated red/green through it**, the library being just a property — and since
-   there are **five** of them, one of which adds a method, the wiring needs a paragraph of its own.
+   there are **six** of them, one of which adds a method, the wiring needs a paragraph of its own.
    `ScreenUseCasesTest` **skips itself** on a JLine that does not carry them, keyed on
    `Status.repaint()` (the fifth fix and the only one that is a new method, so its presence stands in for the
    whole set). That is CLAUDE.md's own rule applied late — "no project test may assert the fixed behaviour
    while the build depends on an unfixed release" — and it had been broken: the pom's `jline.version` is the
    **released** one, which is what CI builds against, and against it these cases fail. Measured: the whole
-   module is green with `-Djline.version=4.4.6-statusfix5` (43 of the screen cases run) and green with the
-   released `4.4.6` as well, where all 43 report as **skipped** rather than passing.
+   module is green with `-Djline.version=4.4.6-statusfix6` (43 of the screen cases run) and green with the
+   released `4.4.6` as well, where all 43 report as **skipped** rather than passing. The marker cannot tell
+   the fifth build from the sixth (the sixth adds a *protected* method), so on a `statusfix5` jar exactly one
+   case fails rather than skipping — stated in the test rather than worked around.
    **The gate is the whole class and there is no fixed list of affected cases, which is itself a finding.**
    Against the released library between six and thirteen of them fail, a *different set each run*: the fourth
    fix is a data race, and when its `ConcurrentModificationException` lands on the reader's signal thread it
@@ -2504,10 +2506,13 @@ are decisions, not details:
    Surefire record the class as **zero tests** — which reads as "nothing here" instead of "skipped", the same
    trap that silently muted every model-backed test in this repository for months.
    **What proves the fixes themselves are JLine's own tests**, in the clone's own style and next to its
-   others: `StatusRedisplayTest`, `StatusDelayedWrapTest`, `StatusConcurrencyTest` and `StatusRepaintTest`
+   others: `StatusRedisplayTest`, `StatusDelayedWrapTest`, `StatusConcurrencyTest`, `StatusRepaintTest`
    (4 cases: an update with unchanged lines leaves damage on screen, `redraw()` does too because it is the
    same diff, `repaint()` puts every reserved row back without scrolling anything, and a repaint before
-   anything was shown is not an error).
+   anything was shown is not an error) and `StatusWrongWidthTest` (3 cases on a screen wider than the width
+   it reports: every reserved row keeps its own screen row, nothing is written beside the rule, and the rows
+   above the block stay empty). 101 of JLine's own tests are green with all six fixes, `DisplayTest` and
+   `ScreenTerminalTest` included.
 
 
    **The fourth fix is a data race, and it is the one that explains the reports that survived the other
@@ -2651,6 +2656,23 @@ are decisions, not details:
    inside what the reader was drawing for the same size change and printed `36;1H` as text with the block
    doubled. That race is the fourth JLine fix carried here, so this line depends on that fix and must not be
    kept without it — `refreshingTheBlockWhileTheReaderRedrawsNeverThrows` is what holds the pair together.
+
+   **The pinned region ADDRESSES each of its rows, which is the sixth JLine fix and the one that explains
+   the screens full of rule fragments.** One measurement settled a long chase: a status update emits
+   `ESC[8;1H` and then the rows back to back, padded to the reported width — **one cursor address for the
+   whole bar**. The second row begins on a new screen row only because writing the last column of the first
+   made the terminal wrap. A screen that is wider than the reported width (a window mid-drag, or one whose
+   terminal has reflowed its buffer) therefore never wraps, and **every reserved row lands on one screen row,
+   side by side**. And because the bar is reserved from the *bottom*, what the collapse pushes past the window
+   lands in the **output area above it**, where nothing writes again — one fragment per drag, which is why it
+   accumulated and why only `/cls` (which scrolls) cleaned it up.
+   `Display.addressesEveryRow()` (false by default, so no other display changes) switches off the
+   pending-wrap compensation, and `Status.MovingCursorDisplay` turns every cursor move into an absolute
+   address. **Two narrower variants were measured and are wrong**, both recorded in the code: addressing rows
+   at the top of the update loop makes even an unchanged update save and restore the cursor, which interleaves
+   with the reader's writes and printed the typed text **one character per screen row** (deterministic, 2/2);
+   addressing only row starts leaves a row that shares a prefix unaddressed, so the row above's pending wrap
+   is never finished and the state row came out shifted one column, `" state]"` (deterministic, 3/3).
 
    **The redraw after the size SETTLES is a repaint, not a diff** (`repaintBlockFromScratch`, 400 ms after
    the last size event). This is the fix for "kleiner ziehen sah gut aus, größer macht noch Probleme", and it
