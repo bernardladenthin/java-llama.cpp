@@ -314,3 +314,100 @@ reader's thread with the reader's own lock held, while `line()` takes the write 
 lock second, so acquiring it there inverts the order and hangs the session. The reader's own lock
 serialises the widget against every other `printAbove`, which is what matters; a concurrent block refresh
 can still interleave, which is the exposure JLine's own widget has today as well.
+
+## The console changes the screen behind JLine's back, and a diff cannot see it
+
+The report after the clear was fixed: *"Kleiner ziehen sah ganz gut aus, größer macht noch Probleme"*, with a
+screen showing a rule of one width and the activity row **cut short beside it on the same line**, the next
+rule starting where that left off, and the state row below it looking perfectly correct.
+
+**The mechanism, reproduced deterministically.** JLine pads every row of the pinned region to the width the
+terminal *reports* (`Status.update`, against `display.columns`) and writes the rows one after another,
+relying on the terminal wrapping at the right margin to begin the next one. When the screen is **wider**
+than the reported width, the padding never reaches the margin, no wrap happens, and the next row continues
+on the same screen line. A harness whose `getSize()` reports eight columns fewer than its screen has
+produces the reported screen exactly:
+
+```
+16|>
+17|──────────────────────────────────  … waitin
+18|g for input …                        [▤ X:/tmp/agent-
+19|sandbox · ⏸  manual · ▦ 0/16k · ⚒ 8 · ◆ local-model]
+```
+
+Note which row survives: the **last** one. The region addresses its first row and then writes on, so only
+the rows in between collapse — which is why the artefact reads as a partial defect and why the state row
+looked right in every report.
+
+**Two different causes reach that state, and only one of them can be recovered from.** A console that
+reports a width it has not applied yet does it *briefly*, and a rebuild afterwards repairs it — measured:
+the transient form recovers with the existing settle redraw, and so does a window that additionally grows a
+row taller (the screen model moves its content down with the region, as a real console does). What does
+**not** recover is the other cause: **Windows reflows its screen buffer when the window is widened**, joining
+rows it had marked as wrapped — which is every row of the region, since each one is padded to the last
+column. JLine is never told. Its `Display` still matches what it wrote, so every later update computes an
+**empty diff and emits nothing**, and the joined rows stay on screen for the rest of the session. That
+accounts for the one thing no earlier theory did: the artefact *persisting* while every redraw runs.
+
+**It also explains the recovery that was found by hand.** Holding Enter repaired it because printing does
+not go through the region's diff at all.
+
+**The fix: the settle redraw repaints instead of diffing.** `repaintBlockFromScratch()` hands the region a
+block of the **same height** whose rows are blank, and then the real rows. The first pass makes the second
+one a real write rather than an empty diff, and erases the rows on the way. Only the settle redraw does
+this — a drag reports a size every ~125 ms and a full repaint on each is bytes spent against a screen about
+to change again, while the reflow happens when the console applies the *final* size.
+
+**`Status.reset()` is the call that looks right and is wrong.** It clears the display model *and* forgets the
+scroll region, so the following update believes it must grow the region and scrolls to make room: the stale
+rows were pushed **up** instead of being cleared and the block stood on screen **twice**, four rows apart.
+Measured on the interpreted screen, which is the only place that difference is visible. Handing over an
+empty block has the same problem for the same reason — it changes the region's height. Same count, different
+content, is what invalidates the model without moving anything.
+
+**What this cannot reach, stated plainly.** The **prompt** has a display of its own with the same diff and no
+`reset()` a caller can call, so a reflow that damages the prompt's row is still unrepairable from here —
+which is the same asymmetry `thePromptItselfStaysVisibleAfterEnlarging` has recorded all along. `/cls` and
+Ctrl-L now repair that case, because they only print.
+
+## The fifth fix: `Status.repaint()`, and why it had to be a new method
+
+The repair above needs one thing the library does not offer: a way to tell the pinned region to draw its
+rows again without assuming anything about what is on screen. Both candidates were measured and both are
+wrong:
+
+- **`Status.redraw()`** is `update(lines)` under another name, so it diffs like it — and it has to, being
+  called from `LineReaderImpl.redisplay()` on **every keystroke**, where a diff is exactly what is wanted.
+- **`Status.reset()`** clears the display model *and* sets `scrollRegion = display.rows`, so the next
+  `update` takes its "we need to scroll up to grow the status bar" branch: the stale rows were pushed **up**
+  instead of being cleared and the block stood on screen **twice**, four rows apart. Handing over an empty
+  block does the same thing for the same reason — it changes the region's height. Handing over blank rows of
+  the same height does work, but makes the block vanish for an instant; two unrelated screen cases caught
+  that as a flicker, which on a real console would be a blink of the whole block at the end of every drag.
+
+`Status.resize(Size)` already does the right thing — `display.reset()`, the scroll region, and clearing a
+band of old remnants — but its whole body sits behind `if (display.rows != oldRows || display.columns !=
+oldColumns)`. After a drag has settled the grid size has not changed, so it is skipped, and the following
+update is an empty diff. **That is the precise reason a reflowed screen was never repaired.**
+
+So: `public synchronized void repaint()` — `display.reset()` then `update(lines)`. It clears the model and
+nothing else, so the following write covers every reserved row, the scroll region stays put, and nothing
+blinks. Four tests in JLine's own style (`terminal/src/test/java/org/jline/utils/StatusRepaintTest.java`)
+pin both sides: an `update` with unchanged lines leaves damage on screen, `redraw()` leaves it too,
+`repaint()` puts every reserved row back **and** leaves every row above the block untouched (the assertion
+that catches the `reset()` variant), and a repaint before anything was ever shown is not an error.
+
+**On the consuming side it is called reflectively**, which none of the other four fixes needs. They change
+how the library *behaves*, so the code compiles against the release and merely shows the symptom there; a
+new *method* would make the released library fail to compile, and this project must stay buildable with
+whatever JLine a copy of it finds (`llama-atmosphere-agent`'s pom names the released version on purpose).
+Present: the block is repainted. Absent: nothing is forced, the artefact stays until something prints, and
+`/cls` or Ctrl-L repairs it — the same trade the other four make.
+
+**And the project's screen tests now skip themselves without the patched library.** CLAUDE.md has always
+required this ("no project test may assert the fixed behaviour while the build depends on an unfixed
+release") and it had been broken: CI builds the agent with the released JLine, against which between six and
+thirteen of those cases fail — **a different set each run**, because the fourth fix is a data race and its
+`ConcurrentModificationException`, once it lands on the reader's signal thread, ends that thread and takes
+every later size change with it. There is therefore no fixed list to annotate, and the gate is the whole
+class, keyed on `Status.repaint()` being present.

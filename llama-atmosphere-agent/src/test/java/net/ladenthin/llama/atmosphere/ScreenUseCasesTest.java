@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import org.jline.terminal.Size;
+import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
@@ -53,8 +55,67 @@ class ScreenUseCasesTest {
     /** The tails a torn escape sequence leaves behind as visible text. */
     private static final List<String> ESCAPE_TAILS = List.of("1H", "[m", "[C", "[?", "[0m", "[90m");
 
+    /**
+     * The marker that says the JLine on the classpath carries the fixes this console needs.
+     *
+     * <p>{@code Status.repaint()} is the fifth of them and the only one that adds a method, so its presence
+     * is a usable stand-in for the whole set — it exists only in a build that has the other four as well.
+     *
+     * @return whether the patched library is on the classpath
+     */
+    private static boolean jlineCarriesTheFixes() {
+        try {
+            org.jline.utils.Status.class.getMethod("repaint");
+            return true;
+        } catch (NoSuchMethodException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Skip everything here on a JLine that does not carry the fixes.
+     *
+     * <p><b>This is a rule from CLAUDE.md, applied late:</b> "no project test may assert the fixed behaviour
+     * while the build depends on an unfixed release". The pom's {@code jline.version} is the released one, so
+     * that is what CI builds against — and against it these cases fail, between six and thirteen of them,
+     * a DIFFERENT set each run. The variation is the point: the fourth fix is a data race, and when its
+     * {@code ConcurrentModificationException} lands on the reader's signal thread it ends that thread, after
+     * which no size change is reported at all and whichever cases were still to run fail too. So there is no
+     * fixed list to mark, and the honest gate is the whole class.
+     *
+     * <p>Per test rather than in a {@code @BeforeAll}, on purpose: a class-level assumption makes Surefire
+     * record the class as zero tests, which reads as "nothing to see" instead of "skipped" — the same trap
+     * that silently muted every model-backed test in this repository for months.
+     *
+     * <p><b>To see the library make the difference</b>, run this class twice:
+     *
+     * <pre>
+     * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix5   # green
+     * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6              # skipped -- delete this
+     *                                                                        # assumption to see it fail
+     * </pre>
+     */
+    @BeforeEach
+    void onlyWithAJLineThatCarriesTheFixes() {
+        Assumptions.assumeTrue(
+                jlineCarriesTheFixes(),
+                "needs the patched JLine: mvn test -Djline.version=4.4.6-statusfix5"
+                        + " (see docs/upstream-investigation-jline-status-windows-redraw.md)");
+    }
+
     private ScreenTerminalHarness terminal(int columns) throws Exception {
         return new ScreenTerminalHarness("windows-vtp", columns, ROWS);
+    }
+
+    /**
+     * A screen whose height is not this class's constant.
+     *
+     * @param columns the width
+     * @param rows the height
+     * @return the harness
+     */
+    private ScreenTerminalHarness terminalWithRows(int columns, int rows) throws Exception {
+        return new ScreenTerminalHarness("windows-vtp", columns, rows);
     }
 
     /** A rule row, in either form the screen can show it. */
@@ -1224,6 +1285,363 @@ class ScreenUseCasesTest {
                     terminal.cursorRow(),
                     is(promptRow));
             assertThat("the prompt is on that row:\n" + screen, rows[promptRow].contains(">"), is(true));
+        }
+    }
+
+    /**
+     * Drag a window to a new width AND a new height, the way a corner drag does.
+     *
+     * <p>The variable no test in this class had ever varied. Every case here changes the width and keeps
+     * the row count, but a window is dragged by its corner: the reported screen came from a drag that grew
+     * both. A taller window moves the pinned region DOWN — it is reserved from the bottom — and whatever
+     * stood on the rows it used to occupy is not erased by anything, because nothing writes there again.
+     *
+     * @param terminal the screen
+     * @param console the console under test
+     * @param columns the new width
+     * @param rows the new height
+     */
+    private void growOnce(ScreenTerminalHarness terminal, JLineTerminal console, int columns, int rows)
+            throws Exception {
+        Thread pump = terminal.resizeAsynchronously(columns, rows);
+        console.refreshBlockForCurrentSize();
+        pump.join(2000);
+        Thread.sleep(400);
+        console.refreshBlockForCurrentSize();
+        Thread.sleep(400);
+    }
+
+    /**
+     * Everything the reports were about, for a window whose height is not this class's constant.
+     *
+     * @param terminal the screen to read
+     * @param rows the window's height
+     * @param blockRows how many rows the pinned block occupies
+     */
+    private void assertBlockIsIntactAt(ScreenTerminalHarness terminal, int rows, int blockRows) {
+        String[] screenRows = terminal.rows();
+        String screen = terminal.describe();
+        for (int row = 0; row < screenRows.length; row++) {
+            for (String tail : ESCAPE_TAILS) {
+                assertThat(
+                        "row " + row + " shows \"" + tail + "\", the tail of a torn escape sequence" + NEWLINE + screen,
+                        screenRows[row].contains(tail),
+                        is(false));
+            }
+            assertThat(
+                    "row " + row + " carries the prompt AND the rule" + NEWLINE + screen,
+                    screenRows[row].contains(">") && isRule(screenRows[row]),
+                    is(false));
+        }
+        assertThat("the rule is on screen once" + NEWLINE + screen, count(screenRows, this::isRule), is(1));
+        assertThat(
+                "the rule is directly above the block" + NEWLINE + screen,
+                isRule(screenRows[rows - blockRows]),
+                is(true));
+        assertThat(
+                "the state row is on screen once" + NEWLINE + screen,
+                count(screenRows, row -> row.contains("local-model")),
+                is(1));
+    }
+
+    @Test
+    void draggingTheCORNERSoTheWindowGrowsInBOTHDIRECTIONS() throws Exception {
+        // The reported screen, and the one variable this class had never varied: a corner drag changes the
+        // HEIGHT as well as the width. The pinned block is reserved from the BOTTOM, so a taller window
+        // moves it down -- and the rows it used to stand on are never written again, so nothing erases
+        // them. The report shows exactly that: a rule at the OLD width with the activity row continuing on
+        // the SAME screen line (the old block, left behind, its rows no longer padded to a full window),
+        // then the new rule below it, then the block. Four rows where three belong.
+        int rows = 24;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", 100, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+
+            int grown = 34;
+            growOnce(terminal, console, 150, grown);
+
+            assertBlockIsIntactAt(terminal, grown, 3);
+        }
+    }
+
+    @Test
+    void makingOnlyTheWindowTALLERLeavesNoBlockBehind() throws Exception {
+        // The same drag with the width held still, so the two variables are separated: if this is red and
+        // the width-only cases are green, the height is the whole story.
+        int rows = 24;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", 100, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+
+            int grown = 34;
+            growOnce(terminal, console, 100, grown);
+
+            assertBlockIsIntactAt(terminal, grown, 3);
+        }
+    }
+
+    @Test
+    void makingOnlyTheWindowSHORTERLeavesNoBlockBehind() throws Exception {
+        // The other direction, because "kleiner ziehen sah ganz gut aus" is a report too and a test that
+        // pins it is what keeps it that way.
+        int rows = 34;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", 100, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+
+            int shrunk = 24;
+            growOnce(terminal, console, 100, shrunk);
+
+            assertBlockIsIntactAt(terminal, shrunk, 3);
+        }
+    }
+
+    @Test
+    void aFastCORNERDragThroughSeveralSizesEndsWithOneCleanBlock() throws Exception {
+        // The reported screen is not a single size event: it shows a rule of ONE width with the activity
+        // row CUT and continuing on the same screen line, and a second rule below it starting at the
+        // column the cut left off at. Rows built for one width, written into a region that has another --
+        // which is what two overlapping size events produce, and a drag delivers ~22 of them.
+        //
+        // Every other case in this class is deliberately ONE event, because stepping through a width-only
+        // drag failed between one and four cases per run. This one steps on purpose and grows in BOTH
+        // directions, which no other case does.
+        int rows = 24;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", 100, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+
+            List<Thread> pumps = new ArrayList<>();
+            int grown = rows;
+            for (int columns = 106; columns <= 150; columns += 8) {
+                grown += 2;
+                pumps.add(terminal.resizeAsynchronously(columns, grown));
+                console.refreshBlockForCurrentSize();
+                Thread.sleep(40);
+            }
+            for (Thread pump : pumps) {
+                pump.join(2000);
+            }
+            Thread.sleep(600);
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(600);
+
+            assertBlockIsIntactAt(terminal, grown, 3);
+        }
+    }
+
+    @Test
+    void aWidthTheScreenDoesNotHaveIsWhatRunsTheBlockRowsTogether() throws Exception {
+        // THE MECHANISM, pinned deliberately as the artefact rather than as its absence -- the one test here
+        // that asserts something broken, and it says why.
+        //
+        // The reported screen is a rule with the activity row cut short beside it on ONE line, and the next
+        // rule starting where that left off. This is where it comes from: JLine pads every row of the pinned
+        // region to the width the terminal REPORTS, and writes the rows one after another, relying on the
+        // terminal wrapping at the right margin to start the next one. When the screen is wider than the
+        // reported width, the padding never reaches the margin, no wrap happens, and the next row continues
+        // on the same screen line. Here getSize() claims eight columns fewer than the screen has, which is
+        // the report's own arithmetic: a rule of 111 columns is rule(113), cut where a 121-column window ends.
+        //
+        // Nothing built from a reported width can defend against this, which is why the assertion is the
+        // artefact and not a contract -- the same call already made for the opposite lie in
+        // aWindowThatReportsMoreColumnsThanItHasMustNotCostThePromptItsRow, where one column is the most that
+        // can be absorbed. A real console lies only BRIEFLY, or changes the screen under JLine's feet by
+        // reflowing it; those are the two shapes that can be recovered from, and they are the two cases after
+        // this one. If this ever goes green -- JLine positioning each row instead of trusting the wrap -- that
+        // is a reason to revisit the repaint those cases rest on, so a failure here is a useful signal rather
+        // than a regression.
+        int rows = 20;
+        int realColumns = 121;
+        int claimedMissing = 8;
+        LaggingWidth terminal = new LaggingWidth(realColumns, rows);
+        terminal.missing = claimedMissing;
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(300);
+
+            String screen = terminal.describe();
+            String[] screenRows = terminal.rows();
+            assertThat(
+                    "a row carries the rule AND the activity row, which is the mechanism this documents" + NEWLINE
+                            + screen,
+                    count(screenRows, row -> isRule(row) && row.contains("wait")),
+                    is(1));
+            // And the detail that makes the artefact so confusing to read: the LAST row still comes out
+            // right. The region addresses its first row and then writes on, so only the rows in between
+            // collapse -- the bottom row looks perfectly correct while the two above it are wreckage.
+            assertThat(
+                    "the state row is still the bottom row, which is why this reads as a partial defect" + NEWLINE
+                            + screen,
+                    screenRows[rows - 1].contains("local-model"),
+                    is(true));
+        }
+    }
+
+    /** A screen that is already wider than the size the application is told, for as long as the lie lasts. */
+    private static final class LaggingWidth extends ScreenTerminalHarness {
+
+        /** How many columns the application is NOT told about. Zero means the console has caught up. */
+        private volatile int missing;
+
+        LaggingWidth(int columns, int rows) throws java.io.IOException {
+            super("windows-vtp", columns, rows);
+        }
+
+        @Override
+        public Size getSize() {
+            Size real = super.getSize();
+            return Size.of(real.getColumns() - missing, real.getRows());
+        }
+    }
+
+    @Test
+    void aWidthTheConsoleAnnouncesLATEMustNotLEAVEHalfABlockAbOVEtheRegion() throws Exception {
+        // The faithful shape of the report, in three steps, because only the third one says what is still
+        // broken. (1) The block is rendered while the screen is ALREADY wider than the application has been
+        // told -- the rows run together, which the previous case pins. (2) The console catches up. (3) The
+        // block is rebuilt, which is what this console's settle redraw does 400 ms after the last size
+        // event. The question this asks is whether step 3 is enough: the region owns three rows, and if the
+        // run-together render put block content on a row ABOVE them, nothing ever writes there again.
+        int rows = 20;
+        int narrow = 113;
+        int wide = 121;
+        LaggingWidth terminal = new LaggingWidth(narrow, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(300);
+
+            // (1) the screen is widened; the application is told nothing yet
+            terminal.resizeScreenOnly(wide, rows);
+            terminal.missing = wide - narrow;
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(300);
+
+            // (2) the console catches up, and announces it the way one does
+            terminal.missing = 0;
+            terminal.raise(org.jline.terminal.Terminal.Signal.WINCH);
+            Thread.sleep(300);
+
+            // (3) the settle redraw
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(400);
+
+            assertBlockIsIntactAt(terminal, rows, 3);
+        }
+    }
+
+    @Test
+    void aLateWidthPLUSaTallerWindowLeavesBlockRowsSTRANDEDAboveTheRegion() throws Exception {
+        // The reported screen, complete. The previous case shows the settle redraw repairs the three rows
+        // the region owns; this one adds the second half of a CORNER drag -- the window also gets taller.
+        // The region is reserved from the BOTTOM, so it moves DOWN, and the row the run-together render
+        // dirtied is then no longer one of its rows. Nothing writes there again, so it stays: exactly the
+        // one leftover row above an otherwise correct block that was reported.
+        int rows = 20;
+        int narrow = 113;
+        int wide = 121;
+        LaggingWidth terminal = new LaggingWidth(narrow, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(300);
+
+            // the screen is already wider; the application has not been told
+            terminal.resizeScreenOnly(wide, rows);
+            terminal.missing = wide - narrow;
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(300);
+
+            // the console catches up AND the window is a row taller, which a corner drag does
+            int taller = rows + 1;
+            terminal.missing = 0;
+            terminal.resize(wide, taller);
+            Thread.sleep(300);
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(400);
+
+            assertBlockIsIntactAt(terminal, taller, 3);
+        }
+    }
+
+    @Test
+    void aScreenTheCONSOLEChangedBehindJLinesBackMustStillBeRepaired() throws Exception {
+        // The explanation the other cases were circling, and the only one that accounts for "it stays
+        // broken". Windows reflows its screen buffer when the window is widened: rows it had marked as
+        // wrapped -- which is every row the pinned region writes, because each one fills the last column --
+        // are joined back together. JLine is not told. Its Display still believes the rows it wrote are on
+        // screen, so every later update computes an EMPTY diff and emits nothing, and the joined rows stay
+        // there for the rest of the session. That is exactly the reported screen, and exactly why pressing
+        // Enter a dozen times is what repairs it.
+        //
+        // The screen is dirtied here the same way a reflow dirties it: straight onto the screen, past
+        // everything that keeps a model of it. The size never changes, because the size is not the point --
+        // what matters is that the SCREEN and JLine's belief about it have come apart.
+        int rows = 20;
+        ScreenTerminalHarness terminal = terminalWithRows(100, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(300);
+
+            // the console joins the rule row and the activity row, as a reflow does: address the region's
+            // first row and write the two of them onto one line
+            // The cursor is saved and restored around it: a reflow changes CONTENT, and leaving the cursor
+            // somewhere else would be a different defect (measured: the block was then drawn four rows too
+            // high and stood on screen twice -- true, but not what a console does).
+            terminal.writeBehindTheApplicationsBack(
+                    "\u001b7\u001b[" + (rows - 2) + ";1H" + "-".repeat(40) + "  … wait" + "\u001b8");
+            Thread.sleep(200);
+
+            // and now the redraw this console does when the size settles
+            console.repaintBlockFromScratch();
+            Thread.sleep(400);
+
+            String[] screenRows = terminal.rows();
+            String screen = terminal.describe();
+            for (int row = 0; row < screenRows.length; row++) {
+                assertThat(
+                        "row " + row + " still carries what the console left behind" + NEWLINE + screen,
+                        screenRows[row].contains("… wait") && !screenRows[row].contains("waiting for input"),
+                        is(false));
+            }
+            assertBlockIsIntactAt(terminal, rows, 3);
         }
     }
 }

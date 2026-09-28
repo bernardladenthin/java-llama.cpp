@@ -2487,15 +2487,28 @@ are decisions, not details:
    that compares two sizes and calls that method. **(3) A rule shows as `q` when it went out through a
    *prompt*** (the DEC line-drawing set, which this screen renders literally) and as `─` through the
    status region, so both forms count as a rule and a row of `q` also says which path it took.
-   **The JLine fixes are demonstrated red/green through it**, the library being just a property, and the
-   staircase is monotone — the whole module (198 tests, 10 skipped) is green against a JLine carrying
-   **all four** fixes (`-Djline.version=4.4.6-statusfix4`); `ScreenUseCasesTest` alone (35 tests, 7
-   skipped) fails **13** against the released `4.4.6` and **6** against fixes 1–3. The middle number is
-   the one to read carefully: it is not stable, and has been measured as **1** as well. Fix 4 is a data
-   race (below), so how many of the cases it takes down with it varies per run — when the
-   `ConcurrentModificationException` lands on the reader's signal thread it ends that thread, and every
-   later size change then goes unreported, which is what turns one defect into six red cases. A count
-   that moves is the expected shape here, not a flaky test.
+   **The JLine fixes are demonstrated red/green through it**, the library being just a property — and since
+   there are **five** of them, one of which adds a method, the wiring needs a paragraph of its own.
+   `ScreenUseCasesTest` **skips itself** on a JLine that does not carry them, keyed on
+   `Status.repaint()` (the fifth fix and the only one that is a new method, so its presence stands in for the
+   whole set). That is CLAUDE.md's own rule applied late — "no project test may assert the fixed behaviour
+   while the build depends on an unfixed release" — and it had been broken: the pom's `jline.version` is the
+   **released** one, which is what CI builds against, and against it these cases fail. Measured: the whole
+   module is green with `-Djline.version=4.4.6-statusfix5` (43 of the screen cases run) and green with the
+   released `4.4.6` as well, where all 43 report as **skipped** rather than passing.
+   **The gate is the whole class and there is no fixed list of affected cases, which is itself a finding.**
+   Against the released library between six and thirteen of them fail, a *different set each run*: the fourth
+   fix is a data race, and when its `ConcurrentModificationException` lands on the reader's signal thread it
+   ends that thread, after which no size change is reported at all and whichever cases were still to run fail
+   too. The skip is per test (`@BeforeEach`), not a `@BeforeAll` assumption, because a class-level one makes
+   Surefire record the class as **zero tests** — which reads as "nothing here" instead of "skipped", the same
+   trap that silently muted every model-backed test in this repository for months.
+   **What proves the fixes themselves are JLine's own tests**, in the clone's own style and next to its
+   others: `StatusRedisplayTest`, `StatusDelayedWrapTest`, `StatusConcurrencyTest` and `StatusRepaintTest`
+   (4 cases: an update with unchanged lines leaves damage on screen, `redraw()` does too because it is the
+   same diff, `repaint()` puts every reserved row back without scrolling anything, and a repaint before
+   anything was shown is not an error).
+
 
    **The fourth fix is a data race, and it is the one that explains the reports that survived the other
    three.** `refreshingTheBlockWhileTheReaderRedrawsNeverThrows` refreshes the block from three threads
@@ -2632,11 +2645,42 @@ are decisions, not details:
    its *old* width without the poll and emits nothing with it — neither says the rule was redrawn at
    the new width, and the first assertion built on that passed with the poll disabled. Green either
    way is worse than none (the same call already made for two write-lock tests). The evidence is the
-   probe, on the console where it happens. **And the poll must do nothing but rebuild the rows:**
-   adding `status.resize(size)` to it — which the deleted test appeared to require, because no reader
-   runs in it — writes to the terminal directly, lands inside what the reader is drawing for the same
-   size change, and printed `36;1H` as text on the real console with the block doubled. The reader has
-   already done that resize by the time the poll notices.
+   probe, on the console where it happens. **The poll DOES re-assert the region
+   (`status.resize(size)`), and that line was once removed for a measured reason before coming back for
+   another:** it writes to the terminal directly, so without `Status`'s methods being synchronized it landed
+   inside what the reader was drawing for the same size change and printed `36;1H` as text with the block
+   doubled. That race is the fourth JLine fix carried here, so this line depends on that fix and must not be
+   kept without it — `refreshingTheBlockWhileTheReaderRedrawsNeverThrows` is what holds the pair together.
+
+   **The redraw after the size SETTLES is a repaint, not a diff** (`repaintBlockFromScratch`, 400 ms after
+   the last size event). This is the fix for "kleiner ziehen sah gut aus, größer macht noch Probleme", and it
+   rests on a mechanism worth knowing: JLine pads every region row to the width the terminal **reports** and
+   writes the rows one after another, relying on the terminal wrapping at the right margin to start the next.
+   A screen that is **wider** than the reported width therefore never wraps, and the next row continues on
+   the same screen line — a rule with the activity row cut short beside it, the next rule where that left
+   off, and the *last* row still perfectly correct (the region addresses its first row and then writes on, so
+   only the rows in between collapse). Reproduced deterministically with a harness that reports eight columns
+   fewer than its screen has.
+   **Two causes reach that state and only one recovers by itself.** A console reporting a width it has not
+   applied does it briefly, and the existing rebuild repairs it (measured, including a window that also grows
+   a row taller). **Windows also reflows its screen buffer when the window is widened**, joining rows it had
+   marked as wrapped — which is every region row, since each is padded to the last column — and JLine is
+   never told. Its `Display` still matches what it wrote, so every later update computes an **empty diff and
+   emits nothing** and the joined rows stay for the rest of the session. That is the half no earlier theory
+   explained: the artefact *persisting* while every redraw runs, and repairing itself when Enter is held
+   (printing does not go through the region's diff at all).
+   **The repaint is two passes:** the same number of rows, blank, then the real rows — the first makes the
+   second a real write and erases the rows on the way. **`Status.reset()` is the call that looks right and is
+   wrong:** it forgets the scroll region too, so the next update believes it must grow the region and scrolls
+   to make room — the stale rows were pushed *up* rather than cleared and the block stood on screen **twice**,
+   four rows apart (measured on the interpreted screen, the only place that is visible). An empty block has
+   the same problem for the same reason: it changes the region's height. Only the settle redraw repaints; a
+   drag reports a size every ~125 ms and repainting on each is bytes spent against a screen about to change
+   again.
+   **What it cannot reach:** the prompt has a display of its own with the same diff and no `reset()` a caller
+   can call, so a reflow that damages the prompt's row is still beyond repair from here —
+   `thePromptItselfStaysVisibleAfterEnlarging` records that. `/cls` and Ctrl-L do repair it, because they
+   only print.
 
    **Do not add a `WINCH` handler, and the reason is measured.** A resize drawing a row of
    `> > > > >` across the screen looks like the pinned region not being told about the new size, so a

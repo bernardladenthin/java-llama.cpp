@@ -5,6 +5,7 @@
 package net.ladenthin.llama.atmosphere;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
@@ -70,6 +71,35 @@ public final class JLineTerminal implements AgentTerminal {
      * rule.
      */
     private final Object writing = new Object();
+
+    /**
+     * {@code Status.repaint()}, or {@code null} on a JLine that does not have it.
+     *
+     * <p><b>Why this is looked up rather than called.</b> The other four fixes this project carries against
+     * JLine change how the library <em>behaves</em>, so the code compiles against the released version and
+     * merely shows the symptom there. This one is a new method — the library offers no way to ask the pinned
+     * region for a repaint, which is what a screen the console has changed behind its back needs (see
+     * {@link #repaintBlockFromScratch()}). Calling it directly would make the released library fail to
+     * compile, and this project must stay buildable with whatever JLine a copy of it finds: the pom's
+     * {@code jline.version} is the released one on purpose.
+     *
+     * <p>So it is looked up once. Present: the block is repainted. Absent: nothing is forced, and the
+     * artefact stays until something prints — exactly the trade the other four fixes make.
+     */
+    private static final @Nullable Method REPAINT = lookUpRepaint();
+
+    /**
+     * Find {@code Status.repaint()} if this JLine has it.
+     *
+     * @return the method, or {@code null}
+     */
+    private static @Nullable Method lookUpRepaint() {
+        try {
+            return Status.class.getMethod("repaint");
+        } catch (NoSuchMethodException | RuntimeException e) {
+            return null;
+        }
+    }
 
     /**
      * The block as it was last handed over, so it can be put back after the screen is wiped.
@@ -255,15 +285,23 @@ public final class JLineTerminal implements AgentTerminal {
                             }
                             continue;
                         }
-                        // The size stopped changing: draw once more, a moment later. A console being
-                        // enlarged reports the new width before its screen has applied it, so the LAST
-                        // event of a drag is processed against a size the screen does not have yet -- the
-                        // rule then covers two screen rows and everything above it moves up. Nothing
-                        // re-renders afterwards, because the size no longer changes, so the too-wide rule
-                        // is what stays. Reported after enlarging, with the block otherwise in place.
+                        // The size stopped changing: draw once more, a moment later, and this one is a
+                        // repaint rather than a diff. A console being enlarged reports the new width before
+                        // its screen has applied it, so the LAST event of a drag is processed against a size
+                        // the screen does not have yet -- the rule then covers two screen rows and
+                        // everything above it moves up. Nothing re-renders afterwards, because the size no
+                        // longer changes, so the wrong render is what stays. Reported after enlarging, with
+                        // the block otherwise in place.
+                        //
+                        // From scratch, because a diff cannot see it: the console also REFLOWS its screen
+                        // buffer when the window is widened, joining rows it had marked as wrapped -- every
+                        // row of the region is padded to the last column, so all of them are -- and JLine is
+                        // not told. Its model still matches what it wrote, so an ordinary redraw computes an
+                        // empty diff and emits nothing, which is why the artefact survived every redraw and
+                        // why holding Enter was what repaired it. See repaintBlockFromScratch.
                         if (settleAt != 0 && System.currentTimeMillis() >= settleAt) {
                             settleAt = 0;
-                            if (!refreshBlockForCurrentSize() && closed) {
+                            if (!repaintBlockFromScratch() && closed) {
                                 return;
                             }
                         }
@@ -400,6 +438,70 @@ public final class JLineTerminal implements AgentTerminal {
             }
         }
         terminal.writer().flush();
+    }
+
+    /**
+     * Rebuild the pinned block and make the region forget what it believes is on screen first.
+     *
+     * <p><b>The difference from {@link #refreshBlockForCurrentSize()} is one call, and it is the difference
+     * between a redraw that writes something and one that writes nothing.</b> JLine's pinned region is a
+     * diff: it compares the rows it is handed with the rows it last wrote and emits only what changed. That
+     * is right as long as nobody else touches the screen — and the console touches it. Windows reflows its
+     * screen buffer when the window is widened, joining rows it had marked as wrapped, which is every row
+     * the region writes, because each one is padded to the last column. JLine is never told, so its model
+     * still matches what it wrote, every later update computes an empty diff, and the joined rows stay on
+     * screen for the rest of the session. That is the reported screen — a rule with the activity row cut
+     * short beside it on one line — and it is why pressing Enter a dozen times repaired it while every
+     * redraw did not.
+     *
+     * <p><b>{@code Status.repaint()} is the fifth fix carried against JLine, and this method is why.</b>
+     * There was no way to ask for a repaint from outside. {@code Status.redraw()} is {@code update(lines)}
+     * under another name and diffs like it — it has to, being called from
+     * {@code LineReaderImpl.redisplay()} on every keystroke. {@code Status.reset()} clears the model but
+     * also forgets the scroll region, so the next update believes it must grow the region and scrolls to
+     * make room: the stale rows were pushed <em>up</em> rather than cleared and the block stood on screen
+     * <b>twice</b>, four rows apart — measured on the interpreted screen. Handing over an empty block does
+     * the same thing for the same reason, and handing over blank rows of the same height works but makes
+     * the block vanish for an instant, which two other screen cases caught as a flicker. The added
+     * {@code repaint()} clears the model and nothing else, so the following write covers every reserved
+     * row, the scroll region stays put, and nothing blinks.
+     *
+     * <p>{@code Status.resize(Size)} already does all of this — {@code display.reset()}, the scroll region,
+     * and clearing a band of old remnants — but only <b>if the grid size actually changed</b>. After a drag
+     * has settled it has not, so that whole body is skipped and the following update is an empty diff.
+     * Which is the precise reason the reflowed screen was never repaired.
+     *
+     * <p>Only the <b>settle</b> redraw does this, not every size event: a drag reports a size every ~125 ms
+     * and a full repaint on each of them is bytes spent against a screen that is about to change again. The
+     * reflow happens when the console applies the final size, so the redraw that matters is the one after
+     * the size stops changing.
+     *
+     * <p>Note what this cannot reach: the <b>prompt</b> has a display of its own, with the same diff and no
+     * {@code reset()} a caller can call. That asymmetry is exactly why the block comes back and the prompt
+     * row can stay blank, which {@code thePromptItselfStaysVisibleAfterEnlarging} records.
+     *
+     * @return {@code false} when the redraw threw, which a caller in a loop should treat as "skip this
+     *     size" rather than as a reason to stop
+     */
+    boolean repaintBlockFromScratch() {
+        if (requested.isEmpty()) {
+            return true;
+        }
+        try {
+            synchronized (writing) {
+                if (REPAINT == null) {
+                    // The released library has no repaint(), so there is nothing to force here and the
+                    // reflowed rows stay until something prints -- which is the same shape every one of the
+                    // other four fixes has on an unpatched library: the symptom comes back, nothing breaks.
+                    // /cls and Ctrl-L repair it there, because they only print.
+                    return true;
+                }
+                REPAINT.invoke(status);
+            }
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return false;
+        }
+        return refreshBlockForCurrentSize();
     }
 
     /**

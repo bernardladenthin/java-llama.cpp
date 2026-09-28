@@ -45,10 +45,22 @@ class ScreenTerminalHarness extends LineDisciplineTerminal {
 
     private final ScreenTerminal screen;
 
+    /**
+     * The screen's OWN geometry, which is not necessarily what the application is told.
+     *
+     * <p>Every reader below used to ask {@code getSize()} for the shape of the dump, which is the
+     * application's view — and a subclass that lies about it (to reproduce a console reporting a size it
+     * has not applied) then made the harness misread its own screen: an undersized dump buffer threw
+     * {@code ArrayIndexOutOfBoundsException} out of {@code ScreenTerminal.dump}. The screen is the
+     * harness's own object, so its shape is the harness's own knowledge and is kept here.
+     */
+    private Size screenSize;
+
     @SuppressWarnings("this-escape")
     ScreenTerminalHarness(String type, int columns, int rows) throws IOException {
         super("screen-harness", type, new ScreenTerminalOutputStream.DelegateOutputStream(), StandardCharsets.UTF_8);
         setSize(Size.of(columns, rows));
+        screenSize = Size.of(columns, rows);
         boolean delayedWrap = getBooleanCapability(InfoCmp.Capability.eat_newline_glitch);
         screen = new ScreenTerminal(columns, rows, delayedWrap);
         OutputStream feedback = new OutputStream() {
@@ -83,9 +95,48 @@ class ScreenTerminalHarness extends LineDisciplineTerminal {
      * @param rows the new height
      */
     void resize(int columns, int rows) {
+        screenSize = Size.of(columns, rows);
         screen.setSize(Size.of(columns, rows));
         setSize(Size.of(columns, rows));
         raise(Signal.WINCH);
+    }
+
+    /**
+     * Write straight onto the screen, behind the application's back.
+     *
+     * <p>What a console does to itself. Windows reflows its screen buffer when the window is widened —
+     * rows it had marked as wrapped are joined again — and JLine is never told: its {@code Display} still
+     * believes the rows it last wrote are on screen, so the next update computes an empty diff and emits
+     * NOTHING. That is why the artefact survives every later redraw and why "ein paar Mal Enter" is what
+     * repairs it. The bytes go into {@code masterOutput}, which is the screen's own input, so they reach
+     * the screen exactly the way the console's own reflow does: without passing through anything that
+     * keeps a model of it.
+     *
+     * @param ansi the sequence to interpret, e.g. a cursor address followed by text
+     * @throws IOException if the screen is gone
+     */
+    void writeBehindTheApplicationsBack(String ansi) throws IOException {
+        masterOutput.write(ansi.getBytes(StandardCharsets.UTF_8));
+        masterOutput.flush();
+    }
+
+    /**
+     * Change the SCREEN's shape without telling the application and without raising a signal.
+     *
+     * <p>The state a console is briefly in while it is being dragged, and the one shape of this defect
+     * that cannot be arranged any other way: the screen already has its new width while
+     * {@code getSize()} still reports the old one. A block rendered in that moment is padded to the
+     * width the application was told, does not reach the right margin, the terminal does not wrap, and
+     * the next row continues on the SAME screen line. A console that reflows its wrapped rows when it is
+     * widened — which Windows does — arrives at the identical screen by a different route, so this models
+     * both.
+     *
+     * @param columns the screen's real new width
+     * @param rows the screen's real new height
+     */
+    void resizeScreenOnly(int columns, int rows) {
+        screenSize = Size.of(columns, rows);
+        screen.setSize(Size.of(columns, rows));
     }
 
     /**
@@ -104,6 +155,7 @@ class ScreenTerminalHarness extends LineDisciplineTerminal {
      * @return the thread the signal was raised on, so a test can wait for it at the very end
      */
     Thread resizeAsynchronously(int columns, int rows) {
+        screenSize = Size.of(columns, rows);
         screen.setSize(Size.of(columns, rows));
         setSize(Size.of(columns, rows));
         Thread pump = new Thread(() -> {
@@ -124,7 +176,7 @@ class ScreenTerminalHarness extends LineDisciplineTerminal {
      * @return the rows, top to bottom
      */
     String[] rows() {
-        Size size = getSize();
+        Size size = screenSize;
         long[] dump = new long[size.getRows() * size.getColumns()];
         screen.dump(dump, 0, 0, size.getRows(), size.getColumns(), null);
         String[] out = new String[size.getRows()];
@@ -151,7 +203,7 @@ class ScreenTerminalHarness extends LineDisciplineTerminal {
      * @return the cursor's row, counted from the top
      */
     int cursorRow() {
-        Size size = getSize();
+        Size size = screenSize;
         long[] dump = new long[size.getRows() * size.getColumns()];
         int[] cursor = new int[2];
         screen.dump(dump, cursor);
@@ -164,7 +216,7 @@ class ScreenTerminalHarness extends LineDisciplineTerminal {
      * @return the cursor's column, counted from the left
      */
     int cursorColumn() {
-        Size size = getSize();
+        Size size = screenSize;
         long[] dump = new long[size.getRows() * size.getColumns()];
         int[] cursor = new int[2];
         screen.dump(dump, cursor);

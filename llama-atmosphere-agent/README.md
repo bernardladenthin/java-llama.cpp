@@ -463,15 +463,29 @@ network. Each is an icon, a space, its value. Rows are cut by **screen columns**
 because an icon is one character and two columns — counting characters lets a row come out wider than
 the window, wrap, and push the pinned block out of place.
 
-**Resizing the window** is left to JLine, which resizes the pinned region and re-cuts its rows itself.
-A handler of our own was tried for a reported row of `> > > > >` after dragging the window smaller and
-made it worse: the line reader installs its own handler for as long as it is reading, so ours only
-added a second writer on the terminal while the reader was redrawing. A test drives the real path — a
-size change plus the resize signal, with the reader reading as it does all session — across shrinking,
-growing and a changed row count, and every one draws exactly one prompt. The leftover `> ` row that is
-still reported is therefore not produced there; the remaining suspect is the console reflowing its own
-screen buffer on a resize, which moves lines the program never wrote again and which nothing on this
-side can reproduce. `/cls` or Ctrl-L cleans it up.
+**Resizing the window.** The pinned region is JLine's, but the rows in it are this project's: a rule built
+for a 113-column window stays 113 columns wide until somebody re-makes it, so the block is rebuilt whenever
+the window changes size, from a poll. A resize handler of our own was tried and made things worse — the line
+reader installs its own for as long as it is reading, so ours only added a second writer while the reader was
+redrawing.
+
+**And the redraw after the size settles is a repaint rather than a redraw**, which is what fixed "smaller was
+fine, bigger still breaks". The mechanism is worth knowing because it explains a report that survived every
+earlier fix. JLine pads each region row to the width the terminal *reports* and writes the rows one after
+another, relying on the terminal wrapping at the right margin to start the next one — so a screen that is
+**wider** than the reported width never wraps and the next row continues on the same screen line: a rule with
+the activity row cut short beside it, and the last row still looking perfectly correct. Windows gets there by
+a second route that does not correct itself: it **reflows** its screen buffer when the window is widened,
+joining rows it had marked as wrapped, which is every region row. JLine is never told, so its model still
+matches what it wrote, every later update computes an empty difference and writes **nothing**, and the joined
+rows stay for the rest of the session — which is exactly why holding Enter repaired it and no redraw did.
+Once the size stops changing, the block is therefore repainted unconditionally instead of compared.
+That needs a way to ask for a repaint, which the library did not have — `redraw()` is the same diff under another name, and `reset()` forgets the scroll region as well, so the next update grows the region by scrolling and leaves the old rows *above* the block. So a fifth fix is carried against JLine: a `Status.repaint()` that clears the model and nothing else. It is the only one of the five that adds a method, so it is called reflectively and skipped when absent: the agent must stay buildable with whatever JLine a copy of it finds, and the pom names the released version on purpose.
+
+What that cannot reach: the prompt is drawn by a display of its own with the same difference logic and no way
+in from outside, so a reflow that damages the prompt's row is still beyond repair from here. `/cls` or Ctrl-L
+cleans that up, because they only print.
+
 
 **A known JLine defect on Windows.** With a pinned block, typing without pressing Enter and then
 widening the window shows the prompt and the typed text once per keystroke, side by side. The repeats
