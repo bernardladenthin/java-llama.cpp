@@ -231,3 +231,42 @@ into view — see `CLAUDE.md`). Nothing in this project draws those rows a secon
 already covered by `JLineTerminalTest`. A fix would need the byte stream of a real session, which on
 Windows cannot be captured from inside the same JVM (see the note above about JLine writing through
 the console API), so it is recorded here rather than guessed at.
+
+## The drift, measured: our render path is innocent, and the screen loses rows
+
+A probe on the reporter's console (`DriftProbe`, session scratchpad) measures the cursor row **twice per
+request** — once before rebuilding the pinned block and once after, with the rebuild doing exactly what
+the console does. Two results, and both are decisive.
+
+**`cursorAfter` equalled `cursorBefore` in every single measurement**, across every run. That is a
+comparison of two readings on the same yardstick, so it holds regardless of whether the expectation was
+right — and it rules out this project's render path as the thing that moves the cursor. Together with the
+bisection (neither half of JLine's `handleSignal`, nor this console's refresh, nor the screen model) that
+leaves the movement happening during the console's own reflow.
+
+**The recovery sequence names the mechanism.** With the window left at one size and Enter pressed
+repeatedly, the readings climb one row per printed line:
+
+```
+cursorBefore=14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 26, 26, …
+```
+
+The cursor is not drifting *up*; each printed line walks it back *down* until it reaches its row and stays
+there. So the screen had **lost rows** above the block, and printing restores the layout — which is
+exactly what the reporter described: "es scheint als wäre der Bereich darüber invalide und müsste einmal
+überschrieben werden", and "nach ganz oft Enter sieht es wieder okay aus".
+
+**The candidate fix, and the obstacle.** The console already owns the primitive: `scrollToBottom()` emits
+`rows - 1` newlines once at startup for precisely this reason. Pushing the cursor back down when it sits
+above its row would be self-correcting and is entirely within this project. The obstacle is detection: a
+cursor-position report is a round trip through the terminal's input, so it cannot be issued from the
+polling thread while the reader owns the keyboard — which is why the probe measures only between reads.
+Tracking the row by counting what we print is the alternative, and it is fragile in exactly the situation
+that matters, a console that is dropping rows on its own.
+
+**Two probe defects, recorded so the earlier readings are not trusted.** The first version reported
+`cursorBefore=4` against `expectedRow=26` on every measurement and read as "the console moved it": it
+never scrolled to the bottom at startup, so the prompt legitimately sat near the top and the expectation
+did not apply there. It also wrote its log lines with `terminal.writer().println` instead of
+`printAbove`, which corrupted its own block into three rules at three widths — the defect this project's
+console fixed long ago. Both are fixed; the readings above are from the corrected probe.
