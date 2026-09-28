@@ -2387,6 +2387,17 @@ are decisions, not details:
    **no** entries rather than one wrong one, since anything it yielded would be replayed to the model
    as if it had been said.
 
+   **`JLineTerminal.open` refuses when there is no console, and that was a red build for months.** A system
+   terminal takes over the process's standard input, and where there is no console that input belongs to somebody
+   else. Inside a **Surefire fork it is the channel Surefire talks over**: a test that drives the agent
+   interactively reached `open()`, JLine grabbed the channel, and the run ended with
+   `[SUREFIRE] std/in stream corrupted` — **every test green, the build red**, which is exactly the shape that
+   hides. It also made `LocalAgentTest` take 23.6 s instead of 2.0 s, because it was blocking on reads that were
+   never going to arrive. The check is the same two-step `Ansi` uses for colour: `Console.isTerminal()` where it
+   exists (JDK 22+, where `System.console()` returns a console even for redirected streams), otherwise the mere
+   presence of a console. Piped input lands here too and has always been served by the plain console, so nothing
+   else changes.
+
 8. **Tool calls are carried into the conversation as a text note, and logged for `/calls`.**
    `LocalAgent.withToolNotes` prefixes each turn's answer in the history with
    `(tools I actually ran this turn: <tool> <args> -> <result, cut at 400 chars>)`, and `ToolCallLog`

@@ -790,3 +790,31 @@ observes the erase any more. It stays in the patch set because it is *right* —
 the bar's to clear, the erase is unrecoverable where a scroll is not, and every consumer that does not wipe needs
 it — but it is carried on the merits rather than on a failing test here. Its own guard lives where the defect
 does, in `StatusRepaintTest`.
+
+## Does it build against the released JLine? Yes — and asking found a red build
+
+The question behind the question was whether the patched jar is a prerequisite, i.e. whether the fixes would have
+to go upstream before this is usable. Measured, with the pom's default (`jline.version=4.4.6`, the released
+library):
+
+```
+mvn clean compile   -> BUILD SUCCESS
+mvn clean verify    -> 233 tests, 0 failures, 63 skipped, BUILD SUCCESS
+```
+
+So no: the console compiles and builds against the release. Only one JLine API is used that does not exist there —
+`Status.repaint()` — and it is looked up reflectively for exactly this reason, while the other fixes change
+*behaviour* rather than surface. Without them the symptoms come back (26 cases fail when the skip is bypassed),
+which is why the patched jar is worth having; it is not needed to build or to run.
+
+**Asking the question found something worse than the answer.** The first `verify` failed — not on a test, but with
+`[SUREFIRE] std/in stream corrupted` after every one of the 233 tests had passed. `JLineTerminal.open()` builds a
+*system* terminal, which takes over the process's standard input, and inside a Surefire fork that is the channel
+Surefire itself talks over: a test driving the agent interactively reached it, took the channel, and the build
+ended red with a green suite. It had also been making `LocalAgentTest` take **23.6 s instead of 2.0 s**, blocking
+on reads that were never going to arrive.
+
+`open()` now refuses when there is no console, checked the way `Ansi` checks for colour: `Console.isTerminal()`
+where it exists (JDK 22+, where `System.console()` answers even for redirected streams), otherwise the presence of
+a console. Piped input reaches the same path and has always been served by the plain console, so nothing else
+changes — and `mvn verify` is green for the first time in this module's history.

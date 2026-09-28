@@ -150,6 +150,15 @@ public final class JLineTerminal implements AgentTerminal {
      * @return the terminal, or {@code null} when this is not an interactive terminal
      */
     public static @Nullable JLineTerminal open(List<String> completions) {
+        if (!thereIsAConsole()) {
+            // Refused rather than attempted, and this is not hypothetical tidiness: a system terminal takes
+            // over the process's standard input, and where there is no console that input belongs to somebody
+            // else. Inside a Surefire fork it is the channel Surefire itself talks over, and grabbing it ends
+            // the build with "[SUREFIRE] std/in stream corrupted" -- every test green, the build red, for
+            // months, because a test that drives the agent interactively reaches this method. Piped input lands
+            // here too and has always been served by the plain console.
+            return null;
+        }
         try {
             Terminal terminal = TerminalBuilder.builder().system(true).build();
             if (terminal.getType().startsWith(Terminal.TYPE_DUMB)) {
@@ -160,6 +169,29 @@ public final class JLineTerminal implements AgentTerminal {
         } catch (IOException | RuntimeException e) {
             // No terminal, no native provider, a restricted environment: the plain console still works.
             return null;
+        }
+    }
+
+    /**
+     * Whether this process has a console to take over.
+     *
+     * <p>{@code Console.isTerminal()} where it exists (JDK 22 and later), because from there
+     * {@link System#console()} returns a console even when the streams are redirected; below that, the presence
+     * of a console is the answer. The same two-step {@code Ansi} uses to decide about colour, for the same
+     * reason: a redirected stream is not a terminal, whatever the JDK hands back.
+     *
+     * @return whether a system terminal may be opened
+     */
+    private static boolean thereIsAConsole() {
+        java.io.Console console = System.console();
+        if (console == null) {
+            return false;
+        }
+        try {
+            return (Boolean) java.io.Console.class.getMethod("isTerminal").invoke(console);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            // Before JDK 22 there is no isTerminal(), and a console that exists is a terminal.
+            return true;
         }
     }
 
