@@ -1355,9 +1355,12 @@ class ScreenUseCasesTest {
                 "the rule is directly above the block" + NEWLINE + screen,
                 isRule(screenRows[rows - blockRows]),
                 is(true));
+        // The HEAD of the state row, not its tail: a narrow window cuts the row with an ellipsis, so
+        // "local-model" is legitimately absent there and looking for it fails for the wrong reason -- which it
+        // did, twice, in tests about narrowing.
         assertThat(
                 "the state row is on screen once" + NEWLINE + screen,
-                count(screenRows, row -> row.contains("local-model")),
+                count(screenRows, row -> row.contains("agent-sandbox")),
                 is(1));
     }
 
@@ -2062,32 +2065,35 @@ class ScreenUseCasesTest {
     }
 
     @Test
-    void makingTheWindowNARROWERmustNotERASETheConversation() throws Exception {
-        // "nach dem kleiner ziehen sehe ich es nicht mehr" -- and the answer is not scrolled away, it is
-        // ERASED. Status.resize clears a band of rows when the geometry changes, and when the width DECREASES
-        // it pulls the start of that band upwards by as many rows as the old status lines would have wrapped
-        // into: extraRows = (ceil(oldColumns / columns) - 1) * statusLines. Halving the width of a window with
-        // a three-row bar therefore clears six rows ABOVE the region -- straight through the conversation.
+    void makingTheWindowNARROWERwipesAndLeavesOneCleanBlock() throws Exception {
+        // This case changed sides once the wipe covered narrowing too, and both sides are worth keeping.
+        //
+        // It began as the reproduction of "nach dem kleiner ziehen sehe ich es nicht mehr": Status.resize ERASED
+        // rows above the bar -- six of them for a halved window -- and that erase is unrecoverable, which is why
+        // it is fixed in the library (StatusRepaintTest.makingTheWindowNarrowerDoesNotEraseWhatIsAboveTheBar) and
+        // stays fixed for every consumer that does not wipe.
+        //
+        // What this console does on top is scroll the screen once the width has settled, because narrowing
+        // re-wraps the bar's own rows -- built for the old width, they no longer fit -- and the pieces that land
+        // above the region cannot be found afterwards. Scrolling is not erasing: the conversation is in the
+        // scrollback. So what is asserted here is the settled state: a clean single block, with the input on its
+        // row.
         int rows = 16;
         int wide = 100;
         ScreenTerminalHarness terminal = terminalWithRows(wide, rows);
         try (JLineTerminal console = start(terminal, realBlockWithBasicPlaneIcons())) {
             console.line("ANSWER-ONE the user wants to keep seeing");
             console.line("ANSWER-TWO the user wants to keep seeing");
-            console.line("ANSWER-THREE the user wants to keep seeing");
             Thread.sleep(300);
-            assertThat(
-                    "all three answers are on screen before the drag" + NEWLINE + terminal.describe(),
-                    count(terminal.rows(), row -> row.contains("the user wants to keep seeing")),
-                    is(3));
 
             resizeOnceAt(terminal, console, wide / 2, rows);
 
             String screen = terminal.describe();
+            assertBlockIsIntactAt(terminal, rows, 3);
             assertThat(
-                    "and still after it" + NEWLINE + screen,
-                    count(terminal.rows(), row -> row.contains("the user wants")),
-                    is(3));
+                    "the input is on the row the block leaves for it" + NEWLINE + screen,
+                    terminal.cursorRow(),
+                    is(rows - 4));
         }
     }
 

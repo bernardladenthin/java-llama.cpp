@@ -705,3 +705,26 @@ change does not, because without a width change there is no reflow — there the
 instead. Both reflow cases are green with it and the screen is exact: prompt on its row, one rule, nothing above.
 The trade is the user's, taken knowingly: the visible conversation scrolls out of view on a width drag and stays
 reachable with the scrollbar.
+
+## Both directions, and a correction of my own
+
+The wipe was narrowed to "only when the width grew" on reasoning — joining is what frees rows — and the next
+report came from the other direction: *"beim kleiner ziehen wandert es nach oben mit ganz vielen Zeilen"*, with
+one enormous run of dashes. A paste rejoins wrapped runs, so what is on the screen is the **bar's own rows**,
+built for the old width, re-wrapped by the console across several screen rows: the bar then needs more rows than
+the region reserves and everything above it is pushed up. Narrowing does not join, it **splits**, and it leaves
+rows behind for the mirror-image reason. **The decision the trade-off question actually asked for was "after a
+width change", and that is what is implemented now** — narrowing my own brief was the mistake.
+
+**What the emulator does and does not show here, stated plainly.** Its narrowing case comes out clean, so it does
+**not** reproduce that report; it is kept as the guard for the settled state rather than presented as evidence for
+the fix. Two of its assertions had to be corrected along the way, both for the same reason and both mine: at 50 or
+60 columns the state row is *legitimately* cut with an ellipsis, so looking for `local-model` — its tail — fails
+for the wrong reason. The shared helper now checks the row's head. That is the third time in this investigation
+that an assertion was wrong rather than the code, which is worth counting.
+
+**Where this leaves the drag behaviour**, all of it measured rather than described: a width change in either
+direction wipes once the size settles and draws the block in place; a height change prints the prompt back to its
+row and keeps the conversation; the block itself is never carried anywhere because it is redrawn from scratch
+afterwards. 230 tests green twice in a row with `4.4.6-statusfix8`, and green against the released `4.4.6`, where
+the 60 cases that need the patched library skip themselves.

@@ -2803,7 +2803,7 @@ are decisions, not details:
    `thePromptItselfStaysVisibleAfterEnlarging` records that. `/cls` and Ctrl-L do repair it, because they
    only print.
 
-   **A settled WIDTH change wipes the screen; a height change does not.** This is the last of the drag defects and
+   **A settled WIDTH change wipes the screen, in EITHER direction; a height change does not.** This is the last of the drag defects and
    the only one that could not be prevented, only removed. A console **reflows** when the width changes — measured
    on the reporter's, with a number rather than a screenshot, because a pasted screen cannot answer it (Windows
    Terminal copies the scrollback and rejoins wrapped runs, so wrapping is invisible in a paste): a 32-row window
@@ -2819,7 +2819,14 @@ are decisions, not details:
    copy afterwards either — a caller cannot read the screen. Scrolling removes it, which is what `/cls` does and
    why that command was always the repair. The trade was the user's call: the visible conversation scrolls out of
    view on a width drag and stays reachable with the scrollbar. A height change needs none of this (no width
-   change, no reflow) and keeps the conversation, with the prompt printed back to its row instead.
+   change, nothing re-wraps) and keeps the conversation, with the prompt printed back to its row instead.
+   **It was narrowed to "only when the width grew" once, on reasoning rather than evidence, and the next report
+   came from the other direction:** narrowing does not join lines, it **splits** them, and the bar's own rows —
+   built for the old width — no longer fit and are re-wrapped across several screen rows, so the bar needs more
+   rows than the region reserves and everything above it is pushed up ("beim kleiner ziehen wandert es nach oben
+   mit ganz vielen Zeilen"). Both directions leave rows behind that only scrolling removes. Note what the wipe is
+   **not**: the eighth JLine fix stops the library from *erasing* those rows, which is unrecoverable, while
+   scrolling them into the scrollback is not — that fix still matters for every consumer that does not wipe.
 
    **A height change moves the prompt off its row, and the settle prints it back**
    (`pushThePromptBackToItsRow`). Measured on the interpreted screen with the real three-row block: growing 20

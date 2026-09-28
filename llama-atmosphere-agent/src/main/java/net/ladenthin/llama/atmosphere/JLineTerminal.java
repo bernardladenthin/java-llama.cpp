@@ -256,13 +256,12 @@ public final class JLineTerminal implements AgentTerminal {
                     // The height the window had when the current run of changes started, so the settle knows
                     // how far the prompt can have drifted. Zero while nothing is in flight.
                     int rowsBeforeTheDrag = 0;
-                    // Whether the window got WIDER during the current run of events. Wider, not merely
-                    // different: joining wrapped lines is what frees rows and carries the block up, and that
-                    // happens when the width GROWS. Narrowing splits lines instead, the content grows downwards,
-                    // and the measurement agrees -- the cursor stayed on the last row there. Wiping on a
-                    // narrowing would also undo the eighth JLine fix, which exists precisely so that making the
-                    // window smaller no longer costs the conversation.
-                    boolean widthGrew = false;
+                    // Whether the WIDTH moved during the current run of events -- in either direction, and that
+                    // was corrected once after being narrowed to "grew" on reasoning rather than on evidence.
+                    // Widening joins wrapped lines and frees rows; narrowing splits them and the bar's own rows,
+                    // built for the old width, no longer fit and are re-wrapped across several screen rows. Both
+                    // leave rows behind that only scrolling removes, and both were reported.
+                    boolean widthMoved = false;
                     while (!closed) {
                         try {
                             Thread.sleep(WATCH_INTERVAL_MILLIS);
@@ -290,10 +289,10 @@ public final class JLineTerminal implements AgentTerminal {
                         if (now.getColumns() != last.getColumns() || now.getRows() != last.getRows()) {
                             if (settleAt == 0) {
                                 rowsBeforeTheDrag = last.getRows();
-                                widthGrew = false;
+                                widthMoved = false;
                             }
-                            if (now.getColumns() > last.getColumns()) {
-                                widthGrew = true;
+                            if (now.getColumns() != last.getColumns()) {
+                                widthMoved = true;
                             }
                             last = now;
                             settleAt = System.currentTimeMillis() + SETTLE_MILLIS;
@@ -318,14 +317,14 @@ public final class JLineTerminal implements AgentTerminal {
                         // why holding Enter was what repaired it. See repaintBlockFromScratch.
                         if (settleAt != 0 && System.currentTimeMillis() >= settleAt) {
                             settleAt = 0;
-                            if (widthGrew) {
+                            if (widthMoved) {
                                 // The screen is wiped, which is the only thing that removes what a reflow left
                                 // behind -- see wipeAfterAWidthChange.
                                 clearScreen();
                             } else {
                                 pushThePromptBackToItsRow(Math.abs(now.getRows() - rowsBeforeTheDrag));
                             }
-                            widthGrew = false;
+                            widthMoved = false;
                             rowsBeforeTheDrag = 0;
                             if (!repaintBlockFromScratch() && closed) {
                                 return;
@@ -561,13 +560,19 @@ public final class JLineTerminal implements AgentTerminal {
      * the copy afterwards either — a caller cannot read the screen. Scrolling removes it, which is exactly what
      * {@code /cls} does and why that command has been the one repair that always worked.
      *
-     * <p>So a settled <b>widening</b> wipes, and the trade is stated rather than hidden: the visible conversation
-     * scrolls out of view, and stays reachable with the scrollbar. <b>Narrowing does not wipe</b>, and that is not
-     * an oversight: splitting lines makes the content grow downwards rather than freeing rows — the probe's cursor
-     * stayed on the last row there — and wiping would undo the eighth JLine fix, which exists precisely so that
-     * making the window smaller no longer costs the conversation. A height change does not wipe either, because
-     * without a width change there is no reflow; there the prompt is printed back to its row instead (see
-     * {@link #pushThePromptBackToItsRow(int)}).
+     * <p>So a settled change of <b>width</b> wipes, in either direction. That was narrowed to "only when it grew"
+     * once, on the reasoning that joining is what frees rows — and the next report came from the other direction:
+     * narrowing does not join, it <b>splits</b>, and the bar's own rows, built for the old width, no longer fit
+     * and are re-wrapped across several screen rows. The bar then needs more rows than the region reserves and
+     * everything above it is pushed up, which is "beim kleiner ziehen wandert es nach oben mit ganz vielen
+     * Zeilen". Both directions leave rows behind and only scrolling removes them.
+     *
+     * <p>The trade is stated rather than hidden: the visible conversation scrolls out of view on a width drag and
+     * stays reachable with the scrollbar. A <b>height</b> change does not wipe — without a width change nothing
+     * re-wraps — and there the prompt is printed back to its row instead (see
+     * {@link #pushThePromptBackToItsRow(int)}). Note what this is not: the eighth JLine fix stops the library from
+     * <em>erasing</em> the rows above the bar, which is unrecoverable; scrolling them into the scrollback is not,
+     * and the fix still matters for every consumer that does not wipe.
      *
      * <p>Reproduced by {@code ReflowResizeTest} on a screen model that reflows. The ordinary model does not,
      * which is why this defect survived so many rounds of testing.

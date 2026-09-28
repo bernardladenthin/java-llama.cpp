@@ -154,4 +154,50 @@ class ReflowResizeTest {
                     is(1));
         }
     }
+
+    @Test
+    void narrowingMustNotLEAVETheOldWIDERuleWrappedAcrossTheScreen() throws Exception {
+        // The reported screen for a NARROWING: "beim kleiner ziehen wandert es nach oben mit ganz vielen
+        // Zeilen", with one enormous run of dashes. A paste rejoins wrapped runs, so what is really there is the
+        // OLD rule -- built for the old, much wider window -- re-wrapped by the console across several screen
+        // rows. The bar then occupies more rows than the region reserves and everything above it is pushed up.
+        //
+        // The console must re-wrap it: the text no longer fits, so no wrap flag and no padding trick can prevent
+        // it, and this console learns of the new size up to 120 ms later. So what is asserted is the state after
+        // everything has settled: one rule, at the new width, on the row above the block, and nothing of the old
+        // one left anywhere.
+        int wide = 200;
+        int narrow = 60;
+        ReflowingScreenHarness terminal = new ReflowingScreenHarness("windows-vtp", wide, ROWS);
+        try (JLineTerminal console = start(terminal)) {
+            console.line("AN-ANSWER the user was reading");
+            Thread.sleep(200);
+
+            resizeAndSettle(terminal, console, narrow, ROWS);
+
+            String screen = terminal.describe();
+            String[] rows = terminal.rows();
+            assertThat(
+                    "exactly one rule is on screen" + System.lineSeparator() + screen,
+                    count(rows, this::isRule),
+                    is(1));
+            assertThat(
+                    "the rule is the row above the block" + System.lineSeparator() + screen,
+                    isRule(rows[ROWS - 3]),
+                    is(true));
+            // "agent-sandbox", not "local-model": at 60 columns the state row is legitimately cut with
+            // an ellipsis, so its tail is not on screen and looking for it would fail for the wrong reason.
+            assertThat(
+                    "exactly one state row is on screen" + System.lineSeparator() + screen,
+                    count(rows, row -> row.contains("agent-sandbox")),
+                    is(1));
+            for (int row = 0; row < ROWS - 3; row++) {
+                assertThat(
+                        "row " + row + " is above the block and carries no piece of a rule" + System.lineSeparator()
+                                + screen,
+                        rows[row].contains("─"),
+                        is(false));
+            }
+        }
+    }
 }
