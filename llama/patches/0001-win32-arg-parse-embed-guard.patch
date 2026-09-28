@@ -300,19 +300,6 @@ index 46ded1398..d5f1cabe7 100644
          return 1;
      }
  
-diff --git a/tests/test-recurrent-state-rollback.cpp b/tests/test-recurrent-state-rollback.cpp
-index 8e2eace6a..d7a7afed9 100644
---- a/tests/test-recurrent-state-rollback.cpp
-+++ b/tests/test-recurrent-state-rollback.cpp
-@@ -44,7 +44,7 @@ int main(int argc, char ** argv) {
- 
-     common_init();
- 
--    if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_COMMON)) {
-+    if (!common_params_parse_main(argc, argv, params, LLAMA_EXAMPLE_COMMON)) {
-         return 1;
-     }
- 
 diff --git a/tests/test-state-restore-fragmented.cpp b/tests/test-state-restore-fragmented.cpp
 index d5548afba..95ba2b67b 100644
 --- a/tests/test-state-restore-fragmented.cpp
