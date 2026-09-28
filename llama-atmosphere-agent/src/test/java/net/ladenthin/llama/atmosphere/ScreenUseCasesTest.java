@@ -920,6 +920,62 @@ class ScreenUseCasesTest {
     }
 
     @Test
+    @Disabled(
+            "Reproduced and open, and the same defect as the invisible prompt seen from the other side: re-establishing the reserved region clears rows above it, so a turn already on screen is erased by a resize. Here the rule assertions hold -- one rule, no wider than the window -- while the answer text is gone entirely, which is the reported half about the output sitting too far up. The fix belongs in Status.resize, which clears a band above its own region; it cannot be worked around from outside the reader. Delete the annotation to see it.")
+    void afterATurnShrinkingAndGrowingKeepsOneRuleNoWiderThanTheWindow() throws Exception {
+        // Both halves of the latest report in one case, because both are the same measurement from
+        // different sides: shrinking moves the input area and the output up, and growing produces a rule
+        // far wider than the window -- roughly 700 columns of it in a window of about 175, so four screen
+        // rows of rule. A rule that occupies four rows where one is reserved pushes everything above it up
+        // by three, which IS the "Ausgabe zu weit oben" half.
+        //
+        // With a turn's output on screen, as the report had it: the conversation is what gets pushed.
+        int rows = 20;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", WIDE, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            console.line("› Hallo");
+            console.line("Hello! How can I assist you today?");
+            Thread.sleep(300);
+
+            List<Thread> pumps = new ArrayList<>();
+            for (int columns : new int[] {NARROW, WIDE, NARROW, WIDE}) {
+                pumps.add(terminal.resizeAsynchronously(columns, rows));
+                console.refreshBlockForCurrentSize();
+                Thread.sleep(40);
+            }
+            for (Thread pump : pumps) {
+                pump.join(2000);
+            }
+            Thread.sleep(400);
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(300);
+
+            String screen = terminal.describe();
+            String[] screenRows = terminal.rows();
+            int columns = terminal.getSize().getColumns();
+
+            assertThat("the rule is on screen once" + NEWLINE + screen, count(screenRows, this::isRule), is(1));
+            long dashes = screenRows[rows - 3]
+                    .chars()
+                    .filter(character -> character == '─' || character == 'q')
+                    .count();
+            assertThat(
+                    "and it is no wider than the window: " + dashes + " of " + columns + NEWLINE + screen,
+                    dashes <= columns - 2L,
+                    is(true));
+            assertThat(
+                    "the answer from the turn is still on screen" + NEWLINE + screen,
+                    count(screenRows, row -> row.contains("How can I assist")),
+                    is(1));
+        }
+    }
+
+    @Test
     void theModeBadgeKeepsItsSpaceOnScreen() throws Exception {
         // Reported: "beim auto mode hat immer ein leerzeichen gefehlt: [pause] manual". The badge is
         // built as symbol + " " + name, so the space is there in the string -- the question is whether it
