@@ -321,6 +321,17 @@ public final class JLineTerminal implements AgentTerminal {
             text.lines().forEach(this::line);
             return;
         }
+        for (String piece : fold(text, Math.max(20, terminal.getSize().getColumns() - 1))) {
+            write(piece);
+        }
+    }
+
+    /**
+     * Write one line that is known to fit, through whichever path is safe right now.
+     *
+     * @param text the line
+     */
+    private void write(String text) {
         synchronized (writing) {
             if (input != null) {
                 // Once the reader thread exists it owns the screen, and nothing may write around it --
@@ -333,6 +344,57 @@ public final class JLineTerminal implements AgentTerminal {
                 terminal.writer().flush();
             }
         }
+    }
+
+    /**
+     * Break a line into pieces that each fit the window, so the CONSOLE never wraps it.
+     *
+     * <p><b>This is what makes the whole console reflow-proof, and the reasoning is the point.</b> A line the
+     * console wrapped is <em>one</em> logical line spanning two screen rows, and Windows joins such lines
+     * again when the window is widened. The text above then occupies fewer rows and <b>everything below moves
+     * up</b> — including the block rows last rendered, which end up above the pinned region where nothing ever
+     * writes again. One leftover per drag step, which is the reported staircase of rules climbing "von unten
+     * rechts nach oben links"; narrowing does it in reverse and walks the input upwards. No program can
+     * observe a reflow or prevent one. What it can do is deny it a target: a line that was never soft-wrapped
+     * has nothing to join.
+     *
+     * <p>Counted in <b>screen columns</b>, not characters, and that distinction has cost this class a defect
+     * before: an icon is one character and two columns, so folding by length lets a piece come out wider than
+     * the window after all. {@link AttributedString#fromAnsi} parses the colours a caller already put in, so
+     * the pieces keep their styling and the escape sequences do not count towards the width.
+     *
+     * <p>The price is stated rather than hidden: text keeps the line breaks it was printed with, so widening
+     * the window does not re-flow the conversation. That is the same trade this console already makes by
+     * rendering append-only — and the alternative is what the reports were about.
+     *
+     * @param text the line, possibly carrying ANSI styling
+     * @param width how many columns a piece may use
+     * @return the pieces, in order; a single-element list when the line already fits
+     */
+    static List<String> fold(String text, int width) {
+        AttributedString measured = AttributedString.fromAnsi(text);
+        if (measured.columnLength() <= width) {
+            return List.of(text);
+        }
+        List<String> pieces = new java.util.ArrayList<>();
+        int totalColumns = measured.columnLength();
+        int at = 0;
+        while (at < totalColumns) {
+            // The window walks in COLUMNS, because that is the only unit the terminal cares about, and the
+            // piece says how many it actually took: a double-width character straddling the boundary is left
+            // for the next piece, so a piece can be one column short of the width.
+            AttributedString piece = measured.columnSubSequence(at, Math.min(totalColumns, at + width));
+            int consumed = piece.columnLength();
+            if (consumed <= 0) {
+                // A single character wider than the whole window. Cannot happen with the width the caller
+                // passes, and a guard rather than a loop that never ends if it ever does.
+                piece = measured.columnSubSequence(at, at + 2);
+                consumed = Math.max(1, piece.columnLength());
+            }
+            pieces.add(piece.toAnsi());
+            at += consumed;
+        }
+        return pieces;
     }
 
     /**

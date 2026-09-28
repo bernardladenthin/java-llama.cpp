@@ -16,6 +16,7 @@ import java.util.List;
 import org.jline.terminal.Size;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
+import org.jline.utils.AttributedString;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -422,6 +423,62 @@ class JLineTerminalTest {
 
             assertThat(screen(), containsString("first"));
             assertThat(screen(), containsString("second"));
+        }
+    }
+
+    @Test
+    void foldingLeavesAShortLineExactlyAsItWas() {
+        assertThat(JLineTerminal.fold("kurz", 40), is(List.of("kurz")));
+        assertThat(JLineTerminal.fold("", 40), is(List.of("")));
+    }
+
+    @Test
+    void foldingBreaksOnColumnsAndNoPieceIsWiderThanTheWidth() {
+        List<String> pieces = JLineTerminal.fold("x".repeat(95), 40);
+        assertThat(pieces.size(), is(3));
+        for (String piece : pieces) {
+            assertThat(new AttributedString(piece).columnLength() <= 40, is(true));
+        }
+        assertThat(String.join("", pieces), is("x".repeat(95)));
+    }
+
+    @Test
+    void foldingKeepsDoubleWidthGlyphsWhole() {
+        // An icon is one character and two columns. A piece may therefore come out one column short of the
+        // width rather than splitting the glyph in half -- what must never happen is a piece WIDER than the
+        // window, which is the thing the console would wrap.
+        List<String> pieces = JLineTerminal.fold("📊".repeat(30), 41);
+        for (String piece : pieces) {
+            assertThat(
+                    "piece is " + new AttributedString(piece).columnLength() + " columns wide",
+                    new AttributedString(piece).columnLength() <= 41,
+                    is(true));
+        }
+        assertThat(String.join("", pieces), is("📊".repeat(30)));
+    }
+
+    @Test
+    void foldingKeepsTheStylingACallerPutIn() {
+        // The text arrives with ANSI already in it (bold echoes, coloured markdown). The escapes have zero
+        // width, so they must not count towards the fold, and each piece has to carry its own styling or the
+        // second one comes out plain.
+        String bold = "\u001b[1m" + "y".repeat(90) + "\u001b[0m";
+        List<String> pieces = JLineTerminal.fold(bold, 40);
+        assertThat(pieces.size(), is(3));
+        for (String piece : pieces) {
+            assertThat("a piece carries its own styling: " + piece, piece.contains("\u001b["), is(true));
+            assertThat(new AttributedString(piece).columnLength() <= 40 + 10, is(true));
+        }
+    }
+
+    @Test
+    void foldingKeepsUmlautsAndSharpS() {
+        // Two bytes in UTF-8, one column on screen: a fold that counted bytes would cut them in half.
+        String text = "Grüße über Straßen".repeat(6);
+        List<String> pieces = JLineTerminal.fold(text, 30);
+        assertThat(String.join("", pieces), is(text));
+        for (String piece : pieces) {
+            assertThat(new AttributedString(piece).columnLength() <= 30, is(true));
         }
     }
 }

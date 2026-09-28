@@ -1728,4 +1728,111 @@ class ScreenUseCasesTest {
                     is(grown - 1 - blockRows));
         }
     }
+
+    @Test
+    void severalGrowingDragsInARowMustNotLEAVEaStaircaseOfRulesBehind() throws Exception {
+        // The report, in the words that name the shape: "beim größer ziehen tauchen von unten rechts nach
+        // oben links immer mehr von den zeilen strichen auf". A staircase of rules, one per drag, climbing
+        // away from the block.
+        //
+        // The mechanism this looks for: the bar is drawn at the rows the region has NOW, so every earlier
+        // render sits at the rows the region had THEN. On a window that grows, those are higher up -- and
+        // they are above the region, in the output area, where nothing writes again. One render left behind
+        // per size change is exactly a staircase.
+        int rows = 14;
+        ScreenTerminalHarness terminal = terminalWithRows(80, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+
+            int grown = rows;
+            for (int step = 0; step < 3; step++) {
+                grown += 3;
+                growOnce(terminal, console, 80 + 20 * (step + 1), grown);
+            }
+
+            String screen = terminal.describe();
+            String[] screenRows = terminal.rows();
+            assertThat("exactly one rule is on screen" + NEWLINE + screen, count(screenRows, this::isRule), is(1));
+            assertThat(
+                    "exactly one state row is on screen" + NEWLINE + screen,
+                    count(screenRows, row -> row.contains("local-model")),
+                    is(1));
+            assertThat(
+                    "exactly one activity row is on screen" + NEWLINE + screen,
+                    count(screenRows, row -> row.contains("waiting for input")),
+                    is(1));
+        }
+    }
+
+    @Test
+    void aLongLineIsFoldedByUsSoTheCONSOLEneverWrapsIt() throws Exception {
+        // The fix for the whole family of drag artefacts, and the reason is the console's own reflow: a line
+        // the CONSOLE wrapped is one logical line spanning two screen rows, and when the window is widened it
+        // joins them again. The text above then needs fewer rows, everything below moves UP -- including the
+        // block rows last rendered, which end up above the region where nothing writes again. One leftover
+        // per drag step, "von unten rechts nach oben links". Narrowing does it in reverse and walks the input
+        // upwards.
+        //
+        // Nothing can observe or prevent a reflow. What it can be denied is a target: a line that was never
+        // soft-wrapped has nothing to join. So every output line is folded HERE, to one column less than the
+        // window, and the screen then holds no full-width row at all -- which is what this asserts, because
+        // that is the property the reflow needs.
+        int columns = 60;
+        ScreenTerminalHarness terminal = terminalWithRows(columns, 14);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(List.of(STATE));
+            Thread.sleep(200);
+
+            console.line("x".repeat(columns * 2 + 7));
+            Thread.sleep(300);
+
+            String[] rows = terminal.rows();
+            String screen = terminal.describe();
+            for (int row = 0; row < rows.length; row++) {
+                assertThat(
+                        "row " + row + " reaches the last column, so the console wrapped it" + NEWLINE + screen,
+                        rows[row].charAt(columns - 1) != ' ',
+                        is(false));
+            }
+            long carrying = count(rows, row -> row.contains("xxx"));
+            assertThat(
+                    "the text is spread over its own rows: " + carrying + NEWLINE + screen, carrying >= 3L, is(true));
+        }
+    }
+
+    @Test
+    void foldingCountsSCREENCOLUMNSnotCharacters() throws Exception {
+        // An icon is one character and TWO columns. Folding by character length lets a piece come out wider
+        // than the window after all, which is the very thing being prevented -- and it is how a long summary
+        // tore the block apart once before, through another door.
+        int columns = 40;
+        ScreenTerminalHarness terminal = terminalWithRows(columns, 12);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+
+            console.line("◆".repeat(60));
+            Thread.sleep(300);
+
+            String[] rows = terminal.rows();
+            String screen = terminal.describe();
+            for (int row = 0; row < rows.length; row++) {
+                assertThat(
+                        "row " + row + " reaches the last column" + NEWLINE + screen,
+                        rows[row].charAt(columns - 1) != ' ',
+                        is(false));
+            }
+        }
+    }
 }

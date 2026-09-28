@@ -463,6 +463,15 @@ network. Each is an icon, a space, its value. Rows are cut by **screen columns**
 because an icon is one character and two columns — counting characters lets a row come out wider than
 the window, wrap, and push the pinned block out of place.
 
+**Output is folded by the agent, not by the console**, to one column less than the window. That is what
+makes dragging the window survivable, and the reason is worth knowing: a line the console wrapped is *one*
+logical line over two screen rows, and Windows joins such lines again when the window is widened. The text
+above then needs fewer rows and everything below moves **up** — including the pinned block's last-drawn rows,
+which end up above the block where nothing writes again. One leftover per drag, which is where the rules
+climbing up the screen came from; narrowing does it in reverse and walks the input upwards. A line that was
+never soft-wrapped has nothing to join. The price: text keeps the line breaks it was printed with, so widening
+the window does not re-flow the conversation — the same trade an append-only console already makes.
+
 **Resizing the window.** The pinned region is JLine's, but the rows in it are this project's: a rule built
 for a 113-column window stays 113 columns wide until somebody re-makes it, so the block is rebuilt whenever
 the window changes size, from a poll. A resize handler of our own was tried and made things worse — the line

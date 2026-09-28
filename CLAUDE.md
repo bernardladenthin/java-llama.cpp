@@ -2633,6 +2633,27 @@ are decisions, not details:
    [`docs/upstream-investigation-jline-status-windows-redraw.md`](docs/upstream-investigation-jline-status-windows-redraw.md).
    **Nothing here can honestly fix it**; `--plain` pins nothing and is unaffected.
 
+   **Every output line is folded by this console, so the CONSOLE never wraps one** (`JLineTerminal.fold`, to
+   one column less than the window). This is the fix for the whole family of drag artefacts and the reasoning
+   is the load-bearing part: a line the console wrapped is **one** logical line spanning two screen rows, and
+   Windows **joins such lines again when the window is widened**. The text above then needs fewer rows and
+   everything below moves **up** — including the block rows last rendered, which end up above the pinned region
+   where nothing ever writes again. One leftover per drag step, which is the reported staircase of rules
+   climbing "von unten rechts nach oben links"; narrowing does it in reverse and walks the input upwards.
+   **No program can observe a reflow or prevent one — but it can deny it a target:** a line that was never
+   soft-wrapped has nothing to join.
+   **The harness could not reproduce this, and that is why every grow test was green while the console was
+   not:** `ScreenTerminal` pulls scrollback down when it grows and **does not reflow at all**. The property is
+   testable, though, and that is what the two screen cases assert — after printing a long line, **no row on
+   screen reaches the last column** (red before: rows 8 and 9 were full width). Five unit tests pin the fold:
+   a short line is untouched, no piece exceeds the width, a double-width glyph is never split (a piece may come
+   out a column short instead), ANSI a caller put in survives and does not count towards the width, and
+   umlauts stay whole. Folding counts **screen columns** via `AttributedString.fromAnsi`, never characters —
+   an icon is one character and two columns, which has cost this class a defect before.
+   **The price is stated rather than hidden:** text keeps the line breaks it was printed with, so widening no
+   longer re-flows the conversation. That is the same trade this console already makes by rendering
+   append-only.
+
    **The pinned block is rebuilt whenever the window changes size, from a poll** (`startWatchingSize`,
    every 120 ms). What JLine holds are the rows it was handed, so a rule built for a 113-column window
    stays 113 columns wide: on a resize the row is padded with spaces or cut with an ellipsis, never

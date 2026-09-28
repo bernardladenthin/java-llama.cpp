@@ -509,3 +509,33 @@ use did not contain, the agent now prints the terminal type and the **patch leve
 running with**, probed by method (`Status.repaint` for the fifth fix, `Display.addressesEveryRow` for the
 sixth) rather than by version string — the patched builds overlay classes into the released jar and keep its
 manifest version, so the version string cannot tell them apart.
+
+## The console reflows the conversation, and that is what moved everything
+
+With the patch level now printed at startup (`terminal: windows-vtp, JLine: patched (row addressing +
+repaint)`) the remaining report was clean and specific: **narrowing walks the input upwards; widening makes
+more and more rules appear "von unten rechts nach oben links"**, with the input ending up mid-screen at the
+far left. `/cls` repairs it.
+
+**The harness cannot reproduce this, and that is the finding.** Three grows in a row leave no staircase there,
+because `ScreenTerminal` pulls scrollback down when it grows and **does not reflow at all**. The real console
+does, and the target is not the block: **the conversation's own lines are soft-wrapped.** Widening joins them,
+the text above needs fewer rows, and everything below moves **up** — including the block rows last rendered,
+which then sit above the region where nothing writes again. One leftover per drag step, climbing away from the
+block. Narrowing does it in reverse: more wraps, everything moves down, and the input walks up.
+
+**No program can observe a reflow or prevent one. What it can do is deny it a target.** A line that was never
+soft-wrapped is one screen row and has nothing to join. So `JLineTerminal.line` now **folds every output line
+itself**, to one column less than the window, and prints each piece as its own line. Two screen tests state
+the property the reflow needs and no longer finds — no row on screen reaches the last column — and both were
+red before (rows 8 and 9 full width). Five unit tests pin the fold itself: a short line is untouched, no piece
+exceeds the width, a double-width glyph is never split in half (a piece may come out a column short instead),
+ANSI styling a caller put in survives and does not count towards the width, and umlauts stay whole.
+
+**The price, stated rather than hidden:** text keeps the line breaks it was printed with, so widening the
+window no longer re-flows the conversation. That is the same trade this console already makes by rendering
+append-only, and it is what every terminal agent that does not own the screen accepts.
+
+**What this does not fix** is the prompt's row after a resize — that is the open item above, where JLine draws
+the prompt wherever the cursor happens to be. It is a row or two, not a screen of debris, and `/cls` puts it
+back.
