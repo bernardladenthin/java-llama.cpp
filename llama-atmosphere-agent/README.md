@@ -472,6 +472,13 @@ climbing up the screen came from; narrowing does it in reverse and walks the inp
 never soft-wrapped has nothing to join. The price: text keeps the line breaks it was printed with, so widening
 the window does not re-flow the conversation — the same trade an append-only console already makes.
 
+**The pinned block never writes the last column of a row**, which is what stopped the stacks of bars. A row
+padded to the full reported width wraps when that width is not the screen's real one — a dragged window reports
+a width before it has applied it — and a wrapped row takes two screen rows where the bar reserves one, so the
+bar's last row wraps past the bottom and scrolls it: the bar moves up and leaves a copy above, one per bad
+render. Leaving the last column alone costs nothing, because each row is addressed rather than reached by
+wrapping, and it also stops the terminal from marking the row as wrapped at all.
+
 **After a height change the prompt is printed back down to its row.** JLine draws the prompt wherever the
 cursor happens to be, and a window whose height changes moves the screen's content by however many rows the
 console's buffer gives it — measured: growing a 20-row window to 26 left the input three rows too high, and

@@ -31,7 +31,7 @@ import org.junit.jupiter.api.Test;
  * <p><b>Which JLine this needs.</b> The library is a property, and these cases need the patched one:
  *
  * <pre>
- * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix6   # runs
+ * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix7   # runs
  * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6              # every case SKIPS
  * </pre>
  *
@@ -65,10 +65,12 @@ class ScreenUseCasesTest {
      *
      * <p>{@code Status.repaint()} is the fifth of them and the first to add a method, so its presence is a
      * usable stand-in for the set — it exists only in a build that has the others too. It does not
-     * distinguish the fifth build from the sixth: the sixth adds {@code Display.addressesEveryRow()}, which
-     * is protected and cannot be probed from here, and one case
-     * ({@code aWidthTheScreenDoesNotHaveMustNotRunTheBlockRowsTogether}) therefore fails rather than skips on
-     * a {@code statusfix5} jar. Stated rather than worked around: the message names the version to use.
+     * distinguish the fifth build from the later ones: the sixth adds a <em>protected</em>
+     * {@code Display.addressesEveryRow()} and the seventh changes only how wide a row is padded, neither of
+     * which can be probed from here. So on an older patched jar one or two cases fail rather than skip
+     * ({@code aWidthTheScreenDoesNotHaveMustNotRunTheBlockRowsTogether} needs the sixth,
+     * {@code aBlockRowBuiltWIDERThanTheWindowMustNotSPILLaCopyIntoTheOutput} the seventh). Stated rather than
+     * worked around: the message names the version to use.
      *
      * @return whether the patched library is on the classpath
      */
@@ -99,7 +101,7 @@ class ScreenUseCasesTest {
      * <p><b>To see the library make the difference</b>, run this class twice:
      *
      * <pre>
-     * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix6   # green
+     * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6-statusfix7   # green
      * mvn test -Dtest=ScreenUseCasesTest -Djline.version=4.4.6              # skipped -- delete this
      *                                                                        # assumption to see it fail
      * </pre>
@@ -108,7 +110,7 @@ class ScreenUseCasesTest {
     void onlyWithAJLineThatCarriesTheFixes() {
         Assumptions.assumeTrue(
                 jlineCarriesTheFixes(),
-                "needs the patched JLine: mvn test -Djline.version=4.4.6-statusfix6"
+                "needs the patched JLine: mvn test -Djline.version=4.4.6-statusfix7"
                         + " (see docs/upstream-investigation-jline-status-windows-redraw.md)");
     }
 
@@ -1888,6 +1890,169 @@ class ScreenUseCasesTest {
                     "the prompt is on the row the block leaves for it" + NEWLINE + terminal.describe(),
                     terminal.cursorRow(),
                     is(shrunk - 1 - blockRows));
+        }
+    }
+
+    @Test
+    void alternatingDragsManyTimesOverLeaveExactlyOneBlock() throws Exception {
+        // The report in its worst form: "ganz viel kleiner / größer abwechselnd nach einander zerhackt alles",
+        // with a screen carrying SEVERAL complete blocks at different widths -- rule, activity row, sometimes a
+        // state row -- and some rules ending in the ellipsis Status uses to cut a row that is too WIDE for the
+        // region. So two things to catch: copies of the block left in the output area, and rows built for a
+        // width the region does not have.
+        int rows = 20;
+        ScreenTerminalHarness terminal = terminalWithRows(120, rows);
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(200);
+            console.line("an answer the user wants to keep seeing");
+            Thread.sleep(200);
+
+            // A DRAG, not a single event: a real console reports a size roughly every 125 ms while the mouse
+            // moves, and the probe counted ~22 for one drag. Every other case in this class deliberately uses
+            // one event, because stepping through them made assertions about content flaky -- but here the
+            // assertions are made after everything has settled, which is the state the report is about.
+            List<Thread> pumps = new ArrayList<>();
+            int at = rows;
+            int columns = 120;
+            for (int drag = 0; drag < 4; drag++) {
+                boolean smaller = drag % 2 == 0;
+                for (int step = 0; step < 5; step++) {
+                    at += smaller ? -1 : 1;
+                    columns += smaller ? -8 : 8;
+                    pumps.add(terminal.resizeAsynchronously(columns, at));
+                    Thread.sleep(30);
+                }
+                Thread.sleep(200);
+            }
+            for (Thread pump : pumps) {
+                pump.join(2000);
+            }
+            Thread.sleep(800);
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(800);
+
+            String screen = terminal.describe();
+            String[] screenRows = terminal.rows();
+            assertThat("exactly one rule is on screen" + NEWLINE + screen, count(screenRows, this::isRule), is(1));
+            assertThat(
+                    "exactly one activity row is on screen" + NEWLINE + screen,
+                    count(screenRows, row -> row.contains("waiting for input")),
+                    is(1));
+            assertThat(
+                    "exactly one state row is on screen" + NEWLINE + screen,
+                    count(screenRows, row -> row.contains("local-model")),
+                    is(1));
+            assertThat(
+                    "no row was cut with an ellipsis, which means built for a width the region does not have" + NEWLINE
+                            + screen,
+                    count(screenRows, row -> row.contains("─…") || row.contains("model…")),
+                    is(0));
+        }
+    }
+
+    @Test
+    void aBlockRowBuiltWIDERThanTheWindowMustNotSPILLaCopyIntoTheOutput() throws Exception {
+        // The mechanism behind the stacked blocks: "ganz viel kleiner / größer abwechselnd zerhackt alles",
+        // with several complete blocks at different widths on screen and some rules ending in the ellipsis
+        // Status uses to cut a row that is too WIDE for the region.
+        //
+        // A row wider than the window WRAPS. The region is reserved in rows, so a block of three rows then
+        // needs four screen rows, and the one that no longer fits spills UPWARD into the output area, where
+        // nothing writes again. One copy per bad render, which is exactly a stack of them.
+        //
+        // Forced rather than waited for: the console reports more columns than the screen has. That is the
+        // state a drag really produces, because this console reads the size, re-asserts the region, and builds
+        // the rows -- while JLine's own signal handler resizes the same region with a newer size in between.
+        int rows = 20;
+        int realColumns = 80;
+        // ONE column, because that is the lag a console being dragged actually shows, and it is what the fix
+        // absorbs: the rows are padded one column short of the reported width, so a width that is one too
+        // large still fits. A larger overshoot cannot be absorbed by anything built from a reported width --
+        // measured with eight, the state row came out with its first eight characters replaced by spaces --
+        // and asserting otherwise would be a wish rather than a contract.
+        int claimedExtra = 1;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", realColumns, rows) {
+            @Override
+            public Size getSize() {
+                Size real = super.getSize();
+                return Size.of(real.getColumns() + claimedExtra, real.getRows());
+            }
+        };
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(200);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(300);
+            // FOUR renders, because one is only half the story: the last row of a too-wide block wraps past
+            // the bottom of the screen, which SCROLLS it -- so every bad render pushes the block up and leaves
+            // a copy above it. That is the stack.
+            for (int render = 0; render < 4; render++) {
+                console.refreshBlockForCurrentSize();
+                Thread.sleep(200);
+            }
+
+            String screen = terminal.describe();
+            String[] screenRows = terminal.rows();
+            assertThat("exactly one rule is on screen" + NEWLINE + screen, count(screenRows, this::isRule), is(1));
+            assertThat(
+                    "exactly one state row is on screen" + NEWLINE + screen,
+                    count(screenRows, row -> row.contains("local-model")),
+                    is(1));
+            assertThat(
+                    "the state row is whole, not cut by a wrap" + NEWLINE + screen,
+                    screenRows[rows - 1].startsWith("[▤"),
+                    is(true));
+        }
+    }
+
+    @Test
+    void aSizeThatCHANGESwhileTheBlockIsBeingBuiltMustNotProduceRowsForTheWrongWidth() throws Exception {
+        // OUR half of the same defect, and the one the ellipsis in the report pointed at: Status cuts a row
+        // with "…" when it is WIDER than the region, which means the rows were built for a size the region does
+        // not have. That happens during a fast drag, because this console reads the size, re-asserts the region
+        // with it, and then builds the rows -- while the reader's own signal handler resizes the same region
+        // with a newer size in between.
+        //
+        // Forced deterministically rather than raced: this terminal reports a different size on every call, the
+        // way a console does mid-drag, and settles after a few. The rows must end up matching the size the
+        // region settled on, not an intermediate one.
+        int rows = 20;
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        int settled = 90;
+        ScreenTerminalHarness terminal = new ScreenTerminalHarness("windows-vtp", 130, rows) {
+            @Override
+            public Size getSize() {
+                // 130, 120, 110, 100, then 90 for ever: a drag that stops.
+                int at = reads.getAndIncrement();
+                int columns = Math.max(settled, 130 - 10 * at);
+                return Size.of(columns, rows);
+            }
+        };
+        try (JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
+            Thread reading = new Thread(() -> console.readLine("ignored"));
+            reading.setDaemon(true);
+            reading.start();
+            Thread.sleep(300);
+            console.status(realBlockWithBasicPlaneIcons());
+            Thread.sleep(300);
+            console.refreshBlockForCurrentSize();
+            Thread.sleep(300);
+
+            String screen = terminal.describe();
+            String[] screenRows = terminal.rows();
+            assertThat(
+                    "no row was cut with an ellipsis, which is what a row too wide for the region looks like" + NEWLINE
+                            + screen,
+                    count(screenRows, row -> row.contains("─…") || row.contains("model…")),
+                    is(0));
+            assertThat("the state row is whole" + NEWLINE + screen, screenRows[rows - 1].startsWith("[▤"), is(true));
         }
     }
 }

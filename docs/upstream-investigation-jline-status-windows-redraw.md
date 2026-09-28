@@ -576,3 +576,41 @@ caller can emit does that without breaking the reader's own cursor bookkeeping �
 through the terminal's input, which the reader owns for the whole session; issuing one from the poll would race
 the keyboard and could swallow a keystroke or leave `[24;1R` in the input line — which is precisely the class of
 defect this investigation has been chasing.
+
+## The seventh fix: a status row must not write the last column
+
+The report after the push-down: *"kleiner ziehen sah ganz gut aus, größer ziehen ist problematisch, wieder
+viele zeilen zu viel"*, and alternating drags "zerhackt alles" — a screen carrying **several complete bars** at
+different widths, some rules ending in `…`.
+
+**That ellipsis is the clue, and it is JLine's own.** `Status.update` cuts a row with an inverse `…` when the
+row is **wider** than `display.columns`, so those bars were rendered with rows built for a width the region did
+not have. Two candidates, and the measurement separated them:
+
+- **Ours** — read the size, re-assert the region, build the rows, all racing the reader's own resize. A harness
+  whose `getSize()` returns a different width on every call (130, 120, 110, 100, then 90 for ever, i.e. a drag
+  that stops) shows **no** ellipsis and a whole state row: this console already reads the size **once** per
+  block build and hands that one read to both the region and the rows. The case is kept as the guard for it.
+- **JLine's** — `Status.update` pads every row to **the full reported width**. That is the defect. A row padded
+  to a width the screen does not have **wraps**: it takes two screen rows where the bar reserves one, and the
+  bar's *last* row therefore wraps past the bottom of the screen, which **scrolls** it. The bar moves up and
+  leaves a copy of itself above — one per bad render, which is exactly a stack of bars.
+
+Measured, deterministically, with a screen that reports one column more than it has (the lag a dragged console
+really shows): the state row came out as `" ▤ X:/tmp/…"` — its `[` eaten by the wrap. With eight columns over,
+eight characters were replaced by spaces. Both are the same thing the earlier `"state]"` reports were.
+
+**The fix: pad to `columns - 1`, never to `columns`.** Leaving the last column alone costs nothing now that
+every row is addressed rather than reached by wrapping (the sixth fix) — the padding no longer has to reach the
+margin for the next row to start in the right place. It also stops the terminal from marking the row as
+**wrapped** at all, which is what allowed a reflow to join it to its neighbour when the window was widened.
+
+**Verified:** 102 tests in JLine's own suite green; `StatusWrongWidthTest.aReportedWidthOneColumnTooLARGEDoesNotWrapTheBottomRow`
+is red without the fix (`expected: <[state]> but was: <state]>`, plus the bar pushed right by a wrap) and green
+with it. On the project side the same pair:
+`aBlockRowBuiltWIDERThanTheWindowMustNotSPILLaCopyIntoTheOutput` is red against `4.4.6-statusfix6` and green
+against `4.4.6-statusfix7`.
+
+**What the harness still cannot show** is the *stack* itself: `ScreenTerminal` does not reflow, and JLine's diff
+skips a render whose content has not changed, so only the first bad render damages its screen. The damage it
+does show — a bottom row eaten by a wrap — is the same mechanism one render at a time.

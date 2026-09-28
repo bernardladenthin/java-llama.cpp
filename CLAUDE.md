@@ -2488,16 +2488,16 @@ are decisions, not details:
    *prompt*** (the DEC line-drawing set, which this screen renders literally) and as `─` through the
    status region, so both forms count as a rule and a row of `q` also says which path it took.
    **The JLine fixes are demonstrated red/green through it**, the library being just a property — and since
-   there are **six** of them, one of which adds a method, the wiring needs a paragraph of its own.
+   there are **seven** of them, one of which adds a method, the wiring needs a paragraph of its own.
    `ScreenUseCasesTest` **skips itself** on a JLine that does not carry them, keyed on
    `Status.repaint()` (the fifth fix and the only one that is a new method, so its presence stands in for the
    whole set). That is CLAUDE.md's own rule applied late — "no project test may assert the fixed behaviour
    while the build depends on an unfixed release" — and it had been broken: the pom's `jline.version` is the
    **released** one, which is what CI builds against, and against it these cases fail. Measured: the whole
-   module is green with `-Djline.version=4.4.6-statusfix6` (43 of the screen cases run) and green with the
+   module is green with `-Djline.version=4.4.6-statusfix7` (the screen cases run) and green with the
    released `4.4.6` as well, where all 43 report as **skipped** rather than passing. The marker cannot tell
-   the fifth build from the sixth (the sixth adds a *protected* method), so on a `statusfix5` jar exactly one
-   case fails rather than skipping — stated in the test rather than worked around.
+   the fifth build from the later ones (the sixth adds a *protected* method, the seventh changes only a padding
+   width), so on an older patched jar one or two cases fail rather than skipping — stated in the test rather than worked around.
    **The gate is the whole class and there is no fixed list of affected cases, which is itself a finding.**
    Against the released library between six and thirteen of them fail, a *different set each run*: the fourth
    fix is a data race, and when its `ConcurrentModificationException` lands on the reader's signal thread it
@@ -2511,8 +2511,9 @@ are decisions, not details:
    same diff, `repaint()` puts every reserved row back without scrolling anything, and a repaint before
    anything was shown is not an error) and `StatusWrongWidthTest` (3 cases on a screen wider than the width
    it reports: every reserved row keeps its own screen row, nothing is written beside the rule, and the rows
-   above the block stay empty). 101 of JLine's own tests are green with all six fixes, `DisplayTest` and
-   `ScreenTerminalTest` included.
+   above the block stay empty, and — the seventh fix — a reported width one column too LARGE does not wrap the
+   bottom row). 102 of JLine's own tests are green with all seven fixes, `DisplayTest` and `ScreenTerminalTest`
+   included.
 
 
    **The fourth fix is a data race, and it is the one that explains the reports that survived the other
@@ -2722,6 +2723,26 @@ are decisions, not details:
    (`Status.repaint` for the fifth fix, `Display.addressesEveryRow` for the sixth), never by version string —
    the patched builds overlay classes into the released jar and keep its manifest version, so the string
    cannot tell them apart.
+
+   **A status row must not write the last column, which is the seventh JLine fix.** `Status.update` padded every
+   row to the **full** reported width. A row padded to a width the screen does not have **wraps**: it occupies
+   two screen rows where the bar reserves one, so the bar's *last* row wraps past the bottom of the screen and
+   **scrolls** it — the bar moves up and leaves a copy of itself above, one per bad render. That is the reported
+   "ganz viel kleiner / größer abwechselnd zerhackt alles", a screen carrying several complete bars at different
+   widths. The `…` some of those rules ended in is JLine's own marker for a row wider than the region, which is
+   what pointed at it.
+   **Padding one column short costs nothing** now that every row is addressed rather than reached by wrapping
+   (the sixth fix), and it additionally stops the terminal from marking the row as **wrapped**, which is what let
+   a reflow join it to its neighbour. Measured with a screen reporting one column more than it has — the lag a
+   dragged console really shows: the state row came out as `" ▤ X:/tmp/…"`, its `[` eaten by the wrap; with eight
+   columns over, eight characters. Both are the same thing the earlier `"state]"` reports were.
+   **Our own half of that race was measured and is already closed:** a harness whose `getSize()` returns a
+   different width on every call (a drag that stops) produces no ellipsis and a whole state row, because this
+   console reads the size **once** per block build and hands that one read to both the region and the rows. The
+   case is kept as the guard for it.
+   **What the harness cannot show is the stack itself** — `ScreenTerminal` does not reflow, and JLine's diff skips
+   a render whose content has not changed, so only the first bad render damages it. What it does show, a bottom
+   row eaten by a wrap, is the same mechanism one render at a time.
 
    **The redraw after the size SETTLES is a repaint, not a diff** (`repaintBlockFromScratch`, 400 ms after
    the last size event). This is the fix for "kleiner ziehen sah gut aus, größer macht noch Probleme", and it
