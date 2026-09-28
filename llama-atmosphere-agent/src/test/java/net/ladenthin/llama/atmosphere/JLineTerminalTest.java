@@ -7,7 +7,6 @@ package net.ladenthin.llama.atmosphere;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
-import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
 import java.io.ByteArrayInputStream;
@@ -17,6 +16,7 @@ import java.util.List;
 import org.jline.terminal.Size;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
+import org.jline.utils.AttributedString;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -166,20 +166,13 @@ class JLineTerminalTest {
     }
 
     @Test
-    void clearingTheScreenWipesItAndLeavesTheReaderWorking() throws Exception {
+    void clearingTheScreenLeavesTheReaderWorking() throws Exception {
         try (Terminal terminal = terminal("first\nsecond\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
             assertThat(console.readLine("ignored"), is("first"));
-            int before = screen().length();
 
             console.clearScreen();
 
-            // The capability is terminfo source ("\E[H\E[2J"), so what must reach the screen is the
-            // expanded form. Writing the capability as it comes prints it as text, which is what this
-            // assertion caught the first time it ran.
-            assertThat(
-                    terminal.getStringCapability(org.jline.utils.InfoCmp.Capability.clear_screen), is(notNullValue()));
-            assertThat("erase display reached the screen", screen().substring(before), containsString(ERASE_DISPLAY));
             assertThat("and the prompt still reads afterwards", console.readLine("ignored"), is("second"));
         }
     }
@@ -228,8 +221,15 @@ class JLineTerminalTest {
         // The reported artefact is a second, stale "> " left on screen after dragging the window.
         // This drives the path that redraws it -- a real size change plus the signal, with the reader
         // sitting in readLine as it does all session -- and pins that shrinking, growing and changing
-        // the row count each produce one prompt and not two. It holds for every size tried, which is
-        // what says the remaining artefact is not in this path.
+        // the row count never produce a SECOND prompt. It holds for every size tried, which is what
+        // says the remaining artefact is not in this path.
+        //
+        // At most one, not exactly one, and the difference is measured: on a JLine whose resize path
+        // keeps its display model (the fix filed upstream for the duplication) widening the window
+        // emits no prompt at all, because the terminal has already reflowed the line itself -- which
+        // is the very reasoning JLine's own no-status-bar branch states. Requiring exactly one pinned
+        // the repainting behaviour rather than the property, and went red against the fixed library
+        // with "was <0L>". Zero is not the defect; two is.
         java.io.PipedOutputStream keys = new java.io.PipedOutputStream();
         try (Terminal terminal = terminal(new java.io.PipedInputStream(keys));
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
@@ -250,44 +250,149 @@ class JLineTerminalTest {
                 String drawn = screen().substring(before);
                 long prompts =
                         drawn.chars().filter(character -> character == '>').count();
-                assertThat("one prompt after resizing to " + size[0] + "x" + size[1], prompts, is(1L));
+                assertThat(
+                        "at most one prompt after resizing to " + size[0] + "x" + size[1] + ", drew " + prompts,
+                        prompts <= 1L,
+                        is(true));
             }
         }
     }
 
     @Test
-    void theBlockIsBackOnScreenAfterAClear() throws Exception {
-        // Clearing erases the block along with everything else, and the pinned region is redrawn only
-        // when its content changes -- so after a clear it believes it is still on screen and draws
-        // nothing, leaving the bottom of the window empty.
+    void aClearScrollsAWindowAndErasesNothing() throws Exception {
+        // This test changed sides, and both sides are worth keeping on record because the wrong one was
+        // shipped twice. It used to assert the opposite -- that a clear ERASES and scrolls nothing -- and
+        // that was right for as long as a wipe was how the screen was cleared. Erasing has been given up:
+        // clear_screen puts the cursor home, the reader draws its prompt where the cursor is, and the
+        // prompt then sat at the top left while the block stayed pinned at the bottom ("nach /cls ist der
+        // cursor auch ganz oben und nicht unten"). Everything tried to put it back on top of an erase was
+        // reported as a new defect -- blank rows pulled the erased lines back into view, a cursor_address
+        // inside printAbove's argument stranded a character above the prompt -- and the screen tests then
+        // showed the erase is worse than it looks on its own: the reader redraws its prompt as a diff
+        // against a belief the erase invalidates, so the measured result was no prompt on screen at all.
+        //
+        // Scrolling a window's worth of blank lines through printAbove does both halves at once and breaks
+        // neither: the screen goes blank, what was written stays reachable with the scrollbar, the block is
+        // never touched, and the cursor ends on its row because printing is what puts it there. Nothing is
+        // erased, so nothing can be pulled back into view -- which is exactly why the two assertions below
+        // are the pair they are.
+        //
+        // A pipe has no screen, so "the prompt is on its row afterwards" is not assertable here; that is
+        // what ScreenUseCasesTest asserts, on an interpreted screen. What a pipe does show is how much was
+        // scrolled and whether an erase was emitted at all.
         try (Terminal terminal = terminal("go\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
-            // As in a session: the reader owns the screen before anything is drawn into the block. The
-            // pause is not decoration -- the reader thread starts the next prompt as soon as one
-            // returns, and clearing while that is in flight makes what JLine emits depend on which of
-            // the two got there first. This test is about the block coming back, not about that race.
             console.readLine("ignored");
             Thread.sleep(200);
-            console.status(List.of("a distinctive state row"));
+            console.status(List.of("state row"));
             int before = screen().length();
 
             console.clearScreen();
 
+            String drawn = screen().substring(before);
+            long lineFeeds =
+                    drawn.chars().filter(character -> character == '\n').count();
             assertThat(
-                    "the block is drawn again after the wipe",
-                    screen().substring(before),
-                    containsString("a distinctive state row"));
+                    "a clear scrolls a whole window: it emitted " + lineFeeds + " line feeds for a " + SIZE.getRows()
+                            + "-row window",
+                    lineFeeds >= SIZE.getRows(),
+                    is(true));
+            assertThat(
+                    "and it erases nothing, so nothing can be pulled back into view",
+                    drawn.contains(ERASE_DISPLAY),
+                    is(false));
         }
     }
 
     @Test
-    void controlLIsBoundToTheReadersOwnClearScreen() throws Exception {
-        // 0x0C is Ctrl-L. It is bound by JLine itself, so /cls is the second way to do this rather
-        // than the only one -- worth pinning, because a keymap option could silently take it away.
+    void resizingWithTextInTheInputDoesNotDrawThePromptBesideItself() throws Exception {
+        // Reported: start, type Hallo without pressing Enter, drag the window -- and "> Hallo" appears
+        // ten times side by side on one line. Each redraw lands NEXT to the previous one instead of
+        // over it. The existing resize test missed the case because its input buffer was empty, so
+        // there was nothing to redraw and one prompt per resize was the whole story.
+        //
+        // **This does not reproduce the report**, and it is kept for what it does cover: that an
+        // application-side regression cannot start appending redraws. The harness raises a synthetic
+        // WINCH, and Windows -- where all three resize reports come from -- has no SIGWINCH at all; the
+        // size change arrives as a console event on a path this terminal never takes. Said here rather
+        // than left to be inferred from a green run.
+        java.io.PipedOutputStream keys = new java.io.PipedOutputStream();
+        Terminal terminal = terminal(new java.io.PipedInputStream(keys));
+        JLineTerminal console = JLineTerminal.over(terminal, List.of());
+        try {
+            Thread reader = new Thread(() -> console.readLine("ignored"));
+            reader.setDaemon(true);
+            reader.start();
+            Thread.sleep(250);
+            console.status(List.of("state row"));
+            keys.write("Hallo".getBytes(StandardCharsets.UTF_8)); // typed, deliberately not submitted
+            keys.flush();
+            Thread.sleep(250);
+            int before = screen().length();
+
+            for (int resize = 0; resize < 4; resize++) {
+                terminal.setSize(new Size(SIZE.getColumns() - 10 * (resize + 1), SIZE.getRows()));
+                terminal.raise(Terminal.Signal.WINCH);
+                Thread.sleep(150);
+            }
+
+            String drawn = screen().substring(before);
+            assertThat(
+                    "a redraw overwrites the input line rather than appending to it",
+                    drawn.contains("Hallo> Hallo"),
+                    is(false));
+        } finally {
+            console.close();
+            terminal.close();
+        }
+    }
+
+    @Test
+    void leavingReleasesTheReservedRowsAndTheScrollRegion() throws Exception {
+        // Reported: after /exit the block was still on screen, and resizing the window then reflowed it
+        // into a mess. The pinned block is a *reserved scroll region* -- ESC[1;<n>r keeps the bottom
+        // rows out of it -- so a session that ends without resetting that region leaves the terminal
+        // restricted, and everything the shell prints afterwards, or any resize, is laid out inside a
+        // window that no longer matches.
+        Terminal terminal = terminal("go" + System.lineSeparator());
+        JLineTerminal console = JLineTerminal.over(terminal, List.of());
+        try {
+            console.readLine("ignored");
+            Thread.sleep(200);
+            console.status(List.of("state row"));
+            int before = screen().length();
+
+            console.close();
+
+            String drawn = screen().substring(before);
+            assertThat(
+                    "the reserved region is handed back, so the next program gets the whole window",
+                    drawn.contains("\u001b[1;" + SIZE.getRows() + "r") || drawn.contains("\u001b[r"),
+                    is(true));
+        } finally {
+            terminal.close();
+        }
+    }
+
+    @Test
+    void controlLClearsTheSameWayTheCommandDoes() throws Exception {
+        // 0x0C is Ctrl-L. JLine binds it itself, so /cls is the second way to do this rather than the
+        // only one -- and both must end with the prompt on the same row, which is why this console now
+        // owns the binding. Two things are pinned here: the key is still a clear rather than a character
+        // typed into the line (a keymap option could silently take that away), and it clears the way the
+        // command does, by scrolling. Whether the PROMPT lands on its row is asserted where it is
+        // visible, on the interpreted screen in ScreenUseCasesTest.
         try (Terminal terminal = terminal("\u000cstill here\n");
                 JLineTerminal console = JLineTerminal.over(terminal, List.of())) {
             assertThat(console.readLine("ignored"), is("still here"));
-            assertThat("Ctrl-L cleared rather than being typed into the line", screen(), containsString(ERASE_DISPLAY));
+
+            long lineFeeds =
+                    screen().chars().filter(character -> character == '\n').count();
+            assertThat(
+                    "Ctrl-L scrolled rather than being typed into the line: " + lineFeeds + " line feeds",
+                    lineFeeds >= SIZE.getRows(),
+                    is(true));
+            assertThat("and it erased nothing", screen().contains(ERASE_DISPLAY), is(false));
         }
     }
 
@@ -318,6 +423,62 @@ class JLineTerminalTest {
 
             assertThat(screen(), containsString("first"));
             assertThat(screen(), containsString("second"));
+        }
+    }
+
+    @Test
+    void foldingLeavesAShortLineExactlyAsItWas() {
+        assertThat(JLineTerminal.fold("kurz", 40), is(List.of("kurz")));
+        assertThat(JLineTerminal.fold("", 40), is(List.of("")));
+    }
+
+    @Test
+    void foldingBreaksOnColumnsAndNoPieceIsWiderThanTheWidth() {
+        List<String> pieces = JLineTerminal.fold("x".repeat(95), 40);
+        assertThat(pieces.size(), is(3));
+        for (String piece : pieces) {
+            assertThat(new AttributedString(piece).columnLength() <= 40, is(true));
+        }
+        assertThat(String.join("", pieces), is("x".repeat(95)));
+    }
+
+    @Test
+    void foldingKeepsDoubleWidthGlyphsWhole() {
+        // An icon is one character and two columns. A piece may therefore come out one column short of the
+        // width rather than splitting the glyph in half -- what must never happen is a piece WIDER than the
+        // window, which is the thing the console would wrap.
+        List<String> pieces = JLineTerminal.fold("📊".repeat(30), 41);
+        for (String piece : pieces) {
+            assertThat(
+                    "piece is " + new AttributedString(piece).columnLength() + " columns wide",
+                    new AttributedString(piece).columnLength() <= 41,
+                    is(true));
+        }
+        assertThat(String.join("", pieces), is("📊".repeat(30)));
+    }
+
+    @Test
+    void foldingKeepsTheStylingACallerPutIn() {
+        // The text arrives with ANSI already in it (bold echoes, coloured markdown). The escapes have zero
+        // width, so they must not count towards the fold, and each piece has to carry its own styling or the
+        // second one comes out plain.
+        String bold = "\u001b[1m" + "y".repeat(90) + "\u001b[0m";
+        List<String> pieces = JLineTerminal.fold(bold, 40);
+        assertThat(pieces.size(), is(3));
+        for (String piece : pieces) {
+            assertThat("a piece carries its own styling: " + piece, piece.contains("\u001b["), is(true));
+            assertThat(new AttributedString(piece).columnLength() <= 40 + 10, is(true));
+        }
+    }
+
+    @Test
+    void foldingKeepsUmlautsAndSharpS() {
+        // Two bytes in UTF-8, one column on screen: a fold that counted bytes would cut them in half.
+        String text = "Grüße über Straßen".repeat(6);
+        List<String> pieces = JLineTerminal.fold(text, 30);
+        assertThat(String.join("", pieces), is(text));
+        for (String piece : pieces) {
+            assertThat(new AttributedString(piece).columnLength() <= 30, is(true));
         }
     }
 }

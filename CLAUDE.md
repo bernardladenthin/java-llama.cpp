@@ -2499,6 +2499,17 @@ are decisions, not details:
    **no** entries rather than one wrong one, since anything it yielded would be replayed to the model
    as if it had been said.
 
+   **`JLineTerminal.open` refuses when there is no console, and that was a red build for months.** A system
+   terminal takes over the process's standard input, and where there is no console that input belongs to somebody
+   else. Inside a **Surefire fork it is the channel Surefire talks over**: a test that drives the agent
+   interactively reached `open()`, JLine grabbed the channel, and the run ended with
+   `[SUREFIRE] std/in stream corrupted` — **every test green, the build red**, which is exactly the shape that
+   hides. It also made `LocalAgentTest` take 23.6 s instead of 2.0 s, because it was blocking on reads that were
+   never going to arrive. The check is the same two-step `Ansi` uses for colour: `Console.isTerminal()` where it
+   exists (JDK 22+, where `System.console()` returns a console even for redirected streams), otherwise the mere
+   presence of a console. Piped input lands here too and has always been served by the plain console, so nothing
+   else changes.
+
 8. **Tool calls are carried into the conversation as a text note, and logged for `/calls`.**
    `LocalAgent.withToolNotes` prefixes each turn's answer in the history with
    `(tools I actually ran this turn: <tool> <args> -> <result, cut at 400 chars>)`, and `ToolCallLog`
@@ -2578,6 +2589,92 @@ are decisions, not details:
    `ERASE_LINE_ON_FINISH` removes the input line on Enter and the reader thread echoes it above as
    `› text`, so the transcript keeps what was asked.
 
+   **`ScreenUseCasesTest` + `ScreenTerminalHarness` are how the resize and `/cls` cases are checkable,
+   and they are what every byte-level attempt before them could not do.** The harness subclasses JLine's
+   `LineDisciplineTerminal` and puts its own `ScreenTerminal` (a real VT interpreter, public API in the
+   shipped jar) behind it, so a test reads the **screen** — "the block is smeared across the output",
+   "an escape sequence is printed as text", "the block is drawn twice" are indistinguishable from
+   correct output in a byte stream, which is why two byte-level assertions in `JLineTerminalTest` had to
+   be deleted, one of them green with the fix it was written for switched off. The cases are the reports:
+   dragging wider and narrower (with nothing typed, with text in the input, one step at a time, with a
+   two- and a three-row block, with the real block's glyphs), `/cls` and Ctrl-L (block intact, and the
+   cursor and prompt on the row the block leaves for them), a window that over-reports its width, size
+   events arriving on another thread, and a block refresh racing the reader. Several assert the **cursor
+   row** rather than the content, which is what finally located two of the defects: content can look
+   plausible while the cursor is rows away from where a region reserved from the bottom expects it.
+   Three things are load-bearing. **(1) A reader runs in every test** — it runs for the whole session in
+   the application and owns the resize signal, so a test without one is a state the application cannot
+   be in. **(2) The block rebuild is invoked directly, not waited for**
+   (`refreshBlockForCurrentSize`): sleeping for the 120 ms poll passed alone and failed in a full run,
+   and a flaky test is worse than none — what that leaves uncovered is the polling thread itself, a loop
+   that compares two sizes and calls that method. **(3) A rule shows as `q` when it went out through a
+   *prompt*** (the DEC line-drawing set, which this screen renders literally) and as `─` through the
+   status region, so both forms count as a rule and a row of `q` also says which path it took.
+   **The JLine fixes are demonstrated red/green through it**, the library being just a property — and since
+   there are **eight** of them, one of which adds a method, the wiring needs a paragraph of its own.
+   `ScreenUseCasesTest` **skips itself** on a JLine that does not carry them, keyed on
+   `Status.repaint()` (the fifth fix and the only one that is a new method, so its presence stands in for the
+   whole set). That is CLAUDE.md's own rule applied late — "no project test may assert the fixed behaviour
+   while the build depends on an unfixed release" — and it had been broken: the pom's `jline.version` is the
+   **released** one, which is what CI builds against, and against it these cases fail. Measured: the whole
+   module is green with `-Djline.version=4.4.6-atmosphere` (the screen cases run) and green with the
+   released `4.4.6` as well, where they report as **skipped** rather than passing.
+   **Whether the fixes are still needed is measurable rather than arguable**, because the gate honours
+   `-Datmosphere.screen.tests.runAnyway=true`. Against the current console, 233 tests: released `4.4.6` **26
+   red**; `statusfix4` (fixes 1–4) 8; `statusfix5` (+`repaint`) 4; `statusfix6` (+addressing every row) 1;
+   `statusfix7` (+padding one column short) **0**; `statusfix8` 0. (Those version names are the history of the
+   investigation; **what to build today is `4.4.6-atmosphere`**, the reviewed set — the recipe is at the end of
+   the investigation document.) So they are needed, by a wide margin — and the
+   **eighth is carried on the merits, not on a failing test**: `Status.resize` still erases rows above the bar
+   without it, but this console wipes and redraws after a width change, so nothing here observes it. It stays
+   because the rows above a bar are not the bar's to clear, an erase is unrecoverable where a scroll is not, and
+   every consumer that does not wipe needs it; its guard lives where the defect does, in `StatusRepaintTest`.
+   **Every change was then reverted on its own and measured**, which dropped one and corrected a mistake of mine:
+   the `xenl` entry for `windows-vtp` is **no longer caught by anything** (addressing every row and padding one
+   column short removed the dependence on the wrap), so it is out — an unmeasured change does not belong in a set
+   meant for submission. The `doDisplay()` → `display.resize(size)` change was first reported as unnecessary too,
+   wrongly: that revert had been made with a string replacement matching nothing, compiled into a second directory
+   layered in front of the first, which does not reliably win. Compiled properly, two tests fail without it. The
+   set is therefore **seven** changes in three files, each with a failing test in JLine's own style behind it; the
+   full matrix and both traps are in the investigation document. The marker cannot tell
+   the fifth build from the later ones (the sixth adds a *protected* method, the seventh changes only a padding
+   width), so on an older patched jar one or two cases fail rather than skipping — stated in the test rather than worked around.
+   **The gate is the whole class and there is no fixed list of affected cases, which is itself a finding.**
+   Against the released library between six and thirteen of them fail, a *different set each run*: the fourth
+   fix is a data race, and when its `ConcurrentModificationException` lands on the reader's signal thread it
+   ends that thread, after which no size change is reported at all and whichever cases were still to run fail
+   too. The skip is per test (`@BeforeEach`), not a `@BeforeAll` assumption, because a class-level one makes
+   Surefire record the class as **zero tests** — which reads as "nothing here" instead of "skipped", the same
+   trap that silently muted every model-backed test in this repository for months.
+   **What proves the fixes themselves are JLine's own tests**, in the clone's own style and next to its
+   others: `StatusRedisplayTest`, `StatusDelayedWrapTest`, `StatusConcurrencyTest`, `StatusRepaintTest`
+   (4 cases: an update with unchanged lines leaves damage on screen, `redraw()` does too because it is the
+   same diff, `repaint()` puts every reserved row back without scrolling anything, and a repaint before
+   anything was shown is not an error) and `StatusWrongWidthTest` (3 cases on a screen wider than the width
+   it reports: every reserved row keeps its own screen row, nothing is written beside the rule, and the rows
+   above the block stay empty, and — the seventh fix — a reported width one column too LARGE does not wrap the
+   bottom row). 103 of JLine's own tests are green with all eight fixes, `DisplayTest` and `ScreenTerminalTest`
+   included.
+
+
+   **The fourth fix is a data race, and it is the one that explains the reports that survived the other
+   three.** `refreshingTheBlockWhileTheReaderRedrawsNeverThrows` refreshes the block from three threads
+   while the size changes, and fails with a `ConcurrentModificationException` whose stack names the
+   defect: `AttributedString.join` iterating `Display.oldLines` from `Status.resize` (called by
+   `LineReaderImpl.handleSignal`) while another thread is inside `Status.update` replacing that same
+   `ArrayList`. Neither is synchronized and both are reachable from different threads *by design* — this
+   console keeps its block current from its own thread four times a second. **Keystrokes do not provoke
+   it; a size change does**, because the reader then resizes its display, resizes the region and
+   redisplays. Raised on the input pump it ends that thread, after which no size change is ever reported
+   again and the block keeps its width — which is the "rule wider than the window, wrapped" screen,
+   reported as a separate problem. The fix is `synchronized` on `Status`'s nine public entry points.
+   **And it is why the screen harness could not reproduce the reports it was built for**:
+   `ScreenTerminalOutputStream.write` is synchronized, so it serialises the byte stream, while the
+   unprotected state is JLine's own list — no stream lock reaches it. Two cases carry
+   `@Disabled` as the record of a defect that is still open — a narrower drag loses the edit line, and a
+   *three*-row block ends a wide drag with the rule three columns short, the state row shifted one
+   column and the prompt on two rows, while a two-row block comes out clean.
+
    **`JLineTerminalTest` is how any of this is checkable**: `JLineTerminal.over(Terminal, …)` takes a
    terminal built over two streams, which renders exactly like a TTY, so the screen can be asserted on
    the emitted bytes. Two things that cost an hour each and are not guessable: the test terminal needs
@@ -2604,20 +2701,55 @@ are decisions, not details:
    interleaving happens *between* calls, inside JLine. A test that is green either way is worse than
    none, so it was deleted rather than kept.
 
-   **`/cls` wipes the screen, `/clear` wipes it and the history.** `AgentTerminal.clearScreen()`
-   defaults to doing nothing (a stream has no screen); `JLineTerminal` expands the terminal's
-   `clear_screen` capability and sends it **through `printAbove`**, like every other write, then
-   refills the blank rows and redraws the block. One trap, caught by the test rather than by reading:
-   `getStringCapability` returns **terminfo source** (`\E[H\E[2J`, with the escape spelled out), so
-   writing it as it comes prints that text on the screen — `Curses.tputs` expands it. A second one, and
-   the reason the bar went missing after a `/cls`: **`Status.redraw()` writes nothing after a wipe.**
-   It draws what has *changed*, and a wipe changes nothing about its content — it only removes it from
-   the screen, which the object has no way of knowing. So the block is kept in a field as it was last
-   rendered and put back with `status.reset()` (forget what is believed to be on screen) followed by
-   `status.update(block)`; `redraw()` alone is a no-op, verified by putting it back and watching the
-   test go red. Ctrl-L already
-   did this before the command existed, bound by JLine's own keymap; a test pins that too, so a keymap
-   option cannot quietly remove it.
+   **`/cls` clears by SCROLLING, not by erasing, and `/clear` also wipes the history.**
+   `AgentTerminal.clearScreen()` defaults to doing nothing (a stream has no screen); `JLineTerminal`
+   prints a window's worth of blank lines through `printAbove`. That is the whole implementation, and it
+   replaces an erase-based one that took four attempts and produced a reported defect each time — which
+   is why the reasoning is kept in full.
+
+   **What a clear has to do here is two things at once**: leave the screen blank *and* leave the input on
+   the row the pinned block leaves for it. Erasing does the first and undoes the second, because
+   `clear_screen` puts the cursor home and the reader draws its prompt where the cursor is. The
+   reports, in order: blank rows printed after the erase to push the input back down scrolled the
+   *erased* lines back into view (`ESC[2J` clears the visible area and leaves them in the scrollback);
+   a `cursor_address` smuggled into `printAbove`'s argument corrupted its bookkeeping — it moves up,
+   writes, and redraws the prompt below — and stranded a character above the prompt; and the erase on
+   its own left the input at the top left ("nach /cls ist der cursor auch ganz oben und nicht unten").
+   The screen tests then showed that last state is worse than it looks: the reader redraws its prompt
+   as a **diff** against what it believes is on screen, an erase invalidates that belief, and the
+   measured result is **no prompt on screen at all** — cursor on row 0, the block still pinned at the
+   bottom, ten blank rows between them.
+
+   **Scrolling has none of those problems because it is nothing but output.** Everything is pushed above
+   the window, so the screen is blank and what was written stays reachable with the scrollbar — which
+   erasing the scrollback (`ESC[3J`) would have broken anyway, and this console promises it. Nothing is
+   erased, so nothing can be pulled back into view. The reader's bookkeeping stays right, because
+   printing above the prompt is what `printAbove` is *for*. The block is never touched: it is pinned, so
+   it needs neither `status.reset()` nor a rebuild — three steps of erase-era repair went away with the
+   erase. And the cursor ends on its row **by construction**, since printing is what pushes it there —
+   which is also the mechanism behind "ein paar Mal Enter und alles sitzt wieder", so a screen that has
+   lost rows is repaired by a clear rather than left crooked.
+
+   **Ctrl-L is the same command through another door, and this console now owns the binding.** JLine's
+   keymap dispatches Ctrl-L by *name* to the widget registered under `LineReader.CLEAR_SCREEN`, and
+   JLine's own widget wipes and redraws the line — i.e. it reproduced the identical defect, measured on
+   an interpreted screen. Replacing the map entry re-points the key without touching the keymap. **It
+   deliberately does not take the `writing` lock**: a widget runs on the reader's thread with the
+   reader's own lock held, while `line()` takes `writing` first and the reader's lock second, so
+   acquiring `writing` there inverts the order and hangs the session. What serialises it instead is the
+   reader's lock, which every `printAbove` needs; a concurrent block refresh can still interleave, which
+   is the exposure JLine's own Ctrl-L widget has today as well.
+
+   **Where each half is pinned.** `ScreenUseCasesTest` asserts the part that is only visible on a screen
+   — after `/cls`, and again after Ctrl-L, the cursor is on `rows - 1 - blockRows`, the prompt is on that
+   row, and every row above it is blank (checked one row at a time, so a failure names the row). All four
+   were red before the change, with the cursor on row 0 and no prompt anywhere.
+   `JLineTerminalTest.aClearScrollsAWindowAndErasesNothing` pins the pair a pipe *can* see: a window's
+   worth of line feeds, and no `ESC[2J` at all. That test changed sides — it used to assert the exact
+   opposite ("a clear must not scroll") and was right for as long as clearing meant erasing; both sides
+   are recorded in it. Two byte-level assertions written for the erase (`erase display reached the
+   screen`, `the block is drawn again after the wipe`) were **deleted** rather than adapted: what they
+   described no longer happens, and the behaviour they were reaching for is asserted on the screen.
 
    **The screen is scrolled to the bottom once, before the first prompt** (`scrollToBottom`). The
    reader draws its prompt at the cursor, i.e. after the last line printed, while only the status
@@ -2629,6 +2761,251 @@ are decisions, not details:
    session, which is what a program that wants its input at the bottom *without* taking over the
    screen has to pay.
 
+   **The repeated `> Hallo` is a JLine defect, reproduced and fixed upstream-side.** Typing without
+   Enter and then dragging the window showed the prompt and buffer a dozen times side by side. It is
+   **one copy per size event** — a drag reports a new size per step — and an earlier reading of this
+   ("the repeats are written while typing and widening only reveals them, so the count follows
+   keystrokes") was an inference from a number rather than a measurement, and wrong. A three-row
+   `Status` is equally necessary: the same drag without one is clean, and typing without a resize is
+   clean too. Ruled out along the way: project code, JLine 4.4.6, `nativeSignals(false)`, a missing
+   terminfo capability, Windows itself (it reproduces on a virtual `xterm`), and the `lastStatusSize`
+   guard in `redisplay()` that was the documented hypothesis before the resize path was measured. The
+   cause is `handleSignal(WINCH)`'s status branch — see the next paragraph. Full record, including the
+   two measurements that were *inconclusive rather than negative*, in
+   [`docs/upstream-investigation-jline-status-windows-redraw.md`](docs/upstream-investigation-jline-status-windows-redraw.md).
+   **Nothing here can honestly fix it**; `--plain` pins nothing and is unaffected.
+
+   **Every output line is folded by this console, so the CONSOLE never wraps one** (`JLineTerminal.fold`, to
+   one column less than the window). This is the fix for the whole family of drag artefacts and the reasoning
+   is the load-bearing part: a line the console wrapped is **one** logical line spanning two screen rows, and
+   Windows **joins such lines again when the window is widened**. The text above then needs fewer rows and
+   everything below moves **up** — including the block rows last rendered, which end up above the pinned region
+   where nothing ever writes again. One leftover per drag step, which is the reported staircase of rules
+   climbing "von unten rechts nach oben links"; narrowing does it in reverse and walks the input upwards.
+   **No program can observe a reflow or prevent one — but it can deny it a target:** a line that was never
+   soft-wrapped has nothing to join.
+   **The harness could not reproduce this, and that is why every grow test was green while the console was
+   not:** `ScreenTerminal` pulls scrollback down when it grows and **does not reflow at all**. The property is
+   testable, though, and that is what the two screen cases assert — after printing a long line, **no row on
+   screen reaches the last column** (red before: rows 8 and 9 were full width). Five unit tests pin the fold:
+   a short line is untouched, no piece exceeds the width, a double-width glyph is never split (a piece may come
+   out a column short instead), ANSI a caller put in survives and does not count towards the width, and
+   umlauts stay whole. Folding counts **screen columns** via `AttributedString.fromAnsi`, never characters —
+   an icon is one character and two columns, which has cost this class a defect before.
+   **The price is stated rather than hidden:** text keeps the line breaks it was printed with, so widening no
+   longer re-flows the conversation. That is the same trade this console already makes by rendering
+   append-only.
+
+   **The pinned block is rebuilt whenever the window changes size, from a poll** (`startWatchingSize`,
+   every 120 ms). What JLine holds are the rows it was handed, so a rule built for a 113-column window
+   stays 113 columns wide: on a resize the row is padded with spaces or cut with an ellipsis, never
+   re-made, and the next row then continues on the same screen line — the three rows run together with
+   growing gaps, which is what was reported three times. Only the caller knows a rule is meant to span
+   the window. **Both halves are needed and the second is easy to miss:** `status.resize(size)` first,
+   or the pinned region cuts the rebuilt rule straight back to the old width. **Measured, not
+   reasoned:** a probe on the real console reproduced the report when it left the block alone and
+   rendered cleanly when it rebuilt all three rows per size event — after four harness theories had
+   been measured and discarded (buffer-vs-window width, reflow by joining the rows, a
+   wide→narrow→wide drag, an accumulating cursor drift), and with that probe recording window and
+   buffer at identical widths throughout and one size event per ~125 ms for a single drag.
+   **It carries no test, and a written one was deleted rather than kept:** the stream-backed harness
+   has no screen model, so all it can observe after a size change is that JLine re-emits the rule at
+   its *old* width without the poll and emits nothing with it — neither says the rule was redrawn at
+   the new width, and the first assertion built on that passed with the poll disabled. Green either
+   way is worse than none (the same call already made for two write-lock tests). The evidence is the
+   probe, on the console where it happens. **The poll DOES re-assert the region
+   (`status.resize(size)`), and that line was once removed for a measured reason before coming back for
+   another:** it writes to the terminal directly, so without `Status`'s methods being synchronized it landed
+   inside what the reader was drawing for the same size change and printed `36;1H` as text with the block
+   doubled. That race is the fourth JLine fix carried here, so this line depends on that fix and must not be
+   kept without it — `refreshingTheBlockWhileTheReaderRedrawsNeverThrows` is what holds the pair together.
+
+   **The pinned region ADDRESSES each of its rows, which is the sixth JLine fix and the one that explains
+   the screens full of rule fragments.** One measurement settled a long chase: a status update emits
+   `ESC[8;1H` and then the rows back to back, padded to the reported width — **one cursor address for the
+   whole bar**. The second row begins on a new screen row only because writing the last column of the first
+   made the terminal wrap. A screen that is wider than the reported width (a window mid-drag, or one whose
+   terminal has reflowed its buffer) therefore never wraps, and **every reserved row lands on one screen row,
+   side by side**. And because the bar is reserved from the *bottom*, what the collapse pushes past the window
+   lands in the **output area above it**, where nothing writes again — one fragment per drag, which is why it
+   accumulated and why only `/cls` (which scrolls) cleaned it up.
+   `Display.addressesEveryRow()` (false by default, so no other display changes) switches off the
+   pending-wrap compensation, and `Status.MovingCursorDisplay` turns every cursor move into an absolute
+   address. **Two narrower variants were measured and are wrong**, both recorded in the code: addressing rows
+   at the top of the update loop makes even an unchanged update save and restore the cursor, which interleaves
+   with the reader's writes and printed the typed text **one character per screen row** (deterministic, 2/2);
+   addressing only row starts leaves a row that shares a prefix unaddressed, so the row above's pending wrap
+   is never finished and the state row came out shifted one column, `" state]"` (deterministic, 3/3).
+   **And it shipped with an off-by-one that JLine's own tests structurally could not see:** `Display` counts
+   positions in `columns + 1` per row (`columns1`) throughout, the address divided by `columns`, so row *N*
+   landed at column *N* — rule at 0, activity row at 1, state row at 2. Every existing test compares
+   **trimmed** rows, which is exactly what hides it; it took the interpreted screen here to catch it, and
+   `StatusWrongWidthTest.everyRowStartsAtColumnZero` now asserts on the raw row.
+
+   **The prompt is never addressed at all, and that is the row that is still lost on a resize.** Bisected on
+   the interpreted screen with the real block: after `/cls` the cursor is right (16 of 16), after **JLine's
+   WINCH handling alone** it is wrong (19 of 20), and neither this console's row rebuild nor its repaint
+   changes it either way. The byte stream says why — the status region clears its band, re-establishes the
+   scroll region, restores the cursor, the block is addressed row by row, and then the prompt is written as a
+   bare `>` **wherever the cursor happens to be**. Nothing relates it to the region below. A growing window
+   moves the screen's content down by as many rows as it has scrollback to pull from, which need not be the
+   number of rows added, so the prompt ends up a row or two above the rule.
+   **Not patched, and the reason is a contract rather than cowardice:** a prompt directly above the pinned
+   region is what *this* application wants (it scrolls to the bottom once at startup), while JLine promises
+   only "the prompt is drawn at the cursor", which for a half-empty screen is correct. "Move the cursor to the
+   bottom of the scroll region on a resize" would be right here and wrong there.
+   `ScreenUseCasesTest.aGrowingWindowLeavesThePromptOnTheRowTheBlockLeavesForIt` carries the reproduction with
+   the bisection in its `@Disabled` text; `/cls` repairs it in one keystroke, which the same measurement
+   confirms.
+
+   **The startup line names the terminal and the JLine patch level** (`LocalAgent.describeTerminal`), because
+   its absence cost two rounds of testing: a screenshot from a console says nothing about which library
+   produced it, and twice a defect was chased whose fix the jar in use did not contain. Probed by **method**
+   (`Status.repaint` for the fifth fix, `Display.addressesEveryRow` for the sixth), never by version string —
+   the patched builds overlay classes into the released jar and keep its manifest version, so the string
+   cannot tell them apart.
+
+   **A screen model that REFLOWS, because the one that does not reported every drag case green**
+   (`ReflowingScreenHarness` + `ReflowResizeTest`, and `ReflowProbe` (in the agent's test tree, `…/atmosphere/probe/`) for the real console). JLine's
+   `ScreenTerminal` adjusts its buffer on a resize and **never reflows**; a real console does, and that single
+   missing behaviour is why several rounds of reproduction failed. The harness adds it and nothing else: it does
+   not parse VT (JLine's screen keeps doing that), it reads the screen on a width change, rebuilds the logical
+   lines, re-wraps them and writes the result back **behind JLine's back** — the honest channel, since a console's
+   reflow changes the screen without telling the program. Both of its rules are explicit so they can be checked:
+   a row **continues** into the next when its last cell is not blank (the terminal's own rule in practice), and
+   which edge keeps its content when joining frees rows is a **parameter** (`Anchor.BOTTOM`/`TOP`), not a guess.
+   `ReflowingScreenHarnessTest` puts the harness itself under test. **Its limit is stated:** the cursor is not
+   reflowed with the content, so it is evidence about what is ON the screen after a resize, not about where the
+   cursor lands — those cases stay with `ScreenTerminalHarness`.
+   **The insight that came with it:** folding makes nothing soft-wrapped *at the width it was printed at*, so
+   making the window NARROWER turns those same lines into wrapped ones and the next widening joins them. That is
+   why enlarging alone looked fine while alternating "zerhackt alles" — the shrink manufactures what the widening
+   then moves everything with.
+
+   **The eighth JLine fix: `Status.resize` must not erase the rows above the bar.** The first thing the emulator
+   showed was not a reflow but an **erase** — after a shrink the conversation was simply gone. Reproduced without
+   any reflow at all, on the ordinary harness: three answers on a 100-column window, halve the width, and **two
+   are erased**. `Status.resize` clears a band when the geometry changes and pulled its start upwards by
+   `(ceil(oldColumns / columns) - 1) * statusLines` rows "to account for wrapped status lines" — six rows above a
+   three-row bar in a halved window, straight through the application's output. Since the seventh fix a status row
+   is padded one column short and **cannot wrap**, so there are no extra rows to account for. Red/green both
+   sides: `StatusRepaintTest.makingTheWindowNarrowerDoesNotEraseWhatIsAboveTheBar` fails with the compensation
+   restored and passes without it; `makingTheWindowNARROWERmustNotERASETheConversation` is red against
+   `statusfix7` and green against `statusfix8`. **This is the answer to "nach dem kleiner ziehen sehe ich es nicht
+   mehr":** the output was never scrolled away, it was erased by the bar's own housekeeping.
+
+   **A status row must not write the last column, which is the seventh JLine fix.** `Status.update` padded every
+   row to the **full** reported width. A row padded to a width the screen does not have **wraps**: it occupies
+   two screen rows where the bar reserves one, so the bar's *last* row wraps past the bottom of the screen and
+   **scrolls** it — the bar moves up and leaves a copy of itself above, one per bad render. That is the reported
+   "ganz viel kleiner / größer abwechselnd zerhackt alles", a screen carrying several complete bars at different
+   widths. The `…` some of those rules ended in is JLine's own marker for a row wider than the region, which is
+   what pointed at it.
+   **Padding one column short costs nothing** now that every row is addressed rather than reached by wrapping
+   (the sixth fix), and it additionally stops the terminal from marking the row as **wrapped**, which is what let
+   a reflow join it to its neighbour. Measured with a screen reporting one column more than it has — the lag a
+   dragged console really shows: the state row came out as `" ▤ X:/tmp/…"`, its `[` eaten by the wrap; with eight
+   columns over, eight characters. Both are the same thing the earlier `"state]"` reports were.
+   **Our own half of that race was measured and is already closed:** a harness whose `getSize()` returns a
+   different width on every call (a drag that stops) produces no ellipsis and a whole state row, because this
+   console reads the size **once** per block build and hands that one read to both the region and the rows. The
+   case is kept as the guard for it.
+   **What the harness cannot show is the stack itself** — `ScreenTerminal` does not reflow, and JLine's diff skips
+   a render whose content has not changed, so only the first bad render damages it. What it does show, a bottom
+   row eaten by a wrap, is the same mechanism one render at a time.
+
+   **The redraw after the size SETTLES is a repaint, not a diff** (`repaintBlockFromScratch`, 400 ms after
+   the last size event). This is the fix for "kleiner ziehen sah gut aus, größer macht noch Probleme", and it
+   rests on a mechanism worth knowing: JLine pads every region row to the width the terminal **reports** and
+   writes the rows one after another, relying on the terminal wrapping at the right margin to start the next.
+   A screen that is **wider** than the reported width therefore never wraps, and the next row continues on
+   the same screen line — a rule with the activity row cut short beside it, the next rule where that left
+   off, and the *last* row still perfectly correct (the region addresses its first row and then writes on, so
+   only the rows in between collapse). Reproduced deterministically with a harness that reports eight columns
+   fewer than its screen has.
+   **Two causes reach that state and only one recovers by itself.** A console reporting a width it has not
+   applied does it briefly, and the existing rebuild repairs it (measured, including a window that also grows
+   a row taller). **Windows also reflows its screen buffer when the window is widened**, joining rows it had
+   marked as wrapped — which is every region row, since each is padded to the last column — and JLine is
+   never told. Its `Display` still matches what it wrote, so every later update computes an **empty diff and
+   emits nothing** and the joined rows stay for the rest of the session. That is the half no earlier theory
+   explained: the artefact *persisting* while every redraw runs, and repairing itself when Enter is held
+   (printing does not go through the region's diff at all).
+   **The repaint is two passes:** the same number of rows, blank, then the real rows — the first makes the
+   second a real write and erases the rows on the way. **`Status.reset()` is the call that looks right and is
+   wrong:** it forgets the scroll region too, so the next update believes it must grow the region and scrolls
+   to make room — the stale rows were pushed *up* rather than cleared and the block stood on screen **twice**,
+   four rows apart (measured on the interpreted screen, the only place that is visible). An empty block has
+   the same problem for the same reason: it changes the region's height. Only the settle redraw repaints; a
+   drag reports a size every ~125 ms and repainting on each is bytes spent against a screen about to change
+   again.
+   **What it cannot reach:** the prompt has a display of its own with the same diff and no `reset()` a caller
+   can call, so a reflow that damages the prompt's row is still beyond repair from here —
+   `thePromptItselfStaysVisibleAfterEnlarging` records that. `/cls` and Ctrl-L do repair it, because they
+   only print.
+
+   **A settled WIDTH change wipes the screen, in EITHER direction; a height change does not.** This is the last of the drag defects and
+   the only one that could not be prevented, only removed. A console **reflows** when the width changes — measured
+   on the reporter's, with a number rather than a screenshot, because a pasted screen cannot answer it (Windows
+   Terminal copies the scrollback and rejoins wrapped runs, so wrapping is invisible in a paste): a 32-row window
+   widened from 86 to 111 columns left the cursor on **row 28 of 32** where 31 is the last, exactly the three rows
+   that joining three wrapped lines freed; narrowed to 72 it stayed on 31. So the **top** keeps its content and
+   everything below moves **up** — and the block's rows are ordinary screen rows, so they are carried out of the
+   region while the next render draws a fresh block at the bottom. The carried-up copy then sits above the region
+   where nothing writes again: one per size event, one every ~125 ms during a drag, which is "beim größer ziehen
+   wieder hunderte male die Linie".
+   **Both halves of "cannot be prevented" were measured.** Taking the block off the screen at the first event of a
+   drag fixes an *alternating* drag but not a plain shrink-then-widen: the console reflows immediately while this
+   console learns of the size up to 120 ms later, so the block is unavoidably on screen then. Nothing can find the
+   copy afterwards either — a caller cannot read the screen. Scrolling removes it, which is what `/cls` does and
+   why that command was always the repair. The trade was the user's call: the visible conversation scrolls out of
+   view on a width drag — and is then **printed again**, which is the part that makes the wipe affordable.
+   Every line handed to `line()` is remembered **before** folding (a bounded ring of the last 300), and after the
+   wipe as many of the most recent as fit above the block are printed again, oldest first, counted in **screen
+   rows** rather than lines because folding can turn one line into several. Storing the text rather than the
+   drawing buys what a reader expects from a window they just made bigger: the conversation **re-flows** — a line
+   that needed two rows in a narrow window takes one in a wide one
+   (`whatIsPrintedAgainIsFoldedForTheWidthTheWindowHasNOW` measures both states). It was wiped without this for
+   one round and the report was a single sentence: "allerdings sehe ich den Verlauf nicht mehr". A height change
+   needs none of this (no width change, nothing re-wraps) and keeps the conversation where it is, with the prompt
+   printed back to its row instead.
+   **The redraw only prints; it must not remember.** `line()` does both, and routing the redraw through it put the
+   whole visible conversation into the ring a second time on every wipe — one turn ended up on screen four times
+   ("der Text erscheint zwar wieder, aber mehrmals"). `remember` and `print` are separate for that reason. It also
+   takes **two** width changes to see it: after the first wipe the ring holds the line twice but only one copy has
+   been printed, which is why the case that shipped with the redraw was green while the console was not.
+   **It was narrowed to "only when the width grew" once, on reasoning rather than evidence, and the next report
+   came from the other direction:** narrowing does not join lines, it **splits** them, and the bar's own rows —
+   built for the old width — no longer fit and are re-wrapped across several screen rows, so the bar needs more
+   rows than the region reserves and everything above it is pushed up ("beim kleiner ziehen wandert es nach oben
+   mit ganz vielen Zeilen"). Both directions leave rows behind that only scrolling removes. Note what the wipe is
+   **not**: the eighth JLine fix stops the library from *erasing* those rows, which is unrecoverable, while
+   scrolling them into the scrollback is not — that fix still matters for every consumer that does not wipe.
+
+   **A height change moves the prompt off its row, and the settle prints it back**
+   (`pushThePromptBackToItsRow`). Measured on the interpreted screen with the real three-row block: growing 20
+   rows to 26 left the prompt on row 19 where 22 is right, shrinking 20 to 14 left it on row 13 where 10 is
+   right — **half the height change in both directions**, and "half" is an artefact of that buffer state rather
+   than a rule (the screen moves content by as many rows as it has scrollback to give or room to delete, which
+   is what a console does). **A width change moves nothing at all**, which is folding paying off, so nothing is
+   printed for one.
+   **The growing half is fixed and the reason it works is the direction:** the drift cannot be computed, but it
+   is bounded by the height change, and printing moves the cursor down one row per line until it reaches its row
+   and then merely scrolls — so printing that many lines lands it correctly without knowing where it was. It is
+   the same repair `/cls` performs with a whole window's worth, which is why that command always worked.
+   Measured 19 → 22; `aGrowingWindowLeavesThePromptOnTheRowTheBlockLeavesForIt` was the open reproduction and is
+   now green twice in a row. The price is bounded by the change: up to that many blank rows enter the
+   conversation and up to that many lines of it scroll out of view.
+   **The shrinking half stays open**, because there the prompt must move *up*: it lands inside the pinned band
+   and the block draws over it ("nach dem kleiner ziehen sehe ich es nicht mehr"). Nothing a caller can emit
+   moves the cursor up without breaking the reader's bookkeeping — `cursor_address` inside `printAbove` was tried
+   twice and stranded characters above the prompt both times.
+   `aWindowThatGetsSHORTERLeavesThePromptOnTheRowTheBlockLeavesForIt` carries it, `/cls` repairs it.
+   **Measuring the cursor was ruled out, not overlooked:** a cursor-position report is a round trip through the
+   terminal's input, which the reader owns all session, so it would race the keyboard and could swallow a
+   keystroke or leave `[24;1R` in the input line — the exact class of defect this whole investigation has been
+   about.
+
    **Do not add a `WINCH` handler, and the reason is measured.** A resize drawing a row of
    `> > > > >` across the screen looks like the pinned region not being told about the new size, so a
    `Signal.WINCH` handler that resized and re-rendered it was added — and the user reported it
@@ -2636,9 +3013,16 @@ are decisions, not details:
    and the reader installs its own handler for as long as it is reading, which is the whole session;
    ours therefore either never ran or ran *in addition*, putting a second writer on the terminal from
    the signal thread at the exact moment the reader was redrawing. A probe driving a real
-   `terminal.raise(WINCH)` against a pipe-backed terminal shows JLine doing it correctly on its own:
-   scroll region reset, the rule re-cut to the new width, **one** prompt. So the remaining report is
-   not reproducible in the harness and has no fix here yet — stated rather than papered over.
+   `terminal.raise(WINCH)` against a **pipe-backed** terminal shows JLine doing it correctly on its
+   own: scroll region reset, the rule re-cut to the new width, **one** prompt — but that probe was
+   measuring the wrong thing, because a pipe has no screen to redraw onto. Against JLine's own
+   `VirtualTerminal` (a real VT interpreter over a virtual screen) the same drag reproduces the report
+   exactly, on `xterm` and `windows-vtp` alike, and the cause is a **one-line JLine defect**:
+   `handleSignal(WINCH)`'s status branch calls `doDisplay()`, which replaces the `Display` with a fresh
+   one that believes the screen is blank, so the following `redisplay()` paints the prompt as new
+   content once per size event instead of as a diff (`display.resize(size)` is the fix, verified with
+   three new tests plus JLine's 72 existing ones). Still nothing to fix *here*, and no project test may
+   assert the fixed behaviour while the build depends on an unfixed release.
    `fit()` measuring in **screen columns** (`AttributedString.columnLength`) rather than characters is
    ours and does matter: an icon is one character and two columns, and a row wider than the window
    wraps onto a second screen line, which the reserved region cannot survive.
@@ -2650,11 +3034,14 @@ are decisions, not details:
    claiming a benefit it does not have. The stray `?1h` consequently still has **no established
    cause**: the lock covers our writes, the reader's own are inside JLine.
 
-   **Restoring the block after a wipe takes three steps, found by measurement not by reading**:
-   `status.reset()`, then `status.update(List.of())`, then render it again from `requested` (the text
-   the caller gave, not the rendered rows). With only the first two, `Status` draws the difference it
-   computes against a belief the wipe invalidated — observed as a single character emitted where a
-   whole block was missing. `JLineTerminalTest.theBlockIsBackOnScreenAfterAClear` is what says so.
+   **Restoring the block after a wipe took three steps — and the whole repair went away with the wipe.**
+   It is kept as a record because it is the same mechanism that eventually retired the wipe itself. The
+   steps were `status.reset()`, then `status.update(List.of())`, then rendering it again from `requested`
+   (the text the caller gave, not the rendered rows); with only the first two, `Status` drew the
+   difference it computed against a belief the wipe had invalidated — observed as a single character
+   emitted where a whole block was missing. The reader's own prompt has exactly that problem and no
+   equivalent repair, which is why an erase left no prompt on screen at all. A clear that only scrolls
+   invalidates nothing, so the block is simply left alone.
 
    **The turn after an interrupted one is pinned end to end** (`InterruptedTurnTest`): with a scripted
    backend behind the real `OpenAiCompatServer`, a turn is cut short by pending input and the next one

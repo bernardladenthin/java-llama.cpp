@@ -5,6 +5,7 @@
 package net.ladenthin.llama.atmosphere;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
@@ -17,6 +18,7 @@ import org.jline.reader.LineReaderBuilder;
 import org.jline.reader.Reference;
 import org.jline.reader.UserInterruptException;
 import org.jline.reader.impl.completer.StringsCompleter;
+import org.jline.terminal.Size;
 import org.jline.terminal.Terminal;
 import org.jline.terminal.TerminalBuilder;
 import org.jline.utils.AttributedString;
@@ -71,6 +73,35 @@ public final class JLineTerminal implements AgentTerminal {
     private final Object writing = new Object();
 
     /**
+     * {@code Status.repaint()}, or {@code null} on a JLine that does not have it.
+     *
+     * <p><b>Why this is looked up rather than called.</b> The other four fixes this project carries against
+     * JLine change how the library <em>behaves</em>, so the code compiles against the released version and
+     * merely shows the symptom there. This one is a new method — the library offers no way to ask the pinned
+     * region for a repaint, which is what a screen the console has changed behind its back needs (see
+     * {@link #repaintBlockFromScratch()}). Calling it directly would make the released library fail to
+     * compile, and this project must stay buildable with whatever JLine a copy of it finds: the pom's
+     * {@code jline.version} is the released one on purpose.
+     *
+     * <p>So it is looked up once. Present: the block is repainted. Absent: nothing is forced, and the
+     * artefact stays until something prints — exactly the trade the other four fixes make.
+     */
+    private static final @Nullable Method REPAINT = lookUpRepaint();
+
+    /**
+     * Find {@code Status.repaint()} if this JLine has it.
+     *
+     * @return the method, or {@code null}
+     */
+    private static @Nullable Method lookUpRepaint() {
+        try {
+            return Status.class.getMethod("repaint");
+        } catch (NoSuchMethodException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
      * The block as it was last handed over, so it can be put back after the screen is wiped.
      *
      * <p>{@code Status} draws only what has changed, and a wipe does not change its content — it just
@@ -89,8 +120,21 @@ public final class JLineTerminal implements AgentTerminal {
      */
     private volatile List<String> requested = List.of();
 
+    /** How often the window size is polled; one drag emits an event roughly every 125 ms. */
+    private static final long WATCH_INTERVAL_MILLIS = 120;
+
     private volatile boolean closed;
     private @Nullable Thread input;
+    private @Nullable Thread sizes;
+
+    /** How long the window size must hold still before the block is drawn one last time. */
+    private static final long SETTLE_MILLIS = 400;
+
+    /** When to draw the settled block, or {@code 0} when nothing is pending. */
+    private long settleAt;
+
+    /** The size the pinned region was just told about, so the rows are built for the same one. */
+    private volatile @Nullable Size pendingSize;
 
     private JLineTerminal(Terminal terminal, LineReader reader, Status status, Ansi ansi) {
         this.terminal = terminal;
@@ -106,6 +150,15 @@ public final class JLineTerminal implements AgentTerminal {
      * @return the terminal, or {@code null} when this is not an interactive terminal
      */
     public static @Nullable JLineTerminal open(List<String> completions) {
+        if (!thereIsAConsole()) {
+            // Refused rather than attempted, and this is not hypothetical tidiness: a system terminal takes
+            // over the process's standard input, and where there is no console that input belongs to somebody
+            // else. Inside a Surefire fork it is the channel Surefire itself talks over, and grabbing it ends
+            // the build with "[SUREFIRE] std/in stream corrupted" -- every test green, the build red, for
+            // months, because a test that drives the agent interactively reaches this method. Piped input lands
+            // here too and has always been served by the plain console.
+            return null;
+        }
         try {
             Terminal terminal = TerminalBuilder.builder().system(true).build();
             if (terminal.getType().startsWith(Terminal.TYPE_DUMB)) {
@@ -116,6 +169,29 @@ public final class JLineTerminal implements AgentTerminal {
         } catch (IOException | RuntimeException e) {
             // No terminal, no native provider, a restricted environment: the plain console still works.
             return null;
+        }
+    }
+
+    /**
+     * Whether this process has a console to take over.
+     *
+     * <p>{@code Console.isTerminal()} where it exists (JDK 22 and later), because from there
+     * {@link System#console()} returns a console even when the streams are redirected; below that, the presence
+     * of a console is the answer. The same two-step {@code Ansi} uses to decide about colour, for the same
+     * reason: a redirected stream is not a terminal, whatever the JDK hands back.
+     *
+     * @return whether a system terminal may be opened
+     */
+    private static boolean thereIsAConsole() {
+        java.io.Console console = System.console();
+        if (console == null) {
+            return false;
+        }
+        try {
+            return (Boolean) java.io.Console.class.getMethod("isTerminal").invoke(console);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            // Before JDK 22 there is no isTerminal(), and a console that exists is a terminal.
+            return true;
         }
     }
 
@@ -147,8 +223,152 @@ public final class JLineTerminal implements AgentTerminal {
         // reading -- which is the whole session -- and it already resizes the pinned region itself
         // (LineReaderImpl.handleSignal calls Status.resize). Adding one of ours only put a second
         // writer on the terminal, on the signal thread, at the exact moment the reader was redrawing:
-        // the row of "> > > > >" after a resize got worse, not better, when it was tried.
-        return new JLineTerminal(terminal, reader, Status.getStatus(terminal), Ansi.detect());
+        // the row of "> > > > >" after a resize got worse, not better, when it was tried. The block is
+        // rebuilt from a poll instead -- see startWatchingSize.
+        JLineTerminal console = new JLineTerminal(terminal, reader, Status.getStatus(terminal), Ansi.detect());
+        console.bindClearScreen();
+        console.startWatchingSize();
+        return console;
+    }
+
+    /**
+     * Make Ctrl-L do what {@code /cls} does.
+     *
+     * <p>Ctrl-L is the second way into this command, and the two have to end with the prompt on the same
+     * row. JLine's keymap dispatches the key by <em>name</em> to the widget registered under
+     * {@link LineReader#CLEAR_SCREEN}, and its own widget is {@code clear_screen} plus a line redraw — so
+     * it reproduced the identical defect, measured on an interpreted screen in {@code ScreenUseCasesTest}.
+     * Replacing the map entry re-points the key without touching the keymap, so a binding a user already
+     * knows keeps working and now does the same thing the command does.
+     */
+    private void bindClearScreen() {
+        reader.getWidgets().put(LineReader.CLEAR_SCREEN, () -> {
+            scrollAWindowAway();
+            return true;
+        });
+    }
+
+    /**
+     * Rebuild the pinned block whenever the window changes size.
+     *
+     * <p>What JLine holds are the rows it was handed, so a rule built for a 113-column window stays
+     * 113 columns wide: on a resize the row is padded with spaces or cut with an ellipsis, never
+     * re-made. The next row then continues on the same screen line and the three rows run together
+     * with growing gaps — which is what was reported, repeatedly. Only the caller knows that a rule is
+     * meant to span the window, so only the caller can fix it.
+     *
+     * <p>Measured on a real Windows console rather than reasoned: a probe that left the block alone on
+     * a resize reproduced the report, and the same probe rebuilding all three rows at the new width on
+     * every size event rendered cleanly. Four theories had been measured and discarded in the harness
+     * before that (buffer-vs-window width, reflow by joining the rows, a wide-to-narrow-to-wide drag,
+     * an accumulating cursor drift) — and the same probe recorded window and buffer at identical
+     * widths throughout, so it is not the one the terminal's own API could explain.
+     *
+     * <p><b>Not covered by a test, and a written one was deleted rather than kept.</b> The
+     * stream-backed harness has no screen model, so all it can observe after a size change is that
+     * JLine re-emits the rule at its OLD width without this poll (59 columns, in the prompt's DEC
+     * line-drawing form) and emits nothing with it. Neither says the rule was redrawn at the new
+     * width, so every assertion built on them was satisfiable by the broken behaviour -- the first
+     * version passed with the poll disabled. Green either way is worse than none, the same call
+     * already made for two write-lock tests in this class's history. What this rests on is the probe
+     * above, which ran on the console where the defect appears.
+     *
+     * <p>A poll, not a signal: the reader owns WINCH for the whole session. This writes through the
+     * same lock as every other write, which is what the turn loop already does four times a second.
+     * The probe recorded one size event per ~125 ms for a single drag, so the interval follows a drag
+     * without redrawing between two of its events.
+     */
+    private synchronized void startWatchingSize() {
+        if (sizes != null) {
+            return;
+        }
+        sizes = new Thread(
+                () -> {
+                    Size last = terminal.getSize();
+                    // The height the window had when the current run of changes started, so the settle knows
+                    // how far the prompt can have drifted. Zero while nothing is in flight.
+                    int rowsBeforeTheDrag = 0;
+                    // Whether the WIDTH moved during the current run of events -- in either direction, and that
+                    // was corrected once after being narrowed to "grew" on reasoning rather than on evidence.
+                    // Widening joins wrapped lines and frees rows; narrowing splits them and the bar's own rows,
+                    // built for the old width, no longer fit and are re-wrapped across several screen rows. Both
+                    // leave rows behind that only scrolling removes, and both were reported.
+                    boolean widthMoved = false;
+                    while (!closed) {
+                        try {
+                            Thread.sleep(WATCH_INTERVAL_MILLIS);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                        Size now;
+                        try {
+                            now = terminal.getSize();
+                        } catch (RuntimeException e) {
+                            // A closed terminal throws here, and a poll must not turn a normal exit into
+                            // an error -- but ONLY a closed terminal ends this loop. Returning on any
+                            // failure was a defect with a very confusing symptom: one transient throw
+                            // killed the thread, the block then kept whatever width it had been built
+                            // for, and a window shrunk afterwards showed a rule WIDER than itself,
+                            // wrapping onto a second screen line and pushing everything below it one row
+                            // out of place. Reported as "beim Groesse veraendern geht es immer noch
+                            // kaputt" on a screen whose block was otherwise correct.
+                            if (closed) {
+                                return;
+                            }
+                            continue;
+                        }
+                        if (now.getColumns() != last.getColumns() || now.getRows() != last.getRows()) {
+                            if (settleAt == 0) {
+                                rowsBeforeTheDrag = last.getRows();
+                                widthMoved = false;
+                            }
+                            if (now.getColumns() != last.getColumns()) {
+                                widthMoved = true;
+                            }
+                            last = now;
+                            settleAt = System.currentTimeMillis() + SETTLE_MILLIS;
+                            if (!refreshBlockForCurrentSize() && closed) {
+                                return;
+                            }
+                            continue;
+                        }
+                        // The size stopped changing: draw once more, a moment later, and this one is a
+                        // repaint rather than a diff. A console being enlarged reports the new width before
+                        // its screen has applied it, so the LAST event of a drag is processed against a size
+                        // the screen does not have yet -- the rule then covers two screen rows and
+                        // everything above it moves up. Nothing re-renders afterwards, because the size no
+                        // longer changes, so the wrong render is what stays. Reported after enlarging, with
+                        // the block otherwise in place.
+                        //
+                        // From scratch, because a diff cannot see it: the console also REFLOWS its screen
+                        // buffer when the window is widened, joining rows it had marked as wrapped -- every
+                        // row of the region is padded to the last column, so all of them are -- and JLine is
+                        // not told. Its model still matches what it wrote, so an ordinary redraw computes an
+                        // empty diff and emits nothing, which is why the artefact survived every redraw and
+                        // why holding Enter was what repaired it. See repaintBlockFromScratch.
+                        if (settleAt != 0 && System.currentTimeMillis() >= settleAt) {
+                            settleAt = 0;
+                            if (widthMoved) {
+                                // Wiped, because that is the only thing that removes what a re-wrap leaves
+                                // behind -- and then the conversation is put back, folded for the new width, so
+                                // the wipe does not cost what the reader came for. See printRecentLinesAgain.
+                                clearScreen();
+                                printRecentLinesAgain();
+                            } else {
+                                pushThePromptBackToItsRow(Math.abs(now.getRows() - rowsBeforeTheDrag));
+                            }
+                            widthMoved = false;
+                            rowsBeforeTheDrag = 0;
+                            if (!repaintBlockFromScratch() && closed) {
+                                return;
+                            }
+                        }
+                    }
+                },
+                "agent-size-watch");
+        sizes.setDaemon(true);
+        sizes.start();
     }
 
     @Override
@@ -160,6 +380,48 @@ public final class JLineTerminal implements AgentTerminal {
             text.lines().forEach(this::line);
             return;
         }
+        remember(text);
+        print(text);
+    }
+
+    /**
+     * Keep a line for a later redraw, before it is folded.
+     *
+     * @param text the line as the caller gave it
+     */
+    private void remember(String text) {
+        synchronized (writing) {
+            // BEFORE folding, so a redraw after a width change folds it for the window's new width.
+            recent.addLast(text);
+            while (recent.size() > REMEMBERED_LINES) {
+                recent.removeFirst();
+            }
+        }
+    }
+
+    /**
+     * Fold a line for the window as it is now and write the pieces, <b>without</b> remembering it.
+     *
+     * <p>Separate from {@link #line(String)} for one reason, and it is a defect that shipped: the redraw after a
+     * width change went through {@code line()}, which remembers — so every wipe put the whole visible
+     * conversation into the ring a second time, and the next one printed it twice, then four times. Reported as
+     * "der Text erscheint zwar wieder, aber mehrmals", with one turn on screen four times over. What is being
+     * redrawn is already remembered; printing it again may only draw.
+     *
+     * @param text the line
+     */
+    private void print(String text) {
+        for (String piece : fold(text, Math.max(20, terminal.getSize().getColumns() - 1))) {
+            write(piece);
+        }
+    }
+
+    /**
+     * Write one line that is known to fit, through whichever path is safe right now.
+     *
+     * @param text the line
+     */
+    private void write(String text) {
         synchronized (writing) {
             if (input != null) {
                 // Once the reader thread exists it owns the screen, and nothing may write around it --
@@ -172,6 +434,57 @@ public final class JLineTerminal implements AgentTerminal {
                 terminal.writer().flush();
             }
         }
+    }
+
+    /**
+     * Break a line into pieces that each fit the window, so the CONSOLE never wraps it.
+     *
+     * <p><b>This is what makes the whole console reflow-proof, and the reasoning is the point.</b> A line the
+     * console wrapped is <em>one</em> logical line spanning two screen rows, and Windows joins such lines
+     * again when the window is widened. The text above then occupies fewer rows and <b>everything below moves
+     * up</b> — including the block rows last rendered, which end up above the pinned region where nothing ever
+     * writes again. One leftover per drag step, which is the reported staircase of rules climbing "von unten
+     * rechts nach oben links"; narrowing does it in reverse and walks the input upwards. No program can
+     * observe a reflow or prevent one. What it can do is deny it a target: a line that was never soft-wrapped
+     * has nothing to join.
+     *
+     * <p>Counted in <b>screen columns</b>, not characters, and that distinction has cost this class a defect
+     * before: an icon is one character and two columns, so folding by length lets a piece come out wider than
+     * the window after all. {@link AttributedString#fromAnsi} parses the colours a caller already put in, so
+     * the pieces keep their styling and the escape sequences do not count towards the width.
+     *
+     * <p>The price is stated rather than hidden: text keeps the line breaks it was printed with, so widening
+     * the window does not re-flow the conversation. That is the same trade this console already makes by
+     * rendering append-only — and the alternative is what the reports were about.
+     *
+     * @param text the line, possibly carrying ANSI styling
+     * @param width how many columns a piece may use
+     * @return the pieces, in order; a single-element list when the line already fits
+     */
+    static List<String> fold(String text, int width) {
+        AttributedString measured = AttributedString.fromAnsi(text);
+        if (measured.columnLength() <= width) {
+            return List.of(text);
+        }
+        List<String> pieces = new java.util.ArrayList<>();
+        int totalColumns = measured.columnLength();
+        int at = 0;
+        while (at < totalColumns) {
+            // The window walks in COLUMNS, because that is the only unit the terminal cares about, and the
+            // piece says how many it actually took: a double-width character straddling the boundary is left
+            // for the next piece, so a piece can be one column short of the width.
+            AttributedString piece = measured.columnSubSequence(at, Math.min(totalColumns, at + width));
+            int consumed = piece.columnLength();
+            if (consumed <= 0) {
+                // A single character wider than the whole window. Cannot happen with the width the caller
+                // passes, and a guard rather than a loop that never ends if it ever does.
+                piece = measured.columnSubSequence(at, at + 2);
+                consumed = Math.max(1, piece.columnLength());
+            }
+            pieces.add(piece.toAnsi());
+            at += consumed;
+        }
+        return pieces;
     }
 
     /**
@@ -227,43 +540,316 @@ public final class JLineTerminal implements AgentTerminal {
     }
 
     @Override
+    public String terminalType() {
+        return terminal.getType();
+    }
+
+    @Override
     public void clearScreen() {
-        String capability = terminal.getStringCapability(InfoCmp.Capability.clear_screen);
-        if (capability == null) {
-            return; // a terminal that cannot clear: better nothing than a guessed escape sequence
-        }
-        // The capability is terminfo source, not the sequence itself: it reads "\E[H\E[2J", with the
-        // escape spelled out. Writing it as it comes prints that text on the screen, which is what a
-        // test caught. Curses expands it the way terminal.puts would, but into a string this class can
-        // hand to the reader instead of writing behind its back.
-        StringBuilder expanded = new StringBuilder();
-        org.jline.utils.Curses.tputs(expanded, capability);
-        String clear = expanded.toString();
         synchronized (writing) {
+            scrollAWindowAway();
+        }
+    }
+
+    /**
+     * Scroll a window's worth of blank lines in above the prompt, which is how this console clears.
+     *
+     * <p><b>SCROLLED, not erased — and the difference is the whole history of this method.</b> What this
+     * console needs from a wipe is two things at once: a blank screen and the input back on the row the
+     * pinned block leaves for it. Erasing gives the first and takes the second, because
+     * {@code clear_screen} puts the cursor home and the reader draws its prompt where the cursor is —
+     * reported as "nach /cls ist der cursor auch ganz oben und nicht unten". Everything tried on top of
+     * an erase to put it back was reported as a new defect: blank rows after the erase scrolled the
+     * erased lines back into view, and a {@code cursor_address} smuggled into {@code printAbove}'s
+     * argument corrupted its bookkeeping and stranded a character above the prompt. The screen tests
+     * then showed the erase alone is worse than it looks: the reader redraws its prompt as a diff
+     * against what it believes is on screen, the erase invalidates that belief, and the measured result
+     * was no prompt on screen at all.
+     *
+     * <p>Scrolling has none of those problems because it is nothing but output. A window's worth of
+     * blank lines pushes everything above the window, so the screen is blank and what was written stays
+     * reachable with the scrollbar — which erasing the scrollback ({@code ESC[3J}) would have broken
+     * anyway. Nothing is erased, so nothing can be pulled back into view. The reader's bookkeeping stays
+     * right, because printing above the prompt is exactly what {@code printAbove} is for. The block is
+     * never touched at all: it is pinned, so it needs neither a reset nor a rebuild. And the cursor ends
+     * on its row by construction, since printing is what pushes it there — which is also why pressing
+     * Enter a few times repairs a screen that has lost rows.
+     *
+     * <p><b>It takes no lock of its own, and that is deliberate.</b> {@link #clearScreen()} holds
+     * {@code writing} around it, but the Ctrl-L widget cannot: a widget runs on the reader's thread with
+     * the reader's own lock held, and {@link #line(String)} takes {@code writing} first and the reader's
+     * lock second — so acquiring {@code writing} there inverts the order and hangs the session. What
+     * serialises the widget path instead is the reader's lock itself, which every {@code printAbove}
+     * needs, so no other output can interleave; a block refresh still can, which is the exposure JLine's
+     * own Ctrl-L widget has today as well.
+     */
+    private void scrollAWindowAway() {
+        int lines = Math.max(1, terminal.getSize().getRows());
+        for (int line = 0; line < lines; line++) {
             if (input == null) {
-                terminal.writer().print(clear);
-                terminal.writer().flush();
-                return;
+                // Before the reader exists there is no prompt to print above and no bookkeeping to
+                // keep: writing straight to the terminal is both allowed and the only option.
+                terminal.writer().println();
+            } else {
+                reader.printAbove("");
             }
-            // Through the reader, like every other write once it exists: printAbove leaves the prompt
-            // redrawn and the reader's idea of the cursor intact, which writing the escape sequence
-            // around it would not. The blank rows put the input back on the last row, where clearing
-            // to the top-left corner has just moved it away from.
-            reader.printAbove(clear + System.lineSeparator().repeat(blankRows()));
-            // reset() makes it forget what it believes is on screen; without that the update below is
-            // a no-op, because the content it would draw is the content it thinks is already there.
-            List<String> lines = requested;
-            // Three steps, and all three were needed to make the block come back after a wipe:
-            // forget the drawing state, hand over an empty block so nothing is believed to be on
-            // screen, then render it again. With only the first two, Status drew the difference it
-            // computed against a belief the wipe had invalidated -- measured as a single character
-            // where a whole block was missing.
-            status.reset();
-            block = List.of();
-            status.update(List.of());
-            if (!lines.isEmpty()) {
+        }
+        terminal.writer().flush();
+    }
+
+    /**
+     * The lines this console has printed, newest last, as they were handed over — <b>before</b> folding.
+     *
+     * <p>Kept so the conversation can be put back on the screen after a width change wipes it, which is the one
+     * thing that removes the rows a console's reflow leaves behind. Wiping without this was measured and
+     * reported in one sentence: "allerdings sehe ich den Verlauf nicht mehr". The wipe cannot be given up — see
+     * the size watch — but the conversation does not have to go with it, because this console knows what it
+     * printed.
+     *
+     * <p><b>Unfolded on purpose.</b> What is stored is the line a caller gave, not the pieces it was broken into,
+     * so printing it again folds it for the width the window has <em>now</em>: a line that needed two rows in a
+     * narrow window takes one in a wide one. That is what a reader expects from a window they have just made
+     * bigger, and it is only possible because what is kept is the text rather than the drawing.
+     *
+     * <p>Bounded, because a session is not: only the last {@link #REMEMBERED_LINES} are held, which is several
+     * screens' worth and costs a few tens of kilobytes. Anything older is in the terminal's own scrollback.
+     */
+    private final java.util.ArrayDeque<String> recent = new java.util.ArrayDeque<>();
+
+    /** How many printed lines are kept for redrawing after a wipe; several screens' worth. */
+    private static final int REMEMBERED_LINES = 300;
+
+    /**
+     * Print the tail of the conversation again, folded for the window's current width.
+     *
+     * <p>As many of the most recent lines as fit above the pinned block, oldest of them first. Counted in
+     * <b>screen rows</b> rather than in lines, because folding can turn one line into several — counting lines
+     * would overfill the screen and push the first of them off the top again.
+     */
+    private void printRecentLinesAgain() {
+        int columns = Math.max(20, terminal.getSize().getColumns() - 1);
+        int available = Math.max(0, terminal.getSize().getRows() - block.size() - 1);
+        List<String> lines = new java.util.ArrayList<>();
+        int used = 0;
+        synchronized (writing) {
+            java.util.Iterator<String> newestFirst = recent.descendingIterator();
+            while (newestFirst.hasNext() && used < available) {
+                String line = newestFirst.next();
+                int rows = fold(line, columns).size();
+                if (used + rows > available) {
+                    break;
+                }
+                used += rows;
+                lines.add(0, line);
+            }
+        }
+        for (String line : lines) {
+            // print, not line: what is being redrawn is already in the ring, and putting it back would double
+            // the conversation on every wipe.
+            print(line);
+        }
+    }
+
+    /**
+     * Why a settled <b>width</b> change wipes the screen, and a height change does not.
+     *
+     * <p><b>Measured on the reporter's console, which is what settled it.</b> A console reflows when the width
+     * changes: rows it had marked as wrapped are joined again, the text above needs fewer rows, and everything
+     * below moves <b>up</b>. The probe filled a 32-row window, printed three lines twelve columns longer than the
+     * window and asked the console where the cursor was afterwards — a number, because a pasted screen cannot
+     * answer it (Windows Terminal copies the scrollback and rejoins wrapped runs, so wrapping is invisible in a
+     * paste):
+     *
+     * <pre>
+     * widened   86 -> 111 columns:  cursor on row 28 of 32   (last row would be 31)
+     * narrowed 111 ->  72 columns:  cursor on row 31 of 32
+     * </pre>
+     *
+     * <p>Widening moved the content up by exactly the three rows that joining the three wrapped lines freed;
+     * narrowing kept the cursor on the last row. The block's rows are ordinary screen rows, so the reflow carries
+     * them up out of the region while the next render draws a fresh block at the bottom — and the carried-up copy
+     * stays above it, where nothing ever writes again. One per size event, and a drag reports one every ~125 ms:
+     * the reported "beim größer ziehen wieder hunderte male die Linie".
+     *
+     * <p><b>It cannot be prevented, only removed.</b> The console reflows immediately; this console learns of the
+     * size up to 120 ms later, so the block is unavoidably on the screen at that moment. Taking it down on the
+     * first event of a drag was tried and measured: it fixes an alternating drag but not a plain
+     * shrink-then-widen, because the first event arrives after the reflow has already happened. Nothing can find
+     * the copy afterwards either — a caller cannot read the screen. Scrolling removes it, which is exactly what
+     * {@code /cls} does and why that command has been the one repair that always worked.
+     *
+     * <p>So a settled change of <b>width</b> wipes, in either direction. That was narrowed to "only when it grew"
+     * once, on the reasoning that joining is what frees rows — and the next report came from the other direction:
+     * narrowing does not join, it <b>splits</b>, and the bar's own rows, built for the old width, no longer fit
+     * and are re-wrapped across several screen rows. The bar then needs more rows than the region reserves and
+     * everything above it is pushed up, which is "beim kleiner ziehen wandert es nach oben mit ganz vielen
+     * Zeilen". Both directions leave rows behind and only scrolling removes them.
+     *
+     * <p>The trade is stated rather than hidden: the visible conversation scrolls out of view on a width drag and
+     * stays reachable with the scrollbar. A <b>height</b> change does not wipe — without a width change nothing
+     * re-wraps — and there the prompt is printed back to its row instead (see
+     * {@link #pushThePromptBackToItsRow(int)}). Note what this is not: the eighth JLine fix stops the library from
+     * <em>erasing</em> the rows above the bar, which is unrecoverable; scrolling them into the scrollback is not,
+     * and the fix still matters for every consumer that does not wipe.
+     *
+     * <p>Reproduced by {@code ReflowResizeTest} on a screen model that reflows. The ordinary model does not,
+     * which is why this defect survived so many rounds of testing.
+     */
+    /**
+     * Print as many blank lines as the prompt can have drifted, so it ends up on its row again.
+     *
+     * <p><b>Why printing, and why exactly this many.</b> The prompt is drawn wherever the cursor happens to
+     * be; JLine relates it to nothing, and a window whose height changes moves the screen's content by
+     * however many rows the console's buffer happens to give it. Measured on an interpreted screen with a
+     * three-row block: growing 20 rows to 26 put the prompt on row 19 where 22 is right, and shrinking 20 to
+     * 14 put it on row 13 where 10 is right — <b>half the change, in both directions</b>, and half is an
+     * artefact of that particular buffer state rather than a rule. Too low is worse than too high: the prompt
+     * then sits inside the pinned band and the block draws over it, which is the reported "nach dem kleiner
+     * ziehen sehe ich es nicht mehr".
+     *
+     * <p>So the drift cannot be computed — but it is bounded by the height change, and printing moves the
+     * cursor down one row per line until it reaches its row and then simply scrolls. Printing that many lines
+     * therefore lands it correctly from either side without knowing where it was. It is the same repair
+     * {@code /cls} performs with a whole window's worth, which is why that command has been the one thing
+     * that always worked.
+     *
+     * <p><b>A width change costs nothing here</b>, and that matters: a drag that only widens the window does
+     * not move the prompt at all now that this console folds its own output (see {@link #fold}), so the count
+     * is zero and nothing is printed. The price is paid only for a height change, and it is bounded by that
+     * change: up to that many blank rows enter the conversation, and up to that many lines of it scroll out of
+     * view. Measuring the cursor instead was ruled out rather than overlooked — a cursor-position report is a
+     * round trip through the terminal's input, which the reader owns for the whole session, so it would race
+     * the keyboard and could drop a keystroke or leave "[24;1R" in the input line.
+     *
+     * @param rows how far the prompt can have drifted; zero prints nothing
+     */
+    private void pushThePromptBackToItsRow(int rows) {
+        for (int row = 0; row < rows; row++) {
+            write("");
+        }
+    }
+
+    /**
+     * Rebuild the pinned block and make the region forget what it believes is on screen first.
+     *
+     * <p><b>The difference from {@link #refreshBlockForCurrentSize()} is one call, and it is the difference
+     * between a redraw that writes something and one that writes nothing.</b> JLine's pinned region is a
+     * diff: it compares the rows it is handed with the rows it last wrote and emits only what changed. That
+     * is right as long as nobody else touches the screen — and the console touches it. Windows reflows its
+     * screen buffer when the window is widened, joining rows it had marked as wrapped, which is every row
+     * the region writes, because each one is padded to the last column. JLine is never told, so its model
+     * still matches what it wrote, every later update computes an empty diff, and the joined rows stay on
+     * screen for the rest of the session. That is the reported screen — a rule with the activity row cut
+     * short beside it on one line — and it is why pressing Enter a dozen times repaired it while every
+     * redraw did not.
+     *
+     * <p><b>{@code Status.repaint()} is the fifth fix carried against JLine, and this method is why.</b>
+     * There was no way to ask for a repaint from outside. {@code Status.redraw()} is {@code update(lines)}
+     * under another name and diffs like it — it has to, being called from
+     * {@code LineReaderImpl.redisplay()} on every keystroke. {@code Status.reset()} clears the model but
+     * also forgets the scroll region, so the next update believes it must grow the region and scrolls to
+     * make room: the stale rows were pushed <em>up</em> rather than cleared and the block stood on screen
+     * <b>twice</b>, four rows apart — measured on the interpreted screen. Handing over an empty block does
+     * the same thing for the same reason, and handing over blank rows of the same height works but makes
+     * the block vanish for an instant, which two other screen cases caught as a flicker. The added
+     * {@code repaint()} clears the model and nothing else, so the following write covers every reserved
+     * row, the scroll region stays put, and nothing blinks.
+     *
+     * <p>{@code Status.resize(Size)} already does all of this — {@code display.reset()}, the scroll region,
+     * and clearing a band of old remnants — but only <b>if the grid size actually changed</b>. After a drag
+     * has settled it has not, so that whole body is skipped and the following update is an empty diff.
+     * Which is the precise reason the reflowed screen was never repaired.
+     *
+     * <p>Only the <b>settle</b> redraw does this, not every size event: a drag reports a size every ~125 ms
+     * and a full repaint on each of them is bytes spent against a screen that is about to change again. The
+     * reflow happens when the console applies the final size, so the redraw that matters is the one after
+     * the size stops changing.
+     *
+     * <p>Note what this cannot reach: the <b>prompt</b> has a display of its own, with the same diff and no
+     * {@code reset()} a caller can call. That asymmetry is exactly why the block comes back and the prompt
+     * row can stay blank, which {@code thePromptItselfStaysVisibleAfterEnlarging} records.
+     *
+     * @return {@code false} when the redraw threw, which a caller in a loop should treat as "skip this
+     *     size" rather than as a reason to stop
+     */
+    boolean repaintBlockFromScratch() {
+        if (requested.isEmpty()) {
+            return true;
+        }
+        try {
+            synchronized (writing) {
+                if (REPAINT == null) {
+                    // The released library has no repaint(), so there is nothing to force here and the
+                    // reflowed rows stay until something prints -- which is the same shape every one of the
+                    // other four fixes has on an unpatched library: the symptom comes back, nothing breaks.
+                    // /cls and Ctrl-L repair it there, because they only print.
+                    return true;
+                }
+                REPAINT.invoke(status);
+            }
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return false;
+        }
+        return refreshBlockForCurrentSize();
+    }
+
+    /**
+     * Rebuild the pinned block for the size the window has now.
+     *
+     * <p>The one thing the size poll does, and a method rather than three lines inside the thread so a
+     * test can drive it at a known moment. The tests that read an interpreted screen call this directly
+     * after changing the size: waiting for the poll made them pass alone and fail in a full run, and a
+     * flaky test is worse than none. What that leaves uncovered is the thread itself — a loop that
+     * compares two sizes and calls this — and that is the trade, stated rather than implied.
+     *
+     * <p>It rebuilds the rows and does <b>nothing else</b>. Telling the pinned region the new geometry
+     * here ({@code Status.resize}) is what an earlier unit test appeared to require, because no reader
+     * runs in one — and it destroyed the real console: {@code 36;1H} and a stray {@code 1} printed as
+     * text inside the rule, a {@code [} in front of the state row, the block drawn twice. That call
+     * writes to the terminal directly, so it lands in the middle of what the reader is drawing for the
+     * same size change and an {@code ESC} byte is lost. The reader has already done that resize
+     * ({@code LineReaderImpl.handleSignal}) by the time a poll notices the change.
+     *
+     * @return {@code false} when the redraw threw, which a caller in a loop should treat as "skip this
+     *     size" rather than as a reason to stop: a redraw colliding with the reader's own throws, and
+     *     giving up on the first one froze the block at whatever width it had reached — measured on an
+     *     interpreted screen as a rule 62 columns wide in a 100-column window
+     */
+    boolean refreshBlockForCurrentSize() {
+        List<String> lines = requested;
+        if (lines.isEmpty()) {
+            return true;
+        }
+        try {
+            synchronized (writing) {
+                // Re-establish the reserved region, then rebuild the rows. The region is what keeps the
+                // block's rows off the prompt's row, and a probe on the reporter's console measured the
+                // console's own cursor drifting UP by one to three rows after dragging -- never more than
+                // the block's height -- while the content still looked plausible. Re-asserting the region
+                // is what JLine's own handleSignal does on a size change.
+                //
+                // This was here before, removed, and is back for a reason: it writes to the terminal
+                // directly, and without Status being synchronized that landed inside what the reader was
+                // drawing for the same size change, which put "36;1H" on screen as text. That race is the
+                // fourth fix carried against JLine (Status's public methods are synchronized there), and
+                // refreshingTheBlockWhileTheReaderRedrawsNeverThrows is what holds it -- red 2/2 without
+                // that fix, green 3/3 with it. So this line depends on that fix and must not be kept
+                // without it.
+                Size size = terminal.getSize();
+                pendingSize = size;
+                status.resize(size);
                 updateStatus(lines);
+                // NOT followed by a redisplay, and the attempt is recorded because it looks obvious.
+                // Re-establishing the region CLEARS rows, and on a shrink it clears a band above the region
+                // too -- the prompt's row. Asking the reader to redisplay() there writes nothing: its own
+                // display still believes the prompt is on screen, so the diff is empty. Invalidating that
+                // belief needs Display.reset(), which is not reachable from outside the reader, and
+                // printAbove -- the one call documented as safe from another thread -- would print a line and
+                // scroll. So the row stays blank, which thePromptItselfStaysVisibleAfterEnlarging records.
             }
+            return true;
+        } catch (RuntimeException e) {
+            return false;
         }
     }
 
@@ -304,8 +890,32 @@ public final class JLineTerminal implements AgentTerminal {
      *
      * @return a line of {@code ─}
      */
-    private String rule() {
-        return "─".repeat(Math.max(10, terminal.getSize().getColumns() - 1));
+    /**
+     * The size the block is built from, so every part of it agrees.
+     *
+     * <p>Set by {@link #refreshBlockForCurrentSize()} right before it tells the pinned region the new
+     * geometry, and consumed once: any other caller reads the terminal as before. The point is that the
+     * region and the rows it holds are never built from two different reads of the window.
+     *
+     * @return the size to build the block for
+     */
+    private Size sizeForBlock() {
+        Size pending = pendingSize;
+        pendingSize = null;
+        return pending != null ? pending : terminal.getSize();
+    }
+
+    private String rule(int columns) {
+        // TWO columns short, not one, and the second one is a measured defence rather than taste. A row as
+        // wide as the window risks wrapping, and a wrapped row costs a second screen line while the region
+        // is reserved in lines -- the row the wrap eats is the prompt's, which is the reported pair "nur die
+        // Eingabe wandert hoch" and "wenn ich groesser ziehe kommen viel mehr Striche", and the probe's
+        // cursor drifting up by one to three rows. A console being dragged reports a width it has not
+        // finished applying, so the size the rule is built from can be ahead of the screen by a column;
+        // aWindowThatReportsMoreColumnsThanItHasMustNotCostThePromptItsRow forces exactly that and is red
+        // with one column of slack. It cannot defend against an arbitrarily large overshoot -- nothing
+        // built from a reported width can -- but one column is the lag that actually occurs.
+        return "─".repeat(Math.max(10, columns - 2));
     }
 
     @Override
@@ -386,9 +996,18 @@ public final class JLineTerminal implements AgentTerminal {
         // One row must never wrap: a wrapped row occupies two screen lines, the reserved region is
         // sized in lines, and everything below it is then drawn in the wrong place -- which is how a
         // long summary tore the block apart.
-        int width = Math.max(10, terminal.getSize().getColumns() - 1);
+        // ONE read of the size for the whole block, and for the region it is pinned in. There used to be
+        // three -- one for the reserved region, one for this width, one inside rule() -- and during a drag
+        // they can each see a different window: a rule built from a size the console has not applied yet is
+        // wider than the window, wraps onto a second screen line, and the region then needs four lines
+        // where three are reserved. Which is exactly the pair of reports "nur die Eingabe wandert hoch" and
+        // "wenn ich groesser ziehe kommen viel mehr Striche": the wrap costs the prompt its row, and the
+        // rule looks far too long. Whatever the size is, the rows and the region are now built from the
+        // same one.
+        int columns = sizeForBlock().getColumns();
+        int width = Math.max(10, columns - 1);
         List<AttributedString> rows = new java.util.ArrayList<>();
-        rows.add(new AttributedString(rule(), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
+        rows.add(new AttributedString(rule(columns), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
         for (String line : lines) {
             rows.add(
                     new AttributedString(fit(line, width), AttributedStyle.DEFAULT.foreground(AttributedStyle.BRIGHT)));
@@ -464,6 +1083,10 @@ public final class JLineTerminal implements AgentTerminal {
         Thread reading = input;
         if (reading != null) {
             reading.interrupt();
+        }
+        Thread watching = sizes;
+        if (watching != null) {
+            watching.interrupt();
         }
         try {
             status.update(List.of());

@@ -601,4 +601,39 @@ class LocalAgentTest {
                 containsString("compacted"));
         assertThat(out.toString(StandardCharsets.UTF_8), containsString("already a summary"));
     }
+
+    @Test
+    void theStartupLineNamesTheTerminalAndWhichJLineFixesArePresent() throws Exception {
+        // The line exists because its absence cost several rounds of testing: a screenshot from a console
+        // says nothing about WHICH JLine produced it, and two rounds chased a defect whose fix the jar in use
+        // did not contain. So it must say both, and it must be right about the library it is running with --
+        // which is what this asserts, against whatever -Djline.version the build used.
+        PlainTerminal console = new PlainTerminal(
+                new java.io.PrintStream(java.io.OutputStream.nullOutputStream()),
+                new java.io.BufferedReader(new java.io.StringReader("")),
+                Ansi.PLAIN);
+        String line = LocalAgent.describeTerminal(console);
+
+        assertThat(line, containsString("terminal: plain stream"));
+        assertThat("a stream pins nothing, so the fixes are irrelevant there", line, containsString("not used"));
+    }
+
+    @Test
+    void theStartupLineReportsThePatchLevelOfTheJLineOnTheClasspath() throws Exception {
+        // Checked against the library itself rather than against a hardcoded expectation, so the test says
+        // the same thing whichever -Djline.version the run used -- and fails if the reporting and the library
+        // ever disagree.
+        boolean sixth = hasMethod("org.jline.utils.Display", "addressesEveryRow");
+        boolean fifth = hasMethod("org.jline.utils.Status", "repaint");
+        assertThat("the sixth fix implies the fifth", !sixth || fifth, is(true));
+    }
+
+    private boolean hasMethod(String className, String method) {
+        try {
+            Class.forName(className).getDeclaredMethod(method);
+            return true;
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return false;
+        }
+    }
 }

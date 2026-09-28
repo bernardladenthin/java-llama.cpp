@@ -262,6 +262,7 @@ public final class LocalAgent {
             });
             err.println("Interactive mode: type a request, /help for the commands."
                     + (shortcut ? " shift+tab switches the approval mode." : ""));
+            err.println(describeTerminal(console));
             int turnNumber = 0;
             String pendingNote = "";
             String lastMessage = "";
@@ -1144,6 +1145,49 @@ public final class LocalAgent {
             return new String(in.readAllBytes(), StandardCharsets.UTF_8).strip();
         } catch (IOException e) {
             throw new UncheckedIOException("Cannot read prompt resource " + name, e);
+        }
+    }
+    /**
+     * What this terminal is, and which of the JLine fixes the library on the classpath actually has.
+     *
+     * <p>Printed at startup because its absence cost several rounds of testing. Six fixes are carried
+     * against JLine as a locally installed jar, selected by {@code -Djline.version=…}; a report from a
+     * console then says nothing about <em>which</em> library produced it, and two of those rounds chased a
+     * defect that the jar in use did not even contain the fix for. The version string in the jar's manifest
+     * is no help — the patched builds overlay classes into the released jar and keep its version — so the
+     * fixes are probed directly: {@code Status.repaint()} is the fifth and {@code Display.addressesEveryRow}
+     * the sixth, and each exists only in a build that has the ones before it.
+     *
+     * @return a line naming the terminal type and the fixes present
+     */
+    static String describeTerminal(AgentTerminal console) {
+        String type = console.terminalType();
+        String fixes;
+        if (!console.pinsStatus()) {
+            fixes = "not used in this mode";
+        } else if (hasJLineMethod("org.jline.utils.Display", "addressesEveryRow")) {
+            fixes = "patched (row addressing + repaint)";
+        } else if (hasJLineMethod("org.jline.utils.Status", "repaint")) {
+            fixes = "patched (repaint only -- the block can still collapse on a resize)";
+        } else {
+            fixes = "RELEASED -- the pinned block can smear on a resize, /cls repairs it";
+        }
+        return "terminal: " + type + ", JLine: " + fixes;
+    }
+
+    /**
+     * Whether a JLine class declares a method, however visible.
+     *
+     * @param className the class to look in
+     * @param method the method to look for
+     * @return whether it is there
+     */
+    private static boolean hasJLineMethod(String className, String method) {
+        try {
+            Class.forName(className).getDeclaredMethod(method);
+            return true;
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            return false;
         }
     }
 }
