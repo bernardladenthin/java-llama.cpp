@@ -870,7 +870,7 @@ class ScreenUseCasesTest {
 
     @Test
     @Disabled(
-            "Reproduced and open. Re-establishing the reserved region clears rows, and on a shrink it clears a band above the region too -- the prompt row. The reader writes nothing back, because its own display believes the prompt is still there, so the row stays blank: reported as the > of the input being invisible. Measured here: the block sits exactly right on rows 17-19 of 20 while row 16 is empty. redisplay() does not help (the diff is empty), Display.reset() is not reachable from outside the reader, and printAbove -- the only call documented as safe from another thread -- would print a line and scroll. Delete the annotation to see it.")
+            "Reproduced and OPEN, with four candidates eliminated by bisection and one named. After a series of size changes the block sits exactly right while the prompt row is blank. Ruled out by measurement, each a separate run: this console re-establishing the region (Status.resize), this console rebuilding the rows at all, JLine handleSignal calling Status.resize, and JLine handleSignal calling redisplay -- red with every one of them switched off. Also ruled out: the screen model itself, which keeps text across resizes (ScreenTerminalHarnessTest). The candidate left is Status.update clearing excess rows from display.rows - oldLinesSize, which reaches ABOVE the region when that count is stale. Delete the annotation to see it.")
     void thePromptItselfStaysVisibleAfterEnlarging() throws Exception {
         // A gap in every assertion above, and it is why they were all green while the console was not.
         // They ask that no row carries the prompt AND the rule -- but when the rule is drawn ON the prompt's
@@ -921,7 +921,7 @@ class ScreenUseCasesTest {
 
     @Test
     @Disabled(
-            "Reproduced and open, and the same defect as the invisible prompt seen from the other side: re-establishing the reserved region clears rows above it, so a turn already on screen is erased by a resize. Here the rule assertions hold -- one rule, no wider than the window -- while the answer text is gone entirely, which is the reported half about the output sitting too far up. The fix belongs in Status.resize, which clears a band above its own region; it cannot be worked around from outside the reader. Delete the annotation to see it.")
+            "Reproduced and OPEN, the same defect from the other side: with a turn already on screen, shrinking and growing erases the answer while the rule assertions hold. Same bisection as the test above -- neither this console nor either half of JLine handleSignal is the writer that erases it, and the screen model keeps text across resizes. Delete the annotation to see it.")
     void afterATurnShrinkingAndGrowingKeepsOneRuleNoWiderThanTheWindow() throws Exception {
         // Both halves of the latest report in one case, because both are the same measurement from
         // different sides: shrinking moves the input area and the output up, and growing produces a rule
