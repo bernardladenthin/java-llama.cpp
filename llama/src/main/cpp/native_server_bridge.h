@@ -15,7 +15,9 @@
 //    patches/0006-server-embed-native-server-jni.patch so the server can run embedded in the JVM
 //    (does not install process-wide signal handlers, and honors the forwarded argv instead of
 //    re-deriving it from the process command line) and can be stopped out-of-band (the SIGTERM
-//    path) since its server_context is local to llama_server().
+//    path) since its server_context is local to llama_server(). Safe to call from any thread at
+//    any time, including before the server started and after it returned (a no-op then): the
+//    handler it invokes is guarded by a mutex and cleared before the locals it captures are gone.
 
 //  - llama_server_attach: added by patches/0007-server-attach-http-frontend.patch. Attaches the
 //    upstream HTTP frontend (route table + WebUI + resumable streaming) to an ALREADY-LOADED

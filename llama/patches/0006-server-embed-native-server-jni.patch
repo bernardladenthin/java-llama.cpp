@@ -1,8 +1,16 @@
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index 28f18c1bb..8aeed4b99 100644
+index deac18f61..6a1dc82db 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -25,6 +25,28 @@
+@@ -15,6 +15,7 @@
+ #include <atomic>
+ #include <clocale>
+ #include <exception>
++#include <mutex>
+ #include <signal.h>
+ #include <thread> // for std::thread::hardware_concurrency
+ 
+@@ -25,6 +26,53 @@
  static std::function<void(int)> shutdown_handler;
  static std::atomic_flag is_terminating = ATOMIC_FLAG_INIT;
  
@@ -19,10 +27,35 @@ index 28f18c1bb..8aeed4b99 100644
 +    g_llama_server_embedded.store(embedded);
 +}
 +
++// [jllama] shutdown_handler captures llama_server()'s locals by reference and upstream never
++// clears it, so a request that lands after llama_server() returned ran it over destroyed objects
++// (SIGSEGV in server_http_context::stop(), seen in RouterModeIntegrationTest's tearDown). The JNI
++// caller signals repeatedly until the server has returned, so that window is routinely hit. Two
++// guards close it: every read and write of the handler holds this mutex (the caller runs on another
++// thread), and a llama_server_shutdown_handler_reset declared after the captured locals clears the
++// handler before any of them is destroyed. The handler is invoked under the lock, so the reset --
++// and therefore the destruction of what it captures -- waits for an invocation in progress.
++static std::mutex g_shutdown_handler_mutex;
++
++static void llama_server_set_shutdown_handler(std::function<void(int)> handler) {
++    std::lock_guard<std::mutex> lock(g_shutdown_handler_mutex);
++    shutdown_handler = std::move(handler);
++}
++
++struct llama_server_shutdown_handler_reset {
++    llama_server_shutdown_handler_reset() = default;
++    llama_server_shutdown_handler_reset(const llama_server_shutdown_handler_reset &) = delete;
++    llama_server_shutdown_handler_reset & operator=(const llama_server_shutdown_handler_reset &) = delete;
++    ~llama_server_shutdown_handler_reset() {
++        llama_server_set_shutdown_handler(nullptr);
++    }
++};
++
 +void llama_server_request_shutdown() {
 +    // Mirrors the SIGTERM path: invoke the installed shutdown_handler, which unblocks
 +    // ctx_server.start_loop() (single-model) / ctx_http.stop() (router). No-op if the server has
-+    // not finished starting (handler not yet installed) — stop after /health reports ready.
++    // not finished starting (handler not yet installed) or has already returned (handler reset).
++    std::lock_guard<std::mutex> lock(g_shutdown_handler_mutex);
 +    if (shutdown_handler) {
 +        shutdown_handler(SIGTERM);
 +    }
@@ -31,7 +64,7 @@ index 28f18c1bb..8aeed4b99 100644
  static inline void signal_handler(int signal) {
      if (is_terminating.test_and_set()) {
          // in case it hangs, we can force terminate the server by hitting Ctrl+C twice
-@@ -102,7 +124,13 @@ int llama_server(int argc, char ** argv) {
+@@ -102,7 +150,13 @@ int llama_server(int argc, char ** argv) {
      // touch it. lifecycle is symmetric, stop_gc() runs in clean_up() before backend free
      server_stream_session_manager_start();
  
@@ -46,7 +79,44 @@ index 28f18c1bb..8aeed4b99 100644
          return 1;
      }
  
-@@ -493,7 +521,10 @@ int llama_server(common_params & params, int argc, char ** argv) {
+@@ -197,6 +251,9 @@ int llama_server(common_params & params, int argc, char ** argv) {
+     std::optional<server_models_routes> models_routes{};
+ 
+     server_http_context ctx_http;
++    // [jllama] declared after every local the shutdown handler captures, so it clears the handler
++    // before any of them is destroyed (see llama_server_request_shutdown)
++    llama_server_shutdown_handler_reset shutdown_handler_reset;
+     if (!ctx_http.init(params)) {
+         SRV_ERR("%s", "failed to initialize HTTP server\n");
+         return 1;
+@@ -427,14 +484,14 @@ int llama_server(common_params & params, int argc, char ** argv) {
+         }
+         ctx_http.is_ready.store(true);
+ 
+-        shutdown_handler = [&](int) {
++        llama_server_set_shutdown_handler([&](int) {
+             if (models_routes.has_value()) {
+                 // important to disconnect any SSE clients
+                 models_routes->stopping.store(true);
+             }
+             mcp_mgr.shutdown();
+             ctx_http.stop();
+-        };
++        });
+ 
+         try {
+             models_routes->models.load_startup_models();
+@@ -484,15 +541,18 @@ int llama_server(common_params & params, int argc, char ** argv) {
+ 
+         SRV_INF("%s", "model loaded\n");
+ 
+-        shutdown_handler = [&](int) {
++        llama_server_set_shutdown_handler([&](int) {
+             mcp_mgr.shutdown();
+             // this will unblock start_loop()
+             ctx_server.terminate();
+-        };
++        });
      }
  
      // register signal handler if not running by CLI
