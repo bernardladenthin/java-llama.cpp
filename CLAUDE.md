@@ -348,8 +348,10 @@ its Python wheels (`rocm[libraries,devel]` from `stable.repo.amd.com/rocm/whl-ne
 llama.cpp's own `ubuntu-rocm` / `windows-rocm` release jobs do, and read the paths back with
 `rocm-sdk path`. The ROCm version follows upstream's `release.yml` at the pinned `GIT_TAG` —
 **re-check it on every llama.cpp bump**. The `GPU_TARGETS` lists deliberately go **further than
-upstream's**: they are every target TheRock builds for that OS (its `SUPPORTED_GPUS.md`), which adds
-gfx900/gfx906/gfx90c/gfx1153 — "build passing" there, not release-ready, and omitted by llama.cpp.
+upstream's**: they are every target TheRock builds for that OS (its `SUPPORTED_GPUS.md`). On Linux
+that adds gfx900/gfx906/gfx90c/gfx1153 to upstream's list, on Windows only gfx900/gfx906/gfx90c
+(upstream's `windows-rocm` list already carries gfx1153, its `ubuntu-rocm` list does not — checked at
+b11256). All four are "build passing" in TheRock, not release-ready.
 Supporting more rather than fewer is the policy, with one limit: an extra stays only while it builds
 without problems and without local patches; the moment one needs a patch or holds back a newer
 ROCm/llama.cpp, drop it. The two lists differ **only** by the Instinct parts
