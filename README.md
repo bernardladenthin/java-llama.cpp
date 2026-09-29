@@ -1141,6 +1141,20 @@ In the REPL, `/help` lists the commands (`/status`, `/tools`, `/mode manual|auto
 context used (`[manual · ctx ~3.1k/16k · 9 tools · local-model]`), and the answer is rendered with
 headings, bullets and code spans.
 
+**Also in a browser or an editor.** The same agent session has two more front ends. `--web` serves it
+to a browser on `127.0.0.1:8787` (Atmosphere's own AI console on an embedded Jetty, a random access
+token in the printed address; from another machine open an SSH tunnel, `ssh -L 8787:127.0.0.1:8787
+user@server`, rather than binding to the network). `--acp` speaks the
+[Agent Client Protocol](https://agentclientprotocol.com) on stdin/stdout, so JetBrains IDEs and Zed —
+and VS Code through an ACP extension — run it as their chat agent, with the editor's own permission
+dialog for writes and commands:
+
+```bash
+java -jar llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar --model model.gguf --allow-shell --web
+# JetBrains, ~/.jetbrains/acp.json: {"agent_servers": {"Local llama": {"command": "java",
+#   "args": ["-jar", "/path/llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar", "--acp", "--model", "/path/model.gguf"]}}}
+```
+
 On Windows PowerShell quote the whole argument (`"-Dexec.args=--model models\… --allow-shell"`); for
 the GPU add e.g. `-Dllama.classifier=vulkan-windows-x86-64` and `--ngl 99`. The agent's
 [README](llama-atmosphere-agent/) walks through all of it step by step. Other ways to run it, e.g.

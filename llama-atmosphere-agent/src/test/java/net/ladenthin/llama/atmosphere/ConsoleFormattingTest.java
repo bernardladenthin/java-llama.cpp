@@ -117,10 +117,10 @@ class ConsoleFormattingTest {
     @Test
     void anEstimatedCountIsMarkedWithATilde() {
         // llama.cpp reports usage only to clients that ask for it, and Atmosphere does not, so the
-        // number normally comes from LocalAgent.estimateTokens -- the tilde says so.
+        // number normally comes from AgentSession.estimateTokens -- the tilde says so.
         assertThat(StatusLine.context(2500, true, 16384), is("~2.5k/16k"));
         assertThat(
-                LocalAgent.estimateTokens(
+                AgentSession.estimateTokens(
                         "0123456789", java.util.List.of(org.atmosphere.ai.llm.ChatMessage.user("0123456789"))),
                 is(5L));
     }

@@ -78,7 +78,7 @@ class PlainTerminalTest {
 
     @Test
     void everyCommandNameIsOfferedForCompletion() {
-        List<String> names = LocalAgent.commandNames();
+        List<String> names = AgentSession.commandNames();
 
         for (SlashCommands.Command command : SlashCommands.Command.values()) {
             for (String name : command.names()) {

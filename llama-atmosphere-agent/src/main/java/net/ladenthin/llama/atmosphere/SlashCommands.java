@@ -27,36 +27,62 @@ public record SlashCommands(Command command, String arguments) {
     /** The commands the REPL answers itself. */
     public enum Command {
         /** Print the command overview. */
-        HELP("/help", "/?", "/commands"),
+        HELP("this overview", null, "/help", "/?", "/commands"),
         /** Drop the conversation history, and wipe the screen with it. */
-        CLEAR("/clear", "/reset", "/new"),
+        CLEAR("drop the history and start over", null, "/clear", "/reset", "/new"),
         /** Wipe the screen, keeping the conversation. */
-        CLS("/cls", "/clear-screen"),
+        CLS("wipe the screen, keep the conversation", null, "/cls", "/clear-screen"),
         /** Write what was said, with the time, to a file in the workspace. */
-        SAVE("/save", "/transcript"),
+        SAVE("write what was said, with timestamps, into the workspace", "file name", "/save", "/transcript"),
         /** Ask the last question again, without the answer that came back. */
-        RETRY("/retry", "/again"),
+        RETRY("ask the last question again, dropping the answer", null, "/retry", "/again"),
         /** Read a saved transcript back in as the conversation. */
-        LOAD("/load", "/resume"),
+        LOAD("read a saved transcript back in as the conversation", "file name", "/load", "/resume"),
         /** Summarize the history and continue with the summary; the argument steers the summary. */
-        COMPACT("/compact"),
+        COMPACT("summarize the history and continue with the summary", "what to focus on", "/compact"),
         /** Keep working on one task until it is done; see {@link TaskLoop}. */
-        LOOP("/loop"),
+        LOOP(
+                "keep working on a task until it is done (needs auto mode)",
+                "[--every 5m] [--max 20] [--check '<cmd>'] <task>",
+                "/loop"),
         /** Show or set the approval mode; the argument is {@code manual} or {@code auto}. */
-        MODE("/mode", "/approve"),
+        MODE("show or set the approval mode", "manual or auto", "/mode", "/approve"),
         /** Print endpoint, model, tools, approval mode and context usage. */
-        STATUS("/status"),
+        STATUS("model, tools, mode and context use", null, "/status"),
         /** List the tools offered to the model. */
-        TOOLS("/tools"),
+        TOOLS("the tools offered to the model", null, "/tools"),
         /** Show every tool call of this session — the receipt for what really happened. */
-        CALLS("/calls", "/log"),
+        CALLS("every tool call of this session, with its result", null, "/calls", "/log"),
         /** Leave the REPL. */
-        EXIT("/exit", "/quit");
+        EXIT("leave", null, "/exit", "/quit");
 
+        private final String description;
+        private final @Nullable String argumentHint;
         private final List<String> names;
 
-        Command(String... names) {
+        Command(String description, @Nullable String argumentHint, String... names) {
+            this.description = description;
+            this.argumentHint = argumentHint;
             this.names = List.of(names);
+        }
+
+        /**
+         * One line saying what the command does, for front ends that list the commands (an editor's
+         * {@code /} menu).
+         *
+         * @return the description
+         */
+        public String description() {
+            return description;
+        }
+
+        /**
+         * What the command's argument is, when it takes one.
+         *
+         * @return a short hint, or {@code null} for a command without an argument
+         */
+        public @Nullable String argumentHint() {
+            return argumentHint;
         }
 
         /**

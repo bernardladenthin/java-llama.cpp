@@ -2326,8 +2326,8 @@ profile, descriptor `src/assembly/agent-jar.xml`) builds
 it was built against, not the agent's own `1.0.0-SNAPSHOT`, because it only runs next to that core.
 It excludes `net.ladenthin:llama` **with its whole runtime graph** (`useTransitiveFiltering`: Jackson 2,
 slf4j-api, and Jackson 3's `jackson-annotations`, which resolves through the core's trail) plus
-`jspecify` and `slf4j-simple`, all of which every core fat jar already bundles — so the asset is ~7 MB
-instead of hundreds, the natives are not in the release twice, and there are never two SLF4J providers.
+`jspecify` and `slf4j-simple`, all of which every core fat jar already bundles — so the asset is ~14 MB
+(most of it Jetty, the ACP SDK with Reactor, and the Atmosphere console pages) instead of hundreds, the natives are not in the release twice, and there are never two SLF4J providers.
 The manifest's `Class-Path` names the four `llama-<v>-all-<os>-<arch>-…` fat jars and then the default
 `llama-<v>-jar-with-dependencies.jar`, so `java -jar` works when the agent lies next to any of them
 (missing entries are ignored; note that a manifest `Class-Path` is honoured under `java -cp` too).
@@ -2340,8 +2340,19 @@ way the README tells a user to — `java -jar` next to the real `all-linux-x86-6
 bytecode ≤ 65 (Java 21, unlike the core's 52 — with one `--allow` for JLine's FFM terminal provider `org/jline/terminal/impl/ffm/*`, 25 classes shipped as Java 22 bytecode that JLine discovers through `META-INF/jline/providers/ffm` and never loads on 21, where it picks its JNI provider; the first CI run of the smoke caught them), that the jar started **alone** fails with
 `NoClassDefFoundError: net/ladenthin/llama/LlamaModel` (i.e. it really carries no core), `--help`, a
 one-shot `2 + 2` answer and a `read_file` round that must surface a marker from `--workspace`, all on
-the cached `TOOL_MODEL_NAME` with `--ngl 0`. **All three agent jobs gate both publish jobs**
-(model-free, model-backed integration, smoke).
+the cached `TOOL_MODEL_NAME` with `--ngl 0`; then `--web` on port 0 (the console is `401` without the
+token, the token link answers `302` with the `jllama_agent` cookie, the console page is served with it)
+and `--acp` through `.github/smoke/agent_acp_smoke.py` (standard-library Python playing the editor:
+handshake, modes, a streamed `4`, the announced commands, a `read_file` tool card that brings a marker
+back, a clean exit when stdin closes, and nothing but JSON-RPC on stdout). **All three agent jobs gate
+both publish jobs** (model-free, model-backed integration, smoke).
+
+**The console pages come from a jar the assembly otherwise leaves out.** Atmosphere's prebuilt AI
+console lives in `atmosphere-spring-boot-starter` under `META-INF/resources/atmosphere/console/`. The
+pom depends on that starter with a `*:*` exclusion (no Spring on the classpath), the assembly's main
+dependency set excludes it, and a second dependency set unpacks **only** that resource path. Remove
+either half and the jar either grows by the whole starter or `--web` starts with nothing to open
+(`WebConsole.available()` says so at startup).
 
 **What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.71) ships
 `BuiltInAgentRuntime` + `OpenAiCompatibleClient`: a zero-framework OpenAI client that *always*
@@ -3084,6 +3095,78 @@ are decisions, not details:
    mid-turn message into the running loop; `AgentExecutionContext` is a record whose request is built
    once from `message()` + `history()`, with nothing to append to, so stop-and-resend is the achievable
    equivalent — and it acts immediately instead of waiting out a tool loop.
+
+**Three front ends on one `AgentSession`: console, `--web`, `--acp`.** Everything that is not
+presentation lives in `AgentSession` — history, the slash commands (`submit` returns `CONTINUE`/`EXIT`),
+`/compact`, `/loop`, `/retry`, the transcript, the approval mode, cancellation (`cancel()`,
+`stopRequested()`, `isBusy()`), and `runTurn` itself. A front end implements `SessionFrontend`: `line`,
+a `renderer()` (a `StreamingSession` the turn forwards every event to), `await` (how it waits for a
+turn — the console with its activity block, the others with `AgentSession.awaitQuietly`), `approvals()`,
+`ask()` (a free question; `null` means the front end has none, and `/loop` then refuses rather than
+guesses) and `commandOutput()` (a running command's lines). The console is `ConsoleFrontend` over the two
+`AgentTerminal`s; `LocalAgent` is now only option parsing, the choice of front end and the console's
+activity rendering. Three pieces are what keeps them from drifting apart:
+
+- **`TurnRecorder` records, the front end renders.** The recorder is the `StreamingSession` handed to
+  Atmosphere; it keeps text, tool rounds, token counts and the running tool, supplies the workspace
+  filesystem via `injectables()`, and forwards everything downstream. `ConsoleSession` is now just a
+  recorder with a `ConsoleRenderer`. So the tool note in the history, `/calls` and the transcript are
+  identical whichever front end showed the turn.
+- **`ModeGatedApprovalStrategy` wraps every front end's strategy.** Atmosphere asks the strategy per
+  call; the wrapper reads the session's mode *at that moment*, so `/mode auto` in the browser, *Allow
+  all* in an editor and Shift+Tab in the console all take effect for the very next call, and a front
+  end with nobody to ask (`approvals()` = `null`) denies. `ConsoleApprovalStrategy` keeps its own AUTO
+  check as well; it is redundant under the wrapper and harmless.
+- **`AgentSessionTest` + `RecordingFrontend`** drive the session with no terminal, no browser and no
+  editor, over the real `OpenAiCompatServer` and a scripted engine; the three front-end test classes
+  then only need to prove their own mapping.
+
+**`--web` (`WebServer`, `WebAgentEndpoint`, `WebFrontend`, `WebAccessGuard`, `WebConsole`).** Embedded
+Jetty 12 (ee10 servlet + Jakarta WebSocket; `jetty-ee10-annotations` excluded, nothing here needs
+annotation scanning) with an `AtmosphereServlet` whose annotation map is set **explicitly** to the one
+`@AiEndpoint`. **The scanning trap, which cost an afternoon:** Atmosphere's `ClasspathScanner.preventOOM()`
+turns classpath scanning **off** whenever `org.junit.jupiter.api.Assertions` is on the classpath, and in
+servlet-initializer mode the explicit map is only processed *during* a scan — so the endpoint registered
+fine from the jar and was missing in every test ("No AtmosphereHandler or WebSocketHandler installed").
+The init params `ANNOTATION_PACKAGE="all"` and `SCAN_CLASSPATH="false"` make the explicit map the path in
+both. One `AgentSession` per process, shared by every tab (`WebAgentEndpoint.SESSION`); a message while a
+turn runs cancels it first, `/stop` only cancels, and `connection.complete()` is always sent so the
+console's input unlocks. Approvals use Atmosphere's own `/__approval/<id>/approve|deny` protocol through
+`ApprovalStrategy.virtualThread(registry)`, which the prebuilt console renders as Approve / Deny.
+`WebAccessGuard` is a Jetty `Handler.Wrapper` in front of everything: loopback `Host` when bound to
+loopback (DNS rebinding), `Origin` must match `Host`, `?token=` exchanged for an `HttpOnly;
+SameSite=Strict` cookie plus a redirect, else `Bearer` or cookie, else `401` — constant-time comparison.
+`WebConsole` serves the console pages with a fresh CSP nonce per response and answers
+`/api/console/info`. `WebServerTest` (11) drives it over the JDK `WebSocket` speaking the atmosphere.js
+wire protocol (`AtmosphereTestClient`: `len|payload` frames, `X-atmo-protocol`); **create the client
+object before `buildAsync`**, or the handshake message races the listener into a thrown exception and
+`request(1)` is never called — a flaky test that looked like a server bug.
+
+**`--acp` (`AcpServer`, `AcpFrontend`).** The ACP Java SDK (`com.agentclientprotocol:acp-core` +
+`acp-json-jackson2`, 0.18.0) over `StdioAcpAgentTransport`. Its sync handlers run on the SDK's own pool,
+so a blocking `session/prompt` does not block `session/cancel` or the answer to a permission request.
+One `AgentSession` per ACP session, built for the editor's `cwd` (`AgentOptions.withWorkspace`); the
+model endpoint is opened once per process. **stdout is the protocol**: `run()` keeps the real stdout for
+the transport and points `System.out` at stderr, so a stray `println` cannot corrupt the stream (the
+smoke asserts every stdout line is JSON). Mapping: text → `agent_message_chunk`; `ToolStart` →
+`tool_call` (`call_N`, `ToolKind` from the tool name, `locations` resolved against the workspace, raw
+arguments), `ToolResult`/`ToolError` → `tool_call_update` (result cut at 4000 chars), running command
+output → `tool_call_update` IN_PROGRESS at most every 500 ms with the last 40 lines; approvals →
+`session/request_permission` with allow / always / reject, where *always* switches the session to AUTO
+and sends `current_mode_update`, and no answer (timeout, cancelled dialog, editor gone) is a deny; the
+approval modes are ACP session modes `manual`/`auto`; the slash commands (minus `/exit`, `/cls`) go out as
+`available_commands_update` 100 ms after `session/new` on a virtual thread, because an update that
+arrives before the `session/new` response names a session the editor does not know yet.
+`AcpServerTest` (9) deliberately drives it with **plain JSON** (`AcpTestClient`), not the SDK's client —
+an SDK on both ends agrees with itself even where it disagrees with the protocol. Tear-down closes the
+editor side first: that is how an ACP session ends, and closing the server first logs an
+`InterruptedIOException` "Transport error" per test.
+
+**Two defects fixed on the way (step 0), both pinned in `LocalAgentTest`:** the shell tool's live-output
+sink captured the console *before* it existed, so every command's output came back as
+`[output unavailable: NullPointerException]` (now an `AtomicReference` set once the terminal is up); and
+`/clear` left the pending tool note and the message `/retry` would resend, so the first turn after a
+clear still carried the old conversation.
 
 **The default system prompt is general-purpose on purpose — do not narrow it back.** Every model-facing
 text is a resource, not a Java literal: `src/main/resources/net/ladenthin/llama/atmosphere/` holds

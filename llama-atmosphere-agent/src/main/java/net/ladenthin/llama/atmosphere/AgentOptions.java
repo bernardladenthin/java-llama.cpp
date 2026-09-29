@@ -58,6 +58,12 @@ public final class AgentOptions {
      */
     public static final int DEFAULT_LOG_VERBOSITY = 2;
 
+    /** The port {@code --web} listens on unless {@code --web-port} says otherwise. */
+    public static final int DEFAULT_WEB_PORT = 8787;
+
+    /** The address {@code --web} binds: loopback, reachable from elsewhere only through an SSH tunnel. */
+    public static final String DEFAULT_WEB_HOST = "127.0.0.1";
+
     private final @Nullable String baseUrl;
     private final @Nullable String modelPath;
     private final int gpuLayers;
@@ -79,6 +85,11 @@ public final class AgentOptions {
     private final @Nullable String systemPrompt;
     private final @Nullable String prompt;
     private final boolean help;
+    private final boolean web;
+    private final int webPort;
+    private final String webHost;
+    private final @Nullable String webToken;
+    private final boolean acp;
 
     private AgentOptions(Builder b) {
         this.baseUrl = b.baseUrl;
@@ -102,6 +113,11 @@ public final class AgentOptions {
         this.systemPrompt = b.systemPrompt;
         this.prompt = b.prompt;
         this.help = b.help;
+        this.web = b.web;
+        this.webPort = b.webPort;
+        this.webHost = b.webHost;
+        this.webToken = b.webToken;
+        this.acp = b.acp;
     }
 
     /**
@@ -141,6 +157,11 @@ public final class AgentOptions {
                 case "--system" -> b.systemPrompt = value(args, ++i, a);
                 case "--system-file" -> b.systemPrompt = readSystemPrompt(value(args, ++i, a));
                 case "--prompt", "-p" -> b.prompt = value(args, ++i, a);
+                case "--web" -> b.web = true;
+                case "--web-port" -> b.webPort = portValue(args, ++i, a);
+                case "--web-host" -> b.webHost = value(args, ++i, a);
+                case "--web-token" -> b.webToken = tokenValue(args, ++i, a);
+                case "--acp" -> b.acp = true;
                 default -> throw new IllegalArgumentException("Unknown argument: " + a);
             }
         }
@@ -148,7 +169,50 @@ public final class AgentOptions {
             if ((b.baseUrl == null) == (b.modelPath == null)) {
                 throw new IllegalArgumentException("Exactly one of --base-url <url> or --model <gguf> is required");
             }
+            int frontEnds = (b.web ? 1 : 0) + (b.acp ? 1 : 0) + (b.prompt != null ? 1 : 0);
+            if (frontEnds > 1) {
+                throw new IllegalArgumentException("--web, --acp and --prompt exclude each other");
+            }
         }
+        return new AgentOptions(b);
+    }
+
+    /**
+     * The same options with another workspace — what an editor session needs, since the editor names the
+     * project directory itself.
+     *
+     * @param newWorkspace the directory the tools are confined to
+     * @return a copy with the workspace replaced
+     */
+    public AgentOptions withWorkspace(Path newWorkspace) {
+        Builder b = new Builder();
+        b.baseUrl = baseUrl;
+        b.modelPath = modelPath;
+        b.gpuLayers = gpuLayers;
+        b.ctxSize = ctxSize;
+        b.logVerbosity = logVerbosity;
+        b.verbose = verbose;
+        b.apiKey = apiKey;
+        b.modelId = modelId;
+        b.workspace = workspace;
+        b.allowShell = allowShell;
+        b.plain = plain;
+        b.transcript = transcript;
+        b.auto = auto;
+        b.autoCompact = autoCompact;
+        b.compactAt = compactAt;
+        b.temperature = temperature;
+        b.maxTokens = maxTokens;
+        b.maxToolRounds = maxToolRounds;
+        b.systemPrompt = systemPrompt;
+        b.prompt = prompt;
+        b.help = help;
+        b.web = web;
+        b.webPort = webPort;
+        b.webHost = webHost;
+        b.webToken = webToken;
+        b.acp = acp;
+        b.workspace = newWorkspace.toAbsolutePath().normalize();
         return new AgentOptions(b);
     }
 
@@ -176,6 +240,23 @@ public final class AgentOptions {
             throw new IllegalArgumentException(flag + " must be between 10 and 95, got: " + percent);
         }
         return percent;
+    }
+
+    private static int portValue(String[] args, int index, String flag) {
+        int port = intValue(args, index, flag);
+        if (port < 0 || port > 65_535) {
+            throw new IllegalArgumentException(flag + " must be between 0 and 65535, got: " + port);
+        }
+        return port;
+    }
+
+    private static String tokenValue(String[] args, int index, String flag) {
+        String token = value(args, index, flag);
+        // Short tokens are guessable, and anything outside this set would need escaping in a URL.
+        if (token.length() < 16 || !token.matches("[A-Za-z0-9_-]+")) {
+            throw new IllegalArgumentException(flag + " must be at least 16 characters of A-Z, a-z, 0-9, '-' or '_'");
+        }
+        return token;
     }
 
     private static int intValue(String[] args, int index, String flag) {
@@ -229,6 +310,14 @@ public final class AgentOptions {
                 "  --max-tool-rounds <n>   tool rounds per turn (default " + DEFAULT_MAX_TOOL_ROUNDS + ")",
                 "  --api-key <key>         bearer token (default " + DEFAULT_API_KEY + ")",
                 "  --model-id <id>         model id in requests (default " + DEFAULT_MODEL_ID + ")",
+                "",
+                "Front end (default: the console; --plain for a line-oriented one):",
+                "  --web                   serve the agent in a browser instead of the console",
+                "  --web-port <n>          port for --web (default " + DEFAULT_WEB_PORT + ", 0 = any free port)",
+                "  --web-host <address>    address for --web (default " + DEFAULT_WEB_HOST
+                        + "; use an SSH tunnel rather than another address)",
+                "  --web-token <token>     access token for --web (default: a new random one per start)",
+                "  --acp                   speak the Agent Client Protocol on stdin/stdout, for an editor",
                 "  -h, --help              this text");
     }
 
@@ -367,6 +456,51 @@ public final class AgentOptions {
     }
 
     /**
+     * Whether to serve the agent in a browser ({@code --web}).
+     *
+     * @return {@code true} when {@code --web} was passed
+     */
+    public boolean isWeb() {
+        return web;
+    }
+
+    /**
+     * The port for {@code --web}.
+     *
+     * @return the port, {@code 0} for any free one
+     */
+    public int getWebPort() {
+        return webPort;
+    }
+
+    /**
+     * The address {@code --web} binds.
+     *
+     * @return loopback unless {@code --web-host} said otherwise
+     */
+    public String getWebHost() {
+        return webHost;
+    }
+
+    /**
+     * The access token for {@code --web}, when one was given.
+     *
+     * @return the token, or {@code null} for a random one per start
+     */
+    public @Nullable String getWebToken() {
+        return webToken;
+    }
+
+    /**
+     * Whether to speak the Agent Client Protocol on stdin/stdout ({@code --acp}).
+     *
+     * @return {@code true} when {@code --acp} was passed
+     */
+    public boolean isAcp() {
+        return acp;
+    }
+
+    /**
      * Where to append the session transcript as it happens, if anywhere.
      *
      * <p>{@code /save} writes the whole thing on request; this writes each line as it is said, so a
@@ -497,5 +631,13 @@ public final class AgentOptions {
         String prompt;
 
         boolean help;
+        boolean web;
+        int webPort = DEFAULT_WEB_PORT;
+        String webHost = DEFAULT_WEB_HOST;
+
+        @Nullable
+        String webToken;
+
+        boolean acp;
     }
 }

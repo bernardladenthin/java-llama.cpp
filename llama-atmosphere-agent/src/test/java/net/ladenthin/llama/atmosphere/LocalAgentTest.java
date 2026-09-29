@@ -404,8 +404,9 @@ class LocalAgentTest {
     void inProcessModelIsLoadedWithAQuietLogThresholdByDefault() {
         // llama.cpp prints its per-request INFO lines to stderr, the very console the streamed answer
         // goes to; the default threshold has to stay below INFO (3) or the two interleave again.
-        List<String> args = List.of(LocalAgent.modelParameters(AgentOptions.parse(new String[] {"--model", "m.gguf"}))
-                .toArray());
+        List<String> args =
+                List.of(ModelEndpoint.modelParameters(AgentOptions.parse(new String[] {"--model", "m.gguf"}))
+                        .toArray());
 
         assertThat(args, hasItem("--log-verbosity"));
         assertThat(
@@ -416,7 +417,7 @@ class LocalAgentTest {
 
     @Test
     void verboseReplacesTheThresholdWithLlamaCppsOwnVerboseFlag() {
-        List<String> args = List.of(LocalAgent.modelParameters(
+        List<String> args = List.of(ModelEndpoint.modelParameters(
                         AgentOptions.parse(new String[] {"--model", "m.gguf", "--log-verbosity", "1", "--verbose"}))
                 .toArray());
 
@@ -435,6 +436,72 @@ class LocalAgentTest {
 
         assertThat(content, containsString("-Dstdout.encoding=UTF-8"));
         assertThat(content, containsString("-Dstderr.encoding=UTF-8"));
+    }
+
+    @Test
+    void aShellCommandShowsItsOutputWhileItRuns() throws Exception {
+        // The live-output sink used to capture the console before the console existed, so the first
+        // line of output threw a NullPointerException inside the reader, the reader stopped, and the
+        // model got "[output unavailable: ...]" instead of the output -- on every command, silently.
+        String command = "echo live-marker"; // the same on sh and cmd
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> switch (call) {
+            case 1 -> ScriptedBackend.toolCallTurn("call_1", ShellTool.TOOL_NAME, "{\"command\":\"" + command + "\"}");
+            default -> ScriptedBackend.textTurn("done");
+        });
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (OpenAiCompatServer server = server(backend)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url",
+                "http://127.0.0.1:" + server.getPort() + "/v1",
+                "--workspace",
+                workspace.toString(),
+                "--allow-shell",
+                "--auto"
+            });
+
+            LocalAgent.run(
+                    options,
+                    new StringReader("run it" + System.lineSeparator() + "/exit" + System.lineSeparator()),
+                    new PrintStream(out, true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        }
+
+        assertThat("streamed while it ran", out.toString(StandardCharsets.UTF_8), containsString("│ live-marker"));
+        String toolResult = backend.requests().get(1).path("messages").toString();
+        assertThat("and the model got the real output", toolResult, containsString("live-marker"));
+        assertThat(toolResult, not(containsString("output unavailable")));
+    }
+
+    @Test
+    void clearingAlsoForgetsTheToolNoteAndTheMessageToRetry() throws Exception {
+        // /clear emptied the history and the record but left the loop's own two variables alone: the
+        // next message still carried the tool note of a turn that had just been forgotten, and /retry
+        // still repeated it.
+        Files.writeString(workspace.resolve("hello.txt"), "VALUE=42\n");
+        ScriptedBackend backend = new ScriptedBackend((call, request) -> switch (call) {
+            case 1 -> ScriptedBackend.toolCallTurn("call_1", "read_file", "{\"file_path\":\"hello.txt\"}");
+            default -> ScriptedBackend.textTurn("answer " + call);
+        });
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try (OpenAiCompatServer server = server(backend)) {
+            AgentOptions options = AgentOptions.parse(new String[] {
+                "--base-url", "http://127.0.0.1:" + server.getPort() + "/v1", "--workspace", workspace.toString()
+            });
+
+            LocalAgent.run(
+                    options,
+                    new StringReader(String.join(
+                            System.lineSeparator(), "read it", "/clear", "/retry", "fresh start", "/exit", "")),
+                    new PrintStream(out, true, StandardCharsets.UTF_8),
+                    new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        }
+
+        List<JsonNode> requests = backend.requests();
+        assertThat("only the first turn and the fresh one reached the model", requests, hasSize(3));
+        JsonNode messages = requests.get(2).path("messages");
+        assertThat("a cleared session starts over", messages.size(), is(2));
+        assertThat(messages.get(1).path("content").asText(), is("fresh start"));
+        assertThat(out.toString(StandardCharsets.UTF_8), containsString("nothing to retry yet"));
     }
 
     @Test
@@ -502,7 +569,7 @@ class LocalAgentTest {
 
     @Test
     void theSpinnerWordsAreOursAndHarmless() {
-        List<String> words = LocalAgent.prompt(LocalAgent.SPINNER_WORDS)
+        List<String> words = Prompts.prompt(LocalAgent.SPINNER_WORDS)
                 .lines()
                 .map(String::strip)
                 .filter(word -> !word.isEmpty())
@@ -526,13 +593,13 @@ class LocalAgentTest {
     void theToolNoteIsAddressedToTheModelAndNotWrittenAsItsOwnWords() {
         // It first rode in front of the assistant's answer -- and the model copied it into its next
         // reply, so the user read "(tools I actually ran this turn: …)" as the first line of an answer.
-        String note = LocalAgent.toolNote(
+        String note = AgentSession.toolNote(
                 List.of(new ConsoleSession.ToolRound("grep", "{pattern=Test}", "3 matches in 2 files")));
 
         assertThat(note, containsString("do not repeat it"));
         assertThat(note, containsString("grep"));
         assertThat(note, containsString("3 matches in 2 files"));
-        assertThat(LocalAgent.toolNote(List.of()), is(""));
+        assertThat(AgentSession.toolNote(List.of()), is(""));
     }
 
     @Test
@@ -542,19 +609,19 @@ class LocalAgentTest {
         assertThat(on.getCompactAt(), is(AgentOptions.DEFAULT_COMPACT_AT));
 
         // 70 % of 1000 tokens: 699 still fits, 700 does not
-        assertThat(LocalAgent.needsCompaction(on, 1000, 699), is(false));
-        assertThat(LocalAgent.needsCompaction(on, 1000, 700), is(true));
+        assertThat(AgentSession.needsCompaction(on, 1000, 699), is(false));
+        assertThat(AgentSession.needsCompaction(on, 1000, 700), is(true));
 
         // an unknown window is never guessed at
-        assertThat(LocalAgent.needsCompaction(on, StatusLine.UNKNOWN_CONTEXT, 1_000_000), is(false));
+        assertThat(AgentSession.needsCompaction(on, StatusLine.UNKNOWN_CONTEXT, 1_000_000), is(false));
 
         AgentOptions off = AgentOptions.parse(new String[] {"--base-url", "u", "--auto-compact", "false"});
         assertThat(off.isAutoCompact(), is(false));
-        assertThat(LocalAgent.needsCompaction(off, 1000, 999), is(false));
+        assertThat(AgentSession.needsCompaction(off, 1000, 999), is(false));
 
         AgentOptions early = AgentOptions.parse(new String[] {"--base-url", "u", "--compact-at", "50"});
-        assertThat(LocalAgent.needsCompaction(early, 1000, 500), is(true));
-        assertThat(LocalAgent.needsCompaction(early, 1000, 499), is(false));
+        assertThat(AgentSession.needsCompaction(early, 1000, 500), is(true));
+        assertThat(AgentSession.needsCompaction(early, 1000, 499), is(false));
     }
 
     @Test

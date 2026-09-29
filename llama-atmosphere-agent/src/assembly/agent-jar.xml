@@ -39,7 +39,28 @@ SPDX-License-Identifier: MIT
                 <exclude>net.ladenthin:llama</exclude>
                 <exclude>org.jspecify:jspecify</exclude>
                 <exclude>org.slf4j:slf4j-simple</exclude>
+                <exclude>org.atmosphere:atmosphere-spring-boot-starter</exclude>
             </excludes>
+        </dependencySet>
+        <!--
+          The Spring Boot starter is on the classpath for one thing: the prebuilt Atmosphere AI
+          Console under META-INF/resources, which the browser front end (web option) serves. Its
+          classes are Spring auto-configuration that never loads without Spring, so only the pages
+          are packed.
+        -->
+        <dependencySet>
+            <outputDirectory>/</outputDirectory>
+            <useProjectArtifact>false</useProjectArtifact>
+            <unpack>true</unpack>
+            <scope>runtime</scope>
+            <includes>
+                <include>org.atmosphere:atmosphere-spring-boot-starter</include>
+            </includes>
+            <unpackOptions>
+                <includes>
+                    <include>META-INF/resources/atmosphere/console/**</include>
+                </includes>
+            </unpackOptions>
         </dependencySet>
     </dependencySets>
 </assembly>

@@ -50,6 +50,8 @@ SPDX-License-Identifier: MIT
 		<llama.classifier></llama.classifier>
 		<atmosphere.version>4.0.71</atmosphere.version>
 		<jline.version>4.4.6</jline.version>
+		<jetty.version>12.1.13</jetty.version>
+		<acp.version>0.18.0</acp.version>
 		<slf4j.version>2.0.20</slf4j.version>
 		<jspecify.version>1.0.1</jspecify.version>
 		<junit.version>6.1.3</junit.version>
@@ -101,6 +103,52 @@ SPDX-License-Identifier: MIT
 			<groupId>org.jline</groupId>
 			<artifactId>jline</artifactId>
 			<version>${jline.version}</version>
+		</dependency>
+
+		<!-- The browser front end (the web option): Atmosphere's servlet on an embedded Jetty 12, no Spring.
+		     jetty-ee10-annotations is excluded because the endpoint is registered explicitly: it
+		     would pull in CDI, JNDI, XML and ASM for classpath scanning that never runs. -->
+		<dependency>
+			<groupId>org.eclipse.jetty.ee10</groupId>
+			<artifactId>jetty-ee10-servlet</artifactId>
+			<version>${jetty.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>org.eclipse.jetty.ee10.websocket</groupId>
+			<artifactId>jetty-ee10-websocket-jakarta-server</artifactId>
+			<version>${jetty.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>org.eclipse.jetty.ee10</groupId>
+					<artifactId>jetty-ee10-annotations</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+		<!-- Only for the prebuilt Atmosphere AI Console it carries under META-INF/resources: every
+		     transitive dependency (Spring Boot) is excluded, so no Spring class is on the classpath. -->
+		<dependency>
+			<groupId>org.atmosphere</groupId>
+			<artifactId>atmosphere-spring-boot-starter</artifactId>
+			<version>${atmosphere.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>*</groupId>
+					<artifactId>*</artifactId>
+				</exclusion>
+			</exclusions>
+		</dependency>
+
+		<!-- The editor front end (the acp option): the official Java SDK of the Agent Client Protocol,
+		     spoken over stdin/stdout. Jackson 2 binding, which the core fat jar already carries. -->
+		<dependency>
+			<groupId>com.agentclientprotocol</groupId>
+			<artifactId>acp-core</artifactId>
+			<version>${acp.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>com.agentclientprotocol</groupId>
+			<artifactId>acp-json-jackson2</artifactId>
+			<version>${acp.version}</version>
 		</dependency>
 
 		<dependency>

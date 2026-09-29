@@ -47,8 +47,8 @@ public final class ToolCallLog {
      * @param turn the turn number
      * @param rounds the calls, in order
      */
-    public void add(int turn, List<ConsoleSession.ToolRound> rounds) {
-        for (ConsoleSession.ToolRound round : rounds) {
+    public void add(int turn, List<TurnRecorder.ToolRound> rounds) {
+        for (TurnRecorder.ToolRound round : rounds) {
             entries.add(new Entry(
                     LocalTime.now(), turn, round.name(), cut(round.argumentsJson()), cut(oneLine(round.result()))));
         }

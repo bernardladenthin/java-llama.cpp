@@ -163,42 +163,39 @@ class AgentOptionsTest {
         AgentOptions plain = AgentOptions.parse(new String[] {"--base-url", "http://x/v1"});
         AgentOptions shell = AgentOptions.parse(new String[] {"--base-url", "http://x/v1", "--allow-shell"});
 
-        assertThat(LocalAgent.systemPrompt(plain).contains("run_command"), is(false));
-        assertThat(LocalAgent.systemPrompt(shell), containsString("run_command"));
+        assertThat(Prompts.systemPrompt(plain).contains("run_command"), is(false));
+        assertThat(Prompts.systemPrompt(shell), containsString("run_command"));
     }
 
     @Test
     void defaultSystemPromptIsGeneralPurposeAndAllowsAnyCommandWithTheShell() {
         // A narrow "coding agent ... build, test or inspect the project" framing made a 4B model refuse
         // "list the docker images" although run_command could run it; the prompt must grant it outright.
-        String shell = LocalAgent.systemPrompt(
-                AgentOptions.parse(new String[] {"--base-url", "http://x/v1", "--allow-shell"}));
+        String shell =
+                Prompts.systemPrompt(AgentOptions.parse(new String[] {"--base-url", "http://x/v1", "--allow-shell"}));
         assertThat(shell, containsString("general-purpose"));
         assertThat(shell, containsString("any command line through " + ShellTool.shellName()));
         assertThat(shell, containsString("run the command instead of explaining"));
         assertThat(shell.contains("coding agent"), is(false));
 
         // Without the shell the model must not invent a limitation: it is told why and how to lift it.
-        String plain = LocalAgent.systemPrompt(AgentOptions.parse(new String[] {"--base-url", "http://x/v1"}));
+        String plain = Prompts.systemPrompt(AgentOptions.parse(new String[] {"--base-url", "http://x/v1"}));
         assertThat(plain, containsString("--allow-shell"));
     }
 
     @Test
     void promptResourcesLoadAndEveryPlaceholderIsFilled() {
         for (String name : new String[] {
-            LocalAgent.SYSTEM_PROMPT,
-            LocalAgent.SHELL_PROMPT,
-            LocalAgent.NO_SHELL_PROMPT,
-            ShellTool.DESCRIPTION_RESOURCE
+            Prompts.SYSTEM_PROMPT, Prompts.SHELL_PROMPT, Prompts.NO_SHELL_PROMPT, ShellTool.DESCRIPTION_RESOURCE
         }) {
-            assertThat(name, LocalAgent.prompt(name).isBlank(), is(false));
+            assertThat(name, Prompts.prompt(name).isBlank(), is(false));
         }
         for (boolean allowShell : new boolean[] {true, false}) {
             AgentOptions options = AgentOptions.parse(
                     allowShell
                             ? new String[] {"--base-url", "u", "--workspace", "ws", "--allow-shell"}
                             : new String[] {"--base-url", "u", "--workspace", "ws"});
-            String prompt = LocalAgent.systemPrompt(options);
+            String prompt = Prompts.systemPrompt(options);
 
             // a renamed or mistyped placeholder would otherwise reach the model verbatim
             assertThat(prompt, prompt.contains("{"), is(false));
@@ -218,7 +215,51 @@ class AgentOptionsTest {
     @Test
     void systemPromptOverrideReplacesTheDefault() {
         assertThat(
-                LocalAgent.systemPrompt(AgentOptions.parse(new String[] {"--base-url", "u", "--system", "custom"})),
+                Prompts.systemPrompt(AgentOptions.parse(new String[] {"--base-url", "u", "--system", "custom"})),
                 is("custom"));
+    }
+
+    @Test
+    void theFrontEndOptionsDefaultToTheConsoleAndALoopbackPort() {
+        AgentOptions console = AgentOptions.parse(new String[] {"--base-url", "u"});
+        assertThat(console.isWeb(), is(false));
+        assertThat(console.isAcp(), is(false));
+        assertThat(console.getWebPort(), is(AgentOptions.DEFAULT_WEB_PORT));
+        assertThat(console.getWebHost(), is("127.0.0.1"));
+        assertThat(console.getWebToken(), nullValue());
+
+        AgentOptions web = AgentOptions.parse(new String[] {
+            "--base-url", "u", "--web", "--web-port", "0", "--web-host", "::1", "--web-token", "abcdefghijklmnop_-12"
+        });
+        assertThat(web.isWeb(), is(true));
+        assertThat(web.getWebPort(), is(0));
+        assertThat(web.getWebHost(), is("::1"));
+        assertThat(web.getWebToken(), is("abcdefghijklmnop_-12"));
+        assertThat(AgentOptions.parse(new String[] {"--base-url", "u", "--acp"}).isAcp(), is(true));
+    }
+
+    @Test
+    void frontEndsExcludeEachOtherAndABadTokenOrPortIsRefused() {
+        assertThat(
+                assertThrows(
+                                IllegalArgumentException.class,
+                                () -> AgentOptions.parse(new String[] {"--base-url", "u", "--web", "--acp"}))
+                        .getMessage(),
+                containsString("exclude each other"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> AgentOptions.parse(new String[] {"--base-url", "u", "--web", "--prompt", "x"}));
+        assertThat(
+                assertThrows(
+                                IllegalArgumentException.class,
+                                () -> AgentOptions.parse(new String[] {"--base-url", "u", "--web-token", "short"}))
+                        .getMessage(),
+                containsString("at least 16"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> AgentOptions.parse(new String[] {"--base-url", "u", "--web-token", "has spaces in it, 16+"}));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> AgentOptions.parse(new String[] {"--base-url", "u", "--web-port", "70000"}));
     }
 }
