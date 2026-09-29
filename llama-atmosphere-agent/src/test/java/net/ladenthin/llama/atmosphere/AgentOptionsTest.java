@@ -218,4 +218,48 @@ class AgentOptionsTest {
                 Prompts.systemPrompt(AgentOptions.parse(new String[] {"--base-url", "u", "--system", "custom"})),
                 is("custom"));
     }
+
+    @Test
+    void theFrontEndOptionsDefaultToTheConsoleAndALoopbackPort() {
+        AgentOptions console = AgentOptions.parse(new String[] {"--base-url", "u"});
+        assertThat(console.isWeb(), is(false));
+        assertThat(console.isAcp(), is(false));
+        assertThat(console.getWebPort(), is(AgentOptions.DEFAULT_WEB_PORT));
+        assertThat(console.getWebHost(), is("127.0.0.1"));
+        assertThat(console.getWebToken(), nullValue());
+
+        AgentOptions web = AgentOptions.parse(new String[] {
+            "--base-url", "u", "--web", "--web-port", "0", "--web-host", "::1", "--web-token", "abcdefghijklmnop_-12"
+        });
+        assertThat(web.isWeb(), is(true));
+        assertThat(web.getWebPort(), is(0));
+        assertThat(web.getWebHost(), is("::1"));
+        assertThat(web.getWebToken(), is("abcdefghijklmnop_-12"));
+        assertThat(AgentOptions.parse(new String[] {"--base-url", "u", "--acp"}).isAcp(), is(true));
+    }
+
+    @Test
+    void frontEndsExcludeEachOtherAndABadTokenOrPortIsRefused() {
+        assertThat(
+                assertThrows(
+                                IllegalArgumentException.class,
+                                () -> AgentOptions.parse(new String[] {"--base-url", "u", "--web", "--acp"}))
+                        .getMessage(),
+                containsString("exclude each other"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> AgentOptions.parse(new String[] {"--base-url", "u", "--web", "--prompt", "x"}));
+        assertThat(
+                assertThrows(
+                                IllegalArgumentException.class,
+                                () -> AgentOptions.parse(new String[] {"--base-url", "u", "--web-token", "short"}))
+                        .getMessage(),
+                containsString("at least 16"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> AgentOptions.parse(new String[] {"--base-url", "u", "--web-token", "has spaces in it, 16+"}));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> AgentOptions.parse(new String[] {"--base-url", "u", "--web-port", "70000"}));
+    }
 }

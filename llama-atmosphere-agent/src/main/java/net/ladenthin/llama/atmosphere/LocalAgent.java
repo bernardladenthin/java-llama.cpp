@@ -80,6 +80,10 @@ public final class LocalAgent {
             System.out.println(AgentOptions.usage());
             return;
         }
+        if (options.isWeb()) {
+            System.exit(WebAgent.run(options, System.err));
+            return;
+        }
         System.exit(run(
                 options,
                 System.in == null ? null : new InputStreamReader(System.in, StandardCharsets.UTF_8),
