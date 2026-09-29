@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b11247**
+Current llama.cpp pinned version: **b11256**
 
 ## Upgrading CUDA Version
 
@@ -348,12 +348,30 @@ its Python wheels (`rocm[libraries,devel]` from `stable.repo.amd.com/rocm/whl-ne
 llama.cpp's own `ubuntu-rocm` / `windows-rocm` release jobs do, and read the paths back with
 `rocm-sdk path`. The ROCm version follows upstream's `release.yml` at the pinned `GIT_TAG` —
 **re-check it on every llama.cpp bump**. The `GPU_TARGETS` lists deliberately go **further than
-upstream's**: they are every target TheRock builds for that OS (its `SUPPORTED_GPUS.md`), which adds
-gfx900/gfx906/gfx90c/gfx1153 — "build passing" there, not release-ready, and omitted by llama.cpp.
+upstream's**: they are every target TheRock builds for that OS (its `SUPPORTED_GPUS.md`). On Linux
+that adds gfx900/gfx906/gfx90c/gfx1153 to upstream's list, on Windows only gfx900/gfx906/gfx90c
+(upstream's `windows-rocm` list already carries gfx1153, its `ubuntu-rocm` list does not — checked at
+b11256). All four are "build passing" in TheRock, not release-ready.
 Supporting more rather than fewer is the policy, with one limit: an extra stays only while it builds
 without problems and without local patches; the moment one needs a patch or holds back a newer
 ROCm/llama.cpp, drop it. The two lists differ **only** by the Instinct parts
 (gfx908/gfx90a/gfx942/gfx950), which ROCm supports on Linux alone.
+
+**The ROCm GPU code is compressed (`--offload-compress`), and CI enforces it.** Each HIP
+translation unit embeds one code object per GPU target, i.e. the whole kernel set (flash attention,
+mmq per quant type, …) once per architecture — stored **uncompressed** by default, which made the
+Windows `jllama.dll` ~1 GB for its 23 targets (234 MB zipped, so the jar never showed it). That size
+also lands on disk: `LlamaLoader` extracts the library to the temp dir on every start, and in the
+all-backends fat jar ROCm is tried right after CUDA, i.e. on nearly every machine without an NVIDIA
+card. `llama/CMakeLists.txt` therefore adds `--offload-compress` to the `ggml-hip` target only
+(`$<COMPILE_LANGUAGE:HIP,CXX>`: its sources are HIP on Linux and CXX on Windows, where upstream
+compiles HIP as C++), so clang stores every bundle zstd-compressed (a `CCOB` bundle) and the HIP
+runtime inflates it when the module loads. Upstream llama.cpp does **not** do this; its
+`ggml-hip.dll` carries the same uncompressed code (for 20 targets). `.github/verify-hip-offload-compressed.py` runs after the build in
+both ROCm jobs, prints the library size and bundle counts (also into the job summary), and fails on
+any uncompressed bundle (`__CLANG_OFFLOAD_BUNDLE__`) or on none compressed — a toolchain or upstream
+change that drops the flag reds the job instead of quietly shipping the 1 GB library again. The
+jar barely shrinks (zip already compressed the code); what shrinks is the extracted library.
 
 Two routing notes mirror existing precedent: **Linux SYCL** ships two precision variants at the *same*
 arch, so `CMakeLists.txt` routes them to two *distinct* trees by `GGML_SYCL_F16` (fp16 vs fp32).
@@ -538,7 +556,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network for the asset build; the embed step is plain cmake -P
-git clone --depth 1 --branch b11247 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b11256 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build )
 mkdir -p webui-generated /tmp/ui-gen
 cmake -DUI_SOURCE_DIR=/tmp/lc/tools/ui -DUI_BINARY_DIR=/tmp/ui-gen \
@@ -578,7 +596,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11247`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11256`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -1797,7 +1815,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11247`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11256`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the

@@ -188,13 +188,26 @@ set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b11247
+	GIT_TAG        b11256
 	PATCH_COMMAND  ${CMAKE_COMMAND}
 		-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patches
 		-DLLAMA_SRC=<SOURCE_DIR>
 		-P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply-llama-patches.cmake
 )
 FetchContent_MakeAvailable(llama.cpp)
+
+# ROCm/HIP: compress the embedded GPU code. Without it every HIP translation unit carries one
+# UNcompressed code object per GPU target, so the shipped library holds the complete kernel set
+# (flash attention, mmq per quant type, ...) once per architecture: ~1 GB for the 23 Windows
+# targets, which LlamaLoader then extracts to the temp dir on every start. --offload-compress
+# makes clang store each bundle zstd-compressed (a "CCOB" bundle); the HIP runtime inflates it
+# when the module is loaded. Scoped to the ggml-hip target (the only one with device code):
+# its sources are LANGUAGE HIP on Linux and CXX on Windows (upstream compiles HIP as C++ there).
+# CI (.github/verify-hip-offload-compressed.py) fails the ROCm jobs if an uncompressed bundle
+# ever reappears.
+if(TARGET ggml-hip)
+    target_compile_options(ggml-hip PRIVATE $<$<COMPILE_LANGUAGE:HIP,CXX>:--offload-compress>)
+endif()
 
 # b8831 added ggml_graph_next_uid() which calls _InterlockedIncrement64 via
 # <intrin.h> on x86. The intrinsic only exists on x64; provide the

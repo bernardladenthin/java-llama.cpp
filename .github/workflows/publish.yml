@@ -2164,6 +2164,10 @@ jobs:
         run: |
           mvn --no-transfer-progress -f llama/pom.xml compile
           .github/build.sh "-DGGML_HIP=ON -DCMAKE_HIP_COMPILER=$(hipconfig -l)/clang -DGPU_TARGETS=gfx900;gfx906;gfx908;gfx90a;gfx90c;gfx942;gfx950;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201 -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
+      - name: Verify the GPU code is compressed
+        # ggml-hip is compiled with --offload-compress (llama/CMakeLists.txt); without it the
+        # library carries every target's kernels uncompressed. Fails on an uncompressed bundle.
+        run: python3 .github/verify-hip-offload-compressed.py llama/src/main/resources_linux_rocm
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2242,9 +2246,14 @@ jobs:
         # Upstream's compiler wiring for TheRock (clang under lib\llvm\bin, not bin\);
         # -Wno-error=incompatible-pointer-types is upstream's too. Targets: every Windows target
         # TheRock builds — the Linux list minus the Instinct parts, which ROCm has no Windows
-        # support for. Same rule for the extras upstream omits as on Linux.
+        # support for. Same rule as on Linux for the extras upstream omits -- here only
+        # gfx900/gfx906/gfx90c, since upstream's windows-rocm list already has gfx1153.
         run: |
           .github\build.bat -G "Ninja Multi-Config" -DGGML_HIP=ON -DGPU_TARGETS=gfx900;gfx906;gfx90c;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201 -DCMAKE_PREFIX_PATH="%HIP_PATH%" -DHIP_PATH="%HIP_PATH%" -DCMAKE_C_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_CXX_COMPILER="%HIP_PATH%\lib\llvm\bin\clang++.exe" -DCMAKE_HIP_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_C_FLAGS="-Wno-error=incompatible-pointer-types" -DOS_NAME=Windows -DOS_ARCH=x86_64
+      - name: Verify the GPU code is compressed
+        # Same check as the Linux ROCm job: an uncompressed bundle means ~1 GB jllama.dll again.
+        shell: pwsh
+        run: python .github/verify-hip-offload-compressed.py llama/src/main/resources_windows_rocm
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
