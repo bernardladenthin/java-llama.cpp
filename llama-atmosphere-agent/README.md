@@ -176,8 +176,12 @@ irrelevant: inference stays in the running server, the agent's JVM loads no mode
 | `--temperature <t>` / `--max-tokens <n>` | sampling / per-call budget | `0.2` / `2048` |
 | `--max-tool-rounds <n>` | tool rounds per turn | `25` |
 | `--api-key <key>` / `--model-id <id>` | bearer token / `model` field | `sk-local` / `local-model` |
+| `--web` | serve the agent to a browser instead of this console (see [below](#in-the-browser---web)) | off |
+| `--web-port <n>` / `--web-host <addr>` | where `--web` listens (`0` = any free port) | `8787` / `127.0.0.1` |
+| `--web-token <token>` | access token for `--web` (16+ of `A-Z a-z 0-9 _ -`) | new random one per start |
+| `--acp` | speak the Agent Client Protocol on stdin/stdout, for editors (see [below](#in-an-editor---acp)) | off |
 
-Exactly one of `--base-url` / `--model` is required. Exit code 0 = turn completed, 1 = the turn
+Exactly one of `--base-url` / `--model` is required; `--web`, `--acp` and `--prompt` exclude each other. Exit code 0 = turn completed, 1 = the turn
 errored, 2 = usage error. Set `-Dorg.slf4j.simpleLogger.defaultLogLevel=debug` to see every request.
 
 **Console output with `--model`.** llama.cpp writes its own log (`slot …`, `srv …`, model loading)
@@ -224,6 +228,85 @@ What the line-oriented console gives up, so the choice is an informed one:
 | approvals | `y` + Enter | `y` + Enter |
 | history, Tab completion, Ctrl-L, Shift+Tab | yes | no |
 | correct when the output is a file | — | yes |
+
+### Three front ends on one session: console, browser, editor
+
+The console is one of three ways to talk to the same agent. All three drive one front-end-independent
+`AgentSession` — the conversation, the slash commands, the approval mode, `/compact`, `/loop`, the
+transcript — so a command or a fix exists once and every front end has it. What differs is only how a
+turn is shown and how an approval is asked.
+
+| | console (default / `--plain`) | browser (`--web`) | editor (`--acp`) |
+|---|---|---|---|
+| where it runs | this terminal | any browser, also through an SSH tunnel | inside JetBrains IDEs, Zed, VS Code (extension) |
+| streamed answer | yes | yes | yes, as `agent_message_chunk` |
+| tool calls | `⚙ tool {args}` / `↳ result` lines | tool cards | tool call cards with kind and the file they touch |
+| approvals | `y` + Enter | Approve / Deny on the card | the editor's own permission dialog |
+| slash commands | typed | typed | offered by the editor on `/` |
+| stop a turn | type a line | `/stop`, or send the next message | the editor's stop button (`session/cancel`) |
+| approval mode | `/mode`, Shift+Tab | `/mode` | the editor's mode picker (`manual` / `auto`) |
+
+#### In the browser (`--web`)
+
+```bash
+java -jar llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar --model model.gguf --allow-shell --web
+# Open in a browser: http://127.0.0.1:8787/?token=…
+```
+
+The agent runs [Atmosphere](https://github.com/Atmosphere/atmosphere)'s own AI console on an embedded
+Jetty: an `@AiEndpoint` on the same `AgentSession`, WebSocket transport, the prebuilt console pages
+from `atmosphere-spring-boot-starter` (only those pages are unpacked into the jar — no Spring). Tool
+calls appear as cards, a gated call as an Approve / Deny card, a running command's output as progress
+lines. A new message while a turn runs stops that turn first, and `/stop` stops it without asking
+anything new.
+
+**Security, because this is a shell with a URL.** It listens on `127.0.0.1` by default. The printed
+address carries a random token; opening it exchanges the token for an `HttpOnly`, `SameSite=Strict`
+cookie and redirects, so the token leaves the address bar at once. Without the cookie (or
+`Authorization: Bearer <token>`) every request is `401`. Requests whose `Host` is not loopback while
+bound to loopback, and cross-origin requests, are refused, which is what stops DNS rebinding and other
+sites from reaching it. There is no TLS.
+
+**From another machine, tunnel — do not bind to the network.** On a server you reach with SSH:
+
+```bash
+ssh -L 8787:127.0.0.1:8787 user@server      # PuTTY: Connection > SSH > Tunnels, source 8787, destination 127.0.0.1:8787
+```
+
+then open the printed address on your own machine. `--web-host 0.0.0.0` exists and warns loudly: the
+token is then all that stands between the network and a shell on that machine, in clear text.
+
+#### In an editor (`--acp`)
+
+With `--acp` the agent speaks the [Agent Client Protocol](https://agentclientprotocol.com) — JSON-RPC
+on stdin/stdout — and the editor starts it as a subprocess. Each editor session is one agent session
+whose workspace is the project the editor has open (its `cwd`), so the file tools are confined to
+that project. JetBrains IDEs (AI Assistant, `~/.jetbrains/acp.json`):
+
+```json
+{
+  "agent_servers": {
+    "Local llama": {
+      "command": "java",
+      "args": ["-jar", "/path/llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar",
+               "--acp", "--model", "/path/model.gguf", "--allow-shell"]
+    }
+  }
+}
+```
+
+Zed takes the same command and arguments as a custom agent server in its settings (`agent_servers`,
+see Zed's external-agents documentation); VS Code needs one of the ACP client extensions. The model
+loads once per editor process, so several chat sessions share it. `--base-url` works here too, to use
+a model server that is already running.
+
+In the editor: the answer streams into the chat; every tool call is a card with its kind (read, edit,
+search, execute, …) and a link to the file it touches, and a running command's output updates in the
+card; a gated call opens the editor's permission dialog with *Allow*, *Allow all* (switches the
+session to `auto`, like `[a]` in the console) and *Reject* — closing the dialog is a no. The slash
+commands appear in the editor's `/` menu; `/exit` and `/cls` are left out because there is nothing to
+exit or clear there. Nothing but protocol goes to stdout: the agent's own status lines and llama.cpp's
+log go to stderr, which editors show in their agent log.
 
 ### Asking again, and your own system prompt
 
@@ -741,7 +824,13 @@ CI (plain chat, streaming, a tool call whose result is answered, a read→write�
 changes a temp file). It self-skips without the GGUF. Both gate every publish, together with
 `smoke-agent-linux`, which starts the **release jar** next to the real Linux fat jar (`java -jar`,
 the core found only through the manifest `Class-Path`) and runs a one-shot answer and a `read_file`
-round on the same model:
+round on the same model, then starts it with `--web` (token, cookie, console page) and with `--acp`
+(handshake, a streamed answer and a `read_file` round the way an editor sends them). The browser and
+editor front ends are also covered model-free on every PR: `WebServerTest` drives the real Jetty +
+Atmosphere endpoint over a WebSocket speaking the atmosphere.js protocol (streaming, approvals, `/stop`,
+the token guard), `AcpServerTest` drives `AcpServer` with the JSON-RPC an editor sends (streaming, tool
+cards, allow / reject / allow-all, mode switch, cancel), and `AgentSessionTest` covers the shared
+session under all of them:
 
 ```bash
 mvn -f llama-atmosphere-agent/pom.xml test -Dtest=AtmosphereToolLoopIntegrationTest \
@@ -769,9 +858,12 @@ context = ToolLoopPolicies.attach(context, ToolLoopPolicy.maxIterations(25));
 runtime.execute(context, session); // session.injectables() carries the AgentFileSystem the file tools resolve
 ```
 
-`AgentRunner` is exactly that; `ConsoleSession` renders the stream and supplies the
-`WorkspaceAgentFileSystem` (path-confined, size-limited) through `injectables()`; `LocalAgent` parses
-the options and optionally hosts the model. The `@Agent`/`@AiTool` annotations and the Spring Boot
+`AgentRunner` is exactly that. Around it: `AgentSession` holds the conversation, the commands and the
+approval mode and runs each turn; a `TurnRecorder` (the `StreamingSession` handed to the runtime)
+records the turn and supplies the `WorkspaceAgentFileSystem` (path-confined, size-limited) through
+`injectables()`, forwarding every event to the front end's renderer; a `SessionFrontend` — the console,
+`WebFrontend` or `AcpFrontend` — shows it and answers approvals. `ModelEndpoint` optionally hosts the
+model in-process, and `LocalAgent` parses the options and picks the front end. The `@Agent`/`@AiTool` annotations and the Spring Boot
 starter are the *deployment* layer on top of the same runtime — not needed for a local terminal agent.
 
 ## Limitations / next steps
@@ -792,5 +884,7 @@ starter are the *deployment* layer on top of the same runtime — not needed for
   `Failed to delete old native lib` followed by `No native library found`. Two in-process models
   also share the GPU's memory — a second 4B model on an 8 GB card can stall instead of failing.
   To run several agents, start one server (mode A) and point each agent at it with `--base-url`.
-- The Spring Boot `@Agent` + WebSocket/SSE UI variant is untested here; it uses the same runtime and
-  the same `LLM_BASE_URL`, so it is expected to work but is not CI-covered.
+- `--web` serves one conversation: every browser tab with the token shares it (and sees a turn another
+  tab started). A second, separate conversation needs a second agent on another port.
+- `--acp` offers neither `session/load` nor MCP servers from the editor; images and audio attached in
+  the editor are not passed on (the text of an attached file is).

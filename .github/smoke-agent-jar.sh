@@ -16,7 +16,14 @@
 #   2. --help exits 0 and prints the usage;
 #   3. a one-shot prompt with the model loaded in-process answers "2+2" with a 4;
 #   4. a one-shot prompt that needs a reading tool (read_file) reads a marker file from
-#      --workspace, so the whole tool loop runs through the shipped jars.
+#      --workspace, so the whole tool loop runs through the shipped jars;
+#   5. --web starts the browser front end (embedded Jetty + the Atmosphere console pages,
+#      which the assembly unpacks from a jar it otherwise leaves out): without the token
+#      the console is 401, the token link sets the session cookie, and the console page
+#      is served with it;
+#   6. --acp speaks the Agent Client Protocol on stdin/stdout the way an editor drives it
+#      (smoke/agent_acp_smoke.py): handshake, a streamed answer, a read_file round, and a
+#      clean exit when the editor hangs up.
 #
 # Usage: smoke-agent-jar.sh <jar-dir> <model-path>
 # <jar-dir> must hold exactly one llama-atmosphere-agent-*-jar-with-dependencies.jar and at
@@ -111,5 +118,45 @@ rm -rf "$WORKSPACE"
 grep -q 'read_file' agent-tool.log || { cat agent-tool.log; fail "the model did not call read_file"; }
 grep -q "$MARKER" agent-tool.log || { cat agent-tool.log; fail "the marker never reached the output"; }
 echo "OK: tool round (read_file)"
+
+# 5. The browser front end. Port 0 lets the OS pick; the banner says which one it got.
+WEB_LOG=agent-web.log
+java -jar "$AGENT" --model "$MODEL" --ngl 0 --web --web-port 0 > agent-web.out.log 2> "$WEB_LOG" < /dev/null &
+WEB_PID=$!
+trap 'kill "$WEB_PID" 2>/dev/null || true' EXIT
+URL=""
+for _ in $(seq 1 "$TIMEOUT"); do
+    URL="$(sed -n 's/^Open in a browser: //p' "$WEB_LOG" | head -n 1)"
+    [ -n "$URL" ] && break
+    kill -0 "$WEB_PID" 2>/dev/null || { tail -n 80 "$WEB_LOG"; fail "--web exited before it listened"; }
+    sleep 1
+done
+[ -n "$URL" ] || { tail -n 80 "$WEB_LOG"; fail "--web printed no address within ${TIMEOUT}s"; }
+BASE="${URL%%/?token=*}"
+code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/atmosphere/console/")"
+[ "$code" = "401" ] || fail "the console without a token answered $code, not 401"
+COOKIES="$(mktemp)"
+code="$(curl -s -o /dev/null -w '%{http_code}' -c "$COOKIES" "$URL")"
+[ "$code" = "302" ] || fail "the token link answered $code, not a redirect"
+grep -q jllama_agent "$COOKIES" || fail "the token link set no session cookie"
+curl -s -f -b "$COOKIES" -o agent-web-console.log "$BASE/atmosphere/console/" \
+    || fail "the console page is not served with the session cookie"
+grep -qi '<script' agent-web-console.log || { head -c 2000 agent-web-console.log; fail "the console page has no script"; }
+# The page ships with a placeholder the server replaces per response; left in, the browser's CSP
+# blocks the console's own script and the page stays blank.
+if grep -q '__ATMO_CSP_NONCE__' agent-web-console.log; then fail "the console page still carries the CSP nonce placeholder"; fi
+rm -f "$COOKIES"
+kill "$WEB_PID" 2>/dev/null || true
+wait "$WEB_PID" 2>/dev/null || true
+trap - EXIT
+echo "OK: --web (token, cookie, console page)"
+
+# 6. The editor front end.
+WORKSPACE="$(mktemp -d)"
+python3 "$(dirname "$0")/smoke/agent_acp_smoke.py" "$WORKSPACE" agent-acp.log -- \
+    java -jar "$AGENT" --model "$MODEL" --ngl 0 --temperature 0 --acp \
+    || { tail -n 80 agent-acp.err.log 2>/dev/null || true; fail "--acp smoke failed"; }
+rm -rf "$WORKSPACE"
+echo "OK: --acp"
 
 echo "Agent release asset smoke test passed."
