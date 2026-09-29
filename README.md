@@ -98,7 +98,8 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
     3.3 [Chat Completion](#chat-completion)  
     3.4 [Infilling](#infilling)  
     3.5 [Embeddings & Reranking](#embeddings--reranking)  
-    3.6 [Raw JSON Endpoints](#raw-json-endpoints)
+    3.6 [Raw JSON Endpoints](#raw-json-endpoints)  
+    3.7 [Local agent: terminal, browser, IDE via ACP](#local-agent-terminal-browser-ide-via-acp)
 4. [Android](#importing-in-android)
 5. [Feature Ideas](#feature-ideas)
 
@@ -118,6 +119,7 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - **Conversation checkpoints** — `Session.checkpoint(...)` / `rewind(...)` / `fork(...)` branch and roll back a chat (KV-cache slot save/restore + transcript snapshot) without re-prefilling.
 - **GGUF metadata inspection** without loading the model (`GgufInspector` — pure Java, reads header + key/value table only, big-endian aware).
 - **Distributed inference over RPC** — offload a model's layers to llama.cpp RPC servers on other machines (`ModelParameters.setRpcServers(...)` / `--rpc host:port`), and serve this machine's devices to them with `RpcServer` (the in-JVM `rpc-server`). See [Distributed inference over RPC](#distributed-inference-over-rpc).
+- **Local agent** ([`llama-atmosphere-agent`](llama-atmosphere-agent/), release asset, JDK 21+) — a fully offline agent on top of this library that reads and edits files and, if allowed, runs commands. One agent session, three ways to use it: a **terminal** (full console or line-oriented `--plain`, fine over SSH/PuTTY), a **browser** (`--web`, token-protected, loopback by default — reach it from elsewhere through an SSH tunnel), and **IDEs** over the [Agent Client Protocol](https://agentclientprotocol.com) (`--acp`: JetBrains IDEs and Zed natively, VS Code through an ACP extension). See [Local agent](#local-agent-terminal-browser-ide-via-acp).
 - **Multi-model router mode** (`--models-dir` + per-request model selection, managed via the typed `RouterClient`) and **attach mode** (`NativeServer(LlamaModel, ...)` serves an already-loaded model over the full upstream HTTP frontend — one copy of the weights).
 - Pre-built native binaries in the default JAR for Linux (x86-64, aarch64, s390x), macOS (x86-64, arm64 — Metal included), Windows (x86-64, x86, arm64) and Android (arm64, x86-64); GPU backends (CUDA, Vulkan, OpenCL, ROCm/HIP, SYCL, OpenVINO) ship as Maven classifiers — see [Choosing the right classifier](#choosing-the-right-classifier). Android additionally ships as the [`llama-android` AAR](#importing-in-android) with the optional `llama-kotlin` coroutines façade.
 
@@ -1087,10 +1089,19 @@ See [`llama-langchain4j/README.md`](llama-langchain4j/) for streaming/embedding/
 examples and the current mapping limitations (tool calling, JSON mode, and multimodal input are
 not yet forwarded).
 
-### Local coding agent with Atmosphere (`llama-atmosphere-agent/`)
+### Local agent: terminal, browser, IDE via ACP
 
-A copy-and-run **general-purpose terminal agent on the JVM** — Claude Code / OpenCode reduced to the
-essentials, fully offline; it edits files and, with `--allow-shell`, runs any command on your machine
+> [!TIP]
+> **Supported front ends** — all on the same agent session (history, slash commands, approval mode):
+>
+> | Front end | Start with | Where it runs |
+> |---|---|---|
+> | Terminal | *(default)* / `--plain` | this console; `--plain` for piped, logged or line-only sessions |
+> | Browser | `--web` | `http://127.0.0.1:8787/?token=…` — over SSH: `ssh -L 8787:127.0.0.1:8787 user@server` |
+> | IDE via **ACP** | `--acp` | JetBrains IDEs and Zed natively, VS Code through an ACP extension |
+
+`llama-atmosphere-agent/` is a copy-and-run **general-purpose agent on the JVM** — Claude Code /
+OpenCode reduced to the essentials, fully offline; it edits files and, with `--allow-shell`, runs any command on your machine
 (`docker`, `git`, build tools) — built from [Atmosphere](https://github.com/Atmosphere/atmosphere)'s
 built-in OpenAI-compatible agent runtime (streaming, tool loop, workspace file tools) driven
 **headless** against this project's OpenAI-compatible server. It is a standalone Maven project (not a

@@ -6,8 +6,8 @@ SPDX-License-Identifier: MIT
 
 # llama-atmosphere-agent — a local, general-purpose JVM agent on java-llama.cpp
 
-A minimal, copy-and-run **general-purpose terminal agent** (think Claude Code / OpenCode, reduced to
-the essentials): it reads and edits files, and with `--allow-shell` it runs any command on your
+A minimal, copy-and-run **general-purpose agent** for the terminal, the browser and your IDE (think
+Claude Code / OpenCode, reduced to the essentials): it reads and edits files, and with `--allow-shell` it runs any command on your
 machine — `docker`, `git`, build tools, system information. It runs entirely on the JVM and entirely
 offline:
 
@@ -15,12 +15,22 @@ offline:
   you start yourself, or the GGUF loaded **in this process**.
 - **Agent:** [Atmosphere](https://github.com/Atmosphere/atmosphere)'s built-in OpenAI-compatible
   runtime (`org.atmosphere:atmosphere-ai`): streaming, the model→tool→model loop, and its
-  workspace-confined file tools (`ls`, `write_file`, `glob`, `delete`, `rename`). Driven **headless**
-  — no Spring Boot, no servlet container, no `@Agent` scanning — through `BuiltInAgentRuntime`.
+  workspace-confined file tools (`ls`, `write_file`, `glob`, `delete`, `rename`). Driven directly
+  through `BuiltInAgentRuntime` — no Spring Boot, no `@Agent` scanning; only `--web` adds a servlet
+  container (an embedded Jetty).
   `read_file`, `edit_file` and `grep` are this project's own (see [Tools](#tools)), on the same
   workspace-confined filesystem.
 - **Shell:** an opt-in `run_command` tool (`--allow-shell`) that runs any command line through the
   system shell (`cmd.exe` on Windows, `sh` elsewhere).
+- **Front ends:** one agent session, three ways to use it — see
+  [Three front ends](#three-front-ends-on-one-session-console-browser-editor):
+  - **terminal** (default): a full console with a pinned status block, or `--plain` for a
+    line-oriented one that works when piped or logged; both work over SSH/PuTTY;
+  - **browser** (`--web`): Atmosphere's AI console on an embedded Jetty, loopback-only with an access
+    token by default; from another machine, open an SSH tunnel;
+  - **IDE** (`--acp`): the [Agent Client Protocol](https://agentclientprotocol.com) on stdin/stdout, so
+    JetBrains IDEs and Zed (and VS Code through an ACP extension) use it as their chat agent, with
+    their own permission dialog for writes and commands.
 
 This folder is a **standalone Maven project**, deliberately *not* a reactor module and *never* on
 Maven Central: CI builds and tests it against the core of the same checkout; you copy the folder and
