@@ -657,6 +657,29 @@ if(BUILD_TESTING)
     target_link_libraries(jllama_test PRIVATE llama-common mtmd llama nlohmann_json GTest::gtest_main)
     target_compile_features(jllama_test PRIVATE cxx_std_17)
 
+    # The embedded llama-server's shutdown path (test_native_server_shutdown.cpp) drives the real
+    # llama_server() in router mode, so the test binary needs server.cpp and what it pulls in: the
+    # HTTP transport, its cpp-httplib backend, and the tools/MCP units server.cpp references. Same
+    # non-Android guard as jllama (subprocess.h / posix_spawn_*). The empty-asset WebUI stub is
+    # always enough here: no test serves the UI.
+    if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
+        target_sources(jllama_test PRIVATE
+            src/test/cpp/test_native_server_shutdown.cpp
+            ${llama.cpp_SOURCE_DIR}/tools/server/server.cpp
+            ${llama.cpp_SOURCE_DIR}/tools/server/server-tools.cpp
+            ${llama.cpp_SOURCE_DIR}/tools/server/server-mcp.cpp
+            ${llama.cpp_SOURCE_DIR}/tools/server/server-http.cpp
+            ${llama.cpp_SOURCE_DIR}/vendor/cpp-httplib/httplib.cpp
+        )
+        target_include_directories(jllama_test PRIVATE ${CMAKE_SOURCE_DIR}/src/main/cpp/webui_stub)
+        if(MSVC)
+            target_compile_options(jllama_test PRIVATE /utf-8)
+        endif()
+        if(WIN32 AND NOT MSVC)
+            target_link_libraries(jllama_test PRIVATE ws2_32)
+        endif()
+    endif()
+
     target_compile_definitions(jllama_test PRIVATE
         SERVER_VERBOSE=$<BOOL:${LLAMA_VERBOSE}>
     )

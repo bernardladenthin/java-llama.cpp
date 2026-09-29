@@ -1,8 +1,8 @@
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index 102692c74..8389fe6bf 100644
+index 6a1dc82db..ac4c45f42 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -63,6 +63,7 @@ int llama_server(int argc, char ** argv);
+@@ -89,6 +89,7 @@ int llama_server(int argc, char ** argv);
  
  // to be used via CLI (argc / argv are used by router mode only)
  int llama_server(common_params & params, int argc, char ** argv);
@@ -10,7 +10,7 @@ index 102692c74..8389fe6bf 100644
  void llama_server_terminate();
  void llama_server_terminate() {
      if (shutdown_handler) {
-@@ -107,6 +108,57 @@ static server_http_context::handler_t ex_wrapper(server_http_context::handler_t
+@@ -133,6 +134,57 @@ static server_http_context::handler_t ex_wrapper(server_http_context::handler_t
      };
  }
  
@@ -68,7 +68,7 @@ index 102692c74..8389fe6bf 100644
  int llama_server(int argc, char ** argv) {
      std::setlocale(LC_NUMERIC, "C");
  
-@@ -259,47 +311,7 @@ int llama_server(common_params & params, int argc, char ** argv) {
+@@ -305,47 +357,7 @@ int llama_server(common_params & params, int argc, char ** argv) {
          ctx_http.del ("/models",               ex_wrapper(models_routes->del_router_models));
      }
  
@@ -117,7 +117,7 @@ index 102692c74..8389fe6bf 100644
  
      // resumable streaming: a child binds the local session factories, the router binds
      // proxies that resolve the owning child, see server-stream.h
-@@ -579,3 +591,89 @@ int llama_server(common_params & params, int argc, char ** argv) {
+@@ -615,3 +627,91 @@ int llama_server(common_params & params, int argc, char ** argv) {
  
      return 0;
  }
@@ -147,6 +147,8 @@ index 102692c74..8389fe6bf 100644
 +    server_stream_session_manager_start();
 +
 +    server_http_context ctx_http;
++    // [jllama] declared after ctx_http: clears the shutdown handler before ctx_http is destroyed
++    llama_server_shutdown_handler_reset shutdown_handler_reset;
 +    if (!ctx_http.init(params)) {
 +        SRV_ERR("%s", "failed to initialize HTTP server\n");
 +        server_stream_session_manager_stop();
@@ -193,9 +195,9 @@ index 102692c74..8389fe6bf 100644
 +    routes.update_meta(ctx_server);
 +    ctx_http.is_ready.store(true);
 +
-+    shutdown_handler = [&](int) {
++    llama_server_set_shutdown_handler([&](int) {
 +        ctx_http.stop();
-+    };
++    });
 +
 +    for (const auto & address : ctx_http.listening_addresses) {
 +        SRV_INF("attached to existing server context, listening on %s\n", address.c_str());
