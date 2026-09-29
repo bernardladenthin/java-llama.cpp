@@ -404,8 +404,9 @@ class LocalAgentTest {
     void inProcessModelIsLoadedWithAQuietLogThresholdByDefault() {
         // llama.cpp prints its per-request INFO lines to stderr, the very console the streamed answer
         // goes to; the default threshold has to stay below INFO (3) or the two interleave again.
-        List<String> args = List.of(LocalAgent.modelParameters(AgentOptions.parse(new String[] {"--model", "m.gguf"}))
-                .toArray());
+        List<String> args =
+                List.of(ModelEndpoint.modelParameters(AgentOptions.parse(new String[] {"--model", "m.gguf"}))
+                        .toArray());
 
         assertThat(args, hasItem("--log-verbosity"));
         assertThat(
@@ -416,7 +417,7 @@ class LocalAgentTest {
 
     @Test
     void verboseReplacesTheThresholdWithLlamaCppsOwnVerboseFlag() {
-        List<String> args = List.of(LocalAgent.modelParameters(
+        List<String> args = List.of(ModelEndpoint.modelParameters(
                         AgentOptions.parse(new String[] {"--model", "m.gguf", "--log-verbosity", "1", "--verbose"}))
                 .toArray());
 
@@ -568,7 +569,7 @@ class LocalAgentTest {
 
     @Test
     void theSpinnerWordsAreOursAndHarmless() {
-        List<String> words = LocalAgent.prompt(LocalAgent.SPINNER_WORDS)
+        List<String> words = Prompts.prompt(LocalAgent.SPINNER_WORDS)
                 .lines()
                 .map(String::strip)
                 .filter(word -> !word.isEmpty())
@@ -592,13 +593,13 @@ class LocalAgentTest {
     void theToolNoteIsAddressedToTheModelAndNotWrittenAsItsOwnWords() {
         // It first rode in front of the assistant's answer -- and the model copied it into its next
         // reply, so the user read "(tools I actually ran this turn: …)" as the first line of an answer.
-        String note = LocalAgent.toolNote(
+        String note = AgentSession.toolNote(
                 List.of(new ConsoleSession.ToolRound("grep", "{pattern=Test}", "3 matches in 2 files")));
 
         assertThat(note, containsString("do not repeat it"));
         assertThat(note, containsString("grep"));
         assertThat(note, containsString("3 matches in 2 files"));
-        assertThat(LocalAgent.toolNote(List.of()), is(""));
+        assertThat(AgentSession.toolNote(List.of()), is(""));
     }
 
     @Test
@@ -608,19 +609,19 @@ class LocalAgentTest {
         assertThat(on.getCompactAt(), is(AgentOptions.DEFAULT_COMPACT_AT));
 
         // 70 % of 1000 tokens: 699 still fits, 700 does not
-        assertThat(LocalAgent.needsCompaction(on, 1000, 699), is(false));
-        assertThat(LocalAgent.needsCompaction(on, 1000, 700), is(true));
+        assertThat(AgentSession.needsCompaction(on, 1000, 699), is(false));
+        assertThat(AgentSession.needsCompaction(on, 1000, 700), is(true));
 
         // an unknown window is never guessed at
-        assertThat(LocalAgent.needsCompaction(on, StatusLine.UNKNOWN_CONTEXT, 1_000_000), is(false));
+        assertThat(AgentSession.needsCompaction(on, StatusLine.UNKNOWN_CONTEXT, 1_000_000), is(false));
 
         AgentOptions off = AgentOptions.parse(new String[] {"--base-url", "u", "--auto-compact", "false"});
         assertThat(off.isAutoCompact(), is(false));
-        assertThat(LocalAgent.needsCompaction(off, 1000, 999), is(false));
+        assertThat(AgentSession.needsCompaction(off, 1000, 999), is(false));
 
         AgentOptions early = AgentOptions.parse(new String[] {"--base-url", "u", "--compact-at", "50"});
-        assertThat(LocalAgent.needsCompaction(early, 1000, 500), is(true));
-        assertThat(LocalAgent.needsCompaction(early, 1000, 499), is(false));
+        assertThat(AgentSession.needsCompaction(early, 1000, 500), is(true));
+        assertThat(AgentSession.needsCompaction(early, 1000, 499), is(false));
     }
 
     @Test

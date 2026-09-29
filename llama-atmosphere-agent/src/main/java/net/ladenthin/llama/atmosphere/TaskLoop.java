@@ -79,7 +79,7 @@ public final class TaskLoop {
                 ? ""
                 : System.lineSeparator() + "Before you declare the task done, run this and make sure it succeeds: "
                         + options.check();
-        return LocalAgent.prompt(LocalAgent.LOOP_PROMPT)
+        return Prompts.prompt(Prompts.LOOP_PROMPT)
                 .replace("{task}", options.task())
                 .replace("{file}", LOOP_FILE)
                 .replace("{check_hint}", checkHint);
@@ -98,8 +98,7 @@ public final class TaskLoop {
             if (!Files.exists(file)) {
                 Files.writeString(
                         file,
-                        LocalAgent.prompt(LocalAgent.LOOP_FILE_TEMPLATE).replace("{task}", task)
-                                + System.lineSeparator(),
+                        Prompts.prompt(Prompts.LOOP_FILE_TEMPLATE).replace("{task}", task) + System.lineSeparator(),
                         StandardCharsets.UTF_8);
             }
             return file;
@@ -132,15 +131,32 @@ public final class TaskLoop {
      */
     public record Outcome(String reason, boolean completed) {}
 
+    /** One step of the loop: send a message on a fresh history and return the finished turn. */
+    @FunctionalInterface
+    public interface Steps {
+        /**
+         * Run one step.
+         *
+         * @param message the step's message
+         * @param step the step number, from 1
+         * @param label what the state line shows while the step runs
+         * @return the finished turn
+         * @throws InterruptedException if interrupted while the step runs
+         */
+        TurnRecorder step(String message, int step, String label) throws InterruptedException;
+    }
+
     /**
-     * Run the loop until it is done, stopped, or out of budget.
+     * Run the loop on a console — each step a console turn. What the tests and a bare runner use; a session
+     * runs the loop through {@link #run(Steps, java.util.function.Consumer, Ansi, Path, LoopOptions,
+     * java.util.function.BooleanSupplier, Duration)} with its own front end.
      *
      * @param runner the runner
      * @param fileSystem the workspace filesystem for the sessions
      * @param terminal the console
      * @param workspace the workspace directory
      * @param options what to work on and for how long
-     * @param stopped polled between steps; {@code true} ends the loop (Ctrl-C)
+     * @param stopped polled between steps; {@code true} ends the loop
      * @param budget the wall-clock limit
      * @param callLog records every tool call of every step, so /calls shows what the loop did
      * @return why it ended
@@ -156,9 +172,50 @@ public final class TaskLoop {
             Duration budget,
             ToolCallLog callLog)
             throws InterruptedException {
+        return run(
+                (message, step, label) -> LocalAgent.turn(
+                        runner,
+                        fileSystem,
+                        message,
+                        new java.util.ArrayList<>(),
+                        terminal,
+                        callLog,
+                        step,
+                        ignored -> label,
+                        new TurnActivity()),
+                terminal::line,
+                terminal.ansi(),
+                workspace,
+                options,
+                stopped,
+                budget);
+    }
+
+    /**
+     * Run the loop until it is done, stopped, or out of budget.
+     *
+     * @param steps runs one step on a fresh history
+     * @param out where the loop's own lines go
+     * @param ansi how those lines are coloured
+     * @param workspace the workspace directory
+     * @param options what to work on and for how long
+     * @param stopped polled between steps; {@code true} ends the loop
+     * @param budget the wall-clock limit
+     * @return why it ended
+     * @throws InterruptedException if interrupted while waiting for a step or an interval
+     */
+    public static Outcome run(
+            Steps steps,
+            java.util.function.Consumer<String> out,
+            Ansi ansi,
+            Path workspace,
+            LoopOptions options,
+            java.util.function.BooleanSupplier stopped,
+            Duration budget)
+            throws InterruptedException {
         Path file = ensureLoopFile(workspace, options.task());
-        terminal.line("loop: " + options.task());
-        terminal.line("loop: state in " + file + ", max " + options.maxSteps() + " steps, budget "
+        out.accept("loop: " + options.task());
+        out.accept("loop: state in " + file + ", max " + options.maxSteps() + " steps, budget "
                 + budget.toMinutes() + " min"
                 + (options.interval() == null
                         ? ""
@@ -178,21 +235,11 @@ public final class TaskLoop {
                 return new Outcome(
                         "budget of " + budget.toMinutes() + " min used up after " + (step - 1) + " steps", false);
             }
-            terminal.line(terminal.ansi().dim("── loop step " + step + "/" + options.maxSteps() + " ──"));
-            // the status row is rendered on every redraw, and a lambda may not close over the counter
+            out.accept(ansi.dim("── loop step " + step + "/" + options.maxSteps() + " ──"));
             String stepLabel = "loop step " + step + "/" + options.maxSteps() + " · " + options.task();
 
             // A fresh history every step: the file is the memory, so the context cannot grow.
-            ConsoleSession session = LocalAgent.turn(
-                    runner,
-                    fileSystem,
-                    stepPrompt(options) + extra,
-                    new java.util.ArrayList<>(),
-                    terminal,
-                    callLog,
-                    step,
-                    ignored -> stepLabel,
-                    new TurnActivity());
+            TurnRecorder session = steps.step(stepPrompt(options) + extra, step, stepLabel);
             extra = "";
             if (session.failure() != null) {
                 return new Outcome("step " + step + " failed: " + session.failure(), false);
@@ -206,7 +253,7 @@ public final class TaskLoop {
                 if (failure == null) {
                     return new Outcome("done after " + step + " steps", true);
                 }
-                terminal.line(terminal.ansi().yellow("loop: the check failed, continuing"));
+                out.accept(ansi.yellow("loop: the check failed, continuing"));
                 extra = System.lineSeparator() + "You answered " + SENTINEL + ", but the check ("
                         + options.check() + ") failed:" + System.lineSeparator() + failure
                         + System.lineSeparator() + "Fix that first.";

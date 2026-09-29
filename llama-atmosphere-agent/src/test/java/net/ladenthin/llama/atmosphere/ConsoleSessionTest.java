@@ -144,10 +144,9 @@ class ConsoleSessionTest {
         RecordingHandle handle = new RecordingHandle();
         terminal.pending = true;
 
-        LocalAgent.TurnEnd end =
-                LocalAgent.awaitWithActivity(session, terminal, () -> "state", new TurnActivity(), handle);
+        TurnEnd end = LocalAgent.awaitWithActivity(session, terminal, () -> "state", new TurnActivity(), handle);
 
-        assertThat(end, is(LocalAgent.TurnEnd.INTERRUPTED));
+        assertThat(end, is(TurnEnd.INTERRUPTED));
         assertThat("the stream the model is answering on is closed", handle.cancelled, is(true));
         assertThat(
                 "and it says so rather than looking like a finished answer",
@@ -161,10 +160,9 @@ class ConsoleSessionTest {
         RecordingHandle handle = new RecordingHandle();
         session.complete();
 
-        LocalAgent.TurnEnd end =
-                LocalAgent.awaitWithActivity(session, terminal, () -> "state", new TurnActivity(), handle);
+        TurnEnd end = LocalAgent.awaitWithActivity(session, terminal, () -> "state", new TurnActivity(), handle);
 
-        assertThat(end, is(LocalAgent.TurnEnd.FINISHED));
+        assertThat(end, is(TurnEnd.FINISHED));
         assertThat(handle.cancelled, is(false));
     }
 
@@ -173,7 +171,7 @@ class ConsoleSessionTest {
         // it used to be rendered once before the turn and handed over as a fixed string, so it stood
         // still through every tool round and only moved at the next prompt
         ConsoleSession session = session();
-        assertThat(LocalAgent.liveTokens(1000, session), is(1000L));
+        assertThat(AgentSession.liveTokens(1000, session), is(1000L));
 
         session.send("a".repeat(400));
         session.emit(new AiEvent.ToolStart("read_file", Map.of("file_path", "x")));
@@ -181,7 +179,7 @@ class ConsoleSessionTest {
 
         assertThat(
                 "the tool output counts too, it is in the next call's prompt",
-                LocalAgent.liveTokens(1000, session) > 2000L,
+                AgentSession.liveTokens(1000, session) > 2000L,
                 is(true));
     }
 
@@ -191,7 +189,7 @@ class ConsoleSessionTest {
         session.send("a".repeat(4000));
         session.usage(new org.atmosphere.ai.TokenUsage(7777, 10, 0, 7787, "m"));
 
-        assertThat(LocalAgent.liveTokens(1000, session), is(7777L));
+        assertThat(AgentSession.liveTokens(1000, session), is(7777L));
     }
 
     @Test

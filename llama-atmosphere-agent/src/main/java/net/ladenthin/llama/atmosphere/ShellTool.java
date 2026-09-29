@@ -59,7 +59,7 @@ public final class ShellTool {
     public static ToolDefinition definition(
             Path workspace, Duration defaultTimeout, int maxOutputChars, Consumer<String> liveOutput) {
         return ToolDefinition.builder(
-                        TOOL_NAME, LocalAgent.prompt(DESCRIPTION_RESOURCE).replace("{shell}", shellName()))
+                        TOOL_NAME, Prompts.prompt(DESCRIPTION_RESOURCE).replace("{shell}", shellName()))
                 .parameter(PARAM_COMMAND, "The command line to run through " + shellName(), "string", true)
                 .parameter(PARAM_TIMEOUT, "Seconds to wait before the command is killed", "integer", false)
                 .executor(args -> {

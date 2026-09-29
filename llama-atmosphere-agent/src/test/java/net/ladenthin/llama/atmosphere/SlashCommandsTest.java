@@ -48,7 +48,7 @@ class SlashCommandsTest {
 
     @Test
     void everyCommandIsDocumentedInTheHelpText() {
-        String help = LocalAgent.prompt(LocalAgent.HELP_TEXT);
+        String help = Prompts.prompt(Prompts.HELP_TEXT);
 
         for (SlashCommands.Command command : SlashCommands.Command.values()) {
             assertThat(help, containsString(command.canonicalName()));

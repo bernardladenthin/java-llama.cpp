@@ -142,7 +142,7 @@ class InterruptedTurnTest {
 
             // The user types while the first turn is still running.
             terminal.pending = true;
-            ConsoleSession first = LocalAgent.turn(
+            TurnRecorder first = LocalAgent.turn(
                     runner, files, "a poem please", history, terminal, log, 1, ignored -> "", new TurnActivity());
 
             assertThat(
@@ -152,7 +152,7 @@ class InterruptedTurnTest {
 
             // What was typed is now the next message, and nothing is pending any more.
             terminal.pending = false;
-            ConsoleSession second = LocalAgent.turn(
+            TurnRecorder second = LocalAgent.turn(
                     runner, files, "make it longer", history, terminal, log, 2, ignored -> "", new TurnActivity());
 
             assertThat("the turn after the interruption produced an answer", second.text(), containsString("answer"));
