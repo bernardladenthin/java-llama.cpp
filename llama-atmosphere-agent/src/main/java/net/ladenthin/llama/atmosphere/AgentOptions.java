@@ -177,6 +177,45 @@ public final class AgentOptions {
         return new AgentOptions(b);
     }
 
+    /**
+     * The same options with another workspace — what an editor session needs, since the editor names the
+     * project directory itself.
+     *
+     * @param newWorkspace the directory the tools are confined to
+     * @return a copy with the workspace replaced
+     */
+    public AgentOptions withWorkspace(Path newWorkspace) {
+        Builder b = new Builder();
+        b.baseUrl = baseUrl;
+        b.modelPath = modelPath;
+        b.gpuLayers = gpuLayers;
+        b.ctxSize = ctxSize;
+        b.logVerbosity = logVerbosity;
+        b.verbose = verbose;
+        b.apiKey = apiKey;
+        b.modelId = modelId;
+        b.workspace = workspace;
+        b.allowShell = allowShell;
+        b.plain = plain;
+        b.transcript = transcript;
+        b.auto = auto;
+        b.autoCompact = autoCompact;
+        b.compactAt = compactAt;
+        b.temperature = temperature;
+        b.maxTokens = maxTokens;
+        b.maxToolRounds = maxToolRounds;
+        b.systemPrompt = systemPrompt;
+        b.prompt = prompt;
+        b.help = help;
+        b.web = web;
+        b.webPort = webPort;
+        b.webHost = webHost;
+        b.webToken = webToken;
+        b.acp = acp;
+        b.workspace = newWorkspace.toAbsolutePath().normalize();
+        return new AgentOptions(b);
+    }
+
     private static String value(String[] args, int index, String flag) {
         if (index >= args.length) {
             throw new IllegalArgumentException("Missing value for " + flag);

@@ -18,6 +18,8 @@ Commands (everything else is sent to the model):
   /retry                 ask the last question again, dropping the answer      (/again)
   /load <file>           read a saved transcript back in as the conversation   (/resume)
   /exit                  leave                                      (/quit)
+  /stop                  in the browser: stop the running request (the console stops on typing,
+                         an editor with its own stop button)
 
 The input line sits in the box at the bottom and is there while the agent works: you can type
 at any time. A line typed during a turn stops it and is sent as the next message.
