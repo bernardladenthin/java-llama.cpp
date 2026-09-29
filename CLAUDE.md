@@ -355,6 +355,22 @@ without problems and without local patches; the moment one needs a patch or hold
 ROCm/llama.cpp, drop it. The two lists differ **only** by the Instinct parts
 (gfx908/gfx90a/gfx942/gfx950), which ROCm supports on Linux alone.
 
+**The ROCm GPU code is compressed (`--offload-compress`), and CI enforces it.** Each HIP
+translation unit embeds one code object per GPU target, i.e. the whole kernel set (flash attention,
+mmq per quant type, …) once per architecture — stored **uncompressed** by default, which made the
+Windows `jllama.dll` ~1 GB for its 23 targets (234 MB zipped, so the jar never showed it). That size
+also lands on disk: `LlamaLoader` extracts the library to the temp dir on every start, and in the
+all-backends fat jar ROCm is tried right after CUDA, i.e. on nearly every machine without an NVIDIA
+card. `llama/CMakeLists.txt` therefore adds `--offload-compress` to the `ggml-hip` target only
+(`$<COMPILE_LANGUAGE:HIP,CXX>`: its sources are HIP on Linux and CXX on Windows, where upstream
+compiles HIP as C++), so clang stores every bundle zstd-compressed (a `CCOB` bundle) and the HIP
+runtime inflates it when the module loads. Upstream llama.cpp does **not** do this; its
+`ggml-hip.dll` carries the same uncompressed code (for 20 targets). `.github/verify-hip-offload-compressed.py` runs after the build in
+both ROCm jobs, prints the library size and bundle counts (also into the job summary), and fails on
+any uncompressed bundle (`__CLANG_OFFLOAD_BUNDLE__`) or on none compressed — a toolchain or upstream
+change that drops the flag reds the job instead of quietly shipping the 1 GB library again. The
+jar barely shrinks (zip already compressed the code); what shrinks is the extracted library.
+
 Two routing notes mirror existing precedent: **Linux SYCL** ships two precision variants at the *same*
 arch, so `CMakeLists.txt` routes them to two *distinct* trees by `GGML_SYCL_F16` (fp16 vs fp32).
 **Windows OpenCL** now holds both `x86_64` (desktop ICD) and `aarch64` (Snapdragon/Adreno) in the one
