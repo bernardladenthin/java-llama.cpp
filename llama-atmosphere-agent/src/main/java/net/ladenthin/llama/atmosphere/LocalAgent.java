@@ -173,14 +173,18 @@ public final class LocalAgent {
             // Our own read_file/edit_file/grep replace the framework's (see WorkspaceTools); the
             // read tracker is what lets an edit insist the file was read first.
             List<ToolDefinition> tools = new ArrayList<>(WorkspaceTools.all(new WorkspaceTools.ReadTracker()));
+            // Filled in once the console exists, which is after the tools are built: the sink has to
+            // look the console up when a line arrives, not capture it now. Capturing it here captured
+            // null, and every command then lost its output to a NullPointerException in the reader.
+            AtomicReference<AgentTerminal> liveConsole = new AtomicReference<>();
             if (options.isAllowShell()) {
                 // Live output: a two-minute build has to show that it is doing something.
-                AgentTerminal console = terminal;
-                tools.add(ShellTool.definition(
-                        options.getWorkspace(),
-                        SHELL_TIMEOUT,
-                        SHELL_MAX_OUTPUT_CHARS,
-                        line -> console.line(console.ansi().dim("  │ " + line))));
+                tools.add(ShellTool.definition(options.getWorkspace(), SHELL_TIMEOUT, SHELL_MAX_OUTPUT_CHARS, line -> {
+                    AgentTerminal console = liveConsole.get();
+                    if (console != null) {
+                        console.line(console.ansi().dim("  │ " + line));
+                    }
+                }));
             }
             AgentRunner runner = new AgentRunner(
                     baseUrl,
@@ -207,6 +211,7 @@ public final class LocalAgent {
             if (terminal == null) {
                 terminal = new PlainTerminal(out, reader, Ansi.detect());
             }
+            liveConsole.set(terminal);
             captureNativeLog(terminal, options);
             // One-shot runs have nobody at the keyboard, so the strategy gets no console and denies
             // gated calls unless --auto was passed (see ConsoleApprovalStrategy).
@@ -313,6 +318,13 @@ public final class LocalAgent {
                         transcript.add(Transcript.Kind.NOTE, "retrying: " + lastMessage);
                         line = lastMessage;
                     } else {
+                        if (command.get().command() == SlashCommands.Command.CLEAR) {
+                            // The loop's own memory of the last turn goes with the history: the tool
+                            // note belongs to a turn that no longer exists, and so does the message a
+                            // /retry would repeat.
+                            pendingNote = "";
+                            lastMessage = "";
+                        }
                         inputTokens.set(handleCommand(
                                 command.get(),
                                 runner,
