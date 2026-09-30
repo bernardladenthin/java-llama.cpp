@@ -13,7 +13,7 @@
 # one path and produced a byte-level hybrid, the result — a library whose ad-hoc linker signature no
 # longer matched its own __TEXT pages, which macOS SIGKILLs on load — shipped in 5.0.6 and several
 # 5.0.7 snapshots with an all-green pipeline. Linux and Windows already had the equivalent gate
-# (`smoke-fatjar-linux` / `smoke-fatjar-windows`, downstream of `package`); macOS had none.
+# (the `smoke-fatjar` matrix, downstream of `package`); macOS had none.
 #
 # This is the macOS member of the cross-repo "no release asset is attached that CI has not run"
 # convention (workspace/policies/fat-jar-release-assets.md). It is NOT the shared

@@ -40,13 +40,33 @@ def platform(classifiers):
 
 def jobs(rows=ROWS, package_needs="[build]", smoke_targets=("linux-x86-64",), run_targets=("linux-x86-64",)):
     build = [line for r in rows for line in upload("natives-" + r["classifier"])]
-    fatjars = [line for t in smoke_targets for line in upload("s-" + t, f"f/llama-*-all-{t}-jar-with-dependencies.jar")]
+    fatjars = [line for t in smoke_targets
+               for line in upload("llama-fatjar-smoke-" + t, f"f/llama-*-all-{t}-jar-with-dependencies.jar")]
     smoke = [f"      - run: .github/smoke-test-fatjar.sh f 'llama-*-all-{t}-jar-with-dependencies.jar'"
              for t in run_targets]
     return workflow.parse(workflow_text([("build", None, build), ("other", None, []),
                                          ("package", package_needs, []),
                                          ("package-fatjars", "[package]", fatjars),
                                          ("smoke", "[package-fatjars]", smoke)]))
+
+
+SMOKE_MATRIX = ["    strategy:", "      matrix:", "        include:", "{rows}",
+                "    steps:", "      - uses: actions/download-artifact@v8", "        with:",
+                "          name: {download}", "          path: f/",
+                "      - run: .github/smoke-test-fatjar.sh f 'llama-*-all-${{ matrix.target }}-jar-with-dependencies.jar'"]
+
+
+def matrix_jobs(targets, download="llama-fatjar-smoke-${{ matrix.target }}", smoke=None,
+                jar="f/llama-*-all-linux-x86-64-jar-with-dependencies.jar"):
+    """The workflow of jobs(), with the smoke job as a matrix over `targets`."""
+    rows = "\n".join(f"          - {{ target: {t}, runner: ubuntu-latest }}" for t in targets)
+    body = [line.format(rows=rows, download=download) if "{" in line and "matrix" not in line else line
+            for line in (smoke or SMOKE_MATRIX)]
+    body = [line for line in body if line]
+    build = [line for r in ROWS for line in upload("natives-" + r["classifier"])]
+    fatjars = upload("llama-fatjar-smoke-linux-x86-64", jar)
+    return workflow.parse(workflow_text([("build", None, build), ("package", "build", []),
+                                         ("package-fatjars", "package", fatjars), ("smoke", "package-fatjars", body)]))
 
 
 class ListTest(unittest.TestCase):
@@ -108,7 +128,7 @@ class ConsumerTest(unittest.TestCase):
         wf = workflow_text([("build", None, [line for r in ROWS for line in upload("natives-" + r["classifier"])]),
                             ("mid", "build", []), ("package", "mid", []),
                             ("package-fatjars", "package",
-                             upload("s", "f/llama-*-all-linux-x86-64-jar-with-dependencies.jar")),
+                             upload("llama-fatjar-smoke-linux-x86-64", "f/llama-*-all-linux-x86-64-jar-with-dependencies.jar")),
                             ("smoke", "package-fatjars",
                              ["      - run: .github/smoke-test-fatjar.sh f 'llama-*-all-linux-x86-64-jar-with-dependencies.jar'"])])
         self.assertEqual(natives.check_workflow(ROWS, workflow.parse(wf)), [])
@@ -118,6 +138,29 @@ class ConsumerTest(unittest.TestCase):
                          ["publish.yml package-fatjars smoke-jar uploads: missing linux-x86-64"])
         self.assertEqual(natives.check_workflow(ROWS, jobs(run_targets=("linux-x86-64", "linux-s390x"))),
                          ["publish.yml fat-jar smoke runs: linux-s390x is not in .github/natives.csv"])
+
+    def test_a_smoke_upload_must_hold_its_own_target(self):
+        wf = matrix_jobs(["linux-x86-64"], jar="f/llama-*-all-linux-aarch64-jar-with-dependencies.jar")
+        self.assertEqual(natives.check_workflow(ROWS, wf),
+                         ["publish.yml package-fatjars: llama-fatjar-smoke-linux-x86-64 does not upload the "
+                          "linux-x86-64 fat jar"])
+
+    def test_a_matrix_launches_its_rows(self):
+        self.assertEqual(natives.check_workflow(ROWS, matrix_jobs(["linux-x86-64"])), [])
+        self.assertEqual(natives.check_workflow(ROWS, matrix_jobs([])),
+                         ["publish.yml fat-jar smoke runs: missing linux-x86-64"])
+        self.assertEqual(natives.check_workflow(ROWS, matrix_jobs(["linux-x86-64", "linux-s390x"])),
+                         ["publish.yml fat-jar smoke runs: linux-s390x is not in .github/natives.csv"])
+
+    def test_a_matrix_must_download_each_rows_own_jar(self):
+        self.assertEqual(natives.check_workflow(ROWS, matrix_jobs(["linux-x86-64"], download="llama-fatjars")),
+                         ["publish.yml: smoke does not download llama-fatjar-smoke-${{ matrix.target }}"])
+
+    def test_matrix_rows_count_only_where_the_smoke_run_uses_them(self):
+        # A matrix whose smoke line names a fixed jar launches that jar, not the rows.
+        lines = [line.replace("${{ matrix.target }}-jar", "linux-x86-64-jar") if "smoke-test" in line else line
+                 for line in SMOKE_MATRIX]
+        self.assertEqual(natives.check_workflow(ROWS, matrix_jobs(["linux-s390x"], smoke=lines)), [])
 
     def test_loader(self):
         text = 'List<String> BACKEND_PRIORITY = Arrays.asList(\n "cuda13", "msvc",\n "metal", "opencl", "cpu");'

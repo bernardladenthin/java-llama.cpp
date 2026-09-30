@@ -121,13 +121,29 @@ srcmorph), the signing self-test, `lombok.config` and the issue/PR templates.
 
 **Composite actions (`.github/actions/`, this repo only).** `restore-models` (restore the shared GGUF
 cache + `validate-models.sh`; the one place a job gets its models — 16 call sites) and
-`install-sccache-windows` (10 call sites; the caller keeps `if:` and `continue-on-error`). Composite,
-not reusable workflows: they replace steps without changing any job or check name.
+`install-sccache-windows` (10 call sites; the caller keeps `if:` and `continue-on-error`). Composite
+actions for steps; for whole jobs, the two shapes below.
 
-**Considered and not done** (measured after the above): a reusable workflow for the Java test jobs
-(the three macOS jobs are 53 lines each with 7 differing, the two Windows jobs 77) and a matrix for
-the four fat-jar smokes (32–47 lines each). Both would save about a hundred lines and rename every
-affected check, which means updating branch protection — not worth it at this size.
+**Reusable workflow for the macOS/Windows Java tests (`.github/workflows/java-tests.yml`).** The
+three macOS arm64 test jobs and the two Windows x86-64 ones were five copies of one job differing in
+the runner, the natives artifact, one Maven flag and the failure-artifact name. They are now five
+**callers** (`uses: ./.github/workflows/java-tests.yml` + four `with:` inputs) that keep their ids,
+names and `needs`, so `package`, the release gate and `check-natives.py` see the same graph; the
+OS-specific steps (memory report, core dumps vs. WER minidumps) are chosen inside by `runner.os`.
+Two constraints shaped it: a called workflow sees **none** of the caller's `env:`, and `with:` cannot
+read `env` — which is why the JDK version moved to **`.java-version`** (`setup-java`'s
+`java-version-file`, used by every job and by `codeql.yml`/`sonarqube.yml`, so one file names it)
+and why the callee needs no model names (the tests default to the CI model set). The Linux x86-64
+test job stays inline: it differs in far more than inputs.
+
+**Matrix for the fat-jar smokes (`smoke-fatjar`).** See "All-backends server fat jars" below. A
+matrix and not a reusable workflow, because the rows differ only in data (target, runner).
+
+**Check names changed with both** — a called job shows as `<caller name> / Java tests`, a matrix row
+as `Smoke test all-backends fat jar (<target>)`. That was measured, not assumed, before doing it:
+none of the four repositories has a required status check (each has only a ruleset — no deletion,
+no force push, PR required — and classic branch protection is off), so no setting pins a check
+name. Should required checks ever be added, name these new forms.
 
 ## Upgrading CUDA Version
 
@@ -487,7 +503,7 @@ corrupt binary.
 
 **The end-to-end gate: `smoke-fatjar-macos`.** The three macOS Java test jobs each test the dylib
 *their own job* built, so until now nothing exercised the **packaged** artifact on macOS — Linux and
-Windows had `smoke-fatjar-*` downstream of `package`, macOS had none, which is why this bug reached
+Windows had fat-jar smoke jobs downstream of `package`, macOS had none, which is why this bug reached
 three releases with a fully green pipeline. The job (`needs: [package]`, `macos-15`, gates both
 publish jobs) downloads `llama-jars` and runs `.github/smoke-native-macos.sh`, which extracts
 `Mac/aarch64/metal/libjllama.dylib` from the **default fat jar** and asserts two things: `codesign --verify
@@ -553,21 +569,24 @@ Mechanism:
    A load failure (missing vendor runtime → `UnsatisfiedLinkError`) moves to the next backend, ending
    at `cpu`. `net.ladenthin.llama.backend` forces one backend (fail-loud). A backend whose extra module
    is already resident from a previously failed attempt is skipped (by-name import cross-wiring).
-3. **`publish.yml` wiring** — **all four** OS/arch fat jars are launched, one smoke job each:
-   `smoke-fatjar-linux` / `smoke-fatjar-windows` (x86-64) plus `smoke-fatjar-linux-aarch64`
-   (`ubuntu-24.04-arm`) / `smoke-fatjar-windows-arm64` (`windows-11-arm`). Each runs its jar via
-   real `java -jar` on a GPU-less runner (cached draft model, `--chat-template chatml`): poll
-   `/health` to 200, assert a `/v1/chat/completions` choice, and require the loader's
-   backend-selection log line — so every GPU backend failing its load and falling back to the
-   CPU backend is exercised on the actual release asset. The four jobs consume four small
-   single-jar artifacts (`llama-fatjar-smoke-{linux,windows,linux-aarch64,windows-arm64}`) rather
-   than the multi-GB `llama-fatjars` set. **The two aarch64 jobs close a real gap**: those jars were
-   built, GPG-signed and attached to every release while `publish.yml` referenced them zero times,
-   which is exactly what the cross-repo rule forbids — and that rule exists because a corrupt macOS
-   dylib shipped in three releases under a fully green pipeline. `publish-snapshot`/`publish-release`
-   `need` `package-fatjars` + **all four** smokes (fail-loud gating); `github-release-signed` and
-   `github-snapshot` additionally download `llama-fatjars` into their asset directory, then
-   **GPG-sign each fat jar** via `.github/sign-fatjars.sh` (a detached `.asc` alongside the
+3. **`publish.yml` wiring** — **every** OS/arch fat jar is launched by one row of the
+   **`smoke-fatjar` matrix** (`fail-fast: false`; rows `linux-x86-64` on `ubuntu-latest`,
+   `linux-aarch64` on `ubuntu-24.04-arm`, `windows-x86-64` on `windows-2025-vs2026`,
+   `windows-aarch64` on `windows-11-arm`). Each row runs its jar via real `java -jar` on a
+   GPU-less runner (cached draft model, `--chat-template chatml`): poll `/health` to 200, assert a
+   `/v1/chat/completions` choice, and require the loader's backend-selection log line — so every
+   GPU backend failing its load and falling back to the CPU backend is exercised on the actual
+   release asset. Each row downloads one small single-jar artifact, `llama-fatjar-smoke-<target>`,
+   rather than the multi-GB `llama-fatjars` set; the Linux rows also re-run the bytecode gate and
+   the `linux-x86-64` row the RPC smoke. `check-natives.py` holds the uploads (name **and** the jar
+   inside) and the matrix rows to the targets `natives.csv` derives, so a new fat jar cannot ship
+   unlaunched — **the aarch64 rows close a real gap**: those jars were built, GPG-signed and
+   attached to every release while `publish.yml` referenced them zero times, which is exactly what
+   the cross-repo rule forbids — and that rule exists because a corrupt macOS dylib shipped in
+   three releases under a fully green pipeline. `publish-snapshot`/`publish-release` `need`
+   `package-fatjars` + `smoke-fatjar` (a matrix job is done when every row is; fail-loud gating);
+   `github-release-signed` and `github-snapshot` additionally download `llama-fatjars` into their
+   asset directory, then **GPG-sign each fat jar** via `.github/sign-fatjars.sh` (a detached `.asc` alongside the
    `.sha256`), so the fat jars land signed on the tag release and the rolling `snapshot`
    pre-release. Both jobs declare `environment: maven-central` (where the signing key secret is
    scoped; it has no approval gate) and `checkout` the repo so the script is present. Signing
@@ -1088,7 +1107,7 @@ drives start/stop, bind failure, start timeout, interrupt and the single-instanc
 `RpcServerTest` (native, model-free: lifecycle, restart on the same port, single instance, bind
 failure, unreachable `--rpc` load), `RpcIntegrationTest` (draft model: layers on the RPC server
 proven from the load log's `model buffer size` line naming the endpoint, then the stale-server
-load). CI: `.github/smoke-rpc-fatjar.sh` in `smoke-fatjar-linux` runs **two JVMs from the release
+load). CI: `.github/smoke-rpc-fatjar.sh` in the `linux-x86-64` row of `smoke-fatjar` runs **two JVMs from the release
 asset** — `RpcServer` in one, the default `NativeServer` with `--rpc` in the other — and requires a
 chat completion, the RPC model buffer in the log, an accepted client on the server, and a clean
 non-SIGABRT failure naming the endpoint for a server nobody runs.
@@ -2101,7 +2120,7 @@ why a `release 9` `module-info` is fine. `--allow` is a repeatable glob matched 
 this check reported a clean pass over a directory a failed build had left empty).
 
 It runs twice: in the `package` job over `llama/target` (every jar plus the default fat
-jar, as early as they exist), and again in `smoke-fatjar-linux` over the downloaded `fatjars/` —
+jar, as early as they exist), and again in the two Linux rows of `smoke-fatjar` over the downloaded fat jar —
 `package-fatjars` rewrites those zips, and they are the artifacts users actually download.
 
 **Surefire AND PIT both exclude `org.slf4j:slf4j-simple` from the test classpath**
@@ -3318,7 +3337,7 @@ Structure (mirrors the consumer-test's plumbing):
   after upgrading Gradle to 9.x with AGP 9.2.0) that hits this project directly since
   `buildTypes.release` sets `isMinifyEnabled = true`; `9.4.0` carries that fix forward and the
   `.github/android-consumer-test` fixture is pinned the same way. AGP 9.4.x requires Gradle >= 9.6.0
-  and JDK 17+; CI already runs JDK 21 everywhere (`env.JAVA_VERSION`), so only the `gradle-version`
+  and JDK 17+; CI already runs JDK 21 everywhere (`.java-version`), so only the `gradle-version`
   pin on the jobs that build this project (and the `.github/android-consumer-test` fixture)
   needed bumping (currently `9.8.0`). AGP 9.0+ has **built-in Kotlin support** (a runtime dependency on
   Kotlin Gradle plugin 2.2.10+), so the standalone `org.jetbrains.kotlin.android` plugin is no longer

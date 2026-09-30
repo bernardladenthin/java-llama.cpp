@@ -15,7 +15,8 @@ the fat-jar assembly) or has to repeat it, and each repetition is checked here:
                         directory the list lacks
   * README.md           documents every classifier
 and, for the all-backends fat jars derived from the list (fatjar_targets), that each one is
-uploaded for a smoke job, launched by one, named in the agent jar's Class-Path and in the README.
+uploaded as llama-fatjar-smoke-<target>, launched by a smoke job (a script line naming it, or a row
+of the smoke-fatjar matrix), named in the agent jar's Class-Path and in the README.
 package-fatjars.sh does not repeat the targets at all: it asks this module for them.
 
 Every check is a function of the texts it compares, so the tests drive them with literals.
@@ -38,6 +39,12 @@ FATJAR_EXCLUDED_BACKENDS = ("msvc",)
 FATJAR_EXCLUDED_OSES = ("Linux-Android",)
 
 FATJAR_NAME = re.compile(r"all-([a-z0-9]+(?:-[a-z0-9]+)*?)-jar-with-dependencies")
+
+# package-fatjars uploads each all-backends fat jar alone, as llama-fatjar-smoke-<target>, for the
+# smoke-fatjar matrix; a matrix row is a flow mapping that starts with its target.
+SMOKE_ARTIFACT = "llama-fatjar-smoke-"
+MATRIX_ROW = re.compile(r"^\s*-\s*\{\s*target:\s*([a-z0-9-]+)\s*[,}]")
+MATRIX_FATJAR = "all-${{ matrix.target }}-jar-with-dependencies"
 
 
 def rows(text):
@@ -168,14 +175,44 @@ def check_workflow(natives, jobs):
     assembler = jobs.get("package-fatjars")
     if assembler is None:
         return failures + ["publish.yml has no `package-fatjars` job"]
-    uploaded = fatjar_names("\n".join(line for line in assembler.lines if "path:" in line))
-    failures += compare("publish.yml package-fatjars smoke-jar uploads", targets, uploaded)
+    failures += check_smoke_uploads(targets, assembler)
     launched = set()
     for job in jobs.values():
         if job.name != "package-fatjars":
-            launched |= fatjar_names("\n".join(line for line in job.lines if ".github/smoke-" in line))
+            launched |= smoke_runs(job, failures)
     failures += compare("publish.yml fat-jar smoke runs", targets, launched)
     return failures
+
+
+def check_smoke_uploads(targets, assembler):
+    """package-fatjars uploads llama-fatjar-smoke-<target> for every target, each holding that
+    target's jar (the path names the same target as the artifact)."""
+    failures, uploaded = [], set()
+    for step in assembler.steps():
+        text = "\n".join(step)
+        names = [n for n in re.findall(r"name:\s*(\S+)", text) if n.startswith(SMOKE_ARTIFACT)]
+        if "actions/upload-artifact@" not in text or not names:
+            continue
+        target = names[0][len(SMOKE_ARTIFACT):]
+        uploaded.add(target)
+        if fatjar_names("\n".join(line for line in step if "path:" in line)) != {target}:
+            failures.append(f"publish.yml package-fatjars: {names[0]} does not upload the {target} fat jar")
+    return compare("publish.yml package-fatjars smoke-jar uploads", targets, uploaded) + failures
+
+
+def smoke_runs(job, failures):
+    """The fat-jar targets a job launches: the ones its smoke-script lines name, and, when those run
+    `all-${{ matrix.target }}-...`, every row of its matrix -- which must then download each row's
+    own smoke jar."""
+    smoke = "\n".join(line for line in job.lines if ".github/smoke-" in line)
+    if not smoke:
+        return set()
+    launched = fatjar_names(smoke)
+    if MATRIX_FATJAR in job.text:
+        launched |= {m.group(1) for m in map(MATRIX_ROW.match, job.lines) if m}
+        if f"name: {SMOKE_ARTIFACT}${{{{ matrix.target }}}}" not in job.text:
+            failures.append(f"publish.yml: {job.name} does not download {SMOKE_ARTIFACT}${{{{ matrix.target }}}}")
+    return launched
 
 
 def check_loader(natives, loader_text):

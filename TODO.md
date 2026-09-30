@@ -52,8 +52,9 @@ so everything below is genuinely still open.
   release too), but the app needs `android.permission.INTERNET` even for loopback, which the AAR
   deliberately does not declare and the emulator fixture does not have. A loopback test on the
   emulator needs that permission in the fixture's manifest only.
-- **RPC smoke on the other fat-jar platforms.** `smoke-rpc-fatjar.sh` runs in `smoke-fatjar-linux`
-  only; the Java `RpcServerTest`/`RpcIntegrationTest` already run on every `test-java-*` job
+- **RPC smoke on the other fat-jar platforms.** `smoke-rpc-fatjar.sh` runs in the `linux-x86-64` row
+  of the `smoke-fatjar` matrix only (widening it to `linux-aarch64` is a change of that step's `if:`;
+  Windows needs a PowerShell port of the script); the Java `RpcServerTest`/`RpcIntegrationTest` already run on every `test-java-*` job
   (Windows and macOS included), so this is about the packaged asset, not the code path.
 - **Authentication / TLS.** Upstream has none; the documented answer is a trusted network or a
   tunnel. Only worth doing if it lands upstream.

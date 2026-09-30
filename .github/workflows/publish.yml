@@ -20,7 +20,9 @@ on:
         type: boolean
         default: true
 env:
-  JAVA_VERSION: '21'
+  # The JDK every job builds with is .java-version (setup-java's java-version-file), so the
+  # reusable workflows read the same one without an input.
+
   # The Gradle builds (Android AAR, the consumer fixture, the llmservice app, the signing self-test).
   # AGP 9.4.x needs Gradle >= 9.6.0 (CLAUDE.md, Android app). Not seen by Dependabot: bump by hand.
   GRADLE_VERSION: '9.8.0'
@@ -170,7 +172,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
           distribution: temurin
       - uses: gradle/actions/setup-gradle@v6
         with:
@@ -280,7 +282,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
           distribution: temurin
       # .github/buildcheck/natives.py; its unit tests run in the shared-files job.
       - name: Natives list check (everything that names a natives jar agrees with natives.csv)
@@ -316,7 +318,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
           distribution: temurin
       - name: Install parent + core net.ladenthin:llama into the local repo (Java only)
         run: >
@@ -340,7 +342,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
           distribution: temurin
       - name: Install parent + core net.ladenthin:llama into the local repo (Java only)
         run: >
@@ -375,7 +377,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Install parent + core net.ladenthin:llama (classes; the test JVM loads the downloaded native library via lib.path)
         run: >
           mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
@@ -443,7 +445,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
           distribution: temurin
       - name: Install parent + core net.ladenthin:llama into the local repo (Java only)
         run: >
@@ -494,7 +496,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Install parent + core net.ladenthin:llama (classes; the test JVM loads the downloaded native library via lib.path)
         run: >
           mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
@@ -719,7 +721,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Install toolchain (GCC 14, mirrors upstream llama.cpp ARM release)
         run: |
           sudo apt-get update
@@ -769,7 +771,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Install s390x cross toolchain + qemu-user
         run: |
           sudo apt-get update
@@ -821,7 +823,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Install Vulkan SDK (headers + loader + glslc shader compiler)
         run: |
           sudo apt-get update
@@ -857,7 +859,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Install toolchain (GCC 14) + Vulkan SDK
         run: |
           sudo apt-get update
@@ -985,7 +987,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
           distribution: temurin
       - uses: gradle/actions/setup-gradle@v6
         with:
@@ -1108,7 +1110,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
           distribution: temurin
       - uses: gradle/actions/setup-gradle@v6
         with:
@@ -1193,7 +1195,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
           distribution: temurin
       - uses: gradle/actions/setup-gradle@v6
         with:
@@ -1289,7 +1291,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
           distribution: temurin
       - uses: gradle/actions/setup-gradle@v6
         with:
@@ -1371,7 +1373,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
@@ -1409,7 +1411,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
@@ -1816,7 +1818,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Install ROCm/HIP (TheRock wheels)
         # KEEP IN SYNC WITH UPSTREAM: ROCM_VERSION tracks the ubuntu-rocm job in llama.cpp's
         # .github/workflows/release.yml at the pinned GIT_TAG (GPU targets: see the build step). Since ROCm 7.14
@@ -1955,7 +1957,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Install Intel oneAPI (DPC++ + MKL)
         run: |
           wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
@@ -1996,7 +1998,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Install Intel oneAPI (DPC++ + MKL)
         run: |
           wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
@@ -2109,7 +2111,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Install OpenCL dev + Intel OpenVINO 2026.4 (archive)
         run: |
           # Intel's OpenVINO APT repo only publishes up to ~2025 (the /openvino/2026 path 404s), and
@@ -2203,7 +2205,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
@@ -2237,7 +2239,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
@@ -2279,7 +2281,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Memory before tests
         run: free -h
       - name: Enable core dumps
@@ -2353,7 +2355,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
           cache: maven
       - name: Test under vmlens (interleaving analysis)
         # Add each new test in the `vmlens` package to this -Dtest list (surefire
@@ -2369,314 +2371,58 @@ jobs:
           path: llama/target/vmlens-report/
           if-no-files-found: ignore
 
+  # The macOS and Windows Java test jobs: one reusable workflow (.github/workflows/java-tests.yml),
+  # called with the native build under test. The ids, names and needs stay here, so `package`,
+  # the release gate and every reader of this file see the same jobs as before.
   test-java-macos-arm64-metal:
     name: Java Tests macOS 14 arm64 (Metal)
     needs: [build-macos-arm64-metal, verify-model-cache]
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v7
-      - name: Display CPU Info
-        shell: bash
-        run: bash .github/print-host-info.sh
-      - uses: actions/download-artifact@v8
-        with:
-          name: macos-14-metal
-          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      - uses: ./.github/actions/restore-models
-      - uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-      - name: Memory before tests
-        run: vm_stat && sysctl hw.memsize hw.physmem
-      - name: Enable core dumps
-        run: ulimit -c unlimited
-      - name: Run tests
-        run: |
-          mvn -e --no-transfer-progress -f llama/pom.xml -Dnet.ladenthin.llama.test.ngl=0 test
-      # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
-      # fails makes Surefire record tests="0" for that class -- no entries at all, so it is
-      # invisible to a skip check. That is exactly how every model-gated class stayed silently
-      # muted on every test-java-* job for months. The floor is deliberately slack; the per-class
-      # zero check is the sensitive half.
-      - name: Verify tests actually ran
-        run: .github/verify-test-counts.sh llama/target/surefire-reports --min-total 1500
-      - name: Memory after tests
-        if: always()
-        run: vm_stat && sysctl hw.memsize hw.physmem
-      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
-      - name: Print crash logs (on failure)
-        if: failure()
-        shell: bash
-        run: bash .github/print-crash-logs.sh llama
-      - if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: error-log-macos-14-metal
-          path: |
-            ${{ github.workspace }}/llama/hs_err_pid*.log
-            ${{ github.workspace }}/llama/*.hprof
-            ${{ github.workspace }}/llama/target/surefire-reports/*.dump
-            ${{ github.workspace }}/llama/target/surefire-reports/*.dumpstream
-            ${{ github.workspace }}/llama/target/surefire-reports/*.txt
-            ${{ github.workspace }}/llama/target/surefire-reports/TEST-*.xml
-          if-no-files-found: warn
+    uses: ./.github/workflows/java-tests.yml
+    with:
+      runs-on: macos-14
+      natives-artifact: macos-14-metal
+      maven-args: -Dnet.ladenthin.llama.test.ngl=0
+      error-artifact: error-log-macos-14-metal
 
   test-java-macos-arm64-no-metal:
     name: Java Tests macOS 15 arm64 (no Metal)
     needs: [build-macos-arm64-no-metal, verify-model-cache]
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v7
-      - name: Display CPU Info
-        shell: bash
-        run: bash .github/print-host-info.sh
-      - uses: actions/download-artifact@v8
-        with:
-          name: macos-15-no-metal
-          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      - uses: ./.github/actions/restore-models
-      - uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-      - name: Memory before tests
-        run: vm_stat && sysctl hw.memsize hw.physmem
-      - name: Enable core dumps
-        run: ulimit -c unlimited
-      - name: Run tests
-        run: |
-          mvn -e --no-transfer-progress -f llama/pom.xml test
-      # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
-      # fails makes Surefire record tests="0" for that class -- no entries at all, so it is
-      # invisible to a skip check. That is exactly how every model-gated class stayed silently
-      # muted on every test-java-* job for months. The floor is deliberately slack; the per-class
-      # zero check is the sensitive half.
-      - name: Verify tests actually ran
-        run: .github/verify-test-counts.sh llama/target/surefire-reports --min-total 1500
-      - name: Memory after tests
-        if: always()
-        run: vm_stat && sysctl hw.memsize hw.physmem
-      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
-      - name: Print crash logs (on failure)
-        if: failure()
-        shell: bash
-        run: bash .github/print-crash-logs.sh llama
-      - if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: error-log-macos-15-no-metal
-          path: |
-            ${{ github.workspace }}/llama/hs_err_pid*.log
-            ${{ github.workspace }}/llama/*.hprof
-            ${{ github.workspace }}/llama/target/surefire-reports/*.dump
-            ${{ github.workspace }}/llama/target/surefire-reports/*.dumpstream
-            ${{ github.workspace }}/llama/target/surefire-reports/*.txt
-            ${{ github.workspace }}/llama/target/surefire-reports/TEST-*.xml
-          if-no-files-found: warn
+    uses: ./.github/workflows/java-tests.yml
+    with:
+      runs-on: macos-15
+      natives-artifact: macos-15-no-metal
+      error-artifact: error-log-macos-15-no-metal
 
   test-java-macos-arm64-metal-15:
     name: Java Tests macOS 15 arm64 (Metal)
     needs: [build-macos-arm64-metal-15, verify-model-cache]
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v7
-      - name: Display CPU Info
-        shell: bash
-        run: bash .github/print-host-info.sh
-      - uses: actions/download-artifact@v8
-        with:
-          name: natives-metal-macos-aarch64
-          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      - uses: ./.github/actions/restore-models
-      - uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-      - name: Memory before tests
-        run: vm_stat && sysctl hw.memsize hw.physmem
-      - name: Enable core dumps
-        run: ulimit -c unlimited
-      - name: Run tests
-        run: |
-          mvn -e --no-transfer-progress -f llama/pom.xml test
-      # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
-      # fails makes Surefire record tests="0" for that class -- no entries at all, so it is
-      # invisible to a skip check. That is exactly how every model-gated class stayed silently
-      # muted on every test-java-* job for months. The floor is deliberately slack; the per-class
-      # zero check is the sensitive half.
-      - name: Verify tests actually ran
-        run: .github/verify-test-counts.sh llama/target/surefire-reports --min-total 1500
-      - name: Memory after tests
-        if: always()
-        run: vm_stat && sysctl hw.memsize hw.physmem
-      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
-      - name: Print crash logs (on failure)
-        if: failure()
-        shell: bash
-        run: bash .github/print-crash-logs.sh llama
-      - if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: error-log-macos-15-metal
-          path: |
-            ${{ github.workspace }}/llama/hs_err_pid*.log
-            ${{ github.workspace }}/llama/*.hprof
-            ${{ github.workspace }}/llama/target/surefire-reports/*.dump
-            ${{ github.workspace }}/llama/target/surefire-reports/*.dumpstream
-            ${{ github.workspace }}/llama/target/surefire-reports/*.txt
-            ${{ github.workspace }}/llama/target/surefire-reports/TEST-*.xml
-          if-no-files-found: warn
+    uses: ./.github/workflows/java-tests.yml
+    with:
+      runs-on: macos-15
+      natives-artifact: natives-metal-macos-aarch64
+      error-artifact: error-log-macos-15-metal
 
   test-java-windows-x86_64:
     name: Java Tests Windows 2025 x86_64 (default / Ninja)
     needs: [build-windows-x86_64, verify-model-cache]
-    runs-on: windows-2025-vs2026
-    steps:
-      - uses: actions/checkout@v7
-      - name: Display CPU Info
-        shell: bash
-        run: bash .github/print-host-info.sh
-      - uses: actions/download-artifact@v8
-        with:
-          name: natives-cpu-windows-x86-64
-          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      - uses: ./.github/actions/restore-models
-      - uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-      - name: Memory before tests
-        run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
-        shell: pwsh
-      - name: Enable WER LocalDumps for java.exe
-        # Windows Error Reporting writes minidumps when java.exe (or any other
-        # registered process) crashes via __fastfail / abort / unhandled SEH.
-        # We use it as the Windows analogue of Linux core dumps so that a JVM
-        # crash inside the JNI layer leaves us a real native callstack instead
-        # of just surefire's "VM terminated without saying goodbye" line.
-        # DumpType=2 == MiniDumpWithFullMemory; the workspace dumps/ folder is
-        # globbed by the failure-upload step below.
-        shell: pwsh
-        run: |
-          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\java.exe'
-          New-Item -Path $key -Force | Out-Null
-          New-Item -Path "${{ github.workspace }}\dumps" -ItemType Directory -Force | Out-Null
-          New-ItemProperty -Path $key -Name 'DumpFolder' -Value "${{ github.workspace }}\dumps" -PropertyType ExpandString -Force | Out-Null
-          New-ItemProperty -Path $key -Name 'DumpType'   -Value 2 -PropertyType DWord -Force | Out-Null
-          New-ItemProperty -Path $key -Name 'DumpCount'  -Value 5 -PropertyType DWord -Force | Out-Null
-          Get-ItemProperty -Path $key | Format-List
-      - name: Run tests
-        run: |
-          mvn -e --no-transfer-progress -f llama/pom.xml test
-      # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
-      # fails makes Surefire record tests="0" for that class -- no entries at all, so it is
-      # invisible to a skip check. That is exactly how every model-gated class stayed silently
-      # muted on every test-java-* job for months. The floor is deliberately slack; the per-class
-      # zero check is the sensitive half.
-      - name: Verify tests actually ran
-        shell: bash
-        run: .github/verify-test-counts.sh llama/target/surefire-reports --min-total 1500
-      - name: Memory after tests
-        if: always()
-        run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
-        shell: pwsh
-      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
-      - name: Print crash logs (on failure)
-        if: failure()
-        shell: bash
-        run: bash .github/print-crash-logs.sh llama
-      - if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-output
-          path: |
-            ${{ github.workspace }}\llama\hs_err_pid*.log
-            ${{ github.workspace }}\llama\*.hprof
-            ${{ github.workspace }}\dumps\*.dmp
-            ${{ github.workspace }}\llama\target\surefire-reports\*.dump
-            ${{ github.workspace }}\llama\target\surefire-reports\*.dumpstream
-            ${{ github.workspace }}\llama\target\surefire-reports\*.txt
-            ${{ github.workspace }}\llama\target\surefire-reports\TEST-*.xml
-            ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/**/*
-          if-no-files-found: warn
+    uses: ./.github/workflows/java-tests.yml
+    with:
+      runs-on: windows-2025-vs2026
+      natives-artifact: natives-cpu-windows-x86-64
+      error-artifact: windows-output
 
   # Java/inference validation of the MSVC-built x86_64 DLL (the analogue of
   # test-java-windows-x86_64 for the default Ninja build). Loads the MSVC jllama.dll
   # via JNI and runs the full model-backed suite, so both Windows generators are
-  # validated end-to-end before the `msvc-windows` classifier JAR ships.
+  # validated end-to-end before the `msvc-windows` natives jar ships.
   test-java-windows-x86_64-msvc:
     name: Java Tests Windows 2025 x86_64 (MSVC classifier)
     needs: [build-windows-x86_64-msvc, verify-model-cache]
-    runs-on: windows-2025-vs2026
-    steps:
-      - uses: actions/checkout@v7
-      - name: Display CPU Info
-        shell: bash
-        run: bash .github/print-host-info.sh
-      - uses: actions/download-artifact@v8
-        with:
-          name: natives-msvc-windows-x86-64
-          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      - uses: ./.github/actions/restore-models
-      - uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-      - name: Memory before tests
-        run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
-        shell: pwsh
-      - name: Enable WER LocalDumps for java.exe
-        # Windows Error Reporting writes minidumps when java.exe (or any other
-        # registered process) crashes via __fastfail / abort / unhandled SEH.
-        # We use it as the Windows analogue of Linux core dumps so that a JVM
-        # crash inside the JNI layer leaves us a real native callstack instead
-        # of just surefire's "VM terminated without saying goodbye" line.
-        # DumpType=2 == MiniDumpWithFullMemory; the workspace dumps/ folder is
-        # globbed by the failure-upload step below.
-        shell: pwsh
-        run: |
-          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\java.exe'
-          New-Item -Path $key -Force | Out-Null
-          New-Item -Path "${{ github.workspace }}\dumps" -ItemType Directory -Force | Out-Null
-          New-ItemProperty -Path $key -Name 'DumpFolder' -Value "${{ github.workspace }}\dumps" -PropertyType ExpandString -Force | Out-Null
-          New-ItemProperty -Path $key -Name 'DumpType'   -Value 2 -PropertyType DWord -Force | Out-Null
-          New-ItemProperty -Path $key -Name 'DumpCount'  -Value 5 -PropertyType DWord -Force | Out-Null
-          Get-ItemProperty -Path $key | Format-List
-      - name: Run tests
-        run: |
-          mvn -e --no-transfer-progress -f llama/pom.xml test
-      # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
-      # fails makes Surefire record tests="0" for that class -- no entries at all, so it is
-      # invisible to a skip check. That is exactly how every model-gated class stayed silently
-      # muted on every test-java-* job for months. The floor is deliberately slack; the per-class
-      # zero check is the sensitive half.
-      - name: Verify tests actually ran
-        shell: bash
-        run: .github/verify-test-counts.sh llama/target/surefire-reports --min-total 1500
-      - name: Memory after tests
-        if: always()
-        run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
-        shell: pwsh
-      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
-      - name: Print crash logs (on failure)
-        if: failure()
-        shell: bash
-        run: bash .github/print-crash-logs.sh llama
-      - if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-output-msvc
-          path: |
-            ${{ github.workspace }}\llama\hs_err_pid*.log
-            ${{ github.workspace }}\llama\*.hprof
-            ${{ github.workspace }}\dumps\*.dmp
-            ${{ github.workspace }}\llama\target\surefire-reports\*.dump
-            ${{ github.workspace }}\llama\target\surefire-reports\*.dumpstream
-            ${{ github.workspace }}\llama\target\surefire-reports\*.txt
-            ${{ github.workspace }}\llama\target\surefire-reports\TEST-*.xml
-            ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/**/*
-          if-no-files-found: warn
+    uses: ./.github/workflows/java-tests.yml
+    with:
+      runs-on: windows-2025-vs2026
+      natives-artifact: natives-msvc-windows-x86-64
+      error-artifact: windows-output-msvc
 
   # ---------------------------------------------------------------------------
   # Package and publish
@@ -2749,7 +2495,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Build JARs
         # `assembly` additionally produces the fat jar-with-dependencies uber JAR
         # (llama-<version>-jar-with-dependencies.jar: library classes + Java runtime deps +
@@ -2814,28 +2560,18 @@ jobs:
           compression-level: 0 # jars are already deflated
           retention-days: 7 # multi-GB artifact; release jobs consume it within the same run
           if-no-files-found: error
-      # Small single-jar artifacts so the smoke jobs don't download the multi-GB set.
-      - name: Upload Linux smoke jar
+      # Small single-jar artifacts, llama-fatjar-smoke-<target>, one per all-backends fat jar, so the
+      # smoke-fatjar matrix does not download the multi-GB set. check-natives.py holds these, the
+      # matrix rows and the targets derived from natives.csv to the same list.
+      - name: Upload linux-x86-64 smoke jar
         uses: actions/upload-artifact@v7
         with:
-          name: llama-fatjar-smoke-linux
+          name: llama-fatjar-smoke-linux-x86-64
           path: fatjars/llama-*-all-linux-x86-64-jar-with-dependencies.jar
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
-      - name: Upload Windows smoke jar
-        uses: actions/upload-artifact@v7
-        with:
-          name: llama-fatjar-smoke-windows
-          path: fatjars/llama-*-all-windows-x86-64-jar-with-dependencies.jar
-          compression-level: 0
-          retention-days: 7
-          if-no-files-found: error
-      # The two aarch64 fat jars are release assets exactly like the x86-64 pair, so they get the
-      # same treatment: package-fatjars emits four, and for a long time only the two x86-64 ones
-      # were ever launched. GitHub's free ARM runners (ubuntu-24.04-arm / windows-11-arm) are
-      # already used by the aarch64 build jobs, so there is no reason to leave these unrun.
-      - name: Upload Linux aarch64 smoke jar
+      - name: Upload linux-aarch64 smoke jar
         uses: actions/upload-artifact@v7
         with:
           name: llama-fatjar-smoke-linux-aarch64
@@ -2843,52 +2579,86 @@ jobs:
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
-      - name: Upload Windows arm64 smoke jar
+      - name: Upload windows-x86-64 smoke jar
         uses: actions/upload-artifact@v7
         with:
-          name: llama-fatjar-smoke-windows-arm64
+          name: llama-fatjar-smoke-windows-x86-64
+          path: fatjars/llama-*-all-windows-x86-64-jar-with-dependencies.jar
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - name: Upload windows-aarch64 smoke jar
+        uses: actions/upload-artifact@v7
+        with:
+          name: llama-fatjar-smoke-windows-aarch64
           path: fatjars/llama-*-all-windows-aarch64-jar-with-dependencies.jar
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
 
-  # GPU-less runners: every GPU backend must fail its load cleanly (missing vendor
-  # runtimes) and the server must come up on the CPU backend — this exercises backend
-  # probing, per-backend extraction, and the fallback chain end-to-end through
-  # a real `java -jar`, then proves the server serves /health + /v1/chat/completions.
-  smoke-fatjar-linux:
-    name: Smoke test all-backends fat jar (Linux)
+  # Every all-backends fat jar, launched on a GPU-less runner of its OS/arch: every GPU backend
+  # must fail its load cleanly (missing vendor runtimes) and the server must come up on the CPU
+  # backend -- backend probing, per-backend extraction and the fallback chain end-to-end through a
+  # real `java -jar`, then /health + /v1/chat/completions. One row per fat-jar target;
+  # check-natives.py fails when the rows differ from the targets natives.csv derives, so a new
+  # all-<os>-<arch> jar cannot ship unlaunched -- which is how the two aarch64 jars once did:
+  # built, signed and attached to every release while nothing ran them. That breaks the rule of
+  # workspace/policies/fat-jar-release-assets.md ("No release asset is attached that CI has not
+  # run"), which exists because a corrupt macOS dylib shipped in three releases under a green
+  # pipeline. fail-fast is off: one platform's failure must not hide another's.
+  smoke-fatjar:
+    name: Smoke test all-backends fat jar (${{ matrix.target }})
     needs: [package-fatjars, verify-model-cache]
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x86-64, runner: ubuntu-latest }
+          - { target: linux-aarch64, runner: ubuntu-24.04-arm }
+          - { target: windows-x86-64, runner: windows-2025-vs2026 }
+          - { target: windows-aarch64, runner: windows-11-arm }
+    runs-on: ${{ matrix.runner }}
+    env:
+      JAR_GLOB: llama-*-all-${{ matrix.target }}-jar-with-dependencies.jar
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
-          name: llama-fatjar-smoke-linux
+          name: llama-fatjar-smoke-${{ matrix.target }}
           path: fatjars/
       - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-      # Same floor, re-checked on the ASSEMBLED release asset rather than the module
-      # jars the `package` job verified: package-fatjars rewrites the zip (drops the other
-      # platforms, adds the backend trees), and this is the artifact users download.
+          java-version-file: .java-version
+      # The Java 8 floor, re-checked on the ASSEMBLED release asset rather than the module jars the
+      # `package` job verified: package-fatjars rewrites the zip per OS/arch (drops the other
+      # platforms, adds the backend trees), and this is the artifact users download. The script is
+      # bash-only, so the Linux rows check; the Windows jars are assembled from the same classes.
       - name: Verify Java 8 bytecode (no class newer than major 52)
+        if: runner.os == 'Linux'
         run: .github/verify-bytecode-version.sh --max-major 52 fatjars
       - name: Run fat-jar server smoke test
-        run: .github/smoke-test-fatjar.sh fatjars 'llama-*-all-linux-x86-64-jar-with-dependencies.jar' "models/${DRAFT_MODEL_NAME}"
+        if: runner.os != 'Windows'
+        run: .github/smoke-test-fatjar.sh fatjars "$JAR_GLOB" "models/${DRAFT_MODEL_NAME}"
+      - name: Run fat-jar server smoke test
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .github/smoke-test-fatjar.ps1 -JarDir fatjars -JarGlob $env:JAR_GLOB -Model "models/$env:DRAFT_MODEL_NAME"
       # RPC over two JVMs from the same release asset: RpcServer in one, the default NativeServer
       # with --rpc in the other. Requires a chat completion, the model buffer on the RPC endpoint in
       # the load log (the layers really went over RPC), an accepted client on the server, and a clean
       # non-SIGABRT failure naming the endpoint when --rpc names a server nobody runs.
       - name: Run fat-jar RPC smoke test (two JVMs)
-        run: .github/smoke-rpc-fatjar.sh fatjars 'llama-*-all-linux-x86-64-jar-with-dependencies.jar' "models/${DRAFT_MODEL_NAME}"
+        if: matrix.target == 'linux-x86-64'
+        run: .github/smoke-rpc-fatjar.sh fatjars "$JAR_GLOB" "models/${DRAFT_MODEL_NAME}"
       - name: Upload server logs
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: fatjar-smoke-linux-logs
+          name: fatjar-smoke-${{ matrix.target }}-logs
           path: |
             server-out.log
             server-err.log
@@ -2915,13 +2685,13 @@ jobs:
           path: agent-assets/
       - uses: actions/download-artifact@v8
         with:
-          name: llama-fatjar-smoke-linux
+          name: llama-fatjar-smoke-linux-x86-64
           path: agent-assets/
       - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       # The agent is Java 21 (Atmosphere's floor), unlike the Java 8 core: its ceiling is 65.
       # One waiver: JLine ships its FFM terminal provider (org/jline/terminal/impl/ffm, 25 classes)
       # as Java 22 bytecode. It is discovered through META-INF/jline/providers/ffm, not loaded
@@ -2941,103 +2711,6 @@ jobs:
         with:
           name: agent-smoke-linux-logs
           path: agent-*.log
-          if-no-files-found: warn
-
-  smoke-fatjar-windows:
-    name: Smoke test all-backends fat jar (Windows)
-    needs: [package-fatjars, verify-model-cache]
-    runs-on: windows-2025-vs2026
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: llama-fatjar-smoke-windows
-          path: fatjars/
-      - uses: ./.github/actions/restore-models
-      - uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-      - name: Run fat-jar server smoke test
-        shell: pwsh
-        run: .github/smoke-test-fatjar.ps1 -JarDir fatjars -JarGlob 'llama-*-all-windows-x86-64-jar-with-dependencies.jar' -Model "models/$env:DRAFT_MODEL_NAME"
-      - name: Upload server logs
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: fatjar-smoke-windows-logs
-          path: |
-            server-out.log
-            server-err.log
-          if-no-files-found: warn
-
-  # The aarch64 halves of the same convention. Identical in shape to the two jobs above — the only
-  # differences are the runner and the jar glob — and they exist because `all-linux-aarch64` and
-  # `all-windows-aarch64` were built, GPG-signed and attached to every release without CI ever
-  # launching them, which is exactly what workspace/policies/fat-jar-release-assets.md forbids
-  # ("No release asset is attached that CI has not run"). That rule exists because a corrupt macOS
-  # dylib shipped in three releases under a fully green pipeline; these two jars were the remaining
-  # assets in the same blind spot.
-  smoke-fatjar-linux-aarch64:
-    name: Smoke test all-backends fat jar (Linux aarch64)
-    needs: [package-fatjars, verify-model-cache]
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: llama-fatjar-smoke-linux-aarch64
-          path: fatjars/
-      - uses: ./.github/actions/restore-models
-      - uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-      # Same floor, re-checked on this assembled release asset: package-fatjars rewrites the zip
-      # per OS/arch, so the aarch64 jar is a different artifact from the one smoke-fatjar-linux
-      # verifies even though the classes are identical.
-      - name: Verify Java 8 bytecode (no class newer than major 52)
-        run: .github/verify-bytecode-version.sh --max-major 52 fatjars
-      - name: Run fat-jar server smoke test
-        run: .github/smoke-test-fatjar.sh fatjars 'llama-*-all-linux-aarch64-jar-with-dependencies.jar' "models/${DRAFT_MODEL_NAME}"
-      - name: Upload server logs
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: fatjar-smoke-linux-aarch64-logs
-          path: |
-            server-out.log
-            server-err.log
-          if-no-files-found: warn
-
-  smoke-fatjar-windows-arm64:
-    name: Smoke test all-backends fat jar (Windows arm64)
-    needs: [package-fatjars, verify-model-cache]
-    runs-on: windows-11-arm
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: llama-fatjar-smoke-windows-arm64
-          path: fatjars/
-      - uses: ./.github/actions/restore-models
-      # temurin publishes a Windows/AArch64 JDK for this java-version; the build-windows-arm64
-      # job already resolves it on this same runner.
-      - uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
-      - name: Run fat-jar server smoke test
-        shell: pwsh
-        run: .github/smoke-test-fatjar.ps1 -JarDir fatjars -JarGlob 'llama-*-all-windows-aarch64-jar-with-dependencies.jar' -Model "models/$env:DRAFT_MODEL_NAME"
-      - name: Upload server logs
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: fatjar-smoke-windows-arm64-logs
-          path: |
-            server-out.log
-            server-err.log
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -3070,7 +2743,7 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
       - name: Run packaged-native smoke test
         run: .github/smoke-native-macos.sh jars 'llama-*-jar-with-dependencies.jar'
 
@@ -3083,7 +2756,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
-        with: { java-version: '${{ env.JAVA_VERSION }}', distribution: temurin }
+        with: { java-version-file: .java-version, distribution: temurin }
       - uses: actions/download-artifact@v8
         with: { name: jacoco-report, path: target/site/jacoco/ }
         continue-on-error: true
@@ -3128,7 +2801,7 @@ jobs:
 
   publish-snapshot:
     name: Publish Snapshot to Central
-    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows, smoke-fatjar-linux-aarch64, smoke-fatjar-windows-arm64, smoke-fatjar-macos, smoke-agent-linux, vmlens, shared-files]
+    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, package-fatjars, smoke-fatjar, smoke-fatjar-macos, smoke-agent-linux, vmlens, shared-files]
     if: needs.check-snapshot.result == 'success' && inputs.publish_to_central
     runs-on: ubuntu-latest
     environment: maven-central
@@ -3155,7 +2828,7 @@ jobs:
       - name: Set up Maven Central Repository
         uses: actions/setup-java@v6
         with:
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
           distribution: 'temurin'
           server-id: central
           server-username: MAVEN_USERNAME
@@ -3325,7 +2998,7 @@ jobs:
   publish-release:
     name: Publish Release to Central
     if: needs.check-tag.result == 'success' && inputs.publish_to_central
-    needs: [check-tag, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows, smoke-fatjar-linux-aarch64, smoke-fatjar-windows-arm64, smoke-fatjar-macos, smoke-agent-linux, vmlens, shared-files]
+    needs: [check-tag, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, package-fatjars, smoke-fatjar, smoke-fatjar-macos, smoke-agent-linux, vmlens, shared-files]
     runs-on: ubuntu-latest
     environment: maven-central
     permissions:
@@ -3351,7 +3024,7 @@ jobs:
       - name: Set up Maven Central Repository
         uses: actions/setup-java@v6
         with:
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version-file: .java-version
           distribution: 'temurin'
           server-id: central
           server-username: MAVEN_USERNAME
