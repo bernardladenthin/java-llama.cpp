@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT
+#
+# Test fixture for BackendLoadTest: files loaded, in order, before this backend's library.
+libextra.so

@@ -8,6 +8,69 @@ Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, p
 
 Current llama.cpp pinned version: **b11259**
 
+## Natives jars: one directory per backend (`.github/natives.csv`)
+
+`net.ladenthin:llama` is the **Java classes only**. Every native build ships as its own jar of the
+same artifact, classifier `<backend>-<os>-<arch>`, holding exactly one directory
+`net/ladenthin/llama/<OS>/<ARCH>/<backend>/` (26 today: `cpu-*` for 8 platforms, `metal-macos-aarch64`,
+`msvc-windows-*`, and the GPU backends). Because the directories never overlap, **any combination of
+natives jars can share one classpath**, and `LlamaLoader` tries the backends it finds in a fixed
+order (`BACKEND_PRIORITY`: cuda13, rocm, sycl-fp16, sycl-fp32, sycl, vulkan, opencl, openvino, metal,
+msvc, cpu), taking the first whose library loads. Every build carries the CPU backend, so a GPU
+library that loads can still run a model on the CPU (`-ngl 0`); one that fails to load (no vendor
+runtime) falls through to the next directory, ending at `cpu`. `net.ladenthin.llama.backend=<dir>`
+forces one and fails loud. `net.ladenthin:llama-platform` is a **pom-packaging** module (a
+dependency list, no jar, nothing to upload) naming the classes jar plus the CPU/Metal jars of every
+desktop platform; consumers use it with `<type>pom</type>`.
+
+This replaced (in 5.2.0) the old layout, where the default jar carried the CPU natives of every
+platform at `<OS>/<ARCH>/` and each GPU classifier was a complete replacement jar with its own
+compile pass: two jars could not share a classpath, a GPU jar had no CPU fallback, and the
+all-backends fat jars needed a `jllama-backends.txt` manifest to tell backends apart.
+
+**The list is `.github/natives.csv`** (classifier, directory, library, platform yes/no) — the one
+place a natives jar is declared, in the same spirit as `models.csv`. Everything else either reads
+it or is checked against it:
+
+| Place | Relation to the list |
+|---|---|
+| `llama/CMakeLists.txt` | names the backend directory (`JLLAMA_BACKEND`: GGML flag → name; `msvc` = Visual Studio generator; `metal` = Apple + `GGML_METAL`) and writes to `src/main/natives/net/ladenthin/llama/<OS>/<ARCH>/<backend>/` |
+| `llama/pom.xml` `natives` profile | one `maven-jar-plugin` execution per row, **generated**: `python3 .github/check-natives.py pom` prints them |
+| `llama-platform/pom.xml` | depends on the rows with `platform=yes` |
+| `publish.yml` build jobs | each uploads its tree as artifact `natives-<classifier>` |
+| `LlamaLoader.BACKEND_PRIORITY` | must contain every backend directory |
+| `.github/check-natives.py` | runs in `code-style` (first minutes of every run); fails when the four rows above disagree with the list |
+| `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library and nothing outside its directory, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows) |
+| `.github/package-fatjars.sh` | reads the list: the built natives jars match it, each holds only its directory and the right `Automatic-Module-Name`; merges one `all-<os>-<arch>` fat jar per OS/arch with a GPU backend (no `msvc`, no Android) |
+| `.github/verify-native-deps.py` | exact dependency allowlist per CPU directory (`cpu`/`metal`/`msvc`), denylist for GPU ones |
+| `.github/smoke-natives-jars.sh` (`package` job) | loads the real jars: classes + all 26 natives jars at once, on the classpath **and** the module path (on the GPU-less runner normally ending at `cpu`) |
+
+**Adding a natives jar:** a row in `natives.csv`, the execution `check-natives.py pom` prints, a build
+job uploading `natives-<classifier>`, the backend name in CMake and `BACKEND_PRIORITY` if new, a
+README row. `check-natives.py` fails until they agree; nothing else needs touching.
+
+**Why the build jobs are not spawned from the list as one matrix** (considered and rejected): the 26
+builds use genuinely different toolchains — dockcross images, the CUDA redist archives, ROCm pip
+wheels, oneAPI, OpenVINO, `clang-cl` on arm64, qemu for s390x, three macOS variants — so a single
+matrix job would be a web of `if:` conditions; and `needs:` on a matrix waits for every entry, so
+each test job would wait for the slowest build (CUDA). The list removes the scattering that matters
+(the packaging facts); a build job's only contract is its artifact name, and the merge check
+enforces it.
+
+**Module path.** Resources are looked up through the `ClassLoader`, never `Class.getResource`
+(which only sees the own module's resources on the module path). Each natives jar declares
+`Automatic-Module-Name: net.ladenthin.llama.natives.<classifier with _ for ->`. **Without it every
+natives jar derives the module name `llama` from its file name and the JVM does not refuse to start —
+it silently keeps the first one and drops the others' natives** (measured; `package-fatjars.sh`
+checks the manifest of every built jar for that reason). Nothing `requires` a natives module, so a
+module-path launch needs `--add-modules` (or the natives jars on the classpath). `module-info.java`
+`requires` Jackson and SLF4J — it did not before, so the classes jar never worked on the module path.
+
+**Locally**, CMake writes into `llama/src/main/natives/` (git-ignored); surefire adds that directory
+to the test classpath (`additionalClasspathElements`), so `mvn test` finds the library. `-P natives`
+is CI-only (a local tree holds one directory); a missing directory there is caught by the merge
+step, not by Maven.
+
 ## Upgrading CUDA Version
 
 Current CUDA version: **13.4** (Linux `cuda-toolkit-13-4` from NVIDIA's rhel8 repo; Windows 13.4 redist archives)
@@ -22,8 +85,10 @@ To change the CUDA version, update the following places:
    `.github/actions/windows-setup-cuda/action.yml` at the pinned `GIT_TAG`** — the component versions
    differ per component (cuBLAS and CCCL have their own numbering) and cannot be derived from the CUDA
    version. (This replaced `Jimver/cuda-toolkit`, which never shipped 13.4.)
-3. **`llama/pom.xml`** — the `<classifier>`s `cuda13-linux-x86-64` / `cuda13-windows-x86-64`
-   (major version only — no change for a minor bump).
+3. **Only for a major bump:** the backend name `cuda13` — in `llama/CMakeLists.txt`
+   (`JLLAMA_BACKEND`), `.github/natives.csv` (the two `cuda13-*` rows), the generated pom executions
+   (`check-natives.py pom`), the build jobs' artifact names, and `LlamaLoader.BACKEND_PRIORITY`.
+   `check-natives.py` fails until they agree. No change for a minor bump.
 4. **`CLAUDE.md`** — the "Current CUDA version" line above.
 
 Available CUDA versions for RHEL8/Manylinux_2_28 can be browsed at:
@@ -123,24 +188,12 @@ detects Android via `OS_NAME MATCHES "Android"` (CI passes
 
 ## OpenCL / Adreno backend on Android
 
-A second Android arm64 artifact is built with the OpenCL backend enabled and
-Adreno-tuned kernels embedded. It ships under the Maven classifier
-`opencl-android-aarch64` and is consumed only when callers explicitly request it.
-The default Android arm64 JAR remains CPU-only.
-
-Three places wire it together (mirrors the CUDA classifier pattern):
-
-1. **`llama/CMakeLists.txt`** — `elseif(GGML_OPENCL)` branch routes artifacts to
-   `src/main/resources_android_opencl/net/ladenthin/llama/${OS_NAME}/${OS_ARCH}/`.
-2. **`.github/workflows/publish.yml`** — `crosscompile-android-aarch64-opencl`
-   job runs the dockcross-android-arm64 build with
-   `-DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON`
-   and uploads as artifact `android-libraries-opencl`. The `package`,
-   `publish-snapshot`, and `publish-release` jobs download it into
-   `resources_android_opencl/` and activate the `opencl-android` Maven profile.
-3. **`llama/pom.xml`** — the `opencl-android` profile produces a second JAR with
-   `<classifier>opencl-android-aarch64</classifier>` from the
-   `${project.build.outputDirectory}_opencl_android` tree.
+A second Android arm64 build has the OpenCL backend enabled and Adreno-tuned kernels embedded.
+It ships as the natives jar `opencl-android-aarch64` (directory `Linux-Android/aarch64/opencl/`)
+and as the `llama-android-opencl` AAR; the `cpu-android-*` jars and the `llama-android` AAR stay
+CPU-only. The `crosscompile-android-aarch64-opencl` job runs the dockcross-android-arm64 build with
+`-DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON` and uploads
+`natives-opencl-android-aarch64`; the rest is the natives-jar wiring (see "Natives jars" above).
 
 Local sanity build:
 ```bash
@@ -149,37 +202,36 @@ Local sanity build:
    -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON \
    -DGGML_OPENCL_USE_ADRENO_KERNELS=ON"
 ```
-Artifacts land in `src/main/resources_android_opencl/net/ladenthin/llama/Linux-Android/aarch64/`.
+Artifacts land in `src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/opencl/`.
 
 The dockcross image does not ship OpenCL headers or a stub `libOpenCL.so`, so
 `build_opencl_android.sh` first stages Khronos `OpenCL-Headers` and
 cross-builds `OpenCL-ICD-Loader` into `/tmp/opencl-stage/` before invoking the
 main project cmake with `-DOpenCL_INCLUDE_DIR=...` and `-DOpenCL_LIBRARY=...`.
 At runtime the device must provide its own OpenCL ICD (`libOpenCL.so`);
-Qualcomm Adreno drivers do. Devices without an ICD should use the default
-CPU-only Android JAR.
+Qualcomm Adreno drivers do. Devices without an ICD should use the CPU-only
+`llama-android` AAR.
 
-## Windows native classifiers (default Ninja CPU + MSVC classifier + CUDA/Vulkan/OpenCL GPU)
+## Windows natives (Ninja CPU + MSVC + CUDA/Vulkan/OpenCL GPU)
 
-The Windows native libraries ship in **five** forms. The **default JAR's** Windows natives are now
-built with the **`Ninja Multi-Config`** generator (the *default flip*); the Visual Studio / MSVC
-build is shipped as the **`msvc-windows`** classifier; and three GPU backends ship as
-**`cuda13-windows-x86-64`**, **`vulkan-windows-x86-64`**, and **`opencl-windows-x86-64`** (all
-**x86_64 only**, all Ninja).
+The Windows x86-64 natives ship in **five** forms (natives jars): the CPU build with the
+**`Ninja Multi-Config`** generator (`cpu-windows-x86-64` / `cpu-windows-x86`, the ones in
+`llama-platform`), the Visual Studio / MSVC build (`msvc-windows-x86-64` / `msvc-windows-x86`), and
+three GPU backends, **`cuda13-windows-x86-64`**, **`vulkan-windows-x86-64`** and
+**`opencl-windows-x86-64`** (all Ninja).
 
 **Why Ninja is the default (the flip).** The Visual Studio generator ignores
 `CMAKE_{C,CXX}_COMPILER_LAUNCHER`, so only Ninja Multi-Config can front `cl.exe` with sccache over
 Depot WebDAV. **Both generators use the same MSVC toolchain** (`cl.exe`, static `/MT` CRT via
 `CMAKE_MSVC_RUNTIME_LIBRARY`, same Release flags, same runner), so the produced
 `jllama.dll` binaries are **functionally equivalent with identical runtime
-dependencies** — the only difference is build-system plumbing + caching. Making Ninja the default
-gives the most-pulled JAR the sccache cache; MSVC stays available as a classifier for anyone who
-wants the Visual-Studio-generator build. (Upstream llama.cpp also builds its Windows artifacts with
+dependencies** — the only difference is build-system plumbing + caching. Making Ninja the `cpu`
+build gives the most-pulled natives the sccache cache; MSVC stays available (directory `msvc`,
+which the loader tries before `cpu`) for anyone who wants the Visual-Studio-generator build. (Upstream llama.cpp also builds its Windows artifacts with
 Ninja Multi-Config + MSVC.) Both Windows CPU builds are validated end-to-end with the full
-model-backed Java suite (`test-java-windows-x86_64` = default/Ninja, `test-java-windows-x86_64-msvc`
-= MSVC classifier).
+model-backed Java suite (`test-java-windows-x86_64` = Ninja, `test-java-windows-x86_64-msvc` = MSVC).
 
-**GPU runtime libraries are NOT bundled.** The GPU JARs ship only the single monolithic
+**GPU runtime libraries are NOT bundled.** The GPU natives jars ship only the single monolithic
 `jllama.dll` (llama.cpp + ggml + the backend are statically linked in — `BUILD_SHARED_LIBS OFF`). The consumer's driver/toolkit must supply the runtime: CUDA needs the
 installed CUDA 13 Toolkit (`cudart64_13.dll`/`cublas64_13.dll`/`cublasLt64_13.dll` on `PATH`); Vulkan
 needs `vulkan-1.dll` (ships with current GPU drivers); OpenCL needs the vendor ICD
@@ -190,45 +242,26 @@ device, so `gtest_discover_tests` registers a failing `*_NOT_BUILT` sentinel). T
 suite is fully covered by the `C++ Tests` job + the CPU Windows jobs; model-backed GPU inference is
 local / self-hosted.
 
-Wiring (mirrors the CUDA-Linux / OpenCL-Android classifier pattern):
+Windows-specific wiring (the rest is the natives-jar wiring, see "Natives jars" above; CMake names
+the Visual Studio generator build `msvc`, the Ninja one `cpu`):
 
-1. **`llama/CMakeLists.txt`** — the `if(GGML_CUDA) … elseif(GGML_VULKAN) … elseif(GGML_OPENCL) … else()`
-   chain is **OS-aware**: CUDA → `resources_windows_cuda` on Windows (else `resources_linux_cuda`),
-   Vulkan → `resources_windows_vulkan` on Windows (else `resources_linux_vulkan` — see "Linux Vulkan
-   classifiers" above), OpenCL → `resources_windows_opencl` on Windows (else
-   `resources_android_opencl`). The default CPU build (both generators) still emits to the canonical
-   `src/main/resources/.../Windows/{x86_64,x86}/`, so the Ninja-vs-MSVC split is purely a
-   CI-artifact-name + pom-profile concern (no CMake change for it).
-2. **`.github/build.bat`** — the sccache probe guard (mirrors `build.sh`) wraps the **cl.exe** C/C++ TUs
+1. **`.github/build.bat`** — the sccache probe guard (mirrors `build.sh`) wraps the **cl.exe** C/C++ TUs
    only. Unlike `build.sh` (Linux), it does **not** wrap `nvcc`: sccache on Windows can't parse the nvcc
    command line (`sccache: error: Could not parse shell line`) and fails every `.cu` compile, so CUDA
    device code builds with nvcc directly (uncached). `build.bat` also propagates a `cmake --build`
    failure as a non-zero exit (a prior bug let a failed CUDA build exit 0 → empty artifact → late
    `package` failure); the GPU upload steps additionally use `if-no-files-found: error` as a backstop.
-3. **`.github/build_opencl_windows.bat`** — stages Khronos OpenCL-Headers + builds OpenCL-ICD-Loader
+2. **`.github/build_opencl_windows.bat`** — stages Khronos OpenCL-Headers + builds OpenCL-ICD-Loader
    (`OpenCL.lib`), then delegates to `build.bat` with `-DOpenCL_INCLUDE_DIR`/`-DOpenCL_LIBRARY`
    (the Windows analogue of `build_opencl_android.sh`).
-4. **`.github/workflows/publish.yml`** — build jobs (all `windows-2025-vs2026`, `ilammy/msvc-dev-cmd@v1`,
-   sccache v0.18.0 zip + Depot WebDAV):
-   - `build-windows-x86_64` / `build-windows-x86` — **Ninja CPU**, artifacts `Windows-{arch}-libraries`
-     → picked up by the `package` job's `pattern: "*-libraries"` into the **default** tree.
-   - `build-windows-x86_64-msvc` / `build-windows-x86-msvc` — **MSVC CPU**, artifacts `Windows-{arch}-msvc`.
+3. **`.github/workflows/publish.yml`** — build jobs (all `windows-2025-vs2026`, `ilammy/msvc-dev-cmd@v1`,
+   sccache v0.18.0 zip + Depot WebDAV), each uploading `natives-<classifier>`:
+   - `build-windows-x86_64` / `build-windows-x86` — **Ninja CPU**.
+   - `build-windows-x86_64-msvc` / `build-windows-x86-msvc` — **MSVC CPU**.
    - `build-windows-x86_64-cuda` — CUDA `13.4` assembled from NVIDIA's redist archives (upstream's
-     `windows-setup-cuda` component list; `Jimver/cuda-toolkit` stops at 13.3.1) + `-DGGML_CUDA=ON`,
-     artifact `Windows-x86_64-cuda`.
-   - `build-windows-x86_64-vulkan` — `jakoch/install-vulkan-sdk-action` + `-DGGML_VULKAN=ON`, artifact
-     `Windows-x86_64-vulkan`.
-   - `build-windows-x86_64-opencl` — `build_opencl_windows.bat -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON`,
-     artifact `Windows-x86_64-opencl`.
-   The `package`, `publish-snapshot`, and `publish-release` jobs download each non-default artifact into
-   its `src/main/resources_windows_{msvc,cuda,vulkan,opencl}/` tree and activate the
-   `windows-msvc,cuda-windows,vulkan-windows,opencl-windows` Maven profiles.
-5. **`llama/pom.xml`** — profiles `windows-msvc` / `cuda-windows` / `vulkan-windows` / `opencl-windows`,
-   each a separate compile pass + resource copy + classified jar (classifiers `msvc-windows` /
-   `cuda13-windows-x86-64` / `vulkan-windows-x86-64` / `opencl-windows-x86-64`). Activated only in CI.
-6. **`README.md`** — the classifier table + dependency snippets in "Choosing the right classifier".
-
-`src/main/resources_windows_{msvc,cuda,vulkan,opencl}/` are git-ignored (staged by CI, never committed).
+     `windows-setup-cuda` component list; `Jimver/cuda-toolkit` stops at 13.3.1) + `-DGGML_CUDA=ON`.
+   - `build-windows-x86_64-vulkan` — `jakoch/install-vulkan-sdk-action` + `-DGGML_VULKAN=ON`.
+   - `build-windows-x86_64-opencl` — `build_opencl_windows.bat -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON`.
 
 **First CI run (PR #276, run 28327740376):** the default Ninja CPU flip, the MSVC classifier, and the
 **OpenCL** job were green on the first try. Two GPU jobs needed a toolchain fix: **CUDA** failed with
@@ -237,8 +270,7 @@ bumped to `@v0.2.35` + `13.2.0` (matches the Linux pin, classifier stays `cuda13
 `find_package(Vulkan)` because `humbletim/install-vulkan-sdk` set `VULKAN_SDK` but laid the SDK out in a
 way CMake's `FindVulkan` couldn't read → switched to `jakoch/install-vulkan-sdk-action` (purpose-built,
 FindVulkan-compatible). Because all five Windows build jobs are in the `package`/publish `needs:` graph, a
-GPU-toolchain failure blocks packaging — the same release-gating policy the Linux-CUDA / Android-OpenCL
-jobs already follow.
+GPU-toolchain failure blocks packaging — the same release-gating policy every build job follows.
 
 **sccache on every Windows Ninja job.** All ten Ninja build jobs install sccache (x86_64 or the
 native `aarch64` release) with the same `USE_CACHE` / `SCCACHE_WEBDAV_*` env; only the two MSVC-classifier
@@ -265,45 +297,24 @@ ctest --test-dir build --output-on-failure
 .github\build_opencl_windows.bat -G "Ninja Multi-Config" -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DOS_NAME=Windows -DOS_ARCH=x86_64
 ```
 
-## Linux Vulkan classifiers + Windows arm64 CPU
+## Linux Vulkan natives + Windows arm64 CPU
 
-Three additional artifacts extend the matrix toward upstream llama.cpp's release set. They follow
-the same classifier/resource-tree pattern as CUDA-Linux and Vulkan-Windows.
+Three natives jars that extend the matrix toward upstream llama.cpp's release set.
 
 **Linux Vulkan (`vulkan-linux-x86-64` + `vulkan-linux-aarch64`).** A vendor-neutral GPU jar for
-Linux (NVIDIA / AMD / Intel) with no CUDA toolkit — the intersection of the existing Vulkan-Windows
-and CUDA-Linux wiring. Four places:
+Linux (NVIDIA / AMD / Intel) with no CUDA toolkit. The build jobs are `build-linux-x86_64-vulkan`
+(native `ubuntu-latest`, **not** dockcross — the Vulkan SDK is a trivial apt install and upstream
+builds ubuntu-vulkan the same way) and `build-linux-aarch64-vulkan` (`ubuntu-24.04-arm` + GCC 14).
+Both `apt-get install libvulkan-dev glslc glslang-tools`, build `-DGGML_VULKAN=ON -DGGML_NATIVE=OFF`,
+and are **build-only** (no `ctest`: a Vulkan-linked `jllama_test` errors enumerating devices on a
+GPU-less runner — same as the Windows GPU jobs). Glibc floor rises to the ubuntu baseline (like the
+aarch64 CPU jar); acceptable for a GPU artifact. GPU runtime `libvulkan.so.1` is supplied by the
+consumer's driver — nothing is bundled (same policy as every GPU backend).
 
-1. **`llama/CMakeLists.txt`** — the `elseif(GGML_VULKAN)` branch is now **OS-aware** (mirrors
-   `GGML_CUDA`): Windows → `resources_windows_vulkan`, else → `resources_linux_vulkan`
-   (`.../Linux/${OS_ARCH}/`). One tree holds both arches under `Linux/{x86_64,aarch64}`.
-2. **`.github/workflows/publish.yml`** — `build-linux-x86_64-vulkan` (native `ubuntu-latest`, **not**
-   dockcross — the Vulkan SDK is a trivial apt install and upstream builds ubuntu-vulkan the same way)
-   and `build-linux-aarch64-vulkan` (`ubuntu-24.04-arm` + GCC 14). Both `apt-get install libvulkan-dev
-   glslc glslang-tools`, build `-DGGML_VULKAN=ON -DGGML_NATIVE=OFF`, and are **build-only** (no
-   `ctest`: a Vulkan-linked `jllama_test` errors enumerating devices on a GPU-less runner — same as the
-   Windows GPU jobs). Artifacts `Linux-{x86_64,aarch64}-vulkan` → both downloaded into the **one**
-   `resources_linux_vulkan/` tree by `package`/`publish-*`. Glibc floor rises to the ubuntu baseline
-   (like the aarch64 CPU jar); acceptable for a GPU artifact.
-3. **`llama/pom.xml`** — profiles `vulkan-linux` (classifier `vulkan-linux-x86-64`) and
-   `vulkan-linux-aarch64` (classifier `vulkan-linux-aarch64`). Both read the shared
-   `resources_linux_vulkan` tree but the resource-copy `<includes>` is **arch-scoped**
-   (`net/ladenthin/llama/Linux/{x86_64,aarch64}/**`), so each classifier JAR carries only its own
-   arch (verified: each jar contains exactly one `libjllama.so`). Separate output dirs
-   `_linux_vulkan` / `_linux_vulkan_aarch64` avoid collision. Activated in CI via
-   `-P …,vulkan-linux,vulkan-linux-aarch64,…`.
-4. **`README.md`** — classifier table + dependency snippets.
-
-`src/main/resources_linux_vulkan/` is git-ignored (staged by CI, never committed). GPU runtime
-`libvulkan.so.1` is supplied by the consumer's driver — nothing is bundled (same policy as every GPU
-classifier).
-
-**Windows arm64 CPU (default JAR, no classifier).** `build-windows-arm64` runs natively on GitHub's
-free `windows-11-arm` runner (`ilammy/msvc-dev-cmd` `arch: arm64`, Ninja Multi-Config, `-DOS_ARCH=aarch64`,
-build + `ctest`). It emits to the **canonical** `resources/.../Windows/aarch64/` and uploads
-`Windows-aarch64-libraries`, which the `package`/`publish-*` `*-libraries` glob merges into the default
-tree — so it ships in the **default** JAR alongside Windows x86-64 / x86 (like those, it is not a
-classifier). No Java change was needed: `OSInfo` already maps a Windows-on-ARM JVM (`os.arch=aarch64`)
+**Windows arm64 CPU (`cpu-windows-aarch64`, in `llama-platform`).** `build-windows-arm64` runs
+natively on GitHub's free `windows-11-arm` runner (`ilammy/msvc-dev-cmd` `arch: arm64`, Ninja
+Multi-Config, `-DOS_ARCH=aarch64`, build + `ctest`) and writes `Windows/aarch64/cpu/`. No Java change
+was needed: `OSInfo` already maps a Windows-on-ARM JVM (`os.arch=aarch64`)
 to `Windows/aarch64` (it isn't in `archMapping`, so it falls through `translateArchNameToFolderName`).
 sccache runs here too, from its native `aarch64-pc-windows-msvc` release (it wraps `clang-cl`; see
 "sccache on every Windows Ninja job" above). **Compiler: `clang-cl`, not MSVC
@@ -322,25 +333,23 @@ threadpool, leaving the arm64 `jllama.dll` self-contained (the x86_64/x86 jobs k
 x64 runner with `vcvarsall amd64_arm64` + a `clang`/`clang++` toolchain file and no arm64 tests; the
 native-runner + `clang-cl` route here keeps the `/MT` CRT and lets `ctest` run on real ARM hardware.)
 
-## Additional GPU-backend classifiers (ROCm/HIP, SYCL, Win-arm64 OpenCL, OpenVINO)
+## Additional GPU-backend natives (ROCm/HIP, SYCL, Win-arm64 OpenCL, OpenVINO)
 
-Eight further GPU classifiers extend the matrix toward upstream llama.cpp's full release set. They
-follow the **exact same 5-place wiring** as the CUDA/Vulkan classifiers (no special cases — KISS): a
-`CMakeLists.txt` backend branch, a `publish.yml` build job (in `package.needs`, **fail-loud** — a
-broken build reds the pipeline, same policy as every GPU job), a `pom.xml` classifier profile, a
-`README.md` row, and a git-ignored `resources_*` tree. All are **build-only** (GitHub runners have no
-matching GPU) and bundle **no** vendor runtime.
+Eight further GPU natives jars extend the matrix toward upstream llama.cpp's full release set, with
+the same natives-jar wiring as every other one (see "Natives jars"; each build job is in
+`package.needs`, **fail-loud**). All are **build-only** (GitHub runners have no matching GPU) and
+bundle **no** vendor runtime.
 
-| Classifier | GGML flag(s) | Job runner / toolchain | Tree |
+| Classifier | GGML flag(s) | Job runner / toolchain | Directory |
 |---|---|---|---|
-| `rocm-linux-x86-64` | `GGML_HIP=ON -DCMAKE_HIP_COMPILER=… -DGPU_TARGETS=…` | `ubuntu-latest` + ROCm 10 TheRock wheels (pip, `rocm-sdk path`) | `resources_linux_rocm` |
-| `rocm-windows-x86-64` | `GGML_HIP=ON` | `windows-2022` + ROCm 10 TheRock wheels (pip) | `resources_windows_rocm` |
-| `sycl-fp16-linux-x86-64` | `GGML_SYCL=ON -DGGML_SYCL_F16=ON` (`icx`/`icpx`) | `ubuntu-latest` + Intel oneAPI apt | `resources_linux_sycl_fp16` |
-| `sycl-fp32-linux-x86-64` | `GGML_SYCL=ON` (`icx`/`icpx`) | `ubuntu-latest` + Intel oneAPI apt | `resources_linux_sycl_fp32` |
-| `sycl-windows-x86-64` | `GGML_SYCL=ON` (`icx`) | `windows-2025-vs2026` + oneAPI installer | `resources_windows_sycl` |
-| `opencl-windows-aarch64` | `GGML_OPENCL=ON …ADRENO_KERNELS=ON` (clang-cl, `GGML_OPENMP=OFF`) | `windows-11-arm` (arm64 CPU job's toolchain) | `resources_windows_opencl` (arch subdir `aarch64`) |
-| `openvino-linux-x86-64` | `GGML_OPENVINO=ON` | `ubuntu-latest` + OpenVINO apt | `resources_linux_openvino` |
-| `openvino-windows-x86-64` | `GGML_OPENVINO=ON` | `windows-2025-vs2026` + OpenVINO archive | `resources_windows_openvino` |
+| `rocm-linux-x86-64` | `GGML_HIP=ON -DCMAKE_HIP_COMPILER=… -DGPU_TARGETS=…` | `ubuntu-latest` + ROCm 10 TheRock wheels (pip, `rocm-sdk path`) | `Linux/x86_64/rocm` |
+| `rocm-windows-x86-64` | `GGML_HIP=ON` | `windows-2022` + ROCm 10 TheRock wheels (pip) | `Windows/x86_64/rocm` |
+| `sycl-fp16-linux-x86-64` | `GGML_SYCL=ON -DGGML_SYCL_F16=ON` (`icx`/`icpx`) | `ubuntu-latest` + Intel oneAPI apt | `Linux/x86_64/sycl-fp16` |
+| `sycl-fp32-linux-x86-64` | `GGML_SYCL=ON` (`icx`/`icpx`) | `ubuntu-latest` + Intel oneAPI apt | `Linux/x86_64/sycl-fp32` |
+| `sycl-windows-x86-64` | `GGML_SYCL=ON` (`icx`) | `windows-2025-vs2026` + oneAPI installer | `Windows/x86_64/sycl` |
+| `opencl-windows-aarch64` | `GGML_OPENCL=ON …ADRENO_KERNELS=ON` (clang-cl, `GGML_OPENMP=OFF`) | `windows-11-arm` (arm64 CPU job's toolchain) | `Windows/aarch64/opencl` |
+| `openvino-linux-x86-64` | `GGML_OPENVINO=ON` | `ubuntu-latest` + OpenVINO apt | `Linux/x86_64/openvino` |
+| `openvino-windows-x86-64` | `GGML_OPENVINO=ON` | `windows-2025-vs2026` + OpenVINO archive | `Windows/x86_64/openvino` |
 
 **ROCm comes from TheRock, and the version and GPU targets follow upstream.** Since ROCm 7.14 AMD
 builds and releases ROCm through [TheRock](https://github.com/ROCm/TheRock); both ROCm jobs install
@@ -373,11 +382,9 @@ any uncompressed bundle (`__CLANG_OFFLOAD_BUNDLE__`) or on none compressed — a
 change that drops the flag reds the job instead of quietly shipping the 1 GB library again. The
 jar barely shrinks (zip already compressed the code); what shrinks is the extracted library.
 
-Two routing notes mirror existing precedent: **Linux SYCL** ships two precision variants at the *same*
-arch, so `CMakeLists.txt` routes them to two *distinct* trees by `GGML_SYCL_F16` (fp16 vs fp32).
-**Windows OpenCL** now holds both `x86_64` (desktop ICD) and `aarch64` (Snapdragon/Adreno) in the one
-`resources_windows_opencl` tree, split by the `opencl-windows` / `opencl-windows-aarch64` profiles'
-arch-scoped `<includes>` — exactly like the `vulkan-linux` / `vulkan-linux-aarch64` split.
+One routing note: **Linux SYCL** ships two precision variants at the *same* arch, so
+`CMakeLists.txt` names them two *distinct* backends by `GGML_SYCL_F16` (`sycl-fp16` vs `sycl-fp32`);
+the loader tries fp16 first.
 
 The Linux jobs that install a multi-GB vendor toolchain (CUDA, ROCm, both SYCL) start with
 `ggml-org/free-disk-space` — the same guard upstream llama.cpp's CUDA/ROCm jobs use (ROCm also clears the
@@ -386,53 +393,44 @@ tool cache, as upstream does, which is safe only because the step runs before `s
 The vendor toolchain install steps in `publish.yml` are **first-pass** (apt repos / vendor installers
 pinned to a specific version): if a URL/version 404s in CI, the job fails loud and the step is adjusted
 — the failure is intentional signal, not a regression to hide behind `continue-on-error`.
-`src/main/resources_{linux_rocm,windows_rocm,linux_sycl_fp16,linux_sycl_fp32,windows_sycl,linux_openvino,windows_openvino}/`
-are all git-ignored (staged by CI, never committed).
 
 ## macOS arm64: three build jobs, one shipped dylib
 
-macOS arm64 is the **only** `{OS}/{ARCH}` built by more than one job, and it has **no classifier** —
-all three variants ship (or don't) into the same default-JAR path `Mac/aarch64/libjllama.dylib`:
+macOS arm64 is the **only** platform built by more than one job; one of them ships, as the natives
+jar `metal-macos-aarch64` (directory `Mac/aarch64/metal/`, in `llama-platform`):
 
 | Job | Build flags | Artifact | Role |
 |---|---|---|---|
-| `build-macos-arm64-metal-15` (macos-15) | `-DLLAMA_METAL_EMBED_LIBRARY=ON -DGGML_NATIVE=OFF` | `macos-15-metal` | **shipped** in the default JAR |
+| `build-macos-arm64-metal-15` (macos-15) | `-DLLAMA_METAL_EMBED_LIBRARY=ON -DGGML_NATIVE=OFF` | `natives-metal-macos-aarch64` | **shipped** |
 | `build-macos-arm64-metal` (macos-14) | `-DLLAMA_METAL_EMBED_LIBRARY=ON` (host-native) | `macos-14-metal` | test-only |
-| `build-macos-arm64-no-metal` (macos-15) | `-DLLAMA_METAL=OFF -DGGML_NATIVE=OFF` | `macos-15-no-metal` | test-only |
+| `build-macos-arm64-no-metal` (macos-15) | `-DLLAMA_METAL=OFF -DGGML_NATIVE=OFF` | `macos-15-no-metal` | test-only (writes `Mac/aarch64/cpu/`) |
 
-None of the three passes `-DOS_NAME`/`-DOS_ARCH`, so `CMakeLists.txt` auto-detects the **same**
-output subdirectory in all three. The shipped variant is `macos-15-metal` because it is the only one
-with **both** Metal **and** `GGML_NATIVE=OFF` (portable across Apple-silicon generations); the other
-two exist to prove the no-Metal path and the macos-14 SDK still build and pass the Java suite.
+The shipped variant is the metal-15 build because it is the only one with **both** Metal **and**
+`GGML_NATIVE=OFF` (portable across Apple-silicon generations); the other two exist to prove the
+no-Metal path and the macos-14 SDK still build and pass the Java suite. The two Metal builds write
+the **same** directory, which is why the test-only artifacts are named outside the `natives-*` glob.
 
-**The invariant: at most one `*-libraries` artifact per `{OS}/{ARCH}`.** The `package`,
-`publish-snapshot` and `publish-release` jobs collect the default JAR's natives with one globbed
-`actions/download-artifact` (`pattern: "*-libraries"`). An artifact *name* says nothing about which
-subdirectory the job actually wrote, so two artifacts sharing a relative path get extracted onto one
-file — and the survivor can be a **byte-level hybrid** of both, not either input. All three macOS
-jobs used to upload under a `*-libraries` name: the published dylib's ad-hoc linker signature then no
-longer matched its own `__TEXT` pages and macOS **SIGKILLed every process that loaded it** (shipped
-broken in 5.0.6 and several 5.0.7 snapshots; 66/4078 and 1141/4097 code pages failed their stored
-hashes). Windows already avoided this by naming its MSVC variants outside the glob; macOS now does
-the same, and the shipped variant is chosen by an **explicit download step by name**, never by which
-artifact name happens to match a glob.
+**Why that naming matters (the incident).** Two artifacts sharing a relative path, downloaded with
+one glob and merged, get extracted onto one file — and the survivor can be a **byte-level hybrid** of
+both, not either input. All three macOS jobs used to upload under one glob: the published dylib's
+ad-hoc linker signature then no longer matched its own `__TEXT` pages and macOS **SIGKILLed every
+process that loaded it** (shipped broken in 5.0.6 and several 5.0.7 snapshots; 66/4078 and 1141/4097
+code pages failed their stored hashes).
 
-**The guard: `.github/merge-native-artifacts.sh`.** The three consumer jobs download the glob
+**The guard: `.github/merge-native-artifacts.sh`.** The three consumer jobs download `natives-*`
 **unmerged** (`merge-multiple` off → one subdirectory per artifact) and let that script do the merge.
-It fails the job when any relative path is claimed by more than one `*-libraries` artifact, and when
-the glob matched nothing at all (a silently native-library-free default JAR). Note **why the check
-runs before the merge**: a collision still leaves exactly one file on the path, so a post-merge
-assertion like "exactly one dylib per `{OS}/{ARCH}`" cannot see it — the collision is only observable
-while the artifacts are still separate. A future job that reopens the hole (a second job writing
-`Mac/aarch64`, or a new platform whose auto-detected subdir clashes) reds the pipeline instead of
-shipping a corrupt binary.
+Each artifact must hold exactly the directory its row in `natives.csv` names, and no relative path may
+be claimed twice. Note **why the check runs before the merge**: a collision still leaves exactly one
+file on the path, so a post-merge assertion cannot see it — it is only observable while the artifacts
+are still separate. A future job that reopens the hole reds the pipeline instead of shipping a
+corrupt binary.
 
 **The end-to-end gate: `smoke-fatjar-macos`.** The three macOS Java test jobs each test the dylib
 *their own job* built, so until now nothing exercised the **packaged** artifact on macOS — Linux and
 Windows had `smoke-fatjar-*` downstream of `package`, macOS had none, which is why this bug reached
 three releases with a fully green pipeline. The job (`needs: [package]`, `macos-15`, gates both
 publish jobs) downloads `llama-jars` and runs `.github/smoke-native-macos.sh`, which extracts
-`Mac/aarch64/libjllama.dylib` from the **default fat jar** and asserts two things: `codesign --verify
+`Mac/aarch64/metal/libjllama.dylib` from the **default fat jar** and asserts two things: `codesign --verify
 --strict` (re-hashes the code pages against the signature's stored hashes — the direct check for a
 dylib assembled from two builds) and a real JVM load via `.github/smoke/NativeLoadSmoke.java`
 (`java -cp <fatjar> …`, the JDK single-file source launcher), which forces
@@ -440,9 +438,9 @@ dylib assembled from two builds) and a real JVM load via `.github/smoke/NativeLo
 `getLlamaCppBuildInfo()`, checked against the `LlamaCppVersion` pin.
 
 Two macOS specifics: it targets the **default** fat jar because there is no `all-macos-*` fat jar to
-target (macOS has no GPU classifier — Metal is in the default jar — so `package-fatjars` builds no
-macOS variant), and it asserts native loadability rather than a CLI exit code, so it cannot reuse
-`smoke-test-fatjar.sh` (whose backend-manifest grep never matches the manifest-less default jar).
+target (macOS has no GPU backend besides Metal, which the default fat jar carries, so
+`package-fatjars` builds no macOS variant), and it asserts native loadability plus the code
+signature rather than a server round trip, so it does not reuse `smoke-test-fatjar.sh`.
 Deliberately model-free (~1 min, no GGUF/cache restore/network): a full model-backed macOS server
 smoke would be strictly more, but this catches the failure class that actually shipped and is cheap
 enough to always run. It is the macOS member of the cross-repo convention in
@@ -461,36 +459,47 @@ and are untouched. (The cross-repo "fat jar → GitHub Release, never Central, s
 convention shared with BAF and srcmorph is documented in
 [`../workspace/policies/fat-jar-release-assets.md`](../workspace/policies/fat-jar-release-assets.md).)
 
-Mechanism (three pieces):
+Mechanism:
 
 1. **`.github/package-fatjars.sh`** — run by the `package-fatjars` job (`needs: [package]`,
-   downloads `llama-jars`). Enumerates the `<classifier>` set from `llama/pom.xml` (source of
-   truth) and cross-checks it in **both** directions against the built classifier jars; parses
-   each classifier as `<backend>-<os>-<arch>`; **fails loud** on unparseable classifiers,
-   backends missing from its priority table, missing native trees, or zip-update corruption
-   (entry list, `Main-Class`, sample byte-compare). Excluded by design: `msvc-windows`
-   (redundant CPU variant) and `opencl-android-aarch64` (no `java -jar` on Android). For each
-   OS/arch it copies the default fat jar and adds every backend's native tree under
-   `net/ladenthin/llama/<OS>/<ARCH>/<backend>/` plus a **`jllama-backends.txt`** manifest
-   (backends in priority order `cuda13 rocm sycl-fp16 sycl-fp32 sycl vulkan opencl openvino`;
-   extra tokens per line list sibling files such as openvino-windows' bundled `OpenCL.dll`).
-   **A new classifier fails this script until it is consciously ranked/excluded** — that is the
-   no-silent-gaps guarantee.
-2. **`LlamaLoader` backend selection** — when (and only when) the manifest resource exists,
-   the loader tries each backend subdirectory in order: extract into a per-backend temp subdir
-   (`jllama-backend-<name>/`; backends share file names), load manifest extras first, then the
-   backend's `jllama` library. A load failure (missing vendor runtime → `UnsatisfiedLinkError`)
-   moves to the next backend; after the list it falls back to the default CPU natives. System
-   property `net.ladenthin.llama.backend` forces one backend (fail-loud) or `default`/`cpu`.
-   Jars without a manifest take the unchanged legacy path. A backend whose extra module is
-   already resident from a previously failed attempt is skipped (by-name import cross-wiring).
+   downloads `llama-jars`). Takes the natives jars from `.github/natives.csv` and checks them in
+   **both** directions against the built jars; every natives jar must hold exactly its own
+   directory, its library, and its `Automatic-Module-Name`. Because the directories never overlap,
+   an all-backends jar is a **plain merge**: for each OS/arch that has a GPU backend (Android and the
+   `msvc` backend excluded — no `java -jar` on Android, and `msvc` would only be a second CPU library),
+   copy the default fat jar, **remove the native trees of every other platform**, and unzip every
+   natives jar of that OS/arch into it. No manifest: the loader's fixed priority order does the rest.
+
+   **Only the jar's own OS+arch tree is kept.** Originally each combined jar was the default fat jar
+   plus backends, i.e. it carried the CPU natives of all nine platforms — ~71.5 MB of dead weight in
+   `all-windows-x86-64` (341.5 MB → ~270 MB, computed from the per-tree sizes of run 36606543343).
+   That was how the jar was built, not a requirement: the introducing commit (`aff68f5e`) gives no
+   reason. The rule is deliberately the strict one, so `all-windows-x86-64` also loses `Windows/x86`
+   and `Windows/aarch64` — a 32-bit JVM on 64-bit Windows needs the default fat jar, which still runs
+   everywhere. The "natives missing from a jar" incidents in the history are a different layer — the
+   default jar's collection (`package` once lacked `needs:` on three build jobs, `7ad8066a`), which the
+   merge step's completeness check against `natives.csv` now covers.
+   Trees are found as the **upper-case directories** below `net/ladenthin/llama/` (OSInfo folder
+   names; Java packages are lower-case) and matched by exact path component — a `Linux*` prefix
+   would also hit `Linux-Android`, and a pattern without the trailing `/` of a directory matches
+   upper-case class files such as `LlamaModel.class`. Fail-loud checks after the zip update: every
+   added backend byte-identical to its natives jar, the own CPU library byte-identical to the default
+   jar's, **no other `<OS>/<ARCH>` tree left**, the `.class` count equal to the default jar's (the
+   check that caught the missing-slash variant during development), `Main-Class` intact, and all
+   four release targets produced.
+2. **`LlamaLoader` backend selection** — the same code path as for any classpath: every backend
+   directory present is tried in `BACKEND_PRIORITY` order, each extracted into its own temp subdir
+   (`jllama-backend-<name>/`; backends share file names), its `jllama-extras.txt` files loaded first.
+   A load failure (missing vendor runtime → `UnsatisfiedLinkError`) moves to the next backend, ending
+   at `cpu`. `net.ladenthin.llama.backend` forces one backend (fail-loud). A backend whose extra module
+   is already resident from a previously failed attempt is skipped (by-name import cross-wiring).
 3. **`publish.yml` wiring** — **all four** OS/arch fat jars are launched, one smoke job each:
    `smoke-fatjar-linux` / `smoke-fatjar-windows` (x86-64) plus `smoke-fatjar-linux-aarch64`
    (`ubuntu-24.04-arm`) / `smoke-fatjar-windows-arm64` (`windows-11-arm`). Each runs its jar via
    real `java -jar` on a GPU-less runner (cached draft model, `--chat-template chatml`): poll
    `/health` to 200, assert a `/v1/chat/completions` choice, and require the loader's
-   backend-selection log line — so every manifest backend failing its load and falling back to the
-   CPU natives is exercised on the actual release asset. The four jobs consume four small
+   backend-selection log line — so every GPU backend failing its load and falling back to the
+   CPU backend is exercised on the actual release asset. The four jobs consume four small
    single-jar artifacts (`llama-fatjar-smoke-{linux,windows,linux-aarch64,windows-arm64}`) rather
    than the multi-GB `llama-fatjars` set. **The two aarch64 jobs close a real gap**: those jars were
    built, GPG-signed and attached to every release while `publish.yml` referenced them zero times,
@@ -922,8 +931,7 @@ byte-identical body). No local patch needed — the tree already matches what `0
 
 ## RPC backend: `--rpc` client and the in-JVM `RpcServer`
 
-llama.cpp's RPC backend (`ggml-rpc`) is compiled into **every** artifact — the default JAR and all
-GPU classifiers — with `GGML_RPC=ON` forced in `llama/CMakeLists.txt`. It stays **one** `jllama`
+llama.cpp's RPC backend (`ggml-rpc`) is compiled into **every** natives jar — CPU and GPU — with `GGML_RPC=ON` forced in `llama/CMakeLists.txt`. It stays **one** `jllama`
 library: `ggml_add_backend_library` makes `ggml-rpc` a static library linked into `ggml` (only
 `GGML_BACKEND_DL`, which needs shared libs, would split it out), and its registration is compiled in
 (`GGML_USE_RPC`). Client and server live in the same file, so the flag brings both.
@@ -937,9 +945,10 @@ statically in a useful way either (it `dlopen`s its hardware providers), and ups
 comment says the Apple weak link does not survive a static `ggml-rpc`. **`.github/verify-native-deps.py`**
 (the `package` job) reads each shipped library's dependency list straight from the file — ELF
 `DT_NEEDED`, PE import table including Windows arm64 (which binutils cannot read), Mach-O load
-commands — and holds the default tree to an exact per-`{OS}/{ARCH}` allowlist (the classifier trees
-only to a denylist, since they need their vendor runtime). A new `{OS}/{ARCH}` without an allowlist
-fails too. **It found a pre-existing defect on its first run**: the macOS dylib links Homebrew's
+commands — and holds every CPU directory (`cpu`, `metal`, `msvc`) to an exact per-directory
+allowlist (the GPU directories only to a denylist, since they need their vendor runtime). A new CPU
+directory without an allowlist fails too. (That every build arrived is the merge step's check against
+`natives.csv`.) **It found a pre-existing defect on its first run**: the macOS dylib links Homebrew's
 `openssl@3` (`/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib` + `libcrypto`), so it does not load on a
 Mac without that formula. Those two paths are in the allowlist marked as a known defect so the
 check reports only *new* dependencies; the fix is on file in `TODO.md`.
@@ -1001,7 +1010,7 @@ loading thread — the lock is reentrant, so a second complete load ran while th
 backend again over the library being loaded. The fat-jar RPC smoke timed out on it (the doubled
 extraction of the CUDA/ROCm/SYCL libraries); it now waits 300 s like the other smoke and fails if the
 backend is selected more than once. Only the *nested* call is skipped — later calls still run the body,
-which `BackendManifestLoadTest` relies on.
+which `BackendLoadTest` relies on.
 **Single instance per process** (ggml keeps the server state in globals). `startLocal` binds
 loopback only; `startOnNetwork` is the explicit, warned opt-in, and binding needs an IPv4 literal
 (the server uses `inet_addr`). Endpoints on the client side are `value.RpcEndpoint`
@@ -1234,15 +1243,17 @@ cmake --build build --config Release
 cmake -B build -DLLAMA_CURL=ON
 ```
 
-Built libraries are placed in `src/main/resources/net/ladenthin/llama/{OS}/{ARCH}/`.
+Built libraries are placed in `src/main/natives/net/ladenthin/llama/{OS}/{ARCH}/{backend}/`
+(`cpu` for a plain build; see "Natives jars").
 
 ### Building the native library for local Java tests
 
 `mvn test` does **not** build the native library — Maven only compiles Java
 and runs surefire. The shared library must already exist on disk under the
-platform-specific resource path that `LlamaLoader` resolves at runtime.
-Without it the JVM throws `UnsatisfiedLinkError` and every Java test fails
-immediately (it does not auto-skip).
+platform-specific path that `LlamaLoader` resolves at runtime; surefire puts
+`src/main/natives/` on the test classpath (`additionalClasspathElements`).
+Without it the native-backed tests skip themselves or fail with
+`UnsatisfiedLinkError`.
 
 The output path is derived by `CMakeLists.txt` from `OS_NAME` and `OS_ARCH`
 detected by the helper script `.github/dockcross/dockcross-resolve-host`
@@ -1250,20 +1261,20 @@ detected by the helper script `.github/dockcross/dockcross-resolve-host`
 mirrors `OSInfo.translateOSNameToFolderName` on the Java side, so the same
 folder name is produced on both ends.
 
-| Host | Library file | Resource path produced by `cmake --build` |
+| Host | Library file | Path produced by `cmake --build` |
 |------|--------------|-------------------------------------------|
-| Linux x86_64 | `libjllama.so` | `src/main/resources/net/ladenthin/llama/Linux/x86_64/` |
-| Linux aarch64 | `libjllama.so` | `src/main/resources/net/ladenthin/llama/Linux/aarch64/` |
-| macOS Apple Silicon | `libjllama.dylib` | `src/main/resources/net/ladenthin/llama/Mac/aarch64/` |
-| macOS Intel | `libjllama.dylib` | `src/main/resources/net/ladenthin/llama/Mac/x86_64/` |
-| Windows x86_64 | `jllama.dll` | `src/main/resources/net/ladenthin/llama/Windows/x86_64/` |
+| Linux x86_64 | `libjllama.so` | `src/main/natives/net/ladenthin/llama/Linux/x86_64/cpu/` |
+| Linux aarch64 | `libjllama.so` | `src/main/natives/net/ladenthin/llama/Linux/aarch64/cpu/` |
+| macOS Apple Silicon | `libjllama.dylib` | `src/main/natives/net/ladenthin/llama/Mac/aarch64/metal/` |
+| Windows x86_64 | `jllama.dll` | `src/main/natives/net/ladenthin/llama/Windows/x86_64/cpu/` (Ninja) or `…/msvc/` (Visual Studio generator) |
 
 On every platform exactly **one** `jllama` library is produced: `CMakeLists.txt` forces
 `BUILD_SHARED_LIBS OFF`, so upstream `llama` and `ggml` are static libraries linked into
 `jllama` (the `RUNTIME_OUTPUT_DIRECTORY_*` block that also names the `llama`/`ggml` targets
 is a no-op for them — verified against the published 5.0.5 jars, which contain only
 `jllama.dll` per Windows arch). `LlamaLoader` accordingly extracts and loads a single file
-from the jar (plus `ggml-metal.metal` on macOS). Historical note: upstream kherud once
+per backend (plus the files in its `jllama-extras.txt`, and `ggml-metal.metal` from a Metal build
+that does not embed it). Historical note: upstream kherud once
 shipped split `ggml` + `jllama` libraries, which is where stale "three co-located DLLs"
 claims came from.
 
@@ -1276,8 +1287,8 @@ mvn -q compile
 # 2. Configure + build the native library for the current host
 cmake -B build
 cmake --build build --config Release -j$(nproc)
-# The shared lib lands directly in src/main/resources/.../{OS}/{ARCH}/ —
-# no separate install step is needed.
+# The shared lib lands directly in src/main/natives/.../{OS}/{ARCH}/{backend}/ —
+# no separate install step is needed; surefire puts that tree on the test classpath.
 
 # 3. Ensure model files referenced by tests are present under models/.
 #    The default test models (downloaded by CI in publish.yml) are:
@@ -1363,7 +1374,7 @@ tests cannot do this in a restricted sandbox — they self-skip via
 #    which is reachable even when huggingface.co is not):
 mvn -q compile
 cmake -B build -DBUILD_TESTING=ON
-cmake --build build --config Release -j$(nproc)   # -> src/main/resources/.../<os>/<arch>/libjllama.so
+cmake --build build --config Release -j$(nproc)   # -> src/main/natives/.../<os>/<arch>/cpu/libjllama.so
 # 2. Force LlamaModel.<clinit> (System.load -> JNI_OnLoad) with no model:
 mvn test -Dtest=NativeLibraryLoadSmokeTest
 ```
@@ -1388,8 +1399,8 @@ to a local `mvn test` (model tests skipped) or to the pure-Java unit tests.
 [root], `exception.LlamaException`, `value.LogLevel`, `args.LogFormat`,
 `callback.LoadProgressCallback`), update the matching `FindClass` / `"L…;"`
 signature string in `src/main/cpp/jllama.cpp` and keep the native-resource root
-anchored at `net/ladenthin/llama/` in `LlamaLoader.NATIVE_RESOURCE_BASE` (it must
-not track the loader's own Java package). This is the same
+anchored at `net/ladenthin/llama` in `LlamaLoader.NATIVE_RESOURCE_BASE` (it must
+not track the loader's own Java package; no leading slash, it is resolved through the ClassLoader). This is the same
 "FQN/path not updated after a package move" class as the stale
 `spotbugs-exclude.xml`, PIT `targetClasses`, and `CMakeLists.txt` OSInfo repairs.
 
@@ -1639,8 +1650,9 @@ Java parameters are serialized to JSON strings and passed to native code, which 
 ### Native Library Resolution
 `LlamaLoader` tries in order:
 1. System property `net.ladenthin.llama.lib.path`
-2. `java.library.path`
-3. Extracts from JAR resources at `net/ladenthin/llama/{os}/{arch}/`
+2. `System.loadLibrary` on Android (the AAR's `jni/`), then `java.library.path`
+3. The natives jars on the classpath: every `net/ladenthin/llama/{os}/{arch}/{backend}/` present, in
+   `BACKEND_PRIORITY` order, extracted and loaded until one loads (see "Natives jars")
 
 ### Cross-compilation
 Docker-based cross-compilation scripts are in `.github/dockcross/` for **Android** targets (and the
@@ -1675,7 +1687,7 @@ Wiring (mirrors the macOS native jobs, not the dockcross jobs):
 
 ### Linux s390x: big-endian cross-build + qemu test gate
 
-`build-linux-s390x` extends the default JAR to **IBM Z (s390x, big-endian)** — the one target whose
+`build-linux-s390x` adds **IBM Z (s390x, big-endian)** — the one target whose
 byte order differs from every other platform. It **cross-compiles** with the GCC s390x toolchain
 (`g++-s390x-linux-gnu`, native x86 speed — no emulated build) and then runs the **full C++ unit suite
 under `qemu-user`** (`CMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/qemu-s390x-static`, `QEMU_LD_PREFIX=/usr/s390x-linux-gnu`).
@@ -1685,8 +1697,8 @@ which is where an endian bug in *our* code could hide. Model-backed **Java** tes
 **not** run under emulation (a JVM + GGUF inference under `qemu-user` is slow and flaky); the Java↔JNI
 boundary uses host-native array copies (endian-transparent), so the C++ gate covers the actual risk.
 `-DGGML_OPENMP=OFF` sidesteps cross-libgomp issues (ggml uses its own `std::thread` pool). s390x is a
-CPU platform like aarch64, so it ships in the **default** JAR (`Linux-s390x-libraries` merges via the
-`*-libraries` glob; `OSInfo` maps `os.arch=s390x` → `Linux/s390x`) — no classifier, no pom profile.
+CPU platform like aarch64, so it ships as the natives jar `cpu-linux-s390x`, part of `llama-platform`
+(`OSInfo` maps `os.arch=s390x` → `Linux/s390x`).
 **Fail-loud** and in `package.needs` like every other build. (Upstream llama.cpp already supports s390x
 — it ships `ubuntu-s390x` with GGUF big-endian handling — so the native inference path is upstream's
 concern; this job validates only *our* layer's endian-safety.)
@@ -1983,7 +1995,7 @@ EXPECT_FALSE(j.contains("stop_type"));  // filtered out
 - **Java 8+** runtime required. Built with JDK 21 targeting bytecode 1.8 for broad compatibility.
 - Native memory allocated by llama.cpp is not GC-managed — always use `LlamaModel` in try-with-resources or call `close()` explicitly.
 - The `server.hpp` file is adapted from llama.cpp upstream — minimize modifications to ease future upgrades.
-- Platform-specific native libraries must be pre-built and placed under `src/main/resources/` before packaging for distribution.
+- Platform-specific native libraries must be pre-built and placed under `src/main/natives/` before packaging for distribution (CI does this; see "Natives jars").
 
 ## Javadoc Conventions
 
@@ -2025,14 +2037,14 @@ exceeds `--max-major`:
 ```
 
 Paths may be jars or directories (searched recursively for `*.jar`), so one invocation covers a whole
-artifact set — here all 16 classifier jars plus every `all-<os>-<arch>` fat jar. `module-info.class`
+artifact set — here the classes jar, all 26 natives jars and every `all-<os>-<arch>` fat jar. `module-info.class`
 and `META-INF/versions/**` are skipped unconditionally: a classpath JVM never loads either, which is
 why a `release 9` `module-info` is fine. `--allow` is a repeatable glob matched against
 `<jar-basename>:<entry-path>` for anything else that must be tolerated. Exit codes: 0 clean,
 1 violations, **2 nothing to scan** (an empty input is a failure, never a pass — the first version of
 this check reported a clean pass over a directory a failed build had left empty).
 
-It runs twice: in the `package` job over `llama/target` (every classifier jar plus the default fat
+It runs twice: in the `package` job over `llama/target` (every jar plus the default fat
 jar, as early as they exist), and again in `smoke-fatjar-linux` over the downloaded `fatjars/` —
 `package-fatjars` rewrites those zips, and they are the artifacts users actually download.
 
@@ -2126,10 +2138,10 @@ keeping it clear of the JPMS module-mode javadoc trap that bit BAF. **Before rai
 javadoc source level to ≥ 9, read**
 [`../workspace/policies/jpms-module-descriptor.md`](../workspace/policies/jpms-module-descriptor.md).
 
-## Repository layout — Maven reactor (`llama/` + `llama-langchain4j/` + `llama-kotlin/`) + the `llama-android/` Gradle build
+## Repository layout — Maven reactor (`llama/` + `llama-langchain4j/` + `llama-kotlin/` + `llama-platform/`) + the `llama-android/` Gradle build
 
 The repo root is a thin **aggregator/parent POM** (`net.ladenthin:llama-parent`,
-`packaging=pom`) with three modules:
+`packaging=pom`) with four modules:
 
 - **`llama/`** — the native JNI core (`net.ladenthin:llama`). *All the core sources and build
   files live here now:* `llama/src/`, `llama/CMakeLists.txt`, `llama/cmake/`, `llama/patches/`,
@@ -2137,12 +2149,14 @@ The repo root is a thin **aggregator/parent POM** (`net.ladenthin:llama-parent`,
   Its published coordinates are unchanged (`net.ladenthin:llama`), so consumers are unaffected.
 - **`llama-langchain4j/`** — the LangChain4j adapters (see below).
 - **`llama-kotlin/`** — the Kotlin coroutines façade (see "Android AAR + Kotlin façade" below).
+- **`llama-platform/`** — a pom-packaging dependency list: the classes jar plus the CPU natives jars
+  of every desktop platform (see "Natives jars" above).
 
 All modules inherit the single `<version>` from the parent, so they **ship in lockstep by
 construction** (no CI guard needed). The parent also holds the shared `release` profile (GPG +
-Central Publishing), so one reactor `mvn -P release deploy` signs and publishes all four
-Maven artifacts (`llama-parent` pom, `llama`, `llama-langchain4j`, `llama-kotlin`) at the same
-version.
+Central Publishing), so one reactor `mvn -P release,natives deploy` signs and publishes all five
+Maven artifacts (`llama-parent` pom, `llama` with its natives jars, `llama-langchain4j`,
+`llama-kotlin`, `llama-platform` pom) at the same version.
 
 **`llama-android/` is deliberately NOT a reactor module** but a standalone plain-Gradle build
 (no AGP, no Android SDK needed to build): Maven cannot produce or deploy an artifact with
@@ -2164,12 +2178,13 @@ file shows `cmake -B build` / `src/main/...` / `mvn compile` at the root, read i
 **Version bump:** the child modules declare **no `<version>` of their own** — their *project*
 version is inherited from the parent. But each child still hardcodes the parent version inside its
 `<parent><version>` pointer (Maven requires a literal there — there is **no `${revision}`/CI-friendly
-versioning** here), so a version change must be applied to **all four poms in lockstep**:
+versioning** here), so a version change must be applied to **all five poms in lockstep**:
 
 - `pom.xml` (root) — `<version>`
 - `llama/pom.xml` — `<parent><version>`
 - `llama-langchain4j/pom.xml` — `<parent><version>`
 - `llama-kotlin/pom.xml` — `<parent><version>`
+- `llama-platform/pom.xml` — `<parent><version>`
 
 (`llama-android/` needs **no** edit — its Gradle build reads the root pom's version at
 configure time.)
@@ -2237,13 +2252,13 @@ Wiring:
    jar so a release-time javadoc break is caught in PR CI). The `publish-snapshot`/
    `publish-release` jobs `needs:` this job; deployment is a **single reactor**
    `mvn -P release deploy` (no separate module deploy step — the parent's inherited `release`
-   profile signs and publishes parent + llama + llama-langchain4j together at the same version).
+   profile signs and publishes every reactor module together at the same version).
    A separate **`test-java-llama-langchain4j-integration`** job runs the model-backed tests
    (chat/streaming/embedding/scoring adapters) by **reusing** the shared GGUF cache
-   (`gguf-models-v1`, restore-only — no extra download) and the `Linux-x86_64-libraries` native
+   (`gguf-models-v1`, restore-only — no extra download) and the `natives-cpu-linux-x86-64` native
    artifact: it `needs: [crosscompile-linux-x86_64, download-models]` (so the cache is already
-   populated and it runs in parallel), installs parent+core with the downloaded native lib
-   bundled, and passes the already-cached chat (`REASONING_MODEL_NAME`), nomic-embedding and
+   populated and it runs in parallel), installs parent+core (classes), points the test JVM at the
+   downloaded library with `-Dnet.ladenthin.llama.lib.path`, and passes the already-cached chat (`REASONING_MODEL_NAME`), nomic-embedding and
    jina-reranker model paths via the module's
    `-Dnet.ladenthin.llama.langchain4j.{embedding,rerank}.model` / `net.ladenthin.llama.model.path`
    properties. It is validation-only (not a release gate); a cold cache degrades to a self-skip.
@@ -2269,14 +2284,14 @@ the recommended path (README "Importing in Android", Option 1):
 - **`net.ladenthin:llama-android`** / **`llama-android-opencl`** — AARs (`<packaging>aar</packaging>`)
   carrying the core classes + the CI-built `libjllama.so` natives under `jni/` — the CPU AAR is
   **multi-ABI** (`arm64-v8a` devices + `x86_64` emulators/Chromebooks, built by the
-  `crosscompile-android-x86_64` dockcross job whose artifact also merges into the default JAR's
-  `Linux-Android/x86_64` tree via the `*-libraries` glob; the OpenCL flavor stays arm64-only —
+  `crosscompile-android-x86_64` dockcross job, which also ships as the `cpu-android-x86-64` natives
+  jar; the OpenCL flavor stays arm64-only —
   Adreno is Qualcomm ARM hardware), a
   `minSdkVersion 28` manifest (AGP enforces the floor on consumers), and consumer R8/ProGuard
   rules (`consumer-proguard.txt` → `proguard.txt` in the AAR; keeps `net.ladenthin.llama.**` for
   the JNI `FindClass`/Jackson reflection surface). The AAR's `classes.jar` is the
-  **byte-identical Maven-built core jar** minus the desktop/Android native resource trees
-  (~70 MB APK bloat otherwise) and `module-info.class` (D8 rejects it); on Android `LlamaLoader`
+  **byte-identical Maven-built classes jar** minus `module-info.class` (D8 rejects it) — it carries no
+  natives, which ship as separate natives jars; on Android `LlamaLoader`
   resolves via `System.loadLibrary("jllama")`, which finds the AAR-installed `.so` — no loader
   change was needed. Built by the **standalone plain-Gradle build** in `llama-android/`
   (see "Repository layout" for why it is not a Maven module); the POM mirrors the core's
@@ -2336,7 +2351,10 @@ needs Java 21 (Atmosphere's floor) while the core stays Java 8. CI builds it aga
 installed (`-Dllama.version=<reactor version>`); a user copies the folder and runs
 `mvn compile exec:java -Dexec.args="…"` with no `-D` at all — the pom's `llama.version` names the
 **released** core the READMEs describe (currently `5.2.0`, written as if released so the docs are
-right the moment the release lands).
+right the moment the release lands). The natives come from the
+`natives` profile (`llama-platform`, active unless `-Dllama.natives=none`) plus the `gpu-natives`
+profile (`-Dllama.classifier=<natives jar>`); CI passes `-Dllama.natives=none`, since it installs only
+the classes and the model-backed job uses `-Dnet.ladenthin.llama.lib.path`.
 
 **Release asset: the agent jar WITHOUT the core.** `mvn -P assembly package` (the pom's `assembly`
 profile, descriptor `src/assembly/agent-jar.xml`) builds

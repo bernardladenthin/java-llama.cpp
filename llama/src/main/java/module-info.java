@@ -6,13 +6,14 @@
 /**
  * JPMS module descriptor for the java-llama.cpp JNI bindings.
  *
- * <p>Exports the three hand-written public packages
- * ({@code net.ladenthin.llama}, {@code net.ladenthin.llama.args},
- * {@code net.ladenthin.llama.json}). The native libraries shipped under
- * {@code /net/ladenthin/llama/{OS}/{ARCH}/} are loaded by
- * {@link net.ladenthin.llama.loader.LlamaLoader} via
- * {@link Class#getResourceAsStream(String)} on its own class object, so the resources
- * are looked up in this module and do <em>not</em> need to be {@code opens}'d.</p>
+ * <p>Exports the public packages. The native libraries are not in this module: they ship as
+ * separate natives jars, one directory {@code net/ladenthin/llama/<os>/<arch>/<backend>/} each,
+ * which on the module path are automatic modules (each jar declares its own
+ * {@code Automatic-Module-Name}). {@link net.ladenthin.llama.loader.LlamaLoader} finds them
+ * through its {@link ClassLoader}, which sees the resources of every module and of the
+ * classpath, so nothing needs to be {@code opens}'d. Nothing {@code requires} a natives module,
+ * so a module-path launch resolves them only with {@code --add-modules} (or with the natives
+ * jars on the classpath).</p>
  *
  * <p>JSpecify {@code @NullMarked} is declared at the module level here so that no source
  * file compiled at {@code --release 8} references the JSpecify annotation type directly.
@@ -26,12 +27,9 @@
  * <p>{@code requires static org.jspecify} is needed only at compile time of this
  * descriptor; JSpecify annotations carry {@code RetentionPolicy.CLASS} so module-path
  * consumers never need jspecify on their runtime path. Checker Framework qualifiers and
- * the Codehaus animal-sniffer annotation are likewise compile-time only. Jackson and
- * SLF4J are referenced from ordinary sources only; javac in the separate
- * {@code module-info-compile} execution compiles {@code module-info.java} in isolation
- * and therefore does not need their module names. Consumers that put this jar
- * on the module path will load these dependencies through their own {@code requires}
- * graph; consumers on the classpath are unaffected.</p>
+ * the Codehaus animal-sniffer annotation are likewise compile-time only. Jackson (tree model
+ * only; a caller's own type given to {@code completeAsJson} must be open to Jackson) and SLF4J
+ * are runtime dependencies and therefore required.</p>
  *
  * <p>This descriptor compiles at {@code --release 9}; the rest of the source compiles
  * at {@code --release 8}. Java 8 runtimes silently ignore {@code module-info.class} at
@@ -50,6 +48,9 @@ module net.ladenthin.llama {
     // com.sun.net.httpserver, so module-path consumers need to read jdk.httpserver. It is a
     // platform module (always present in the JDK), not an external dependency.
     requires jdk.httpserver;
+    // Runtime dependencies of the classes (JSON tree model, logging facade).
+    requires com.fasterxml.jackson.databind;
+    requires org.slf4j;
 
     exports net.ladenthin.llama;
     exports net.ladenthin.llama.args;

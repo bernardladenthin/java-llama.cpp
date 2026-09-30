@@ -9,7 +9,7 @@
 #
 # Why this exists (the gap it closes): the three macOS Java test jobs each run against the dylib
 # THEIR OWN build job produced. Nothing in the pipeline ever loaded the one that goes into the
-# published jar. So when the `*-libraries` artifact glob merged three different macOS dylibs onto
+# published jar. So when an artifact glob merged three different macOS dylibs onto
 # one path and produced a byte-level hybrid, the result — a library whose ad-hoc linker signature no
 # longer matched its own __TEXT pages, which macOS SIGKILLs on load — shipped in 5.0.6 and several
 # 5.0.7 snapshots with an all-green pipeline. Linux and Windows already had the equivalent gate
@@ -50,7 +50,7 @@ while IFS= read -r j; do jars+=("$j"); done < <(find "$JAR_DIR" -type f -name "$
 JAR="$(cd "$(dirname "${jars[0]}")" && pwd)/$(basename "${jars[0]}")"
 echo "smoke jar: $JAR"
 
-DYLIB_ENTRY="net/ladenthin/llama/Mac/aarch64/libjllama.dylib"
+DYLIB_ENTRY="net/ladenthin/llama/Mac/aarch64/metal/libjllama.dylib"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

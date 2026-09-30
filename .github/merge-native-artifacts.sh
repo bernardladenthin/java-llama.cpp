@@ -4,43 +4,41 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# Merges the per-artifact native-library trees downloaded by the `*-libraries` glob into the
-# single default-JAR resource tree — and FAILS LOUD if two artifacts claim the same file path.
+# Merges the per-build native-library artifacts downloaded by the `natives-*` glob into the one
+# natives tree (llama/src/main/natives/net/ladenthin/llama/) that the `natives` Maven profile
+# packages — and FAILS LOUD when an artifact does not hold exactly what its name promises.
 #
-# Why this exists: the `package` / `publish-snapshot` / `publish-release` jobs pull every build
-# job whose artifact name ends in `-libraries` with one globbed `actions/download-artifact`.
-# That is convenient (a new CPU platform ships in the default JAR by naming its artifact
-# `<Something>-libraries`, no packaging change) but it is silently unsafe: an artifact name says
-# nothing about which `{OS}/{ARCH}` subdirectory the job's CMake run actually wrote. When two
-# artifacts carry the same relative path, `merge-multiple: true` extracts both onto that one
-# path and the survivor can be a byte-level hybrid of the two, not either input.
+# Every shipped build uploads its tree as `natives-<classifier>`, one per row of
+# .github/natives.csv, which names the one directory it may write. Checked before anything is
+# merged:
+#   * every listed artifact arrived, with its library, and no unlisted one did;
+#   * every file lies below the artifact's own directory. A build whose CMake picked another
+#     backend name or platform (the routing lives in llama/CMakeLists.txt) would otherwise land in
+#     some other natives jar, or in none;
+#   * no relative path is claimed by two artifacts. This follows from the second check, and is
+#     kept anyway because it is the failure that actually shipped: all three macOS build jobs
+#     wrote Mac/aarch64 and used to share one glob, the merge produced a byte-level hybrid of two
+#     dylibs, and macOS SIGKILLed every process that loaded it (5.0.6 and several 5.0.7
+#     snapshots). A check on the merged tree cannot see it — the collision leaves exactly one
+#     file on the path, a corrupt one — so it has to run before the merge.
 #
-# That is exactly what happened to macOS arm64: all three macOS build jobs write
-# `Mac/aarch64/libjllama.dylib` (none of them passes -DOS_NAME/-DOS_ARCH, so CMakeLists
-# auto-detects the same subdir) and all three used to upload under a `*-libraries` name. The
-# published dylib became a hybrid whose ad-hoc linker signature no longer matched its own
-# __TEXT pages, so macOS SIGKILLed every process that loaded it — shipped broken in 5.0.6 and
-# several 5.0.7 snapshots. The immediate fix renamed those artifacts out of the glob; this
-# script is the backstop that stops the same hole from being reopened by a future job.
-#
-# NOTE ON WHAT *CANNOT* WORK AS A GUARD: asserting "exactly one library per {OS}/{ARCH}" on the
-# merged tree does not detect this. The collision overwrites one path, so the merged tree still
-# holds exactly one file there — a corrupt one. The collision is only observable BEFORE the
-# merge, which is why this script does the merge itself instead of checking afterwards.
+# After the merge, a backend directory holding files beside its library gets a
+# jllama-extras.txt listing them; LlamaLoader loads those first (e.g. the OpenCL ICD loader that
+# OpenVINO ships on Windows).
 #
 # Usage: merge-native-artifacts.sh <staging-dir> <dest-dir>
-#   <staging-dir>  output of `actions/download-artifact` with `pattern: "*-libraries"` and
+#   <staging-dir>  output of `actions/download-artifact` with `pattern: "natives-*"` and
 #                  `merge-multiple: false`, i.e. one subdirectory per artifact name.
-#   <dest-dir>     the tree the artifacts are merged into, e.g.
-#                  llama/src/main/resources/net/ladenthin/llama/
+#   <dest-dir>     the tree the artifacts are merged into,
+#                  llama/src/main/natives/net/ladenthin/llama/
 #
-# Fail-loud: aborts when the staging directory holds no artifacts (a silently empty default JAR
-# is worse than a red job) and when any relative path is claimed by more than one artifact.
+# Fail-loud: also aborts when the staging directory holds no artifacts.
 
 set -euo pipefail
 
 STAGING="${1:?usage: merge-native-artifacts.sh <staging-dir> <dest-dir>}"
 DEST="${2:?usage: merge-native-artifacts.sh <staging-dir> <dest-dir>}"
+LIST="$(dirname "$0")/natives.csv"
 
 if [ ! -d "$STAGING" ]; then
   echo "::error::staging directory '$STAGING' does not exist — the globbed download did not run." >&2
@@ -52,12 +50,31 @@ artifacts=()
 while IFS= read -r d; do artifacts+=("$(basename "$d")"); done < <(find "$STAGING" -mindepth 1 -maxdepth 1 -type d | sort)
 
 if [ "${#artifacts[@]}" -eq 0 ]; then
-  echo "::error::no '*-libraries' artifacts found in '$STAGING' — the default JAR would ship without native libraries." >&2
+  echo "::error::no 'natives-*' artifacts found in '$STAGING' — there would be no natives jars." >&2
   exit 1
 fi
 
 echo "Merging ${#artifacts[@]} native-library artifact(s) into $DEST"
-for a in "${artifacts[@]}"; do echo "  - $a"; done
+listed=0
+while IFS=, read -r classifier dir lib _; do
+  listed=$((listed + 1))
+  a="natives-$classifier"
+  if [ ! -d "$STAGING/$a" ]; then
+    echo "::error::no artifact '$a' -- the build job for this row of $LIST did not upload it" >&2
+    exit 1
+  fi
+  stray="$(cd "$STAGING/$a" && find . -type f | sed 's|^\./||' | grep -v "^$dir/" || true)"
+  if [ -n "$stray" ] || [ ! -f "$STAGING/$a/$dir/$lib" ]; then
+    echo "::error::artifact '$a' must hold $dir/$lib and nothing outside $dir/; outside it:" >&2
+    printf '%s\n' "$stray" | sed 's|^|::error::  |' >&2
+    exit 1
+  fi
+  echo "  - $a -> $dir/"
+done < <(grep -v -e '^#' -e '^classifier,' -e '^$' "$LIST")
+if [ "$listed" -ne "${#artifacts[@]}" ]; then
+  echo "::error::$STAGING holds ${#artifacts[@]} natives-* artifacts but $LIST lists $listed: $(printf '%s ' "${artifacts[@]}")" >&2
+  exit 1
+fi
 
 # relpath -> space-separated list of artifacts that carry it. Bash 3.2 (macOS) has no
 # associative arrays, so this stays a sorted "<relpath>\t<artifact>" stream processed by awk.
@@ -71,22 +88,26 @@ collisions="$(
 )"
 
 if [ -n "$collisions" ]; then
-  echo "::error::two or more '*-libraries' artifacts write the same path — merging them would produce a hybrid, corrupt native library." >&2
+  echo "::error::two or more 'natives-*' artifacts write the same path — merging them would produce a hybrid, corrupt native library." >&2
   while IFS=$'\t' read -r path owners; do
     echo "::error::  $path  <- claimed by:$owners" >&2
   done <<< "$collisions"
-  cat >&2 <<'EOF'
-::error::Fix: only ONE artifact per {OS}/{ARCH} may be named `*-libraries`. Rename the extra
-::error::build jobs' artifacts outside the glob (as the macOS jobs do: macos-15-metal /
-::error::macos-14-metal / macos-15-no-metal) and download the variant that ships explicitly by
-::error::name. See CLAUDE.md, "macOS arm64: three build jobs, one shipped dylib".
-EOF
+  echo "::error::Fix: only one shipped build per <backend>-<os>-<arch>; name a test-only variant outside the glob (see CLAUDE.md, \"macOS arm64\")." >&2
   exit 1
 fi
 
 mkdir -p "$DEST"
 for a in "${artifacts[@]}"; do
   cp -R "$STAGING/$a/." "$DEST/"
+done
+
+# Sibling files of a backend's library are loaded before it, in name order.
+find "$DEST" -mindepth 3 -maxdepth 3 -type d | sort | while IFS= read -r dir; do
+  extras="$(cd "$dir" && find . -maxdepth 1 -type f ! -name 'libjllama.*' ! -name 'jllama.dll' ! -name '*.metal' ! -name jllama-extras.txt | sed 's|^\./||' | sort)"
+  if [ -n "$extras" ]; then
+    printf '%s\n' "$extras" > "$dir/jllama-extras.txt"
+    echo "extras for ${dir#"$DEST"}: $(echo "$extras" | tr '\n' ' ')"
+  fi
 done
 
 echo "Merged native tree:"

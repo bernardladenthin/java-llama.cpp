@@ -67,7 +67,10 @@ ScoringModel reranker     = new JllamaScoringModel(rerankLlama);
 ```
 
 `langchain4j-core` is pulled transitively. You still supply a java-llama.cpp native library for your
-platform the usual way (bundled in the `net.ladenthin:llama` JAR or on `java.library.path`).
+platform: from 5.2.0 on, `net.ladenthin:llama` is the classes only, so add
+`net.ladenthin:llama-platform` (`<type>pom</type>`, the CPU natives of every desktop) and/or the
+natives jars you need next to this dependency (see the root README, "Choosing the natives jars"),
+or put the library on `java.library.path`. Up to 5.1.0 the `net.ladenthin:llama` jar carried it.
 
 ## Building
 

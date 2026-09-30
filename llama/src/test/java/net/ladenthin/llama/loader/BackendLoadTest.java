@@ -16,17 +16,17 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 @ClaudeGenerated(
-        purpose = "Drive LlamaLoader.initialize() end-to-end against the committed backend-manifest "
-                + "fixture trees (src/test/resources/net/ladenthin/llama/Linux/backendtest*/) by "
+        purpose = "Drive LlamaLoader.initialize() end-to-end against the committed backend fixture "
+                + "trees (src/test/resources/net/ladenthin/llama/Linux/backendtest*/<backend>/) by "
                 + "redirecting the arch component via the osinfo.architecture override. backendtest/ "
-                + "holds only unloadable fake libraries, exercising every failure branch (manifest "
-                + "read, per-backend temp-dir extraction, extra-file handling present and missing, "
-                + "clean load-failure fallback, forced-backend fail-loud, default/cpu manifest skip, "
-                + "no-manifest legacy path); backendtest-ok/ adds two trivial real x86-64 ELF dummies "
-                + "so the success path, the resident-extra bookkeeping, and the same-extra clash skip "
-                + "execute too. Linux-only (the trees are committed under the Linux OS folder); "
-                + "self-skips elsewhere.")
-public class BackendManifestLoadTest {
+                + "holds only unloadable fake libraries in real backend directories (cuda13, rocm, "
+                + "vulkan), exercising every failure branch (priority probing, per-backend temp-dir "
+                + "extraction, jllama-extras.txt present and naming a missing file, clean load-failure "
+                + "fallthrough, forced-backend fail-loud, no backend at all); backendtest-ok/ adds two "
+                + "trivial real x86-64 ELF dummies so the success path, the resident-extra bookkeeping, "
+                + "and the same-extra clash skip execute too. Linux-only (the trees are committed under "
+                + "the Linux OS folder); self-skips elsewhere.")
+public class BackendLoadTest {
 
     /** Arch-folder override selecting the committed fixture tree {@code Linux/backendtest/}. */
     private static final String FIXTURE_ARCH = "backendtest";
@@ -71,7 +71,7 @@ public class BackendManifestLoadTest {
         // The fixture tree is committed under the Linux OS folder; the OS path component
         // cannot be overridden, so these tests are meaningful only on a Linux JVM (which is
         // where the CI coverage run executes).
-        assumeTrue("Linux".equals(OSInfo.getOSName()), "backend-manifest fixtures are committed for Linux only");
+        assumeTrue("Linux".equals(OSInfo.getOSName()), "backend fixtures are committed for Linux only");
     }
 
     private static void assumeX86_64() {
@@ -85,31 +85,29 @@ public class BackendManifestLoadTest {
     }
 
     @Test
-    public void autoModeTriesEveryManifestBackendThenFailsWithoutDefaultLibrary() {
+    public void triesEveryBackendOnTheClasspathInPriorityOrderThenFails() {
         assumeLinuxFixtureTree();
         UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
-        // Every manifest backend must have been attempted (and failed cleanly): the final
-        // error lists each backend resource path plus the default path as tried.
+        // Every backend present in the fixture tree was attempted (and failed cleanly); backends
+        // with no directory there (sycl, opencl, cpu, ...) are not listed as tried.
         String message = error.getMessage();
-        String base = "/net/ladenthin/llama/Linux/" + FIXTURE_ARCH;
-        assertTrue(message.contains(base + "/fakegpu"), message);
-        assertTrue(message.contains(base + "/missingextra"), message);
-        assertTrue(message.contains(base + "/nodir"), message);
-        assertTrue(message.contains(base + "/fallbackgpu"), message);
-        assertTrue(message.contains(base), message);
-        // fakegpu: the extra file is extracted into the per-backend temp subdir before its
+        String base = "net/ladenthin/llama/Linux/" + FIXTURE_ARCH;
+        assertTrue(message.indexOf(base + "/cuda13") < message.indexOf(base + "/rocm"), message);
+        assertTrue(message.indexOf(base + "/rocm") < message.indexOf(base + "/vulkan"), message);
+        assertFalse(message.contains(base + "/cpu"), message);
+        // cuda13: the extra file is extracted into the per-backend temp subdir before its
         // load fails; the main library is never reached for that backend.
         assertTrue(Files.isRegularFile(
-                tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "fakegpu").resolve("libextra.so")));
+                tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "cuda13").resolve("libextra.so")));
         assertFalse(Files.exists(
-                tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "fakegpu").resolve("libjllama.so")));
-        // fallbackgpu (no extras): its main library is extracted, then fails to load.
-        assertTrue(Files.isRegularFile(tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "fallbackgpu")
-                .resolve("libjllama.so")));
+                tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "cuda13").resolve("libjllama.so")));
+        // vulkan (no extras): its main library is extracted, then fails to load.
+        assertTrue(Files.isRegularFile(
+                tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "vulkan").resolve("libjllama.so")));
     }
 
     @Test
-    public void autoModeLoadsFirstWorkingBackendAndSkipsResidentClash() throws java.io.IOException {
+    public void loadsFirstWorkingBackendAndSkipsResidentClash() throws java.io.IOException {
         assumeLinuxFixtureTree();
         assumeX86_64();
         System.setProperty(ARCH_PROP, "backendtest-ok");
@@ -120,56 +118,43 @@ public class BackendManifestLoadTest {
                 tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "stale").resolve("nested");
         Files.createDirectories(stale);
         Files.write(stale.resolve("libjllama.so"), new byte[] {1});
-        // Must succeed: extrafail's real extra library loads but its fake main library
-        // fails; clash declares the same extra file name and is skipped (already resident,
-        // so its temp dir is never even created); workinggpu's real dummy library loads.
+        // Must succeed: cuda13's real extra library loads but its fake main library fails;
+        // rocm lists the same extra file name and is skipped (already resident, so its temp
+        // dir is never even created); vulkan's real dummy library loads.
         LlamaLoader.initialize();
-        assertTrue(Files.isRegularFile(tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "extrafail")
-                .resolve("libextra.so")));
-        assertFalse(Files.exists(tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "clash")));
-        assertTrue(Files.isRegularFile(tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "workinggpu")
-                .resolve("libjllama.so")));
+        assertTrue(Files.isRegularFile(
+                tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "cuda13").resolve("libextra.so")));
+        assertFalse(Files.exists(tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "rocm")));
+        assertTrue(Files.isRegularFile(
+                tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "vulkan").resolve("libjllama.so")));
     }
 
     @Test
-    public void withoutManifestNoBackendIsAttempted() {
+    public void withoutAnyBackendTheErrorNamesTheMissingNativesJar() {
         assumeLinuxFixtureTree();
         System.setProperty(ARCH_PROP, "backendtest-none");
         UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
-        // No manifest resource exists for this arch folder: the loader must take the
-        // unchanged legacy path with zero backend attempts.
         String message = error.getMessage();
         assertFalse(message.contains("backendtest-none/"), message);
         assertTrue(message.contains("os.arch=backendtest-none"), message);
+        assertTrue(message.contains("natives jar"), message);
     }
 
     @Test
     public void forcedBackendFailsLoudInsteadOfFallingBack() {
         assumeLinuxFixtureTree();
-        System.setProperty(BACKEND_PROP, "fakegpu");
+        System.setProperty(BACKEND_PROP, "cuda13");
         UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
-        assertTrue(error.getMessage().contains("Forced native backend 'fakegpu'"), error.getMessage());
+        assertTrue(error.getMessage().contains("Forced native backend 'cuda13'"), error.getMessage());
+        // Only the forced backend was attempted.
+        assertFalse(Files.exists(tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "vulkan")));
     }
 
     @Test
-    public void forcedUnknownBackendFailsLoud() {
+    public void forcedAbsentBackendFailsLoud() {
         assumeLinuxFixtureTree();
-        System.setProperty(BACKEND_PROP, "does-not-exist");
+        System.setProperty(BACKEND_PROP, "cpu");
         UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
-        assertTrue(error.getMessage().contains("Forced native backend 'does-not-exist'"), error.getMessage());
-    }
-
-    @Test
-    public void forcedDefaultSkipsAllManifestBackends() {
-        assumeLinuxFixtureTree();
-        System.setProperty(BACKEND_PROP, "default");
-        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
-        // The default library is also missing from the fixture tree (its resource path is
-        // then not even listed as tried), so loading still fails — but without any backend
-        // attempt: no backend path may appear in the tried list.
-        String message = error.getMessage();
-        assertFalse(message.contains("/fakegpu"), message);
-        assertFalse(message.contains("/fallbackgpu"), message);
-        assertTrue(message.contains("os.arch=" + FIXTURE_ARCH), message);
+        assertTrue(error.getMessage().contains("Forced native backend 'cpu'"), error.getMessage());
     }
 }

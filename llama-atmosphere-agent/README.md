@@ -100,10 +100,11 @@ Windows (PowerShell — quote the whole `-D` argument, no line continuation with
 mvn -q compile exec:java "-Dexec.args=--model models\Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ctx-size 16384 --workspace C:\path\to\project --allow-shell"
 ```
 
-**4. Optional: use the GPU.** Add a core classifier and offload the layers, e.g.
+**4. Optional: use the GPU.** Add a natives jar of the core and offload the layers, e.g.
 `-Dllama.classifier=vulkan-windows-x86-64` (or `vulkan-linux-x86-64`; any current GPU driver) or
-`cuda13-linux-x86-64` (needs the CUDA 13 toolkit), plus `--ngl 99` inside `-Dexec.args`. macOS uses
-Metal with the default jar already. The root README's classifier table lists every backend.
+`cuda13-linux-x86-64` (needs the CUDA 13 toolkit), plus `--ngl 99` inside `-Dexec.args`. It comes on
+top of the CPU natives, which stay the fallback. macOS uses Metal already. The root README's
+natives table lists every backend.
 
 ## Quick start
 
@@ -164,10 +165,11 @@ first compiler error"*. On Windows PowerShell, quote the whole argument instead:
 `"-Dexec.args=--model C:\models\… --allow-shell --system '…'"`. Inside `--system '…'` avoid the
 apostrophe (write *the user* rather than *user's*): the value is already single-quoted.
 
-GPU natives: pick the core classifier, e.g. `-Dllama.classifier=cuda13-linux-x86-64` or
-`vulkan-windows-x86-64` (the vendor runtime must be installed — see the root README's classifier
-table). Without it the default CPU jar (incl. macOS Metal) is used. In mode A the classifier is
-irrelevant: inference stays in the running server, the agent's JVM loads no model.
+GPU natives: add a natives jar of the core, e.g. `-Dllama.classifier=cuda13-linux-x86-64` or
+`vulkan-windows-x86-64` (the vendor runtime must be installed — see the root README's natives
+table). The CPU natives of every desktop platform (`llama-platform`, macOS with Metal) are always
+there and stay the fallback. In mode A the natives are irrelevant: inference stays in the running
+server, the agent's JVM loads no model.
 
 ### Options
 

@@ -46,25 +46,9 @@ models/*.gguf
 # the agent README downloads its model next to the agent: llama-atmosphere-agent/models/
 llama-atmosphere-agent/models/*.gguf
 llama/src/main/cpp/net_ladenthin_llama_*.h
-llama/src/main/resources_linux_cuda/
-# Per-classifier native trees, staged by CI before the matching Maven profile runs,
-# never committed (same policy as the default-tree native libs below).
-llama/src/main/resources_linux_vulkan/
-llama/src/main/resources_windows_msvc/
-llama/src/main/resources_windows_cuda/
-llama/src/main/resources_windows_vulkan/
-llama/src/main/resources_windows_opencl/
-llama/src/main/resources_linux_rocm/
-llama/src/main/resources_windows_rocm/
-llama/src/main/resources_linux_sycl_fp16/
-llama/src/main/resources_linux_sycl_fp32/
-llama/src/main/resources_windows_sycl/
-llama/src/main/resources_linux_openvino/
-llama/src/main/resources_windows_openvino/
-llama/src/main/resources/**/*.so
-llama/src/main/resources/**/*.dylib
-llama/src/main/resources/**/*.dll
-llama/src/main/resources/**/*.metal
+# Native libraries: one tree, <OS>/<ARCH>/<backend>/, written by CMake and staged by CI,
+# never committed.
+llama/src/main/natives/
 llama/src/test/resources/**/*.gbnf
 
 # Generated WebUI assets (ui.cpp/ui.h) produced once by the build-webui CI job and

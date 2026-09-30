@@ -365,6 +365,8 @@ jobs:
         with:
           java-version: '21'
           distribution: temurin
+      - name: Natives list check (pom, llama-platform, workflow and loader agree with natives.csv)
+        run: python3 .github/check-natives.py
       - name: Spotless check (fail fast on format violations)
         run: mvn -B --no-transfer-progress -f llama/pom.xml spotless:check
       - name: SpotBugs check (fail fast on static-analysis findings)
@@ -449,8 +451,8 @@ jobs:
       - name: Download Linux x86_64 native library (reused, not rebuilt)
         uses: actions/download-artifact@v8
         with:
-          name: Linux-x86_64-libraries
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-cpu-linux-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       - name: Restore shared GGUF model cache (populated by download-models; no re-download)
         # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
         # cache miss cannot re-save an empty/partial entry under the immutable key.
@@ -465,7 +467,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
-      - name: Install parent + core net.ladenthin:llama (bundles the downloaded native library)
+      - name: Install parent + core net.ladenthin:llama (classes; the test JVM loads the downloaded native library via lib.path)
         run: >
           mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
           -Dspotless.check.skip=true -Dspotbugs.skip=true
@@ -477,6 +479,7 @@ jobs:
           -Dnet.ladenthin.llama.langchain4j.embedding.model=models/${NOMIC_EMBED_MODEL_NAME}
           -Dnet.ladenthin.llama.langchain4j.rerank.model=models/${RERANKING_MODEL_NAME}
           -Dnet.ladenthin.llama.langchain4j.tool.model=models/${TOOL_MODEL_NAME}
+          -Dnet.ladenthin.llama.lib.path=${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/Linux/x86_64/cpu
 
       # This job is model-backed and crosses JNI, so a forked test JVM here can abort exactly the
       # way the six test-java-* jobs can -- but it had neither of their diagnostics. Same step and
@@ -568,16 +571,16 @@ jobs:
       - name: Resolve the reactor version
         run: echo "VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)" >> "$GITHUB_ENV"
       - name: Spotless check
-        run: mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" spotless:check
+        run: mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" -Dllama.natives=none spotless:check
       - name: Build and test (unit + model-free wire contract against the real OpenAiCompatServer)
-        run: mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" verify
+        run: mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" -Dllama.natives=none verify
       # The GitHub Release asset llama-atmosphere-agent-<core version>-jar-with-dependencies.jar:
       # the agent plus Atmosphere/JLine, WITHOUT the core (src/assembly/agent-jar.xml), so it is a
       # few MB and the natives are not in the release twice. Never deployed to Maven Central.
       # smoke-agent-linux launches it next to the real core fat jar; the attach jobs sign it.
       - name: Build the agent release jar (without the core)
         run: >
-          mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}"
+          mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" -Dllama.natives=none
           -P assembly -DskipTests package
       - name: Collect the agent release jar + sha256
         run: |
@@ -603,8 +606,8 @@ jobs:
       - name: Download Linux x86_64 native library (reused, not rebuilt)
         uses: actions/download-artifact@v8
         with:
-          name: Linux-x86_64-libraries
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-cpu-linux-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       - name: Restore shared GGUF model cache (populated by download-models; no re-download)
         uses: actions/cache/restore@v6
         with:
@@ -615,7 +618,7 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
-      - name: Install parent + core net.ladenthin:llama (bundles the downloaded native library)
+      - name: Install parent + core net.ladenthin:llama (classes; the test JVM loads the downloaded native library via lib.path)
         run: >
           mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
           -Dspotless.check.skip=true -Dspotbugs.skip=true
@@ -624,10 +627,11 @@ jobs:
         run: echo "VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)" >> "$GITHUB_ENV"
       - name: Run the Atmosphere tool-loop integration test (cached Qwen2.5-1.5B tool model, CPU)
         run: >
-          mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" test
+          mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" -Dllama.natives=none test
           -Dtest=AtmosphereToolLoopIntegrationTest -Dsurefire.failIfNoSpecifiedTests=false
           -Dnet.ladenthin.llama.tool.model=models/${TOOL_MODEL_NAME}
           -Dnet.ladenthin.llama.test.ngl=0
+          -Dnet.ladenthin.llama.lib.path=${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/Linux/x86_64/cpu
       # Model-backed and crossing JNI: same crash diagnostics as the langchain4j integration job.
       - name: Print crash logs (on failure)
         if: failure()
@@ -793,8 +797,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: linux-libraries-cuda
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_cuda/net/ladenthin/llama/
+          name: natives-cuda13-linux-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   crosscompile-linux-x86_64:
     name: Cross-Compile manylinux2014 x86_64
@@ -833,8 +837,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-x86_64-libraries
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-cpu-linux-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   crosscompile-linux-aarch64:
     name: Build and Test Linux aarch64
@@ -888,8 +892,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-aarch64-libraries
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-cpu-linux-aarch64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   build-linux-s390x:
     name: Build and Test Linux s390x (big-endian, qemu)
@@ -897,11 +901,11 @@ jobs:
     # Cross-compile for IBM Z (s390x, BIG-ENDIAN) with the GCC cross toolchain, then run the full
     # C++ unit suite under qemu-user — a real big-endian correctness gate for our helpers and
     # serializers (esp. the little-endian WAV writer, JSON/token/embedding transforms). The BUILD
-    # is native speed (x86 cross-gcc); only the tiny test binary is emulated. s390x is a DEFAULT-jar
-    # CPU platform (like aarch64), so the artifact merges via the `*-libraries` glob (no classifier /
-    # pom profile). Model-backed Java tests are NOT run under emulation (a JVM + GGUF inference under
-    # qemu-user is slow/flaky); the C++ gate covers the actual byte-order risk since the Java<->JNI
-    # boundary uses host-native array copies. GGML_OPENMP=OFF avoids cross-libgomp issues (ggml uses
+    # is native speed (x86 cross-gcc); only the tiny test binary is emulated. s390x is a CPU
+    # platform like aarch64 and ships as the cpu-linux-s390x natives jar. Model-backed Java tests
+    # are NOT run under emulation (a JVM + GGUF inference under qemu-user is slow/flaky); the
+    # C++ gate covers the actual byte-order risk since the Java<->JNI boundary uses host-native
+    # array copies. GGML_OPENMP=OFF avoids cross-libgomp issues (ggml uses
     # its own std::thread pool). CMAKE_CROSSCOMPILING_EMULATOR makes ctest run the s390x exe via qemu;
     # QEMU_LD_PREFIX lets the emulated binary find the s390x sysroot libs.
     runs-on: ubuntu-latest
@@ -945,8 +949,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-s390x-libraries
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-cpu-linux-s390x
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   build-linux-x86_64-vulkan:
     name: Build Linux x86_64 Vulkan
@@ -987,8 +991,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-x86_64-vulkan
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_vulkan/net/ladenthin/llama/
+          name: natives-vulkan-linux-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   build-linux-aarch64-vulkan:
@@ -996,8 +1000,7 @@ jobs:
     needs: [startgate, build-webui]
     # Native ARM64 Vulkan build on GitHub's free arm64 runner (same runner as the aarch64 CPU job).
     # Build-only (GPU-less runner); GGML_NATIVE=OFF for portability across ARMv8 generations; GCC 14
-    # to match the aarch64 CPU job. Reuses the resources_linux_vulkan tree (arch subdir Linux/aarch64);
-    # the vulkan-linux-aarch64 Maven profile packages only that subtree.
+    # to match the aarch64 CPU job. Ships as the vulkan-linux-aarch64 natives jar.
     runs-on: ubuntu-24.04-arm
     env:
       USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
@@ -1028,8 +1031,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-aarch64-vulkan
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_vulkan/net/ladenthin/llama/
+          name: natives-vulkan-linux-aarch64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   crosscompile-android-aarch64:
@@ -1066,8 +1069,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-Android-aarch64-libraries
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-cpu-android-aarch64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   crosscompile-android-x86_64:
     name: Cross-Compile Android x86_64
@@ -1075,8 +1078,7 @@ jobs:
     runs-on: ubuntu-latest
     # Android x86_64 CPU ABI: consumed by the llama-android AAR as jni/x86_64 (so the
     # Android emulator — and x86_64 Android devices/Chromebooks — can run the binding)
-    # and merged into the default JAR's Linux-Android/x86_64 tree via the *-libraries
-    # glob. Same dockcross + sccache steady-state env as the arm64 job; the wrapper
+    # and shipped as the cpu-android-x86-64 natives jar. Same dockcross + sccache steady-state env as the arm64 job; the wrapper
     # pins the same image tag. Fail-loud and in the package/publish needs graphs.
     env:
       USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
@@ -1097,8 +1099,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-Android-x86_64-libraries
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-cpu-android-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   crosscompile-android-aarch64-opencl:
@@ -1128,8 +1130,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: android-libraries-opencl
-          path: ${{ github.workspace }}/llama/src/main/resources_android_opencl/net/ladenthin/llama/
+          name: natives-opencl-android-aarch64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   # ---------------------------------------------------------------------------
   # Android AAR packaging (net.ladenthin:llama-android + llama-android-opencl).
@@ -1167,24 +1169,24 @@ jobs:
       - name: Download Android CPU natives (arm64)
         uses: actions/download-artifact@v8
         with:
-          name: Linux-Android-aarch64-libraries
+          name: natives-cpu-android-aarch64
           path: stage/cpu/
       - name: Download Android CPU natives (x86_64)
         uses: actions/download-artifact@v8
         with:
-          name: Linux-Android-x86_64-libraries
+          name: natives-cpu-android-x86-64
           path: stage/cpu-x86_64/
       - name: Download Android OpenCL natives
         uses: actions/download-artifact@v8
         with:
-          name: android-libraries-opencl
+          name: natives-opencl-android-aarch64
           path: stage/opencl/
       - name: Stage natives for the AAR build
         run: |
           mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64 llama-android/natives/opencl/arm64-v8a
-          cp stage/cpu/Linux-Android/aarch64/libjllama.so llama-android/natives/cpu/arm64-v8a/
-          cp stage/cpu-x86_64/Linux-Android/x86_64/libjllama.so llama-android/natives/cpu/x86_64/
-          cp stage/opencl/Linux-Android/aarch64/libjllama.so llama-android/natives/opencl/arm64-v8a/
+          cp stage/cpu/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
+          cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
+          cp stage/opencl/Linux-Android/aarch64/opencl/libjllama.so llama-android/natives/opencl/arm64-v8a/
       - name: Assemble AARs + publish to mavenLocal
         run: gradle -p llama-android aarCpu aarOpencl publishToMavenLocal
       - name: Validate AAR structure + 16 KB page-size alignment
@@ -1313,18 +1315,18 @@ jobs:
       - name: Download Android CPU natives (arm64)
         uses: actions/download-artifact@v8
         with:
-          name: Linux-Android-aarch64-libraries
+          name: natives-cpu-android-aarch64
           path: stage/cpu/
       - name: Download Android CPU natives (x86_64)
         uses: actions/download-artifact@v8
         with:
-          name: Linux-Android-x86_64-libraries
+          name: natives-cpu-android-x86-64
           path: stage/cpu-x86_64/
       - name: Stage natives + publish the CPU AAR to mavenLocal
         run: |
           mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64
-          cp stage/cpu/Linux-Android/aarch64/libjllama.so llama-android/natives/cpu/arm64-v8a/
-          cp stage/cpu-x86_64/Linux-Android/x86_64/libjllama.so llama-android/natives/cpu/x86_64/
+          cp stage/cpu/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
+          cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
           gradle -p llama-android publishLlamaAndroidPublicationToMavenLocal
       - name: Restore shared GGUF model cache (populated by download-models; no re-download)
         # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
@@ -1407,18 +1409,18 @@ jobs:
       - name: Download Android CPU natives (arm64)
         uses: actions/download-artifact@v8
         with:
-          name: Linux-Android-aarch64-libraries
+          name: natives-cpu-android-aarch64
           path: stage/cpu/
       - name: Download Android CPU natives (x86_64)
         uses: actions/download-artifact@v8
         with:
-          name: Linux-Android-x86_64-libraries
+          name: natives-cpu-android-x86-64
           path: stage/cpu-x86_64/
       - name: Stage natives + publish the CPU AAR to mavenLocal
         run: |
           mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64
-          cp stage/cpu/Linux-Android/aarch64/libjllama.so llama-android/natives/cpu/arm64-v8a/
-          cp stage/cpu-x86_64/Linux-Android/x86_64/libjllama.so llama-android/natives/cpu/x86_64/
+          cp stage/cpu/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
+          cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
           gradle -p llama-android publishLlamaAndroidPublicationToMavenLocal
       - name: Decode upload keystore (if configured)
         # Optional Play upload key. Set the ANDROID_UPLOAD_KEYSTORE_BASE64 secret
@@ -1503,18 +1505,18 @@ jobs:
       - name: Download Android CPU natives (arm64)
         uses: actions/download-artifact@v8
         with:
-          name: Linux-Android-aarch64-libraries
+          name: natives-cpu-android-aarch64
           path: stage/cpu/
       - name: Download Android CPU natives (x86_64)
         uses: actions/download-artifact@v8
         with:
-          name: Linux-Android-x86_64-libraries
+          name: natives-cpu-android-x86-64
           path: stage/cpu-x86_64/
       - name: Stage natives + publish the CPU AAR to mavenLocal
         run: |
           mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64
-          cp stage/cpu/Linux-Android/aarch64/libjllama.so llama-android/natives/cpu/arm64-v8a/
-          cp stage/cpu-x86_64/Linux-Android/x86_64/libjllama.so llama-android/natives/cpu/x86_64/
+          cp stage/cpu/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
+          cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
           gradle -p llama-android publishLlamaAndroidPublicationToMavenLocal
       - name: Restore shared GGUF model cache (populated by download-models; no re-download)
         uses: actions/cache/restore@v6
@@ -1597,7 +1599,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: macos-15-no-metal
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   build-macos-arm64-metal:
     name: Build and Test macOS 14 arm64 (Metal)
@@ -1642,7 +1644,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: macos-14-metal
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   build-windows-x86_64-msvc:
     name: Build and Test Windows 2025 x86_64 (MSVC / VS 2026, classifier)
@@ -1675,8 +1677,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-x86_64-msvc
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-msvc-windows-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   build-windows-x86-msvc:
     name: Build and Test Windows 2025 x86 (MSVC / VS 2026, classifier)
@@ -1709,8 +1711,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-x86-msvc
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-msvc-windows-x86
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   # ---------------------------------------------------------------------------
   # Windows Ninja Multi-Config + sccache — the DEFAULT Windows CPU natives.
@@ -1719,10 +1721,9 @@ jobs:
   # (build.bat probe-guards it). Both generators use the same MSVC toolchain (cl.exe,
   # static /MT CRT) on the same runner, so the produced jllama.dll/llama.dll/ggml.dll
   # are functionally equivalent with identical runtime dependencies — the only delta
-  # is build-system plumbing + caching. The Ninja build is therefore the default JAR
-  # (artifacts `Windows-*-libraries`, picked up by the package job's `pattern:
-  # "*-libraries"`); the MSVC build above is shipped as the `msvc-windows` classifier
-  # for anyone who wants the Visual-Studio-generator natives. Upstream llama.cpp also
+  # is build-system plumbing + caching. The Ninja build therefore ships as the
+  # cpu-windows-* natives jars; the MSVC build above as msvc-windows-*, for anyone who
+  # wants the Visual-Studio-generator natives. Upstream llama.cpp also
   # builds its Windows artifacts with Ninja Multi-Config + MSVC.
   # ---------------------------------------------------------------------------
 
@@ -1777,8 +1778,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-x86_64-libraries
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-cpu-windows-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   build-windows-x86:
     name: Build and Test Windows 2025 x86 (Ninja Multi-Config + sccache, default)
@@ -1831,16 +1832,15 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-x86-libraries
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-cpu-windows-x86
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   build-windows-arm64:
     name: Build and Test Windows 11 arm64 (Ninja Multi-Config, default)
     needs: [startgate, build-webui]
-    # Native arm64 build on GitHub's free windows-11-arm runner. Goes into the DEFAULT JAR (no
-    # classifier): OSInfo maps a Windows-on-ARM JVM (os.arch=aarch64) to Windows/aarch64, the same
-    # path CMake emits here, and the `*-libraries` glob in the package/publish jobs merges it into
-    # src/main/resources. sccache: the native aarch64-pc-windows-msvc release, wrapping clang-cl
+    # Native arm64 build on GitHub's free windows-11-arm runner; ships as the cpu-windows-aarch64
+    # natives jar: OSInfo maps a Windows-on-ARM JVM (os.arch=aarch64) to Windows/aarch64, the same
+    # path CMake emits here. sccache: the native aarch64-pc-windows-msvc release, wrapping clang-cl
     # (guarded by build.bat's probe + uncached retry like every other Windows job).
     #
     # Compiler: clang-cl, NOT MSVC cl.exe. ggml's ggml-cpu/CMakeLists.txt aborts with "MSVC is not
@@ -1900,18 +1900,17 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-aarch64-libraries
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-cpu-windows-aarch64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   # ---------------------------------------------------------------------------
   # Windows GPU classifiers (x86_64 only) — CUDA, Vulkan, OpenCL.
   # All three use the same Ninja Multi-Config + MSVC + sccache toolchain as the
   # default CPU build; they differ only by the GGML backend flag (and the build-time
   # SDK each needs). CMakeLists.txt routes each backend's output to its own
-  # src/main/resources_windows_{cuda,vulkan,opencl}/ tree, which the matching Maven
-  # profile (cuda-windows / vulkan-windows / opencl-windows) turns into a classifier
-  # JAR. GPU runtime libraries are NOT bundled — the consumer's GPU driver / toolkit
-  # provides them (CUDA: cudart64_13/cublas64_13 from the CUDA Toolkit; Vulkan:
+  # src/main/natives/.../Windows/x86_64/<backend>/ directory, which the natives Maven
+  # profile turns into a natives jar. GPU runtime libraries are NOT bundled — the
+  # consumer's GPU driver / toolkit provides them (CUDA: cudart64_13/cublas64_13 from the CUDA Toolkit; Vulkan:
   # vulkan-1.dll from the driver; OpenCL: System32\OpenCL.dll from the driver).
   # NOTE: GitHub-hosted Windows runners have NO GPU, so these jobs build + run the
   # C++ unit suite (ctest, CPU-only) but cannot run model-backed GPU inference;
@@ -1998,8 +1997,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-x86_64-cuda
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_cuda/net/ladenthin/llama/
+          name: natives-cuda13-windows-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   build-windows-x86_64-vulkan:
@@ -2047,8 +2046,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-x86_64-vulkan
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_vulkan/net/ladenthin/llama/
+          name: natives-vulkan-windows-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   build-windows-x86_64-opencl:
@@ -2091,8 +2090,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-x86_64-opencl
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_opencl/net/ladenthin/llama/
+          name: natives-opencl-windows-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -2101,8 +2100,8 @@ jobs:
   # Intel OpenVINO. All BUILD-ONLY (GitHub runners have no AMD/Intel/Adreno GPU, and
   # no ctest — a GPU-linked jllama_test can't enumerate a device). GPU runtime libs
   # are NOT bundled — the consumer's driver/toolkit supplies them. CMakeLists.txt
-  # routes each backend to its own src/main/resources_* tree; the matching Maven
-  # profile turns it into a classifier JAR. Toolchain install steps are first-pass —
+  # routes each backend to its own src/main/natives/<OS>/<ARCH>/<backend>/ directory; the
+  # natives Maven profile turns it into a natives jar. Toolchain install steps are first-pass —
   # if a vendor URL/version 404s in CI, adjust it (the failure is intentional signal).
   # ---------------------------------------------------------------------------
 
@@ -2167,12 +2166,12 @@ jobs:
       - name: Verify the GPU code is compressed
         # ggml-hip is compiled with --offload-compress (llama/CMakeLists.txt); without it the
         # library carries every target's kernels uncompressed. Fails on an uncompressed bundle.
-        run: python3 .github/verify-hip-offload-compressed.py llama/src/main/resources_linux_rocm
+        run: python3 .github/verify-hip-offload-compressed.py llama/src/main/natives
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-x86_64-rocm
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_rocm/net/ladenthin/llama/
+          name: natives-rocm-linux-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   build-windows-x86_64-rocm:
@@ -2253,12 +2252,12 @@ jobs:
       - name: Verify the GPU code is compressed
         # Same check as the Linux ROCm job: an uncompressed bundle means ~1 GB jllama.dll again.
         shell: pwsh
-        run: python .github/verify-hip-offload-compressed.py llama/src/main/resources_windows_rocm
+        run: python .github/verify-hip-offload-compressed.py llama/src/main/natives
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-x86_64-rocm
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_rocm/net/ladenthin/llama/
+          name: natives-rocm-windows-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   build-linux-x86_64-sycl-fp16:
@@ -2300,8 +2299,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-x86_64-sycl-fp16
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_sycl_fp16/net/ladenthin/llama/
+          name: natives-sycl-fp16-linux-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   build-linux-x86_64-sycl-fp32:
@@ -2343,8 +2342,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-x86_64-sycl-fp32
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_sycl_fp32/net/ladenthin/llama/
+          name: natives-sycl-fp32-linux-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   build-windows-x86_64-sycl:
@@ -2397,17 +2396,16 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-x86_64-sycl
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_sycl/net/ladenthin/llama/
+          name: natives-sycl-windows-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   build-windows-arm64-opencl:
     name: Build Windows 11 arm64 OpenCL (Adreno)
     needs: [startgate, build-webui]
     # Windows-on-ARM OpenCL (Snapdragon X / Adreno). Same clang-cl + GGML_OPENMP=OFF
-    # toolchain as the arm64 CPU job (ggml refuses MSVC cl.exe on ARM). Reuses the
-    # resources_windows_opencl tree under Windows/aarch64; the opencl-windows-aarch64
-    # Maven profile packages only that subtree. build_opencl_windows.bat stages the
+    # toolchain as the arm64 CPU job (ggml refuses MSVC cl.exe on ARM). Ships as the
+    # opencl-windows-aarch64 natives jar. build_opencl_windows.bat stages the
     # OpenCL headers + ICD loader before delegating to build.bat.
     runs-on: windows-11-arm
     env:
@@ -2447,8 +2445,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-aarch64-opencl
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_opencl/net/ladenthin/llama/
+          name: natives-opencl-windows-aarch64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   build-linux-x86_64-openvino:
@@ -2498,8 +2496,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Linux-x86_64-openvino
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_openvino/net/ladenthin/llama/
+          name: natives-openvino-linux-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   build-windows-x86_64-openvino:
@@ -2559,8 +2557,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Windows-x86_64-openvino
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_openvino/net/ladenthin/llama/
+          name: natives-openvino-windows-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -2639,8 +2637,8 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: macos-15-metal
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-metal-macos-aarch64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   # ---------------------------------------------------------------------------
   # Java test jobs — download release artifact, run mvn test
@@ -2662,8 +2660,8 @@ jobs:
           cat /proc/cpuinfo
       - uses: actions/download-artifact@v8
         with:
-          name: Linux-x86_64-libraries
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-cpu-linux-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
       # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
       # download logic. GGUF is platform-independent, so ubuntu + macOS + Windows share
@@ -2828,7 +2826,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: macos-14-metal
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
       # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
       # download logic. GGUF is platform-independent, so ubuntu + macOS + Windows share
@@ -2939,7 +2937,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: macos-15-no-metal
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
       # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
       # download logic. GGUF is platform-independent, so ubuntu + macOS + Windows share
@@ -3049,8 +3047,8 @@ jobs:
           system_profiler SPHardwareDataType
       - uses: actions/download-artifact@v8
         with:
-          name: macos-15-metal
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-metal-macos-aarch64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
       # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
       # download logic. GGUF is platform-independent, so ubuntu + macOS + Windows share
@@ -3163,8 +3161,8 @@ jobs:
           Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
       - uses: actions/download-artifact@v8
         with:
-          name: Windows-x86_64-libraries
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-cpu-windows-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
       # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
       # download logic. validate-models is kept as an integrity guard so a partial/absent
@@ -3274,7 +3272,7 @@ jobs:
             ${{ github.workspace }}\llama\target\surefire-reports\*.dumpstream
             ${{ github.workspace }}\llama\target\surefire-reports\*.txt
             ${{ github.workspace }}\llama\target\surefire-reports\TEST-*.xml
-            ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/**/*
+            ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/**/*
           if-no-files-found: warn
 
   # Java/inference validation of the MSVC-built x86_64 DLL (the analogue of
@@ -3300,8 +3298,8 @@ jobs:
           Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
       - uses: actions/download-artifact@v8
         with:
-          name: Windows-x86_64-msvc
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
+          name: natives-msvc-windows-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
       # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
       # download logic. validate-models is kept as an integrity guard so a partial/absent
@@ -3411,7 +3409,7 @@ jobs:
             ${{ github.workspace }}\llama\target\surefire-reports\*.dumpstream
             ${{ github.workspace }}\llama\target\surefire-reports\*.txt
             ${{ github.workspace }}\llama\target\surefire-reports\TEST-*.xml
-            ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/**/*
+            ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/**/*
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
@@ -3456,114 +3454,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Downloaded UNMERGED (one subdirectory per artifact name) on purpose: `merge-multiple: true`
-      # would silently overwrite — and can byte-level interleave — two artifacts that carry the same
-      # relative path, which is how the corrupt macOS dylib shipped. merge-native-artifacts.sh does
-      # the merge instead, and fails the job if any {OS}/{ARCH} path is claimed by more than one
-      # `*-libraries` artifact. A post-merge check cannot catch this (the collision leaves exactly
-      # one file on the path — a corrupt one), so the check has to happen before the merge.
+      # Every shipped native build uploads `natives-<classifier>`. Downloaded UNMERGED (one
+      # subdirectory per artifact) on purpose: merge-native-artifacts.sh checks that each artifact
+      # holds exactly the <OS>/<ARCH>/<backend>/ directory its name promises and that no path is
+      # claimed twice, then merges. `merge-multiple: true` would silently overwrite -- and can
+      # byte-level interleave -- two artifacts with the same path, which is how a corrupt macOS
+      # dylib shipped; the test-only macOS builds (macos-14-metal, macos-15-no-metal) are named
+      # outside the glob for that reason.
       - uses: actions/download-artifact@v8
         with:
-          pattern: "*-libraries"
+          pattern: "natives-*"
           path: ${{ github.workspace }}/native-artifacts/
-      - name: Merge native libraries into the default resource tree (collision-checked)
+      - name: Merge native libraries into the natives tree (checked per artifact)
         run: |
           bash .github/merge-native-artifacts.sh \
             "${{ github.workspace }}/native-artifacts" \
-            "${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/"
-      # All three macOS arm64 build jobs emit the same path Mac/aarch64/libjllama.dylib, so their
-      # artifact names are kept outside the "*-libraries" glob above — merging them would drop
-      # three different dylibs onto one file. The variant that ships is selected explicitly:
-      # macos-15-metal is the only one built with both Metal and GGML_NATIVE=OFF (portable across
-      # CPU generations); macos-14-metal and macos-15-no-metal remain test-only.
-      - uses: actions/download-artifact@v8
-        with:
-          name: macos-15-metal
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: linux-libraries-cuda
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_cuda/net/ladenthin/llama/
-      # Linux Vulkan classifiers (x86_64 + aarch64) share one tree; the two Maven profiles
-      # split it by arch subdir into one single-arch classifier JAR each.
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-vulkan
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_vulkan/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-aarch64-vulkan
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_vulkan/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: android-libraries-opencl
-          path: ${{ github.workspace }}/llama/src/main/resources_android_opencl/net/ladenthin/llama/
-      # MSVC-built Windows natives -> `msvc-windows` classifier tree. The default JAR
-      # now ships the Ninja `*-libraries` natives merged above (default flip).
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-msvc
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_msvc/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86-msvc
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_msvc/net/ladenthin/llama/
-      # Windows GPU classifiers (x86_64 only) -> one tree each.
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-cuda
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_cuda/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-vulkan
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_vulkan/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-opencl
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_opencl/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-rocm
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_rocm/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-rocm
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_rocm/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-sycl-fp16
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_sycl_fp16/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-sycl-fp32
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_sycl_fp32/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-sycl
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_sycl/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-aarch64-opencl
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_opencl/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-openvino
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_openvino/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-openvino
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_openvino/net/ladenthin/llama/
+            "${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/"
       # Runtime dependencies of every shipped native library, read from the file itself (ELF
-      # DT_NEEDED, PE imports incl. Windows arm64, Mach-O load commands). The default tree must
-      # match an exact per-{OS}/{ARCH} allowlist -- a new dependency is a load failure on every
-      # machine that lacks it. The classifier trees legitimately need their vendor runtime, so
-      # there only the denylist applies. The case this was written for: ggml-rpc's RDMA
+      # DT_NEEDED, PE imports incl. Windows arm64, Mach-O load commands). The CPU builds must
+      # match an exact per-<OS>/<ARCH>/<backend> allowlist -- a new dependency is a load failure
+      # on every machine that lacks it. The GPU backends legitimately need their vendor runtime,
+      # so there only the denylist applies. The case this was written for: ggml-rpc's RDMA
       # transport, which upstream enables whenever the build host has libibverbs/librdma
       # (llama/CMakeLists.txt forces it off).
       - name: Verify native runtime dependencies
         run: |
-          python3 .github/verify-native-deps.py --default llama/src/main/resources
-          python3 .github/verify-native-deps.py --deny llama/src/main/resources_*
+          python3 .github/verify-native-deps.py llama/src/main/natives
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -3574,13 +3490,12 @@ jobs:
         # default-platform native libs in one drop-on-classpath JAR, runnable via its
         # ServerLauncher Main-Class). It lands in target/ and is uploaded in the `llama-jars`
         # artifact below - never a Maven Central asset; the `package-fatjars` job downstream
-        # combines it with the classifier jars into the GitHub-Release fat-jar assets.
-        # Windows classifier JARs: `windows-msvc` (MSVC-built CPU natives) plus the GPU
-        # backends `cuda-windows` / `vulkan-windows` / `opencl-windows`. The default JAR's
-        # Windows natives are the Ninja `*-libraries` merged into src/main/resources/ above.
-        run: mvn --batch-mode --no-transfer-progress -P release,cuda,vulkan-linux,vulkan-linux-aarch64,opencl-android,windows-msvc,cuda-windows,vulkan-windows,opencl-windows,rocm-linux,rocm-windows,sycl-fp16-linux,sycl-fp32-linux,sycl-windows,opencl-windows-aarch64,openvino-linux,openvino-windows,assembly -Dmaven.test.skip=true -Dgpg.skip=true package
-      # Class-file floor, checked on every jar this job just built (all 16 classifier
-      # jars plus the default fat jar). Production code targets Java 8, so anything a
+        # combines it with the natives jars into the GitHub-Release fat-jar assets.
+        # `natives` builds one jar per <backend>-<os>-<arch> from the tree merged above; its
+        # enforcer rule fails the build when any of them is missing.
+        run: mvn --batch-mode --no-transfer-progress -P release,natives,assembly -Dmaven.test.skip=true -Dgpg.skip=true package
+      # Class-file floor, checked on every jar this job just built (the classes jar, the
+      # natives jars and the default fat jar). Production code targets Java 8, so anything a
       # consumer's JVM can load must be major 52 or lower: a single Java 11 class kills
       # the process with UnsupportedClassVersionError before any of our code runs, which
       # is exactly what shipped when logback's LogbackServiceProvider was the binding.
@@ -3588,6 +3503,15 @@ jobs:
       # classpath JVM never loads them. Kept byte-identical across all four sibling repos.
       - name: Verify Java 8 bytecode (no class newer than major 52)
         run: .github/verify-bytecode-version.sh --max-major 52 llama/target
+      # The jars as a consumer uses them: the classes jar, its runtime dependencies and all
+      # natives jars at once, on the classpath and on the module path. Proves the directories
+      # never collide and each natives jar is its own automatic module; on this GPU-less runner the
+      # loader normally falls through the GPU backends to the CPU library.
+      - name: Load the natives jars together (classpath and module path)
+        run: |
+          mvn -B -q --no-transfer-progress -f llama/pom.xml dependency:build-classpath \
+            -DincludeScope=runtime -Dmdep.outputFile=runtime-classpath.txt
+          bash .github/smoke-natives-jars.sh llama/target "$(cat llama/runtime-classpath.txt)"
       - name: Upload JARs
         uses: actions/upload-artifact@v7
         with:
@@ -3606,16 +3530,16 @@ jobs:
           path: jars/
       # One self-contained multi-backend server fat jar per OS/arch
       # (llama-<version>-all-<os>-<arch>-jar-with-dependencies.jar): the default
-      # jar-with-dependencies plus every GPU backend of that OS/arch in backend
-      # subdirectories, described by the jllama-backends.txt priority manifest that
-      # LlamaLoader reads at runtime (first loadable backend wins, CPU fallback).
+      # jar-with-dependencies reduced to that OS/arch plus every natives jar of it; each
+      # backend keeps its own directory, which LlamaLoader tries in its fixed priority
+      # order (first loadable backend wins, CPU fallback).
       # These are GitHub-Release download assets ONLY - never deployed to Maven
       # Central (the deploy jobs run without the `assembly` profile and are untouched).
-      # The script enumerates the classifiers from llama/pom.xml and fails loud on any
-      # mismatch with the built classifier jars, so a new classifier cannot be silently
-      # skipped.
+      # The script takes the natives jars from .github/natives.csv and fails loud on any
+      # mismatch with the built jars or on a natives jar holding anything but its own
+      # directory, so a new natives jar cannot be silently skipped.
       - name: Assemble all-backends fat jars
-        run: bash .github/package-fatjars.sh jars fatjars llama/pom.xml
+        run: bash .github/package-fatjars.sh jars fatjars
       - name: Upload fat jars
         uses: actions/upload-artifact@v7
         with:
@@ -3662,9 +3586,9 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
-  # GPU-less runners: every manifest backend must fail its load cleanly (missing vendor
-  # runtimes) and the server must come up on the default CPU natives — this exercises
-  # manifest parsing, per-backend extraction, and the fallback chain end-to-end through
+  # GPU-less runners: every GPU backend must fail its load cleanly (missing vendor
+  # runtimes) and the server must come up on the CPU backend — this exercises backend
+  # probing, per-backend extraction, and the fallback chain end-to-end through
   # a real `java -jar`, then proves the server serves /health + /v1/chat/completions.
   smoke-fatjar-linux:
     name: Smoke test all-backends fat jar (Linux)
@@ -3693,8 +3617,8 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
       # Same floor, re-checked on the ASSEMBLED release asset rather than the module
-      # jars the `package` job verified: package-fatjars rewrites the zip (backend native
-      # trees + the jllama-backends.txt manifest), and this is the artifact users download.
+      # jars the `package` job verified: package-fatjars rewrites the zip (drops the other
+      # platforms, adds the backend trees), and this is the artifact users download.
       - name: Verify Java 8 bytecode (no class newer than major 52)
         run: .github/verify-bytecode-version.sh --max-major 52 fatjars
       - name: Run fat-jar server smoke test
@@ -3994,98 +3918,22 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      # Downloaded UNMERGED (one subdirectory per artifact name) on purpose: `merge-multiple: true`
-      # would silently overwrite — and can byte-level interleave — two artifacts that carry the same
-      # relative path, which is how the corrupt macOS dylib shipped. merge-native-artifacts.sh does
-      # the merge instead, and fails the job if any {OS}/{ARCH} path is claimed by more than one
-      # `*-libraries` artifact. A post-merge check cannot catch this (the collision leaves exactly
-      # one file on the path — a corrupt one), so the check has to happen before the merge.
+      # Every shipped native build uploads `natives-<classifier>`. Downloaded UNMERGED (one
+      # subdirectory per artifact) on purpose: merge-native-artifacts.sh checks that each artifact
+      # holds exactly the <OS>/<ARCH>/<backend>/ directory its name promises and that no path is
+      # claimed twice, then merges. `merge-multiple: true` would silently overwrite -- and can
+      # byte-level interleave -- two artifacts with the same path, which is how a corrupt macOS
+      # dylib shipped; the test-only macOS builds (macos-14-metal, macos-15-no-metal) are named
+      # outside the glob for that reason.
       - uses: actions/download-artifact@v8
         with:
-          pattern: "*-libraries"
+          pattern: "natives-*"
           path: ${{ github.workspace }}/native-artifacts/
-      - name: Merge native libraries into the default resource tree (collision-checked)
+      - name: Merge native libraries into the natives tree (checked per artifact)
         run: |
           bash .github/merge-native-artifacts.sh \
             "${{ github.workspace }}/native-artifacts" \
-            "${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/"
-      # All three macOS arm64 build jobs emit the same path Mac/aarch64/libjllama.dylib, so their
-      # artifact names are kept outside the "*-libraries" glob above — merging them would drop
-      # three different dylibs onto one file. The variant that ships is selected explicitly:
-      # macos-15-metal is the only one built with both Metal and GGML_NATIVE=OFF (portable across
-      # CPU generations); macos-14-metal and macos-15-no-metal remain test-only.
-      - uses: actions/download-artifact@v8
-        with:
-          name: macos-15-metal
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: linux-libraries-cuda
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_cuda/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-vulkan
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_vulkan/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-aarch64-vulkan
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_vulkan/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: android-libraries-opencl
-          path: ${{ github.workspace }}/llama/src/main/resources_android_opencl/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-msvc
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_msvc/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86-msvc
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_msvc/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-cuda
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_cuda/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-vulkan
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_vulkan/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-opencl
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_opencl/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-rocm
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_rocm/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-rocm
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_rocm/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-sycl-fp16
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_sycl_fp16/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-sycl-fp32
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_sycl_fp32/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-sycl
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_sycl/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-aarch64-opencl
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_opencl/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-openvino
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_openvino/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-openvino
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_openvino/net/ladenthin/llama/
+            "${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/"
       - name: Set up Maven Central Repository
         uses: actions/setup-java@v6
         with:
@@ -4105,9 +3953,9 @@ jobs:
             *-SNAPSHOT) echo "OK: -SNAPSHOT version, continuing snapshot deploy." ;;
             *) echo "::error::Refusing to publish non-SNAPSHOT version '$VERSION' from the snapshot job. Snapshot publishing requires a -SNAPSHOT version; releases go through the v* tag path."; exit 1 ;;
           esac
-      # One reactor deploy publishes all four Maven artifacts at the same version:
-      # net.ladenthin:llama-parent (the pom), :llama (the core jar + classifiers),
-      # :llama-langchain4j, and :llama-kotlin. The `release` profile (GPG + Central
+      # One reactor deploy publishes all five Maven artifacts at the same version:
+      # net.ladenthin:llama-parent (the pom), :llama (the classes jar + natives jars),
+      # :llama-langchain4j, :llama-kotlin and :llama-platform (a pom). The `release` profile (GPG + Central
       # Publishing) is inherited from the parent, so every module — including the
       # parent pom — is signed. The Android AARs are published by the separate
       # Gradle step below (Maven cannot deploy <packaging>aar</packaging>).
@@ -4115,9 +3963,9 @@ jobs:
       # profile set as the deploy below, so the resolved central-publishing configuration
       # (waitUntil/waitMaxTime etc.) is visible for debugging.
       - name: Show effective POM (debug)
-        run: mvn --batch-mode --no-transfer-progress -P release,cuda,vulkan-linux,vulkan-linux-aarch64,opencl-android,windows-msvc,cuda-windows,vulkan-windows,opencl-windows,rocm-linux,rocm-windows,sycl-fp16-linux,sycl-fp32-linux,sycl-windows,opencl-windows-aarch64,openvino-linux,openvino-windows help:effective-pom
-      - name: Publish snapshot (reactor - parent + llama + llama-langchain4j + llama-kotlin)
-        run: mvn --batch-mode --no-transfer-progress -P release,cuda,vulkan-linux,vulkan-linux-aarch64,opencl-android,windows-msvc,cuda-windows,vulkan-windows,opencl-windows,rocm-linux,rocm-windows,sycl-fp16-linux,sycl-fp32-linux,sycl-windows,opencl-windows-aarch64,openvino-linux,openvino-windows -Dmaven.test.skip=true deploy
+        run: mvn --batch-mode --no-transfer-progress -P release,natives help:effective-pom
+      - name: Publish snapshot (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-platform)
+        run: mvn --batch-mode --no-transfer-progress -P release,natives -Dmaven.test.skip=true deploy
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
@@ -4132,9 +3980,9 @@ jobs:
       - name: Publish Android AAR snapshots (llama-android + llama-android-opencl)
         run: |
           mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64 llama-android/natives/opencl/arm64-v8a
-          cp llama/src/main/resources/net/ladenthin/llama/Linux-Android/aarch64/libjllama.so llama-android/natives/cpu/arm64-v8a/
-          cp llama/src/main/resources/net/ladenthin/llama/Linux-Android/x86_64/libjllama.so llama-android/natives/cpu/x86_64/
-          cp llama/src/main/resources_android_opencl/net/ladenthin/llama/Linux-Android/aarch64/libjllama.so llama-android/natives/opencl/arm64-v8a/
+          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
+          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
+          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/opencl/libjllama.so llama-android/natives/opencl/arm64-v8a/
           gradle -p llama-android publishAllPublicationsToCentralSnapshotsRepository
         env:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
@@ -4266,98 +4114,22 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
-      # Downloaded UNMERGED (one subdirectory per artifact name) on purpose: `merge-multiple: true`
-      # would silently overwrite — and can byte-level interleave — two artifacts that carry the same
-      # relative path, which is how the corrupt macOS dylib shipped. merge-native-artifacts.sh does
-      # the merge instead, and fails the job if any {OS}/{ARCH} path is claimed by more than one
-      # `*-libraries` artifact. A post-merge check cannot catch this (the collision leaves exactly
-      # one file on the path — a corrupt one), so the check has to happen before the merge.
+      # Every shipped native build uploads `natives-<classifier>`. Downloaded UNMERGED (one
+      # subdirectory per artifact) on purpose: merge-native-artifacts.sh checks that each artifact
+      # holds exactly the <OS>/<ARCH>/<backend>/ directory its name promises and that no path is
+      # claimed twice, then merges. `merge-multiple: true` would silently overwrite -- and can
+      # byte-level interleave -- two artifacts with the same path, which is how a corrupt macOS
+      # dylib shipped; the test-only macOS builds (macos-14-metal, macos-15-no-metal) are named
+      # outside the glob for that reason.
       - uses: actions/download-artifact@v8
         with:
-          pattern: "*-libraries"
+          pattern: "natives-*"
           path: ${{ github.workspace }}/native-artifacts/
-      - name: Merge native libraries into the default resource tree (collision-checked)
+      - name: Merge native libraries into the natives tree (checked per artifact)
         run: |
           bash .github/merge-native-artifacts.sh \
             "${{ github.workspace }}/native-artifacts" \
-            "${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/"
-      # All three macOS arm64 build jobs emit the same path Mac/aarch64/libjllama.dylib, so their
-      # artifact names are kept outside the "*-libraries" glob above — merging them would drop
-      # three different dylibs onto one file. The variant that ships is selected explicitly:
-      # macos-15-metal is the only one built with both Metal and GGML_NATIVE=OFF (portable across
-      # CPU generations); macos-14-metal and macos-15-no-metal remain test-only.
-      - uses: actions/download-artifact@v8
-        with:
-          name: macos-15-metal
-          path: ${{ github.workspace }}/llama/src/main/resources/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: linux-libraries-cuda
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_cuda/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-vulkan
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_vulkan/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-aarch64-vulkan
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_vulkan/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: android-libraries-opencl
-          path: ${{ github.workspace }}/llama/src/main/resources_android_opencl/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-msvc
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_msvc/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86-msvc
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_msvc/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-cuda
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_cuda/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-vulkan
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_vulkan/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-opencl
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_opencl/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-rocm
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_rocm/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-rocm
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_rocm/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-sycl-fp16
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_sycl_fp16/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-sycl-fp32
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_sycl_fp32/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-sycl
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_sycl/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-aarch64-opencl
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_opencl/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Linux-x86_64-openvino
-          path: ${{ github.workspace }}/llama/src/main/resources_linux_openvino/net/ladenthin/llama/
-      - uses: actions/download-artifact@v8
-        with:
-          name: Windows-x86_64-openvino
-          path: ${{ github.workspace }}/llama/src/main/resources_windows_openvino/net/ladenthin/llama/
+            "${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/"
       - name: Set up Maven Central Repository
         uses: actions/setup-java@v6
         with:
@@ -4368,17 +4140,17 @@ jobs:
           server-password: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
-      # One reactor deploy publishes all three artifacts at the same version:
-      # net.ladenthin:llama-parent (the pom), :llama (the core jar + classifiers), and
-      # :llama-langchain4j. The `release` profile (GPG + Central Publishing) is inherited
+      # One reactor deploy publishes all five Maven artifacts at the same version:
+      # net.ladenthin:llama-parent (the pom), :llama (the classes jar + natives jars),
+      # :llama-langchain4j, :llama-kotlin and :llama-platform (a pom). The `release` profile (GPG + Central Publishing) is inherited
       # from the parent, so every module — including the parent pom — is signed.
       # Informational only (nothing depends on it): logs the effective POM with the same
       # profile set as the deploy below, so the resolved central-publishing configuration
       # (waitUntil/waitMaxTime etc.) is visible for debugging.
       - name: Show effective POM (debug)
-        run: mvn --batch-mode --no-transfer-progress -P release,cuda,vulkan-linux,vulkan-linux-aarch64,opencl-android,windows-msvc,cuda-windows,vulkan-windows,opencl-windows,rocm-linux,rocm-windows,sycl-fp16-linux,sycl-fp32-linux,sycl-windows,opencl-windows-aarch64,openvino-linux,openvino-windows help:effective-pom
-      - name: Publish release (reactor - parent + llama + llama-langchain4j + llama-kotlin)
-        run: mvn --batch-mode --no-transfer-progress -P release,cuda,vulkan-linux,vulkan-linux-aarch64,opencl-android,windows-msvc,cuda-windows,vulkan-windows,opencl-windows,rocm-linux,rocm-windows,sycl-fp16-linux,sycl-fp32-linux,sycl-windows,opencl-windows-aarch64,openvino-linux,openvino-windows -Dmaven.test.skip=true deploy
+        run: mvn --batch-mode --no-transfer-progress -P release,natives help:effective-pom
+      - name: Publish release (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-platform)
+        run: mvn --batch-mode --no-transfer-progress -P release,natives -Dmaven.test.skip=true deploy
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
@@ -4398,9 +4170,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64 llama-android/natives/opencl/arm64-v8a
-          cp llama/src/main/resources/net/ladenthin/llama/Linux-Android/aarch64/libjllama.so llama-android/natives/cpu/arm64-v8a/
-          cp llama/src/main/resources/net/ladenthin/llama/Linux-Android/x86_64/libjllama.so llama-android/natives/cpu/x86_64/
-          cp llama/src/main/resources_android_opencl/net/ladenthin/llama/Linux-Android/aarch64/libjllama.so llama-android/natives/opencl/arm64-v8a/
+          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
+          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
+          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/opencl/libjllama.so llama-android/natives/opencl/arm64-v8a/
           gradle -p llama-android publishAllPublicationsToStagingRepository
           VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)
           ( cd llama-android/build/staging-repo && zip -r -q ../central-bundle.zip net -x "*maven-metadata*" )

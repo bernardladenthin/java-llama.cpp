@@ -286,77 +286,41 @@ if(NOT OS_ARCH)
     message(FATAL_ERROR "Could not determine CPU architecture")
 endif()
 
-# Backend + OS routing for the native-library output tree. Each GPU backend ships
-# under its own Maven classifier, so it must land in a backend-specific resource
-# root (the default CPU tree stays src/main/resources/). The GPU branches are
-# OS-aware because the same GGML flag is used on more than one platform:
-#   - GGML_CUDA     -> Linux (resources_linux_cuda)   AND Windows (resources_windows_cuda)
-#   - GGML_OPENCL   -> Android (resources_android_opencl) AND Windows (resources_windows_opencl)
-#   - GGML_VULKAN   -> Windows (resources_windows_vulkan) AND Linux (resources_linux_vulkan)
-#   - GGML_HIP      -> Linux (resources_linux_rocm)    AND Windows (resources_windows_rocm)   [AMD ROCm/HIP]
-#   - GGML_SYCL     -> Windows (resources_windows_sycl) AND Linux (fp16/fp32 split, see below) [Intel oneAPI]
-#   - GGML_OPENVINO -> Linux (resources_linux_openvino) AND Windows (resources_windows_openvino) [Intel OpenVINO]
-# The classifier->tree mapping is mirrored by the matching Maven profile in pom.xml. The Linux
-# Vulkan tree holds both x86_64 and aarch64 under Linux/${OS_ARCH}; two Maven profiles
-# (vulkan-linux / vulkan-linux-aarch64) split it into one single-arch classifier JAR each. The
-# Windows OpenCL tree likewise holds both x86_64 (desktop ICD) and aarch64 (Snapdragon/Adreno),
-# split by the opencl-windows / opencl-windows-aarch64 profiles. Linux SYCL ships two precision
-# variants at the SAME arch, so it is routed to two distinct trees by GGML_SYCL_F16 (fp16 vs fp32).
-if(GGML_CUDA)
-    if(OS_NAME STREQUAL "Windows")
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_windows_cuda/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (CUDA Windows) build - Installing files to ${JLLAMA_DIR}")
+# Native-library output tree: src/main/natives/net/ladenthin/llama/<OS>/<ARCH>/<backend>/.
+# Every build writes into its own backend directory, so all builds of one pipeline share one
+# tree without overwriting each other, and each directory becomes exactly one natives jar
+# (classifier <backend>-<os>-<arch>, see llama/pom.xml). LlamaLoader tries the directories in a
+# fixed priority order (LlamaLoader.BACKEND_PRIORITY), which must list every name set here.
+# `cuda13` names the CUDA major version the classifier promises; change it together with the
+# classifiers when CUDA's major version changes. `msvc` is the Visual Studio generator build,
+# which ships next to the default Ninja build of the same compiler.
+if(NOT DEFINED JLLAMA_BACKEND)
+    if(GGML_CUDA)
+        set(JLLAMA_BACKEND cuda13)
+    elseif(GGML_VULKAN)
+        set(JLLAMA_BACKEND vulkan)
+    elseif(GGML_OPENCL)
+        set(JLLAMA_BACKEND opencl)
+    elseif(GGML_HIP)
+        set(JLLAMA_BACKEND rocm)
+    elseif(GGML_SYCL AND OS_NAME STREQUAL "Windows")
+        set(JLLAMA_BACKEND sycl)
+    elseif(GGML_SYCL AND GGML_SYCL_F16)
+        set(JLLAMA_BACKEND sycl-fp16)
+    elseif(GGML_SYCL)
+        set(JLLAMA_BACKEND sycl-fp32)
+    elseif(GGML_OPENVINO)
+        set(JLLAMA_BACKEND openvino)
+    elseif(APPLE AND GGML_METAL)
+        set(JLLAMA_BACKEND metal)
+    elseif(CMAKE_GENERATOR MATCHES "^Visual Studio")
+        set(JLLAMA_BACKEND msvc)
     else()
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_linux_cuda/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (CUDA Linux) build - Installing files to ${JLLAMA_DIR}")
+        set(JLLAMA_BACKEND cpu)
     endif()
-elseif(GGML_VULKAN)
-    if(OS_NAME STREQUAL "Windows")
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_windows_vulkan/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (Vulkan Windows) build - Installing files to ${JLLAMA_DIR}")
-    else()
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_linux_vulkan/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (Vulkan Linux) build - Installing files to ${JLLAMA_DIR}")
-    endif()
-elseif(GGML_OPENCL)
-    if(OS_NAME STREQUAL "Windows")
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_windows_opencl/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (OpenCL Windows) build - Installing files to ${JLLAMA_DIR}")
-    else()
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_android_opencl/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (OpenCL Android) build - Installing files to ${JLLAMA_DIR}")
-    endif()
-elseif(GGML_HIP)
-    if(OS_NAME STREQUAL "Windows")
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_windows_rocm/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (ROCm/HIP Windows) build - Installing files to ${JLLAMA_DIR}")
-    else()
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_linux_rocm/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (ROCm/HIP Linux) build - Installing files to ${JLLAMA_DIR}")
-    endif()
-elseif(GGML_SYCL)
-    if(OS_NAME STREQUAL "Windows")
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_windows_sycl/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (SYCL Windows) build - Installing files to ${JLLAMA_DIR}")
-    elseif(GGML_SYCL_F16)
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_linux_sycl_fp16/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (SYCL Linux fp16) build - Installing files to ${JLLAMA_DIR}")
-    else()
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_linux_sycl_fp32/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (SYCL Linux fp32) build - Installing files to ${JLLAMA_DIR}")
-    endif()
-elseif(GGML_OPENVINO)
-    if(OS_NAME STREQUAL "Windows")
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_windows_openvino/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (OpenVINO Windows) build - Installing files to ${JLLAMA_DIR}")
-    else()
-        set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources_linux_openvino/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-        message(STATUS "GPU (OpenVINO Linux) build - Installing files to ${JLLAMA_DIR}")
-    endif()
-else()
-    set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/resources/net/ladenthin/llama/${OS_NAME}/${OS_ARCH})
-    message(STATUS "CPU build - Installing files to ${JLLAMA_DIR}")
 endif()
+set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/natives/net/ladenthin/llama/${OS_NAME}/${OS_ARCH}/${JLLAMA_BACKEND})
+message(STATUS "Backend '${JLLAMA_BACKEND}' - installing files to ${JLLAMA_DIR}")
 
 # include jni.h and jni_md.h
 if(NOT DEFINED JNI_INCLUDE_DIRS)

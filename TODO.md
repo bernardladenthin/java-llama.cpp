@@ -19,9 +19,9 @@ so everything below is genuinely still open.
 
 ### macOS dylib links Homebrew OpenSSL (found by `verify-native-deps.py`)
 
-- **The shipped `Mac/aarch64/libjllama.dylib` needs `/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib`
+- **The shipped `Mac/aarch64/metal/libjllama.dylib` needs `/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib`
   and `libcrypto.3.dylib`** (verified on the published 5.1.0 jar and the current snapshot). The macOS
-  build finds the runner's Homebrew OpenSSL and links it dynamically, so the default JAR does not load
+  build finds the runner's Homebrew OpenSSL and links it dynamically, so the macOS natives do not load
   on a Mac without `brew install openssl@3` — and the macOS smoke cannot see it, because the runner
   has it. Likely fix: build BoringSSL statically on macOS as on Windows
   (`LLAMA_BUILD_BORINGSSL`, `llama/CMakeLists.txt`), or turn HTTPS off there (`-DLLAMA_OPENSSL=OFF`;
@@ -350,7 +350,7 @@ real arm64 hardware and the Adreno/OpenCL flavor. Treat LLaMAndroid as prior art
   **What to investigate before committing**:
   - **JNI-loading shape.** Native Image supports JNI but requires `--enable-native-access=ALL-UNNAMED` + reflection/JNI configuration files (`reflect-config.json`, `jni-config.json`, `resource-config.json`) describing every class/method/field reachable across the JNI boundary. The 34 native methods in `jllama.cpp` plus the JNI-side `FindClass` / `GetFieldID` / `GetMethodID` calls at `JNI_OnLoad` need to be mapped. The GraalVM tracing agent (`-agentlib:native-image-agent=config-output-dir=...`) can auto-generate the config during a representative test run, but the `LlamaLoader` JAR-extraction path needs at least one resource-config rule for `net/ladenthin/llama/{OS}/{ARCH}/lib*.so`.
   - **Native-library packaging.** The current `LlamaLoader` extracts the OS-specific `.so`/`.dll`/`.dylib` from the JAR to a tmp dir at first use. Native Image needs the same file at AOT-execution time, so either (a) ship the native lib alongside the produced binary as a sidecar file and adjust `LlamaLoader` to find it on the same directory, or (b) embed the native lib as a resource and keep the existing extract-to-tmpdir flow (which Native Image supports via `resource-config.json`).
-  - **CUDA / Metal / OpenCL backend selection.** Today the choice between CPU-only / `cuda13-linux-x86-64` / `opencl-android-aarch64` JARs is at Maven-classifier time. Native Image would need either one binary per backend (multiplying the release matrix) or a runtime selector inside `LlamaLoader` that picks among bundled backend libs. The latter is a bigger refactor.
+  - **CUDA / Metal / OpenCL backend selection.** `LlamaLoader` already selects at runtime among the natives jars on the classpath (one directory per backend, fixed priority order). Native Image would need those directories as bundled resources (`resource-config.json`) or as sidecar files next to the binary.
   - **Startup-time benchmark to justify the work.** Measure cold-start of a current java-llama.cpp `LlamaModel(new ModelParameters().setModel("...").setNPredict(1))` invocation: how much is JVM startup + class load vs JNI load + model parse + tokenize + 1 token? If JVM startup is < 10 % of cold-start, Native Image yields little. If JVM startup is > 50 %, it's a clear win for CLI / serverless use cases.
   - **Maintenance cost.** Native Image adds a second build matrix (per OS × per backend × per JDK) and a new failure surface (Native Image config drift when a llama.cpp version bump adds new JNI-reachable types). Should ship only with a CI job that exercises the Native Image build on at least one OS, otherwise the config files will rot silently.
 
@@ -368,8 +368,7 @@ green pipeline, and is the macOS member of the cross-repo convention in
 **Optional depth, not scheduled:** a full model-backed macOS server smoke (poll `/health`, assert a
 `/v1/chat/completions` choice) as Linux and Windows run. It would need `verify-model-cache` +
 a cache restore, and — since there is no `all-macos-*` fat jar — either a macOS variant from
-`package-fatjars` or a `smoke-test-fatjar.sh` flag making the backend-manifest grep optional for the
-manifest-less default jar. Worth doing only if a macOS-specific *inference* regression ever appears;
+`package-fatjars` or running `smoke-test-fatjar.sh` against the default jar. Worth doing only if a macOS-specific *inference* regression ever appears;
 the load-time failure class is already covered, and a slow smoke tends to get made non-gating.
 
 **Not yet observed green in CI** — the job and the two sibling-repo smokes landed in one change set
@@ -454,12 +453,10 @@ introduced by the version bump — they were deferred to keep that PR landable.
   the Java → JNI → native trainer round trip. Adding a small training model to `models.csv` plus the
   matching property to the Java test jobs would close it.
 
-- **`LlamaLoader`'s jar-extraction internals need synthetic jar fixtures.** `readBackendManifest`,
-  `tryLoadBackend`, `extractFile`, `moveIntoPlace`, `cleanPath` and `hasNativeLib` are named in no
-  test; `BackendManifestLoadTest` and `LlamaLoaderTest` drive the class only from outside via system
-  properties. Covering the multi-backend fat-jar path (per-backend temp subdir extraction,
-  manifest-extras-first ordering, `UnsatisfiedLinkError` fallback to the next backend and then to the
-  default CPU natives) means building jars carrying a `jllama-backends.txt` and dummy payloads.
+- **`LlamaLoader`'s jar-extraction internals are tested only through directory fixtures.**
+  `BackendLoadTest` drives backend probing, extras, fallthrough and forcing over the committed
+  `Linux/backendtest*/` trees on the test classpath (directories, not jars); extraction out of a real
+  jar is exercised in CI by `smoke-natives-jars.sh` and the fat-jar smokes, not by a unit test.
 
 - **`Java8CompatibilityHelper` is mostly dead code — decide delete vs. test.** Six of its seven
   public methods have zero call sites repo-wide; the only live one is

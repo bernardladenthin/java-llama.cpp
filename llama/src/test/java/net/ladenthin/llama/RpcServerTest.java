@@ -21,7 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import net.ladenthin.llama.exception.LlamaException;
-import net.ladenthin.llama.loader.OSInfo;
+import net.ladenthin.llama.loader.NativeLibraryPresence;
 import net.ladenthin.llama.parameters.ModelParameters;
 import net.ladenthin.llama.value.RpcEndpoint;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,7 +45,7 @@ public class RpcServerTest {
 
     @BeforeEach
     void requireNativeLibrary() {
-        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping RpcServerTest");
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping RpcServerTest");
     }
 
     @Test
@@ -166,11 +166,5 @@ public class RpcServerTest {
         } catch (IOException e) {
             return false;
         }
-    }
-
-    static boolean nativeLibraryOnClasspath() {
-        String resource = "/net/ladenthin/llama/" + OSInfo.getNativeLibFolderPathForCurrentOS() + "/"
-                + System.mapLibraryName("jllama");
-        return RpcServerTest.class.getResource(resource) != null;
     }
 }

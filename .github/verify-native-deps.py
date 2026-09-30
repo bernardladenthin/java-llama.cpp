@@ -14,13 +14,13 @@ any runner and checks every architecture, including the ones binutils cannot rea
 Mach-O).
 
 Usage:
-  verify-native-deps.py --default <resources-root>   # exact allowlist per <OS>/<ARCH>
-  verify-native-deps.py --deny <dir>...               # classifier trees: only the denylist
+  verify-native-deps.py <natives-root>
 
---default checks net/ladenthin/llama/<OS>/<ARCH>/ under the root against ALLOWED below: a
-dependency outside the list fails, and so does an <OS>/<ARCH> without a list (a new platform
-must be listed consciously). --deny scans every native library under the directories for DENIED
-names only, because GPU classifiers legitimately need their vendor runtime.
+Checks every library under <natives-root>/net/ladenthin/llama/<OS>/<ARCH>/<backend>/. The CPU
+builds (backend cpu, metal, msvc) are held to the exact allowlist in ALLOWED: a dependency outside
+it fails, and so does a CPU build without a list (a new platform must be listed consciously). The
+GPU backends are checked against DENIED only, because they legitimately need their vendor runtime.
+That every listed build arrived is merge-native-artifacts.sh's check.
 
 Exit codes: 0 clean, 1 violation, 2 nothing found to check.
 """
@@ -29,20 +29,20 @@ import os
 import struct
 import sys
 
-# What each default-JAR library needed when this check was introduced (5.1.0 plus the RPC backend,
+# What each CPU library needed when this check was introduced (5.1.0 plus the RPC backend,
 # which adds nothing: its sockets are libc/libSystem/WS2_32, all already present).
 ALLOWED = {
-    "Linux/x86_64": {"libdl.so.2", "libgomp.so.1", "libpthread.so.0", "librt.so.1", "libstdc++.so.6",
+    "Linux/x86_64/cpu": {"libdl.so.2", "libgomp.so.1", "libpthread.so.0", "librt.so.1", "libstdc++.so.6",
                      "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld-linux-x86-64.so.2"},
-    "Linux/aarch64": {"libgomp.so.1", "libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6",
+    "Linux/aarch64/cpu": {"libgomp.so.1", "libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6",
                       "ld-linux-aarch64.so.1"},
-    "Linux/s390x": {"libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld64.so.1"},
-    "Linux-Android/aarch64": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
-    "Linux-Android/x86_64": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
-    "Windows/x86_64": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll", "vcomp140.dll"},
-    "Windows/x86": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll", "vcomp140.dll"},
-    "Windows/aarch64": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll"},
-    "Mac/aarch64": {"/usr/lib/libc++.1.dylib", "/usr/lib/libSystem.B.dylib",
+    "Linux/s390x/cpu": {"libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld64.so.1"},
+    "Linux-Android/aarch64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
+    "Linux-Android/x86_64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
+    "Windows/x86_64/cpu": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll", "vcomp140.dll"},
+    "Windows/x86/cpu": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll", "vcomp140.dll"},
+    "Windows/aarch64/cpu": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll"},
+    "Mac/aarch64/metal": {"/usr/lib/libc++.1.dylib", "/usr/lib/libSystem.B.dylib",
                     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
                     "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
                     "/System/Library/Frameworks/MetalKit.framework/Versions/A/MetalKit",
@@ -57,6 +57,11 @@ ALLOWED = {
                     "/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib",
                     "/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib"},
 }
+# The Visual Studio generator build of the same compiler and runtime.
+ALLOWED["Windows/x86_64/msvc"] = ALLOWED["Windows/x86_64/cpu"]
+ALLOWED["Windows/x86/msvc"] = ALLOWED["Windows/x86/cpu"]
+CPU_BACKENDS = ("cpu", "metal", "msvc")
+LIBRARY_NAMES = ("libjllama.so", "jllama.dll", "libjllama.dylib")
 
 # Never acceptable in any artifact: libraries a consumer cannot be expected to have.
 DENIED = ("libibverbs", "librdma", "rdma.dylib", "libmlx")
@@ -174,32 +179,32 @@ def denied(deps):
 
 
 def main(argv):
-    if len(argv) < 3 or argv[1] not in ("--default", "--deny"):
+    if len(argv) != 2:
         print(__doc__, file=sys.stderr)
         return 2
-    mode, roots = argv[1], argv[2:]
+    root = argv[1]
     checked = 0
     failures = []
-    for root in roots:
-        for path in sorted(find_libraries(root)):
-            deps = dependencies(path)
-            checked += 1
-            rel = os.path.relpath(path, root).replace(os.sep, "/")
-            print(f"{rel}: {' '.join(deps)}")
-            for d in denied(deps):
-                failures.append(f"{rel} needs {d}, which no consumer can be expected to have")
-            if mode == "--default":
-                parts = rel.split("/")
-                key = "/".join(parts[-3:-1]) if len(parts) >= 3 else ""
-                allowed = ALLOWED.get(key)
-                if allowed is None:
-                    failures.append(f"{rel}: no dependency allowlist for '{key}' -- add one to ALLOWED")
-                    continue
-                for d in deps:
-                    if d.lower() not in {a.lower() for a in allowed}:
-                        failures.append(f"{rel} needs {d}, which it did not need before (allowed: {sorted(allowed)})")
+    for path in sorted(find_libraries(root)):
+        deps = dependencies(path)
+        checked += 1
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        print(f"{rel}: {' '.join(deps)}")
+        for d in denied(deps):
+            failures.append(f"{rel} needs {d}, which no consumer can be expected to have")
+        parts = rel.split("/")
+        key = "/".join(parts[-4:-1]) if len(parts) >= 4 else ""
+        if key.rsplit("/", 1)[-1] not in CPU_BACKENDS or os.path.basename(path) not in LIBRARY_NAMES:
+            continue
+        allowed = ALLOWED.get(key)
+        if allowed is None:
+            failures.append(f"{rel}: no dependency allowlist for '{key}' -- add one to ALLOWED")
+            continue
+        for d in deps:
+            if d.lower() not in {a.lower() for a in allowed}:
+                failures.append(f"{rel} needs {d}, which it did not need before (allowed: {sorted(allowed)})")
     if checked == 0:
-        print(f"no native library found under {roots}", file=sys.stderr)
+        print(f"no native library found under {root}", file=sys.stderr)
         return 2
     for f in failures:
         print(f"::error::{f}", file=sys.stderr)

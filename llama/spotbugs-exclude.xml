@@ -800,18 +800,6 @@ SPDX-License-Identifier: MIT
     </Match>
 
     <!--
-        LlamaLoader$BackendEntry's constructor takes List (not Collection) on purpose: the
-        extra files of a backend-manifest entry are ORDER-SIGNIFICANT (they are extracted
-        and loaded in listed order, before the backend's main library), and List documents
-        that contract at the API boundary. Same rationale as SessionCheckpoint above.
-    -->
-    <Match>
-        <Class name="net.ladenthin.llama.loader.LlamaLoader$BackendEntry"/>
-        <Bug pattern="OCP_OVERLY_CONCRETE_COLLECTION_PARAMETER"/>
-        <Method name="&lt;init&gt;"/>
-    </Match>
-
-    <!--
         LlamaLoader.loadNativeLibrary(String) accumulates the diagnostic triedPaths list
         (a handful of strings that only ever feed the final UnsatisfiedLinkError message).
         fb-contrib's PSC_PRESIZE_COLLECTIONS fires because the backend-candidate loop adds

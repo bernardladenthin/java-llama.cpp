@@ -126,12 +126,12 @@ path = "llama/src/test/resources/audios/sample.wav"
 SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
 SPDX-License-Identifier = "MIT"
 
-# Backend-manifest loader test fixtures (backendtest/ + backendtest-ok/):
+# Backend loader test fixtures (backendtest/ + backendtest-ok/):
 # deliberately unloadable fake *.so placeholders (one-line text files) plus two
 # trivial real x86-64 ELF dummies in backendtest-ok/ (built from a one-line C
 # TU, no upstream code) — .so files have no inline-comment syntax for SPDX
-# headers; the manifest .txt files carry theirs inline. Consumed by
-# BackendManifestLoadTest.
+# headers; the jllama-extras.txt files carry theirs inline. Consumed by
+# BackendLoadTest.
 [[annotations]]
 path = "llama/src/test/resources/net/ladenthin/llama/Linux/backendtest*/**"
 SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
