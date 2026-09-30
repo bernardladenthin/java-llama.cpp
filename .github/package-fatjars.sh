@@ -180,10 +180,16 @@ for target in $(printf '%s\n' "${!TARGET_CLASSIFIERS[@]}" | sort); do
     echo "OK: $(basename "$out_jar") ($(du -h "$out_jar" | cut -f1);$classifiers)"
 done
 
-# --- 4. At least the four release targets were produced ------------------------------------
-for target in linux-x86-64 linux-aarch64 windows-x86-64 windows-aarch64; do
-    [ -f "$OUT_DIR/llama-$VERSION-all-$target-jar-with-dependencies.jar" ] || fail "no all-$target fat jar produced"
-done
+# --- 4. Exactly the targets the list derives were produced ---------------------------------
+# check-natives.py derives them from natives.csv as well and checks every consumer against the
+# same derivation (smoke jobs, the agent jar's Class-Path, README), so a target this loop drops
+# or invents cannot reach a release unlaunched.
+produced="$(cd "$OUT_DIR" && ls llama-"$VERSION"-all-*-jar-with-dependencies.jar \
+    | sed -e "s/^llama-$VERSION-all-//" -e 's/-jar-with-dependencies\.jar$//' | sort)"
+expected="$(python3 "$(dirname "$0")/check-natives.py" fatjar-targets | sort)"
+[ -n "$expected" ] || fail "check-natives.py derived no all-backends fat jar from $LIST"
+[ "$produced" = "$expected" ] \
+    || fail "all-backends fat jars produced: $(echo $produced) -- natives.csv derives: $(echo $expected)"
 
 # --- 5. The default (all-platform CPU) fat jar is a release asset too -------------------------
 cp "$BASE_FAT_JAR" "$OUT_DIR/"

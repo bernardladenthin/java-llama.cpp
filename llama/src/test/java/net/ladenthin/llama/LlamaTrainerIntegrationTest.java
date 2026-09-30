@@ -20,10 +20,10 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * End-to-end fine-tuning smoke over a real model — the only test that exercises the
- * Java -> JNI -> native trainer round trip. Self-skips unless a GGUF is provided via
- * {@code -Dnet.ladenthin.llama.train.model=/path/to/model.gguf}; CI sets that on every Java test
- * job to {@code stories260K.gguf} (1.19 MB, F32), so it runs there rather than self-skipping.
- * A local build without that model still skips cleanly.
+ * Java -> JNI -> native trainer round trip. Uses {@link TestConstants#DEFAULT_TRAIN_MODEL_PATH}
+ * ({@code models/stories260K.gguf}, 1.19 MB, F32 -- in CI's model set, so it runs on every Java test
+ * job) unless {@code -Dnet.ladenthin.llama.train.model=/path/to/model.gguf} names another; a local
+ * build without that model skips cleanly.
  *
  * <p>The fixture must be <strong>F32</strong>: {@code llama_set_param} silently ignores any tensor
  * that is not {@code GGML_TYPE_F32}, so a quantized model trains nothing and still produces an
@@ -33,10 +33,12 @@ class LlamaTrainerIntegrationTest {
 
     @Test
     void finetuneWritesAnOutputModel(@TempDir Path tmp) throws Exception {
-        String modelPath = TestConstants.resolveModelProperty("net.ladenthin.llama.train.model");
+        String modelPath = TestConstants.resolveModelProperty(
+                TestConstants.PROP_TRAIN_MODEL_PATH, TestConstants.DEFAULT_TRAIN_MODEL_PATH);
         Assumptions.assumeTrue(
                 modelPath != null && !modelPath.isEmpty() && Files.exists(Paths.get(modelPath)),
-                "set -Dnet.ladenthin.llama.train.model=/path/to/small.gguf to run the fine-tune smoke");
+                "model missing: " + modelPath + " (or set -D" + TestConstants.PROP_TRAIN_MODEL_PATH
+                        + "=/path/to/f32.gguf)");
 
         StringBuilder corpus = new StringBuilder();
         for (int i = 0; i < 64; i++) {

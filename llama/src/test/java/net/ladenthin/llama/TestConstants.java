@@ -99,9 +99,13 @@ public class TestConstants {
      * ({@code nomic-embed-text-v1.5.f16.gguf} or a compatible BERT-family encoder).
      * Used by {@link LlamaEmbeddingsTest#testNomicEmbedLoads} to confirm upstream
      * issue #98 (BERT-encoder result_output assertion) stays resolved.
-     * When the property is unset the test self-skips.
+     * When the property is unset the test uses {@link #DEFAULT_NOMIC_MODEL_PATH}, and self-skips
+     * when the file is missing.
      */
     public static final String PROP_NOMIC_MODEL_PATH = LlamaSystemProperties.PREFIX + ".nomic.path";
+
+    /** Path used when {@link #PROP_NOMIC_MODEL_PATH} is unset: the CI model (.github/models.csv). */
+    public static final String DEFAULT_NOMIC_MODEL_PATH = resolveModelPath("models/nomic-embed-text-v1.5.f16.gguf");
 
     /** Expected embedding dimension of nomic-embed-text-v1.5 (hidden size = 768). */
     public static final int NOMIC_EMBED_DIM = 768;
@@ -109,13 +113,20 @@ public class TestConstants {
     /**
      * System property holding a path to a vision-capable model GGUF. Consumed by
      * {@code MultimodalIntegrationTest}. The CI default is the
-     * SmolVLM-500M Q8_0 GGUF; the test self-skips when the property is unset or
-     * the file is missing.
+     * SmolVLM-500M Q8_0 GGUF ({@link #DEFAULT_VISION_MODEL_PATH}, used when the property is
+     * unset); the test self-skips when the file is missing.
      */
     public static final String PROP_VISION_MODEL_PATH = LlamaSystemProperties.PREFIX + ".vision.model";
 
     /** System property holding a path to the matching mmproj GGUF for the vision model. */
     public static final String PROP_VISION_MMPROJ_PATH = LlamaSystemProperties.PREFIX + ".vision.mmproj";
+
+    /** Path used when {@link #PROP_VISION_MODEL_PATH} is unset: the CI model (.github/models.csv). */
+    public static final String DEFAULT_VISION_MODEL_PATH = resolveModelPath("models/SmolVLM-500M-Instruct-Q8_0.gguf");
+
+    /** Path used when {@link #PROP_VISION_MMPROJ_PATH} is unset: the CI mmproj (.github/models.csv). */
+    public static final String DEFAULT_VISION_MMPROJ_PATH =
+            resolveModelPath("models/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf");
 
     /**
      * System property holding a path to an image used as the visual prompt in
@@ -162,7 +173,8 @@ public class TestConstants {
 
     /**
      * System property holding a path to the Qwen3-TTS backbone GGUF used by
-     * {@code TtsIntegrationTest}. The test self-skips when this or the mmproj is unset/missing.
+     * {@code TtsIntegrationTest} ({@link #DEFAULT_TTS_MODEL_PATH} when unset). The test self-skips when
+     * this or the mmproj file is missing.
      */
     public static final String PROP_TTS_MODEL = LlamaSystemProperties.PREFIX + ".tts.model";
 
@@ -171,4 +183,21 @@ public class TestConstants {
      * predictor + code2wav decoder).
      */
     public static final String PROP_TTS_MMPROJ = LlamaSystemProperties.PREFIX + ".tts.mmproj";
+
+    /** Path used when {@link #PROP_TTS_MODEL} is unset: the CI backbone (.github/models.csv). */
+    public static final String DEFAULT_TTS_MODEL_PATH = resolveModelPath("models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf");
+
+    /** Path used when {@link #PROP_TTS_MMPROJ} is unset: the CI mmproj (.github/models.csv). */
+    public static final String DEFAULT_TTS_MMPROJ_PATH =
+            resolveModelPath("models/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf");
+
+    /**
+     * System property holding a path to the F32 model {@code LlamaTrainerIntegrationTest} fine-tunes
+     * (F32 because {@code llama_set_param} skips every other tensor type). The test self-skips when
+     * the file is missing.
+     */
+    public static final String PROP_TRAIN_MODEL_PATH = LlamaSystemProperties.PREFIX + ".train.model";
+
+    /** Path used when {@link #PROP_TRAIN_MODEL_PATH} is unset: the CI model (.github/models.csv). */
+    public static final String DEFAULT_TRAIN_MODEL_PATH = resolveModelPath("models/stories260K.gguf");
 }

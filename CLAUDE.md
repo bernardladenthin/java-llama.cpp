@@ -37,17 +37,21 @@ it or is checked against it:
 | `llama/CMakeLists.txt` | names the backend directory (`JLLAMA_BACKEND`: GGML flag → name; `msvc` = Visual Studio generator; `metal` = Apple + `GGML_METAL`) and writes to `src/main/natives/net/ladenthin/llama/<OS>/<ARCH>/<backend>/` |
 | `llama/pom.xml` `natives` profile | one `maven-jar-plugin` execution per row, **generated**: `python3 .github/check-natives.py pom` prints them |
 | `llama-platform/pom.xml` | depends on the rows with `platform=yes` |
-| `publish.yml` build jobs | each uploads its tree as artifact `natives-<classifier>` |
+| `publish.yml` build jobs | each uploads its tree as artifact `natives-<classifier>`; `package` waits for every one of them (transitively) |
 | `LlamaLoader.BACKEND_PRIORITY` | must contain every backend directory |
-| `.github/check-natives.py` | runs in `code-style` (first minutes of every run); fails when the four rows above disagree with the list |
+| the all-backends fat jars | **derived**: one `all-<os>-<arch>` per OS/arch with more than one natives jar (no `msvc`, no Android) — `check-natives.py fatjar-targets` prints them; each must be uploaded for and launched by a smoke job, named in the agent jar's `Class-Path` and in the README |
+| `.github/check-natives.py` | runs in `code-style` (first minutes of every run); fails when any row of this table disagrees with the list — including CMake's backend names, the dependency allowlists and the README rows |
 | `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library and nothing outside its directory, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows) |
-| `.github/package-fatjars.sh` | reads the list: the built natives jars match it, each holds only its directory and the right `Automatic-Module-Name`; merges one `all-<os>-<arch>` fat jar per OS/arch with a GPU backend (no `msvc`, no Android) |
-| `.github/verify-native-deps.py` | exact dependency allowlist per CPU directory (`cpu`/`metal`/`msvc`), denylist for GPU ones |
+| `.github/package-fatjars.sh` | reads the list: the built natives jars match it, each holds only its directory and the right `Automatic-Module-Name`; merges the all-backends fat jars and fails unless it produced exactly the targets `check-natives.py fatjar-targets` derives |
+| `.github/verify-native-deps.py` | exact dependency allowlist per CPU directory (`cpu`/`metal`/`msvc`) and for the Android OpenCL build (bionic + `libOpenCL.so`), denylist for the other GPU ones; every Android library 16 KB page-aligned (Google Play). Runs in `package` and on the staged AAR libraries |
 | `.github/smoke-natives-jars.sh` (`package` job) | loads the real jars: classes + all 26 natives jars at once, on the classpath **and** the module path (on the GPU-less runner normally ending at `cpu`) |
 
 **Adding a natives jar:** a row in `natives.csv`, the execution `check-natives.py pom` prints, a build
 job uploading `natives-<classifier>`, the backend name in CMake and `BACKEND_PRIORITY` if new, a
-README row. `check-natives.py` fails until they agree; nothing else needs touching.
+README row. `check-natives.py` fails until they agree; nothing else needs touching — the fat-jar
+targets follow by themselves (a new OS/arch with a GPU backend also needs its smoke job, which
+`check-natives.py` then demands). The checks are Python in `.github/buildcheck/` with unit tests
+(see "Build checks, shared files and the release gate").
 
 **Why the build jobs are not spawned from the list as one matrix** (considered and rejected): the 26
 builds use genuinely different toolchains — dockcross images, the CUDA redist archives, ROCm pip
@@ -70,6 +74,60 @@ module-path launch needs `--add-modules` (or the natives jars on the classpath).
 to the test classpath (`additionalClasspathElements`), so `mvn test` finds the library. `-P natives`
 is CI-only (a local tree holds one directory); a missing directory there is caught by the merge
 step, not by Maven.
+
+## Build checks, shared files and the release gate (`.github/buildcheck/`)
+
+The pipeline's static checks are a small **stdlib-only Python package**, `.github/buildcheck/`, with
+unit tests in `.github/buildcheck/tests/` (`python3 -m unittest discover -s .github/buildcheck/tests
+-t .github`, from the repo root). The `.github/*.py` scripts are thin command-line wrappers around it,
+so every check can be driven with literal inputs in a test — including the ELF/PE/Mach-O parsers
+(synthesized binaries) and the workflow parser. It deliberately does not use PyYAML: the runners do
+not guarantee it, and the checks only need the job graph, which `workflow.py` reads from the two
+shapes this repo writes and rejects anything else loudly.
+
+| Module | CLI | What it checks |
+|---|---|---|
+| `natives.py` | `check-natives.py` (`code-style`) | everything that names a natives jar agrees with `natives.csv` (see "Natives jars") |
+| `models.py` | `check-natives.py` | every `*_MODEL_NAME` of publish.yml's `env:` is a filename of `models.csv` |
+| `nativedeps.py` | `verify-native-deps.py` (`package`, `package-android-aar`) | dependency allowlists, 16 KB Android alignment |
+| `hipoffload.py` | `verify-hip-offload-compressed.py` (the two ROCm jobs) | no uncompressed GPU code bundle |
+| `workflow.py` | — | the job graph of a workflow (`needs`, uploads, transitive closure) |
+| `releasegate.py` | `check-release-gate.py` (`shared-files`) | every job gates **both** publish jobs, unless `.github/release-gate-exemptions.txt` names it with a reason |
+| `sharedfiles.py` | `check-shared-files.py` (`shared-files`) | the files kept byte-identical across the four sibling repos |
+
+**The release gate.** A job nothing waits for can go red while a release still ships — the natives
+builds `package` once forgot to wait for, and the aarch64 fat jars that were signed and attached
+without any job launching them, were both that shape. So "not gating" is a written decision: a line
+`<job>: <reason>` in `.github/release-gate-exemptions.txt`. The check fails both ways — a job neither
+gating nor listed, and a listed job that gates after all (a stale exemption hides the next job of that
+name). Introducing it found `vmlens` gating nothing in all four repos; it now gates both publish jobs.
+
+**Shared files (all four repos).** Files kept byte-identical in java-llama.cpp, BitcoinAddressFinder,
+srcmorph and streambuffer are listed with their SHA-256 in each repo's **`.github/shared-files.sha256`**
+(`sha256sum` format, so `sha256sum -c` reads it too). The `shared-files` job — itself identical in all
+four `publish.yml` files, and gating both publish jobs — **fails** when a listed file changed here
+alone, and **warns** when another repo's default branch lists the same file with a different hash (a
+sync is one change per repo and lands in four steps, so a warning, not a failure). **The manifest is
+the reference for what must stay equal**: changing a shared file means changing every copy, then
+`python3 .github/check-shared-files.py --write` in each repo. Forgetting one is not a disaster — the
+job says so, and the history shows it — but nobody can edit a shared script without learning that it
+is shared. Duplicating the library across repos is therefore deliberate. A separate actions/library
+repo was considered and rejected: every consumer would need a pinned SHA per use (Scorecard's
+pinned-dependencies rule), a release process of its own, and a cross-repo checkout; copies with a
+checksum keep each repo self-contained. Shared today: the `buildcheck` modules above marked shared in
+`__init__.py` (+ their tests and CLIs), `print-crash-logs.sh`, `verify-signing-key.sh`,
+`verify-bytecode-version.sh`, `sign-fatjars.sh` (jllama + srcmorph), `smoke-fatjar-cli.sh` (BAF +
+srcmorph), the signing self-test, `lombok.config` and the issue/PR templates.
+
+**Composite actions (`.github/actions/`, this repo only).** `restore-models` (restore the shared GGUF
+cache + `validate-models.sh`; the one place a job gets its models — 16 call sites) and
+`install-sccache-windows` (10 call sites; the caller keeps `if:` and `continue-on-error`). Composite,
+not reusable workflows: they replace steps without changing any job or check name.
+
+**Considered and not done** (measured after the above): a reusable workflow for the Java test jobs
+(the three macOS jobs are 53 lines each with 7 differing, the two Windows jobs 77) and a matrix for
+the four fat-jar smokes (32–47 lines each). Both would save about a hundred lines and rename every
+affected check, which means updating branch protection — not worth it at this size.
 
 ## Upgrading CUDA Version
 
@@ -273,7 +331,9 @@ FindVulkan-compatible). Because all five Windows build jobs are in the `package`
 GPU-toolchain failure blocks packaging — the same release-gating policy every build job follows.
 
 **sccache on every Windows Ninja job.** All ten Ninja build jobs install sccache (x86_64 or the
-native `aarch64` release) with the same `USE_CACHE` / `SCCACHE_WEBDAV_*` env; only the two MSVC-classifier
+native `aarch64` release) through the composite action `.github/actions/install-sccache-windows`
+(arch from `RUNNER_ARCH`; its version must equal `SCCACHE_DL_VERSION` in `build.sh`) with the same
+`USE_CACHE` / `SCCACHE_WEBDAV_*` env; only the two MSVC-classifier
 jobs cannot, because the Visual Studio generator ignores compiler launchers. It cannot red a build, by
 three guards in `build.bat`: the install step is `continue-on-error`; a probe compiles through sccache
 before it is trusted; and — because that probe only proves `cl.exe`, while arm64 builds with `clang-cl`,
@@ -690,7 +750,10 @@ v0.16.0 + the probe this is no longer a risk.) Job-by-job status:
    OpenCL headers/loader, then delegates the jllama cmake build to `build.sh` via `exec`
    (same pattern as `build_cuda_linux.sh`), so it inherits the probe and launcher automatically.
 
-Per-job recipe: add `env:` { `USE_CACHE`, `SCCACHE_WEBDAV_ENDPOINT`, `SCCACHE_WEBDAV_TOKEN` } and
+Per-job recipe: `USE_CACHE` and `SCCACHE_WEBDAV_ENDPOINT` are workflow-level `env:` (every job has
+them); a cached job adds only `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` to its own `env:` —
+kept per job on purpose, since at workflow level the token would reach every job, including those
+running third-party actions — and, for dockcross,
 `DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"` — the
 dockcross wrapper only forwards host env it is explicitly told to via `-e`. The fetched sccache
 version is the `SCCACHE_DL_VERSION` knob in `build.sh` (default **0.18.0**; overridable per-job
@@ -943,10 +1006,11 @@ the *build host* has `libibverbs` (Linux) or `librdma` (Apple), which would make
 `libibverbs.so.1` at load time and fail on every machine without rdma-core; it cannot be linked
 statically in a useful way either (it `dlopen`s its hardware providers), and upstream's own CMake
 comment says the Apple weak link does not survive a static `ggml-rpc`. **`.github/verify-native-deps.py`**
-(the `package` job) reads each shipped library's dependency list straight from the file — ELF
+(the `package` job; the code and its tests are `.github/buildcheck/nativedeps.py`) reads each shipped library's dependency list straight from the file — ELF
 `DT_NEEDED`, PE import table including Windows arm64 (which binutils cannot read), Mach-O load
-commands — and holds every CPU directory (`cpu`, `metal`, `msvc`) to an exact per-directory
-allowlist (the GPU directories only to a denylist, since they need their vendor runtime). A new CPU
+commands — and holds every CPU directory (`cpu`, `metal`, `msvc`) and the Android OpenCL build to an
+exact per-directory allowlist (the other GPU directories only to a denylist, since they need their
+vendor runtime). A new CPU
 directory without an allowlist fails too. (That every build arrived is the merge step's check against
 `natives.csv`.) **It found a pre-existing defect on its first run**: the macOS dylib links Homebrew's
 `openssl@3` (`/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib` + `libcrypto`), so it does not load on a
@@ -1307,49 +1371,40 @@ mvn test -Dtest=MemoryManagementTest
 mvn test -Dtest=LlamaModelTest#testGenerateAnswer
 ```
 
-**Optional models** referenced by individual tests are gated on a system
-property so CI can skip them cleanly when the GGUF is not downloaded.
-The full property → consumer → default table for every `net.ladenthin.llama.*`
-property the library understands (runtime + test) is the user-facing
-**[System Properties Reference](README.md#system-properties-reference)** in
-the README. The summary below covers only the optional-model bindings:
+**Optional models.** Every model a test uses defaults to `models/<file>` from `.github/models.csv`
+(`TestConstants.DEFAULT_*`), so downloading a model from that list into `models/` is all it takes —
+the tests find it (module-relative or at the reactor root) and self-skip while it is missing. The
+properties below only **override** a default. The full property → consumer → default table for every
+`net.ladenthin.llama.*` property the library understands (runtime + test) is the user-facing
+**[System Properties Reference](README.md#system-properties-reference)** in the README. The summary
+below covers the model bindings:
 
-| Property | Default test that uses it | Model |
+| Property | Default test that uses it | Default (`models/…` unless noted) |
 |----------|---------------------------|-------|
+| `net.ladenthin.llama.tool.model` | `ToolCallingIntegrationTest`, `OpenAiServerToolCallingIntegrationTest` | `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` |
 | `net.ladenthin.llama.nomic.path` | `LlamaEmbeddingsTest#testNomicEmbedLoads` | `nomic-embed-text-v1.5.f16.gguf` (issue #98 regression) |
 | `net.ladenthin.llama.vision.model` | `MultimodalIntegrationTest` | `SmolVLM-500M-Instruct-Q8_0.gguf` (any vision-capable GGUF works) |
-| `net.ladenthin.llama.vision.mmproj` | `MultimodalIntegrationTest` | matching mmproj for the vision model, e.g. `mmproj-SmolVLM-500M-Instruct-Q8_0.gguf` |
-| `net.ladenthin.llama.vision.image` | `MultimodalIntegrationTest` | committed default `src/test/resources/images/test-image.jpg`; override to any png/jpeg/webp/gif on disk |
-| `net.ladenthin.llama.audio.model` | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | audio-input model GGUF, e.g. `ultravox-v0_5-llama-3_2-1b.gguf` |
-| `net.ladenthin.llama.audio.mmproj` | `AudioInputIntegrationTest` | matching audio mmproj/encoder, e.g. `mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf` |
-| `net.ladenthin.llama.audio.input` | `AudioInputIntegrationTest` | committed default `src/test/resources/audios/sample.wav`; override to any `.wav`/`.mp3` on disk |
-| `net.ladenthin.llama.tts.model` | `TtsIntegrationTest` | Qwen3-TTS backbone GGUF (any Qwen3-TTS-family model works) |
-| `net.ladenthin.llama.tts.mmproj` | `TtsIntegrationTest` | matching mmproj GGUF (speaker encoder + code predictor + code2wav) |
+| `net.ladenthin.llama.vision.mmproj` | `MultimodalIntegrationTest` | `mmproj-SmolVLM-500M-Instruct-Q8_0.gguf` |
+| `net.ladenthin.llama.vision.image` | `MultimodalIntegrationTest` | committed `src/test/resources/images/test-image.jpg`; any png/jpeg/webp/gif |
+| `net.ladenthin.llama.tts.model` | `TtsIntegrationTest` | `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf` (any Qwen3-TTS-family model works) |
+| `net.ladenthin.llama.tts.mmproj` | `TtsIntegrationTest` | `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf` |
+| `net.ladenthin.llama.train.model` | `LlamaTrainerIntegrationTest` | `stories260K.gguf` (must be **F32**) |
+| `net.ladenthin.llama.audio.model` | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | none (not in CI's set) — e.g. `ultravox-v0_5-llama-3_2-1b.gguf` |
+| `net.ladenthin.llama.audio.mmproj` | `AudioInputIntegrationTest` | none — e.g. `mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf` |
+| `net.ladenthin.llama.audio.input` | `AudioInputIntegrationTest` | committed `src/test/resources/audios/sample.wav`; any `.wav`/`.mp3` |
 
-Run those tests by setting the property:
 ```bash
-mvn test -Dtest=LlamaEmbeddingsTest#testNomicEmbedLoads \
-         -Dnet.ladenthin.llama.nomic.path=models/nomic-embed-text-v1.5.f16.gguf
-mvn test -Dtest=MultimodalIntegrationTest \
-         -Dnet.ladenthin.llama.vision.model=models/SmolVLM-500M-Instruct-Q8_0.gguf \
-         -Dnet.ladenthin.llama.vision.mmproj=models/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf
-# The vision.image property defaults to src/test/resources/images/test-image.jpg
-# (a CC-BY-4.0 / MIT-granted photo of flowers and bees by the project author);
-# override only if you want to test a different image.
-
-# Audio input (Ultravox / Qwen2.5-Omni; the audio clip has no committed default):
+# CI's models, e.g. the vision pair (URLs in .github/models.csv) -- no property needed afterwards:
+mvn test -Dtest=MultimodalIntegrationTest
+# Another model than the default:
+mvn test -Dtest=TtsIntegrationTest \
+         -Dnet.ladenthin.llama.tts.model=/path/to/qwen3-tts-backbone.gguf \
+         -Dnet.ladenthin.llama.tts.mmproj=/path/to/qwen3-tts-mmproj.gguf
+# Audio input has no CI model, so it always needs the properties:
 mvn test -Dtest=AudioInputIntegrationTest \
          -Dnet.ladenthin.llama.audio.model=models/ultravox-v0_5-llama-3_2-1b.gguf \
-         -Dnet.ladenthin.llama.audio.mmproj=models/mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf \
-         -Dnet.ladenthin.llama.audio.input=/path/to/speech.wav   # optional: defaults to the committed src/test/resources/audios/sample.wav
-mvn test -Dtest=TtsIntegrationTest \
-         -Dnet.ladenthin.llama.tts.model=models/qwen3-tts-backbone.gguf \
-         -Dnet.ladenthin.llama.tts.mmproj=models/qwen3-tts-mmproj.gguf
+         -Dnet.ladenthin.llama.audio.mmproj=models/mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf
 ```
-
-`MultimodalIntegrationTest` self-skips when any of the three vision properties
-points at a missing path, so a partial setup (just the vision model + the
-committed image, no mmproj) lets the test class load without erroring.
 
 **Restricted-network environments.** Some hosts (e.g. ephemeral remote
 execution sandboxes) block outbound traffic to `huggingface.co`. In that
@@ -1740,18 +1795,18 @@ the wiring (a future edit that drops the wrapper from a constant fails that test
 silently re-muting the suite). `llama-langchain4j` had the identical defect and carries the same
 resolver as `TestModelPaths` (test classes are not shared between modules).
 
-`validate-models.{sh,bat}`
-treats all of these as **required** (a missing model hard-fails the job before tests run, so a
-download regression can never silently downgrade to a skip). **Two** classes still self-skip on
-every platform, both because their model is outside the manifest: `AudioInputIntegrationTest` — the
-prompt clip is committed (`src/test/resources/audios/sample.wav`) but the audio model + mmproj have
-no CI download — and `LlamaTrainerIntegrationTest`, whose `net.ladenthin.llama.train.model` property
-is set by no job and whose model is in no `models.csv` row. The trainer one matters more than it
-looks: `train_engine.cpp` carries the same `postprocess_cpu_params` pair as `tts_params.hpp`, so the
-JVM-abort class of bug documented under "Qwen3-TTS" can regress there with no runnable guard. Two
-slices of it are now covered without a model — `test_tts_params.cpp` drives `build_train_params` and
-`jllama::resolve_cpu_params`, and `test_wire_contracts.cpp` pins the configuration key set against
-`TrainingField` — but the Java → JNI → native round trip itself still runs nowhere.
+`validate-models.sh` treats all of these as **required** (a missing model hard-fails the job before
+tests run, so a download regression can never silently downgrade to a skip). **The tests default to
+exactly the CI model set**: every model-gated test reads its path through a `TestConstants`
+`DEFAULT_*` constant (`models/<file>`), a `-Dnet.ladenthin.llama.*` property only overrides it, and
+`TestConstantsTest.theModelDefaultsAreExactlyTheCiModelSet` asserts that the `.gguf` constants and the
+rows of `models.csv` are the same set in both directions (a row no constant names is downloaded for
+nothing; a constant naming a model the list lacks self-skips in CI). So the test jobs pass **no** model
+properties. That also closed a gap this file used to describe: `LlamaTrainerIntegrationTest` defaults
+to `stories260K.gguf` and runs on every Java test job, so the Java → JNI → native trainer round trip
+has a runnable guard. **One** class still self-skips everywhere: `AudioInputIntegrationTest` — its
+prompt clip is committed (`src/test/resources/audios/sample.wav`), but the audio model + mmproj have no
+CI download.
 The model set has a **single source of truth: `.github/models.csv`** (one `filename,url` row per
 model; `#` comments). Everything derives from it: the **`download-models`** job (ubuntu,
 `needs: startgate`) is the only place models are fetched from HuggingFace (one manifest-driven
@@ -1759,24 +1814,25 @@ model; `#` comments). Everything derives from it: the **`download-models`** job 
 GGUF cache (path `models/`, key **`gguf-models-<hash of models.csv>`** — so *editing the manifest
 automatically creates a fresh complete cache entry*; no manual cache deletion on a model-set
 change). The writer sets **`enableCrossOsArchive: true`**, making the one ubuntu-built entry the
-same entry macOS and Windows restore. A **`verify-model-cache` matrix job** (ubuntu / macOS /
-Windows, `needs: download-models`) then proves the entry is restorable
-(`actions/cache/restore` + `fail-on-cache-miss: true`) **and complete**
-(`validate-models.{sh,bat}`, which read their required list from the same manifest) on every OS
-**before any model-consuming job starts** — all `test-java-*` jobs, the langchain4j integration
-job, the Android emulator job and the fat-jar smoke jobs `need: verify-model-cache` and use the
-**restore-only** action themselves (no per-job download, no save — a consumer can never re-save
-an empty/partial entry), keeping validate as a per-job integrity guard. (This design hardened
-after run 28805360584: without the cross-OS flag, cache entries are versioned per-OS and the
-unreachable Windows-side entry had been re-saved **empty** (343 B) after an eviction; and
-`validate-models.bat`'s quoted `MODELS` list broke cmd's for-tokenization so its `exit /b 1`
-never fired — the empty cache sailed through the "gate" and the Windows jobs silently
-self-skipped every model-backed test until the fat-jar smoke's hard check caught it.) The
-`*_MODEL_NAME` workflow env vars remain consumer-side wiring for the `-Dnet.ladenthin.llama.*`
-test properties and must match the manifest's filename column — locally the model tests still
-self-skip when a GGUF is absent (`Assume.assumeTrue`), so a partial local checkout is fine.
+same entry macOS and Windows restore. Every consumer uses the composite action
+**`.github/actions/restore-models`** — restore-only (`actions/cache/restore`; a consumer can never
+re-save an empty/partial entry) plus `validate-models.sh`, which reads its required list from the
+same manifest. A **`verify-model-cache` matrix job** (ubuntu / macOS / Windows, `needs:
+download-models`) runs the same action with `fail-on-cache-miss: true` and so proves the entry is
+restorable **and complete** on every OS **before any model-consuming job starts** — all `test-java-*`
+jobs, the langchain4j integration job, the Android emulator job and the fat-jar smoke jobs `need:
+verify-model-cache`. (This design hardened after run 28805360584: without the cross-OS flag, cache
+entries are versioned per-OS and the unreachable Windows-side entry had been re-saved **empty** (343 B)
+after an eviction; and the then-separate `validate-models.bat`'s quoted `MODELS` list broke cmd's
+for-tokenization so its `exit /b 1` never fired — the empty cache sailed through the "gate" and the
+Windows jobs silently self-skipped every model-backed test until the fat-jar smoke's hard check caught
+it. The `.bat` is gone: Windows runs the one bash script under Git Bash, which is why it uses
+`head -c`/`wc -c` rather than `xxd`/`stat`.) The remaining `*_MODEL_NAME` env vars of publish.yml
+serve only the consumers outside the llama module's tests (smoke scripts, Android emulator jobs,
+langchain4j/agent integration); `check-natives.py` fails when one is not a filename of `models.csv`.
+Locally the model tests self-skip when a GGUF is absent (`Assume.assumeTrue`), so a partial local
+checkout is fine.
 
-Set the model path via system property or environment variable (see test files for exact property names).
 
 Test files are in `src/test/java/net/ladenthin/llama/` and `src/test/java/examples/`.
 
@@ -2028,7 +2084,7 @@ easy to undo by accident:
   scope only. Safe because no source imports `org.checkerframework`.
 
 **The gate: `.github/verify-bytecode-version.sh`.** Kept **byte-identical** across java-llama.cpp /
-BitcoinAddressFinder / streambuffer / srcmorph (checksum table in `workspace/crossrepostatus.md`).
+BitcoinAddressFinder / streambuffer / srcmorph (listed in `.github/shared-files.sha256`, checked by the `shared-files` job).
 It opens every `.class` in every jar it is given and fails on any whose class-file major version
 exceeds `--max-major`:
 
@@ -2306,9 +2362,11 @@ the recommended path (README "Importing in Android", Option 1):
   `Iterable & AutoCloseable` seam (`closeableIterableFlow`/`withCancellationToken` internals).
 
 **16 KB page-size invariant (Google Play, Android 15+ targets):** `llama/CMakeLists.txt` pins
-`-Wl,-z,max-page-size=16384` in the Android guard block, and the `package-android-aar` CI job
-asserts every LOAD segment of the shipped `.so` is 16384-aligned via `readelf` — a dockcross
-toolchain bump cannot silently regress Play compatibility.
+`-Wl,-z,max-page-size=16384` in the Android guard block, and `.github/buildcheck/nativedeps.py`
+(`verify-native-deps.py`, run by the `package-android-aar` job on the staged libraries and by
+`package` on every natives jar) asserts every LOAD segment of an Android `.so` is 16384-aligned,
+reading the ELF program headers itself — a dockcross toolchain bump cannot silently regress Play
+compatibility.
 
 **dlopen-ability invariant (bionic-only DT_NEEDED):** the same Android guard block sets
 `GGML_OPENMP OFF` (ggml uses its std::thread pool — Android ships no `libomp.so`; same trade
@@ -2317,8 +2375,10 @@ dependency — that runtime only exists when an app packages it itself). Without
 dockcross cross-clang emitted `DT_NEEDED` on `libomp.so` + `libc++_shared.so`, which made
 `System.loadLibrary("jllama")` fail with `UnsatisfiedLinkError` on every device (caught by the
 `test-android-emulator` job; the released 5.0.5 arm64 lib had the same latent defect). The
-`package-android-aar` job enforces a per-`.so` `DT_NEEDED` whitelist (`libc.so libm.so libdl.so
-liblog.so libandroid.so`, plus `libOpenCL.so` for the OpenCL flavor) via `readelf -dW`, and
+`nativedeps.ALLOWED` holds each Android directory to an exact `DT_NEEDED` list (`libc.so libm.so
+libdl.so liblog.so libandroid.so`, plus `libOpenCL.so` for `Linux-Android/aarch64/opencl`) — the
+same allowlist mechanism as every desktop CPU build, where the AAR job used to carry a copy of its
+own; the AAR job additionally asserts the AAR's `jni/` library is the staged one. And
 `LlamaLoader` now includes the swallowed `System.loadLibrary` message in its
 "Directly from .apk/lib (…)" tried-path entry so a future dlopen reason is never invisible.
 

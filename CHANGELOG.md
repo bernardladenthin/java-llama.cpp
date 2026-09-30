@@ -9,6 +9,25 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Changed
+- **The model-backed tests default to CI's model set** (`.github/models.csv`): the vision, TTS, nomic
+  and trainer tests read `models/<file>` unless a `-Dnet.ladenthin.llama.*` property names another file,
+  so a model downloaded into `models/` needs no property (new: `net.ladenthin.llama.train.model`
+  defaults to `models/stories260K.gguf`). `TestConstantsTest` asserts the defaults and the list are the
+  same set.
+- **Build checks are a tested Python library** (`.github/buildcheck/`) and check more: that `package`
+  waits for every natives build, that the all-backends fat jars derived from `natives.csv` are each
+  smoke-launched, named in the agent jar's `Class-Path` and the README (`package-fatjars.sh` now asks
+  for them instead of hard-coding four), CMake's backend names, the dependency allowlists, and that
+  every job gates both publish jobs unless `.github/release-gate-exemptions.txt` says why (`vmlens`
+  gated nothing; it now gates). The Android AAR libraries are held to the same allowlist and 16 KB
+  alignment check as every natives jar.
+- **Files shared with the sibling repositories are checksummed** in `.github/shared-files.sha256` and
+  checked by a `shared-files` job (crash-log printing, the signing-key preflight and the build-check
+  library are now such shared scripts). The workflow lost ~760 lines to two composite actions
+  (`restore-models`, `install-sccache-windows`) and `print-host-info.sh`; `validate-models.bat` is gone
+  (Windows runs the bash script).
+
 ### Fixed
 - **`ToolCallingIntegrationTest#requiredToolCallIsParsedFromStreamingResponse` failed on both Windows
   x86-64 jobs after the b11211 bump** (the Ubuntu run and the blocking twin stayed green). The streamed

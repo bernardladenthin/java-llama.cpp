@@ -83,3 +83,6 @@ android-llmservice/.gradle/
 android-llmservice/local.properties
 *.jks
 *.keystore
+
+# Python bytecode of the .github/buildcheck checks
+__pycache__/

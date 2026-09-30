@@ -21,38 +21,24 @@ on:
         default: true
 env:
   JAVA_VERSION: '21'
-  # Model DOWNLOAD URLS live in .github/models.csv (the single source of truth for the
-  # CI model set; the model cache key is derived from that file's hash). The *_NAME
-  # vars below are consumer-side wiring only (-Dnet.ladenthin.llama.* test properties)
-  # and must match the filename column of models.csv.
-  MODEL_NAME: "codellama-7b.Q2_K.gguf"
+  # The Gradle builds (Android AAR, the consumer fixture, the llmservice app, the signing self-test).
+  # AGP 9.4.x needs Gradle >= 9.6.0 (CLAUDE.md, Android app). Not seen by Dependabot: bump by hand.
+  GRADLE_VERSION: '9.8.0'
+  # The sccache/Depot compiler cache (CLAUDE.md, "CI build cache"). Inert without the token, which
+  # stays per build job (SCCACHE_WEBDAV_TOKEN): at workflow level it would reach every job,
+  # including those running third-party actions.
+  USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
+  SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
+  # The CI model set is .github/models.csv (URLs, and the model cache key is its hash). The Java
+  # tests default to exactly that set (TestConstants; TestConstantsTest asserts both directions),
+  # so the test jobs pass no model properties. The names below are only for the consumers outside
+  # the llama module's tests -- the smoke scripts, the Android emulator jobs and the langchain4j /
+  # agent integration jobs; check-natives.py fails when one is not a filename of models.csv.
   RERANKING_MODEL_NAME: "jina-reranker-v1-tiny-en-Q4_0.gguf"
   DRAFT_MODEL_NAME: "AMD-Llama-135m-code.Q2_K.gguf"
   REASONING_MODEL_NAME: "Qwen3-0.6B-Q4_K_M.gguf"
   TOOL_MODEL_NAME: "Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"
   NOMIC_EMBED_MODEL_NAME: "nomic-embed-text-v1.5.f16.gguf"
-  # Vision model + mmproj for MultimodalIntegrationTest.
-  # SmolVLM-500M is the smallest community vision GGUF that loads reliably
-  # under the upstream mtmd pipeline.
-  VISION_MODEL_NAME: "SmolVLM-500M-Instruct-Q8_0.gguf"
-  VISION_MMPROJ_NAME: "mmproj-SmolVLM-500M-Instruct-Q8_0.gguf"
-  # Qwen3-TTS backbone + mmproj for TtsIntegrationTest (the OuteTTS+WavTokenizer pair this replaced
-  # was retired when upstream #26254 replaced the whole TTS pipeline — see
-  # docs/history/llama-cpp-breaking-changes.md, b10269-b10270). Smallest available quants:
-  # Q4_K_M backbone (0.96 GiB), Q8_0 mmproj (0.42 GiB; no smaller mmproj quant is published).
-  TTS_MODEL_NAME: "Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf"
-  TTS_MMPROJ_NAME: "mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf"
-  # Fine-tuning fixture for LlamaTrainerIntegrationTest. stories260K is 1.19 MB and, unlike every
-  # other model here, is **F32** — which is the only reason it works: llama_set_param silently skips
-  # any tensor that is not GGML_TYPE_F32, so a quantized model would "train" nothing but the norm
-  # weights and still write an output GGUF that the test's assertions accept. Its small trained
-  # context also suits the test's short corpus; the test pins nCtx itself so that is belt-and-braces.
-  TRAIN_MODEL_NAME: "stories260K.gguf"
-  # Test image used by MultimodalIntegrationTest is committed to the repo
-  # at src/test/resources/images/test-image.jpg (see the README in that
-  # directory for licensing). No download step is needed; CI just points
-  # mvn test at the committed path.
-  VISION_IMAGE_PATH: "llama/src/test/resources/images/test-image.jpg"
 # Supersede an in-flight run when a PR branch is pushed again.
 #
 # Without this every push starts a full parallel pipeline and the older ones keep
@@ -101,6 +87,28 @@ jobs:
       - run: echo "Start gate elapsed — proceeding with pipeline."
 
   # ---------------------------------------------------------------------------
+  # Files kept byte-identical with the sibling repositories (java-llama.cpp,
+  # BitcoinAddressFinder, srcmorph, streambuffer), listed in .github/shared-files.sha256.
+  # A copy changed here alone fails; one the siblings list with another hash warns.
+  # Also runs the tests of the shared build checks and the release-gate check. This
+  # job is itself identical in all four repositories.
+  # ---------------------------------------------------------------------------
+  shared-files:
+    name: Shared files + build checks
+    needs: startgate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Shared files match .github/shared-files.sha256 (siblings compared, warnings only)
+        run: python3 .github/check-shared-files.py
+      - name: Build-check tests
+        run: python3 -m unittest discover -s .github/buildcheck/tests -t .github
+      - name: Release gate (every job gates both publish jobs, or release-gate-exemptions.txt says why)
+        run: python3 .github/check-release-gate.py
+
+  # ---------------------------------------------------------------------------
   # GPG signing-key preflight (standalone, no `needs:` — runs in parallel at the
   # very start on every trigger). Reproduces what maven-gpg-plugin does at deploy
   # time so a bad/expired key or wrong passphrase is caught in ~20s instead of
@@ -124,94 +132,15 @@ jobs:
     runs-on: ubuntu-latest
     environment: maven-central
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: Import key + run sign/verify self-test (prints only PUBLIC metadata)
-        shell: bash
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-        run: |
-          set -euo pipefail   # NOTE: deliberately NO `set -x` — it would echo the passphrase.
-
-          if [ -z "${GPG_PRIVATE_KEY:-}" ]; then
-            echo "::error::GPG_PRIVATE_KEY is empty for this run. Either the secret is not set, or it is scoped to a different environment/branch than 'maven-central' on this ref. Nothing to verify."
-            exit 1
-          fi
-          # Defensive: even though we never print it, register the passphrase as a
-          # masked value so any accidental echo downstream is redacted.
-          if [ -n "${GPG_PASSPHRASE:-}" ]; then echo "::add-mask::${GPG_PASSPHRASE}"; fi
-
-          echo "gpg: $(gpg --version | head -n1)"
-
-          # Ephemeral, private keyring; removed on exit.
-          export GNUPGHOME="$(mktemp -d)"
-          chmod 700 "$GNUPGHOME"
-          cleanup() { gpgconf --kill gpg-agent >/dev/null 2>&1 || true; rm -rf "$GNUPGHOME"; }
-          trap cleanup EXIT
-
-          echo "== Import private key into an ephemeral keyring (key via stdin, never argv) =="
-          printf '%s\n' "$GPG_PRIVATE_KEY" | gpg --batch --import
-
-          COLONS="$(gpg --list-secret-keys --with-colons --fixed-list-mode)"
-          SECCOUNT="$(printf '%s\n' "$COLONS" | awk -F: '$1=="sec"{n++} END{print n+0}')"
-          echo "Secret keys imported: $SECCOUNT"
-          if [ "$SECCOUNT" -lt 1 ]; then
-            echo "::error::No secret key was imported — GPG_PRIVATE_KEY is not a valid armored secret key (check that the secret contains the full -----BEGIN PGP PRIVATE KEY BLOCK----- with intact newlines)."
-            exit 1
-          fi
-
-          KEYID="$(printf '%s\n' "$COLONS"  | awk -F: '$1=="sec"{print $5; exit}')"
-          ALGO="$(printf '%s\n'  "$COLONS"  | awk -F: '$1=="sec"{print $4; exit}')"
-          CREATED="$(printf '%s\n' "$COLONS"| awk -F: '$1=="sec"{print $6; exit}')"
-          EXPIRES="$(printf '%s\n' "$COLONS"| awk -F: '$1=="sec"{print $7; exit}')"
-          FPR="$(printf '%s\n'   "$COLONS"  | awk -F: '$1=="fpr"{print $10; exit}')"
-
-          echo "== PUBLIC key metadata =="
-          echo "  Key ID (long):  $KEYID"
-          echo "  Fingerprint:    $FPR"
-          echo "  Pubkey algo id: $ALGO"
-          echo "  Created (UTC):  $(date -u -d "@$CREATED" 2>/dev/null || echo "$CREATED")"
-          echo "  Owner UID(s):"
-          printf '%s\n' "$COLONS" | awk -F: '$1=="uid"{print "    - " $10}'
-
-          # --- Expiration gate ---
-          NOW="$(date -u +%s)"
-          if [ -n "$EXPIRES" ]; then
-            echo "  Expires (UTC):  $(date -u -d "@$EXPIRES" 2>/dev/null || echo "$EXPIRES")"
-            if [ "$EXPIRES" -le "$NOW" ]; then
-              echo "::error::Signing key is EXPIRED — Maven Central will reject its signatures. Extend the key's expiry and update the GPG_PRIVATE_KEY secret."
-              exit 1
-            fi
-            echo "  Days to expiry: $(( (EXPIRES - NOW) / 86400 ))"
-            if [ "$(( (EXPIRES - NOW) / 86400 ))" -lt 30 ]; then
-              echo "::warning::Signing key expires in under 30 days — plan to rotate it."
-            fi
-          else
-            echo "  Expires (UTC):  never"
-          fi
-
-          # --- Signing-capability gate ---
-          if printf '%s\n' "$COLONS" | awk -F: '($1=="sec"||$1=="ssb"){print $12}' | grep -q 's'; then
-            echo "  Signing capability: present"
-          else
-            echo "::error::No signing-capable (sub)key found — this key cannot produce release signatures."
-            exit 1
-          fi
-
-          # --- Passphrase unlock + sign + verify roundtrip (the exact failure mode) ---
-          # Passphrase on fd 3 only. Payload is a throwaway nonce; only the signature's
-          # validity (exit codes) matters — no secret is ever emitted.
-          echo "== Passphrase unlock + detached-sign + verify self-test =="
-          WORK="$(mktemp -d)"
-          printf '%s' "ai-index signing-selftest" > "$WORK/payload.txt"
-          gpg --batch --yes --pinentry-mode loopback --passphrase-fd 3 \
-              --local-user "$KEYID" \
-              --detach-sign --armor --output "$WORK/payload.txt.asc" "$WORK/payload.txt" \
-              3<<<"${GPG_PASSPHRASE:-}"
-          echo "  Signature produced: $(wc -c < "$WORK/payload.txt.asc") armored bytes"
-          gpg --batch --verify "$WORK/payload.txt.asc" "$WORK/payload.txt"
-          rm -rf "$WORK"
-
-          echo "RESULT: OK — key imports, is not expired, is signing-capable, and the passphrase successfully unlocked it to produce a VALID signature. maven-gpg-plugin will be able to sign with this key/passphrase."
+        # Shared, byte-identical in all four repos; the security notes are in the script.
+        run: bash .github/verify-signing-key.sh
 
   # ---------------------------------------------------------------------------
   # GPG signing-key preflight — GRADLE / BouncyCastle path.
@@ -241,11 +170,11 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          java-version: '21'
+          java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: "9.8.0"
+          gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Sign a throwaway artifact via useInMemoryPgpKeys (BouncyCastle)
         shell: bash
         env:
@@ -331,25 +260,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            validate: bash .github/validate-models.sh
-          - os: macos-15
-            validate: bash .github/validate-models.sh
-          - os: windows-2025-vs2026
-            validate: .github\validate-models.bat
+        os: [ubuntu-latest, macos-15, windows-2025-vs2026]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        uses: actions/cache/restore@v6
+      - uses: ./.github/actions/restore-models
         with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
           fail-on-cache-miss: true
-      - name: Validate model files
-        run: ${{ matrix.validate }}
 
   # ---------------------------------------------------------------------------
   # Cross-compile jobs (Docker / dockcross) — produce release artifacts, no testing
@@ -363,9 +280,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6
         with:
-          java-version: '21'
+          java-version: ${{ env.JAVA_VERSION }}
           distribution: temurin
-      - name: Natives list check (pom, llama-platform, workflow and loader agree with natives.csv)
+      # .github/buildcheck/natives.py; its unit tests run in the shared-files job.
+      - name: Natives list check (everything that names a natives jar agrees with natives.csv)
         run: python3 .github/check-natives.py
       - name: Spotless check (fail fast on format violations)
         run: mvn -B --no-transfer-progress -f llama/pom.xml spotless:check
@@ -453,16 +371,7 @@ jobs:
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
-        # cache miss cannot re-save an empty/partial entry under the immutable key.
-        # download-models is the single writer; enableCrossOsArchive matches its
-        # cross-OS entry version so Windows/macOS restore the same ubuntu-built entry.
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
+      - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -481,38 +390,11 @@ jobs:
           -Dnet.ladenthin.llama.langchain4j.tool.model=models/${TOOL_MODEL_NAME}
           -Dnet.ladenthin.llama.lib.path=${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/Linux/x86_64/cpu
 
-      # This job is model-backed and crosses JNI, so a forked test JVM here can abort exactly the
-      # way the six test-java-* jobs can -- but it had neither of their diagnostics. Same step and
-      # same path set as those, scoped to this module. See
-      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
         shell: bash
-        run: |
-          shopt -s nullglob
-          found=0
-          for f in llama-langchain4j/hs_err_pid*.log; do
-            found=1
-            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
-            sed -n '1,200p' "$f"
-          done
-          for f in llama-langchain4j/target/surefire-reports/*.dumpstream llama-langchain4j/target/surefire-reports/*.dump; do
-            found=1
-            echo "===== $f ====="
-            cat "$f"
-          done
-          if [ "$found" = 0 ]; then
-            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
-            echo
-            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
-            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
-            echo "crash log. Read the surefire output above for the real cause."
-            echo
-            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
-            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
-            echo "test results. In that case the abort bypassed the JVM error handler (a native"
-            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
-          fi
+        run: bash .github/print-crash-logs.sh llama-langchain4j
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -608,12 +490,7 @@ jobs:
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
+      - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -632,20 +509,11 @@ jobs:
           -Dnet.ladenthin.llama.tool.model=models/${TOOL_MODEL_NAME}
           -Dnet.ladenthin.llama.test.ngl=0
           -Dnet.ladenthin.llama.lib.path=${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/Linux/x86_64/cpu
-      # Model-backed and crossing JNI: same crash diagnostics as the langchain4j integration job.
+      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
         shell: bash
-        run: |
-          shopt -s nullglob
-          for f in llama-atmosphere-agent/hs_err_pid*.log; do
-            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
-            sed -n '1,200p' "$f"
-          done
-          for f in llama-atmosphere-agent/target/surefire-reports/*.dumpstream llama-atmosphere-agent/target/surefire-reports/*.dump; do
-            echo "===== $f ====="
-            cat "$f"
-          done
+        run: bash .github/print-crash-logs.sh llama-atmosphere-agent
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -734,7 +602,7 @@ jobs:
           # all, which is why the naive grep used to be sufficient.) Assert the ACTIVE
           # #define and a non-zero asset count instead -- verified against both paths.
           N=$(sed -n 's/.*std::array<llama_ui_asset, \([0-9]\+\)>.*/\1/p' "$OUT/ui.h" | head -1)
-          if grep -qE '^[[:space:]]*#define[[:space:]]+LLAMA_UI_HAS_ASSETS' "$OUT/ui.h" \
+          if grep -qE '^[[:space:]]*#define[[:space:]]+LLAMA_UI_HAS_ASSETS' "$OUT/ui.h"
              && [ -n "$N" ] && [ "$N" -gt 0 ]; then
             echo "LLAMA_UI_HAS_ASSETS: present, $N assets embedded"
           else
@@ -766,8 +634,6 @@ jobs:
     # prints the `sccache --show-stats` hit table at the end of every run. Inert without DEPOT_TOKEN
     # (fork PRs) or use_cache=false.
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
@@ -784,12 +650,7 @@ jobs:
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
         shell: bash
-        run: |
-          echo "=== Host CPU Information ==="
-          lscpu
-          echo ""
-          echo "=== CPU Details from /proc/cpuinfo ==="
-          cat /proc/cpuinfo
+        run: bash .github/print-host-info.sh
       - name: Build libraries
         shell: bash
         run: |
@@ -811,8 +672,6 @@ jobs:
     # DEPOT_TOKEN (fork PRs) or with use_cache=false; a crashing sccache still falls back to a
     # green uncached build via the build.sh probe.
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
@@ -824,12 +683,7 @@ jobs:
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
         shell: bash
-        run: |
-          echo "=== Host CPU Information ==="
-          lscpu
-          echo ""
-          echo "=== CPU Details from /proc/cpuinfo ==="
-          cat /proc/cpuinfo
+        run: bash .github/print-host-info.sh
       - name: Build libraries
         shell: bash
         run: |
@@ -854,8 +708,6 @@ jobs:
     # display name changed, so update any branch-protection required-check that pinned the old name.
     runs-on: ubuntu-24.04-arm
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -876,12 +728,7 @@ jobs:
           echo "CXX=g++-14" >> "$GITHUB_ENV"
       - name: Display CPU Info
         shell: bash
-        run: |
-          echo "=== Host CPU Information ==="
-          lscpu
-          echo ""
-          echo "=== CPU Details from /proc/cpuinfo ==="
-          cat /proc/cpuinfo
+        run: bash .github/print-host-info.sh
       - name: Build libraries
         shell: bash
         run: |
@@ -911,8 +758,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       QEMU_LD_PREFIX: /usr/s390x-linux-gnu
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -965,8 +810,6 @@ jobs:
     # self-fetches sccache; the probe guards it (a miss just builds uncached).
     runs-on: ubuntu-latest
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -1003,8 +846,6 @@ jobs:
     # to match the aarch64 CPU job. Ships as the vulkan-linux-aarch64 natives jar.
     runs-on: ubuntu-24.04-arm
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -1043,8 +884,6 @@ jobs:
     # the build.sh probe makes it safe to enable without a separate verification run. Inert
     # without DEPOT_TOKEN (fork PRs) or use_cache=false.
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
@@ -1056,12 +895,7 @@ jobs:
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
         shell: bash
-        run: |
-          echo "=== Host CPU Information ==="
-          lscpu
-          echo ""
-          echo "=== CPU Details from /proc/cpuinfo ==="
-          cat /proc/cpuinfo
+        run: bash .github/print-host-info.sh
       - name: Build libraries
         shell: bash
         run: |
@@ -1081,8 +915,6 @@ jobs:
     # and shipped as the cpu-android-x86-64 natives jar. Same dockcross + sccache steady-state env as the arm64 job; the wrapper
     # pins the same image tag. Fail-loud and in the package/publish needs graphs.
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
@@ -1112,8 +944,6 @@ jobs:
     # sccache probe + launcher). Same steady-state env as the other dockcross jobs. Inert
     # without DEPOT_TOKEN (fork PRs) or use_cache=false.
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
@@ -1160,7 +990,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           # AGP 9.4.0 (the .github/android-consumer-test fixture) requires Gradle >= 9.6.0.
-          gradle-version: "9.8.0"
+          gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Build core jar (byte-identical classes payload for the AAR)
         run: >
           mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
@@ -1189,7 +1019,7 @@ jobs:
           cp stage/opencl/Linux-Android/aarch64/opencl/libjllama.so llama-android/natives/opencl/arm64-v8a/
       - name: Assemble AARs + publish to mavenLocal
         run: gradle -p llama-android aarCpu aarOpencl publishToMavenLocal
-      - name: Validate AAR structure + 16 KB page-size alignment
+      - name: Validate AAR structure
         shell: bash
         run: |
           set -euo pipefail
@@ -1207,41 +1037,23 @@ jobs:
             for entry in $ENTRIES; do
               unzip -l "$AAR" | grep -q "${entry}$" || { echo "::error::$AAR is missing $entry"; exit 1; }
             done
-            unzip -p "$AAR" AndroidManifest.xml | grep -q 'android:minSdkVersion="28"' \
+            unzip -p "$AAR" AndroidManifest.xml | grep -q 'android:minSdkVersion="28"'
               || { echo "::error::$AAR manifest lost minSdkVersion 28"; exit 1; }
             unzip -p "$AAR" classes.jar > /tmp/aar-classes.jar
-            unzip -l /tmp/aar-classes.jar | grep -q "net/ladenthin/llama/LlamaModel.class" \
+            unzip -l /tmp/aar-classes.jar | grep -q "net/ladenthin/llama/LlamaModel.class"
               || { echo "::error::$AAR classes.jar lost LlamaModel"; exit 1; }
             if unzip -l /tmp/aar-classes.jar | grep -qE "module-info\.class|net/ladenthin/llama/(Linux|Mac|Windows)/"; then
               echo "::error::$AAR classes.jar carries module-info or desktop native resources"; exit 1
             fi
-            rm -rf /tmp/aar-natives && unzip -o -q -d /tmp/aar-natives "$AAR" "jni/*/libjllama.so"
-            # Google Play 16 KB page-size requirement (Android 15+ targets): every
-            # LOAD segment must be aligned to a multiple of 16384. CMake pins
-            # -Wl,-z,max-page-size=16384 for every Android ABI; this asserts it held.
-            for so in /tmp/aar-natives/jni/*/libjllama.so; do
-              for align in $(readelf -lW "$so" | awk '$1=="LOAD"{print $NF}'); do
-                if [ $(( align % 16384 )) -ne 0 ]; then
-                  echo "::error::$so: LOAD alignment $align is not a multiple of 16384 (16 KB page-size regression)"; exit 1
-                fi
-              done
-              # dlopen-ability gate: an app consuming the AAR bundles no other native
-              # libs, so every DT_NEEDED must be a bionic system library (plus the
-              # vendor ICD libOpenCL.so for the OpenCL flavor). A stray dependency —
-              # libomp.so / libc++_shared.so once shipped exactly this way — makes
-              # System.loadLibrary fail on every device with UnsatisfiedLinkError.
-              # CMake's Android guard (GGML_OPENMP OFF + -static-libstdc++) keeps the
-              # list clean; this asserts it held.
-              ALLOWED="libc.so libm.so libdl.so liblog.so libandroid.so"
-              if [ "$flavor" = "llama-android-opencl" ]; then ALLOWED="$ALLOWED libOpenCL.so"; fi
-              for needed in $(readelf -dW "$so" | awk '/\(NEEDED\)/{gsub(/[\[\]]/,"",$NF); print $NF}'); do
-                case " $ALLOWED " in
-                  *" $needed "*) ;;
-                  *) echo "::error::$so: DT_NEEDED '$needed' is not a bionic system library — dlopen would fail on-device"; exit 1 ;;
-                esac
-              done
-            done
+            # The libraries themselves (bionic-only DT_NEEDED + libOpenCL.so for the OpenCL
+            # flavour, every LOAD segment 16 KB aligned for Google Play) are checked on the staged
+            # tree below, by the same allowlists the package job applies to every natives jar.
+            cmp -s <(unzip -p "$AAR" jni/arm64-v8a/libjllama.so) \
+              "llama-android/natives/$([ "$flavor" = llama-android ] && echo cpu || echo opencl)/arm64-v8a/libjllama.so" \
+              || { echo "::error::$AAR jni/arm64-v8a/libjllama.so is not the staged library"; exit 1; }
           done
+      - name: Android libraries -- dependency allowlist + 16 KB page alignment (buildcheck/nativedeps.py)
+        run: python3 .github/verify-native-deps.py stage
       - name: AGP consumer smoke test (R8 release build from mavenLocal)
         shell: bash
         run: |
@@ -1251,11 +1063,11 @@ jobs:
           APK=.github/android-consumer-test/app/build/outputs/apk/release/app-release.apk
           test -f "$APK"
           for abi in arm64-v8a x86_64; do
-            unzip -l "$APK" | grep -q "lib/$abi/libjllama.so" \
+            unzip -l "$APK" | grep -q "lib/$abi/libjllama.so"
               || { echo "::error::consumer APK is missing lib/$abi/libjllama.so"; exit 1; }
           done
           # The AAR's consumer proguard.txt must have carried the binding through R8.
-          unzip -p "$APK" "classes*.dex" | grep -aq "Lnet/ladenthin/llama/LlamaModel;" \
+          unzip -p "$APK" "classes*.dex" | grep -aq "Lnet/ladenthin/llama/LlamaModel;"
             || { echo "::error::R8 stripped net.ladenthin.llama.LlamaModel — consumer proguard rules broken"; exit 1; }
       - name: Upload AARs
         uses: actions/upload-artifact@v7
@@ -1301,7 +1113,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           # AGP 9.4.0 (the .github/android-consumer-test fixture) requires Gradle >= 9.6.0.
-          gradle-version: "9.8.0"
+          gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Enable KVM group permissions (GitHub-hosted runner)
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -1328,16 +1140,7 @@ jobs:
           cp stage/cpu/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
           cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
           gradle -p llama-android publishLlamaAndroidPublicationToMavenLocal
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
-        # cache miss cannot re-save an empty/partial entry under the immutable key.
-        # download-models is the single writer; enableCrossOsArchive matches its
-        # cross-OS entry version so Windows/macOS restore the same ubuntu-built entry.
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
+      - uses: ./.github/actions/restore-models
       - name: Free disk space for the emulator (only the draft model is needed on-device)
         # Same guard as test-android-llmservice: the AVD userdata partition needs ~7.4 GB; drop the
         # rest of the restored ~10 GB GGUF cache (this job adb-pushes only the tiny draft model) plus
@@ -1397,7 +1200,7 @@ jobs:
           # AGP 9.4.0 (android-llmservice) requires Gradle >= 9.6.0; also satisfies Kotlin
           # 2.4's Gradle-plugin floor. The AAR/lib-only jobs stay on an older Gradle since
           # they build no AGP project.
-          gradle-version: "9.8.0"
+          gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Build core jar + install llama-kotlin facade to mavenLocal
         # install (not package) so the app's Gradle build resolves llama-kotlin +
         # the core POM from mavenLocal. llama-kotlin's core dep is provided-scope, so the
@@ -1491,7 +1294,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
         with:
           # AGP 9.4.0 (android-llmservice) requires Gradle >= 9.6.0.
-          gradle-version: "9.8.0"
+          gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Enable KVM group permissions (GitHub-hosted runner)
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -1518,12 +1321,7 @@ jobs:
           cp stage/cpu/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
           cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
           gradle -p llama-android publishLlamaAndroidPublicationToMavenLocal
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
+      - uses: ./.github/actions/restore-models
       - name: Free disk space for the emulator (only the draft model is needed on-device)
         # The AVD userdata partition needs ~7.4 GB; the full ~10 GB GGUF cache restore leaves too
         # little free, so the emulator FATALs ("Not enough space to create userdata partition") and
@@ -1562,8 +1360,6 @@ jobs:
     runs-on: macos-15
     env:
       BUILD_JOBS: 2
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -1578,12 +1374,7 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
       - name: Display CPU Info
         shell: bash
-        run: |
-          echo "=== CPU Information ==="
-          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
-          echo ""
-          echo "=== Processor Details ==="
-          system_profiler SPHardwareDataType
+        run: bash .github/print-host-info.sh
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -1607,8 +1398,6 @@ jobs:
     runs-on: macos-14
     env:
       BUILD_JOBS: 2
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -1623,12 +1412,7 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
       - name: Display CPU Info
         shell: bash
-        run: |
-          echo "=== CPU Information ==="
-          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
-          echo ""
-          echo "=== Processor Details ==="
-          system_profiler SPHardwareDataType
+        run: bash .github/print-host-info.sh
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -1658,16 +1442,8 @@ jobs:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
-        shell: pwsh
-        run: |
-          Write-Host "=== CPU Information (Get-CimInstance - All Properties) ==="
-          Get-CimInstance Win32_Processor | Select-Object * | Format-List
-          Write-Host ""
-          Write-Host "=== CPU Information (systeminfo) ==="
-          systeminfo | Select-String "Processor"
-          Write-Host ""
-          Write-Host "=== CPU Information (Get-ComputerInfo) ==="
-          Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
+        shell: bash
+        run: bash .github/print-host-info.sh
       - name: Build libraries
         shell: cmd
         run: |
@@ -1692,16 +1468,8 @@ jobs:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Display CPU Info
-        shell: pwsh
-        run: |
-          Write-Host "=== CPU Information (Get-CimInstance - All Properties) ==="
-          Get-CimInstance Win32_Processor | Select-Object * | Format-List
-          Write-Host ""
-          Write-Host "=== CPU Information (systeminfo) ==="
-          systeminfo | Select-String "Processor"
-          Write-Host ""
-          Write-Host "=== CPU Information (Get-ComputerInfo) ==="
-          Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
+        shell: bash
+        run: bash .github/print-host-info.sh
       - name: Build libraries
         shell: cmd
         run: |
@@ -1732,8 +1500,6 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -1749,26 +1515,10 @@ jobs:
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
-        shell: pwsh
-        run: |
-          $ver = "0.18.0"
-          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
-          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
+        uses: ./.github/actions/install-sccache-windows
       - name: Display CPU Info
-        shell: pwsh
-        run: |
-          Write-Host "=== CPU Information (Get-CimInstance - All Properties) ==="
-          Get-CimInstance Win32_Processor | Select-Object * | Format-List
-          Write-Host ""
-          Write-Host "=== CPU Information (systeminfo) ==="
-          systeminfo | Select-String "Processor"
-          Write-Host ""
-          Write-Host "=== CPU Information (Get-ComputerInfo) ==="
-          Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
+        shell: bash
+        run: bash .github/print-host-info.sh
       - name: Build libraries
         shell: cmd
         run: |
@@ -1786,8 +1536,6 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -1803,26 +1551,10 @@ jobs:
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
-        shell: pwsh
-        run: |
-          $ver = "0.18.0"
-          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
-          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
+        uses: ./.github/actions/install-sccache-windows
       - name: Display CPU Info
-        shell: pwsh
-        run: |
-          Write-Host "=== CPU Information (Get-CimInstance - All Properties) ==="
-          Get-CimInstance Win32_Processor | Select-Object * | Format-List
-          Write-Host ""
-          Write-Host "=== CPU Information (systeminfo) ==="
-          systeminfo | Select-String "Processor"
-          Write-Host ""
-          Write-Host "=== CPU Information (Get-ComputerInfo) ==="
-          Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
+        shell: bash
+        run: bash .github/print-host-info.sh
       - name: Build libraries
         shell: cmd
         run: |
@@ -1858,8 +1590,6 @@ jobs:
     # self-contained with no libomp dependency to ship. The x86_64/x86 jobs keep OpenMP (MSVC vcomp).
     runs-on: windows-11-arm
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -1875,18 +1605,7 @@ jobs:
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
-        shell: pwsh
-        # sccache ships a native Windows-on-ARM build; it wraps clang-cl here.
-        # build.bat probes sccache before trusting it and, should a build fail with it as the
-        # launcher, retries once uncached -- so this can speed the job up but never red it.
-        run: |
-          $ver = "0.18.0"
-          $rel = "sccache-v$ver-aarch64-pc-windows-msvc"
-          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
+        uses: ./.github/actions/install-sccache-windows
       - name: Build libraries
         shell: cmd
         # No mvn compile needed: the JNI header (jllama.h) is committed and the native build
@@ -1922,8 +1641,6 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -1977,15 +1694,7 @@ jobs:
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
-        shell: pwsh
-        run: |
-          $ver = "0.18.0"
-          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
-          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
+        uses: ./.github/actions/install-sccache-windows
       - name: Build libraries
         shell: cmd
         # GPU jobs build the artifact only — no -DBUILD_TESTING / ctest. The C++ unit
@@ -2006,8 +1715,6 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -2028,15 +1735,7 @@ jobs:
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
-        shell: pwsh
-        run: |
-          $ver = "0.18.0"
-          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
-          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
+        uses: ./.github/actions/install-sccache-windows
       - name: Build libraries
         shell: cmd
         # Build the artifact only (see the CUDA job's note: GPU-less runner can't run a
@@ -2055,8 +1754,6 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -2072,15 +1769,7 @@ jobs:
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
-        shell: pwsh
-        run: |
-          $ver = "0.18.0"
-          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
-          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
+        uses: ./.github/actions/install-sccache-windows
       - name: Build libraries
         shell: cmd
         # Build the artifact only (see the CUDA job's note: GPU-less runner can't run a
@@ -2110,8 +1799,6 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: ubuntu-latest
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - name: Free up disk space
@@ -2184,8 +1871,6 @@ jobs:
     # reason (it drives ROCm's own clang and relies on the older MSVC STL).
     runs-on: windows-2022
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -2228,18 +1913,7 @@ jobs:
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
-        shell: pwsh
-        # Wraps ROCm's clang (HIP is compiled as C++ on Windows, so the C/CXX launcher covers it).
-        # build.bat probes sccache before trusting it and, should a build fail with it as the
-        # launcher, retries once uncached -- so this can speed the job up but never red it.
-        run: |
-          $ver = "0.18.0"
-          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
-          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
+        uses: ./.github/actions/install-sccache-windows
       - name: Build libraries
         shell: cmd
         # Upstream's compiler wiring for TheRock (clang under lib\llvm\bin, not bin\);
@@ -2265,8 +1939,6 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: ubuntu-latest
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - name: Free up disk space
@@ -2308,8 +1980,6 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: ubuntu-latest
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - name: Free up disk space
@@ -2351,8 +2021,6 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -2376,18 +2044,7 @@ jobs:
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
-        shell: pwsh
-        # Wraps cl.exe (C) and icx (C++); if sccache cannot handle icx the retry builds uncached.
-        # build.bat probes sccache before trusting it and, should a build fail with it as the
-        # launcher, retries once uncached -- so this can speed the job up but never red it.
-        run: |
-          $ver = "0.18.0"
-          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
-          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
+        uses: ./.github/actions/install-sccache-windows
       - name: Build libraries
         shell: cmd
         run: |
@@ -2409,8 +2066,6 @@ jobs:
     # OpenCL headers + ICD loader before delegating to build.bat.
     runs-on: windows-11-arm
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -2426,18 +2081,7 @@ jobs:
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
-        shell: pwsh
-        # sccache ships a native Windows-on-ARM build; it wraps clang-cl here.
-        # build.bat probes sccache before trusting it and, should a build fail with it as the
-        # launcher, retries once uncached -- so this can speed the job up but never red it.
-        run: |
-          $ver = "0.18.0"
-          $rel = "sccache-v$ver-aarch64-pc-windows-msvc"
-          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
+        uses: ./.github/actions/install-sccache-windows
       - name: Build libraries
         shell: cmd
         run: |
@@ -2454,8 +2098,6 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: ubuntu-latest
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -2505,8 +2147,6 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     env:
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -2537,18 +2177,7 @@ jobs:
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
-        shell: pwsh
-        # Plain cl.exe build, same as the Vulkan/OpenCL jobs.
-        # build.bat probes sccache before trusting it and, should a build fail with it as the
-        # launcher, retries once uncached -- so this can speed the job up but never red it.
-        run: |
-          $ver = "0.18.0"
-          $rel = "sccache-v$ver-x86_64-pc-windows-msvc"
-          $url = "https://github.com/mozilla/sccache/releases/download/v$ver/$rel.zip"
-          Write-Host "Downloading $url"
-          Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
-          Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
-          Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
+        uses: ./.github/actions/install-sccache-windows
       - name: Build libraries
         shell: cmd
         # vcpkg toolchain file wires in the OpenCL (incl. cl2.hpp) that ggml-openvino needs.
@@ -2576,12 +2205,8 @@ jobs:
           distribution: 'temurin'
           java-version: ${{ env.JAVA_VERSION }}
       - name: Display CPU Info
-        run: |
-          echo "=== CPU Information ==="
-          lscpu
-          echo ""
-          echo "=== CPU Details from /proc/cpuinfo ==="
-          cat /proc/cpuinfo
+        shell: bash
+        run: bash .github/print-host-info.sh
       - name: Build libraries
         run: |
           mvn -q --no-transfer-progress -f llama/pom.xml compile
@@ -2601,8 +2226,6 @@ jobs:
     runs-on: macos-15
     env:
       BUILD_JOBS: 2
-      USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
-      SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
@@ -2617,12 +2240,7 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
       - name: Display CPU Info
         shell: bash
-        run: |
-          echo "=== CPU Information ==="
-          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
-          echo ""
-          echo "=== Processor Details ==="
-          system_profiler SPHardwareDataType
+        run: bash .github/print-host-info.sh
       - name: Install sccache (shared compiler cache)
         if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
         continue-on-error: true
@@ -2652,33 +2270,12 @@ jobs:
       - uses: actions/checkout@v7
       - name: Display CPU Info
         shell: bash
-        run: |
-          echo "=== CPU Information ==="
-          lscpu
-          echo ""
-          echo "=== CPU Details from /proc/cpuinfo ==="
-          cat /proc/cpuinfo
+        run: bash .github/print-host-info.sh
       - uses: actions/download-artifact@v8
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
-      # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
-      # download logic. GGUF is platform-independent, so ubuntu + macOS + Windows share
-      # one entry (key gguf-models-<manifest hash>). validate-models is kept as an integrity guard so a
-      # partial/absent restore fails loudly instead of silently self-skipping required tests.
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
-        # cache miss cannot re-save an empty/partial entry under the immutable key.
-        # download-models is the single writer; enableCrossOsArchive matches its
-        # cross-OS entry version so Windows/macOS restore the same ubuntu-built entry.
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
-      - name: Validate model files
-        run: bash .github/validate-models.sh
+      - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -2691,15 +2288,7 @@ jobs:
           echo "${{ github.workspace }}/core.%e.%p" | sudo tee /proc/sys/kernel/core_pattern
       - name: Run tests
         run: |
-          mvn -e --no-transfer-progress -f llama/pom.xml -P jcstress test \
-            -Dnet.ladenthin.llama.tool.model=models/${TOOL_MODEL_NAME} \
-            -Dnet.ladenthin.llama.nomic.path=models/${NOMIC_EMBED_MODEL_NAME} \
-            -Dnet.ladenthin.llama.vision.model=models/${VISION_MODEL_NAME} \
-            -Dnet.ladenthin.llama.vision.mmproj=models/${VISION_MMPROJ_NAME} \
-            -Dnet.ladenthin.llama.vision.image=${VISION_IMAGE_PATH} \
-            -Dnet.ladenthin.llama.tts.model=models/${TTS_MODEL_NAME} \
-            -Dnet.ladenthin.llama.tts.mmproj=models/${TTS_MMPROJ_NAME} \
-            -Dnet.ladenthin.llama.train.model=models/${TRAIN_MODEL_NAME}
+          mvn -e --no-transfer-progress -f llama/pom.xml -P jcstress test
       # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
       # fails makes Surefire record tests="0" for that class -- no entries at all, so it is
       # invisible to a skip check. That is exactly how every model-gated class stayed silently
@@ -2732,40 +2321,11 @@ jobs:
       - name: Memory after tests
         if: always()
         run: free -h
-      # A forked test JVM that aborts leaves an hs_err_pid log and a surefire
-      # dumpstream -- both otherwise ONLY inside the artifact uploaded below,
-      # which is unreachable from anywhere that cannot fetch from Azure Blob
-      # (a phone, a restricted network, an agent sandbox). Echo them here so the
-      # aborting frame is readable from the run page itself. See
-      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
         shell: bash
-        run: |
-          shopt -s nullglob
-          found=0
-          for f in llama/hs_err_pid*.log; do
-            found=1
-            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
-            sed -n '1,200p' "$f"
-          done
-          for f in llama/target/surefire-reports/*.dumpstream llama/target/surefire-reports/*.dump; do
-            found=1
-            echo "===== $f ====="
-            cat "$f"
-          done
-          if [ "$found" = 0 ]; then
-            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
-            echo
-            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
-            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
-            echo "crash log. Read the surefire output above for the real cause."
-            echo
-            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
-            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
-            echo "test results. In that case the abort bypassed the JVM error handler (a native"
-            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
-          fi
+        run: bash .github/print-crash-logs.sh llama
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -2817,33 +2377,12 @@ jobs:
       - uses: actions/checkout@v7
       - name: Display CPU Info
         shell: bash
-        run: |
-          echo "=== CPU Information ==="
-          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
-          echo ""
-          echo "=== Processor Details ==="
-          system_profiler SPHardwareDataType
+        run: bash .github/print-host-info.sh
       - uses: actions/download-artifact@v8
         with:
           name: macos-14-metal
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
-      # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
-      # download logic. GGUF is platform-independent, so ubuntu + macOS + Windows share
-      # one entry (key gguf-models-<manifest hash>). validate-models is kept as an integrity guard so a
-      # partial/absent restore fails loudly instead of silently self-skipping required tests.
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
-        # cache miss cannot re-save an empty/partial entry under the immutable key.
-        # download-models is the single writer; enableCrossOsArchive matches its
-        # cross-OS entry version so Windows/macOS restore the same ubuntu-built entry.
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
-      - name: Validate model files
-        run: bash .github/validate-models.sh
+      - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -2854,15 +2393,7 @@ jobs:
         run: ulimit -c unlimited
       - name: Run tests
         run: |
-          mvn -e --no-transfer-progress -f llama/pom.xml -Dnet.ladenthin.llama.test.ngl=0 test \
-            -Dnet.ladenthin.llama.tool.model=models/${TOOL_MODEL_NAME} \
-            -Dnet.ladenthin.llama.nomic.path=models/${NOMIC_EMBED_MODEL_NAME} \
-            -Dnet.ladenthin.llama.vision.model=models/${VISION_MODEL_NAME} \
-            -Dnet.ladenthin.llama.vision.mmproj=models/${VISION_MMPROJ_NAME} \
-            -Dnet.ladenthin.llama.vision.image=${VISION_IMAGE_PATH} \
-            -Dnet.ladenthin.llama.tts.model=models/${TTS_MODEL_NAME} \
-            -Dnet.ladenthin.llama.tts.mmproj=models/${TTS_MMPROJ_NAME} \
-            -Dnet.ladenthin.llama.train.model=models/${TRAIN_MODEL_NAME}
+          mvn -e --no-transfer-progress -f llama/pom.xml -Dnet.ladenthin.llama.test.ngl=0 test
       # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
       # fails makes Surefire record tests="0" for that class -- no entries at all, so it is
       # invisible to a skip check. That is exactly how every model-gated class stayed silently
@@ -2873,40 +2404,11 @@ jobs:
       - name: Memory after tests
         if: always()
         run: vm_stat && sysctl hw.memsize hw.physmem
-      # A forked test JVM that aborts leaves an hs_err_pid log and a surefire
-      # dumpstream -- both otherwise ONLY inside the artifact uploaded below,
-      # which is unreachable from anywhere that cannot fetch from Azure Blob
-      # (a phone, a restricted network, an agent sandbox). Echo them here so the
-      # aborting frame is readable from the run page itself. See
-      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
         shell: bash
-        run: |
-          shopt -s nullglob
-          found=0
-          for f in llama/hs_err_pid*.log; do
-            found=1
-            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
-            sed -n '1,200p' "$f"
-          done
-          for f in llama/target/surefire-reports/*.dumpstream llama/target/surefire-reports/*.dump; do
-            found=1
-            echo "===== $f ====="
-            cat "$f"
-          done
-          if [ "$found" = 0 ]; then
-            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
-            echo
-            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
-            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
-            echo "crash log. Read the surefire output above for the real cause."
-            echo
-            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
-            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
-            echo "test results. In that case the abort bypassed the JVM error handler (a native"
-            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
-          fi
+        run: bash .github/print-crash-logs.sh llama
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -2928,33 +2430,12 @@ jobs:
       - uses: actions/checkout@v7
       - name: Display CPU Info
         shell: bash
-        run: |
-          echo "=== CPU Information ==="
-          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
-          echo ""
-          echo "=== Processor Details ==="
-          system_profiler SPHardwareDataType
+        run: bash .github/print-host-info.sh
       - uses: actions/download-artifact@v8
         with:
           name: macos-15-no-metal
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
-      # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
-      # download logic. GGUF is platform-independent, so ubuntu + macOS + Windows share
-      # one entry (key gguf-models-<manifest hash>). validate-models is kept as an integrity guard so a
-      # partial/absent restore fails loudly instead of silently self-skipping required tests.
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
-        # cache miss cannot re-save an empty/partial entry under the immutable key.
-        # download-models is the single writer; enableCrossOsArchive matches its
-        # cross-OS entry version so Windows/macOS restore the same ubuntu-built entry.
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
-      - name: Validate model files
-        run: bash .github/validate-models.sh
+      - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -2965,15 +2446,7 @@ jobs:
         run: ulimit -c unlimited
       - name: Run tests
         run: |
-          mvn -e --no-transfer-progress -f llama/pom.xml test \
-            -Dnet.ladenthin.llama.tool.model=models/${TOOL_MODEL_NAME} \
-            -Dnet.ladenthin.llama.nomic.path=models/${NOMIC_EMBED_MODEL_NAME} \
-            -Dnet.ladenthin.llama.vision.model=models/${VISION_MODEL_NAME} \
-            -Dnet.ladenthin.llama.vision.mmproj=models/${VISION_MMPROJ_NAME} \
-            -Dnet.ladenthin.llama.vision.image=${VISION_IMAGE_PATH} \
-            -Dnet.ladenthin.llama.tts.model=models/${TTS_MODEL_NAME} \
-            -Dnet.ladenthin.llama.tts.mmproj=models/${TTS_MMPROJ_NAME} \
-            -Dnet.ladenthin.llama.train.model=models/${TRAIN_MODEL_NAME}
+          mvn -e --no-transfer-progress -f llama/pom.xml test
       # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
       # fails makes Surefire record tests="0" for that class -- no entries at all, so it is
       # invisible to a skip check. That is exactly how every model-gated class stayed silently
@@ -2984,40 +2457,11 @@ jobs:
       - name: Memory after tests
         if: always()
         run: vm_stat && sysctl hw.memsize hw.physmem
-      # A forked test JVM that aborts leaves an hs_err_pid log and a surefire
-      # dumpstream -- both otherwise ONLY inside the artifact uploaded below,
-      # which is unreachable from anywhere that cannot fetch from Azure Blob
-      # (a phone, a restricted network, an agent sandbox). Echo them here so the
-      # aborting frame is readable from the run page itself. See
-      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
         shell: bash
-        run: |
-          shopt -s nullglob
-          found=0
-          for f in llama/hs_err_pid*.log; do
-            found=1
-            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
-            sed -n '1,200p' "$f"
-          done
-          for f in llama/target/surefire-reports/*.dumpstream llama/target/surefire-reports/*.dump; do
-            found=1
-            echo "===== $f ====="
-            cat "$f"
-          done
-          if [ "$found" = 0 ]; then
-            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
-            echo
-            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
-            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
-            echo "crash log. Read the surefire output above for the real cause."
-            echo
-            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
-            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
-            echo "test results. In that case the abort bypassed the JVM error handler (a native"
-            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
-          fi
+        run: bash .github/print-crash-logs.sh llama
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -3039,33 +2483,12 @@ jobs:
       - uses: actions/checkout@v7
       - name: Display CPU Info
         shell: bash
-        run: |
-          echo "=== CPU Information ==="
-          sysctl hw.model hw.cachelinesize hw.cpufrequency hw.cachesize hw.physicalcpu hw.logicalcpu hw.packages hw.memsize hw.ncpu 2>/dev/null || true
-          echo ""
-          echo "=== Processor Details ==="
-          system_profiler SPHardwareDataType
+        run: bash .github/print-host-info.sh
       - uses: actions/download-artifact@v8
         with:
           name: natives-metal-macos-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
-      # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
-      # download logic. GGUF is platform-independent, so ubuntu + macOS + Windows share
-      # one entry (key gguf-models-<manifest hash>). validate-models is kept as an integrity guard so a
-      # partial/absent restore fails loudly instead of silently self-skipping required tests.
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
-        # cache miss cannot re-save an empty/partial entry under the immutable key.
-        # download-models is the single writer; enableCrossOsArchive matches its
-        # cross-OS entry version so Windows/macOS restore the same ubuntu-built entry.
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
-      - name: Validate model files
-        run: bash .github/validate-models.sh
+      - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -3076,15 +2499,7 @@ jobs:
         run: ulimit -c unlimited
       - name: Run tests
         run: |
-          mvn -e --no-transfer-progress -f llama/pom.xml test \
-            -Dnet.ladenthin.llama.tool.model=models/${TOOL_MODEL_NAME} \
-            -Dnet.ladenthin.llama.nomic.path=models/${NOMIC_EMBED_MODEL_NAME} \
-            -Dnet.ladenthin.llama.vision.model=models/${VISION_MODEL_NAME} \
-            -Dnet.ladenthin.llama.vision.mmproj=models/${VISION_MMPROJ_NAME} \
-            -Dnet.ladenthin.llama.vision.image=${VISION_IMAGE_PATH} \
-            -Dnet.ladenthin.llama.tts.model=models/${TTS_MODEL_NAME} \
-            -Dnet.ladenthin.llama.tts.mmproj=models/${TTS_MMPROJ_NAME} \
-            -Dnet.ladenthin.llama.train.model=models/${TRAIN_MODEL_NAME}
+          mvn -e --no-transfer-progress -f llama/pom.xml test
       # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
       # fails makes Surefire record tests="0" for that class -- no entries at all, so it is
       # invisible to a skip check. That is exactly how every model-gated class stayed silently
@@ -3095,40 +2510,11 @@ jobs:
       - name: Memory after tests
         if: always()
         run: vm_stat && sysctl hw.memsize hw.physmem
-      # A forked test JVM that aborts leaves an hs_err_pid log and a surefire
-      # dumpstream -- both otherwise ONLY inside the artifact uploaded below,
-      # which is unreachable from anywhere that cannot fetch from Azure Blob
-      # (a phone, a restricted network, an agent sandbox). Echo them here so the
-      # aborting frame is readable from the run page itself. See
-      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
         shell: bash
-        run: |
-          shopt -s nullglob
-          found=0
-          for f in llama/hs_err_pid*.log; do
-            found=1
-            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
-            sed -n '1,200p' "$f"
-          done
-          for f in llama/target/surefire-reports/*.dumpstream llama/target/surefire-reports/*.dump; do
-            found=1
-            echo "===== $f ====="
-            cat "$f"
-          done
-          if [ "$found" = 0 ]; then
-            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
-            echo
-            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
-            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
-            echo "crash log. Read the surefire output above for the real cause."
-            echo
-            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
-            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
-            echo "test results. In that case the abort bypassed the JVM error handler (a native"
-            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
-          fi
+        run: bash .github/print-crash-logs.sh llama
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -3149,36 +2535,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Display CPU Info
-        shell: pwsh
-        run: |
-          Write-Host "=== CPU Information (Get-CimInstance - All Properties) ==="
-          Get-CimInstance Win32_Processor | Select-Object * | Format-List
-          Write-Host ""
-          Write-Host "=== CPU Information (systeminfo) ==="
-          systeminfo | Select-String "Processor"
-          Write-Host ""
-          Write-Host "=== CPU Information (Get-ComputerInfo) ==="
-          Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
+        shell: bash
+        run: bash .github/print-host-info.sh
       - uses: actions/download-artifact@v8
         with:
           name: natives-cpu-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
-      # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
-      # download logic. validate-models is kept as an integrity guard so a partial/absent
-      # restore fails loudly instead of silently self-skipping required tests.
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
-        # cache miss cannot re-save an empty/partial entry under the immutable key.
-        # download-models is the single writer; enableCrossOsArchive matches its
-        # cross-OS entry version so Windows/macOS restore the same ubuntu-built entry.
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
-      - name: Validate model files
-        run: .github\validate-models.bat
+      - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -3205,15 +2568,7 @@ jobs:
           Get-ItemProperty -Path $key | Format-List
       - name: Run tests
         run: |
-          mvn -e --no-transfer-progress -f llama/pom.xml test `
-            "-Dnet.ladenthin.llama.tool.model=models/$env:TOOL_MODEL_NAME" `
-            "-Dnet.ladenthin.llama.nomic.path=models/$env:NOMIC_EMBED_MODEL_NAME" `
-            "-Dnet.ladenthin.llama.vision.model=models/$env:VISION_MODEL_NAME" `
-            "-Dnet.ladenthin.llama.vision.mmproj=models/$env:VISION_MMPROJ_NAME" `
-            "-Dnet.ladenthin.llama.vision.image=$env:VISION_IMAGE_PATH" `
-            "-Dnet.ladenthin.llama.tts.model=models/$env:TTS_MODEL_NAME" `
-            "-Dnet.ladenthin.llama.tts.mmproj=models/$env:TTS_MMPROJ_NAME" `
-            "-Dnet.ladenthin.llama.train.model=models/$env:TRAIN_MODEL_NAME"
+          mvn -e --no-transfer-progress -f llama/pom.xml test
       # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
       # fails makes Surefire record tests="0" for that class -- no entries at all, so it is
       # invisible to a skip check. That is exactly how every model-gated class stayed silently
@@ -3226,40 +2581,11 @@ jobs:
         if: always()
         run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
         shell: pwsh
-      # A forked test JVM that aborts leaves an hs_err_pid log and a surefire
-      # dumpstream -- both otherwise ONLY inside the artifact uploaded below,
-      # which is unreachable from anywhere that cannot fetch from Azure Blob
-      # (a phone, a restricted network, an agent sandbox). Echo them here so the
-      # aborting frame is readable from the run page itself. See
-      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
         shell: bash
-        run: |
-          shopt -s nullglob
-          found=0
-          for f in llama/hs_err_pid*.log; do
-            found=1
-            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
-            sed -n '1,200p' "$f"
-          done
-          for f in llama/target/surefire-reports/*.dumpstream llama/target/surefire-reports/*.dump; do
-            found=1
-            echo "===== $f ====="
-            cat "$f"
-          done
-          if [ "$found" = 0 ]; then
-            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
-            echo
-            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
-            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
-            echo "crash log. Read the surefire output above for the real cause."
-            echo
-            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
-            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
-            echo "test results. In that case the abort bypassed the JVM error handler (a native"
-            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
-          fi
+        run: bash .github/print-crash-logs.sh llama
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -3286,36 +2612,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Display CPU Info
-        shell: pwsh
-        run: |
-          Write-Host "=== CPU Information (Get-CimInstance - All Properties) ==="
-          Get-CimInstance Win32_Processor | Select-Object * | Format-List
-          Write-Host ""
-          Write-Host "=== CPU Information (systeminfo) ==="
-          systeminfo | Select-String "Processor"
-          Write-Host ""
-          Write-Host "=== CPU Information (Get-ComputerInfo) ==="
-          Get-ComputerInfo -Property "CsProcessors*" 2>$null || Write-Host "Get-ComputerInfo not available"
+        shell: bash
+        run: bash .github/print-host-info.sh
       - uses: actions/download-artifact@v8
         with:
           name: natives-msvc-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-      # GGUF models are downloaded + cached ONCE by the upstream `download-models` job
-      # (this job `needs:` it), so here we only RESTORE the shared cache — no per-job
-      # download logic. validate-models is kept as an integrity guard so a partial/absent
-      # restore fails loudly instead of silently self-skipping required tests.
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
-        # cache miss cannot re-save an empty/partial entry under the immutable key.
-        # download-models is the single writer; enableCrossOsArchive matches its
-        # cross-OS entry version so Windows/macOS restore the same ubuntu-built entry.
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
-      - name: Validate model files
-        run: .github\validate-models.bat
+      - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -3342,15 +2645,7 @@ jobs:
           Get-ItemProperty -Path $key | Format-List
       - name: Run tests
         run: |
-          mvn -e --no-transfer-progress -f llama/pom.xml test `
-            "-Dnet.ladenthin.llama.tool.model=models/$env:TOOL_MODEL_NAME" `
-            "-Dnet.ladenthin.llama.nomic.path=models/$env:NOMIC_EMBED_MODEL_NAME" `
-            "-Dnet.ladenthin.llama.vision.model=models/$env:VISION_MODEL_NAME" `
-            "-Dnet.ladenthin.llama.vision.mmproj=models/$env:VISION_MMPROJ_NAME" `
-            "-Dnet.ladenthin.llama.vision.image=$env:VISION_IMAGE_PATH" `
-            "-Dnet.ladenthin.llama.tts.model=models/$env:TTS_MODEL_NAME" `
-            "-Dnet.ladenthin.llama.tts.mmproj=models/$env:TTS_MMPROJ_NAME" `
-            "-Dnet.ladenthin.llama.train.model=models/$env:TRAIN_MODEL_NAME"
+          mvn -e --no-transfer-progress -f llama/pom.xml test
       # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
       # fails makes Surefire record tests="0" for that class -- no entries at all, so it is
       # invisible to a skip check. That is exactly how every model-gated class stayed silently
@@ -3363,40 +2658,11 @@ jobs:
         if: always()
         run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
         shell: pwsh
-      # A forked test JVM that aborts leaves an hs_err_pid log and a surefire
-      # dumpstream -- both otherwise ONLY inside the artifact uploaded below,
-      # which is unreachable from anywhere that cannot fetch from Azure Blob
-      # (a phone, a restricted network, an agent sandbox). Echo them here so the
-      # aborting frame is readable from the run page itself. See
-      # ../workspace/policies/ci-test-diagnostics.md section 3.1.
+      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
       - name: Print crash logs (on failure)
         if: failure()
         shell: bash
-        run: |
-          shopt -s nullglob
-          found=0
-          for f in llama/hs_err_pid*.log; do
-            found=1
-            echo "===== $f (first 200 lines; full file in the uploaded artifact) ====="
-            sed -n '1,200p' "$f"
-          done
-          for f in llama/target/surefire-reports/*.dumpstream llama/target/surefire-reports/*.dump; do
-            found=1
-            echo "===== $f ====="
-            cat "$f"
-          done
-          if [ "$found" = 0 ]; then
-            echo "No hs_err_pid*.log and no surefire dump/dumpstream was written."
-            echo
-            echo "For an ordinary test failure that is EXPECTED, not a finding: this step runs on"
-            echo "any job failure, and an assertion failure, a timeout or a compile error writes no"
-            echo "crash log. Read the surefire output above for the real cause."
-            echo
-            echo "It points at a JVM-level abort only if the log ALSO shows a fork ending abnormally"
-            echo "-- 'The forked VM terminated without properly saying goodbye', or an exit with no"
-            echo "test results. In that case the abort bypassed the JVM error handler (a native"
-            echo "exit()/terminate() rather than a raised signal), which is why no file was written."
-          fi
+        run: bash .github/print-crash-logs.sh llama
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
@@ -3600,18 +2866,7 @@ jobs:
         with:
           name: llama-fatjar-smoke-linux
           path: fatjars/
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
-        # cache miss cannot re-save an empty/partial entry under the immutable key.
-        # download-models is the single writer; enableCrossOsArchive matches its
-        # cross-OS entry version so Windows/macOS restore the same ubuntu-built entry.
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
-      - name: Validate model files
-        run: .github/validate-models.sh
+      - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -3662,14 +2917,7 @@ jobs:
         with:
           name: llama-fatjar-smoke-linux
           path: agent-assets/
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
-      - name: Validate model files
-        run: .github/validate-models.sh
+      - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -3705,18 +2953,7 @@ jobs:
         with:
           name: llama-fatjar-smoke-windows
           path: fatjars/
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
-        # cache miss cannot re-save an empty/partial entry under the immutable key.
-        # download-models is the single writer; enableCrossOsArchive matches its
-        # cross-OS entry version so Windows/macOS restore the same ubuntu-built entry.
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
-      - name: Validate model files
-        run: .github\validate-models.bat
+      - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -3751,18 +2988,7 @@ jobs:
         with:
           name: llama-fatjar-smoke-linux-aarch64
           path: fatjars/
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        # Restore-only: consumer jobs can NEVER write the cache, so a job running on a
-        # cache miss cannot re-save an empty/partial entry under the immutable key.
-        # download-models is the single writer; enableCrossOsArchive matches its
-        # cross-OS entry version so every consumer restores the same ubuntu-built entry.
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
-      - name: Validate model files
-        run: .github/validate-models.sh
+      - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
@@ -3794,15 +3020,7 @@ jobs:
         with:
           name: llama-fatjar-smoke-windows-arm64
           path: fatjars/
-      - name: Restore shared GGUF model cache (populated by download-models; no re-download)
-        # Restore-only: see the note on the Linux job above.
-        uses: actions/cache/restore@v6
-        with:
-          path: models/
-          key: gguf-models-${{ hashFiles('.github/models.csv') }}
-          enableCrossOsArchive: true
-      - name: Validate model files
-        run: .github\validate-models.bat
+      - uses: ./.github/actions/restore-models
       # temurin publishes a Windows/AArch64 JDK for this java-version; the build-windows-arm64
       # job already resolves it on this same runner.
       - uses: actions/setup-java@v6
@@ -3910,7 +3128,7 @@ jobs:
 
   publish-snapshot:
     name: Publish Snapshot to Central
-    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows, smoke-fatjar-linux-aarch64, smoke-fatjar-windows-arm64, smoke-fatjar-macos, smoke-agent-linux]
+    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows, smoke-fatjar-linux-aarch64, smoke-fatjar-windows-arm64, smoke-fatjar-macos, smoke-agent-linux, vmlens, shared-files]
     if: needs.check-snapshot.result == 'success' && inputs.publish_to_central
     runs-on: ubuntu-latest
     environment: maven-central
@@ -3976,7 +3194,7 @@ jobs:
       # downloads above; the core jar was just built by the reactor deploy.
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: "9.8.0"
+          gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Publish Android AAR snapshots (llama-android + llama-android-opencl)
         run: |
           mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64 llama-android/natives/opencl/arm64-v8a
@@ -4088,7 +3306,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view snapshot --repo ${{ github.repository }} 2>/dev/null \
+          gh release view snapshot --repo ${{ github.repository }} 2>/dev/null
             || gh release create snapshot \
                  --repo ${{ github.repository }} \
                  --prerelease \
@@ -4107,7 +3325,7 @@ jobs:
   publish-release:
     name: Publish Release to Central
     if: needs.check-tag.result == 'success' && inputs.publish_to_central
-    needs: [check-tag, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows, smoke-fatjar-linux-aarch64, smoke-fatjar-windows-arm64, smoke-fatjar-macos, smoke-agent-linux]
+    needs: [check-tag, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, package-fatjars, smoke-fatjar-linux, smoke-fatjar-windows, smoke-fatjar-linux-aarch64, smoke-fatjar-windows-arm64, smoke-fatjar-macos, smoke-agent-linux, vmlens, shared-files]
     runs-on: ubuntu-latest
     environment: maven-central
     permissions:
@@ -4164,7 +3382,7 @@ jobs:
       # built by the reactor deploy.
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: "9.8.0"
+          gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Publish Android AAR release bundle to Central Portal
         shell: bash
         run: |

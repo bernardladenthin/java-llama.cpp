@@ -26,7 +26,7 @@ so everything below is genuinely still open.
   has it. Likely fix: build BoringSSL statically on macOS as on Windows
   (`LLAMA_BUILD_BORINGSSL`, `llama/CMakeLists.txt`), or turn HTTPS off there (`-DLLAMA_OPENSSL=OFF`;
   the library only needs it for URL model downloads). Then delete the two allowlist lines marked
-  KNOWN DEFECT in `.github/verify-native-deps.py`. Needs a macOS CI run to verify, which is why it is
+  KNOWN DEFECT in `.github/buildcheck/nativedeps.py`. Needs a macOS CI run to verify, which is why it is
   not folded into the RPC PR that surfaced it.
 
 ### RPC backend — follow-ups
@@ -443,15 +443,6 @@ introduced by the version bump — they were deferred to keep that PR landable.
   non-empty — so a lost `amd64 -> x86_64` entry would send `LlamaLoader` to a resource directory
   that does not exist. Cheap to close: set `os.arch`, assert the non-identity aliases only (identity
   entries such as `s390x` are behaviourally redundant with the `\W`-stripping fallback).
-
-- **`LlamaTrainer`'s end-to-end path runs on no CI platform.** `LlamaTrainerIntegrationTest`
-  self-skips everywhere: `net.ladenthin.llama.train.model` is set by no job and its model is in no
-  `.github/models.csv` row, so `validate-models.{sh,bat}` does not treat it as required. Two slices
-  are now mitigated — `test_tts_params.cpp`'s `TrainParams` + `ResolveCpuParams` suites for the
-  parameter build, and `test_wire_contracts.cpp`'s `JavaTrainingFieldContract` for the configuration
-  key set (`parameters.TrainingField` against `jllama_train::config_keys()`) — but nothing exercises
-  the Java → JNI → native trainer round trip. Adding a small training model to `models.csv` plus the
-  matching property to the Java test jobs would close it.
 
 - **`LlamaLoader`'s jar-extraction internals are tested only through directory fixtures.**
   `BackendLoadTest` drives backend probing, extras, fallthrough and forcing over the committed
