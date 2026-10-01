@@ -47,12 +47,6 @@ FetchContent_MakeAvailable(json)
 
 #################### llama.cpp ####################
 
-# GCC < 9 requires explicit linking of stdc++fs for std::filesystem (C++17). No CI toolchain is
-# that old any more (the last one, dockcross/linux-arm64-lts, is gone); kept for local builds.
-if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "9.0")
-    link_libraries(stdc++fs)
-endif()
-
 # Android bionic gates several libc declarations behind a minimum API level:
 #   >= 24: getifaddrs/freeifaddrs (<ifaddrs.h>), needed by cpp-httplib.
 #   >= 28: posix_spawn / posix_spawnp / posix_spawn_file_actions_* (<spawn.h>),

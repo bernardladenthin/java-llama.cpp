@@ -33,7 +33,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `verify-signing-key-gradle`, `github-snapshot`, `github-release`).
 - **Unused dockcross wrappers removed**: `dockcross-linux-arm64-lts` (Linux aarch64 builds natively on
   `ubuntu-24.04-arm` with GCC 14) and `dockcross-android-arm` (32-bit Android was never built in CI
-  and is not published).
+  and is not published). With them went the `stdc++fs` link for GCC < 9 in `llama/CMakeLists.txt`:
+  llama.cpp needs GCC >= 12 since b9789, so no compiler that could use it builds the project.
 - **`.github/dockcross/update.sh` removed**: it regenerated wrappers that no longer exist
   (`manylinux2014-x86`, `android-x86`) from unpinned images, while the wrappers in use are pinned to
   a dockcross tag. A wrapper is regenerated with `docker run --rm dockcross/<image>:<tag> > dockcross-<image>`
