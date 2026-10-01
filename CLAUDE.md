@@ -95,6 +95,7 @@ shapes this repo writes and rejects anything else loudly.
 | `releasegate.py` | `check-release-gate.py` (`shared-files`) | every job gates **both** publish jobs, unless `.github/release-gate-exemptions.txt` names it with a reason |
 | `sharedfiles.py` | `check-shared-files.py` (`shared-files`) | the files kept byte-identical across the four sibling repos |
 | `versions.py` | `check-versions.py` (`shared-files`) | **warns** where a Maven dependency or plugin is used in another version than in a sibling repo |
+| `runscripts.py` | `check-run-scripts.py` (`shared-files`) | every `run:` script of the workflows and composite actions that runs in bash parses (`bash -n`) |
 
 **The release gate.** A job nothing waits for can go red while a release still ships — the natives
 builds `package` once forgot to wait for, and the aarch64 fat jars that were signed and attached
@@ -131,6 +132,18 @@ bump lands in four pull requests and the first one merged must not turn the othe
 repos' own artifacts (`net.ladenthin:*`) are left out. It compares what is used, not property names:
 those differ between repos and include values that must differ (`maven.compiler.release`). The POM
 list per repo is `versions.POMS` -- a new module's POM goes there, in all four copies.
+
+**Run scripts parse (`check-run-scripts.py`).** A cleanup once lost the trailing ` \` of six continued
+lines in `publish.yml` -- each left a line starting with `||`/`&&`, a syntax error in a step only a
+native build, the AAR job or the snapshot release reaches. actionlint did not see it (it parses
+scripts only with shellcheck installed), `bash -n` sees every one. So the `shared-files` job runs
+`bash -n` over every `run:` script of `.github/workflows/` and `.github/actions/*/action.yml` that
+runs in bash, deciding the shell as the runner does (step `shell:`, job then workflow
+`defaults.run.shell`, else PowerShell on a `windows` runner and bash elsewhere; a matrix/input runner
+is Windows only where the step's `if:` says `runner.os == 'Windows'`). pwsh/powershell/cmd/python are
+skipped, an unknown shell is an error. Literal blocks are checked line for line (errors point at the
+file line), folded and plain values as YAML folds them, `${{ ... }}` becomes a word. Like
+`workflow.py` it reads the two-space layout these workflows use, not general YAML.
 
 Shared today: the `buildcheck` modules above marked shared in
 `__init__.py` (+ their tests and CLIs), `print-crash-logs.sh`, `verify-signing-key.sh`,
