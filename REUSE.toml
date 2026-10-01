@@ -53,10 +53,8 @@ SPDX-License-Identifier = "MIT"
 # Dockcross scripts (no file extension, may not be recognized)
 [[annotations]]
 path = [
-    ".github/dockcross/dockcross-android-arm",
     ".github/dockcross/dockcross-android-arm64",
     ".github/dockcross/dockcross-android-x86_64",
-    ".github/dockcross/dockcross-linux-arm64-lts",
     ".github/dockcross/dockcross-manylinux2014-x64",
     ".github/dockcross/dockcross-manylinux_2_28-x64",
 ]

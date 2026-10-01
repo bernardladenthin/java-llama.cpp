@@ -264,9 +264,7 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 > (emulators, Chromebooks, x86-64 Android hardware) as the `cpu-android-*`
 > natives jars and in the `llama-android` AAR, plus `aarch64` as
 > `opencl-android-aarch64`. 32-bit Android devices are unsupported
-> by the released artifacts; building from source via the
-> `.github/dockcross/dockcross-android-arm` toolchain is possible but not
-> wired into CI.
+> by the released artifacts.
 >
 > The minimum required Android version is **API 28 (Android 9.0 Pie)**.
 > Devices running Android 8.1 (API 27) or earlier are not supported.

@@ -1657,8 +1657,8 @@ Java parameters are serialized to JSON strings and passed to native code, which 
 ### Cross-compilation
 Docker-based cross-compilation scripts are in `.github/dockcross/` for **Android** targets (and the
 x86_64 manylinux jobs). **Linux `aarch64` is no longer cross-compiled** — it builds natively on a
-GitHub `ubuntu-24.04-arm` runner (see "Linux aarch64: native ARM build" below). The
-`.github/dockcross/dockcross-linux-arm64-lts` wrapper is now unused by CI (left in place; harmless).
+GitHub `ubuntu-24.04-arm` runner (see "Linux aarch64: native ARM build" below). Its former
+`dockcross-linux-arm64-lts` wrapper and the never-wired 32-bit `dockcross-android-arm` were deleted.
 
 ### Linux aarch64: native ARM build
 
