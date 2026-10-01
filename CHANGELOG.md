@@ -41,6 +41,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`manylinux2014-x86`, `android-x86`) from unpinned images, while the wrappers in use are pinned to
   a dockcross tag. A wrapper is regenerated with `docker run --rm dockcross/<image>:<tag> > dockcross-<image>`
   (the command each wrapper prints at its end).
+- **Copyright lines checked against the upstream code that is actually left**: the upstream author's
+  `SPDX-FileCopyrightText` line had been stamped onto every file when REUSE was introduced. Each file
+  was compared with the upstream source tree at its last upstream commit (`49be664`, token sequences,
+  robust to reformatting and moves); 80 files whose upstream share is nil or only generic boilerplate
+  (enum and value-class skeletons, separator comments, API calls every example makes, Maven/`.gitignore`
+  templates) no longer carry it. It stays on the 20 files that still hold upstream code or text (the
+  JNI layer, `LlamaModel`, `LlamaLoader`, `ModelParameters`, the examples, the clang configs, ...),
+  on `README.md`, `models/README.md` and `llama/CMakeLists.txt`, and in `LICENSE`.
 - **More shared files, and files identical up to the repository name**: a shared-files entry ending
   in `?repo` is hashed with the repository's name replaced by `{repo}`. Added: `.editorconfig`,
   `.gitattributes` (now with `*.gguf binary` everywhere), `FUNDING.yml`, `CODEOWNERS`, the license texts,

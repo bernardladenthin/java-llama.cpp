@@ -3,7 +3,6 @@ version = 1
 # Markdown files (cannot have inline SPDX headers)
 [[annotations]]
 path = [
-    "README.md",
     "CHANGELOG.md",
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
@@ -13,7 +12,6 @@ path = [
     "llama-atmosphere-agent/CLAUDE.md",
     "android-llmservice/CLAUDE.md",
     "CLAUDE_TEST_GENERATION_PROMPT.md",
-    "models/README.md",
     "docs/RELEASE.md",
     "docs/feature-investigation-llama-stack-client-kotlin.md",
     "docs/history/49be664_24918e4.md",
@@ -26,6 +24,15 @@ path = [
     ".claude/commands/find-cpp-duplication.md",
     "llama-langchain4j/README.md",
 ]
+SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
+SPDX-License-Identifier = "MIT"
+
+# Markdown files that still carry text of the upstream project (kherud/java-llama.cpp)
+[[annotations]]
+path = [
+    "README.md",
+    "models/README.md",
+]
 SPDX-FileCopyrightText = [
     "2023-2025 Konstantin Herud",
     "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
@@ -35,10 +42,7 @@ SPDX-License-Identifier = "MIT"
 # CITATION.cff (not recognized by reuse annotate)
 [[annotations]]
 path = "CITATION.cff"
-SPDX-FileCopyrightText = [
-    "2023-2025 Konstantin Herud",
-    "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
-]
+SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
 SPDX-License-Identifier = "MIT"
 
 # CMakeLists.txt (CMake format not recognized by reuse annotate)
