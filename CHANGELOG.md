@@ -31,6 +31,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `.github/shared-files.sha256` entry `.github/workflows/publish.yml#<job>` hashes one job (`startgate`,
   `shared-files`, `verify-signing-key`, `check-snapshot`, `check-tag`, and where present
   `verify-signing-key-gradle`, `github-snapshot`, `github-release`).
+- **The dockcross wrappers are attributed to dockcross** in `REUSE.toml` (MIT, its copyright holders):
+  they are the generated output of dockcross's wrapper template, not this project's code.
 - **Unused dockcross wrappers removed**: `dockcross-linux-arm64-lts` (Linux aarch64 builds natively on
   `ubuntu-24.04-arm` with GCC 14) and `dockcross-android-arm` (32-bit Android was never built in CI
   and is not published). With them went the `stdc++fs` link for GCC < 9 in `llama/CMakeLists.txt`:

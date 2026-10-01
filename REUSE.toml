@@ -50,7 +50,9 @@ SPDX-FileCopyrightText = [
 ]
 SPDX-License-Identifier = "MIT"
 
-# Dockcross scripts (no file extension, may not be recognized)
+# The dockcross wrappers are generated, unmodified output of dockcross's own wrapper template
+# (imagefiles/dockcross.sh), printed by `docker run --rm dockcross/<image>:<tag>`; copyright and
+# license as in https://github.com/dockcross/dockcross/blob/master/LICENSE.
 [[annotations]]
 path = [
     ".github/dockcross/dockcross-android-arm64",
@@ -58,10 +60,7 @@ path = [
     ".github/dockcross/dockcross-manylinux2014-x64",
     ".github/dockcross/dockcross-manylinux_2_28-x64",
 ]
-SPDX-FileCopyrightText = [
-    "2023-2025 Konstantin Herud",
-    "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
-]
+SPDX-FileCopyrightText = "2015-2021 Steeve Morin, Rob Burns, Matthew McCormick, Jean-Christophe Fillion-Robin, Bensuperpc"
 SPDX-License-Identifier = "MIT"
 
 # GITHUB/ISSUE_TEMPLATE/config.yml handled by reuse annotate below
