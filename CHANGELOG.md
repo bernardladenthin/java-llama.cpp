@@ -27,6 +27,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   library are now such shared scripts). The workflow lost ~760 lines to two composite actions
   (`restore-models`, `install-sccache-windows`) and `print-host-info.sh`; `validate-models.bat` is gone
   (Windows runs the bash script).
+- **Workflow jobs kept identical across the repositories are checked too**: a
+  `.github/shared-files.sha256` entry `.github/workflows/publish.yml#<job>` hashes one job (`startgate`,
+  `shared-files`, `verify-signing-key`, `check-snapshot`, `check-tag`, and where present
+  `verify-signing-key-gradle`, `github-snapshot`, `github-release`).
 - **Fewer copies of the same job in the workflow.** The four fat-jar smoke jobs are one `smoke-fatjar`
   matrix (its rows checked against the targets `natives.csv` derives; the per-jar artifacts are now
   `llama-fatjar-smoke-<target>`), the macOS and Windows Java test jobs call one reusable workflow

@@ -104,8 +104,13 @@ name). Introducing it found `vmlens` gating nothing in all four repos; it now ga
 
 **Shared files (all four repos).** Files kept byte-identical in java-llama.cpp, BitcoinAddressFinder,
 srcmorph and streambuffer are listed with their SHA-256 in each repo's **`.github/shared-files.sha256`**
-(`sha256sum` format, so `sha256sum -c` reads it too). The `shared-files` job — itself identical in all
-four `publish.yml` files, and gating both publish jobs — **fails** when a listed file changed here
+(`sha256sum` format). An entry can also name **one job of a workflow**,
+`.github/workflows/publish.yml#startgate`: `startgate`, `shared-files`, `verify-signing-key`,
+`check-snapshot` and `check-tag` are identical in all four `publish.yml` files (plus
+`verify-signing-key-gradle`, `github-snapshot` and `github-release` in the three Maven-only ones), and
+such an entry hashes just that job -- so a job kept identical by convention is now checked like a
+file, without moving it into a reusable workflow (no check name or `needs:` changes). The
+`shared-files` job, gating both publish jobs, **fails** when a listed file changed here
 alone, and **warns** when another repo's default branch lists the same file with a different hash (a
 sync is one change per repo and lands in four steps, so a warning, not a failure). **The manifest is
 the reference for what must stay equal**: changing a shared file means changing every copy, then
