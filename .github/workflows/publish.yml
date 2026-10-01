@@ -416,7 +416,7 @@ jobs:
   # job — never in the dockcross cross-compilers (which have no node) or per-platform.
   # ---------------------------------------------------------------------------
   # ---------------------------------------------------------------------------
-  # llama-atmosphere-agent: the standalone (non-reactor, never on Maven Central) local
+  # llama-atmosphere-agent: the standalone (non-reactor) local
   # coding-agent project that wires Atmosphere's built-in OpenAI-compatible agent runtime to
   # this project's OpenAiCompatServer. Three jobs, all publish gates:
   #   - model-free: unit tests + the wire-contract tests, which drive the REAL
@@ -430,7 +430,10 @@ jobs:
   #   - smoke-agent-linux (further down, after package-fatjars): the release asset itself,
   #     started next to the real core fat jar.
   # The project is built with -Dllama.version=<reactor version> against the core that was just
-  # installed to the local repo, so it always tests the code of this checkout.
+  # installed to the local repo, so it always tests the code of this checkout. Only the classes and
+  # the llama-platform pom are installed; -Dllama.natives=none keeps Maven from resolving the natives
+  # jars that pom names (they exist only after the package job). The agent itself is published to
+  # Maven Central by the two publish jobs, after the reactor deploy.
   # ---------------------------------------------------------------------------
 
   test-java-llama-atmosphere-agent:
@@ -443,8 +446,10 @@ jobs:
         with:
           java-version-file: .java-version
           distribution: temurin
-      - name: Install parent + core net.ladenthin:llama into the local repo (Java only)
+      - name: Install parent + core net.ladenthin:llama + the llama-platform pom into the local repo (Java only)
         uses: ./.github/actions/build-core
+        with:
+          modules: llama,llama-platform
       - name: Resolve the reactor version
         run: echo "VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)" >> "$GITHUB_ENV"
       - name: Spotless check
@@ -453,7 +458,8 @@ jobs:
         run: mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" -Dllama.natives=none verify
       # The GitHub Release asset llama-atmosphere-agent-<core version>-jar-with-dependencies.jar:
       # the agent plus Atmosphere/JLine, WITHOUT the core (src/assembly/agent-jar.xml), so it is a
-      # few MB and the natives are not in the release twice. Never deployed to Maven Central.
+      # few MB and the natives are not in the release twice. Never deployed to Maven Central (the
+      # thin jar is; see the publish jobs).
       # smoke-agent-linux launches it next to the real core fat jar; the attach jobs sign it.
       - name: Build the agent release jar (without the core)
         run: >
@@ -490,8 +496,10 @@ jobs:
         with:
           distribution: 'temurin'
           java-version-file: .java-version
-      - name: Install parent + core net.ladenthin:llama (classes; the test JVM loads the downloaded native library via lib.path)
+      - name: Install parent + core net.ladenthin:llama + the llama-platform pom (classes; the test JVM loads the downloaded native library via lib.path)
         uses: ./.github/actions/build-core
+        with:
+          modules: llama,llama-platform
       - name: Resolve the reactor version
         run: echo "VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)" >> "$GITHUB_ENV"
       - name: Run the Atmosphere tool-loop integration test (cached Qwen2.5-1.5B tool model, CPU)
@@ -2802,6 +2810,15 @@ jobs:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
           MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      # The agent's thin jar + pom (not a reactor module, so a deploy of its own). It resolves the
+      # core and the natives jars llama-platform names from the local repository, where the reactor
+      # deploy above has just installed them; check-natives.py holds its version to the reactor's.
+      - name: Publish snapshot (llama-atmosphere-agent)
+        run: mvn --batch-mode --no-transfer-progress -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true deploy
+        env:
+          MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
       # Android AARs (llama-android, llama-android-opencl): assembled and published by
       # the plain-Gradle build in llama-android/ — Maven cannot deploy
       # <packaging>aar</packaging>. Natives are already on disk from the artifact
@@ -2983,6 +3000,15 @@ jobs:
         run: mvn --batch-mode --no-transfer-progress -P release,natives help:effective-pom
       - name: Publish release (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-platform)
         run: mvn --batch-mode --no-transfer-progress -P release,natives -Dmaven.test.skip=true deploy
+        env:
+          MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+      # The agent's thin jar + pom (not a reactor module, so a deploy of its own). It resolves the
+      # core and the natives jars llama-platform names from the local repository, where the reactor
+      # deploy above has just installed them; check-natives.py holds its version to the reactor's.
+      - name: Publish release (llama-atmosphere-agent)
+        run: mvn --batch-mode --no-transfer-progress -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true deploy
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}

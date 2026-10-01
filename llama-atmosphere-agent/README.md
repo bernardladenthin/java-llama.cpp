@@ -32,10 +32,12 @@ offline:
     JetBrains IDEs and Zed (and VS Code through an ACP extension) use it as their chat agent, with
     their own permission dialog for writes and commands.
 
-This folder is a **standalone Maven project**, deliberately *not* a reactor module and *never* on
-Maven Central: CI builds and tests it against the core of the same checkout; you copy the folder and
-run it — or download the ready-built jar from a release (see below). Its `pom.xml` pins `llama.version` to the release these instructions describe (**5.2.0**);
-pass `-Dllama.version=…` to run against another core, e.g. a `-SNAPSHOT` before a release.
+This folder is a **standalone Maven project**, deliberately *not* a reactor module: CI builds and tests
+it against the core of the same checkout. Its version moves in lockstep with the core's (**5.2.0**),
+and it ships three ways: on **Maven Central** as `net.ladenthin:llama-atmosphere-agent` (run it with
+JBang, no download and no checkout, see below), as a ready-built jar on every release, and as this
+folder to copy and run. It runs on the core of its own version; pass `-Dllama.version=…` to try
+another, e.g. a `-SNAPSHOT` before a release.
 
 > [!WARNING]
 > `--allow-shell` lets the model run **any** command with **your** user's rights. By default it asks
@@ -48,6 +50,20 @@ pass `-Dllama.version=…` to run against another core, e.g. a `-SNAPSHOT` befor
 You need **JDK 21+** and **Maven** (`mvn -v` must report Java 21 or newer). No C++ toolchain, no
 CMake and no separate llama.cpp install: the core jar from Maven Central ships the native libraries
 for Windows, Linux and macOS.
+
+**Quickest: straight from Maven Central with [JBang](https://www.jbang.dev).** JBang resolves the agent,
+Atmosphere and the core with the CPU natives of every desktop platform (Metal on macOS), then starts it —
+no checkout, no build, no jar to download by hand:
+
+```bash
+jbang net.ladenthin:llama-atmosphere-agent:5.2.0 \
+    --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --workspace /path/to/project
+```
+
+The same coordinates work in any Maven project (`mvn exec:java` with `mainClass`
+`net.ladenthin.llama.atmosphere.LocalAgent`). For a GPU backend, add the matching natives jar next to it,
+e.g. `net.ladenthin:llama:5.2.0` with the classifier `cuda13-linux-x86-64` — the loader prefers it and
+falls back to the CPU when its runtime is missing.
 
 **Or skip Maven entirely.** Every [GitHub release](https://github.com/bernardladenthin/java-llama.cpp/releases)
 carries `llama-atmosphere-agent-<version>-jar-with-dependencies.jar` (+ `.sha256`, GPG `.asc`). It holds

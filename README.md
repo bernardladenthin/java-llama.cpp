@@ -11,7 +11,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b11259](https://img.shields.io/badge/llama.cpp-%23b11259-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11259)  
+[![llama.cpp b11320](https://img.shields.io/badge/llama.cpp-%23b11320-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11320)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.0%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -1114,9 +1114,17 @@ OpenCode reduced to the essentials, fully offline; it edits files and, with `--a
 (`docker`, `git`, build tools) — built from [Atmosphere](https://github.com/Atmosphere/atmosphere)'s
 built-in OpenAI-compatible agent runtime (streaming, tool loop, workspace file tools) driven
 **headless** against this project's OpenAI-compatible server. It is a standalone Maven project (not a
-reactor module, never on Maven Central). Either download it from a release (below, JDK 21+ only), or
-clone the repository and run it from that folder, which needs only JDK 21+ and Maven — the core jar
-from Maven Central ships the natives:
+reactor module) published to Maven Central at the core's version, so the quickest way needs only
+JDK 21+ and [JBang](https://www.jbang.dev) — it resolves the agent and the core with the natives of
+every desktop platform:
+
+```bash
+jbang net.ladenthin:llama-atmosphere-agent:5.2.0 \
+    --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --workspace /path/to/project
+```
+
+Or download it from a release (below, JDK 21+ only), or clone the repository and run it from that
+folder, which needs only JDK 21+ and Maven — the core jar from Maven Central ships the natives:
 
 ```bash
 # get the folder and a tool-capable model (Qwen3-4B-Instruct-2507, 2.3 GB)

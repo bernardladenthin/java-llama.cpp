@@ -9,6 +9,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Added
+- **`net.ladenthin:llama-atmosphere-agent` on Maven Central**, at the core's version: the agent's thin jar
+  (with `Main-Class`), sources and javadoc, published right after the reactor. Its pom names
+  `llama-platform` as a runtime dependency, so `jbang net.ladenthin:llama-atmosphere-agent:<version>`
+  starts it with the CPU natives of every desktop platform, no checkout and no download by hand. The
+  release-asset jar without the core stays on the GitHub release. The agent's version now moves with the
+  core's; `check-natives.py` fails when they differ.
+
 ### Changed
 - **`ProcessRunner` rewritten on `ProcessBuilder`** (the helper `OSInfo` runs `uname` with): the timeout
   is now real -- a command that does not end in time is killed and reported as an `IOException`, where

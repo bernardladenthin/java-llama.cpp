@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b11259**
+Current llama.cpp pinned version: **b11320**
 
 ## Natives jars: one directory per backend (`.github/natives.csv`)
 
@@ -690,7 +690,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network for the asset build; the embed step is plain cmake -P
-git clone --depth 1 --branch b11259 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b11320 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build )
 mkdir -p webui-generated /tmp/ui-gen
 cmake -DUI_SOURCE_DIR=/tmp/lc/tools/ui -DUI_BINARY_DIR=/tmp/ui-gen \
@@ -730,7 +730,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11259`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11320`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -1842,7 +1842,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11259`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11320`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
@@ -2169,7 +2169,10 @@ The repo root is a thin **aggregator/parent POM** (`net.ladenthin:llama-parent`,
 
 All modules inherit the single `<version>` from the parent, so they **ship in lockstep by
 construction** (no CI guard needed). The parent also holds the shared `release` profile (GPG +
-Central Publishing), so one reactor `mvn -P release,natives deploy` signs and publishes all five
+Central Publishing) and a `<pluginManagement>` with every plugin version more than one module uses
+(compiler, jar, resources, surefire, source, javadoc, gpg, central-publishing -- a module names such a
+plugin without a version; without it a module that pins nothing builds with the default of whatever
+Maven runs it, which differed between CI and a local build), so one reactor `mvn -P release,natives deploy` signs and publishes all five
 Maven artifacts (`llama-parent` pom, `llama` with its natives jars, `llama-langchain4j`,
 `llama-kotlin`, `llama-platform` pom) at the same version.
 
@@ -2223,8 +2226,9 @@ missed again.)
   release version now appears in only ~4 spots here, not ~20 — the runtime details live once in the
   classifier table.)
 - **`llama-langchain4j/README.md`** — its own `<dependency>` snippet.
-- **`llama-atmosphere-agent/pom.xml`** — the `llama.version` property (the **release** version;
-  standalone project outside the reactor, so `versions:set` skips it), plus the fat-jar filename
+- **`llama-atmosphere-agent/pom.xml`** — its own `<version>`, which must equal the reactor's
+  (standalone project outside the reactor, so `versions:set` skips it; `check-natives.py` fails until
+  they agree), plus the JBang coordinates and the fat-jar filename
   `llama-<version>-jar-with-dependencies.jar` in the root README's "Local coding agent" section and
   the project's own README.
 - **`llama-android/README.md`** and **`llama-kotlin/README.md`** — their Gradle dependency
@@ -2364,19 +2368,28 @@ releases as a signed Central Portal bundle upload (staging repo → zip → Publ
 
 A copy-and-run terminal agent (console, `--web`, `--acp`) pairing Atmosphere's OpenAI-compatible
 agent runtime with this project's `OpenAiCompatServer`. A **standalone Maven project** (Java 21,
-Atmosphere's floor), **not** a reactor module and **never** on Maven Central. Everything about the
+Atmosphere's floor), **not** a reactor module: an application, built without a parent so the folder
+can be copied out and run. **Published to Maven Central** at the core's version as a thin jar whose
+pom names `llama-platform` as a runtime dependency, so `jbang net.ladenthin:llama-atmosphere-agent:<v>`
+starts it with the CPU natives of every desktop platform. Everything about the
 agent itself -- the REPL, approval gate, file tools, JLine console and its eight carried JLine fixes,
 the three front ends -- is in **[`llama-atmosphere-agent/CLAUDE.md`](llama-atmosphere-agent/CLAUDE.md)**,
 which Claude Code loads when working in that directory. What matters from the rest of the repository:
 
+- **Maven Central:** a step of its own in `publish-snapshot` / `publish-release`, right after the
+  reactor deploy (`-f llama-atmosphere-agent/pom.xml -P release deploy`), resolving the core and its
+  natives jars from the local repository that deploy just filled. Its CI jobs install only the classes
+  and the `llama-platform` pom and pass `-Dllama.natives=none` (a profile that excludes everything that
+  pom names), since no natives jar exists before `package`.
 - **Release asset:** `llama-atmosphere-agent-<llama.version>-jar-with-dependencies.jar`, built
   **without** the core; its manifest `Class-Path` names the four `all-<os>-<arch>` fat jars and the
   default fat jar. Renaming a core fat jar means updating that list -- `check-natives.py` holds it
   to the fat-jar targets of `natives.csv`, and `smoke-agent-linux` launches the pair.
 - **CI:** the model-free job, the model-backed integration job and `smoke-agent-linux` all gate both
   publish jobs.
-- **Version bump:** the pom's `llama.version` is the **release** version and `versions:set` does not
-  touch this standalone pom -- bump it by hand with the fat-jar filename in the two READMEs.
+- **Version bump:** the pom's `<version>` is the reactor's, and `versions:set` does not touch this
+  standalone pom -- bump it by hand (`check-natives.py` fails until it agrees) with the JBang
+  coordinates and fat-jar filename in the two READMEs; `llama.version` follows (`${project.version}`).
 - **The one core change it needed:** `OpenAiBackend`, `ChunkSink` and
   `OpenAiCompatServer(OpenAiBackend, OpenAiServerConfig)` are public, so the agent's tests can drive
   the real server without a model. Keep them public.
