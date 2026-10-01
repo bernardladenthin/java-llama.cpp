@@ -58,7 +58,7 @@ public enum ApprovalMode {
      * gefehlt": the transport symbols are drawn two columns wide by Windows Terminal while the column
      * arithmetic counts them as one, so the glyph covers the single space that follows it and the name
      * ends up touching it. The space is genuinely in the string — the screen-backed tests in
-     * {@link ScreenUseCasesTest} assert the badge survives to the rendered row, and they pass — so the
+     * {@code ScreenUseCasesTest} assert the badge survives to the rendered row, and they pass — so the
      * disagreement is between the terminal's font and the width table, not in this code. A second space
      * is the fix that works on both: where the glyph really is two columns wide the result looks like one
      * space, and where it is one there is a wider gap, which is harmless. The same disagreement in a less

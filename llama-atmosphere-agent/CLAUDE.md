@@ -8,20 +8,32 @@ this project means for the rest of the repository (release asset, CI gates, vers
 A **copy-and-run general-purpose terminal agent** (Claude Code / OpenCode reduced to the essentials, offline)
 that pairs [Atmosphere](https://github.com/Atmosphere/atmosphere)'s built-in OpenAI-compatible
 agent runtime with this project's `OpenAiCompatServer`. Like `android-llmservice/` it is a
-**standalone Maven project, NOT a reactor module and NEVER on Maven Central** — it is an application, and it
-needs Java 21 (Atmosphere's floor) while the core stays Java 8. CI builds it against the core it just
-installed (`-Dllama.version=<reactor version>`); a user copies the folder and runs
-`mvn compile exec:java -Dexec.args="…"` with no `-D` at all — the pom's `llama.version` names the
-**released** core the READMEs describe (currently `5.2.0`, written as if released so the docs are
-right the moment the release lands). The natives come from the
-`natives` profile (`llama-platform`, active unless `-Dllama.natives=none`) plus the `gpu-natives`
-profile (`-Dllama.classifier=<natives jar>`); CI passes `-Dllama.natives=none`, since it installs only
-the classes and the model-backed job uses `-Dnet.ladenthin.llama.lib.path`.
+**standalone Maven project, NOT a reactor module** — it is an application, it needs Java 21
+(Atmosphere's floor) while the core stays Java 8, and it is built without a parent so the folder can be
+copied out and run on its own. **Its version is the core's** (`5.2.0-SNAPSHOT` on `main`), and
+`check-natives.py` fails when the two differ: `versions:set` does not reach this pom, so a release bump
+that forgot it would otherwise publish an agent naming the wrong core. `llama.version` defaults to
+`${project.version}`; CI still passes `-Dllama.version=<reactor version>` (the same value).
+
+**It is published to Maven Central** as `net.ladenthin:llama-atmosphere-agent`: the thin jar (with
+`Main-Class`, so `jbang <coordinates>` starts it), its sources and javadoc jars and the pom, signed, by
+a step of its own in `publish-snapshot` / `publish-release` right after the reactor deploy
+(`-P release deploy`; the `release` profile here mirrors the parent's). It resolves the core and the
+natives jars from the local repository, where that reactor deploy has just installed them.
+
+**The natives are a plain `runtime` dependency on `llama-platform`**, not a profile: they are part of
+the published pom, and a consumer (JBang, Maven, Gradle) must get them however it treats profiles —
+without them the agent fails at the first load. CI installs only the core classes and the
+`llama-platform` pom (`build-core` with `modules: llama,llama-platform`), because no natives jar exists
+before the `package` job, and passes `-Dllama.natives=none`: that activates the `no-natives` profile,
+whose `dependencyManagement` excludes everything `llama-platform` names, so only its pom is resolved.
+The model-backed job loads a downloaded library through `-Dnet.ladenthin.llama.lib.path`. The
+`gpu-natives` profile (`-Dllama.classifier=<natives jar>`) adds a GPU backend next to the CPU natives.
 
 **Release asset: the agent jar WITHOUT the core.** `mvn -P assembly package` (the pom's `assembly`
 profile, descriptor `src/assembly/agent-jar.xml`) builds
 `llama-atmosphere-agent-<llama.version>-jar-with-dependencies.jar` — named after the **core** version
-it was built against, not the agent's own `1.0.0-SNAPSHOT`, because it only runs next to that core.
+it was built against (the agent's own version is the same), because it only runs next to that core.
 It excludes `net.ladenthin:llama` **with its whole runtime graph** (`useTransitiveFiltering`: Jackson 2,
 slf4j-api, and Jackson 3's `jackson-annotations`, which resolves through the core's trail) plus
 `jspecify` and `slf4j-simple`, all of which every core fat jar already bundles — so the asset is ~14 MB
@@ -886,10 +898,9 @@ picks its command line with `ShellTool.isWindows()` — the same detection `Shel
 test counts the platform's line separator. It used plain POSIX commands before and failed 4 of 5 on
 Windows; never skip it per OS, give a new test both command forms instead.
 
-**Version bump note.** The pom's `llama.version` property is the **release** version, not the
-reactor's `-SNAPSHOT` (CI always overrides it, so a not-yet-published default never breaks CI).
-`versions:set` does not touch this standalone pom, so at release time bump it by hand together with
-the fat-jar filename `llama-<version>-jar-with-dependencies.jar` in the two READMEs (`README.md`
-"Local coding agent" + the project's own README) — the same class as the `llama-langchain4j/README.md`
-snippet. Before the release, run it against a pre-release core with `-Dllama.version=<x>-SNAPSHOT`
-(the pom keeps the Sonatype snapshot repository for exactly that).
+**Version bump note.** The pom's own `<version>` must equal the reactor's (`check-natives.py` enforces
+it); `versions:set` does not touch this standalone pom, so a release bumps it by hand, together with the
+version in the two READMEs (`README.md` "Local coding agent" + the project's own README: the JBang
+coordinates and the fat-jar filenames) — the same class as the `llama-langchain4j/README.md` snippet.
+`llama.version` follows by itself (`${project.version}`); `-Dllama.version=<x>-SNAPSHOT` still runs it
+against another core (the pom keeps the Sonatype snapshot repository for exactly that).

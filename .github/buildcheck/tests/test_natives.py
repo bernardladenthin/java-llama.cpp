@@ -200,6 +200,15 @@ class ConsumerTest(unittest.TestCase):
                          ["llama-atmosphere-agent/pom.xml Class-Path: missing linux-x86-64"])
 
 
+    def test_agent_version(self):
+        def pom(version):
+            return ('<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion>'
+                    f'<parent><version>9</version></parent><version>{version}</version></project>')
+        self.assertEqual(natives.check_agent_version(pom("5.2.0-SNAPSHOT"), pom("5.2.0-SNAPSHOT")), [])
+        self.assertEqual(natives.check_agent_version(pom("5.2.0"), pom("5.2.0-SNAPSHOT")),
+                         ["llama-atmosphere-agent/pom.xml is version 5.2.0-SNAPSHOT, the reactor 5.2.0: "
+                          "set both to the same version"])
+
 class RepositoryTest(unittest.TestCase):
     """The checks over this repository: what code-style runs, so a red here is a red there."""
 

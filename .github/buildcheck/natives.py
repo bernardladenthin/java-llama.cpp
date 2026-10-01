@@ -255,6 +255,19 @@ def check_agent_class_path(natives, agent_pom_text):
     return compare("llama-atmosphere-agent/pom.xml Class-Path", fatjar_targets(natives), named)
 
 
+def check_agent_version(root_pom_text, agent_pom_text):
+    """The agent is published to Maven Central at the core's version and depends on the core of its
+    own version, so a release that bumps the reactor without it would publish an agent naming a
+    core that does not exist (or an old one). It is not a reactor module, so `versions:set` misses it."""
+    def version(text):
+        element = ET.fromstring(text).find("m:version", NS)
+        return None if element is None else (element.text or "").strip()
+    core, agent = version(root_pom_text), version(agent_pom_text)
+    if core == agent:
+        return []
+    return [f"llama-atmosphere-agent/pom.xml is version {agent}, the reactor {core}: set both to the same version"]
+
+
 def read(root, path):
     with open(os.path.join(root, path), encoding="utf-8") as f:
         return f.read()
@@ -271,4 +284,5 @@ def check(root):
             + check_cmake(natives, read(root, "llama/CMakeLists.txt"))
             + check_dependency_allowlist(natives, nativedeps.ALLOWED)
             + check_readme(natives, read(root, "README.md"))
-            + check_agent_class_path(natives, read(root, "llama-atmosphere-agent/pom.xml")))
+            + check_agent_class_path(natives, read(root, "llama-atmosphere-agent/pom.xml"))
+            + check_agent_version(read(root, "pom.xml"), read(root, "llama-atmosphere-agent/pom.xml")))

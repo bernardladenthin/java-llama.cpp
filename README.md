@@ -1114,9 +1114,17 @@ OpenCode reduced to the essentials, fully offline; it edits files and, with `--a
 (`docker`, `git`, build tools) — built from [Atmosphere](https://github.com/Atmosphere/atmosphere)'s
 built-in OpenAI-compatible agent runtime (streaming, tool loop, workspace file tools) driven
 **headless** against this project's OpenAI-compatible server. It is a standalone Maven project (not a
-reactor module, never on Maven Central). Either download it from a release (below, JDK 21+ only), or
-clone the repository and run it from that folder, which needs only JDK 21+ and Maven — the core jar
-from Maven Central ships the natives:
+reactor module) published to Maven Central at the core's version, so the quickest way needs only
+JDK 21+ and [JBang](https://www.jbang.dev) — it resolves the agent and the core with the natives of
+every desktop platform:
+
+```bash
+jbang net.ladenthin:llama-atmosphere-agent:5.2.0 \
+    --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --workspace /path/to/project
+```
+
+Or download it from a release (below, JDK 21+ only), or clone the repository and run it from that
+folder, which needs only JDK 21+ and Maven — the core jar from Maven Central ships the natives:
 
 ```bash
 # get the folder and a tool-capable model (Qwen3-4B-Instruct-2507, 2.3 GB)

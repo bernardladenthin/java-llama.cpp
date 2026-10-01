@@ -10,17 +10,18 @@ SPDX-License-Identifier: MIT
 	<modelVersion>4.0.0</modelVersion>
 
 	<!--
-		Standalone (NOT a reactor module, NEVER on Maven Central): a local coding agent that wires
-		Atmosphere's built-in OpenAI-compatible agent runtime to java-llama.cpp. CI builds and tests
-		it against the freshly installed core (-Dllama.version=<reactor version>) and attaches the
-		`-P assembly` jar (without the core, see src/assembly/agent-jar.xml) to the GitHub Release
-		next to the core fat jars. A user either downloads that jar or copies the folder and runs
-		it with `mvn compile exec:java` against the released core the llama.version default names.
-		See README.md.
+		Standalone (NOT a reactor module): a local coding agent that wires Atmosphere's built-in
+		OpenAI-compatible agent runtime to java-llama.cpp. Not in the reactor because it is an
+		application, built without a parent so the folder can be copied out and run on its own.
+		Its version moves in lockstep with the core's (check-natives.py fails otherwise), and it
+		ships two ways: this thin jar + pom on Maven Central (`jbang net.ladenthin:llama-atmosphere-agent:<v>`
+		resolves and starts it, natives included through llama-platform), and the `-P assembly` jar
+		(without the core, see src/assembly/agent-jar.xml) on the GitHub Release next to the core
+		fat jars. See README.md.
 	-->
 	<groupId>net.ladenthin</groupId>
 	<artifactId>llama-atmosphere-agent</artifactId>
-	<version>1.0.0-SNAPSHOT</version>
+	<version>5.2.0-SNAPSHOT</version>
 	<packaging>jar</packaging>
 
 	<name>${project.groupId}:${project.artifactId}</name>
@@ -36,15 +37,34 @@ SPDX-License-Identifier: MIT
 		</license>
 	</licenses>
 
+	<developers>
+		<developer>
+			<name>Bernard Ladenthin</name>
+			<organizationUrl>https://github.com/bernardladenthin</organizationUrl>
+		</developer>
+	</developers>
+
+	<scm>
+		<connection>scm:git:https://github.com/bernardladenthin/java-llama.cpp.git</connection>
+		<developerConnection>scm:git:https://github.com/bernardladenthin/java-llama.cpp.git</developerConnection>
+		<url>https://github.com/bernardladenthin/java-llama.cpp/tree/main</url>
+	</scm>
+
+	<distributionManagement>
+		<snapshotRepository>
+			<id>central</id>
+			<url>https://central.sonatype.com/repository/maven-snapshots/</url>
+		</snapshotRepository>
+	</distributionManagement>
+
 	<properties>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<!-- Atmosphere requires Java 21; the core net.ladenthin:llama stays Java 8. -->
 		<maven.compiler.release>21</maven.compiler.release>
-		<!-- The java-llama.cpp release this project is documented against (the README's commands
-		     run without any -D). CI overrides it with the reactor version it just installed; anyone
-		     else can override it too, e.g. -Dllama.version=5.3.0-SNAPSHOT for a pre-release core.
-		     Bump it as part of every release. -->
-		<llama.version>5.2.0</llama.version>
+		<!-- The core this agent runs on: the same version as the agent, which moves in lockstep with
+		     the java-llama.cpp reactor. Overridable, e.g. -Dllama.version=5.3.0-SNAPSHOT to try a
+		     newer core from the snapshot repository below. -->
+		<llama.version>${project.version}</llama.version>
 		<atmosphere.version>4.0.71</atmosphere.version>
 		<jline.version>4.4.6</jline.version>
 		<jetty.version>12.1.13</jetty.version>
@@ -57,6 +77,10 @@ SPDX-License-Identifier: MIT
 		<surefire.version>3.6.0</surefire.version>
 		<resources.plugin.version>3.5.0</resources.plugin.version>
 		<jar.plugin.version>3.5.1</jar.plugin.version>
+		<source.plugin.version>3.4.0</source.plugin.version>
+		<javadoc.plugin.version>3.12.0</javadoc.plugin.version>
+		<gpg.plugin.version>3.2.8</gpg.plugin.version>
+		<central.publishing.version>0.11.0</central.publishing.version>
 		<exec.plugin.version>3.6.4</exec.plugin.version>
 		<assembly.plugin.version>3.8.0</assembly.plugin.version>
 		<spotless.version>3.10.3</spotless.version>
@@ -64,7 +88,7 @@ SPDX-License-Identifier: MIT
 		<agent.main>net.ladenthin.llama.atmosphere.LocalAgent</agent.main>
 	</properties>
 
-	<!-- Only consulted for a -SNAPSHOT llama.version override (releases come from Maven Central). -->
+	<!-- Only consulted for a -SNAPSHOT core (releases come from Maven Central). -->
 	<repositories>
 		<repository>
 			<id>sonatype-snapshots</id>
@@ -80,11 +104,23 @@ SPDX-License-Identifier: MIT
 
 	<dependencies>
 		<!-- The model server (in-process mode) and the OpenAI-compatible HTTP surface under test: the
-		     classes. The natives come from the natives / gpu-natives profiles below. -->
+		     classes. -->
 		<dependency>
 			<groupId>net.ladenthin</groupId>
 			<artifactId>llama</artifactId>
 			<version>${llama.version}</version>
+		</dependency>
+		<!-- The natives: the CPU natives jar of every desktop platform (macOS: Metal), so the agent runs
+		     anywhere without a further choice. A plain dependency and not a profile, because it is part
+		     of the published pom: a consumer resolving the agent from Maven Central (JBang, Maven) must
+		     get it regardless of how that tool treats profiles. A GPU backend is an addition, see the
+		     gpu-natives profile; CI, which installs only the classes, drops this with -Dllama.natives=none. -->
+		<dependency>
+			<groupId>net.ladenthin</groupId>
+			<artifactId>llama-platform</artifactId>
+			<version>${llama.version}</version>
+			<type>pom</type>
+			<scope>runtime</scope>
 		</dependency>
 
 		<!-- Atmosphere's built-in OpenAI-compatible agent runtime: streaming, tool loop, file tools.
@@ -195,6 +231,15 @@ SPDX-License-Identifier: MIT
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-jar-plugin</artifactId>
 				<version>${jar.plugin.version}</version>
+				<configuration>
+					<!-- The published thin jar names its entry point, so `jbang <coordinates>` starts it;
+					     its classpath comes from the pom, never from a Class-Path entry. -->
+					<archive>
+						<manifest>
+							<mainClass>${agent.main}</mainClass>
+						</manifest>
+					</archive>
+				</configuration>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
@@ -234,27 +279,36 @@ SPDX-License-Identifier: MIT
 	</build>
 	<profiles>
 		<!--
-			The core's CPU natives of every desktop platform (macOS: Metal), so the README's commands
-			run anywhere. Active unless -Dllama.natives=none, which CI passes: it installs only the
-			core classes, and its model-backed job points the loader at a downloaded library with
-			-Dnet.ladenthin.llama.lib.path instead.
+			-Dllama.natives=none: build without the natives, which CI does: it installs only the
+			core classes and the llama-platform pom (no natives jar exists before the package job),
+			and its model-backed job points the loader at a downloaded library with
+			-Dnet.ladenthin.llama.lib.path. The dependency stays; the exclusion keeps Maven from
+			resolving what llama-platform names, so only its pom has to be there.
 		-->
 		<profile>
-			<id>natives</id>
+			<id>no-natives</id>
 			<activation>
 				<property>
 					<name>llama.natives</name>
-					<value>!none</value>
+					<value>none</value>
 				</property>
 			</activation>
-			<dependencies>
-				<dependency>
-					<groupId>net.ladenthin</groupId>
-					<artifactId>llama-platform</artifactId>
-					<version>${llama.version}</version>
-					<type>pom</type>
-				</dependency>
-			</dependencies>
+			<dependencyManagement>
+				<dependencies>
+					<dependency>
+						<groupId>net.ladenthin</groupId>
+						<artifactId>llama-platform</artifactId>
+						<version>${llama.version}</version>
+						<type>pom</type>
+						<exclusions>
+							<exclusion>
+								<groupId>*</groupId>
+								<artifactId>*</artifactId>
+							</exclusion>
+						</exclusions>
+					</dependency>
+				</dependencies>
+			</dependencyManagement>
 		</profile>
 		<!--
 			A GPU backend next to the CPU natives: -Dllama.classifier=<natives jar>, e.g.
@@ -319,6 +373,75 @@ SPDX-License-Identifier: MIT
 								</goals>
 							</execution>
 						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+		<!--
+			`-P release deploy`: signs the thin jar, its sources and javadoc jars and the pom, and
+			publishes them to Maven Central. Run by the publish jobs after the reactor deploy, which
+			installs the core and its natives jars this resolves against. The assembly jar is never
+			part of it.
+		-->
+		<profile>
+			<id>release</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-source-plugin</artifactId>
+						<version>${source.plugin.version}</version>
+						<executions>
+							<execution>
+								<id>attach-sources</id>
+								<goals><goal>jar-no-fork</goal></goals>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-javadoc-plugin</artifactId>
+						<version>${javadoc.plugin.version}</version>
+						<configuration>
+							<doclint>all,-missing</doclint>
+						</configuration>
+						<executions>
+							<execution>
+								<id>attach-javadocs</id>
+								<goals><goal>jar</goal></goals>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-gpg-plugin</artifactId>
+						<version>${gpg.plugin.version}</version>
+						<executions>
+							<execution>
+								<id>sign-artifacts</id>
+								<phase>verify</phase>
+								<goals><goal>sign</goal></goals>
+								<configuration>
+									<keyname>${gpg.keyname}</keyname>
+									<gpgArguments>
+										<arg>--pinentry-mode</arg>
+										<arg>loopback</arg>
+									</gpgArguments>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.sonatype.central</groupId>
+						<artifactId>central-publishing-maven-plugin</artifactId>
+						<version>${central.publishing.version}</version>
+						<extensions>true</extensions>
+						<configuration>
+							<publishingServerId>central</publishingServerId>
+							<autoPublish>true</autoPublish>
+							<waitUntil>validated</waitUntil>
+							<waitMaxTime>21600</waitMaxTime>
+						</configuration>
 					</plugin>
 				</plugins>
 			</build>
