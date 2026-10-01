@@ -21,11 +21,10 @@ SPDX-License-Identifier: MIT
 
     <!--
         ProcessRunner is an internal package-private helper used solely by OSInfo
-        to invoke platform-detection commands ("uname -o", "uname -m"). It is
-        already hardened against shell-tokenisation by calling Runtime.exec(String[])
-        rather than the shell-parsing Runtime.exec(String). findsecbugs still flags
-        every non-literal Runtime.exec call as COMMAND_INJECTION regardless of which
-        overload is used; this exclusion documents the assessment that the finding
+        to invoke platform-detection commands ("uname -o", "uname -m"). It starts
+        the command through ProcessBuilder with an argument array, without a shell,
+        so nothing in it is interpreted. findsecbugs still flags every non-literal
+        process start as COMMAND_INJECTION; this exclusion documents the assessment that the finding
         is theoretical only — there is no public API path that lets an external
         caller reach this code, and the two call sites in OSInfo pass hardcoded
         literal commands.

@@ -10,6 +10,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Changed
+- **`ProcessRunner` rewritten on `ProcessBuilder`** (the helper `OSInfo` runs `uname` with): the timeout
+  is now real -- a command that does not end in time is killed and reported as an `IOException`, where
+  the old timeout overload ignored the result of `waitFor` and then blocked reading the output -- and the
+  plain call waits at most 10 s instead of forever. `ProcessRunnerTest` pins both.
+- **`models/README.md` describes the current setup**: nothing downloads models automatically on a local
+  checkout; the list is `.github/models.csv`, which CI's `download-models` job and the tests' defaults
+  share.
 - **The model-backed tests default to CI's model set** (`.github/models.csv`): the vision, TTS, nomic
   and trainer tests read `models/<file>` unless a `-Dnet.ladenthin.llama.*` property names another file,
   so a model downloaded into `models/` needs no property (new: `net.ladenthin.llama.train.model`

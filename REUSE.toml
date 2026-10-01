@@ -23,16 +23,14 @@ path = [
     "llama/src/test/resources/audios/README.md",
     ".claude/commands/find-cpp-duplication.md",
     "llama-langchain4j/README.md",
+    "models/README.md",
 ]
 SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
 SPDX-License-Identifier = "MIT"
 
-# Markdown files that still carry text of the upstream project (kherud/java-llama.cpp)
+# The README still carries text of the upstream project (kherud/java-llama.cpp)
 [[annotations]]
-path = [
-    "README.md",
-    "models/README.md",
-]
+path = "README.md"
 SPDX-FileCopyrightText = [
     "2023-2025 Konstantin Herud",
     "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
