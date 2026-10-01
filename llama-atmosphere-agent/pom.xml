@@ -55,6 +55,8 @@ SPDX-License-Identifier: MIT
 		<hamcrest.version>3.0</hamcrest.version>
 		<compiler.plugin.version>3.16.0</compiler.plugin.version>
 		<surefire.version>3.6.0</surefire.version>
+		<resources.plugin.version>3.5.0</resources.plugin.version>
+		<jar.plugin.version>3.5.1</jar.plugin.version>
 		<exec.plugin.version>3.6.4</exec.plugin.version>
 		<assembly.plugin.version>3.8.0</assembly.plugin.version>
 		<spotless.version>3.10.3</spotless.version>
@@ -181,6 +183,18 @@ SPDX-License-Identifier: MIT
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>${compiler.plugin.version}</version>
+			</plugin>
+			<!-- Pinned although unconfigured: otherwise the default of whatever Maven runs the build
+			     applies, which differs between CI and a local build. Same versions as the reactor. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-resources-plugin</artifactId>
+				<version>${resources.plugin.version}</version>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jar-plugin</artifactId>
+				<version>${jar.plugin.version}</version>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
