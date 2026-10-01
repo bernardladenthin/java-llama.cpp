@@ -604,7 +604,7 @@ jobs:
           # all, which is why the naive grep used to be sufficient.) Assert the ACTIVE
           # #define and a non-zero asset count instead -- verified against both paths.
           N=$(sed -n 's/.*std::array<llama_ui_asset, \([0-9]\+\)>.*/\1/p' "$OUT/ui.h" | head -1)
-          if grep -qE '^[[:space:]]*#define[[:space:]]+LLAMA_UI_HAS_ASSETS' "$OUT/ui.h"
+          if grep -qE '^[[:space:]]*#define[[:space:]]+LLAMA_UI_HAS_ASSETS' "$OUT/ui.h" \
              && [ -n "$N" ] && [ "$N" -gt 0 ]; then
             echo "LLAMA_UI_HAS_ASSETS: present, $N assets embedded"
           else
@@ -1039,10 +1039,10 @@ jobs:
             for entry in $ENTRIES; do
               unzip -l "$AAR" | grep -q "${entry}$" || { echo "::error::$AAR is missing $entry"; exit 1; }
             done
-            unzip -p "$AAR" AndroidManifest.xml | grep -q 'android:minSdkVersion="28"'
+            unzip -p "$AAR" AndroidManifest.xml | grep -q 'android:minSdkVersion="28"' \
               || { echo "::error::$AAR manifest lost minSdkVersion 28"; exit 1; }
             unzip -p "$AAR" classes.jar > /tmp/aar-classes.jar
-            unzip -l /tmp/aar-classes.jar | grep -q "net/ladenthin/llama/LlamaModel.class"
+            unzip -l /tmp/aar-classes.jar | grep -q "net/ladenthin/llama/LlamaModel.class" \
               || { echo "::error::$AAR classes.jar lost LlamaModel"; exit 1; }
             if unzip -l /tmp/aar-classes.jar | grep -qE "module-info\.class|net/ladenthin/llama/(Linux|Mac|Windows)/"; then
               echo "::error::$AAR classes.jar carries module-info or desktop native resources"; exit 1
@@ -1065,11 +1065,11 @@ jobs:
           APK=.github/android-consumer-test/app/build/outputs/apk/release/app-release.apk
           test -f "$APK"
           for abi in arm64-v8a x86_64; do
-            unzip -l "$APK" | grep -q "lib/$abi/libjllama.so"
+            unzip -l "$APK" | grep -q "lib/$abi/libjllama.so" \
               || { echo "::error::consumer APK is missing lib/$abi/libjllama.so"; exit 1; }
           done
           # The AAR's consumer proguard.txt must have carried the binding through R8.
-          unzip -p "$APK" "classes*.dex" | grep -aq "Lnet/ladenthin/llama/LlamaModel;"
+          unzip -p "$APK" "classes*.dex" | grep -aq "Lnet/ladenthin/llama/LlamaModel;" \
             || { echo "::error::R8 stripped net.ladenthin.llama.LlamaModel — consumer proguard rules broken"; exit 1; }
       - name: Upload AARs
         uses: actions/upload-artifact@v7
@@ -2979,7 +2979,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view snapshot --repo ${{ github.repository }} 2>/dev/null
+          gh release view snapshot --repo ${{ github.repository }} 2>/dev/null \
             || gh release create snapshot \
                  --repo ${{ github.repository }} \
                  --prerelease \
