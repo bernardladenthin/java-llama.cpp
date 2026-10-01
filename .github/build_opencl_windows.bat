@@ -1,6 +1,6 @@
 REM SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 REM
-REM SPDX-License-Identifier: MIT
+REM SPDX-License-Identifier: MIT OR Apache-2.0
 REM
 REM Windows x86_64 build with the OpenCL backend enabled, shipped as the
 REM `opencl-windows-x86-64` classifier. The windows-2025 runner image ships

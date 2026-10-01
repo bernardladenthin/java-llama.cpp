@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """Fail when anything that names the natives jars disagrees with .github/natives.csv (and
 when a model name of publish.yml is not in .github/models.csv, see buildcheck/models.py).
 

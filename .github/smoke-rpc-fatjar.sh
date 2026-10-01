@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 # RPC smoke test over two JVMs, on the real release asset:
 #

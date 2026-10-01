@@ -31,6 +31,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `.github/shared-files.sha256` entry `.github/workflows/publish.yml#<job>` hashes one job (`startgate`,
   `shared-files`, `verify-signing-key`, `check-snapshot`, `check-tag`, and where present
   `verify-signing-key-gradle`, `github-snapshot`, `github-release`).
+- **CI files are licensed `MIT OR Apache-2.0`**: every `.github` file carrying only the owner's
+  copyright now has the same license header in all four sibling repositories, so the shared ones are
+  byte-identical; `CODE_OF_CONDUCT.md` joined the shared-files manifest.
 - **Workflow run scripts are parsed in the `shared-files` job**: `check-run-scripts.py` runs `bash -n`
   over every `run:` script of the workflows and composite actions that runs in bash (shell decided as
   the runner does), so a broken script fails within minutes instead of in the job that runs it.

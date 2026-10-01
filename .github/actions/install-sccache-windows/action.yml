@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Puts sccache on PATH on a Windows runner, from the release zip (x86_64, or the native
 # aarch64-pc-windows-msvc build on windows-11-arm, where it wraps clang-cl). The caller keeps the

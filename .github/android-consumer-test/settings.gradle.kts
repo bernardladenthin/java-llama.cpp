@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 //
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT OR Apache-2.0
 
 // CI fixture (NOT a shipped project): a minimal AGP app that consumes the
 // net.ladenthin:llama-android AAR from mavenLocal and runs a full R8 release

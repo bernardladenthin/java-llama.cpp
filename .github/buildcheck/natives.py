@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """Everything that names a natives jar, checked against .github/natives.csv.
 
 The list is the one place a natives jar is declared. Everything else either reads it (the merge,

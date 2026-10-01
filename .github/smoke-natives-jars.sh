@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Loads the library from the published jars exactly as a consumer does: the classes jar, its
 # runtime dependencies and EVERY natives jar at once -- first on the classpath, then on the module

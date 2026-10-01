@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 """The GGUF file names publish.yml's `env:` names (for the smoke scripts, the Android emulator jobs
 and the integration jobs outside the llama module), checked against .github/models.csv -- the list
 the download-models job fetches and validate-models.sh requires. A name the list lacks is a model

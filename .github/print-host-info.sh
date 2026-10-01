@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Prints the runner's CPU, for reading a native build or test log: which instruction sets the
 # compiler saw (GGML_NATIVE, the x86 variants) and how many cores the job had. Informational only

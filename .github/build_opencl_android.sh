@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Android arm64 build with the OpenCL backend enabled and Adreno-tuned
 # kernels embedded. Runs inside the dockcross/android-arm64 container.

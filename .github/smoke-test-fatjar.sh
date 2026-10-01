@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Smoke test for an all-backends server fat jar on a GPU-less runner:
 # `java -jar` must start the embedded server — with every GPU backend failing its

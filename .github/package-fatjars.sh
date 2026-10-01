@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Checks every natives jar and assembles the per-OS "all backends" server fat jars distributed
 # as GitHub Release assets (never deployed to Maven Central).
