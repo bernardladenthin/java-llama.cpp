@@ -2169,7 +2169,10 @@ The repo root is a thin **aggregator/parent POM** (`net.ladenthin:llama-parent`,
 
 All modules inherit the single `<version>` from the parent, so they **ship in lockstep by
 construction** (no CI guard needed). The parent also holds the shared `release` profile (GPG +
-Central Publishing), so one reactor `mvn -P release,natives deploy` signs and publishes all five
+Central Publishing) and a `<pluginManagement>` with every plugin version more than one module uses
+(compiler, jar, resources, surefire, source, javadoc, gpg, central-publishing -- a module names such a
+plugin without a version; without it a module that pins nothing builds with the default of whatever
+Maven runs it, which differed between CI and a local build), so one reactor `mvn -P release,natives deploy` signs and publishes all five
 Maven artifacts (`llama-parent` pom, `llama` with its natives jars, `llama-langchain4j`,
 `llama-kotlin`, `llama-platform` pom) at the same version.
 

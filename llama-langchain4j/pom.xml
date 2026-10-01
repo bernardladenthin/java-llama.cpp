@@ -62,10 +62,6 @@ SPDX-License-Identifier: MIT
 		<hamcrest.version>3.0</hamcrest.version>
 		<!-- Plugin versions are kept in lockstep with the core pom.xml. This module has no
 		     parent, so it cannot inherit their pluginManagement and must pin them here. -->
-		<compiler.plugin.version>3.16.0</compiler.plugin.version>
-		<surefire.version>3.6.0</surefire.version>
-		<source.plugin.version>3.4.0</source.plugin.version>
-		<javadoc.plugin.version>3.12.0</javadoc.plugin.version>
 	</properties>
 
 	<dependencies>
@@ -104,19 +100,16 @@ SPDX-License-Identifier: MIT
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-compiler-plugin</artifactId>
-				<version>${compiler.plugin.version}</version>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-surefire-plugin</artifactId>
-				<version>${surefire.version}</version>
 			</plugin>
 
 			<!-- -sources.jar (Maven Central requirement). -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-source-plugin</artifactId>
-				<version>${source.plugin.version}</version>
 				<executions>
 					<execution>
 						<id>attach-sources</id>
@@ -132,7 +125,6 @@ SPDX-License-Identifier: MIT
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-javadoc-plugin</artifactId>
-				<version>${javadoc.plugin.version}</version>
 				<configuration>
 					<source>17</source>
 					<failOnError>true</failOnError>
