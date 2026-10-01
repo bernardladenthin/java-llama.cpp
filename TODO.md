@@ -219,7 +219,7 @@ the patch was ever filed, so the `ContentOnlyParseUtf8` guard now pins upstream'
 `0010` followed at b11080: upstream gave `common_json_value` an enum constructor via
 ggml-org/llama.cpp#28518, fixing at the root the enum-to-bool trap the patch cast around, so it became
 a redundant carry — note that it still *applied* cleanly, which is why the by-hand drop-check exists.
-All four drops are recorded in `CLAUDE.md` under the patch table.)
+All four drops are recorded in `docs/history/dropped-llama-patches.md`.)
 
 ### llama.cpp upstream feature exposure (queued, deferred by policy)
 

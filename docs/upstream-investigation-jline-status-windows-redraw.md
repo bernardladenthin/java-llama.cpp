@@ -134,7 +134,7 @@ console API rather than through `System.out`.
 - Nothing in `llama-atmosphere-agent` causes it, and it cannot be fixed there without reimplementing
   `handleSignal` in a `LineReaderImpl` subclass. An earlier attempt to help by installing a `WINCH`
   handler made the display **worse**, because the line reader owns that signal for the whole session —
-  see `CLAUDE.md`, "Do not add a `WINCH` handler".
+  see `llama-atmosphere-agent/CLAUDE.md`, "Do not add a `WINCH` handler".
 - No project test asserts the fixed behaviour: it would fail against the JLine release the build
   depends on. `JLineTerminalTest` therefore keeps pinning what *is* true today.
 - `--plain` is unaffected and is the escape hatch: it pins nothing and redraws nothing.
@@ -229,7 +229,7 @@ the new width on **every** size event — every run ends with exactly one row ca
 So the emitted sequences are correct for a conformant VT, and what is left is the real console's own
 handling of lines drawn at earlier widths: Windows Terminal reflows wrapped lines on widening, and an
 `ESC[2J` erase leaves them in the scrollback (the same property that made `/cls` scroll old rows back
-into view — see `CLAUDE.md`). Nothing in this project draws those rows a second time: only
+into view — see `llama-atmosphere-agent/CLAUDE.md`). Nothing in this project draws those rows a second time: only
 `status()` and `clearScreen()` rebuild the block, and neither runs on a resize.
 
 **The workaround is Ctrl-L (or `/cls`)** — it wipes the visible area and redraws the block, which is

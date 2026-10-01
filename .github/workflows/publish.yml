@@ -24,7 +24,7 @@ env:
   # reusable workflows read the same one without an input.
 
   # The Gradle builds (Android AAR, the consumer fixture, the llmservice app, the signing self-test).
-  # AGP 9.4.x needs Gradle >= 9.6.0 (CLAUDE.md, Android app). Not seen by Dependabot: bump by hand.
+  # AGP 9.4.x needs Gradle >= 9.6.0 (android-llmservice/CLAUDE.md). Not seen by Dependabot: bump by hand.
   GRADLE_VERSION: '9.8.0'
   # The sccache/Depot compiler cache (CLAUDE.md, "CI build cache"). Inert without the token, which
   # stays per build job (SCCACHE_WEBDAV_TOKEN): at workflow level it would reach every job,
@@ -784,7 +784,7 @@ jobs:
       # exactly right for what it is (a big-endian correctness gate for our own layer, not a perf target).
       # Do NOT "fix" a VXE-related compile error by adding -DGGML_VXE=ON: that define sets __VXE__ and
       # __VXE2__ together while -march stays at the toolchain default arch11, so every z14+ builtin is
-      # rejected. See the "`0013` was dropped at the b10948 bump" note in CLAUDE.md for the measured
+      # rejected. See the `0013` note in docs/history/dropped-llama-patches.md for the measured
       # comparison (the patch itself is gone -- upstream merged it as ggml-org/llama.cpp#28775).
       - name: Build libraries (cross-compile s390x)
         shell: bash

@@ -10,6 +10,8 @@ path = [
     "SECURITY.md",
     "SUPPORT.md",
     "CLAUDE.md",
+    "llama-atmosphere-agent/CLAUDE.md",
+    "android-llmservice/CLAUDE.md",
     "CLAUDE_TEST_GENERATION_PROMPT.md",
     "models/README.md",
     "docs/RELEASE.md",
