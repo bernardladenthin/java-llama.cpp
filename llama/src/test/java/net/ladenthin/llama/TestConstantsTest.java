@@ -78,6 +78,35 @@ public class TestConstantsTest {
         }
     }
 
+    /**
+     * The models the tests default to and the models CI downloads are one set.
+     *
+     * <p>{@code .github/models.csv} is what download-models fetches and validate-models requires;
+     * every model-gated test defaults to a {@code models/<file>} constant here. A model in the list
+     * that no constant names is downloaded for nothing, and a constant naming a model the list lacks
+     * makes its test self-skip in CI -- green, and silently. Both directions are asserted, which is
+     * also why CI passes no {@code -Dnet.ladenthin.llama.*} model property: the defaults are the CI set.
+     */
+    @Test
+    public void theModelDefaultsAreExactlyTheCiModelSet() throws Exception {
+        java.util.Set<String> defaults = new java.util.TreeSet<>();
+        for (java.lang.reflect.Field field : TestConstants.class.getFields()) {
+            Object value = field.get(null);
+            if (value instanceof String && ((String) value).endsWith(".gguf")) {
+                defaults.add(Paths.get((String) value).getFileName().toString());
+            }
+        }
+        Path manifest = Paths.get(TestConstants.resolveModelPath(".github/models.csv"));
+        assertTrue(Files.exists(manifest), "model manifest not found: " + manifest);
+        java.util.Set<String> ci = new java.util.TreeSet<>();
+        for (String line : Files.readAllLines(manifest, StandardCharsets.UTF_8)) {
+            if (!line.trim().isEmpty() && !line.startsWith("#")) {
+                ci.add(line.split(",", 2)[0].trim());
+            }
+        }
+        assertEquals(ci, defaults);
+    }
+
     @Test
     public void theShippedModelConstantsGoThroughTheResolver() {
         // Guards the wiring itself: if a future edit drops the resolveModelPath(...) wrapper from a
@@ -98,6 +127,22 @@ public class TestConstantsTest {
         assertEquals(
                 TestConstants.resolveModelPath("src/test/resources/images/test-image.jpg"),
                 TestConstants.DEFAULT_VISION_IMAGE_PATH);
+        assertEquals(
+                TestConstants.resolveModelPath("models/nomic-embed-text-v1.5.f16.gguf"),
+                TestConstants.DEFAULT_NOMIC_MODEL_PATH);
+        assertEquals(
+                TestConstants.resolveModelPath("models/SmolVLM-500M-Instruct-Q8_0.gguf"),
+                TestConstants.DEFAULT_VISION_MODEL_PATH);
+        assertEquals(
+                TestConstants.resolveModelPath("models/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf"),
+                TestConstants.DEFAULT_VISION_MMPROJ_PATH);
+        assertEquals(
+                TestConstants.resolveModelPath("models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf"),
+                TestConstants.DEFAULT_TTS_MODEL_PATH);
+        assertEquals(
+                TestConstants.resolveModelPath("models/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf"),
+                TestConstants.DEFAULT_TTS_MMPROJ_PATH);
+        assertEquals(TestConstants.resolveModelPath("models/stories260K.gguf"), TestConstants.DEFAULT_TRAIN_MODEL_PATH);
         assertEquals(
                 TestConstants.resolveModelPath("src/test/resources/audios/sample.wav"),
                 TestConstants.DEFAULT_AUDIO_INPUT_PATH);

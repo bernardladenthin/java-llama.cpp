@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# The natives jars: the single list every packaging step reads (see CLAUDE.md, "Natives jars").
+# One row per jar, net.ladenthin:llama:<classifier>, holding exactly one directory,
+# net/ladenthin/llama/<directory>/, whose name ends in the backend LlamaLoader tries.
+#   classifier  <backend>-<os>-<arch>; the build job uploads its tree as artifact natives-<classifier>
+#   directory   <OS>/<ARCH>/<backend>, as llama/CMakeLists.txt writes it and OSInfo resolves it
+#   library     the file that must be in it
+#   platform    yes = a dependency of net.ladenthin:llama-platform (the CPU natives of a desktop)
+# Adding a row: add the natives jar execution to llama/pom.xml (`check-natives.py pom` prints it),
+# a build job uploading natives-<classifier>, and, for a new backend, its name in CMakeLists.txt
+# and LlamaLoader.BACKEND_PRIORITY. .github/check-natives.py fails until all of them agree.
+classifier,directory,library,platform
+cpu-linux-x86-64,Linux/x86_64/cpu,libjllama.so,yes
+cpu-linux-aarch64,Linux/aarch64/cpu,libjllama.so,yes
+cpu-linux-s390x,Linux/s390x/cpu,libjllama.so,yes
+cpu-android-aarch64,Linux-Android/aarch64/cpu,libjllama.so,no
+cpu-android-x86-64,Linux-Android/x86_64/cpu,libjllama.so,no
+cpu-windows-x86-64,Windows/x86_64/cpu,jllama.dll,yes
+cpu-windows-x86,Windows/x86/cpu,jllama.dll,yes
+cpu-windows-aarch64,Windows/aarch64/cpu,jllama.dll,yes
+metal-macos-aarch64,Mac/aarch64/metal,libjllama.dylib,yes
+msvc-windows-x86-64,Windows/x86_64/msvc,jllama.dll,no
+msvc-windows-x86,Windows/x86/msvc,jllama.dll,no
+cuda13-linux-x86-64,Linux/x86_64/cuda13,libjllama.so,no
+cuda13-windows-x86-64,Windows/x86_64/cuda13,jllama.dll,no
+vulkan-linux-x86-64,Linux/x86_64/vulkan,libjllama.so,no
+vulkan-linux-aarch64,Linux/aarch64/vulkan,libjllama.so,no
+vulkan-windows-x86-64,Windows/x86_64/vulkan,jllama.dll,no
+opencl-android-aarch64,Linux-Android/aarch64/opencl,libjllama.so,no
+opencl-windows-x86-64,Windows/x86_64/opencl,jllama.dll,no
+opencl-windows-aarch64,Windows/aarch64/opencl,jllama.dll,no
+rocm-linux-x86-64,Linux/x86_64/rocm,libjllama.so,no
+rocm-windows-x86-64,Windows/x86_64/rocm,jllama.dll,no
+sycl-fp16-linux-x86-64,Linux/x86_64/sycl-fp16,libjllama.so,no
+sycl-fp32-linux-x86-64,Linux/x86_64/sycl-fp32,libjllama.so,no
+sycl-windows-x86-64,Windows/x86_64/sycl,jllama.dll,no
+openvino-linux-x86-64,Linux/x86_64/openvino,libjllama.so,no
+openvino-windows-x86-64,Windows/x86_64/openvino,jllama.dll,no

@@ -121,19 +121,29 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - **Distributed inference over RPC** — offload a model's layers to llama.cpp RPC servers on other machines (`ModelParameters.setRpcServers(...)` / `--rpc host:port`), and serve this machine's devices to them with `RpcServer` (the in-JVM `rpc-server`). See [Distributed inference over RPC](#distributed-inference-over-rpc).
 - **Local agent** ([`llama-atmosphere-agent`](llama-atmosphere-agent/), release asset, JDK 21+) — a fully offline agent on top of this library that reads and edits files and, if allowed, runs commands. One agent session, three ways to use it: a **terminal** (full console or line-oriented `--plain`, fine over SSH/PuTTY), a **browser** (`--web`, token-protected, loopback by default — reach it from elsewhere through an SSH tunnel), and **IDEs** over the [Agent Client Protocol](https://agentclientprotocol.com) (`--acp`: JetBrains IDEs and Zed natively, VS Code through an ACP extension). See [Local agent](#local-agent-terminal-browser-ide-via-acp).
 - **Multi-model router mode** (`--models-dir` + per-request model selection, managed via the typed `RouterClient`) and **attach mode** (`NativeServer(LlamaModel, ...)` serves an already-loaded model over the full upstream HTTP frontend — one copy of the weights).
-- Pre-built native binaries in the default JAR for Linux (x86-64, aarch64, s390x), macOS (x86-64, arm64 — Metal included), Windows (x86-64, x86, arm64) and Android (arm64, x86-64); GPU backends (CUDA, Vulkan, OpenCL, ROCm/HIP, SYCL, OpenVINO) ship as Maven classifiers — see [Choosing the right classifier](#choosing-the-right-classifier). Android additionally ships as the [`llama-android` AAR](#importing-in-android) with the optional `llama-kotlin` coroutines façade.
+- Pre-built native binaries for Linux (x86-64, aarch64, s390x), macOS (arm64, Metal included), Windows (x86-64, x86, arm64) and Android (arm64, x86-64), plus GPU backends (CUDA, Vulkan, OpenCL, ROCm/HIP, SYCL, OpenVINO) — one natives jar each, all loadable side by side with automatic CPU fallback; see [Choosing the natives jars](#choosing-the-natives-jars). Android additionally ships as the [`llama-android` AAR](#importing-in-android) with the optional `llama-kotlin` coroutines façade.
 
 ## Quick Start
 
-Access this library via Maven (released versions on Maven Central):
+Access this library via Maven (released versions on Maven Central). `llama-platform` brings
+the classes plus the CPU natives of every desktop platform:
 
 ```xml
 <dependency>
     <groupId>net.ladenthin</groupId>
-    <artifactId>llama</artifactId>
-    <version>5.1.0</version>
+    <artifactId>llama-platform</artifactId>
+    <version>5.2.0</version>
+    <type>pom</type>
 </dependency>
 ```
+
+(`<type>pom</type>` is required in Maven: `llama-platform` is a dependency list, not a jar.
+In Gradle it is just `implementation("net.ladenthin:llama-platform:5.2.0")`.)
+
+> [!NOTE]
+> This layout starts with **5.2.0**. Up to 5.1.0, `net.ladenthin:llama` was one jar that
+> carried the CPU natives of every platform, and each GPU classifier was a complete
+> replacement for it.
 
 There are multiple [examples](llama/src/test/java/examples).
 
@@ -155,8 +165,9 @@ To use the latest snapshot, add the repository and dependency to your `pom.xml`:
 
 <dependency>
     <groupId>net.ladenthin</groupId>
-    <artifactId>llama</artifactId>
+    <artifactId>llama-platform</artifactId>
     <version>5.2.0-SNAPSHOT</version>
+    <type>pom</type>
 </dependency>
 ```
 
@@ -166,97 +177,94 @@ No credentials are required — the repository is publicly readable.
 
 We support CPU inference for the following platforms out of the box:
 
-- Linux x86-64, aarch64
-- MacOS x86-64, aarch64 (M-series)
-- Windows x86-64, x64
+- Linux x86-64, aarch64, s390x
+- macOS aarch64 (Apple silicon, with Metal)
+- Windows x86-64, x86, aarch64
+- Android aarch64, x86-64 (see [Importing in Android](#importing-in-android))
 
 If any of these match your platform, you can include the Maven dependency and get started.
 
-### Choosing the right classifier
+### Choosing the natives jars
 
-The Maven coordinate `net.ladenthin:llama` publishes one default JAR (CPU-only;
-its Windows natives are built with the Ninja Multi-Config + MSVC toolchain) plus
-optional JARs selected via a Maven `<classifier>`: NVIDIA CUDA (Linux / Windows),
-Vulkan (Linux x86-64 / aarch64, Windows), AMD ROCm/HIP (Linux / Windows), Intel
-SYCL (Linux fp16 / fp32, Windows) and OpenVINO (Linux / Windows) GPU builds, OpenCL
-(Android Adreno, Windows x86-64 / Snapdragon-arm64), and an alternate-toolchain MSVC
-Windows CPU build. Pick at most one GPU/accelerator classifier — those are mutually
-exclusive — and optionally a CPU Windows build.
+`net.ladenthin:llama` is the Java classes only. The native libraries ship as separate jars of
+the same artifact, one per backend and platform, selected by a Maven `<classifier>` of the form
+`<backend>-<os>-<arch>`. Each holds exactly one directory,
+`net/ladenthin/llama/<OS>/<ARCH>/<backend>/`, so **any combination can share one classpath**.
+At startup the loader tries the backends it finds in a fixed order — CUDA → ROCm → SYCL
+(fp16, fp32) → Vulkan → OpenCL → OpenVINO → Metal → MSVC → CPU — and uses the first whose
+library loads. A GPU jar next to the CPU jar therefore just works on a machine without that GPU
+or its runtime: the GPU library fails to load and the CPU one is used.
 
-| Classifier | Backend | Target platform | Runtime requirement |
-|---|---|---|---|
-| _(none)_ | CPU | Linux x86-64 / aarch64 / s390x, macOS x86-64 / aarch64, Windows x86-64 / x86 / aarch64 (Ninja Multi-Config + MSVC), Android aarch64 + x86-64 (CPU) | A JDK 8+ JVM. **Linux `aarch64` additionally requires glibc ≥ 2.39** (e.g. Ubuntu 24.04+, Debian 13+) — it is built natively on `ubuntu-24.04-arm`, matching upstream llama.cpp's own ARM binaries; older-glibc ARM hosts (Ubuntu 22.04, Debian 12, RHEL 8/9, Amazon Linux 2023) are not supported. Linux x86-64 keeps a glibc 2.17 floor (manylinux2014). **Windows `aarch64`** (Windows on ARM — Snapdragon X / Surface) is built natively on `windows-11-arm` and ships in the default JAR alongside the x86-64 / x86 natives. |
-| `msvc-windows` | CPU (MSVC / Visual Studio generator) | Windows x86-64 and x86 | None beyond a JDK 8+ JVM. Same CPU backend as the default JAR's Windows natives, but compiled with the Visual Studio generator instead of `Ninja Multi-Config`. Both use the same MSVC toolchain (static `/MT` CRT), so they are functionally equivalent — provided as an alternate-toolchain option. |
-| `cuda13-windows-x86-64` | CUDA 13 | Windows x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 Toolkit installed on the host (`cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` resolvable on `PATH`). The runtime libraries are **not bundled** in the JAR; native-library load fails with `UnsatisfiedLinkError` if they are absent. No CPU fallback. |
-| `vulkan-windows-x86-64` | Vulkan | Windows x86-64 with a Vulkan 1.2+ GPU (NVIDIA / AMD / Intel) | A Vulkan runtime (`vulkan-1.dll`), which current GPU drivers install. No Vulkan SDK is needed at runtime. The most portable Windows GPU option (vendor-independent). |
-| `opencl-windows-x86-64` | OpenCL | Windows x86-64 with an OpenCL 2.0+ GPU | A vendor OpenCL ICD (`OpenCL.dll`, installed by the GPU driver). **Note:** the GGML OpenCL backend is Adreno-tuned; on desktop GPUs CUDA or Vulkan are better supported. |
-| `cuda13-linux-x86-64` | CUDA 13 | Linux x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 runtime libraries (`libcudart.so.13`, `libcublas.so.13`) installed on the host. The shared library is dynamically linked against them and will fail to `dlopen` if they are absent — there is no automatic fallback to CPU. |
-| `vulkan-linux-x86-64` | Vulkan | Linux x86-64 with a Vulkan 1.2+ GPU (NVIDIA / AMD / Intel) | A Vulkan runtime (`libvulkan.so.1`), which current GPU drivers install. No Vulkan SDK is needed at runtime. The most portable Linux GPU option (vendor-independent, no CUDA toolkit). Built natively on `ubuntu-latest`, so it shares the aarch64 build's higher glibc floor (≈ 2.39). |
-| `vulkan-linux-aarch64` | Vulkan | Linux aarch64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`libvulkan.so.1`) from the device/driver. glibc ≥ 2.39 (built on `ubuntu-24.04-arm`). |
-| `opencl-android-aarch64` | OpenCL (Adreno) | Android aarch64 with Qualcomm Adreno GPU | A device-supplied OpenCL ICD (`libOpenCL.so`). Devices without an ICD (e.g. most non-Snapdragon Android hardware) must use the default CPU JAR. |
-| `rocm-linux-x86-64` | ROCm / HIP | Linux x86-64 with AMD GPU | An installed AMD ROCm **10** runtime (`libamdhip64.so`, `librocblas.so`, `libhipblas.so`) on the host — built against ROCm 10.0 (TheRock), the same version upstream llama.cpp ships; targets every GPU TheRock builds for Linux, Instinct included (gfx900/gfx906/gfx90c/gfx1153 best effort — built, but not release-ready in ROCm 10). Not bundled; native load fails without it. No CPU fallback. |
-| `rocm-windows-x86-64` | ROCm / HIP | Windows x86-64 with AMD GPU | The AMD ROCm **10** runtime DLLs (`amdhip64.dll`, `rocblas.dll`, `hipblas.dll`) on `PATH` — built against ROCm 10.0 (TheRock); every Radeon target TheRock builds for Windows, gfx900 through RDNA4 (gfx900/gfx906/gfx90c/gfx1153 best effort). Not bundled. No CPU fallback. |
-| `sycl-fp16-linux-x86-64` | SYCL (Intel oneAPI, fp16) | Linux x86-64 with Intel GPU (Arc / iGPU) | An installed Intel oneAPI / Level-Zero runtime. fp16 accumulation (faster, slightly lower precision). Not bundled. |
-| `sycl-fp32-linux-x86-64` | SYCL (Intel oneAPI, fp32) | Linux x86-64 with Intel GPU (Arc / iGPU) | An installed Intel oneAPI / Level-Zero runtime. fp32 accumulation (higher precision). Not bundled. |
-| `sycl-windows-x86-64` | SYCL (Intel oneAPI) | Windows x86-64 with Intel GPU (Arc / iGPU) | The Intel oneAPI / Level-Zero runtime DLLs on `PATH`. Not bundled. |
-| `opencl-windows-aarch64` | OpenCL (Adreno) | Windows-on-ARM aarch64 (Snapdragon X) with Adreno GPU | A device-supplied OpenCL ICD (`OpenCL.dll`, from the Adreno driver). Not bundled. |
-| `openvino-linux-x86-64` | OpenVINO | Linux x86-64 (Intel GPU / NPU / CPU) | An installed Intel OpenVINO runtime. Not bundled. |
-| `openvino-windows-x86-64` | OpenVINO | Windows x86-64 (Intel GPU / NPU / CPU) | The Intel OpenVINO runtime DLLs on `PATH`. Not bundled. |
-
-> [!NOTE]
-> The AMD (`rocm-*`), Intel SYCL (`sycl-*`), Windows-on-ARM OpenCL
-> (`opencl-windows-aarch64`) and Intel OpenVINO (`openvino-*`) classifiers are
-> newly added GPU backends. Like the other GPU classifiers they are validated
-> **build-only** in CI (GitHub runners have no matching GPU), so end-to-end
-> inference is verified locally / on self-hosted hardware. As with every GPU JAR,
-> the vendor runtime is supplied by the consumer's driver/toolkit and is not bundled.
-
-For the default CPU JAR, omit the `<classifier>`. For a GPU/accelerator or
-alternate-CPU build, add the `<classifier>` for your platform from the table
-above — the backend, target platform and runtime requirement are all listed
-there. Pick **at most one** classifier (they are mutually exclusive):
+`llama-platform` is the classes jar plus the CPU jars of every desktop platform. For GPU
+acceleration, add the jar for your GPU next to it:
 
 ```xml
-<!-- Default (CPU) — no classifier -->
 <dependency>
     <groupId>net.ladenthin</groupId>
-    <artifactId>llama</artifactId>
-    <version>5.1.0</version>
+    <artifactId>llama-platform</artifactId>
+    <version>5.2.0</version>
+    <type>pom</type>
 </dependency>
-
-<!-- GPU / accelerator or alternate-CPU build: add the <classifier> from the
-     table above. Example shown — CUDA 13 on Linux x86-64. -->
+<!-- Add any natives jar from the table below. Example shown: CUDA 13 on Linux x86-64. -->
 <dependency>
     <groupId>net.ladenthin</groupId>
     <artifactId>llama</artifactId>
-    <version>5.1.0</version>
+    <version>5.2.0</version>
     <classifier>cuda13-linux-x86-64</classifier>
 </dependency>
 ```
 
-> [!IMPORTANT]
-> The GPU JARs are **GPU-only at runtime**. On a host without the matching
-> GPU driver/runtime the JVM fails at native-library load time with
-> `UnsatisfiedLinkError`: the CUDA JARs are dynamically linked against the
-> CUDA runtime (`libcudart.so.13` on Linux, `cudart64_13.dll` /
-> `cublas64_13.dll` / `cublasLt64_13.dll` on Windows — the Windows CUDA
-> runtime is **not bundled**, install the CUDA 13 Toolkit), the Vulkan JAR
-> needs a Vulkan runtime (`vulkan-1.dll`, shipped with current GPU drivers),
-> and the OpenCL JARs need a vendor OpenCL ICD. There is no automatic
-> fallback to CPU. If you want a single artifact that works on both CPU and
-> GPU hosts, depend on the default (CPU) JAR; users who want GPU acceleration
-> on an unlisted platform must compile locally with the matching `-DGGML_*=ON`
-> flag (see [Setup required](#setup-required)).
+To ship less, depend on `net.ladenthin:llama` (the classes) plus only the natives jars of the
+platforms you target, e.g. `cpu-linux-x86-64`.
+
+| Classifier | Backend | Target platform | Runtime requirement |
+|---|---|---|---|
+| `cpu-linux-x86-64` | CPU | Linux x86-64 | A JDK 8+ JVM; glibc ≥ 2.17 (manylinux2014). |
+| `cpu-linux-aarch64` | CPU | Linux aarch64 | glibc ≥ 2.39 (e.g. Ubuntu 24.04+, Debian 13+) — built natively on `ubuntu-24.04-arm`, matching upstream llama.cpp's own ARM binaries; older-glibc ARM hosts (Ubuntu 22.04, Debian 12, RHEL 8/9, Amazon Linux 2023) are not supported. |
+| `cpu-linux-s390x` | CPU | Linux s390x (IBM Z, big-endian) | A JDK 8+ JVM. |
+| `cpu-windows-x86-64` / `cpu-windows-x86` | CPU | Windows x86-64 / x86 | A JDK 8+ JVM. Built with Ninja Multi-Config + MSVC (static `/MT` CRT). |
+| `cpu-windows-aarch64` | CPU | Windows on ARM (Snapdragon X / Surface) | A JDK 8+ JVM. Built natively on `windows-11-arm` with `clang-cl`. |
+| `metal-macos-aarch64` | Metal + CPU | macOS aarch64 (Apple silicon) | A JDK 8+ JVM. |
+| `cpu-android-aarch64` / `cpu-android-x86-64` | CPU | Android | For Android use the [`llama-android` AAR](#importing-in-android); these jars are the same libraries for other Android JVM setups. |
+| `msvc-windows-x86-64` / `msvc-windows-x86` | CPU (Visual Studio generator) | Windows x86-64 / x86 | Same CPU backend and MSVC toolchain as `cpu-windows-*`, built with the Visual Studio generator instead of Ninja — an alternate-toolchain option; tried before the `cpu` jar when both are present. |
+| `cuda13-linux-x86-64` | CUDA 13 | Linux x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 runtime libraries (`libcudart.so.13`, `libcublas.so.13`). |
+| `cuda13-windows-x86-64` | CUDA 13 | Windows x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 Toolkit (`cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` on `PATH`). |
+| `vulkan-linux-x86-64` | Vulkan | Linux x86-64 with a Vulkan 1.2+ GPU (NVIDIA / AMD / Intel) | A Vulkan runtime (`libvulkan.so.1`), which current GPU drivers install. The most portable Linux GPU option. glibc ≈ 2.39 (built on `ubuntu-latest`). |
+| `vulkan-linux-aarch64` | Vulkan | Linux aarch64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`libvulkan.so.1`). glibc ≥ 2.39. |
+| `vulkan-windows-x86-64` | Vulkan | Windows x86-64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`vulkan-1.dll`), which current GPU drivers install. The most portable Windows GPU option. |
+| `opencl-windows-x86-64` | OpenCL | Windows x86-64 with an OpenCL 2.0+ GPU | A vendor OpenCL ICD (`OpenCL.dll`). The GGML OpenCL backend is Adreno-tuned; on desktop GPUs CUDA or Vulkan are better supported. |
+| `opencl-windows-aarch64` | OpenCL (Adreno) | Windows on ARM (Snapdragon X) | The Adreno driver's OpenCL ICD (`OpenCL.dll`). |
+| `opencl-android-aarch64` | OpenCL (Adreno) | Android aarch64 with Adreno GPU | A device OpenCL ICD (`libOpenCL.so`); see also the `llama-android-opencl` AAR. |
+| `rocm-linux-x86-64` | ROCm / HIP | Linux x86-64 with AMD GPU | An AMD ROCm **10** runtime (`libamdhip64.so`, `librocblas.so`, `libhipblas.so`) — built against ROCm 10.0 (TheRock), like upstream llama.cpp; every GPU TheRock builds for Linux, Instinct included (gfx900/gfx906/gfx90c/gfx1153 best effort — built, but not release-ready in ROCm 10). |
+| `rocm-windows-x86-64` | ROCm / HIP | Windows x86-64 with AMD GPU | The AMD ROCm **10** runtime DLLs (`amdhip64.dll`, `rocblas.dll`, `hipblas.dll`) on `PATH`; every Radeon target TheRock builds for Windows, gfx900 through RDNA4 (gfx900/gfx906/gfx90c/gfx1153 best effort). |
+| `sycl-fp16-linux-x86-64` | SYCL (Intel oneAPI, fp16) | Linux x86-64 with Intel GPU (Arc / iGPU) | An Intel oneAPI / Level-Zero runtime. fp16 accumulation (faster, slightly lower precision). |
+| `sycl-fp32-linux-x86-64` | SYCL (Intel oneAPI, fp32) | Linux x86-64 with Intel GPU (Arc / iGPU) | An Intel oneAPI / Level-Zero runtime. fp32 accumulation (higher precision). |
+| `sycl-windows-x86-64` | SYCL (Intel oneAPI) | Windows x86-64 with Intel GPU (Arc / iGPU) | The Intel oneAPI / Level-Zero runtime DLLs on `PATH`. |
+| `openvino-linux-x86-64` | OpenVINO | Linux x86-64 (Intel GPU / NPU / CPU) | An Intel OpenVINO runtime. |
+| `openvino-windows-x86-64` | OpenVINO | Windows x86-64 (Intel GPU / NPU / CPU) | The Intel OpenVINO runtime DLLs on `PATH`. |
+
+> [!NOTE]
+> No vendor runtime is bundled; it comes from the GPU driver or toolkit on the host. The GPU
+> jars are validated **build-only** in CI (GitHub runners have no GPU), so end-to-end GPU
+> inference is verified locally / on self-hosted hardware. A GPU library that loads but finds
+> no usable device (e.g. CUDA installed, no NVIDIA GPU) runs on the CPU inside that library and
+> keeps the loader from trying the next backend; force one with
+> `-Dnet.ladenthin.llama.backend=<backend>` (e.g. `vulkan` or `cpu`), which fails loud instead
+> of falling back.
+
+> [!NOTE]
+> On the **module path** each natives jar is an automatic module
+> (`net.ladenthin.llama.natives.<classifier>`, with `_` for `-`) that nothing requires, so
+> resolve them with `--add-modules ALL-MODULE-PATH` (or keep the natives jars on the
+> classpath).
 
 > [!NOTE]
 > Android `armeabi-v7a` (32-bit ARM) is **not** published. Only 64-bit
 > Android binaries are shipped: `aarch64` (devices) and `x86_64`
-> (emulators, Chromebooks, x86-64 Android hardware) in the CPU-only default
-> JAR and the `llama-android` AAR, plus `aarch64` as
+> (emulators, Chromebooks, x86-64 Android hardware) as the `cpu-android-*`
+> natives jars and in the `llama-android` AAR, plus `aarch64` as
 > `opencl-android-aarch64`. 32-bit Android devices are unsupported
-> by the released artifacts; building from source via the
-> `.github/dockcross/dockcross-android-arm` toolchain is possible but not
-> wired into CI.
+> by the released artifacts.
 >
 > The minimum required Android version is **API 28 (Android 9.0 Pie)**.
 > Devices running Android 8.1 (API 27) or earlier are not supported.
@@ -280,20 +288,14 @@ java -jar llama-<version>-all-linux-x86-64-jar-with-dependencies.jar -m model.gg
 | `llama-<version>-all-windows-aarch64-jar-with-dependencies.jar` | OpenCL (Adreno / Snapdragon X) | yes |
 | `llama-<version>-jar-with-dependencies.jar` | none (CPU only, incl. macOS Metal) | — |
 
-Each all-backends jar contains the library classes, all Java runtime
-dependencies, the default CPU natives for **every** platform, and every GPU
-backend for its named OS/arch. At startup the loader tries the bundled backends
-in priority order (CUDA → ROCm → SYCL → Vulkan → OpenCL → OpenVINO) and uses
-the **first one whose native library loads**; if none loads — e.g. no GPU
-driver/toolkit installed — it falls back to the CPU natives, so the jar starts
-everywhere. The usual GPU policy applies: vendor runtimes are **not** bundled
-(see the classifier table above for what each backend needs on the host).
-Force a specific backend with `-Dnet.ladenthin.llama.backend=<name>`
-(e.g. `vulkan`; fails loud instead of falling back) or force CPU with
-`-Dnet.ladenthin.llama.backend=default`. A `.sha256` checksum file accompanies
-every jar. These fat jars are GitHub download assets only — they are **not**
-published to Maven Central (Maven users combine the thin classifier jars
-instead, see above).
+Each all-backends jar is the classes, all Java runtime dependencies, and every natives jar
+of **its named OS/arch** (except `msvc`) merged into one file — pick the jar that matches
+your platform. (A 32-bit JVM on 64-bit Windows, for example, needs the default
+`llama-<version>-jar-with-dependencies.jar`, which carries the CPU natives of every platform.)
+The loader picks the backend exactly as described [above](#choosing-the-natives-jars), so the
+jar starts on every host of its OS/arch, with or without a GPU. A `.sha256` checksum file and a
+detached GPG `.asc` signature accompany every jar. These fat jars are GitHub download assets
+only — they are **not** published to Maven Central.
 
 ### Setup required
 
@@ -319,11 +321,14 @@ cmake --build build --config Release
 > [!TIP]
 > Use `-DLLAMA_CURL=ON` to download models via Java code using `ModelParameters#setModelUrl(String)`.
 
-All compiled libraries will be put in a resources directory matching your platform, which will appear in the cmake output. For example something like:
+The library is put in a directory matching your platform and backend, which appears in the cmake output. For example:
 
 ```shell
---  Installing files to /java-llama.cpp/llama/src/main/resources/net/ladenthin/llama/Linux/x86_64
+-- Backend 'cpu' - installing files to /java-llama.cpp/llama/src/main/natives/net/ladenthin/llama/Linux/x86_64/cpu
 ```
+
+`mvn test` puts that directory on the test classpath; `mvn -P natives package` turns it into a
+natives jar (in CI, together with every other platform's).
 
 #### Library Location
 
@@ -337,8 +342,8 @@ The application will search in the following order in the following locations:
 - In **java.library.path**: These are predefined locations for each OS, e.g., `/usr/java/packages/lib:/usr/lib64:/lib64:/lib:/usr/lib` on Linux.
   You can find out the locations using `System.out.println(System.getProperty("java.library.path"))`.
   Use this option if you want to install the shared libraries as system libraries.
-- From the **JAR**: If any of the libraries weren't found yet, the application will try to use a prebuilt shared library.
-  This of course only works for the [supported platforms](#no-setup-required) .
+- From the **natives jars** on the classpath: every backend directory found for your platform, in the
+  order described in [Choosing the natives jars](#choosing-the-natives-jars).
 
 #### System Properties Reference
 
@@ -349,20 +354,21 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.lib.path` | unset (falls back to `java.library.path`) | runtime | `LlamaLoader` | Directory containing the native `jllama` shared library. Checked first, before `java.library.path`. Set with `-Dnet.ladenthin.llama.lib.path=/path/to/dir`. |
 | `net.ladenthin.llama.tmpdir` | unset (falls back to `java.io.tmpdir`) | runtime | `LlamaLoader` | Custom temporary directory used when extracting the native library from the JAR. |
 | `net.ladenthin.llama.osinfo.architecture` | unset (uses `os.arch`) | runtime | `OSInfo` | Override for the architecture string used to locate the bundled library inside the JAR. Useful when `os.arch` reports an unexpected value (e.g. inside dockcross / chrooted environments). |
-| `net.ladenthin.llama.backend` | unset (auto: first loadable backend, then CPU) | runtime | `LlamaLoader` | Backend override for the [all-backends fat jars](#standalone-server-fat-jars-github-releases) (jars carrying a `jllama-backends.txt` manifest). Names one bundled backend (e.g. `cuda13`, `vulkan`) to load exclusively — failure is then fatal instead of falling back — or `default`/`cpu` to skip all GPU backends. Ignored by jars without a backend manifest. |
+| `net.ladenthin.llama.backend` | unset (auto: the first backend on the classpath whose library loads) | runtime | `LlamaLoader` | Names one backend directory (e.g. `cuda13`, `vulkan`, `cpu`) to load exclusively — failure is then fatal instead of trying the next backend. See [Choosing the natives jars](#choosing-the-natives-jars). |
 | `net.ladenthin.llama.test.ngl` | `43` for the general suite; `0` for `ToolCallingIntegrationTest` | test | Model-backed integration tests | Number of GPU layers used during testing. Pin to `0` on CPU-only hosts: `mvn test -Dnet.ladenthin.llama.test.ngl=0`. The tool test also selects device `none` at zero layers so Metal/CUDA is not initialized. |
 | `net.ladenthin.llama.tool.model` | `models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (test self-skips if missing) | test | `ToolCallingIntegrationTest` | Path to a tool-capable GGUF used to verify required blocking and streaming tool calls. The default matches the Qwen2.5 model in upstream llama.cpp's tool-call test matrix. |
-| `net.ladenthin.llama.nomic.path` | unset (test self-skips) | test | `LlamaEmbeddingsTest#testNomicEmbedLoads` | Path to a Nomic embedding model (`nomic-embed-text-v1.5.f16.gguf` or a compatible BERT-family encoder). Regression test for upstream issue #98 (BERT-encoder `result_output` assertion). |
-| `net.ladenthin.llama.vision.model` | unset (test self-skips) | test | `MultimodalIntegrationTest` | Path to a vision-capable model GGUF. Any vision-capable GGUF works; CI default is `SmolVLM-500M-Instruct-Q8_0.gguf`. |
-| `net.ladenthin.llama.vision.mmproj` | unset (test self-skips) | test | `MultimodalIntegrationTest` | Matching mmproj GGUF for the vision model. |
+| `net.ladenthin.llama.nomic.path` | `models/nomic-embed-text-v1.5.f16.gguf` (test self-skips if missing) | test | `LlamaEmbeddingsTest#testNomicEmbedLoads` | Path to a Nomic embedding model (`nomic-embed-text-v1.5.f16.gguf` or a compatible BERT-family encoder). Regression test for upstream issue #98 (BERT-encoder `result_output` assertion). |
+| `net.ladenthin.llama.vision.model` | `models/SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Path to a vision-capable model GGUF. Any vision-capable GGUF works; CI default is `SmolVLM-500M-Instruct-Q8_0.gguf`. |
+| `net.ladenthin.llama.vision.mmproj` | `models/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Matching mmproj GGUF for the vision model. |
 | `net.ladenthin.llama.vision.image` | `llama/src/test/resources/images/test-image.jpg` (a CC-BY-4.0 / MIT-granted photo committed to the repo) | test | `MultimodalIntegrationTest` | Visual prompt image. Any png/jpeg/webp/gif works; the extension drives MIME detection. |
 | `net.ladenthin.llama.audio.model` | unset (test self-skips) | test | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | Path to an audio-input model GGUF (e.g. Ultravox, Qwen2.5-Omni). |
 | `net.ladenthin.llama.audio.mmproj` | unset (test self-skips) | test | `AudioInputIntegrationTest` | Matching audio mmproj (encoder) GGUF. |
 | `net.ladenthin.llama.audio.input` | `src/test/resources/audios/sample.wav` (committed) | test | `AudioInputIntegrationTest` | `.wav`/`.mp3` audio prompt clip; the extension drives format detection. |
-| `net.ladenthin.llama.tts.model` | unset (test self-skips) | test | `TtsIntegrationTest` | Path to the Qwen3-TTS backbone (text) GGUF. Any Qwen3-TTS-family model works; CI default is `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf`. |
-| `net.ladenthin.llama.tts.mmproj` | unset (test self-skips) | test | `TtsIntegrationTest` | Path to the matching Qwen3-TTS mmproj GGUF (speaker encoder + code predictor + code2wav decoder); CI default is `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf`. |
+| `net.ladenthin.llama.tts.model` | `models/Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf` (test self-skips if missing) | test | `TtsIntegrationTest` | Path to the Qwen3-TTS backbone (text) GGUF. Any Qwen3-TTS-family model works; CI default is `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf`. |
+| `net.ladenthin.llama.tts.mmproj` | `models/mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf` (test self-skips if missing) | test | `TtsIntegrationTest` | Path to the matching Qwen3-TTS mmproj GGUF (speaker encoder + code predictor + code2wav decoder); CI default is `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf`. |
+| `net.ladenthin.llama.train.model` | `models/stories260K.gguf` (test self-skips if missing) | test | `LlamaTrainerIntegrationTest` | Path to the model the fine-tuning smoke trains. Must be **F32**: `llama_set_param` skips every other tensor type, so a quantized model would train nothing. |
 
-`MultimodalIntegrationTest` self-skips when any of the three `vision.*` properties points at a missing path, so a partial setup (just the vision model + the committed image, no mmproj) lets the test class load without erroring. `AudioInputIntegrationTest` self-skips the same way over the three `audio.*` properties. `TtsIntegrationTest` likewise self-skips unless both `tts.model` and `tts.mmproj` point at existing files.
+The test-model defaults are exactly CI's model set (`.github/models.csv`, URLs included), so a model downloaded into `models/` is found without any property; the properties only point a test at another file. `MultimodalIntegrationTest` self-skips when any of the three `vision.*` paths is missing, so a partial setup (just the vision model + the committed image, no mmproj) lets the test class load without erroring. `AudioInputIntegrationTest` self-skips the same way over the three `audio.*` properties. `TtsIntegrationTest` likewise self-skips unless both `tts.model` and `tts.mmproj` paths exist, and `LlamaTrainerIntegrationTest` unless `train.model` (default `models/stories260K.gguf`, an **F32** model) does.
 
 ## Documentation
 
@@ -987,8 +993,8 @@ RouterClient client = new RouterClient(8080, System.getenv("LLAMA_API_KEY"));
 llama.cpp's RPC backend spreads one model over the devices of several machines: every machine
 that contributes runs an **RPC server**, and the machine that loads the model names them with
 `--rpc`. Layers are then distributed over local and remote devices exactly as over several local
-GPUs (`setGpuLayers`, `setTensorSplit`). Both halves are in every artifact — the default JAR and
-every GPU classifier — with **no additional runtime dependency** (plain TCP over the system socket
+GPUs (`setGpuLayers`, `setTensorSplit`). Both halves are in every natives jar — CPU and GPU —
+with **no additional runtime dependency** (plain TCP over the system socket
 library the library already links).
 
 Serve this machine's devices (every GPU this library found, else the CPU):
@@ -1065,6 +1071,9 @@ forcing that floor on every core consumer. It ships and versions in lockstep wit
     <version>5.1.0</version>
 </dependency>
 ```
+
+From 5.2.0 on, add the natives next to it — `llama-platform` or the natives jars you need (see
+[Choosing the natives jars](#choosing-the-natives-jars)); the core it depends on is classes only.
 
 Each adapter **borrows** a `LlamaModel` you already loaded — it never loads or closes the native
 model, so you manage its lifecycle (try-with-resources), and one `LlamaModel` can back several

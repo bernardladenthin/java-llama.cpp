@@ -23,9 +23,9 @@ import org.junit.jupiter.api.Timeout;
  * {@code mtmd_helper::gen_audio} pipeline). Loads the backbone+mmproj TTS pipeline and synthesizes
  * a short clip, checking the WAV container is well-formed.
  *
- * <p>Self-skips when {@link TestConstants#PROP_TTS_MODEL} or {@link TestConstants#PROP_TTS_MMPROJ}
- * is unset or its file is missing, so it runs only where the (large) Qwen3-TTS backbone + mmproj
- * GGUFs have been staged.
+ * <p>Uses CI's Qwen3-TTS backbone + mmproj ({@link TestConstants#DEFAULT_TTS_MODEL_PATH},
+ * {@link TestConstants#DEFAULT_TTS_MMPROJ_PATH}) unless {@link TestConstants#PROP_TTS_MODEL} /
+ * {@link TestConstants#PROP_TTS_MMPROJ} name others, and self-skips when a file is missing.
  */
 public class TtsIntegrationTest {
 
@@ -36,8 +36,10 @@ public class TtsIntegrationTest {
     @DisplayName("synthesize() returns a well-formed, non-silent 24 kHz mono 16-bit WAV")
     @Timeout(value = 300_000, unit = TimeUnit.MILLISECONDS)
     public void synthesizesWellFormedWav() {
-        String model = TestConstants.resolveModelProperty(TestConstants.PROP_TTS_MODEL);
-        String mmproj = TestConstants.resolveModelProperty(TestConstants.PROP_TTS_MMPROJ);
+        String model =
+                TestConstants.resolveModelProperty(TestConstants.PROP_TTS_MODEL, TestConstants.DEFAULT_TTS_MODEL_PATH);
+        String mmproj = TestConstants.resolveModelProperty(
+                TestConstants.PROP_TTS_MMPROJ, TestConstants.DEFAULT_TTS_MMPROJ_PATH);
         Assumptions.assumeTrue(
                 model != null && !model.isEmpty(), "TTS model not set (-D" + TestConstants.PROP_TTS_MODEL + "=...)");
         Assumptions.assumeTrue(

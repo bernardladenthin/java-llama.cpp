@@ -1,0 +1,122 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# The model-backed Java suite against one native build, for the macOS and Windows test jobs of
+# publish.yml (the three macOS arm64 builds and the two Windows x86-64 CPU builds). Called, never
+# run on its own: the caller job keeps its id, its name and its `needs`, so the release gate and
+# `package` see the same graph as before. A check shows as "<caller name> / Java tests".
+#
+# The only differences between the callers are the inputs below; everything OS-specific (memory
+# report, core dumps vs. Windows Error Reporting minidumps) is decided here by runner.os. The
+# JDK is .java-version, the models come from the shared cache, so nothing is passed through
+# `with:` that the caller's `env:` would have to repeat (a reusable workflow sees none of it).
+name: Java tests
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: The runner label (macos-14, macos-15, windows-2025-vs2026, ...).
+        type: string
+        required: true
+      natives-artifact:
+        description: The artifact holding the native build under test (its <OS>/<ARCH>/<backend>/ tree).
+        type: string
+        required: true
+      maven-args:
+        description: Extra arguments for `mvn test`, e.g. -Dnet.ladenthin.llama.test.ngl=0.
+        type: string
+        required: false
+        default: ''
+      error-artifact:
+        description: Name of the artifact uploaded on failure (crash logs, dumps, surefire reports).
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  tests:
+    name: Java tests
+    runs-on: ${{ inputs.runs-on }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.natives-artifact }}
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
+      - uses: ./.github/actions/restore-models
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version-file: .java-version
+      - name: Memory before tests
+        if: runner.os == 'macOS'
+        run: vm_stat && sysctl hw.memsize hw.physmem
+      - name: Memory before tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
+      - name: Enable core dumps
+        if: runner.os != 'Windows'
+        run: ulimit -c unlimited
+      - name: Enable WER LocalDumps for java.exe
+        # Windows Error Reporting writes minidumps when java.exe (or any other registered process)
+        # crashes via __fastfail / abort / unhandled SEH -- the Windows analogue of Linux core
+        # dumps, so that a JVM crash inside the JNI layer leaves a real native callstack instead of
+        # just surefire's "VM terminated without saying goodbye" line. DumpType=2 ==
+        # MiniDumpWithFullMemory; the workspace dumps/ folder is globbed by the failure upload.
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\java.exe'
+          New-Item -Path $key -Force | Out-Null
+          New-Item -Path "${{ github.workspace }}\dumps" -ItemType Directory -Force | Out-Null
+          New-ItemProperty -Path $key -Name 'DumpFolder' -Value "${{ github.workspace }}\dumps" -PropertyType ExpandString -Force | Out-Null
+          New-ItemProperty -Path $key -Name 'DumpType'   -Value 2 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path $key -Name 'DumpCount'  -Value 5 -PropertyType DWord -Force | Out-Null
+          Get-ItemProperty -Path $key | Format-List
+      - name: Run tests
+        shell: bash
+        env:
+          MAVEN_ARGS_EXTRA: ${{ inputs.maven-args }}
+        # MAVEN_ARGS_EXTRA is split on purpose: it carries zero or more separate arguments.
+        run: mvn -e --no-transfer-progress -f llama/pom.xml $MAVEN_ARGS_EXTRA test
+      # Green tests are not the same as tests that ran. A class-level @BeforeAll assumption that
+      # fails makes Surefire record tests="0" for that class -- no entries at all, so it is
+      # invisible to a skip check. That is exactly how every model-gated class stayed silently
+      # muted on every test-java-* job for months. The floor is deliberately slack; the per-class
+      # zero check is the sensitive half.
+      - name: Verify tests actually ran
+        shell: bash
+        run: .github/verify-test-counts.sh llama/target/surefire-reports --min-total 1500
+      - name: Memory after tests
+        if: always() && runner.os == 'macOS'
+        run: vm_stat && sysctl hw.memsize hw.physmem
+      - name: Memory after tests
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory,TotalVisibleMemorySize | Format-List
+      # Echo the crash logs into the job log (workspace/policies/ci-test-diagnostics.md 3.1).
+      - name: Print crash logs (on failure)
+        if: failure()
+        shell: bash
+        run: bash .github/print-crash-logs.sh llama
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.error-artifact }}
+          path: |
+            ${{ github.workspace }}/llama/hs_err_pid*.log
+            ${{ github.workspace }}/llama/*.hprof
+            ${{ github.workspace }}/dumps/*.dmp
+            ${{ github.workspace }}/llama/target/surefire-reports/*.dump
+            ${{ github.workspace }}/llama/target/surefire-reports/*.dumpstream
+            ${{ github.workspace }}/llama/target/surefire-reports/*.txt
+            ${{ github.workspace }}/llama/target/surefire-reports/TEST-*.xml
+            ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/**/*
+          if-no-files-found: warn

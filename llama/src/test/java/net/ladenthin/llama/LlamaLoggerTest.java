@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import net.ladenthin.llama.args.LogFormat;
 import net.ladenthin.llama.exception.LlamaException;
-import net.ladenthin.llama.loader.OSInfo;
+import net.ladenthin.llama.loader.NativeLibraryPresence;
 import net.ladenthin.llama.parameters.ModelParameters;
 import net.ladenthin.llama.value.LogLevel;
 import org.junit.jupiter.api.AfterEach;
@@ -59,12 +59,6 @@ class LlamaLoggerTest {
     @TempDir
     Path tempDir;
 
-    private static boolean nativeLibraryOnClasspath() {
-        String resource = "/net/ladenthin/llama/" + OSInfo.getNativeLibFolderPathForCurrentOS() + "/"
-                + System.mapLibraryName("jllama");
-        return LlamaLoggerTest.class.getResource(resource) != null;
-    }
-
     private static final class Line {
         private final LogLevel level;
         private final String text;
@@ -87,7 +81,7 @@ class LlamaLoggerTest {
      */
     @AfterEach
     void restoreConsoleLogging() {
-        if (!nativeLibraryOnClasspath()) {
+        if (!NativeLibraryPresence.onClasspath()) {
             return;
         }
         LlamaModel.setLogger(LogFormat.TEXT, null);
@@ -127,7 +121,7 @@ class LlamaLoggerTest {
 
     @Test
     void loggerSetBeforeTheLoadReceivesTheLoadsOwnLines() throws IOException {
-        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping logger guard");
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping logger guard");
 
         List<Line> lines = linesOfAFailedLoad(LogFormat.TEXT);
 
@@ -148,7 +142,7 @@ class LlamaLoggerTest {
 
     @Test
     void jsonModeWrapsEveryLineIntoOneObject() throws IOException {
-        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping logger guard");
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping logger guard");
 
         List<Line> lines = linesOfAFailedLoad(LogFormat.JSON);
 
@@ -164,7 +158,7 @@ class LlamaLoggerTest {
 
     @Test
     void anEmptyCallbackDiscardsWithoutFailingTheLoad() throws IOException {
-        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping logger guard");
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping logger guard");
         LlamaModel.setLogger(LogFormat.TEXT, (level, text) -> {});
         Path file = notAGguf();
 
@@ -192,7 +186,7 @@ class LlamaLoggerTest {
      */
     @Test
     void concurrentSetLoggerCallsDoNotRaceOnTheLogWorker() throws Exception {
-        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping logger guard");
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping logger guard");
         final int threads = 4;
         final int rounds = 200;
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
@@ -224,7 +218,7 @@ class LlamaLoggerTest {
      */
     @Test
     void verbosityThresholdIsProcessWideAndEveryLoadSetsIt() throws IOException {
-        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping logger guard");
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping logger guard");
         try {
             List<Line> errorsOnly = linesOfAFailedLoad(LogFormat.TEXT, new ModelParameters().setLogVerbosity(1));
             assertThat("-lv 1 must drop the server's INFO line: " + errorsOnly, sawLoadingModel(errorsOnly), is(false));
@@ -255,7 +249,7 @@ class LlamaLoggerTest {
      */
     @Test
     void deliveryIsAsynchronousOnTheLogWorkerAndRemovingTheLoggerDrains() throws Exception {
-        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping logger guard");
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping logger guard");
         Thread caller = Thread.currentThread();
         Set<Thread> deliveringThreads = Collections.synchronizedSet(new HashSet<>());
         AtomicInteger delivered = new AtomicInteger();

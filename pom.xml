@@ -1,6 +1,5 @@
 <!--
 SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 
 SPDX-License-Identifier: MIT
 -->
@@ -59,6 +58,7 @@ SPDX-License-Identifier: MIT
 		<module>llama</module>
 		<module>llama-langchain4j</module>
 		<module>llama-kotlin</module>
+		<module>llama-platform</module>
 	</modules>
 
 	<profiles>

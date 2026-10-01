@@ -1,5 +1,4 @@
 // SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-// SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 //
 // SPDX-License-Identifier: MIT
 
@@ -211,18 +210,14 @@ public class LlamaEmbeddingsTest {
      *
      * <p>This test reproduces the reporter's batch/ubatch sizing <em>plus</em> the fix
      * ({@code enableEmbedding()}) and asserts the model loads and produces a 768-dimensional
-     * vector. Gated on the {@link TestConstants#PROP_NOMIC_MODEL_PATH} system property so
-     * CI hosts without the ~120 MB GGUF file self-skip cleanly.
-     *
-     * <p>Run with:
-     * <pre>
-     *   mvn test -Dtest=LlamaEmbeddingsTest#testNomicEmbedLoads \
-     *            -Dnet.ladenthin.llama.nomic.path=models/nomic-embed-text-v1.5.f16.gguf
-     * </pre>
+     * vector. Uses {@link TestConstants#DEFAULT_NOMIC_MODEL_PATH} (in CI's model set) unless
+     * {@link TestConstants#PROP_NOMIC_MODEL_PATH} names another file, and self-skips when the
+     * ~120 MB GGUF is missing.
      */
     @Test
     public void testNomicEmbedLoads() {
-        String nomicPath = TestConstants.resolveModelProperty(TestConstants.PROP_NOMIC_MODEL_PATH);
+        String nomicPath = TestConstants.resolveModelProperty(
+                TestConstants.PROP_NOMIC_MODEL_PATH, TestConstants.DEFAULT_NOMIC_MODEL_PATH);
         Assumptions.assumeTrue(
                 nomicPath != null,
                 "Set -D" + TestConstants.PROP_NOMIC_MODEL_PATH + " to a nomic-embed-text GGUF to run this test");

@@ -2,13 +2,13 @@
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Smoke test for an all-backends server fat jar on a GPU-less runner:
-# `java -jar` must start the embedded server — with every manifest backend failing
-# its load cleanly and the loader falling back to the default CPU natives — then
-# answer GET /health with 200 and a POST /v1/chat/completions with a valid choice.
-# This exercises manifest parsing, per-backend extraction, and the fallback chain
+# `java -jar` must start the embedded server — with every GPU backend failing its
+# load cleanly and the loader falling back to the CPU backend — then answer GET
+# /health with 200 and a POST /v1/chat/completions with a valid choice. This
+# exercises backend probing, per-backend extraction, and the fallback chain
 # end-to-end through a real fat-jar launch.
 #
 # Usage: smoke-test-fatjar.sh <jar-dir> <jar-glob> <model-path> [port]
@@ -70,10 +70,10 @@ assert message is not None, "choices[0].message missing"
 print("chat completion OK:", json.dumps(message)[:200])
 ' || fail "malformed chat completion response: $RESPONSE"
 
-# The loader must have reported its backend decision (a chosen backend on a GPU
-# machine, the CPU fallback on a GPU-less runner) — this pins that the manifest was
-# actually read, i.e. the smoke really ran the multi-backend code path.
-grep -hE '\[jllama\] (using native backend|no manifest backend loadable)' server-out.log server-err.log \
-    || fail "no backend-selection log line found — the backend manifest was not processed"
+# The loader must have reported its backend decision (normally the CPU fallback on a
+# GPU-less runner; a GPU backend whose runtime happens to be installed may load and
+# find no device, which is benign) — this pins that the smoke ran the backend probing.
+grep -hE '\[jllama\] using native backend' server-out.log server-err.log \
+    || fail "no backend-selection log line found — the loader did not report a backend"
 
 echo "smoke test PASSED"

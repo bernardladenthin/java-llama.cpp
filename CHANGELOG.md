@@ -9,6 +9,101 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Changed
+- **`ProcessRunner` rewritten on `ProcessBuilder`** (the helper `OSInfo` runs `uname` with): the timeout
+  is now real -- a command that does not end in time is killed and reported as an `IOException`, where
+  the old timeout overload ignored the result of `waitFor` and then blocked reading the output -- and the
+  plain call waits at most 10 s instead of forever. `ProcessRunnerTest` pins both.
+- **`models/README.md` describes the current setup**: nothing downloads models automatically on a local
+  checkout; the list is `.github/models.csv`, which CI's `download-models` job and the tests' defaults
+  share.
+- **The model-backed tests default to CI's model set** (`.github/models.csv`): the vision, TTS, nomic
+  and trainer tests read `models/<file>` unless a `-Dnet.ladenthin.llama.*` property names another file,
+  so a model downloaded into `models/` needs no property (new: `net.ladenthin.llama.train.model`
+  defaults to `models/stories260K.gguf`). `TestConstantsTest` asserts the defaults and the list are the
+  same set.
+- **Build checks are a tested Python library** (`.github/buildcheck/`) and check more: that `package`
+  waits for every natives build, that the all-backends fat jars derived from `natives.csv` are each
+  smoke-launched, named in the agent jar's `Class-Path` and the README (`package-fatjars.sh` now asks
+  for them instead of hard-coding four), CMake's backend names, the dependency allowlists, and that
+  every job gates both publish jobs unless `.github/release-gate-exemptions.txt` says why (`vmlens`
+  gated nothing; it now gates). The Android AAR libraries are held to the same allowlist and 16 KB
+  alignment check as every natives jar.
+- **Files shared with the sibling repositories are checksummed** in `.github/shared-files.sha256` and
+  checked by a `shared-files` job (crash-log printing, the signing-key preflight and the build-check
+  library are now such shared scripts). The workflow lost ~760 lines to two composite actions
+  (`restore-models`, `install-sccache-windows`) and `print-host-info.sh`; `validate-models.bat` is gone
+  (Windows runs the bash script).
+- **Workflow jobs kept identical across the repositories are checked too**: a
+  `.github/shared-files.sha256` entry `.github/workflows/publish.yml#<job>` hashes one job (`startgate`,
+  `shared-files`, `verify-signing-key`, `check-snapshot`, `check-tag`, and where present
+  `verify-signing-key-gradle`, `github-snapshot`, `github-release`).
+- **The dockcross wrappers are attributed to dockcross** in `REUSE.toml` (MIT, its copyright holders):
+  they are the generated output of dockcross's wrapper template, not this project's code.
+- **Unused dockcross wrappers removed**: `dockcross-linux-arm64-lts` (Linux aarch64 builds natively on
+  `ubuntu-24.04-arm` with GCC 14) and `dockcross-android-arm` (32-bit Android was never built in CI
+  and is not published). With them went the `stdc++fs` link for GCC < 9 in `llama/CMakeLists.txt`:
+  llama.cpp needs GCC >= 12 since b9789, so no compiler that could use it builds the project.
+- **`.github/dockcross/update.sh` removed**: it regenerated wrappers that no longer exist
+  (`manylinux2014-x86`, `android-x86`) from unpinned images, while the wrappers in use are pinned to
+  a dockcross tag. A wrapper is regenerated with `docker run --rm dockcross/<image>:<tag> > dockcross-<image>`
+  (the command each wrapper prints at its end).
+- **`LlamaModel`, `CliParameters` and `ModelFlag` rewritten where they still held upstream text**: the
+  class and method documentation of `LlamaModel` now describes the current API (chat, structured output,
+  embeddings, reranking, `Session`) instead of the original four-item list, its code examples use
+  `ChatMessage`, and `rerank`/`decode` were rewritten; `CliParameters` builds argv and `toString` from one
+  `arguments()` method and keeps the options in a `LinkedHashMap`, so argv comes out in the order the
+  options were set rather than in hash order; `ModelFlag`'s eight inherited one-line descriptions say
+  what the flag actually does. What remains in common with upstream is the public API and the JNI
+  declarations, so the upstream copyright line went from these three files. `LICENSE` names the current
+  holder first.
+- **`.clang-format` is a short file of our own, `.clang-tidy` llama.cpp's current one**: the style is
+  `BasedOnStyle: LLVM` plus the four options that differ (column limit 120, indent 4, attributes on the
+  same line, no include sorting) instead of a 230-line `--dump-config`; clang-format 23.1.1 resolves it to
+  the same configuration and leaves all 27 C++ files unchanged. `.clang-tidy`, an older copy of
+  llama.cpp's, is now its current version and attributed to the ggml authors.
+- **The four examples are rewritten for the current API and run in CI**: `MainExample` (blocking
+  completion with token counts and speed, then streaming), `ChatExample` (a multi-turn console chat on
+  `Session`, streamed), `GrammarExample` (a GBNF grammar, and a JSON schema bound to a Java object with
+  `completeAsJson`) and `InfillExample` (fill-in-the-middle). Each defaults to a model of
+  `.github/models.csv` and takes another GGUF as its argument; `ExamplesTest` runs all four on every Java
+  test job, so an example can no longer go stale unnoticed (the old `ChatExample` was `@Disabled`).
+- **Copyright lines checked against the upstream code that is actually left**: the upstream author's
+  `SPDX-FileCopyrightText` line had been stamped onto every file when REUSE was introduced. Each file
+  was compared with the upstream source tree at its last upstream commit (`49be664`, token sequences,
+  robust to reformatting and moves); 80 files whose upstream share is nil or only generic boilerplate
+  (enum and value-class skeletons, separator comments, API calls every example makes, Maven/`.gitignore`
+  templates) no longer carry it. It stays on the 20 files that still hold upstream code or text (the
+  JNI layer, `LlamaModel`, `LlamaLoader`, `ModelParameters`, the examples, the clang configs, ...),
+  on `README.md`, `models/README.md` and `llama/CMakeLists.txt`, and in `LICENSE`.
+- **More shared files, and files identical up to the repository name**: a shared-files entry ending
+  in `?repo` is hashed with the repository's name replaced by `{repo}`. Added: `.editorconfig`,
+  `.gitattributes` (now with `*.gguf binary` everywhere), `FUNDING.yml`, `CODEOWNERS`, the license texts,
+  `SUPPORT.md`, `ISSUE_TEMPLATE/config.yml` and further files listed in `.github/shared-files.sha256`;
+  the signing self-test now runs on Gradle 9.8.0 in all four repositories.
+  The skip-flag list of the core build (9 jobs) and the CPU-AAR staging (3 jobs) are composite actions
+  now (`build-core`, `publish-cpu-aar-local`).
+- **The JDK is named once, in `.java-version`**: every workflow reads it through setup-java's
+  `java-version-file` (the `JAVA_VERSION` env and the literal `21`s are gone); `.java-version` and
+  `codeql.yml` are now byte-identical in all four sibling repositories and in the shared-files manifest.
+- **CI files are licensed `MIT OR Apache-2.0`**: every own `.github` file now has the same license
+  header in all four sibling repositories, so the shared ones are byte-identical. The upstream
+  copyright line stamped onto the redesigned CI files was dropped. `CODE_OF_CONDUCT.md`, `claude.yml`,
+  `claude-code-review.yml`, `scorecard.yml`, `reuse.yml`, `osv-scanner.yml` and `dependabot.yml` joined
+  the shared-files manifest.
+- **Workflow run scripts are parsed in the `shared-files` job**: `check-run-scripts.py` runs `bash -n`
+  over every `run:` script of the workflows and composite actions that runs in bash (shell decided as
+  the runner does), so a broken script fails within minutes instead of in the job that runs it.
+- **Maven versions are compared with the sibling repositories**: `check-versions.py` (in the
+  `shared-files` job) warns where a dependency or plugin -- incl. annotation-processor paths and the
+  Spotless formatter version -- is used in another version than in a sibling's default branch.
+- **Fewer copies of the same job in the workflow.** The four fat-jar smoke jobs are one `smoke-fatjar`
+  matrix (its rows checked against the targets `natives.csv` derives; the per-jar artifacts are now
+  `llama-fatjar-smoke-<target>`), the macOS and Windows Java test jobs call one reusable workflow
+  (`.github/workflows/java-tests.yml`), and the JDK version is `.java-version`, read by every
+  `setup-java` step. Check names of those jobs changed (`<name> / Java tests`, `Smoke test all-backends
+  fat jar (<target>)`); no required status check referred to them.
+
 ### Fixed
 - **`ToolCallingIntegrationTest#requiredToolCallIsParsedFromStreamingResponse` failed on both Windows
   x86-64 jobs after the b11211 bump** (the Ubuntu run and the blocking twin stayed green). The streamed

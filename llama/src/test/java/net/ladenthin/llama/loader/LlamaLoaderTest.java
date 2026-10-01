@@ -1,5 +1,4 @@
 // SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-// SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 //
 // SPDX-License-Identifier: MIT
 
@@ -31,14 +30,15 @@ import org.junit.jupiter.api.io.TempDir;
                         + "contentsEquals performs a correct byte-level stream comparison "
                         + "including BufferedInputStream wrapping and length mismatches; getTempDir "
                         + "honours the 'net.ladenthin.llama.tmpdir' system-property override; and "
-                        + "getNativeResourcePath produces the expected classpath resource prefix; and "
+                        + "getNativeResourcePath produces the expected classpath resource prefix; parseExtras reads a "
+                        + "backend extras file; BACKEND_PRIORITY ends with msvc then cpu; and "
                         + "resourceMatchesFile compares a classpath resource to an on-disk file byte-for-byte; and extractFile extracts a resource, reuses an already-identical copy without rewriting it, and replaces one whose content differs.")
 public class LlamaLoaderTest {
 
     private static final String TMPDIR_PROP = LlamaSystemProperties.PREFIX + ".tmpdir";
 
     /** A small file present on the test classpath, used as a byte-comparison fixture. */
-    private static final String EXISTING_TEST_RESOURCE = "/images/test-image.jpg";
+    private static final String EXISTING_TEST_RESOURCE = "images/test-image.jpg";
 
     private String previousTmpDir;
 
@@ -115,114 +115,31 @@ public class LlamaLoaderTest {
     }
 
     // -------------------------------------------------------------------------
-    // parseBackendManifest
+    // parseExtras / BACKEND_PRIORITY
     // -------------------------------------------------------------------------
 
-    private static java.util.List<LlamaLoader.BackendEntry> parseManifest(String content) throws IOException {
-        return LlamaLoader.parseBackendManifest(new java.io.BufferedReader(new java.io.StringReader(content)));
+    private static java.util.List<String> parseExtras(String content) throws IOException {
+        return LlamaLoader.parseExtras(new java.io.BufferedReader(new java.io.StringReader(content)));
     }
 
     @Test
-    public void testParseBackendManifestPreservesPriorityOrder() throws IOException {
-        java.util.List<LlamaLoader.BackendEntry> entries = parseManifest("cuda13\nvulkan\nopencl\n");
-        assertEquals(3, entries.size());
-        assertEquals("cuda13", entries.get(0).name);
-        assertEquals("vulkan", entries.get(1).name);
-        assertEquals("opencl", entries.get(2).name);
+    public void testParseExtrasKeepsOrderAndSkipsCommentsBlankLinesAndCrLf() throws IOException {
+        assertEquals(
+                java.util.Arrays.asList("OpenCL.dll", "second.dll"),
+                parseExtras("# loaded first\r\n\n  OpenCL.dll \r\n\tsecond.dll\n# tail\n"));
     }
 
     @Test
-    public void testParseBackendManifestTokenizesExtraFiles() throws IOException {
-        java.util.List<LlamaLoader.BackendEntry> entries = parseManifest("openvino OpenCL.dll second.dll\n");
-        assertEquals(1, entries.size());
-        assertEquals("openvino", entries.get(0).name);
-        assertEquals(java.util.Arrays.asList("OpenCL.dll", "second.dll"), entries.get(0).extraFiles);
+    public void testParseExtrasEmptyContent() throws IOException {
+        assertTrue(parseExtras("").isEmpty());
     }
 
     @Test
-    public void testParseBackendManifestNoExtraFiles() throws IOException {
-        java.util.List<LlamaLoader.BackendEntry> entries = parseManifest("vulkan\n");
-        assertTrue(entries.get(0).extraFiles.isEmpty());
-    }
-
-    @Test
-    public void testParseBackendManifestSkipsCommentsAndBlankLines() throws IOException {
-        java.util.List<LlamaLoader.BackendEntry> entries =
-                parseManifest("# priority order\n\n  \ncuda13\n# tail comment\n");
-        assertEquals(1, entries.size());
-        assertEquals("cuda13", entries.get(0).name);
-    }
-
-    @Test
-    public void testParseBackendManifestToleratesCrLfAndIndentation() throws IOException {
-        // BufferedReader.readLine strips \r\n; leading/trailing whitespace is trimmed per line.
-        java.util.List<LlamaLoader.BackendEntry> entries = parseManifest("  cuda13\r\n\tvulkan \r\n");
-        assertEquals(2, entries.size());
-        assertEquals("cuda13", entries.get(0).name);
-        assertEquals("vulkan", entries.get(1).name);
-    }
-
-    @Test
-    public void testParseBackendManifestEmptyContent() throws IOException {
-        assertTrue(parseManifest("").isEmpty());
-    }
-
-    // -------------------------------------------------------------------------
-    // selectBackendCandidates / isForcedBackend
-    // -------------------------------------------------------------------------
-
-    @Test
-    public void testSelectBackendCandidatesWithoutOverrideReturnsManifestOrder() throws IOException {
-        java.util.List<LlamaLoader.BackendEntry> manifest = parseManifest("cuda13\nvulkan\n");
-        assertEquals(manifest, LlamaLoader.selectBackendCandidates(manifest, null));
-    }
-
-    @Test
-    public void testSelectBackendCandidatesDefaultSkipsAllBackends() throws IOException {
-        java.util.List<LlamaLoader.BackendEntry> manifest = parseManifest("cuda13\n");
-        assertTrue(LlamaLoader.selectBackendCandidates(manifest, "default").isEmpty());
-    }
-
-    @Test
-    public void testSelectBackendCandidatesCpuAliasSkipsAllBackends() throws IOException {
-        java.util.List<LlamaLoader.BackendEntry> manifest = parseManifest("cuda13\n");
-        assertTrue(LlamaLoader.selectBackendCandidates(manifest, "cpu").isEmpty());
-    }
-
-    @Test
-    public void testSelectBackendCandidatesForcedKnownBackendKeepsItsExtraFiles() throws IOException {
-        java.util.List<LlamaLoader.BackendEntry> manifest = parseManifest("cuda13\nopenvino OpenCL.dll\n");
-        java.util.List<LlamaLoader.BackendEntry> selected = LlamaLoader.selectBackendCandidates(manifest, "openvino");
-        assertEquals(1, selected.size());
-        assertEquals("openvino", selected.get(0).name);
-        assertEquals(java.util.Collections.singletonList("OpenCL.dll"), selected.get(0).extraFiles);
-    }
-
-    @Test
-    public void testSelectBackendCandidatesForcedUnknownBackendIsSynthesized() throws IOException {
-        // A backend name absent from the manifest is still attempted (stale-manifest override),
-        // just without extra files; the loader fails loud if its library is missing.
-        java.util.List<LlamaLoader.BackendEntry> manifest = parseManifest("cuda13\n");
-        java.util.List<LlamaLoader.BackendEntry> selected = LlamaLoader.selectBackendCandidates(manifest, "rocm");
-        assertEquals(1, selected.size());
-        assertEquals("rocm", selected.get(0).name);
-        assertTrue(selected.get(0).extraFiles.isEmpty());
-    }
-
-    @Test
-    public void testIsForcedBackendUnsetIsNotForced() {
-        assertFalse(LlamaLoader.isForcedBackend(null));
-    }
-
-    @Test
-    public void testIsForcedBackendDefaultAndCpuAreNotForced() {
-        assertFalse(LlamaLoader.isForcedBackend("default"));
-        assertFalse(LlamaLoader.isForcedBackend("cpu"));
-    }
-
-    @Test
-    public void testIsForcedBackendSpecificBackendIsForced() {
-        assertTrue(LlamaLoader.isForcedBackend("cuda13"));
+    public void testBackendPriorityTriesAcceleratorsBeforeCpuAndMsvcBeforeCpu() {
+        java.util.List<String> priority = LlamaLoader.BACKEND_PRIORITY;
+        assertEquals("cpu", priority.get(priority.size() - 1));
+        assertEquals("msvc", priority.get(priority.size() - 2));
+        assertEquals("cuda13", priority.get(0));
     }
 
     @Test
@@ -247,7 +164,7 @@ public class LlamaLoaderTest {
         try {
             java.nio.file.Files.write(tmp, new byte[] {1, 2, 3});
             // A missing classpath resource must compare as "not matching", never throw.
-            assertFalse(LlamaLoader.resourceMatchesFile("/net/ladenthin/llama/does-not-exist.bin", tmp));
+            assertFalse(LlamaLoader.resourceMatchesFile("net/ladenthin/llama/does-not-exist.bin", tmp));
         } finally {
             java.nio.file.Files.deleteIfExists(tmp);
         }
@@ -258,7 +175,8 @@ public class LlamaLoaderTest {
         // The fast-path reuse predicate: a present resource and a byte-identical on-disk copy match.
         java.nio.file.Path tmp = java.nio.file.Files.createTempFile("llama-loader-test", ".bin");
         try {
-            try (java.io.InputStream in = LlamaLoader.class.getResourceAsStream(EXISTING_TEST_RESOURCE)) {
+            try (java.io.InputStream in =
+                    LlamaLoader.class.getClassLoader().getResourceAsStream(EXISTING_TEST_RESOURCE)) {
                 assertNotNull(in, "fixture must be on the test classpath: " + EXISTING_TEST_RESOURCE);
                 java.nio.file.Files.copy(in, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
@@ -274,7 +192,8 @@ public class LlamaLoaderTest {
         // so a stale/partial file is never mistaken for the shipped library on the reuse fast path.
         java.nio.file.Path tmp = java.nio.file.Files.createTempFile("llama-loader-test", ".bin");
         try {
-            try (java.io.InputStream in = LlamaLoader.class.getResourceAsStream(EXISTING_TEST_RESOURCE)) {
+            try (java.io.InputStream in =
+                    LlamaLoader.class.getClassLoader().getResourceAsStream(EXISTING_TEST_RESOURCE)) {
                 assertNotNull(in, "fixture must be on the test classpath: " + EXISTING_TEST_RESOURCE);
                 java.nio.file.Files.copy(in, tmp, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
@@ -354,9 +273,10 @@ public class LlamaLoaderTest {
     // -------------------------------------------------------------------------
 
     @Test
-    public void testGetNativeResourcePathStartsWithSlash() {
+    public void testGetNativeResourcePathIsClassLoaderRelative() {
+        // Resolved through the ClassLoader, which rejects a leading slash (see LlamaLoader.resource).
         String path = LlamaLoader.getNativeResourcePath();
-        assertTrue(path.startsWith("/"), "Resource path should start with '/'");
+        assertFalse(path.startsWith("/"), "Resource path must not start with '/': " + path);
     }
 
     @Test
@@ -376,7 +296,7 @@ public class LlamaLoaderTest {
 
     /**
      * Regression for the layered-restructure bug: the native-library classpath
-     * root is fixed at {@code /net/ladenthin/llama/<os>/<arch>} by CMakeLists +
+     * root is fixed at {@code net/ladenthin/llama/<os>/<arch>} by CMakeLists +
      * the publish workflow, so it must NOT track the loader's own Java package
      * (which moved to {@code net.ladenthin.llama.loader}). Deriving it from
      * {@code LlamaLoader.class.getPackage()} produced {@code .../llama/loader/...},
@@ -387,11 +307,11 @@ public class LlamaLoaderTest {
     public void testGetNativeResourcePathIsPackageIndependent() {
         String path = LlamaLoader.getNativeResourcePath();
         String osArch = OSInfo.getNativeLibFolderPathForCurrentOS();
-        assertEquals("/net/ladenthin/llama/" + osArch, path);
+        assertEquals("net/ladenthin/llama/" + osArch, path);
         assertFalse(
                 path.contains("/loader/"),
                 "Resource path must not include the loader subpackage — the native libs live at "
-                        + "/net/ladenthin/llama/<os>/<arch>, not under the loader package: " + path);
+                        + "net/ladenthin/llama/<os>/<arch>, not under the loader package: " + path);
     }
 
     // -------------------------------------------------------------------------
@@ -408,7 +328,7 @@ public class LlamaLoaderTest {
     Path extractDir;
 
     private static byte[] testResourceBytes() throws IOException {
-        try (InputStream in = LlamaLoader.class.getResourceAsStream(EXISTING_TEST_RESOURCE)) {
+        try (InputStream in = LlamaLoader.class.getClassLoader().getResourceAsStream(EXISTING_TEST_RESOURCE)) {
             assertNotNull(in, "fixture must be on the test classpath: " + EXISTING_TEST_RESOURCE);
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             byte[] buffer = new byte[8192];
@@ -422,7 +342,7 @@ public class LlamaLoaderTest {
 
     @Test
     public void extractFileWritesTheResourceIntoTheTargetDirectory() throws IOException {
-        Path extracted = LlamaLoader.extractFile("/images", "test-image.jpg", extractDir.toString());
+        Path extracted = LlamaLoader.extractFile("images", "test-image.jpg", extractDir.toString());
         assertNotNull(extracted);
         assertEquals(extractDir.resolve("test-image.jpg"), extracted);
         assertArrayEquals(testResourceBytes(), Files.readAllBytes(extracted));
@@ -430,12 +350,12 @@ public class LlamaLoaderTest {
 
     @Test
     public void extractFileReturnsNullWhenTheResourceIsAbsent() {
-        assertNull(LlamaLoader.extractFile("/images", "no-such-file.bin", extractDir.toString()));
+        assertNull(LlamaLoader.extractFile("images", "no-such-file.bin", extractDir.toString()));
     }
 
     @Test
     public void extractFileLeavesNoTemporaryFileBehind() throws IOException {
-        LlamaLoader.extractFile("/images", "test-image.jpg", extractDir.toString());
+        LlamaLoader.extractFile("images", "test-image.jpg", extractDir.toString());
         try (java.util.stream.Stream<Path> entries = Files.list(extractDir)) {
             assertEquals(
                     1L,
@@ -457,7 +377,7 @@ public class LlamaLoaderTest {
         FileTime seeded = FileTime.fromMillis(1_000_000_000L);
         Files.setLastModifiedTime(target, seeded);
 
-        Path extracted = LlamaLoader.extractFile("/images", "test-image.jpg", extractDir.toString());
+        Path extracted = LlamaLoader.extractFile("images", "test-image.jpg", extractDir.toString());
 
         assertEquals(target, extracted);
         assertEquals(seeded, Files.getLastModifiedTime(target));
@@ -471,7 +391,7 @@ public class LlamaLoaderTest {
         Path target = extractDir.resolve("test-image.jpg");
         Files.write(target, "stale content from an older release".getBytes(StandardCharsets.UTF_8));
 
-        Path extracted = LlamaLoader.extractFile("/images", "test-image.jpg", extractDir.toString());
+        Path extracted = LlamaLoader.extractFile("images", "test-image.jpg", extractDir.toString());
 
         assertEquals(target, extracted);
         assertArrayEquals(testResourceBytes(), Files.readAllBytes(target));

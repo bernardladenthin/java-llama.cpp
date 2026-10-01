@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 #
 # Single source of truth for the CI model set: one "filename,url" row per model.
 # Consumed by:

@@ -1,5 +1,4 @@
 // SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-// SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 //
 // SPDX-License-Identifier: MIT
 
@@ -41,7 +40,7 @@ package net.ladenthin.llama.args;
  */
 public enum ModelFlag {
 
-    /** Disable context shift on infinite text generation. */
+    /** Stop generating at the end of the context instead of dropping the oldest tokens to make room. */
     NO_CONTEXT_SHIFT("--no-context-shift"),
 
     /** Keep the full-size sliding-window-attention (SWA) KV cache, enabling cross-request
@@ -61,7 +60,7 @@ public enum ModelFlag {
     /** Enable special tokens in output. */
     SPECIAL("--special"),
 
-    /** Skip warming up the model with an empty run. */
+    /** Skip the empty decode llama.cpp runs right after loading: a faster start, a slower first request. */
     NO_WARMUP("--no-warmup"),
 
     /** Use Suffix/Prefix/Middle infill pattern instead of Prefix/Suffix/Middle. */
@@ -79,28 +78,28 @@ public enum ModelFlag {
     /** Disable continuous batching. */
     NO_CONT_BATCHING("--no-cont-batching"),
 
-    /** Enable checking model tensor data for invalid values. */
+    /** Check every tensor while loading and refuse a model whose data holds NaN or infinite values. */
     CHECK_TENSORS("--check-tensors"),
 
-    /** Enable embedding use case; use only with dedicated embedding models. */
+    /** Serve embeddings rather than text; meant for models trained to produce them. */
     EMBEDDING("--embedding"),
 
-    /** Enable reranking endpoint on server. */
+    /** Serve relevance scores for query/document pairs; needs a reranker model. */
     RERANKING("--reranking"),
 
-    /** Load LoRA adapters without applying them (apply later via POST /lora-adapters). */
+    /** Load the LoRA adapters at scale 0, so that each takes effect only once a scale is set for it. */
     LORA_INIT_WITHOUT_APPLY("--lora-init-without-apply"),
 
     /** Disable logging. */
     LOG_DISABLE("--log-disable"),
 
-    /** Set verbosity level to infinity (log all messages). */
+    /** Log every message, whatever its level. */
     VERBOSE("--verbose"),
 
-    /** Enable prefix in log messages. */
+    /** Start every log line with its level. */
     LOG_PREFIX("--log-prefix"),
 
-    /** Enable timestamps in log messages. */
+    /** Start every log line with a timestamp. */
     LOG_TIMESTAMPS("--log-timestamps"),
 
     /** Enable Jinja templating for chat templates. */

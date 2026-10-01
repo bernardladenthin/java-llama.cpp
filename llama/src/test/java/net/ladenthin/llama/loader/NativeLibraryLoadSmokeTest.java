@@ -42,9 +42,10 @@ import org.junit.jupiter.api.Test;
  * <p>The test self-skips when {@code libjllama} is not on the classpath (a
  * pure-Java checkout with no native build), so a plain {@code mvn test} stays
  * green without a CMake build; CI's {@code test-java-*} jobs and any local build
- * have the library and run it for real. The presence check uses the canonical
- * resource layout directly (not {@link LlamaLoader#getNativeResourcePath()}) so
- * a regression in that method cannot silently skip this guard.
+ * have the library and run it for real. The presence check
+ * ({@link NativeLibraryPresence}) spells out the canonical resource layout rather
+ * than calling {@link LlamaLoader#getNativeResourcePath()}, so a regression in that
+ * method cannot silently skip this guard.
  */
 @ClaudeGenerated(
         purpose = "Model-free native-load smoke: force LlamaModel.<clinit> so System.load + JNI_OnLoad "
@@ -53,15 +54,9 @@ import org.junit.jupiter.api.Test;
                 + "cleanly when libjllama is not on the classpath.")
 class NativeLibraryLoadSmokeTest {
 
-    private static boolean nativeLibraryOnClasspath() {
-        String resource = "/net/ladenthin/llama/" + OSInfo.getNativeLibFolderPathForCurrentOS() + "/"
-                + System.mapLibraryName("jllama");
-        return NativeLibraryLoadSmokeTest.class.getResource(resource) != null;
-    }
-
     @Test
     void loadingNativeLibraryRunsJniOnLoadWithoutError() {
-        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping native-load smoke");
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping native-load smoke");
         assertDoesNotThrow(
                 () -> Class.forName("net.ladenthin.llama.LlamaModel"),
                 "LlamaModel.<clinit> must load the native library and JNI_OnLoad must resolve "
@@ -87,7 +82,8 @@ class NativeLibraryLoadSmokeTest {
      */
     @Test
     void nativeBuildInfoMatchesPinnedVersionConstant() {
-        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping native build-info check");
+        assumeTrue(
+                NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping native build-info check");
         String buildInfo = LlamaModel.getLlamaCppBuildInfo();
         assertNotNull(buildInfo, "getLlamaCppBuildInfo() must return the linked llama.cpp build identifier");
         assertTrue(
@@ -125,7 +121,8 @@ class NativeLibraryLoadSmokeTest {
      */
     @Test
     void quantizerNativeEntryPointResolves() {
-        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping quantizer linkage check");
+        assumeTrue(
+                NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping quantizer linkage check");
         assertThrows(
                 LlamaException.class,
                 () -> LlamaQuantizer.quantize(
@@ -158,7 +155,7 @@ class NativeLibraryLoadSmokeTest {
      */
     @Test
     void jsonSchemaToGrammarWorksWithoutAModel() {
-        assumeTrue(nativeLibraryOnClasspath(), "libjllama not on classpath — skipping grammar check");
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping grammar check");
 
         String grammar =
                 LlamaModel.jsonSchemaToGrammar("{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"string\"}}}");

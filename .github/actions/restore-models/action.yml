@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Restores the shared GGUF model cache and validates it -- the one place a job gets its models.
+# The download-models job is the cache's ONLY writer (actions/cache, same key); every consumer
+# uses this restore-only action, so a job running on a cache miss can never re-save an empty or
+# partial entry under the immutable key. enableCrossOsArchive matches the writer's entry version,
+# so macOS and Windows restore the same ubuntu-built entry (without it the entries are per OS, and
+# the unreachable Windows-side one was once found re-saved EMPTY after an eviction). The key is
+# the hash of .github/models.csv, so editing the manifest creates a fresh complete entry.
+# validate-models.sh then fails a partial or absent restore loudly instead of letting the
+# model-backed tests self-skip. Needs the repository checked out.
+name: Restore GGUF models
+description: Restore the shared GGUF model cache (written by download-models) and validate every model of .github/models.csv.
+inputs:
+  fail-on-cache-miss:
+    description: Fail at the restore already when the cache entry is missing ('true' in verify-model-cache).
+    required: false
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - name: Restore shared GGUF model cache (populated by download-models; no re-download)
+      uses: actions/cache/restore@v6
+      with:
+        path: models/
+        key: gguf-models-${{ hashFiles('.github/models.csv') }}
+        enableCrossOsArchive: true
+        fail-on-cache-miss: ${{ inputs.fail-on-cache-miss }}
+    - name: Validate model files
+      shell: bash
+      run: bash .github/validate-models.sh

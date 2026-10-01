@@ -2,7 +2,7 @@
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Smoke test for the llama-atmosphere-agent release asset, run exactly the way the README
 # tells a user to run it: the agent jar lies next to a core fat jar and is started with

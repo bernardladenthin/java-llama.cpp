@@ -1,9 +1,8 @@
 #!/bin/bash
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-# SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Validate that all required model files exist and are valid GGUF files
 # GGUF files start with magic bytes: 0x47 0x47 0x55 0x46 ("GGUF")
@@ -21,6 +20,7 @@ MODELS_CSV="$(dirname "$0")/models.csv"
 [ -f "${MODELS_CSV}" ] || { echo "ERROR: model manifest not found: ${MODELS_CSV}"; exit 1; }
 MODELS=()
 while IFS=, read -r name _url; do
+  name="${name%$'\r'}"  # a CRLF checkout on Windows
   case "$name" in ''|\#*) continue ;; esac
   MODELS+=("models/$name")
 done < "${MODELS_CSV}"
@@ -45,16 +45,18 @@ validate_gguf() {
       return
     fi
   fi
+  # wc and head, not stat/xxd: the same script runs under Linux, macOS (BSD tools) and Git Bash
+  # on Windows, which has no xxd and whose stat does not read BSD's -f.
   local size
-  size=$(stat -f%z "$model" 2>/dev/null || stat -c%s "$model" 2>/dev/null)
+  size=$(wc -c < "$model" | tr -d ' ')
   if [[ $size -lt 4 ]]; then
     echo "ERROR: Model file too small (likely corrupted): $model (size: $size bytes)"
     exit 1
   fi
   local magic
-  magic=$(xxd -p -l 4 "$model")
-  if [[ "$magic" != "47475546" ]]; then
-    echo "ERROR: Invalid GGUF magic bytes in $model (got: $magic, expected: 47475546)"
+  magic=$(head -c 4 "$model")
+  if [[ "$magic" != "GGUF" ]]; then
+    echo "ERROR: Invalid GGUF magic bytes in $model (got: $(head -c 4 "$model" | od -An -tx1 | tr -d ' '), expected: 47475546 'GGUF')"
     exit 1
   fi
   echo "✓ $model ($(numfmt --to=iec-i --suffix=B $size 2>/dev/null || echo $size bytes))"

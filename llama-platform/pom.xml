@@ -1,0 +1,104 @@
+<!--
+SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+
+SPDX-License-Identifier: MIT
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>net.ladenthin</groupId>
+		<artifactId>llama-parent</artifactId>
+		<version>5.2.0-SNAPSHOT</version>
+		<relativePath>../pom.xml</relativePath>
+	</parent>
+
+	<!--
+		A dependency list, nothing else: packaging pom, so it publishes a .pom and no jar and
+		adds nothing to the upload. Depending on it (Maven: <type>pom</type>) brings the classes
+		plus the CPU natives of every desktop platform, which is what the one-jar artifact used to
+		be. GPU backends are added next to it by classifier; the loader prefers them when their
+		runtime is present. Android uses the llama-android AAR instead.
+	-->
+	<artifactId>llama-platform</artifactId>
+	<packaging>pom</packaging>
+
+	<name>${project.groupId}:${project.artifactId}</name>
+	<description>net.ladenthin:llama with the CPU natives of every desktop platform
+		(Linux x86-64/aarch64/s390x, Windows x86-64/x86/aarch64, macOS aarch64 with Metal).</description>
+	<url>https://github.com/bernardladenthin/java-llama.cpp</url>
+
+	<licenses>
+		<license>
+			<name>MIT License</name>
+			<url>https://www.opensource.org/licenses/mit-license.php</url>
+			<distribution>repo</distribution>
+		</license>
+	</licenses>
+
+	<developers>
+		<developer>
+			<name>Bernard Ladenthin</name>
+			<organizationUrl>https://github.com/bernardladenthin</organizationUrl>
+		</developer>
+	</developers>
+
+	<scm>
+		<connection>scm:git:https://github.com/bernardladenthin/java-llama.cpp.git</connection>
+		<developerConnection>scm:git:https://github.com/bernardladenthin/java-llama.cpp.git</developerConnection>
+		<url>https://github.com/bernardladenthin/java-llama.cpp/tree/main</url>
+	</scm>
+
+	<dependencies>
+		<dependency>
+			<groupId>net.ladenthin</groupId>
+			<artifactId>llama</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+		<dependency>
+			<groupId>net.ladenthin</groupId>
+			<artifactId>llama</artifactId>
+			<version>${project.version}</version>
+			<classifier>cpu-linux-x86-64</classifier>
+		</dependency>
+		<dependency>
+			<groupId>net.ladenthin</groupId>
+			<artifactId>llama</artifactId>
+			<version>${project.version}</version>
+			<classifier>cpu-linux-aarch64</classifier>
+		</dependency>
+		<dependency>
+			<groupId>net.ladenthin</groupId>
+			<artifactId>llama</artifactId>
+			<version>${project.version}</version>
+			<classifier>cpu-linux-s390x</classifier>
+		</dependency>
+		<dependency>
+			<groupId>net.ladenthin</groupId>
+			<artifactId>llama</artifactId>
+			<version>${project.version}</version>
+			<classifier>cpu-windows-x86-64</classifier>
+		</dependency>
+		<dependency>
+			<groupId>net.ladenthin</groupId>
+			<artifactId>llama</artifactId>
+			<version>${project.version}</version>
+			<classifier>cpu-windows-x86</classifier>
+		</dependency>
+		<dependency>
+			<groupId>net.ladenthin</groupId>
+			<artifactId>llama</artifactId>
+			<version>${project.version}</version>
+			<classifier>cpu-windows-aarch64</classifier>
+		</dependency>
+		<dependency>
+			<groupId>net.ladenthin</groupId>
+			<artifactId>llama</artifactId>
+			<version>${project.version}</version>
+			<classifier>metal-macos-aarch64</classifier>
+		</dependency>
+	</dependencies>
+</project>

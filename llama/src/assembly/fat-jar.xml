@@ -8,7 +8,7 @@ SPDX-License-Identifier: MIT
           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
           xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 http://maven.apache.org/xsd/assembly-2.2.0.xsd">
     <!--
-      Same output as the predefined jar-with-dependencies descriptor, plus one file.
+      Same output as the predefined jar-with-dependencies descriptor, plus two fileSets.
 
       The dependencySet below is a verbatim copy of the predefined descriptor shipped
       inside maven-assembly-plugin: outputDirectory /, useProjectArtifact true,
@@ -19,6 +19,10 @@ SPDX-License-Identifier: MIT
       from there it would be published in the library jar and land on every consumer's
       classpath, where slf4j-simple would read it instead of theirs. Only the runnable
       artifact may carry logging defaults.
+
+      The second adds the CPU natives of every platform (Metal on macOS, whose default build
+      carries the CPU backend too), so this jar runs everywhere without a GPU. The library jar
+      carries no natives at all; they ship as classifier jars (see the natives profile).
     -->
     <id>jar-with-dependencies</id>
     <formats>
@@ -39,6 +43,14 @@ SPDX-License-Identifier: MIT
             <outputDirectory>/</outputDirectory>
             <includes>
                 <include>simplelogger.properties</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/src/main/natives</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>net/ladenthin/llama/*/*/cpu/**</include>
+                <include>net/ladenthin/llama/Mac/*/metal/**</include>
             </includes>
         </fileSet>
     </fileSets>

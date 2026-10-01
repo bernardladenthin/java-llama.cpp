@@ -14,9 +14,9 @@
 // with plain Gradle means:
 //   1. classes.jar carries the BYTE-IDENTICAL Maven-built core classes (no
 //      recompilation, no Lombok/AGP coupling, no drift from the tested jar);
-//      only the desktop/Android native resources and module-info.class are
-//      stripped (the .so ships under jni/ instead — LlamaLoader already calls
-//      System.loadLibrary("jllama") first on Android, see LlamaLoader).
+//      only module-info.class is stripped. The core jar carries no natives (they
+//      ship as separate natives jars); here the .so ships under jni/ instead —
+//      LlamaLoader calls System.loadLibrary("jllama") first on Android.
 //   2. The published POM says <packaging>aar</packaging>, which plain Maven
 //      cannot produce — this is exactly how AGP-built libraries on Central
 //      declare themselves, so `implementation("net.ladenthin:llama-android:V")`
@@ -28,8 +28,9 @@
 //
 // Inputs expected before running the aar tasks (fail-loud checks below):
 //   ../llama/target/llama-<version>.jar       mvn -pl llama -am -DskipTests package
-//   natives/cpu/arm64-v8a/libjllama.so        CI artifact Linux-Android-aarch64-libraries
-//   natives/opencl/arm64-v8a/libjllama.so     CI artifact android-libraries-opencl
+//   natives/cpu/arm64-v8a/libjllama.so        CI artifact natives-cpu-android-aarch64
+//   natives/cpu/x86_64/libjllama.so           CI artifact natives-cpu-android-x86-64
+//   natives/opencl/arm64-v8a/libjllama.so     CI artifact natives-opencl-android-aarch64
 
 import org.w3c.dom.Document
 import org.w3c.dom.Element
@@ -112,10 +113,6 @@ val coreClassesJar = tasks.register<Jar>("coreClassesJar") {
         }
     }
     from(zipTree(coreJarFile)) {
-        exclude("net/ladenthin/llama/Linux/**")
-        exclude("net/ladenthin/llama/Linux-Android/**")
-        exclude("net/ladenthin/llama/Mac/**")
-        exclude("net/ladenthin/llama/Windows/**")
         exclude("module-info.class")
         exclude("META-INF/maven/**")
     }
@@ -173,9 +170,9 @@ fun registerAarTask(taskName: String, artifactBase: String, nativesSubdir: Strin
                 val so = File(nativesDir, "$abi/libjllama.so")
                 require(so.isFile) {
                     "Missing Android native library: $so — stage the CI-built libjllama.so there " +
-                            "(artifacts 'Linux-Android-aarch64-libraries' / 'Linux-Android-x86_64-libraries' " +
-                            "for cpu, 'android-libraries-opencl' for opencl; the artifact tree is " +
-                            "net/ladenthin/llama/Linux-Android/<arch>/libjllama.so)"
+                            "(artifacts 'natives-cpu-android-aarch64' / 'natives-cpu-android-x86-64' " +
+                            "for cpu, 'natives-opencl-android-aarch64' for opencl; the artifact tree is " +
+                            "<OS>/<arch>/<backend>/libjllama.so, e.g. Linux-Android/aarch64/cpu/libjllama.so)"
                 }
             }
         }

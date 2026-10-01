@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import net.ladenthin.llama.args.LogFormat;
 import net.ladenthin.llama.exception.LlamaException;
+import net.ladenthin.llama.loader.NativeLibraryPresence;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
 import org.junit.jupiter.api.Test;
@@ -40,7 +41,7 @@ public class RpcIntegrationTest {
 
     @Test
     public void aModelRunsOnAnRpcServerAndALaterLoadWithoutRpcIgnoresIt() throws Exception {
-        assumeTrue(RpcServerTest.nativeLibraryOnClasspath(), "libjllama not on classpath");
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath");
         assumeTrue(new File(TestConstants.DRAFT_MODEL_PATH).exists(), "draft model not found");
 
         List<String> log = new CopyOnWriteArrayList<>();

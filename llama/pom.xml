@@ -1,6 +1,5 @@
 <!--
 SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 
 SPDX-License-Identifier: MIT
 -->
@@ -585,9 +584,9 @@ SPDX-License-Identifier: MIT
 							     the Error Prone / NullAway / Checker Framework processors that target
 							     ordinary source files only. Java 8 runtimes silently ignore the
 							     resulting module-info.class at the JAR root, so existing classpath
-							     consumers continue to work unchanged. LlamaLoader loads native libs
-							     via Class.getResourceAsStream on its own class object, which resolves
-							     to this module and therefore does not require any opens directives. -->
+							     consumers continue to work unchanged. LlamaLoader finds the native libs
+							     (separate natives jars) through its ClassLoader, which needs no opens
+							     directives. -->
 							<release>9</release>
 							<includes>
 								<include>module-info.java</include>
@@ -726,6 +725,15 @@ SPDX-License-Identifier: MIT
 					<classpathDependencyExcludes>
 						<classpathDependencyExclude>org.slf4j:slf4j-simple</classpathDependencyExclude>
 					</classpathDependencyExcludes>
+					<!--
+					  The native libraries a local CMake build (or a CI job) put into
+					  src/main/natives/ are not part of the main jar, so the tests read them
+					  from there directly. A checkout without a native build has no such
+					  directory, and the native-backed tests skip themselves.
+					-->
+					<additionalClasspathElements>
+						<additionalClasspathElement>${project.basedir}/src/main/natives</additionalClasspathElement>
+					</additionalClasspathElements>
 					<!--
 					  Capture each test class's stdout/stderr into
 					  target/surefire-reports/<class>-output.txt. When a native crash
@@ -878,1289 +886,551 @@ SPDX-License-Identifier: MIT
 		<!--
 			The `release` profile (GPG signing + Central Publishing) now lives in the parent
 			pom (../pom.xml) and is inherited, so a single reactor `mvn -P release deploy`
-			signs and publishes every module. The per-classifier native profiles below stay
-			here — they are core-specific.
+			signs and publishes every module. The natives profile below stays here — it is
+			core-specific.
+		-->
+		<!--
+			The natives jars. The main jar carries classes only; every native build ships as its
+			own jar holding exactly one directory, net/ladenthin/llama/<OS>/<ARCH>/<backend>/, so
+			any combination of them can share one classpath and LlamaLoader picks the first one
+			that loads (LlamaLoader.BACKEND_PRIORITY).
+
+			The executions below are generated from .github/natives.csv, the single list of natives
+			jars: `python3 .github/check-natives.py pom` prints them, and the same script (run in
+			CI) fails when they drift from the list. Each jar needs its own Automatic-Module-Name:
+			without one every natives jar derives the module name "llama" from its file name, and
+			the module path silently keeps only the first of them.
+
+			The libraries come from src/main/natives/, where CMake writes them and CI merges every
+			build's artifact (.github/merge-native-artifacts.sh, which fails on a missing one).
+			Activated only in CI (-P natives): a local build has one of these directories at most.
 		-->
 		<profile>
-			<id>cuda</id>
+			<id>natives</id>
 			<build>
 				<plugins>
 					<plugin>
 						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<!-- We have to perform a separate build pass for cuda
-						classifier -->
-						<execution>
-							<id>gpu</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<!-- Same rationale as default-compile: this pass targets release 8;
-								     module-info.java is Java 9+ and is handled by module-info-compile. -->
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_cuda</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<!-- Copy custom cuda libs to the output directory -->
-						<execution>
-							<id>copy-resources</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_cuda</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_linux_cuda/</directory>
-										<includes>
-											<include>**/*.*</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
 						<artifactId>maven-jar-plugin</artifactId>
 						<executions>
-							<!-- Pick class files AND libs from custom output
-							directory -->
 							<execution>
-								<id>cuda</id>
+								<id>natives-cpu-linux-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>cpu-linux-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux/x86_64/cpu/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.cpu_linux_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-cpu-linux-aarch64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>cpu-linux-aarch64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux/aarch64/cpu/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.cpu_linux_aarch64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-cpu-linux-s390x</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>cpu-linux-s390x</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux/s390x/cpu/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.cpu_linux_s390x</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-cpu-android-aarch64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>cpu-android-aarch64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux-Android/aarch64/cpu/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.cpu_android_aarch64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-cpu-android-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>cpu-android-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux-Android/x86_64/cpu/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.cpu_android_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-cpu-windows-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>cpu-windows-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/x86_64/cpu/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.cpu_windows_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-cpu-windows-x86</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>cpu-windows-x86</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/x86/cpu/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.cpu_windows_x86</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-cpu-windows-aarch64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>cpu-windows-aarch64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/aarch64/cpu/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.cpu_windows_aarch64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-metal-macos-aarch64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>metal-macos-aarch64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Mac/aarch64/metal/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.metal_macos_aarch64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-msvc-windows-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>msvc-windows-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/x86_64/msvc/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.msvc_windows_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-msvc-windows-x86</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>msvc-windows-x86</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/x86/msvc/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.msvc_windows_x86</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-cuda13-linux-x86-64</id>
 								<phase>package</phase>
 								<goals>
 									<goal>jar</goal>
 								</goals>
 								<configuration>
 									<classifier>cuda13-linux-x86-64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_cuda</classesDirectory>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux/x86_64/cuda13/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.cuda13_linux_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
 								</configuration>
 							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-
-		<profile>
-			<id>opencl-android</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<!-- Separate build pass for opencl-android classifier -->
-						<execution>
-							<id>opencl-android</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<!-- Same rationale as default-compile: this pass targets release 8;
-								     module-info.java is Java 9+ and is handled by module-info-compile. -->
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_opencl_android</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<!-- Copy custom opencl-android libs to the output directory -->
-						<execution>
-							<id>copy-resources-opencl-android</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_opencl_android</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_android_opencl/</directory>
-										<includes>
-											<include>**/*.*</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
-							<!-- Pick class files AND libs from custom output
-							directory -->
 							<execution>
-								<id>opencl-android</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>opencl-android-aarch64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_opencl_android</classesDirectory>
-								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-		<profile>
-			<!-- MSVC (Visual Studio generator) Windows CPU natives, shipped as the
-			     `msvc-windows` classifier JAR. After the default flip the DEFAULT JAR
-			     ships the Ninja Multi-Config natives (sccache-cached, merged into
-			     src/main/resources/ by CI); this profile packages the alternative
-			     MSVC-generator build for anyone who wants it. Both use the same MSVC
-			     toolchain (static /MT CRT) so they are functionally equivalent. Mirrors
-			     the cuda / opencl-android classifier pattern: a separate compile pass +
-			     resource copy + classified jar. The MSVC DLLs are staged into
-			     src/main/resources_windows_msvc/ by CI before this profile runs. -->
-			<id>windows-msvc</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<!-- Separate build pass for the windows-msvc classifier -->
-						<execution>
-							<id>windows-msvc</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<!-- Same rationale as default-compile: this pass targets release 8;
-								     module-info.java is Java 9+ and is handled by module-info-compile. -->
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_msvc</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<!-- Copy the Ninja-built Windows libs to the output directory -->
-						<execution>
-							<id>copy-resources-windows-msvc</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_msvc</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_windows_msvc/</directory>
-										<includes>
-											<include>**/*.*</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
-							<!-- Pick class files AND libs from custom output
-							directory -->
-							<execution>
-								<id>windows-msvc</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>msvc-windows</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_windows_msvc</classesDirectory>
-								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-
-		<profile>
-			<!-- Windows CUDA GPU natives (x86_64 only), shipped as the
-			     `cuda13-windows-x86-64` classifier JAR. Built with -DGGML_CUDA=ON and
-			     routed by CMakeLists.txt to src/main/resources_windows_cuda/. The CUDA
-			     runtime libs (cudart64_13 / cublas64_13 / cublasLt64_13) are NOT bundled
-			     — the consumer's installed CUDA Toolkit provides them. Mirrors the
-			     cuda (Linux) classifier pattern. Staged by CI before this profile runs. -->
-			<id>cuda-windows</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>cuda-windows</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_cuda</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-cuda-windows</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_cuda</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_windows_cuda/</directory>
-										<includes>
-											<include>**/*.*</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
-							<execution>
-								<id>cuda-windows</id>
+								<id>natives-cuda13-windows-x86-64</id>
 								<phase>package</phase>
 								<goals>
 									<goal>jar</goal>
 								</goals>
 								<configuration>
 									<classifier>cuda13-windows-x86-64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_windows_cuda</classesDirectory>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/x86_64/cuda13/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.cuda13_windows_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
 								</configuration>
 							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-
-		<profile>
-			<!-- Windows Vulkan GPU natives (x86_64 only), shipped as the
-			     `vulkan-windows-x86-64` classifier JAR. Built with -DGGML_VULKAN=ON and
-			     routed by CMakeLists.txt to src/main/resources_windows_vulkan/. The Vulkan
-			     runtime (vulkan-1.dll) ships with the GPU driver — nothing is bundled.
-			     Vulkan is the most portable Windows GPU backend (NVIDIA/AMD/Intel).
-			     Staged by CI before this profile runs. -->
-			<id>vulkan-windows</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>vulkan-windows</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_vulkan</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-vulkan-windows</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_vulkan</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_windows_vulkan/</directory>
-										<includes>
-											<include>**/*.*</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
 							<execution>
-								<id>vulkan-windows</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>vulkan-windows-x86-64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_windows_vulkan</classesDirectory>
-								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-		<profile>
-			<!-- Linux x86_64 Vulkan GPU natives, shipped as the `vulkan-linux-x86-64`
-			     classifier JAR. Built with -DGGML_VULKAN=ON and routed by CMakeLists.txt to
-			     src/main/resources_linux_vulkan/.../Linux/x86_64/. The Vulkan runtime
-			     (libvulkan.so.1) ships with the consumer's GPU driver - nothing is bundled. The
-			     resource copy includes ONLY the Linux/x86_64 subtree so the other arch's natives
-			     (staged into the same tree by the sibling job) do not leak into this JAR. Staged by
-			     CI before this profile runs. -->
-			<id>vulkan-linux</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>vulkan-linux</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_linux_vulkan</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-vulkan-linux</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_linux_vulkan</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_linux_vulkan/</directory>
-										<includes>
-											<include>net/ladenthin/llama/Linux/x86_64/**</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
-							<execution>
-								<id>vulkan-linux</id>
+								<id>natives-vulkan-linux-x86-64</id>
 								<phase>package</phase>
 								<goals>
 									<goal>jar</goal>
 								</goals>
 								<configuration>
 									<classifier>vulkan-linux-x86-64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_linux_vulkan</classesDirectory>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux/x86_64/vulkan/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.vulkan_linux_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
 								</configuration>
 							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-
-		<profile>
-			<!-- Linux aarch64 Vulkan GPU natives, shipped as the `vulkan-linux-aarch64`
-			     classifier JAR. Built with -DGGML_VULKAN=ON and routed by CMakeLists.txt to
-			     src/main/resources_linux_vulkan/.../Linux/aarch64/. The Vulkan runtime
-			     (libvulkan.so.1) ships with the consumer's GPU driver - nothing is bundled. The
-			     resource copy includes ONLY the Linux/aarch64 subtree so the other arch's natives
-			     (staged into the same tree by the sibling job) do not leak into this JAR. Staged by
-			     CI before this profile runs. -->
-			<id>vulkan-linux-aarch64</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>vulkan-linux-aarch64</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_linux_vulkan_aarch64</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-vulkan-linux-aarch64</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_linux_vulkan_aarch64</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_linux_vulkan/</directory>
-										<includes>
-											<include>net/ladenthin/llama/Linux/aarch64/**</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
 							<execution>
-								<id>vulkan-linux-aarch64</id>
+								<id>natives-vulkan-linux-aarch64</id>
 								<phase>package</phase>
 								<goals>
 									<goal>jar</goal>
 								</goals>
 								<configuration>
 									<classifier>vulkan-linux-aarch64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_linux_vulkan_aarch64</classesDirectory>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux/aarch64/vulkan/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.vulkan_linux_aarch64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
 								</configuration>
 							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-
-		<profile>
-			<!-- Windows OpenCL GPU natives (x86_64), shipped as the
-			     `opencl-windows-x86-64` classifier JAR. Built with -DGGML_OPENCL=ON and
-			     routed by CMakeLists.txt to src/main/resources_windows_opencl/. The OpenCL
-			     ICD (System32\OpenCL.dll) ships with the GPU driver — nothing is bundled.
-			     NOTE: the GGML OpenCL backend is Adreno-tuned; on desktop GPUs CUDA/Vulkan
-			     are better supported. The resource copy includes ONLY the Windows/x86_64
-			     subtree so the aarch64 natives (opencl-windows-aarch64, staged into the same
-			     tree by the sibling job) do not leak into this JAR. Staged by CI before this
-			     profile runs. -->
-			<id>opencl-windows</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>opencl-windows</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_opencl</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-opencl-windows</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_opencl</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_windows_opencl/</directory>
-										<includes>
-											<include>net/ladenthin/llama/Windows/x86_64/**</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
 							<execution>
-								<id>opencl-windows</id>
+								<id>natives-vulkan-windows-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>vulkan-windows-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/x86_64/vulkan/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.vulkan_windows_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-opencl-android-aarch64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>opencl-android-aarch64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux-Android/aarch64/opencl/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.opencl_android_aarch64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-opencl-windows-x86-64</id>
 								<phase>package</phase>
 								<goals>
 									<goal>jar</goal>
 								</goals>
 								<configuration>
 									<classifier>opencl-windows-x86-64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_windows_opencl</classesDirectory>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/x86_64/opencl/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.opencl_windows_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
 								</configuration>
 							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-
-		<profile>
-			<!-- Linux x86_64 AMD ROCm/HIP GPU natives, shipped as the `rocm-linux-x86-64` classifier JAR.
-			     Built with -DGGML_HIP=ON and routed by CMakeLists.txt to src/main/resources_linux_rocm/.
-			     The ROCm/HIP runtime ships with the consumer's ROCm install - nothing is bundled. Staged by
-			     CI before this profile runs. -->
-			<id>rocm-linux</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>rocm-linux</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_linux_rocm</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-rocm-linux</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_linux_rocm</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_linux_rocm/</directory>
-										<includes>
-											<include>net/ladenthin/llama/Linux/x86_64/**</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
 							<execution>
-								<id>rocm-linux</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>rocm-linux-x86-64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_linux_rocm</classesDirectory>
-								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-		<profile>
-			<!-- Windows x86_64 AMD ROCm/HIP GPU natives, shipped as the `rocm-windows-x86-64` classifier JAR.
-			     Built with -DGGML_HIP=ON and routed by CMakeLists.txt to src/main/resources_windows_rocm/.
-			     The HIP SDK runtime DLLs ship with the consumer's AMD HIP SDK - nothing is bundled. Staged by
-			     CI before this profile runs. -->
-			<id>rocm-windows</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>rocm-windows</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_rocm</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-rocm-windows</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_rocm</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_windows_rocm/</directory>
-										<includes>
-											<include>net/ladenthin/llama/Windows/x86_64/**</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
-							<execution>
-								<id>rocm-windows</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>rocm-windows-x86-64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_windows_rocm</classesDirectory>
-								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-		<profile>
-			<!-- Linux x86_64 Intel SYCL (oneAPI, fp16) GPU natives, shipped as the `sycl-fp16-linux-x86-64`
-			     classifier JAR. Built with -DGGML_SYCL=ON -DGGML_SYCL_F16=ON and routed by CMakeLists.txt to
-			     src/main/resources_linux_sycl_fp16/. The oneAPI runtime ships with the consumer's oneAPI
-			     install - nothing is bundled. Staged by CI before this profile runs. -->
-			<id>sycl-fp16-linux</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>sycl-fp16-linux</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_linux_sycl_fp16</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-sycl-fp16-linux</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_linux_sycl_fp16</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_linux_sycl_fp16/</directory>
-										<includes>
-											<include>net/ladenthin/llama/Linux/x86_64/**</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
-							<execution>
-								<id>sycl-fp16-linux</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>sycl-fp16-linux-x86-64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_linux_sycl_fp16</classesDirectory>
-								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-		<profile>
-			<!-- Linux x86_64 Intel SYCL (oneAPI, fp32) GPU natives, shipped as the `sycl-fp32-linux-x86-64`
-			     classifier JAR. Built with -DGGML_SYCL=ON (F16 off) and routed by CMakeLists.txt to
-			     src/main/resources_linux_sycl_fp32/. The oneAPI runtime ships with the consumer's oneAPI
-			     install - nothing is bundled. Staged by CI before this profile runs. -->
-			<id>sycl-fp32-linux</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>sycl-fp32-linux</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_linux_sycl_fp32</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-sycl-fp32-linux</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_linux_sycl_fp32</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_linux_sycl_fp32/</directory>
-										<includes>
-											<include>net/ladenthin/llama/Linux/x86_64/**</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
-							<execution>
-								<id>sycl-fp32-linux</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>sycl-fp32-linux-x86-64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_linux_sycl_fp32</classesDirectory>
-								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-		<profile>
-			<!-- Windows x86_64 Intel SYCL (oneAPI) GPU natives, shipped as the `sycl-windows-x86-64` classifier
-			     JAR. Built with -DGGML_SYCL=ON and routed by CMakeLists.txt to src/main/resources_windows_sycl/.
-			     The oneAPI runtime ships with the consumer's oneAPI install - nothing is bundled. Staged by CI
-			     before this profile runs. -->
-			<id>sycl-windows</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>sycl-windows</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_sycl</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-sycl-windows</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_sycl</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_windows_sycl/</directory>
-										<includes>
-											<include>net/ladenthin/llama/Windows/x86_64/**</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
-							<execution>
-								<id>sycl-windows</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>sycl-windows-x86-64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_windows_sycl</classesDirectory>
-								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-		<profile>
-			<!-- Windows aarch64 OpenCL (Adreno/Snapdragon) GPU natives, shipped as the `opencl-windows-aarch64`
-			     classifier JAR. Built with -DGGML_OPENCL=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON and routed by
-			     CMakeLists.txt to src/main/resources_windows_opencl/.../Windows/aarch64/ (same tree as the x86_64
-			     OpenCL build). The OpenCL ICD (System32\OpenCL.dll) ships with the Adreno driver - nothing is
-			     bundled. The resource copy includes ONLY the Windows/aarch64 subtree so the x86_64 natives do not
-			     leak into this JAR. Staged by CI before this profile runs. -->
-			<id>opencl-windows-aarch64</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>opencl-windows-aarch64</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_opencl_aarch64</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-opencl-windows-aarch64</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_opencl_aarch64</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_windows_opencl/</directory>
-										<includes>
-											<include>net/ladenthin/llama/Windows/aarch64/**</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
-							<execution>
-								<id>opencl-windows-aarch64</id>
+								<id>natives-opencl-windows-aarch64</id>
 								<phase>package</phase>
 								<goals>
 									<goal>jar</goal>
 								</goals>
 								<configuration>
 									<classifier>opencl-windows-aarch64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_windows_opencl_aarch64</classesDirectory>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/aarch64/opencl/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.opencl_windows_aarch64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
 								</configuration>
 							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-		<profile>
-			<!-- Linux x86_64 Intel OpenVINO GPU/NPU natives, shipped as the `openvino-linux-x86-64` classifier
-			     JAR. Built with -DGGML_OPENVINO=ON and routed by CMakeLists.txt to
-			     src/main/resources_linux_openvino/. The OpenVINO runtime ships with the consumer's OpenVINO
-			     install - nothing is bundled. Staged by CI before this profile runs. -->
-			<id>openvino-linux</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>openvino-linux</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_linux_openvino</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-openvino-linux</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_linux_openvino</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_linux_openvino/</directory>
-										<includes>
-											<include>net/ladenthin/llama/Linux/x86_64/**</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
 							<execution>
-								<id>openvino-linux</id>
+								<id>natives-rocm-linux-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>rocm-linux-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux/x86_64/rocm/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.rocm_linux_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-rocm-windows-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>rocm-windows-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/x86_64/rocm/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.rocm_windows_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-sycl-fp16-linux-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>sycl-fp16-linux-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux/x86_64/sycl-fp16/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.sycl_fp16_linux_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-sycl-fp32-linux-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>sycl-fp32-linux-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux/x86_64/sycl-fp32/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.sycl_fp32_linux_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-sycl-windows-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>sycl-windows-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/x86_64/sycl/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.sycl_windows_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-openvino-linux-x86-64</id>
 								<phase>package</phase>
 								<goals>
 									<goal>jar</goal>
 								</goals>
 								<configuration>
 									<classifier>openvino-linux-x86-64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_linux_openvino</classesDirectory>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux/x86_64/openvino/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.openvino_linux_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
 								</configuration>
 							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-		<profile>
-			<!-- Windows x86_64 Intel OpenVINO GPU/NPU natives, shipped as the `openvino-windows-x86-64`
-			     classifier JAR. Built with -DGGML_OPENVINO=ON and routed by CMakeLists.txt to
-			     src/main/resources_windows_openvino/. The OpenVINO runtime ships with the consumer's OpenVINO
-			     install - nothing is bundled. Staged by CI before this profile runs. -->
-			<id>openvino-windows</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-compiler-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>openvino-windows</id>
-							<phase>compile</phase>
-							<goals>
-								<goal>compile</goal>
-							</goals>
-							<configuration>
-								<excludes>
-									<exclude>module-info.java</exclude>
-								</excludes>
-								<compilerArgs>
-									<arg>-h</arg>
-									<arg>${project.basedir}/src/main/cpp</arg>
-								</compilerArgs>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_openvino</outputDirectory>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<artifactId>maven-resources-plugin</artifactId>
-						<executions>
-						<execution>
-							<id>copy-resources-openvino-windows</id>
-							<phase>process-classes</phase>
-							<goals>
-								<goal>copy-resources</goal>
-							</goals>
-							<configuration>
-								<outputDirectory>
-									${project.build.outputDirectory}_windows_openvino</outputDirectory>
-								<resources>
-									<resource>
-										<directory>
-											${basedir}/src/main/resources_windows_openvino/</directory>
-										<includes>
-											<include>net/ladenthin/llama/Windows/x86_64/**</include>
-										</includes>
-									</resource>
-								</resources>
-							</configuration>
-						</execution>
-						</executions>
-					</plugin>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-jar-plugin</artifactId>
-						<executions>
 							<execution>
-								<id>openvino-windows</id>
+								<id>natives-openvino-windows-x86-64</id>
 								<phase>package</phase>
 								<goals>
 									<goal>jar</goal>
 								</goals>
 								<configuration>
 									<classifier>openvino-windows-x86-64</classifier>
-									<classesDirectory>
-										${project.build.outputDirectory}_windows_openvino</classesDirectory>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/x86_64/openvino/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.openvino_windows_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
 								</configuration>
 							</execution>
 						</executions>

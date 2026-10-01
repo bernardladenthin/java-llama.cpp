@@ -4,8 +4,9 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# Cross-repo shared script — kept BYTE-IDENTICAL in java-llama.cpp and srcmorph (sync any
-# edit to both). GPG-signs the fat jars (jar-with-dependencies) in a directory with a
+# Cross-repo shared script — kept BYTE-IDENTICAL in java-llama.cpp and srcmorph (listed in each
+# repo's .github/shared-files.sha256: sync any edit to both, then `check-shared-files.py --write`).
+# GPG-signs the fat jars (jar-with-dependencies) in a directory with a
 # detached, armored .asc signature — the authenticity counterpart to any .sha256 integrity
 # file. The caller builds/collects the fat jars; this only signs every
 # *-jar-with-dependencies*.jar it finds in <asset-dir> (thin jars are left untouched).

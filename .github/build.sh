@@ -1,9 +1,8 @@
 #!/bin/bash
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-# SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 # The core project (CMakeLists.txt + src/) lives in the `llama/` module of the Maven
 # reactor. Re-root here once — every native build delegates to this script (incl. the

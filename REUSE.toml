@@ -3,15 +3,15 @@ version = 1
 # Markdown files (cannot have inline SPDX headers)
 [[annotations]]
 path = [
-    "README.md",
     "CHANGELOG.md",
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
     "SUPPORT.md",
     "CLAUDE.md",
+    "llama-atmosphere-agent/CLAUDE.md",
+    "android-llmservice/CLAUDE.md",
     "CLAUDE_TEST_GENERATION_PROMPT.md",
-    "models/README.md",
     "docs/RELEASE.md",
     "docs/feature-investigation-llama-stack-client-kotlin.md",
     "docs/history/49be664_24918e4.md",
@@ -21,12 +21,16 @@ path = [
     "docs/history/REFACTORING.md",
     "llama/src/test/resources/images/README.md",
     "llama/src/test/resources/audios/README.md",
-    ".github/PULL_REQUEST_TEMPLATE.md",
-    ".github/ISSUE_TEMPLATE/bug_report.md",
-    ".github/ISSUE_TEMPLATE/feature_request.md",
     ".claude/commands/find-cpp-duplication.md",
     "llama-langchain4j/README.md",
+    "models/README.md",
 ]
+SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
+SPDX-License-Identifier = "MIT"
+
+# The README still carries text of the upstream project (kherud/java-llama.cpp)
+[[annotations]]
+path = "README.md"
 SPDX-FileCopyrightText = [
     "2023-2025 Konstantin Herud",
     "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
@@ -36,10 +40,7 @@ SPDX-License-Identifier = "MIT"
 # CITATION.cff (not recognized by reuse annotate)
 [[annotations]]
 path = "CITATION.cff"
-SPDX-FileCopyrightText = [
-    "2023-2025 Konstantin Herud",
-    "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
-]
+SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
 SPDX-License-Identifier = "MIT"
 
 # CMakeLists.txt (CMake format not recognized by reuse annotate)
@@ -51,31 +52,20 @@ SPDX-FileCopyrightText = [
 ]
 SPDX-License-Identifier = "MIT"
 
-# Dockcross scripts (no file extension, may not be recognized)
+# The dockcross wrappers are generated, unmodified output of dockcross's own wrapper template
+# (imagefiles/dockcross.sh), printed by `docker run --rm dockcross/<image>:<tag>`; copyright and
+# license as in https://github.com/dockcross/dockcross/blob/master/LICENSE.
 [[annotations]]
 path = [
-    ".github/dockcross/dockcross-android-arm",
     ".github/dockcross/dockcross-android-arm64",
     ".github/dockcross/dockcross-android-x86_64",
-    ".github/dockcross/dockcross-linux-arm64-lts",
     ".github/dockcross/dockcross-manylinux2014-x64",
     ".github/dockcross/dockcross-manylinux_2_28-x64",
 ]
-SPDX-FileCopyrightText = [
-    "2023-2025 Konstantin Herud",
-    "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
-]
+SPDX-FileCopyrightText = "2015-2021 Steeve Morin, Rob Burns, Matthew McCormick, Jean-Christophe Fillion-Robin, Bensuperpc"
 SPDX-License-Identifier = "MIT"
 
 # GITHUB/ISSUE_TEMPLATE/config.yml handled by reuse annotate below
-# CODEOWNERS (# comments supported but file has no extension)
-[[annotations]]
-path = ".github/CODEOWNERS"
-SPDX-FileCopyrightText = [
-    "2023-2025 Konstantin Herud",
-    "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
-]
-SPDX-License-Identifier = "MIT"
 
 # llama.cpp source patches (unified-diff format cannot carry inline SPDX without corrupting the
 # diff). Glob covers every current and future patch dropped into patches/ — see CLAUDE.md
@@ -126,12 +116,12 @@ path = "llama/src/test/resources/audios/sample.wav"
 SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
 SPDX-License-Identifier = "MIT"
 
-# Backend-manifest loader test fixtures (backendtest/ + backendtest-ok/):
+# Backend loader test fixtures (backendtest/ + backendtest-ok/):
 # deliberately unloadable fake *.so placeholders (one-line text files) plus two
 # trivial real x86-64 ELF dummies in backendtest-ok/ (built from a one-line C
 # TU, no upstream code) — .so files have no inline-comment syntax for SPDX
-# headers; the manifest .txt files carry theirs inline. Consumed by
-# BackendManifestLoadTest.
+# headers; the jllama-extras.txt files carry theirs inline. Consumed by
+# BackendLoadTest.
 [[annotations]]
 path = "llama/src/test/resources/net/ladenthin/llama/Linux/backendtest*/**"
 SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
@@ -148,3 +138,14 @@ path = [
 SPDX-FileCopyrightText = "1996-2023 Oracle and/or its affiliates"
 SPDX-License-Identifier = "GPL-2.0-only WITH Classpath-exception-2.0"
 
+# The issue/PR templates are kept byte-identical in java-llama.cpp, BitcoinAddressFinder, srcmorph
+# and streambuffer (.github/shared-files.sha256) and carry the license of the other shared files.
+# Last in this file on purpose: of several matching annotations the last one applies.
+[[annotations]]
+path = [
+    ".github/ISSUE_TEMPLATE/bug_report.md",
+    ".github/ISSUE_TEMPLATE/feature_request.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+]
+SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
+SPDX-License-Identifier = "MIT OR Apache-2.0"

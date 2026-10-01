@@ -45,9 +45,6 @@ SPDX-License-Identifier: MIT
 		     else can override it too, e.g. -Dllama.version=5.3.0-SNAPSHOT for a pre-release core.
 		     Bump it as part of every release. -->
 		<llama.version>5.2.0</llama.version>
-		<!-- Native backend of the core jar: empty = default CPU jar (incl. macOS Metal). GPU users pass
-		     e.g. -Dllama.classifier=cuda13-linux-x86-64 or vulkan-windows-x86-64 (runtime on PATH). -->
-		<llama.classifier></llama.classifier>
 		<atmosphere.version>4.0.71</atmosphere.version>
 		<jline.version>4.4.6</jline.version>
 		<jetty.version>12.1.13</jetty.version>
@@ -80,12 +77,12 @@ SPDX-License-Identifier: MIT
 	</repositories>
 
 	<dependencies>
-		<!-- The model server (in-process mode) and the OpenAI-compatible HTTP surface under test. -->
+		<!-- The model server (in-process mode) and the OpenAI-compatible HTTP surface under test: the
+		     classes. The natives come from the natives / gpu-natives profiles below. -->
 		<dependency>
 			<groupId>net.ladenthin</groupId>
 			<artifactId>llama</artifactId>
 			<version>${llama.version}</version>
-			<classifier>${llama.classifier}</classifier>
 		</dependency>
 
 		<!-- Atmosphere's built-in OpenAI-compatible agent runtime: streaming, tool loop, file tools.
@@ -222,6 +219,50 @@ SPDX-License-Identifier: MIT
 		</plugins>
 	</build>
 	<profiles>
+		<!--
+			The core's CPU natives of every desktop platform (macOS: Metal), so the README's commands
+			run anywhere. Active unless -Dllama.natives=none, which CI passes: it installs only the
+			core classes, and its model-backed job points the loader at a downloaded library with
+			-Dnet.ladenthin.llama.lib.path instead.
+		-->
+		<profile>
+			<id>natives</id>
+			<activation>
+				<property>
+					<name>llama.natives</name>
+					<value>!none</value>
+				</property>
+			</activation>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama-platform</artifactId>
+					<version>${llama.version}</version>
+					<type>pom</type>
+				</dependency>
+			</dependencies>
+		</profile>
+		<!--
+			A GPU backend next to the CPU natives: -Dllama.classifier=<natives jar>, e.g.
+			cuda13-linux-x86-64 or vulkan-windows-x86-64 (the vendor runtime must be installed). The
+			loader prefers it and falls back to the CPU natives when it does not load.
+		-->
+		<profile>
+			<id>gpu-natives</id>
+			<activation>
+				<property>
+					<name>llama.classifier</name>
+				</property>
+			</activation>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>${llama.classifier}</classifier>
+				</dependency>
+			</dependencies>
+		</profile>
 		<!--
 			`mvn -P assembly package`: the GitHub Release asset
 			llama-atmosphere-agent-<llama.version>-jar-with-dependencies.jar. Named after the core

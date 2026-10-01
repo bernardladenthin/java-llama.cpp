@@ -1,52 +1,64 @@
 // SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-// SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 //
 // SPDX-License-Identifier: MIT
 
 package examples;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
+import java.io.PrintStream;
 import net.ladenthin.llama.LlamaModel;
-import net.ladenthin.llama.args.MiroStat;
+import net.ladenthin.llama.TestConstants;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
+import net.ladenthin.llama.value.CompletionResult;
 import net.ladenthin.llama.value.LlamaOutput;
+import net.ladenthin.llama.value.StopReason;
 
-@SuppressWarnings("InfiniteLoopStatement")
-public class MainExample {
+/**
+ * Plain text completion, the shortest way through the API: one blocking call that returns the text
+ * together with what it cost, and the same kind of request streamed piece by piece as it is generated.
+ *
+ * <p>Pass a GGUF file as the first argument; without one the small code model of the test set is used
+ * ({@code models/AMD-Llama-135m-code.Q2_K.gguf}, listed in {@code .github/models.csv}).
+ */
+public final class MainExample {
 
-    public static void main(String... args) throws IOException {
-        ModelParameters modelParams = new ModelParameters()
-                .setModel("models/mistral-7b-instruct-v0.2.Q2_K.gguf")
-                .setGpuLayers(43);
-        String system = "This is a conversation between User and Llama, a friendly chatbot.\n"
-                + "Llama is helpful, kind, honest, good at writing, and never fails to answer any "
-                + "requests immediately and with precision.\n\n"
-                + "User: Hello Llama\n"
-                + "Llama: Hello.  How may I help you today?";
-        BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
-        try (LlamaModel model = new LlamaModel(modelParams)) {
-            System.out.print(system);
-            String prompt = system;
-            while (true) {
-                prompt += "\nUser: ";
-                System.out.print("\nUser: ");
-                String input = reader.readLine();
-                prompt += input;
-                System.out.print("Llama: ");
-                prompt += "\nLlama: ";
-                InferenceParameters inferParams = new InferenceParameters(prompt)
-                        .withTemperature(0.7f)
-                        .withMiroStat(MiroStat.V2)
-                        .withStopStrings("User:");
-                for (LlamaOutput output : model.generate(inferParams)) {
-                    System.out.print(output);
-                    prompt += output;
-                }
+    private MainExample() {}
+
+    public static void main(String... args) {
+        String modelPath = args.length > 0 ? args[0] : TestConstants.DRAFT_MODEL_PATH;
+        run(new ModelParameters().setModel(modelPath).setCtxSize(2048), System.out);
+    }
+
+    /** The example itself; the model parameters and the console come in from outside, so a test can run it. */
+    static void run(ModelParameters modelParameters, PrintStream out) {
+        try (LlamaModel model = new LlamaModel(modelParameters)) {
+            // Blocking: the whole answer at once, with token counts and speed.
+            String prompt = "// Returns the n-th Fibonacci number.\nstatic long fibonacci(int n) {\n";
+            CompletionResult result = model.completeWithStats(InferenceParameters.of(prompt)
+                    .withNPredict(96)
+                    .withTemperature(0.2f)
+                    .withStopStrings("\n}\n"));
+            out.println(prompt + result.getText());
+            out.printf(
+                    "-- %d prompt + %d generated tokens, %.1f tokens/s, stopped: %s%n%n",
+                    result.getUsage().getPromptTokens(),
+                    result.getUsage().getCompletionTokens(),
+                    result.getTimings().getPredictedPerSecond(),
+                    result.getStopReason());
+
+            // Streaming: every piece is printed the moment it is generated.
+            String streamedPrompt =
+                    "// Returns true if the given year is a leap year.\nstatic boolean isLeapYear(int year) {\n";
+            out.print(streamedPrompt);
+            StopReason stopReason = StopReason.NONE;
+            for (LlamaOutput output : model.generate(InferenceParameters.of(streamedPrompt)
+                    .withNPredict(96)
+                    .withTemperature(0.2f)
+                    .withStopStrings("\n}\n"))) {
+                out.print(output.text);
+                stopReason = output.stopReason;
             }
+            out.printf("%n-- stopped: %s%n", stopReason);
         }
     }
 }

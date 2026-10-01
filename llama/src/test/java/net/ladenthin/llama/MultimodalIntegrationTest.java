@@ -91,8 +91,10 @@ public class MultimodalIntegrationTest {
 
     @BeforeAll
     public static void setup() {
-        modelPath = TestConstants.resolveModelProperty(TestConstants.PROP_VISION_MODEL_PATH);
-        mmprojPath = TestConstants.resolveModelProperty(TestConstants.PROP_VISION_MMPROJ_PATH);
+        modelPath = TestConstants.resolveModelProperty(
+                TestConstants.PROP_VISION_MODEL_PATH, TestConstants.DEFAULT_VISION_MODEL_PATH);
+        mmprojPath = TestConstants.resolveModelProperty(
+                TestConstants.PROP_VISION_MMPROJ_PATH, TestConstants.DEFAULT_VISION_MMPROJ_PATH);
         // Image path falls back to the committed test resource when the
         // -D property is unset, so the test works on local dev checkouts
         // without any extra wiring. The model / mmproj remain externally

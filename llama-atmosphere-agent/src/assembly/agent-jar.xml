@@ -13,7 +13,8 @@ SPDX-License-Identifier: MIT
       hundreds of MB of natives every core fat jar holds.
 
       Excluded, because the core fat jar it runs next to supplies them:
-        - net.ladenthin:llama and its whole runtime graph (Jackson 2, slf4j-api), via
+        - net.ladenthin:llama (classes and natives jars), llama-platform, and their whole
+          runtime graph (Jackson 2, slf4j-api), via
           useTransitiveFiltering. That includes jackson-annotations, which Jackson 3 resolves
           through the core's trail as well.
         - jspecify and slf4j-simple, which the core fat jar also bundles (and slf4j-simple's
@@ -37,6 +38,7 @@ SPDX-License-Identifier: MIT
             <useTransitiveFiltering>true</useTransitiveFiltering>
             <excludes>
                 <exclude>net.ladenthin:llama</exclude>
+                <exclude>net.ladenthin:llama-platform</exclude>
                 <exclude>org.jspecify:jspecify</exclude>
                 <exclude>org.slf4j:slf4j-simple</exclude>
                 <exclude>org.atmosphere:atmosphere-spring-boot-starter</exclude>

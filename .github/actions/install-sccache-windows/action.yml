@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Puts sccache on PATH on a Windows runner, from the release zip (x86_64, or the native
+# aarch64-pc-windows-msvc build on windows-11-arm, where it wraps clang-cl). The caller keeps the
+# `if:` (USE_CACHE and a Depot token present) and `continue-on-error: true`: a failed install is
+# only a slower build, because build.bat probes sccache before trusting it and retries a build that
+# fails with it as the launcher once uncached (CLAUDE.md, "sccache on every Windows Ninja job").
+# Keep `version` equal to SCCACHE_DL_VERSION in .github/build.sh (the Linux fetch).
+name: Install sccache (Windows)
+description: Download the sccache release zip matching the runner's architecture and add it to PATH.
+inputs:
+  version:
+    description: sccache release to install.
+    required: false
+    default: '0.18.0'
+runs:
+  using: composite
+  steps:
+    - name: Install sccache ${{ inputs.version }}
+      shell: pwsh
+      env:
+        SCCACHE_VERSION: ${{ inputs.version }}
+      run: |
+        $arch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
+        $rel = "sccache-v$env:SCCACHE_VERSION-$arch-pc-windows-msvc"
+        $url = "https://github.com/mozilla/sccache/releases/download/v$env:SCCACHE_VERSION/$rel.zip"
+        Write-Host "Downloading $url"
+        Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
+        Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
+        Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"
