@@ -41,6 +41,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`manylinux2014-x86`, `android-x86`) from unpinned images, while the wrappers in use are pinned to
   a dockcross tag. A wrapper is regenerated with `docker run --rm dockcross/<image>:<tag> > dockcross-<image>`
   (the command each wrapper prints at its end).
+- **`.clang-format` is a short file of our own, `.clang-tidy` llama.cpp's current one**: the style is
+  `BasedOnStyle: LLVM` plus the four options that differ (column limit 120, indent 4, attributes on the
+  same line, no include sorting) instead of a 230-line `--dump-config`; clang-format 23.1.1 resolves it to
+  the same configuration and leaves all 27 C++ files unchanged. `.clang-tidy`, an older copy of
+  llama.cpp's, is now its current version and attributed to the ggml authors.
 - **The four examples are rewritten for the current API and run in CI**: `MainExample` (blocking
   completion with token counts and speed, then streaming), `ChatExample` (a multi-turn console chat on
   `Session`, streamed), `GrammarExample` (a GBNF grammar, and a JSON schema bound to a Java object with

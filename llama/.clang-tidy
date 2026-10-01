@@ -1,8 +1,10 @@
-# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-# SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
+# SPDX-FileCopyrightText: 2023-2026 The ggml authors
 #
 # SPDX-License-Identifier: MIT
 
+# llama.cpp's own clang-tidy configuration, taken over unchanged (ggml-org/llama.cpp, .clang-tidy) so that
+# clangd and clang-tidy judge this JNI layer by the rules of the code it wraps. Nothing in the build or
+# in CI runs clang-tidy; refresh it from upstream on a llama.cpp bump when convenient.
 ---
 Checks: >
     bugprone-*,
@@ -18,12 +20,16 @@ Checks: >
     -readability-magic-numbers,
     -readability-uppercase-literal-suffix,
     -readability-simplify-boolean-expr,
+    -readability-math-missing-parentheses,
     clang-analyzer-*,
     -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
     performance-*,
+    -performance-enum-size,
     portability-*,
+    -portability-simd-intrinsics,
     misc-*,
     -misc-const-correctness,
     -misc-non-private-member-variables-in-classes,
     -misc-no-recursion,
+    -misc-use-anonymous-namespace,
 FormatStyle: none
