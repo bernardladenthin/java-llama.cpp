@@ -699,6 +699,21 @@ SPDX-License-Identifier: MIT
 						<additionalClasspathElement>${project.basedir}/src/main/natives</additionalClasspathElement>
 					</additionalClasspathElements>
 					<!--
+					  Tests run on the classpath, not the module path. target/classes holds a
+					  module-info.class, and Surefire then defaults to module mode: the main and
+					  test classes become the named module net.ladenthin.llama, and every module
+					  it requires (Jackson, SLF4J) moves to the module path. Jackson is then a
+					  named module of its own that may not reflect into an unexported test
+					  package (ExamplesTest: "module net.ladenthin.llama does not export examples
+					  to module com.fasterxml.jackson.databind"), and java.class.path no longer
+					  holds Jackson, so the worker JVM RouterModeIntegrationTest starts from it
+					  dies with NoClassDefFoundError. Both broke when module-info.java started to
+					  require Jackson and SLF4J. Classpath mode is how nearly every consumer
+					  runs this Java 8 library; the module path is covered by
+					  .github/smoke-natives-jars.sh against the real jars.
+					-->
+					<useModulePath>false</useModulePath>
+					<!--
 					  Capture each test class's stdout/stderr into
 					  target/surefire-reports/<class>-output.txt. When a native crash
 					  takes down the forked JVM, this file is the ONLY record of
