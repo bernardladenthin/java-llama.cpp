@@ -41,6 +41,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`manylinux2014-x86`, `android-x86`) from unpinned images, while the wrappers in use are pinned to
   a dockcross tag. A wrapper is regenerated with `docker run --rm dockcross/<image>:<tag> > dockcross-<image>`
   (the command each wrapper prints at its end).
+- **The four examples are rewritten for the current API and run in CI**: `MainExample` (blocking
+  completion with token counts and speed, then streaming), `ChatExample` (a multi-turn console chat on
+  `Session`, streamed), `GrammarExample` (a GBNF grammar, and a JSON schema bound to a Java object with
+  `completeAsJson`) and `InfillExample` (fill-in-the-middle). Each defaults to a model of
+  `.github/models.csv` and takes another GGUF as its argument; `ExamplesTest` runs all four on every Java
+  test job, so an example can no longer go stale unnoticed (the old `ChatExample` was `@Disabled`).
 - **Copyright lines checked against the upstream code that is actually left**: the upstream author's
   `SPDX-FileCopyrightText` line had been stamped onto every file when REUSE was introduced. Each file
   was compared with the upstream source tree at its last upstream commit (`49be664`, token sequences,

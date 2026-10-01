@@ -1,46 +1,66 @@
 // SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-// SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 //
 // SPDX-License-Identifier: MIT
 
 package examples;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
 import net.ladenthin.llama.LlamaModel;
-import net.ladenthin.llama.parameters.InferenceParameters;
+import net.ladenthin.llama.Session;
+import net.ladenthin.llama.TestConstants;
 import net.ladenthin.llama.parameters.ModelParameters;
 import net.ladenthin.llama.value.LlamaOutput;
-import net.ladenthin.llama.value.Pair;
-import org.junit.jupiter.api.Disabled;
 
-// Model file (models/codellama-7b.Q2_K.gguf) is not available in the models directory
-@Disabled
-public class ChatExample {
+/**
+ * An interactive multi-turn chat on the console. A {@link Session} keeps the conversation, so every turn
+ * passes only the new message, and the model's chat template is applied for it; each reply is streamed as
+ * it is generated. An empty line or the end of the input (Ctrl+D, on Windows Ctrl+Z) ends the chat.
+ *
+ * <p>Pass a GGUF file of an instruction-tuned model as the first argument; without one
+ * {@code models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf} of the test set is used (see {@code .github/models.csv}).
+ */
+public final class ChatExample {
 
-    public static void main(String... args) throws Exception {
-        ModelParameters modelParams =
-                new ModelParameters().setModel("models/codellama-7b.Q2_K.gguf").setGpuLayers(43);
-        try (LlamaModel model = new LlamaModel(modelParams)) {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
-            List<Pair<String, String>> messages = new ArrayList<>();
-            String system = "You are a helpful assistant.";
+    private static final String SYSTEM_MESSAGE = "You are a concise, helpful assistant.";
+
+    private ChatExample() {}
+
+    public static void main(String... args) throws IOException {
+        String modelPath = args.length > 0 ? args[0] : TestConstants.DEFAULT_TOOL_MODEL_PATH;
+        BufferedReader console = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+        run(new ModelParameters().setModel(modelPath).setCtxSize(4096), console, System.out);
+    }
+
+    /** The example itself; the model parameters and the console come in from outside, so a test can run it. */
+    static void run(ModelParameters modelParameters, BufferedReader console, PrintStream out) throws IOException {
+        try (LlamaModel model = new LlamaModel(modelParameters);
+                // Slot 0 holds this conversation; the customizer applies to every turn.
+                Session session = new Session(
+                        model, 0, SYSTEM_MESSAGE, p -> p.withNPredict(512).withTemperature(0.7f))) {
             while (true) {
-                System.out.print("User: ");
-                String input = reader.readLine();
-                messages.add(new Pair<>("user", input));
-                StringBuilder response = new StringBuilder();
-                InferenceParameters inferParams = new InferenceParameters("").withMessages(system, messages);
-                System.out.print("Assistant: ");
-                for (LlamaOutput output : model.generate(inferParams)) {
-                    System.out.print(output);
-                    response.append(output);
+                out.print("\nYou: ");
+                String message = console.readLine();
+                if (message == null || message.trim().isEmpty()) {
+                    return;
                 }
-                System.out.println();
-                messages.add(new Pair<>("assistant", response.toString()));
+                out.print("Assistant: ");
+                StringBuilder reply = new StringBuilder();
+                try {
+                    for (LlamaOutput output : session.stream(message)) {
+                        out.print(output.text);
+                        reply.append(output.text);
+                    }
+                } catch (RuntimeException e) {
+                    // Without a committed reply the session would refuse every further turn.
+                    session.cancelStream();
+                    throw e;
+                }
+                session.commitStreamedReply(reply.toString());
+                out.println();
             }
         }
     }
