@@ -1,9 +1,8 @@
 #!/bin/bash
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-# SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 # Validate that all required model files exist and are valid GGUF files
 # GGUF files start with magic bytes: 0x47 0x47 0x55 0x46 ("GGUF")

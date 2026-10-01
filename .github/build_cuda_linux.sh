@@ -1,9 +1,8 @@
 #!/bin/sh
 
 # SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-# SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 #
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: MIT OR Apache-2.0
 
 # A Cuda 13.4 install script for RHEL8/Rocky8/Manylinux_2.28
 # Available versions can be found at:

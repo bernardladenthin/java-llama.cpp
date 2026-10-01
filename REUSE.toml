@@ -23,9 +23,6 @@ path = [
     "docs/history/REFACTORING.md",
     "llama/src/test/resources/images/README.md",
     "llama/src/test/resources/audios/README.md",
-    ".github/PULL_REQUEST_TEMPLATE.md",
-    ".github/ISSUE_TEMPLATE/bug_report.md",
-    ".github/ISSUE_TEMPLATE/feature_request.md",
     ".claude/commands/find-cpp-duplication.md",
     "llama-langchain4j/README.md",
 ]
@@ -73,11 +70,8 @@ SPDX-License-Identifier = "MIT"
 # CODEOWNERS (# comments supported but file has no extension)
 [[annotations]]
 path = ".github/CODEOWNERS"
-SPDX-FileCopyrightText = [
-    "2023-2025 Konstantin Herud",
-    "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
-]
-SPDX-License-Identifier = "MIT"
+SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
+SPDX-License-Identifier = "MIT OR Apache-2.0"
 
 # llama.cpp source patches (unified-diff format cannot carry inline SPDX without corrupting the
 # diff). Glob covers every current and future patch dropped into patches/ — see CLAUDE.md
@@ -150,3 +144,14 @@ path = [
 SPDX-FileCopyrightText = "1996-2023 Oracle and/or its affiliates"
 SPDX-License-Identifier = "GPL-2.0-only WITH Classpath-exception-2.0"
 
+# The issue/PR templates are kept byte-identical in java-llama.cpp, BitcoinAddressFinder, srcmorph
+# and streambuffer (.github/shared-files.sha256) and carry the license of the other shared files.
+# Last in this file on purpose: of several matching annotations the last one applies.
+[[annotations]]
+path = [
+    ".github/ISSUE_TEMPLATE/bug_report.md",
+    ".github/ISSUE_TEMPLATE/feature_request.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+]
+SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
+SPDX-License-Identifier = "MIT OR Apache-2.0"

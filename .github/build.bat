@@ -1,7 +1,6 @@
 REM SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-REM SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 REM
-REM SPDX-License-Identifier: MIT
+REM SPDX-License-Identifier: MIT OR Apache-2.0
 
 @echo off
 setlocal enabledelayedexpansion

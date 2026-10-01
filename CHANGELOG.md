@@ -35,9 +35,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`manylinux2014-x86`, `android-x86`) from unpinned images, while the wrappers in use are pinned to
   a dockcross tag. A wrapper is regenerated with `docker run --rm dockcross/<image>:<tag> > dockcross-<image>`
   (the command each wrapper prints at its end).
-- **CI files are licensed `MIT OR Apache-2.0`**: every `.github` file carrying only the owner's
-  copyright now has the same license header in all four sibling repositories, so the shared ones are
-  byte-identical; `CODE_OF_CONDUCT.md` joined the shared-files manifest.
+- **CI files are licensed `MIT OR Apache-2.0`**: every own `.github` file now has the same license
+  header in all four sibling repositories, so the shared ones are byte-identical. The upstream
+  copyright line stamped onto the redesigned CI files was dropped. `CODE_OF_CONDUCT.md`, `claude.yml`,
+  `claude-code-review.yml`, `scorecard.yml`, `reuse.yml`, `osv-scanner.yml` and `dependabot.yml` joined
+  the shared-files manifest.
 - **Workflow run scripts are parsed in the `shared-files` job**: `check-run-scripts.py` runs `bash -n`
   over every `run:` script of the workflows and composite actions that runs in bash (shell decided as
   the runner does), so a broken script fails within minutes instead of in the job that runs it.
