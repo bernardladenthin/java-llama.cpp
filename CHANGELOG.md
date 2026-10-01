@@ -31,6 +31,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `.github/shared-files.sha256` entry `.github/workflows/publish.yml#<job>` hashes one job (`startgate`,
   `shared-files`, `verify-signing-key`, `check-snapshot`, `check-tag`, and where present
   `verify-signing-key-gradle`, `github-snapshot`, `github-release`).
+- **`.github/dockcross/update.sh` removed**: it regenerated wrappers that no longer exist
+  (`manylinux2014-x86`, `android-x86`) from unpinned images, while the wrappers in use are pinned to
+  a dockcross tag. A wrapper is regenerated with `docker run --rm dockcross/<image>:<tag> > dockcross-<image>`
+  (the command each wrapper prints at its end).
 - **CI files are licensed `MIT OR Apache-2.0`**: every `.github` file carrying only the owner's
   copyright now has the same license header in all four sibling repositories, so the shared ones are
   byte-identical; `CODE_OF_CONDUCT.md` joined the shared-files manifest.
