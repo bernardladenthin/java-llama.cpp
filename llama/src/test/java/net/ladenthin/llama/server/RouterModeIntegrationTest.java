@@ -129,14 +129,14 @@ public class RouterModeIntegrationTest extends OpenAiServerTestSupport {
     /**
      * Builds the classpath the worker JVM is launched with.
      *
-     * <p>{@code java.class.path} alone is NOT enough. {@code target/classes} carries a
-     * {@code module-info.class}, so Surefire auto-detects a named module and runs the main classes
-     * on the <em>module path</em>; {@code java.class.path} then holds only {@code target/test-classes}
-     * plus the dependency jars. A worker launched with just that dies immediately with
-     * {@code ClassNotFoundException: net.ladenthin.llama.server.NativeServer}, which the router
-     * surfaces only as the opaque "worker failed with exit code 1". The main-classes root is
-     * therefore derived from the class itself — correct in either mode, and a directory or a jar
-     * alike. It also carries the packaged native library the worker has to extract.</p>
+     * <p>Surefire runs the tests on the classpath ({@code useModulePath=false} in the pom), so
+     * {@code java.class.path} normally holds everything the worker needs. In module mode it would
+     * not: the main classes and every module they require (Jackson, SLF4J) move to the module path,
+     * and a worker launched from {@code java.class.path} dies with a
+     * {@code ClassNotFoundException}/{@code NoClassDefFoundError}, which the router surfaces only
+     * as the opaque "worker failed with exit code 1". The main-classes root is therefore still
+     * derived from the class itself, a directory or a jar alike, so the worker at least finds
+     * {@code NativeServer} should someone run the tests on the module path.</p>
      *
      * @return the worker classpath, or an empty string when the code source cannot be resolved
      */
