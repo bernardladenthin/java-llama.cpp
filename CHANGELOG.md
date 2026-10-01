@@ -39,6 +39,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`manylinux2014-x86`, `android-x86`) from unpinned images, while the wrappers in use are pinned to
   a dockcross tag. A wrapper is regenerated with `docker run --rm dockcross/<image>:<tag> > dockcross-<image>`
   (the command each wrapper prints at its end).
+- **The JDK is named once, in `.java-version`**: every workflow reads it through setup-java's
+  `java-version-file` (the `JAVA_VERSION` env and the literal `21`s are gone); `.java-version` and
+  `codeql.yml` are now byte-identical in all four sibling repositories and in the shared-files manifest.
 - **CI files are licensed `MIT OR Apache-2.0`**: every own `.github` file now has the same license
   header in all four sibling repositories, so the shared ones are byte-identical. The upstream
   copyright line stamped onto the redesigned CI files was dropped. `CODE_OF_CONDUCT.md`, `claude.yml`,

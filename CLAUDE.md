@@ -149,8 +149,8 @@ Shared today: the `buildcheck` modules above marked shared in
 `__init__.py` (+ their tests and CLIs), `print-crash-logs.sh`, `verify-signing-key.sh`,
 `verify-bytecode-version.sh`, `sign-fatjars.sh` (jllama + srcmorph), `smoke-fatjar-cli.sh` (BAF +
 srcmorph), the signing self-test, `lombok.config`, the issue/PR templates, `CODE_OF_CONDUCT.md`,
-`claude.yml`, `claude-code-review.yml`, `scorecard.yml`, `reuse.yml`, `osv-scanner.yml` and
-`dependabot.yml`. **License of `.github`:** every file there is `MIT OR Apache-2.0` in all four repos
+`claude.yml`, `claude-code-review.yml`, `codeql.yml`, `scorecard.yml`, `reuse.yml`, `osv-scanner.yml`,
+`dependabot.yml` and `.java-version`. **License of `.github`:** every file there is `MIT OR Apache-2.0` in all four repos
 -- one header, so a file can be shared byte for byte -- except the third-party ones annotated in
 `REUSE.toml` (the generated dockcross wrappers, the JNI headers).
 
