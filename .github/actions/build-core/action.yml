@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Builds the parent POM and net.ladenthin:llama -- plus further reactor modules when asked -- as plain
+# Java: no tests, no checks, no javadoc or sources jar, no signing. With `install` they land in the
+# local Maven repository for a job that builds a module or an artifact on top of them; with `package`
+# only in target/. The one place for that skip-flag list, which nine jobs used to repeat.
+# Needs the repository checked out and a JDK set up.
+name: Build the core classes
+description: Build parent + net.ladenthin:llama (and more reactor modules) without tests, checks, javadoc or signing.
+inputs:
+  modules:
+    description: The reactor modules to build (-pl); their reactor dependencies are built too (-am).
+    required: false
+    default: llama
+  goal:
+    description: install (into the local Maven repository) or package (target/ only).
+    required: false
+    default: install
+runs:
+  using: composite
+  steps:
+    - name: mvn -pl ${{ inputs.modules }} -am ${{ inputs.goal }} (no tests, checks or signing)
+      shell: bash
+      env:
+        MODULES: ${{ inputs.modules }}
+        GOAL: ${{ inputs.goal }}
+      run: >
+        mvn -B --no-transfer-progress -pl "$MODULES" -am -DskipTests -Denforcer.skip=true
+        -Dspotless.check.skip=true -Dspotbugs.skip=true
+        -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dgpg.skip=true "$GOAL"

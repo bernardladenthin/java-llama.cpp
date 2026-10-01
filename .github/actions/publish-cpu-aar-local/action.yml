@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# Downloads the Android CPU natives (arm64-v8a for devices, x86_64 for the emulator), stages them where
+# llama-android's Gradle build expects them and publishes the CPU AAR to mavenLocal -- what the
+# emulator test and the two llmservice jobs consume. Needs the repository checked out, the core jar
+# built (build-core, `package`) and Gradle on PATH; the calling job must `need` both Android CPU
+# build jobs.
+name: Publish the CPU AAR to mavenLocal
+description: Download + stage the Android CPU natives (arm64-v8a, x86_64) and publish the llama-android AAR to mavenLocal.
+runs:
+  using: composite
+  steps:
+    - name: Download Android CPU natives (arm64)
+      uses: actions/download-artifact@v8
+      with:
+        name: natives-cpu-android-aarch64
+        path: stage/cpu/
+    - name: Download Android CPU natives (x86_64)
+      uses: actions/download-artifact@v8
+      with:
+        name: natives-cpu-android-x86-64
+        path: stage/cpu-x86_64/
+    - name: Stage natives + publish the CPU AAR to mavenLocal
+      shell: bash
+      run: |
+        mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64
+        cp stage/cpu/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
+        cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
+        gradle -p llama-android publishLlamaAndroidPublicationToMavenLocal

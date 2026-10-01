@@ -64,11 +64,6 @@ SPDX-FileCopyrightText = "2015-2021 Steeve Morin, Rob Burns, Matthew McCormick, 
 SPDX-License-Identifier = "MIT"
 
 # GITHUB/ISSUE_TEMPLATE/config.yml handled by reuse annotate below
-# CODEOWNERS (# comments supported but file has no extension)
-[[annotations]]
-path = ".github/CODEOWNERS"
-SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
-SPDX-License-Identifier = "MIT OR Apache-2.0"
 
 # llama.cpp source patches (unified-diff format cannot carry inline SPDX without corrupting the
 # diff). Glob covers every current and future patch dropped into patches/ — see CLAUDE.md

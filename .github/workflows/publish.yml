@@ -23,7 +23,9 @@ env:
   # reusable workflows read the same one without an input.
 
   # The Gradle builds (Android AAR, the consumer fixture, the llmservice app, the signing self-test).
-  # AGP 9.4.x needs Gradle >= 9.6.0 (android-llmservice/CLAUDE.md). Not seen by Dependabot: bump by hand.
+  # AGP 9.4.x needs Gradle >= 9.6.0 (android-llmservice/CLAUDE.md). Not seen by Dependabot: bump by hand,
+  # together with the literal in verify-signing-key-gradle (a job kept identical in all four sibling
+  # repositories, so it names its version itself).
   GRADLE_VERSION: '9.8.0'
   # The sccache/Depot compiler cache (CLAUDE.md, "CI build cache"). Inert without the token, which
   # stays per build job (SCCACHE_WEBDAV_TOKEN): at workflow level it would reach every job,
@@ -179,7 +181,7 @@ jobs:
           distribution: temurin
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: ${{ env.GRADLE_VERSION }}
+          gradle-version: "9.8.0"
       - name: Sign a throwaway artifact via useInMemoryPgpKeys (BouncyCastle)
         shell: bash
         env:
@@ -324,10 +326,7 @@ jobs:
           java-version-file: .java-version
           distribution: temurin
       - name: Install parent + core net.ladenthin:llama into the local repo (Java only)
-        run: >
-          mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
-          -Dspotless.check.skip=true -Dspotbugs.skip=true
-          -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dgpg.skip=true install
+        uses: ./.github/actions/build-core
       - name: Build and test llama-langchain4j
         run: mvn -B --no-transfer-progress -f llama-langchain4j/pom.xml verify
 
@@ -348,10 +347,7 @@ jobs:
           java-version-file: .java-version
           distribution: temurin
       - name: Install parent + core net.ladenthin:llama into the local repo (Java only)
-        run: >
-          mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
-          -Dspotless.check.skip=true -Dspotbugs.skip=true
-          -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dgpg.skip=true install
+        uses: ./.github/actions/build-core
       - name: Build and test llama-kotlin
         run: mvn -B --no-transfer-progress -f llama-kotlin/pom.xml verify
 
@@ -382,10 +378,7 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Install parent + core net.ladenthin:llama (classes; the test JVM loads the downloaded native library via lib.path)
-        run: >
-          mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
-          -Dspotless.check.skip=true -Dspotbugs.skip=true
-          -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dgpg.skip=true install
+        uses: ./.github/actions/build-core
       - name: Run llama-langchain4j model-backed integration tests (reused cached models)
         run: >
           mvn -B --no-transfer-progress -f llama-langchain4j/pom.xml test
@@ -451,10 +444,7 @@ jobs:
           java-version-file: .java-version
           distribution: temurin
       - name: Install parent + core net.ladenthin:llama into the local repo (Java only)
-        run: >
-          mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
-          -Dspotless.check.skip=true -Dspotbugs.skip=true
-          -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dgpg.skip=true install
+        uses: ./.github/actions/build-core
       - name: Resolve the reactor version
         run: echo "VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)" >> "$GITHUB_ENV"
       - name: Spotless check
@@ -501,10 +491,7 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Install parent + core net.ladenthin:llama (classes; the test JVM loads the downloaded native library via lib.path)
-        run: >
-          mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
-          -Dspotless.check.skip=true -Dspotbugs.skip=true
-          -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dgpg.skip=true install
+        uses: ./.github/actions/build-core
       - name: Resolve the reactor version
         run: echo "VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)" >> "$GITHUB_ENV"
       - name: Run the Atmosphere tool-loop integration test (cached Qwen2.5-1.5B tool model, CPU)
@@ -997,10 +984,9 @@ jobs:
           # AGP 9.4.0 (the .github/android-consumer-test fixture) requires Gradle >= 9.6.0.
           gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Build core jar (byte-identical classes payload for the AAR)
-        run: >
-          mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
-          -Dspotless.check.skip=true -Dspotbugs.skip=true
-          -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dgpg.skip=true package
+        uses: ./.github/actions/build-core
+        with:
+          goal: package
       - name: Download Android CPU natives (arm64)
         uses: actions/download-artifact@v8
         with:
@@ -1125,26 +1111,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Build core jar (classes payload for the AAR)
-        run: >
-          mvn -B --no-transfer-progress -pl llama -am -DskipTests -Denforcer.skip=true
-          -Dspotless.check.skip=true -Dspotbugs.skip=true
-          -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dgpg.skip=true package
-      - name: Download Android CPU natives (arm64)
-        uses: actions/download-artifact@v8
+        uses: ./.github/actions/build-core
         with:
-          name: natives-cpu-android-aarch64
-          path: stage/cpu/
-      - name: Download Android CPU natives (x86_64)
-        uses: actions/download-artifact@v8
-        with:
-          name: natives-cpu-android-x86-64
-          path: stage/cpu-x86_64/
-      - name: Stage natives + publish the CPU AAR to mavenLocal
-        run: |
-          mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64
-          cp stage/cpu/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
-          cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
-          gradle -p llama-android publishLlamaAndroidPublicationToMavenLocal
+          goal: package
+      - uses: ./.github/actions/publish-cpu-aar-local
       - uses: ./.github/actions/restore-models
       - name: Free disk space for the emulator (only the draft model is needed on-device)
         # Same guard as test-android-llmservice: the AVD userdata partition needs ~7.4 GB; drop the
@@ -1210,26 +1180,10 @@ jobs:
         # install (not package) so the app's Gradle build resolves llama-kotlin +
         # the core POM from mavenLocal. llama-kotlin's core dep is provided-scope, so the
         # desktop JAR is never pulled into the APK — the AAR supplies net.ladenthin.llama.*.
-        run: >
-          mvn -B --no-transfer-progress -pl llama,llama-kotlin -am -DskipTests -Denforcer.skip=true
-          -Dspotless.check.skip=true -Dspotbugs.skip=true
-          -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dgpg.skip=true install
-      - name: Download Android CPU natives (arm64)
-        uses: actions/download-artifact@v8
+        uses: ./.github/actions/build-core
         with:
-          name: natives-cpu-android-aarch64
-          path: stage/cpu/
-      - name: Download Android CPU natives (x86_64)
-        uses: actions/download-artifact@v8
-        with:
-          name: natives-cpu-android-x86-64
-          path: stage/cpu-x86_64/
-      - name: Stage natives + publish the CPU AAR to mavenLocal
-        run: |
-          mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64
-          cp stage/cpu/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
-          cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
-          gradle -p llama-android publishLlamaAndroidPublicationToMavenLocal
+          modules: llama,llama-kotlin
+      - uses: ./.github/actions/publish-cpu-aar-local
       - name: Decode upload keystore (if configured)
         # Optional Play upload key. Set the ANDROID_UPLOAD_KEYSTORE_BASE64 secret
         # (base64 of a PKCS12/JKS upload keystore) plus the three password/alias secrets
@@ -1306,26 +1260,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: Build core jar + install llama-kotlin facade to mavenLocal
-        run: >
-          mvn -B --no-transfer-progress -pl llama,llama-kotlin -am -DskipTests -Denforcer.skip=true
-          -Dspotless.check.skip=true -Dspotbugs.skip=true
-          -Dmaven.javadoc.skip=true -Dmaven.source.skip=true -Dgpg.skip=true install
-      - name: Download Android CPU natives (arm64)
-        uses: actions/download-artifact@v8
+        uses: ./.github/actions/build-core
         with:
-          name: natives-cpu-android-aarch64
-          path: stage/cpu/
-      - name: Download Android CPU natives (x86_64)
-        uses: actions/download-artifact@v8
-        with:
-          name: natives-cpu-android-x86-64
-          path: stage/cpu-x86_64/
-      - name: Stage natives + publish the CPU AAR to mavenLocal
-        run: |
-          mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64
-          cp stage/cpu/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
-          cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
-          gradle -p llama-android publishLlamaAndroidPublicationToMavenLocal
+          modules: llama,llama-kotlin
+      - uses: ./.github/actions/publish-cpu-aar-local
       - uses: ./.github/actions/restore-models
       - name: Free disk space for the emulator (only the draft model is needed on-device)
         # The AVD userdata partition needs ~7.4 GB; the full ~10 GB GGUF cache restore leaves too

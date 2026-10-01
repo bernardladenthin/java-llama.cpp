@@ -111,7 +111,9 @@ srcmorph and streambuffer are listed with their SHA-256 in each repo's **`.githu
 `check-snapshot` and `check-tag` are identical in all four `publish.yml` files (plus
 `verify-signing-key-gradle`, `github-snapshot` and `github-release` in the three Maven-only ones), and
 such an entry hashes just that job -- so a job kept identical by convention is now checked like a
-file, without moving it into a reusable workflow (no check name or `needs:` changes). The
+file, without moving it into a reusable workflow (no check name or `needs:` changes). An entry ending
+in `?repo` covers a file or job identical up to the repository's name (hashed with the name replaced
+by `{repo}`), e.g. `SUPPORT.md?repo`. The
 `shared-files` job, gating both publish jobs, **fails** when a listed file changed here
 alone, and **warns** when another repo's default branch lists the same file with a different hash (a
 sync is one change per repo and lands in four steps, so a warning, not a failure). **The manifest is
@@ -150,14 +152,23 @@ Shared today: the `buildcheck` modules above marked shared in
 `verify-bytecode-version.sh`, `sign-fatjars.sh` (jllama + srcmorph), `smoke-fatjar-cli.sh` (BAF +
 srcmorph), the signing self-test, `lombok.config`, the issue/PR templates, `CODE_OF_CONDUCT.md`,
 `claude.yml`, `claude-code-review.yml`, `codeql.yml`, `scorecard.yml`, `reuse.yml`, `osv-scanner.yml`,
-`dependabot.yml` and `.java-version`. **License of `.github`:** every file there is `MIT OR Apache-2.0` in all four repos
+`dependabot.yml`, `.java-version`, `.editorconfig`, `.gitattributes`, `FUNDING.yml`, `CODEOWNERS`,
+`LICENSES/{MIT,Apache-2.0}.txt` and `.mvn/jvm.config`; the job `verify-signing-key-gradle` (its Gradle
+version is a literal for that reason -- bump it with `GRADLE_VERSION`); and, identical up to the
+repository name (`?repo` entries, see `sharedfiles.py`), `SUPPORT.md` and `ISSUE_TEMPLATE/config.yml`
+(in the siblings also `CITATION.cff`, `sonarqube.yml` for srcmorph + streambuffer, and the
+`code-style` job for BAF + streambuffer). **License of `.github`:** every file there is `MIT OR Apache-2.0` in all four repos
 -- one header, so a file can be shared byte for byte -- except the third-party ones annotated in
 `REUSE.toml` (the generated dockcross wrappers, the JNI headers).
 
 **Composite actions (`.github/actions/`, this repo only).** `restore-models` (restore the shared GGUF
 cache + `validate-models.sh`; the one place a job gets its models — 16 call sites) and
-`install-sccache-windows` (10 call sites; the caller keeps `if:` and `continue-on-error`). Composite
-actions for steps; for whole jobs, the two shapes below.
+`install-sccache-windows` (10 call sites; the caller keeps `if:` and `continue-on-error`),
+`build-core` (parent + `llama`, optionally more modules, built without tests/checks/javadoc/signing,
+`install` or `package` -- the one copy of that skip-flag list, 9 call sites) and
+`publish-cpu-aar-local` (download + stage the Android CPU natives, publish the CPU AAR to mavenLocal;
+the emulator test and the two llmservice jobs). Composite actions for steps; for whole jobs, the two
+shapes below.
 
 **Reusable workflow for the macOS/Windows Java tests (`.github/workflows/java-tests.yml`).** The
 three macOS arm64 test jobs and the two Windows x86-64 ones were five copies of one job differing in

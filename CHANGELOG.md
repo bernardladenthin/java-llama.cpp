@@ -41,6 +41,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`manylinux2014-x86`, `android-x86`) from unpinned images, while the wrappers in use are pinned to
   a dockcross tag. A wrapper is regenerated with `docker run --rm dockcross/<image>:<tag> > dockcross-<image>`
   (the command each wrapper prints at its end).
+- **More shared files, and files identical up to the repository name**: a shared-files entry ending
+  in `?repo` is hashed with the repository's name replaced by `{repo}`. Added: `.editorconfig`,
+  `.gitattributes` (now with `*.gguf binary` everywhere), `FUNDING.yml`, `CODEOWNERS`, the license texts,
+  `SUPPORT.md`, `ISSUE_TEMPLATE/config.yml` and further files listed in `.github/shared-files.sha256`;
+  the signing self-test now runs on Gradle 9.8.0 in all four repositories.
+  The skip-flag list of the core build (9 jobs) and the CPU-AAR staging (3 jobs) are composite actions
+  now (`build-core`, `publish-cpu-aar-local`).
 - **The JDK is named once, in `.java-version`**: every workflow reads it through setup-java's
   `java-version-file` (the `JAVA_VERSION` env and the literal `21`s are gone); `.java-version` and
   `codeql.yml` are now byte-identical in all four sibling repositories and in the shared-files manifest.
