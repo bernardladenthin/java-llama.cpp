@@ -41,6 +41,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`manylinux2014-x86`, `android-x86`) from unpinned images, while the wrappers in use are pinned to
   a dockcross tag. A wrapper is regenerated with `docker run --rm dockcross/<image>:<tag> > dockcross-<image>`
   (the command each wrapper prints at its end).
+- **`LlamaModel`, `CliParameters` and `ModelFlag` rewritten where they still held upstream text**: the
+  class and method documentation of `LlamaModel` now describes the current API (chat, structured output,
+  embeddings, reranking, `Session`) instead of the original four-item list, its code examples use
+  `ChatMessage`, and `rerank`/`decode` were rewritten; `CliParameters` builds argv and `toString` from one
+  `arguments()` method and keeps the options in a `LinkedHashMap`, so argv comes out in the order the
+  options were set rather than in hash order; `ModelFlag`'s eight inherited one-line descriptions say
+  what the flag actually does. What remains in common with upstream is the public API and the JNI
+  declarations, so the upstream copyright line went from these three files. `LICENSE` names the current
+  holder first.
 - **`.clang-format` is a short file of our own, `.clang-tidy` llama.cpp's current one**: the style is
   `BasedOnStyle: LLVM` plus the four options that differ (column limit 120, indent 4, attributes on the
   same line, no include sorting) instead of a 230-line `--dump-config`; clang-format 23.1.1 resolves it to

@@ -1,12 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
-// SPDX-FileCopyrightText: 2023-2025 Konstantin Herud
 //
 // SPDX-License-Identifier: MIT
 
 package net.ladenthin.llama.parameters;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.EqualsAndHashCode;
@@ -32,7 +31,11 @@ import org.jspecify.annotations.Nullable;
 @EqualsAndHashCode
 abstract class CliParameters {
 
-    final Map<String, @Nullable String> parameters = new HashMap<>();
+    /**
+     * The arguments by name, in the order they were first set, so {@link #toArray()} and
+     * {@link #toString()} are reproducible; a flag maps to {@code null}.
+     */
+    final Map<String, @Nullable String> parameters = new LinkedHashMap<>();
 
     /**
      * Store a scalar value (typically a primitive: int, long, float, double, boolean)
@@ -145,17 +148,30 @@ abstract class CliParameters {
         return parameters.get(option.getCliOption());
     }
 
+    /**
+     * The arguments as llama.cpp's parser reads them: every name, followed by its value unless it is a
+     * flag.
+     *
+     * @return a new, modifiable list
+     */
+    private List<String> arguments() {
+        List<String> arguments = new ArrayList<>(2 * parameters.size() + 1);
+        parameters.forEach((name, value) -> {
+            arguments.add(name);
+            if (value != null) {
+                arguments.add(value);
+            }
+        });
+        return arguments;
+    }
+
     @Override
     public String toString() {
-        StringBuilder builder = new StringBuilder();
-        for (Map.Entry<String, @Nullable String> entry : parameters.entrySet()) {
-            builder.append(entry.getKey()).append(' ');
-            String value = entry.getValue();
-            if (value != null) {
-                builder.append(value).append(' ');
-            }
+        StringBuilder rendered = new StringBuilder();
+        for (String argument : arguments()) {
+            rendered.append(argument).append(' ');
         }
-        return builder.toString();
+        return rendered.toString();
     }
 
     /**
@@ -167,16 +183,9 @@ abstract class CliParameters {
      * @return a fresh argv array suitable for passing to a native CLI parser
      */
     public String[] toArray() {
-        // upper bound: 1 program-name slot + 2 entries (key, value) per parameter
-        List<String> result = new ArrayList<>(1 + parameters.size() * 2);
-        result.add(""); // c args contain the program name as the first argument, so we add an empty entry
-        for (Map.Entry<String, @Nullable String> entry : parameters.entrySet()) {
-            result.add(entry.getKey());
-            String value = entry.getValue();
-            if (value != null) {
-                result.add(value);
-            }
-        }
-        return result.toArray(new String[0]);
+        List<String> argv = arguments();
+        // argv[0] is the program's own name in C, which the parser skips; an empty one serves.
+        argv.add(0, "");
+        return argv.toArray(new String[0]);
     }
 }
