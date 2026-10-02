@@ -2135,6 +2135,15 @@ Run PIT with the lifecycle prefix — `mvn test-compile org.pitest:pitest-maven:
 needed: `ContentPartTest`'s `@TempDir` tests cover `value.ContentPart.audioFile(Path)` (verified
 318/318 killed, 0 NO_COVERAGE, test strength 100% in a fixture-less sandbox; the former
 audio-fixture gotcha is resolved).
+**PIT builds its own classpath and reads none of Surefire's settings**, so everything the tests need
+from Surefire's configuration is repeated on the PIT plugin: the `slf4j-simple` exclusion (see "Java 8
+bytecode floor") and `src/main/natives` as `additionalClasspathElements` (the natives left
+`target/classes` with the natives jars; without it a model-backed test in a target-test package aborts
+the gate in CI, where its model exists). `TestClasspathTest` is in PIT's `targetTests` and fails under
+both runners when the native library is missing from the classpath, when the tests run in a named
+module (Surefire's default with a `module-info.class`, hence `useModulePath=false`), or when Jackson is
+not on `java.class.path` (which the router worker JVM is started with).
+
 **`net.ladenthin.llama.value.*` is a target at `mutationThreshold` 100**, so a new getter on a
 `value` type needs its own test or the gate reds — the `ServerMetrics` counters added for the
 `getMetrics()` merge are covered by `ServerMetricsTest`.

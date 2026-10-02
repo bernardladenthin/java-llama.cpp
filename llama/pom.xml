@@ -834,6 +834,9 @@ SPDX-License-Identifier: MIT
 						<param>net.ladenthin.llama.args.*</param>
 						<param>net.ladenthin.llama.json.*</param>
 						<param>net.ladenthin.llama.parameters.*</param>
+						<!-- Not a mutation test: it fails when PIT's own classpath lacks
+						     the native library or puts the tests in a named module. -->
+						<param>net.ladenthin.llama.TestClasspathTest</param>
 					</targetTests>
 					<mutationThreshold>100</mutationThreshold>
 					<timeoutConstant>30000</timeoutConstant>
