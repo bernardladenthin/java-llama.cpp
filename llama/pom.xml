@@ -856,6 +856,18 @@ SPDX-License-Identifier: MIT
 					<classpathDependencyExcludes>
 						<classpathDependencyExclude>org.slf4j:slf4j-simple</classpathDependencyExclude>
 					</classpathDependencyExcludes>
+					<!--
+					  The native library, for the same reason: Surefire reads it from
+					  src/main/natives (additionalClasspathElements above), and PIT does not
+					  see that setting. Since the natives left target/classes (natives jars,
+					  #472), a model-backed test in a target-test package found its model in
+					  CI but no library, and PIT aborted with "JsonEndpointParametersTest did
+					  not pass without mutation". Without a native build the directory is
+					  missing and those tests skip themselves, as under Surefire.
+					-->
+					<additionalClasspathElements>
+						<additionalClasspathElement>${project.basedir}/src/main/natives</additionalClasspathElement>
+					</additionalClasspathElements>
 				</configuration>
 			</plugin>
 		</plugins>
