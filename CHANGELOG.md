@@ -10,6 +10,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **Input/output modalities on `RouterModel` and `ModelMeta`** (llama.cpp b11429, #29987):
+  `getInputModalities()`, `getOutputModalities()` and `isDecisionModel()`, from upstream's new
+  `architecture` object of `GET /models` (the router computes it offline, so a decision model is
+  recognisable before its first load) and, for a loaded `LlamaModel`, from the same metadata in
+  `getModelMeta()`. Empty against a server before b11429.
 - **`vulkan-windows-aarch64` natives jar** (Windows on ARM with a Vulkan 1.2+ driver), following
   upstream's new Windows arm64 Vulkan release (llama.cpp b11395, #29954). Built natively on
   `windows-11-arm` with `clang-cl`; also in the `all-windows-aarch64` fat jar, where the loader tries it

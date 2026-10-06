@@ -1403,6 +1403,11 @@ public class LlamaModelTest {
         assertFalse(meta.supportsVision(), "text-only model must not report vision support");
         assertFalse(meta.supportsAudio(), "text-only model must not report audio support");
 
+        // GET /models' architecture modalities (llama.cpp b11429): a text-only, non-decision model
+        assertEquals(Collections.singletonList("text"), meta.getInputModalities(), "input_modalities");
+        assertEquals(Collections.singletonList("text"), meta.getOutputModalities(), "output_modalities");
+        assertFalse(meta.isDecisionModel(), "CodeLlama is not a decision model");
+
         // Dynamic access via the underlying JsonNode
         assertTrue(meta.asJson().has("modalities"), "modalities field must be present");
         assertTrue(meta.asJson().has("vocab_type"), "vocab_type field must be present");

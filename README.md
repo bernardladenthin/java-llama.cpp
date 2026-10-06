@@ -11,7 +11,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b11418](https://img.shields.io/badge/llama.cpp-%23b11418-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11418)  
+[![llama.cpp b11429](https://img.shields.io/badge/llama.cpp-%23b11429-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11429)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.0%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -996,9 +996,12 @@ client.unloadModel("Qwen3-0.6B-Q4_K_M");                 // POST /models/unload
 ```
 
 `RouterModel` carries the identifier, the lifecycle status
-(`UNLOADED`/`LOADING`/`LOADED`/`SLEEPING`/`DOWNLOADING`/`DOWNLOADED`), and the router's
-failed-worker marker. Chat requests then select a model per request via the standard
-`"model"` field on `POST /v1/chat/completions`.
+(`UNLOADED`/`LOADING`/`LOADED`/`SLEEPING`/`DOWNLOADING`/`DOWNLOADED`), the router's
+failed-worker marker, and the model's input/output modalities (`getInputModalities()`,
+`getOutputModalities()`), which the router computes without loading the model: `isDecisionModel()`
+picks out a [decision model](#decision-models-v1systemone) for `/v1/systemone` before its first load.
+A loaded `LlamaModel` reports the same through `getModelMeta()`. Chat requests then select a model per
+request via the standard `"model"` field on `POST /v1/chat/completions`.
 
 Against a router started with `--api-key`, pass the key — it is sent as
 `Authorization: Bearer <key>` on every call. All of them need it: `/models/load` and

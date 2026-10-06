@@ -1126,6 +1126,15 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_getModelMetaJson(J
             {"architecture", arch},
             {"ftype", m.model_ftype},
         };
+        // The input/output modalities of upstream's GET /models `architecture` object (b11429, #29987),
+        // built by the same helper; flattened to the top level because "architecture" above already
+        // names the GGUF architecture string. A native decision model reports ["decisions"].
+        {
+            const json modalities = server_model_architecture_json(m.has_inp_image, m.has_inp_audio, m.has_inp_video,
+                                                                   m.model_output_modalities);
+            j["input_modalities"] = modalities.at("input_modalities");
+            j["output_modalities"] = modalities.at("output_modalities");
+        }
         // Resolved default chat template (Jinja); empty when the model ships none.
         const char *chat_tmpl = mdl != nullptr ? llama_model_chat_template(mdl, /*name*/ nullptr) : nullptr;
         j["chat_template"] = chat_tmpl != nullptr ? std::string(chat_tmpl) : std::string();

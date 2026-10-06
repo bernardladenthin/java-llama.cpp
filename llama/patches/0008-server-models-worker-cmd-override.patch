@@ -1,6 +1,8 @@
+diff --git a/tools/server/server-models.cpp b/tools/server/server-models.cpp
+index 35d21c876..e8ecb539f 100644
 --- a/tools/server/server-models.cpp
 +++ b/tools/server/server-models.cpp
-@@ -215,6 +215,29 @@
+@@ -535,6 +535,29 @@ void server_model_meta::update_args(common_preset_context & ctx_preset, std::str
      if (app_cmd != nullptr && app_cmd[0] != '\0' && !bin_path.empty()) {
          args.insert(args.begin() + 1, app_cmd);
      }
@@ -29,4 +31,4 @@
 +    }
  }
  
- void server_model_meta::update_caps() {
+ void server_model_meta::update_caps(const common_params & base) {

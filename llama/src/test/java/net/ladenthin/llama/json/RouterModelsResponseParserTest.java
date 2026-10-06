@@ -6,6 +6,8 @@ package net.ladenthin.llama.json;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.empty;
 
 import java.util.List;
 import net.ladenthin.llama.ClaudeGenerated;
@@ -98,5 +100,27 @@ public class RouterModelsResponseParserTest {
     @Test
     public void unparseableInputYieldsEmptyList() {
         assertThat(parser.parse("not json").isEmpty(), is(true));
+    }
+
+    @Test
+    public void parsesTheArchitectureModalities() {
+        // GET /models since llama.cpp b11429 (#29987): computed offline, present before the first load.
+        String json = "{\"data\":[{\"id\":\"decider\",\"status\":{\"value\":\"unloaded\"},"
+                + "\"architecture\":{\"input_modalities\":[\"text\",\"image\"],"
+                + "\"output_modalities\":[\"decisions\"]}}]}";
+
+        RouterModel model = parser.parse(json).get(0);
+        assertThat(model.getInputModalities(), contains("text", "image"));
+        assertThat(model.getOutputModalities(), contains("decisions"));
+        assertThat(model.isDecisionModel(), is(true));
+    }
+
+    @Test
+    public void missingArchitectureYieldsNoModalities() {
+        // A server before b11429 omits the object; upstream asks clients to fall back, not to guess.
+        RouterModel model = parser.parse("{\"data\":[{\"id\":\"old\"}]}").get(0);
+        assertThat(model.getInputModalities(), is(empty()));
+        assertThat(model.getOutputModalities(), is(empty()));
+        assertThat(model.isDecisionModel(), is(false));
     }
 }

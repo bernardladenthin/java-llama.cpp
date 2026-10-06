@@ -5,6 +5,9 @@
 package net.ladenthin.llama.value;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import lombok.EqualsAndHashCode;
 
 /**
@@ -23,6 +26,12 @@ import lombok.EqualsAndHashCode;
  */
 @EqualsAndHashCode
 public final class ModelMeta {
+
+    /**
+     * The output modality of a native decision model (llama.cpp b11429+), served by
+     * {@link net.ladenthin.llama.LlamaModel#handleSystemOne(String)}. See {@link #isDecisionModel()}.
+     */
+    public static final String OUTPUT_MODALITY_DECISIONS = "decisions";
 
     private final JsonNode node;
 
@@ -121,6 +130,43 @@ public final class ModelMeta {
     }
 
     /**
+     * What the model can read, as upstream's {@code GET /models} reports it in
+     * {@code architecture.input_modalities}: always {@code "text"}, plus {@code "image"},
+     * {@code "audio"} and {@code "video"} for each media type the loaded projector supports.
+     *
+     * <p>Empty for metadata from a vocab-only load or from a build before llama.cpp b11429.</p>
+     *
+     * @return the input modalities, unmodifiable
+     */
+    public List<String> getInputModalities() {
+        return strings(node.path("input_modalities"));
+    }
+
+    /**
+     * What the model can produce, as upstream's {@code GET /models} reports it in
+     * {@code architecture.output_modalities}: {@code ["decisions"]} for a native decision model,
+     * {@code ["text"]} otherwise. Upstream documents {@code "text"} as a compatibility default rather
+     * than a promise that the model generates text, and new values may appear, so test for membership.
+     *
+     * <p>Empty for metadata from a vocab-only load or from a build before llama.cpp b11429.</p>
+     *
+     * @return the output modalities, unmodifiable
+     */
+    public List<String> getOutputModalities() {
+        return strings(node.path("output_modalities"));
+    }
+
+    /**
+     * Whether the model is a native decision model, i.e. answers
+     * {@link net.ladenthin.llama.LlamaModel#handleSystemOne(String)} instead of generating text.
+     *
+     * @return {@code true} if {@link #getOutputModalities()} contains {@value #OUTPUT_MODALITY_DECISIONS}
+     */
+    public boolean isDecisionModel() {
+        return getOutputModalities().contains(OUTPUT_MODALITY_DECISIONS);
+    }
+
+    /**
      * The model architecture string from GGUF {@code general.architecture} metadata
      * (e.g. {@code "llama"}, {@code "gemma3"}, {@code "mistral"}).
      * Returns an empty string if the field is absent in the GGUF file.
@@ -210,6 +256,14 @@ public final class ModelMeta {
      */
     public JsonNode asJson() {
         return node;
+    }
+
+    private static List<String> strings(JsonNode array) {
+        List<String> values = new ArrayList<>();
+        for (JsonNode value : array) {
+            values.add(value.asText());
+        }
+        return Collections.unmodifiableList(values);
     }
 
     /** Re-serializes to compact JSON. Suitable for {@code assertEquals} in tests. */
