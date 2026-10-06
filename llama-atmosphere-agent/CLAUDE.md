@@ -64,7 +64,7 @@ dependency set excludes it, and a second dependency set unpacks **only** that re
 either half and the jar either grows by the whole starter or `--web` starts with nothing to open
 (`WebConsole.available()` says so at startup).
 
-**What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.71) ships
+**What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.72) ships
 `BuiltInAgentRuntime` + `OpenAiCompatibleClient`: a zero-framework OpenAI client that *always*
 streams (`stream:true`), accumulates `delta.tool_calls` by `index`, executes `ToolDefinition`
 executors, re-submits the conversation (assistant `tool_calls` message **without** a `content` key,

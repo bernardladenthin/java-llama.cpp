@@ -1418,12 +1418,12 @@ not track the loader's own Java package; no leading slash, it is resolved throug
 ### Code Formatting
 
 C++ formatting is **enforced in CI** (`.github/workflows/clang-format.yml`) with a **pinned**
-clang-format — currently **23.1.1**, installed via `pip install clang-format==23.1.1`. Format with
+clang-format — currently **23.1.3**, installed via `pip install clang-format==23.1.3`. Format with
 that exact version before committing; a different clang-format version reflows code differently and
 will fail the check.
 
 ```bash
-pip install "clang-format==23.1.1"
+pip install "clang-format==23.1.3"
 clang-format -i src/main/cpp/*.cpp src/main/cpp/*.hpp src/test/cpp/*.cpp   # Format C++ code
 ```
 
@@ -2036,7 +2036,7 @@ easy to undo by accident:
   outright: the Nullness Checker resolves its own qualifiers through javac's symbol table, i.e. the
   *compile classpath*, so a 3.x checker-qual under the 4.x processor fails every build with
   `Could not load type: org.checkerframework.framework.qual.DoesNotUnrefineReceiver`. Processor and
-  qualifiers must share a major version. `provided` satisfies both constraints: 4.2.2 on the compile
+  qualifiers must share a major version. `provided` satisfies both constraints: 4.3.0 on the compile
   classpath where the checker needs it, and excluded from consumers' graph **and** from the fat jar
   (`jar-with-dependencies` takes scope `runtime`), so no checker-qual class of any version ships.
   `<optional>true</optional>` would not have been enough on its own — that descriptor filters on

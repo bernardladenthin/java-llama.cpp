@@ -111,6 +111,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`.github/workflows/java-tests.yml`), and the JDK version is `.java-version`, read by every
   `setup-java` step. Check names of those jobs changed (`<name> / Java tests`, `Smoke test all-backends
   fat jar (<target>)`); no required status check referred to them.
+- **Dependency updates in the published side artifacts**: `llama-langchain4j` builds against
+  `langchain4j-core` 1.21.0; `llama-atmosphere-agent` against Atmosphere 4.0.72, Jetty 12.1.14 and JLine
+  4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
 
 ### Fixed
 - **`ToolCallingIntegrationTest#requiredToolCallIsParsedFromStreamingResponse` failed on both Windows
