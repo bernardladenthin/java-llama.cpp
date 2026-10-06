@@ -2046,6 +2046,57 @@ jobs:
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
+  build-windows-arm64-vulkan:
+    name: Build Windows 11 arm64 Vulkan
+    needs: [startgate, build-webui]
+    # Windows-on-ARM Vulkan (Snapdragon X / any Vulkan 1.2+ driver), the natives jar
+    # vulkan-windows-aarch64 -- the counterpart of upstream's windows arm64 Vulkan release
+    # (llama.cpp #29954). Same clang-cl + GGML_OPENMP=OFF toolchain as the arm64 CPU and
+    # OpenCL jobs (ggml refuses MSVC cl.exe on ARM). The SDK is installed the way upstream's
+    # release job does it: LunarG's (x64) installer with the com.lunarg.vulkan.arm64 component,
+    # which adds the arm64 import library; its x64 glslc runs under the runner's x64
+    # emulation. Build-only like every GPU job (no GPU on the runner).
+    runs-on: windows-11-arm
+    env:
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+      VULKAN_VERSION: 1.4.357.0
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download shared WebUI assets
+        uses: actions/download-artifact@v8
+        with:
+          name: webui-generated
+          path: ${{ github.workspace }}/llama/webui-generated/
+      - name: Set up MSVC developer environment (arm64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+      - name: Install Vulkan SDK (with the arm64 component)
+        shell: pwsh
+        # Version and installer arguments as in upstream's release.yml (windows, vulkan arm64).
+        run: |
+          curl.exe -fSL -o "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install com.lunarg.vulkan.arm64
+          if (-not (Test-Path "C:\VulkanSDK\$env:VULKAN_VERSION")) { throw "Vulkan SDK $env:VULKAN_VERSION was not installed" }
+          Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_VERSION"
+          Add-Content $env:GITHUB_PATH "C:\VulkanSDK\$env:VULKAN_VERSION\bin"
+      - name: Install sccache (shared compiler cache)
+        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
+        continue-on-error: true
+        uses: ./.github/actions/install-sccache-windows
+      - name: Build libraries
+        shell: cmd
+        # Build the artifact only (see the CUDA job's note: GPU-less runner can't run a
+        # GPU-linked jllama_test; the C++ unit suite is covered by the CPU jobs).
+        run: |
+          .github\build.bat -G "Ninja Multi-Config" -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DGGML_VULKAN=ON -DOS_NAME=Windows -DOS_ARCH=aarch64
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: natives-vulkan-windows-aarch64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
+          if-no-files-found: error
+
   build-linux-x86_64-openvino:
     name: Build Linux x86_64 OpenVINO (Intel)
     needs: [startgate, build-webui]
@@ -2404,6 +2455,7 @@ jobs:
       - build-linux-x86_64-sycl-fp32
       - build-windows-x86_64-sycl
       - build-windows-arm64-opencl
+      - build-windows-arm64-vulkan
       - build-linux-x86_64-openvino
       - build-windows-x86_64-openvino
       - test-cpp-linux-x86_64

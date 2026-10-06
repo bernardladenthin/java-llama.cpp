@@ -12,7 +12,7 @@ Current llama.cpp pinned version: **b11395**
 
 `net.ladenthin:llama` is the **Java classes only**. Every native build ships as its own jar of the
 same artifact, classifier `<backend>-<os>-<arch>`, holding exactly one directory
-`net/ladenthin/llama/<OS>/<ARCH>/<backend>/` (26 today: `cpu-*` for 8 platforms, `metal-macos-aarch64`,
+`net/ladenthin/llama/<OS>/<ARCH>/<backend>/` (27 today: `cpu-*` for 8 platforms, `metal-macos-aarch64`,
 `msvc-windows-*`, and the GPU backends). Because the directories never overlap, **any combination of
 natives jars can share one classpath**, and `LlamaLoader` tries the backends it finds in a fixed
 order (`BACKEND_PRIORITY`: cuda13, rocm, sycl-fp16, sycl-fp32, sycl, vulkan, opencl, openvino, metal,
@@ -44,7 +44,7 @@ it or is checked against it:
 | `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library and nothing outside its directory, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows) |
 | `.github/package-fatjars.sh` | reads the list: the built natives jars match it, each holds only its directory and the right `Automatic-Module-Name`; merges the all-backends fat jars and fails unless it produced exactly the targets `check-natives.py fatjar-targets` derives |
 | `.github/verify-native-deps.py` | exact dependency allowlist per CPU directory (`cpu`/`metal`/`msvc`) and for the Android OpenCL build (bionic + `libOpenCL.so`), denylist for the other GPU ones; every Android library 16 KB page-aligned (Google Play). Runs in `package` and on the staged AAR libraries |
-| `.github/smoke-natives-jars.sh` (`package` job) | loads the real jars: classes + all 26 natives jars at once, on the classpath **and** the module path (on the GPU-less runner normally ending at `cpu`) |
+| `.github/smoke-natives-jars.sh` (`package` job) | loads the real jars: classes + all 27 natives jars at once, on the classpath **and** the module path (on the GPU-less runner normally ending at `cpu`) |
 
 **Adding a natives jar:** a row in `natives.csv`, the execution `check-natives.py pom` prints, a build
 job uploading `natives-<classifier>`, the backend name in CMake and `BACKEND_PRIORITY` if new, a
@@ -53,7 +53,7 @@ targets follow by themselves (a new OS/arch with a GPU backend also needs its sm
 `check-natives.py` then demands). The checks are Python in `.github/buildcheck/` with unit tests
 (see "Build checks, shared files and the release gate").
 
-**Why the build jobs are not spawned from the list as one matrix** (considered and rejected): the 26
+**Why the build jobs are not spawned from the list as one matrix** (considered and rejected): the 27
 builds use genuinely different toolchains — dockcross images, the CUDA redist archives, ROCm pip
 wheels, oneAPI, OpenVINO, `clang-cl` on arm64, qemu for s390x, three macOS variants — so a single
 matrix job would be a web of `if:` conditions; and `needs:` on a matrix waits for every entry, so
@@ -424,9 +424,9 @@ ctest --test-dir build --output-on-failure
 .github\build_opencl_windows.bat -G "Ninja Multi-Config" -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DOS_NAME=Windows -DOS_ARCH=x86_64
 ```
 
-## Linux Vulkan natives + Windows arm64 CPU
+## Linux Vulkan natives + Windows arm64 CPU and Vulkan
 
-Three natives jars that extend the matrix toward upstream llama.cpp's release set.
+Four natives jars that extend the matrix toward upstream llama.cpp's release set.
 
 **Linux Vulkan (`vulkan-linux-x86-64` + `vulkan-linux-aarch64`).** A vendor-neutral GPU jar for
 Linux (NVIDIA / AMD / Intel) with no CUDA toolkit. The build jobs are `build-linux-x86_64-vulkan`
@@ -437,6 +437,15 @@ and are **build-only** (no `ctest`: a Vulkan-linked `jllama_test` errors enumera
 GPU-less runner — same as the Windows GPU jobs). Glibc floor rises to the ubuntu baseline (like the
 aarch64 CPU jar); acceptable for a GPU artifact. GPU runtime `libvulkan.so.1` is supplied by the
 consumer's driver — nothing is bundled (same policy as every GPU backend).
+
+**Windows arm64 Vulkan (`vulkan-windows-aarch64`).** Added at the llama.cpp b11395 bump, when upstream
+put a Windows arm64 Vulkan build into its release set (#29954). `build-windows-arm64-vulkan` uses the
+arm64 CPU job's toolchain below (`windows-11-arm`, `clang-cl`, `GGML_OPENMP=OFF`) and installs the SDK
+exactly as upstream's release job does: LunarG's x64 installer with the `com.lunarg.vulkan.arm64`
+component (the arm64 import library), whose x64 `glslc` runs under the runner's x64 emulation; the SDK
+version is upstream's `VULKAN_VERSION`, not the one the x86-64 Vulkan job pins through
+`jakoch/install-vulkan-sdk-action`. Build-only like every GPU job, and part of the `all-windows-aarch64`
+fat jar (tried before `opencl`, then `cpu`), so the `windows-aarch64` row of `smoke-fatjar` launches it.
 
 **Windows arm64 CPU (`cpu-windows-aarch64`, in `llama-platform`).** `build-windows-arm64` runs
 natively on GitHub's free `windows-11-arm` runner (`ilammy/msvc-dev-cmd` `arch: arm64`, Ninja
@@ -2059,7 +2068,7 @@ exceeds `--max-major`:
 ```
 
 Paths may be jars or directories (searched recursively for `*.jar`), so one invocation covers a whole
-artifact set — here the classes jar, all 26 natives jars and every `all-<os>-<arch>` fat jar. `module-info.class`
+artifact set — here the classes jar, all 27 natives jars and every `all-<os>-<arch>` fat jar. `module-info.class`
 and `META-INF/versions/**` are skipped unconditionally: a classpath JVM never loads either, which is
 why a `release 9` `module-info` is fine. `--allow` is a repeatable glob matched against
 `<jar-basename>:<entry-path>` for anything else that must be tolerated. Exit codes: 0 clean,

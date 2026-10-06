@@ -10,6 +10,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`vulkan-windows-aarch64` natives jar** (Windows on ARM with a Vulkan 1.2+ driver), following
+  upstream's new Windows arm64 Vulkan release (llama.cpp b11395, #29954). Built natively on
+  `windows-11-arm` with `clang-cl`; also in the `all-windows-aarch64` fat jar, where the loader tries it
+  before OpenCL and the CPU.
 - **`ModelParameters.setDraftSampling(DraftSampling)`** (`--spec-draft-sampling`, llama.cpp b11368):
   `PROBABILISTIC` samples the speculative draft and has the target verify it by rejection sampling,
   which accepts more drafted tokens at a temperature above zero; `GREEDY` is upstream's default. Applies

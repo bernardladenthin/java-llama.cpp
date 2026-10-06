@@ -233,6 +233,7 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 | `vulkan-linux-x86-64` | Vulkan | Linux x86-64 with a Vulkan 1.2+ GPU (NVIDIA / AMD / Intel) | A Vulkan runtime (`libvulkan.so.1`), which current GPU drivers install. The most portable Linux GPU option. glibc ≈ 2.39 (built on `ubuntu-latest`). |
 | `vulkan-linux-aarch64` | Vulkan | Linux aarch64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`libvulkan.so.1`). glibc ≥ 2.39. |
 | `vulkan-windows-x86-64` | Vulkan | Windows x86-64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`vulkan-1.dll`), which current GPU drivers install. The most portable Windows GPU option. |
+| `vulkan-windows-aarch64` | Vulkan | Windows on ARM (Snapdragon X) with a Vulkan 1.2+ GPU | A Vulkan runtime (`vulkan-1.dll`), which current GPU drivers install. Built natively on `windows-11-arm` with `clang-cl`, like upstream's Windows arm64 Vulkan release. |
 | `opencl-windows-x86-64` | OpenCL | Windows x86-64 with an OpenCL 2.0+ GPU | A vendor OpenCL ICD (`OpenCL.dll`). The GGML OpenCL backend is Adreno-tuned; on desktop GPUs CUDA or Vulkan are better supported. |
 | `opencl-windows-aarch64` | OpenCL (Adreno) | Windows on ARM (Snapdragon X) | The Adreno driver's OpenCL ICD (`OpenCL.dll`). |
 | `opencl-android-aarch64` | OpenCL (Adreno) | Android aarch64 with Adreno GPU | A device OpenCL ICD (`libOpenCL.so`); see also the `llama-android-opencl` AAR. |
