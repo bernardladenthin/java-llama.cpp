@@ -34,6 +34,7 @@
 //   8.  parse_positive_int_config       — used by nothing above it
 //   9.  wrap_stream_chunk               — used by nothing above it
 //  10.  server_metrics_to_json          — used by nothing above it
+//  11.  route_error_message            — used by nothing above it
 
 #include <cmath>
 #include <optional>
@@ -298,4 +299,31 @@
 
     out["slots"] = slots_result.slots_data;
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// route_error_message
+//
+// The human-readable message of an error response produced by an upstream
+// `server_routes` handler. `server_res_generator::error()` writes the body as
+// `{"error": {"code": ..., "message": ..., "type": ...}}`; this returns
+// `error.message`, or the body unchanged when it does not have that shape.
+// Never throws: it runs on a path that is already reporting an error.
+//
+// Used by handleSystemOne in jllama.cpp, which calls the upstream
+// `post_systemone` handler directly instead of re-implementing it.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline std::string route_error_message(const std::string &body) {
+    try {
+        const json parsed = json::parse(body);
+        if (parsed.is_object() && parsed.contains("error")) {
+            const json &error = parsed.at("error");
+            if (error.is_object() && error.contains("message") && error.at("message").is_string()) {
+                return error.at("message").get<std::string>();
+            }
+        }
+    } catch (const std::exception &) {
+        // not JSON: fall through and report the raw body
+    }
+    return body;
 }

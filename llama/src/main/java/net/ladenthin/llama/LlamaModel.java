@@ -594,6 +594,31 @@ public class LlamaModel implements AutoCloseable {
     public native String handleRerank(String query, String... documents);
 
     /**
+     * Answer typed questions about a state with a decision model, in one forward pass per question
+     * and without generating a token. This is llama.cpp's TypeSafe-compatible
+     * {@code POST /v1/systemone} API (upstream b11361), served by the same upstream handler the HTTP
+     * server uses, so the request and response are exactly that endpoint's.
+     *
+     * <p>The request carries a {@code "state"} (a string, or any JSON value given to the model as
+     * JSON text), optional {@code "images"} (data URLs; needs a model that takes images and its
+     * {@code --mmproj}) and {@code "questions"}, an object mapping an id to a question with a
+     * {@code "type"} of {@code "choice"}, {@code "score"} or {@code "noul"}, its
+     * {@code "instructions"} and, depending on the type, its {@code "criteria"}. The response maps
+     * each id under {@code "answers"} to the answer of that type (the chosen option and the
+     * probabilities, the expected level, or the probability of {@code true}) and reports
+     * {@code "usage"}. The full description is upstream's {@code tools/server/README.md}.</p>
+     *
+     * <p>Needs a decision model (laya, julia-1, lev, openjev, kev and the ones upstream adds later);
+     * any other model fails with a {@link LlamaException} saying it is not a decision model.</p>
+     *
+     * @param requestJson the request body as JSON
+     * @return the response body as JSON
+     * @throws LlamaException when the model is not a decision model, the request is malformed, or it
+     *     carries images the loaded model cannot take
+     */
+    public native String handleSystemOne(String requestJson);
+
+    /**
      * Applies the chat template to the given inference parameters and returns the formatted string.
      *
      * @param parameters the inference parameters containing message configuration
@@ -981,7 +1006,8 @@ public class LlamaModel implements AutoCloseable {
      * llama.cpp stamps every state file with {@code LLAMA_STATE_SEQ_VERSION} and rejects one written
      * under a different value, so a file saved by a jar built against a different
      * {@link net.ladenthin.llama.value.LlamaCppVersion#LLAMA_CPP_VERSION} may not load — b10642 bumped
-     * that constant 2&nbsp;&rarr;&nbsp;3, invalidating every file written by an earlier release. Treat
+     * that constant 2&nbsp;&rarr;&nbsp;3 and b11411 3&nbsp;&rarr;&nbsp;4, each time invalidating every file
+     * written by an earlier release. Treat
      * these files as a cache to regenerate on upgrade, never as durable storage. A rejected file
      * surfaces as a {@link net.ladenthin.llama.exception.LlamaException} whose message is upstream's
      * wrapped form, {@code "Unable to restore slot: No available space in KV cache or invalid slot

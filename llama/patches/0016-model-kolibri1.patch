@@ -1,0 +1,385 @@
+model: add Kolibri-1 (kolibri1) -- carried until upstream supports it
+
+Aleph Alpha's Kolibri-1 is a 78B-parameter German/English reasoning MoE (3.46B active per
+token, Apache-2.0). Upstream llama.cpp has no support yet; the request is
+https://github.com/ggml-org/llama.cpp/issues/29922 (open, no PR at the time of writing).
+DROP THIS PATCH as soon as upstream registers the architecture -- check on every bump with
+`git grep -n kolibri src/llama-arch.cpp` in the new llama.cpp tag.
+
+Architecture (from Aleph Alpha's own vLLM implementation, the reference used here):
+  - GQA attention with per-head q/k RMSNorm. config.layer_types interleaves sliding-window
+    layers, which use (NEOX) RoPE, with full-attention layers that have no positional encoding.
+  - Sandwich norms: input norm -> attention -> post-attention norm -> residual, then
+    pre-FFN norm -> routed MoE + one ungated shared expert -> post-FFN norm -> residual.
+  - Router: top-k selected on (logits + expert_bias), experts weighted by the unbiased
+    sigmoid(logits), renormalized only if norm_topk_prob (off in Kolibri-1). This is NOT
+    DeepSeek-V3's sigmoid router (selection on sigmoid(logits) + bias), which picks other
+    experts as soon as the bias is non-zero -- so the graph builds the selection itself and
+    hands it to build_moe_ffn (selected_experts_in); build_moe_ffn itself is unchanged.
+
+What the patch touches: the arch name "kolibri1" (llama-arch.{h,cpp}), the model mapping and
+NEOX rope type (llama-model.cpp), the model struct (models/models.h), the new
+src/models/kolibri1.cpp, and the "kolibri1" pre-tokenizer name mapped to Qwen2's
+(llama-vocab.cpp). No converter or gguf-py change: this project only loads GGUFs.
+
+Both published GGUF dialects load. The two community converters disagree on metadata, and
+each community runtime rejects the other's files:
+  - expert_gating_func: 2 (sigmoid) from the AFMoE-based converter, 5 ("sigmoid_logit_add",
+    a value only the Qwen3-MoE-based converter's patch defines) from the other one, or
+    absent. All three mean the same router, which is a property of the architecture.
+  - tokenizer.ggml.pre: "qwen2" or "kolibri1"; the Qwen3-MoE-based runtime registers the
+    latter, the AFMoE-based one does not (llama.cpp rejects an unknown pre-tokenizer).
+  - expert_weights_norm, expert_shared_count and output.weight are optional here.
+
+Known places (all read while writing this patch, 2026-10-06):
+  - Request:   https://github.com/ggml-org/llama.cpp/issues/29922
+  - Model:     https://huggingface.co/Aleph-Alpha/Kolibri-1 (and Kolibri-1-BF16)
+  - Reference: https://github.com/Aleph-Alpha/aleph-alpha-inference, aleph_alpha_inference/
+               kolibri1.py at 049a6a7 (Apache-2.0, Copyright 2026 Aleph Alpha GmbH) -- the
+               specification this patch follows; its tests/test_kolibri1.py pins the router.
+  - AFMoE-based port by Eliasfpv28, base llama.cpp edd6e2bbd (b11378):
+               https://huggingface.co/Eliasfpv28/Kolibri-1-Q3_K_S-GGUF, runtime-source/
+               kolibri1-runtime.patch (new additions Apache-2.0, llama.cpp-derived parts MIT).
+               Source of the graph-side router (selection built outside build_moe_ffn).
+               Its runtime is also what https://huggingface.co/InsidiousFiddler/Kolibri-1-GGUF
+               points to.
+  - Qwen3-MoE-based port, base llama.cpp 836d571 (b11381), as carried in
+               https://github.com/mjwsolo/localcode/pull/101 (patches/0006-kolibri1.patch,
+               "community patch"). https://huggingface.co/Hob-forge/Kolibri-1-GGUF publishes
+               GGUFs and a kolibri1-llama.cpp.patch (MIT) for the same base commit whose model
+               card describes the same design (a new gating mode); that file itself could not be
+               fetched from here, so it is not verified to be byte-identical. Source of the
+               loader (optional keys, tied-output fallback, swa rope base) and of the graph layout.
+  - Independent effort under the name "kolibri" (not "kolibri1"), whose GGUFs this patch
+               does not load: https://github.com/CWBudde/kolibri-llama-cpp,
+               https://github.com/CWBudde/llama.cpp/pull/7
+
+Verification in java-llama.cpp: src/test/cpp/test_kolibri1.cpp builds tiny random Kolibri-1
+GGUFs in both dialects, runs them through the real library and compares every logit with an
+independent float reference written from the vLLM implementation above.
+
+diff --git a/src/llama-arch.cpp b/src/llama-arch.cpp
+index eea2ef589..638d73c4b 100644
+--- a/src/llama-arch.cpp
++++ b/src/llama-arch.cpp
+@@ -117,6 +117,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
+     { LLM_ARCH_DOTS3NOTE,        "dots3note"        },
+     { LLM_ARCH_ARCEE,            "arcee"            },
+     { LLM_ARCH_AFMOE,            "afmoe"            },
++    { LLM_ARCH_KOLIBRI1,         "kolibri1"         },
+     { LLM_ARCH_LAGUNA,           "laguna"           },
+     { LLM_ARCH_ERNIE4_5,         "ernie4_5"         },
+     { LLM_ARCH_ERNIE4_5_MOE,     "ernie4_5-moe"     },
+diff --git a/src/llama-arch.h b/src/llama-arch.h
+index c8abee234..6a235d2b1 100644
+--- a/src/llama-arch.h
++++ b/src/llama-arch.h
+@@ -122,6 +122,7 @@ enum llm_arch {
+     LLM_ARCH_DOTS3NOTE,
+     LLM_ARCH_ARCEE,
+     LLM_ARCH_AFMOE,
++    LLM_ARCH_KOLIBRI1,
+     LLM_ARCH_LAGUNA,
+     LLM_ARCH_ERNIE4_5,
+     LLM_ARCH_ERNIE4_5_MOE,
+diff --git a/src/llama-model.cpp b/src/llama-model.cpp
+index 608285d5c..03150375d 100644
+--- a/src/llama-model.cpp
++++ b/src/llama-model.cpp
+@@ -276,6 +276,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
+             return new llama_model_arcee(params);
+         case LLM_ARCH_AFMOE:
+             return new llama_model_afmoe(params);
++        case LLM_ARCH_KOLIBRI1:
++            return new llama_model_kolibri1(params);
+         case LLM_ARCH_LAGUNA:
+             return new llama_model_laguna(params);
+         case LLM_ARCH_ERNIE4_5:
+@@ -3254,6 +3256,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
+         case LLM_ARCH_COGVLM:
+         case LLM_ARCH_PANGU_EMBED:
+         case LLM_ARCH_AFMOE:
++        case LLM_ARCH_KOLIBRI1:
+         case LLM_ARCH_LAGUNA:
+         case LLM_ARCH_QWEN3NEXT:
+         case LLM_ARCH_MIMO2:
+diff --git a/src/llama-vocab.cpp b/src/llama-vocab.cpp
+index de20c757f..5b54a31bf 100644
+--- a/src/llama-vocab.cpp
++++ b/src/llama-vocab.cpp
+@@ -2376,7 +2376,8 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
+                     tokenizer_pre == "qwen2" ||
+                     tokenizer_pre == "deepseek-r1-qwen" ||
+                     tokenizer_pre == "kormo" ||
+-                    tokenizer_pre == "f2llmv2") {
++                    tokenizer_pre == "f2llmv2" ||
++                    tokenizer_pre == "kolibri1") {
+                 pre_type = LLAMA_VOCAB_PRE_TYPE_QWEN2;
+                 clean_spaces = false;
+             } else if (
+diff --git a/src/models/kolibri1.cpp b/src/models/kolibri1.cpp
+new file mode 100644
+index 000000000..fb52a7a4b
+--- /dev/null
++++ b/src/models/kolibri1.cpp
+@@ -0,0 +1,237 @@
++#include "models.h"
++
++// Aleph Alpha Kolibri 1 (https://huggingface.co/Aleph-Alpha/Kolibri-1), a German/English reasoning MoE.
++// Reference: aleph_alpha_inference/kolibri1.py (https://github.com/Aleph-Alpha/aleph-alpha-inference, 049a6a7).
++//
++//  - attention: GQA with per-head q/k RMSNorm; layer_types interleave sliding-window layers, which use
++//    (NEOX) RoPE, with full-attention layers, which use no positional encoding at all (RNoPE)
++//  - sandwich norms: input norm -> attention -> post-attention norm -> residual,
++//                    pre-FFN norm -> MoE + shared expert -> post-FFN norm -> residual
++//  - every layer is MoE plus one ungated shared expert, added to the routed output
++//  - router: top-k is selected on (logits + expert_bias) and the experts are weighted by the *unbiased*
++//    sigmoid(logits), renormalized only if norm_topk_prob is set (Kolibri 1 ships it off). This is not
++//    DeepSeek-V3's sigmoid router, which selects on sigmoid(logits) + bias -- that one picks different
++//    experts as soon as the bias is non-zero, so the selection is built here and handed to build_moe_ffn.
++//
++// Two community converters produced the published GGUFs, and they disagree on metadata; both load:
++//  - expert_gating_func: 2 (sigmoid) from the AFMoE-based converter, 5 ("sigmoid_logit_add", a value that
++//    exists only in the other converter's patch) from the Qwen3-MoE-based one, or absent. The routing is a
++//    property of the architecture, so the value is only checked, never used to pick another router.
++//  - tokenizer.ggml.pre: "qwen2" or "kolibri1" (llama-vocab.cpp maps both to the Qwen2 pre-tokenizer).
++//  - expert_weights_norm and output.weight are optional (defaults: no renormalization, tied embeddings).
++
++void llama_model_kolibri1::load_arch_hparams(llama_model_loader & ml) {
++    ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,       hparams.f_norm_rms_eps);
++    ml.get_key_or_arr(LLM_KV_EXPERT_FEED_FORWARD_LENGTH, hparams.n_ff_exp_arr, hparams.n_layer_all);
++    ml.get_key(LLM_KV_EXPERT_SHARED_FEED_FORWARD_LENGTH, hparams.n_ff_shexp);
++    ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW,          hparams.n_swa);
++
++    hparams.n_expert_shared = 1;
++    ml.get_key(LLM_KV_EXPERT_SHARED_COUNT,  hparams.n_expert_shared,     false);
++    ml.get_key(LLM_KV_EXPERT_WEIGHTS_NORM,  hparams.expert_weights_norm, false);
++
++    uint32_t gating_func = LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID;
++    ml.get_key(LLM_KV_EXPERT_GATING_FUNC, gating_func, false);
++    if (gating_func != LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID && gating_func != 5) {
++        throw std::runtime_error(format("kolibri1: unexpected expert_gating_func %u (expected 2 or 5)", gating_func));
++    }
++    // what print_info reports; the selection on logits + bias is built in the graph
++    hparams.expert_gating_func = LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID;
++
++    if (hparams.n_swa == 0) {
++        throw std::runtime_error("kolibri1: sliding_window must be > 0");
++    }
++    if (hparams.n_expert_shared != 1 || hparams.n_ff_shexp == 0) {
++        throw std::runtime_error(format("kolibri1: expected one shared expert, got %u of length %u",
++                    hparams.n_expert_shared, hparams.n_ff_shexp));
++    }
++
++    // the converters write the exact per-layer pattern from config.layer_types; 4 sliding + 1 full otherwise
++    hparams.swa_type = LLAMA_SWA_TYPE_STANDARD;
++    load_swa_pattern(ml, 5);
++
++    // only the sliding-window layers use RoPE, with the model's single rope_theta
++    hparams.rope_freq_base_train_swa  = hparams.rope_freq_base_train;
++    hparams.rope_freq_scale_train_swa = hparams.rope_freq_scale_train;
++    ml.get_key(LLM_KV_ROPE_FREQ_BASE_SWA, hparams.rope_freq_base_train_swa, false);
++
++    type = LLM_TYPE_UNKNOWN;
++}
++
++void llama_model_kolibri1::load_arch_tensors(llama_model_loader &) {
++    LLAMA_LOAD_LOCALS;
++
++    if (n_expert == 0 || n_expert_used == 0) {
++        throw std::runtime_error("kolibri1: n_expert and n_expert_used must be > 0");
++    }
++
++    tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
++
++    output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
++    output      = create_tensor(tn(LLM_TENSOR_OUTPUT,      "weight"), {n_embd, n_vocab}, TENSOR_NOT_REQUIRED);
++    if (output == NULL) {
++        output = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, TENSOR_DUPLICATED);
++    }
++
++    const int64_t n_ff_exp   = hparams.n_ff_exp();
++    const int64_t n_ff_shexp = hparams.n_ff_shexp;
++
++    for (int i = 0; i < n_layer; ++i) {
++        auto & layer = layers[i];
++
++        layer.attn_norm      = create_tensor(tn(LLM_TENSOR_ATTN_NORM,      "weight", i), {n_embd}, 0);
++        layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
++
++        create_tensor_qkv(layer, i, n_embd, n_embd_head_k * n_head, n_embd_k_gqa, n_embd_v_gqa, 0);
++        layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), {n_embd_head_k * n_head, n_embd}, 0);
++
++        layer.attn_q_norm = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM, "weight", i), {n_embd_head_k}, 0);
++        layer.attn_k_norm = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM, "weight", i), {n_embd_head_k}, 0);
++
++        layer.ffn_norm      = create_tensor(tn(LLM_TENSOR_FFN_NORM,      "weight", i), {n_embd}, 0);
++        layer.ffn_post_norm = create_tensor(tn(LLM_TENSOR_FFN_POST_NORM, "weight", i), {n_embd}, 0);
++
++        layer.ffn_gate_inp    = create_tensor(tn(LLM_TENSOR_FFN_GATE_INP,    "weight", i), {n_embd, n_expert}, 0);
++        layer.ffn_exp_probs_b = create_tensor(tn(LLM_TENSOR_FFN_EXP_PROBS_B, "bias",   i), {n_expert}, 0);
++
++        layer.ffn_gate_exps = create_tensor(tn(LLM_TENSOR_FFN_GATE_EXPS, "weight", i), {  n_embd, n_ff_exp, n_expert}, 0);
++        layer.ffn_down_exps = create_tensor(tn(LLM_TENSOR_FFN_DOWN_EXPS, "weight", i), {n_ff_exp,   n_embd, n_expert}, 0);
++        layer.ffn_up_exps   = create_tensor(tn(LLM_TENSOR_FFN_UP_EXPS,   "weight", i), {  n_embd, n_ff_exp, n_expert}, 0);
++
++        layer.ffn_gate_shexp = create_tensor(tn(LLM_TENSOR_FFN_GATE_SHEXP, "weight", i), {    n_embd, n_ff_shexp}, 0);
++        layer.ffn_down_shexp = create_tensor(tn(LLM_TENSOR_FFN_DOWN_SHEXP, "weight", i), {n_ff_shexp,     n_embd}, 0);
++        layer.ffn_up_shexp   = create_tensor(tn(LLM_TENSOR_FFN_UP_SHEXP,   "weight", i), {    n_embd, n_ff_shexp}, 0);
++    }
++}
++
++std::unique_ptr<llm_graph_context> llama_model_kolibri1::build_arch_graph(const llm_graph_params & params) const {
++    return std::make_unique<graph>(*this, params);
++}
++
++llama_model_kolibri1::graph::graph(const llama_model & model, const llm_graph_params & params) : llm_graph_context(params) {
++    const int64_t n_embd_head = hparams.n_embd_head_v();
++    GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
++
++    ggml_tensor * cur;
++    ggml_tensor * inpL = build_inp_embd(model.tok_embd);
++
++    ggml_tensor * inp_pos     = build_inp_pos();
++    auto        * inp_attn    = build_attn_inp_kv_iswa();
++    ggml_tensor * inp_out_ids = build_inp_out_ids();
++
++    const float kq_scale = 1.0f/sqrtf(float(n_embd_head));
++
++    for (int il = 0; il < n_layer; ++il) {
++        const auto & layer = model.layers[il];
++
++        ggml_tensor * inpSA = inpL;
++
++        cur = build_norm(inpL, layer.attn_norm, NULL, LLM_NORM_RMS, il);
++        cb(cur, "attn_norm", il);
++
++        // self-attention
++        {
++            auto [Qcur, Kcur, Vcur] = build_qkv(layer, cur, n_embd_head, n_head, n_head_kv, il);
++
++            Qcur = build_norm(Qcur, layer.attn_q_norm, NULL, LLM_NORM_RMS, il);
++            Kcur = build_norm(Kcur, layer.attn_k_norm, NULL, LLM_NORM_RMS, il);
++            cb(Qcur, "Qcur_normed", il);
++            cb(Kcur, "Kcur_normed", il);
++
++            // sliding-window layers: RoPE; full-attention layers: no positional encoding
++            if (hparams.is_swa(il)) {
++                const float freq_base_l  = model.get_rope_freq_base (cparams, il);
++                const float freq_scale_l = model.get_rope_freq_scale(cparams, il);
++
++                Qcur = ggml_rope_ext(ctx0, Qcur, inp_pos, nullptr,
++                        n_rot, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,
++                        ext_factor, attn_factor, beta_fast, beta_slow);
++                Kcur = ggml_rope_ext(ctx0, Kcur, inp_pos, nullptr,
++                        n_rot, rope_type, n_ctx_orig, freq_base_l, freq_scale_l,
++                        ext_factor, attn_factor, beta_fast, beta_slow);
++                cb(Qcur, "Qcur_rope", il);
++                cb(Kcur, "Kcur_rope", il);
++            }
++
++            cur = build_attn(inp_attn,
++                    layer.wo, NULL, layer.wo_s,
++                    Qcur, Kcur, Vcur, nullptr, nullptr, nullptr, kq_scale, il);
++            cb(cur, "attn_out", il);
++        }
++
++        cur = build_norm(cur, layer.attn_post_norm, NULL, LLM_NORM_RMS, il);
++        cb(cur, "attn_post_norm", il);
++
++        if (il == n_layer - 1 && inp_out_ids) {
++            cur   = ggml_get_rows(ctx0,   cur, inp_out_ids);
++            inpSA = ggml_get_rows(ctx0, inpSA, inp_out_ids);
++        }
++
++        ggml_tensor * ffn_inp = ggml_add(ctx0, cur, inpSA);
++        cb(ffn_inp, "ffn_inp", il);
++
++        // HF "post_attention_layernorm" is the pre-FFN norm here
++        cur = build_norm(ffn_inp, layer.ffn_norm, NULL, LLM_NORM_RMS, il);
++        cb(cur, "ffn_norm", il);
++
++        // router: select on logits + expert_bias, weight by the unbiased sigmoid(logits). The reference
++        // computes the logits in fp32 (GateLinear out_dtype=float32), and the selection is sensitive to it:
++        // the biases reach ~20, so keep both the accumulation and the activations at F32 on every backend.
++        ggml_tensor * logits = build_lora_mm(layer.ffn_gate_inp, cur); // [n_expert, n_tokens]
++        ggml_prec_set_acc(logits, GGML_PREC_F32);
++        ggml_prec_set_src(logits, GGML_PREC_F32, 1);
++        cb(logits, "ffn_moe_logits", il);
++
++        ggml_tensor * selection = ggml_add(ctx0, logits, layer.ffn_exp_probs_b);
++        cb(selection, "ffn_moe_logits_biased", il);
++
++        ggml_tensor * selected = ggml_argsort_top_k(ctx0, selection, n_expert_used); // [n_expert_used, n_tokens]
++
++        ggml_tensor * moe_out = build_moe_ffn(cur,
++                layer.ffn_gate_inp,
++                layer.ffn_up_exps,
++                layer.ffn_gate_exps,
++                layer.ffn_down_exps,
++                nullptr, // the bias already went into the selection above
++                n_expert, n_expert_used,
++                LLM_FFN_SILU,
++                hparams.expert_weights_norm,
++                0.0f, // no routed scaling factor
++                LLAMA_EXPERT_GATING_FUNC_TYPE_SIGMOID,
++                il,
++                logits,
++                nullptr, nullptr, nullptr, nullptr,
++                selected);
++        cb(moe_out, "ffn_moe_out", il);
++
++        ggml_tensor * ffn_shexp = build_ffn(cur,
++                layer.ffn_up_shexp,   NULL, NULL,
++                layer.ffn_gate_shexp, NULL, NULL,
++                layer.ffn_down_shexp, NULL, NULL,
++                NULL,
++                LLM_FFN_SILU, LLM_FFN_PAR, il);
++        cb(ffn_shexp, "ffn_shexp", il);
++
++        cur = ggml_add(ctx0, moe_out, ffn_shexp);
++        cb(cur, "ffn_out", il);
++
++        cur = build_norm(cur, layer.ffn_post_norm, NULL, LLM_NORM_RMS, il);
++        cb(cur, "ffn_post_norm", il);
++
++        cur = ggml_add(ctx0, cur, ffn_inp);
++        cur = build_cvec(cur, il);
++        cb(cur, "l_out", il);
++
++        inpL = cur;
++    }
++
++    cur = build_norm(inpL, model.output_norm, NULL, LLM_NORM_RMS, -1);
++    cb(cur, "result_norm", -1);
++    res->t_embd = cur;
++
++    cur = build_lora_mm(model.output, cur, model.output_s);
++    cb(cur, "result_output", -1);
++    res->t_logits = cur;
++
++    ggml_build_forward_expand(gf, cur);
++}
+diff --git a/src/models/models.h b/src/models/models.h
+index 023ed3021..84eff7e97 100644
+--- a/src/models/models.h
++++ b/src/models/models.h
+@@ -1972,6 +1972,18 @@ struct llama_model_afmoe : public llama_model_base {
+ };
+ 
+ 
++struct llama_model_kolibri1 : public llama_model_base {
++    llama_model_kolibri1(const struct llama_model_params & params) : llama_model_base(params) {}
++    void load_arch_hparams(llama_model_loader & ml) override;
++    void load_arch_tensors(llama_model_loader & ml) override;
++
++    struct graph : public llm_graph_context {
++        graph(const llama_model & model, const llm_graph_params & params);
++    };
++
++    std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
++};
++
+ struct llama_model_laguna : public llama_model_base {
+     llama_model_laguna(const struct llama_model_params & params) : llama_model_base(params) {}
+     void load_arch_hparams(llama_model_loader & ml) override;

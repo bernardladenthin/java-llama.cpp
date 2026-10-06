@@ -29,6 +29,7 @@ cuda13-windows-x86-64,Windows/x86_64/cuda13,jllama.dll,no
 vulkan-linux-x86-64,Linux/x86_64/vulkan,libjllama.so,no
 vulkan-linux-aarch64,Linux/aarch64/vulkan,libjllama.so,no
 vulkan-windows-x86-64,Windows/x86_64/vulkan,jllama.dll,no
+vulkan-windows-aarch64,Windows/aarch64/vulkan,jllama.dll,no
 opencl-android-aarch64,Linux-Android/aarch64/opencl,libjllama.so,no
 opencl-windows-x86-64,Windows/x86_64/opencl,jllama.dll,no
 opencl-windows-aarch64,Windows/aarch64/opencl,jllama.dll,no

@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.List;
 import net.ladenthin.llama.ClaudeGenerated;
 import net.ladenthin.llama.args.CacheType;
+import net.ladenthin.llama.args.DraftSampling;
 import net.ladenthin.llama.args.GpuSplitMode;
 import net.ladenthin.llama.args.LazyMode;
 import net.ladenthin.llama.args.MiroStat;
@@ -763,5 +764,21 @@ public class ModelParametersTest {
     public void testSetLazyModeOn() {
         ModelParameters p = new ModelParameters().setLazyMode(LazyMode.ON);
         assertThat(p.parameters.get("--lazy-mode"), is("on"));
+    }
+
+    // -------------------------------------------------------------------------
+    // setDraftSampling (llama.cpp b11368)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testSetDraftSamplingGreedy() {
+        ModelParameters p = new ModelParameters().setDraftSampling(DraftSampling.GREEDY);
+        assertThat(p.parameters.get("--spec-draft-sampling"), is("greedy"));
+    }
+
+    @Test
+    public void testSetDraftSamplingProbabilistic() {
+        ModelParameters p = new ModelParameters().setDraftSampling(DraftSampling.PROBABILISTIC);
+        assertThat(p.parameters.get("--spec-draft-sampling"), is("probabilistic"));
     }
 }

@@ -1228,6 +1228,26 @@ SPDX-License-Identifier: MIT
 								</configuration>
 							</execution>
 							<execution>
+								<id>natives-vulkan-windows-aarch64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>vulkan-windows-aarch64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/aarch64/vulkan/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.vulkan_windows_aarch64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
 								<id>natives-opencl-android-aarch64</id>
 								<phase>package</phase>
 								<goals>

@@ -17,10 +17,10 @@ Upstream-submittable ("common : add a callback sink to common_log for embedding
 hosts"); not yet filed. Guarded by src/test/cpp/test_common_log_callback.cpp.
 
 diff --git a/common/log.cpp b/common/log.cpp
-index 0a9a4eb..8c8ed23 100644
+index 86c98e8e6..79c8d8a2a 100644
 --- a/common/log.cpp
 +++ b/common/log.cpp
-@@ -176,6 +176,9 @@ struct common_log {
+@@ -168,6 +168,9 @@ struct common_log {
          running    = false;
          t_start    = t_us();
  
@@ -30,17 +30,17 @@ index 0a9a4eb..8c8ed23 100644
          queue.resize(capacity, common_log_entry(256));
          head = 0;
          tail = 0;
-@@ -198,6 +201,9 @@ private:
+@@ -190,6 +193,9 @@ private:
  
      FILE * file;
  
 +    common_log_callback callback;
 +    void *              callback_user_data;
 +
+     bool colors;
      bool prefix;
      bool timestamps;
-     bool running;
-@@ -212,7 +218,12 @@ private:
+@@ -205,7 +211,12 @@ private:
      bool print_entry(const common_log_entry & e) const {
          if (e.is_end) return true;
  
@@ -54,7 +54,7 @@ index 0a9a4eb..8c8ed23 100644
          if (file) {
              e.print(file);
          }
-@@ -407,6 +418,17 @@ public:
+@@ -400,6 +411,17 @@ public:
          resume();
      }
  
@@ -69,10 +69,10 @@ index 0a9a4eb..8c8ed23 100644
 +        resume();
 +    }
 +
-     void set_colors(bool colors) {
-         pause();
- 
-@@ -498,6 +520,10 @@ void common_log_set_file(struct common_log * log, const char * file) {
+     bool get_colors() const {
+         return colors;
+     }
+@@ -497,6 +519,10 @@ void common_log_set_file(struct common_log * log, const char * file) {
      log->set_file(file);
  }
  
@@ -84,10 +84,10 @@ index 0a9a4eb..8c8ed23 100644
      if (colors == LOG_COLORS_AUTO) {
          log->set_colors(tty_can_use_colors());
 diff --git a/common/log.h b/common/log.h
-index e36b094..65a0261 100644
+index e9e1f1761..5d6ede9aa 100644
 --- a/common/log.h
 +++ b/common/log.h
-@@ -97,6 +97,18 @@ void common_log_set_prefix    (struct common_log * log, bool prefix);       // w
+@@ -98,6 +98,18 @@ void common_log_set_prefix    (struct common_log * log, bool prefix);       // w
  void common_log_set_timestamps(struct common_log * log, bool timestamps);   // whether to output timestamps in the prefix
  void common_log_flush         (struct common_log * log);                    // flush all pending log messages
  

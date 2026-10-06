@@ -1011,12 +1011,18 @@ static void load_model_impl(JNIEnv *env, jobject obj, jobjectArray jparams, jobj
         params.load_progress_callback_user_data = &progress_ud;
     }
 
+    // Before load_model(), as upstream's llama_server() does -- see jllama_context::routes. It keeps a
+    // reference to jctx->params, which lives as long as it does.
+    jctx->routes = std::make_unique<server_routes>(jctx->params, jctx->server);
+
     if (!jctx->server.load_model(params)) {
         fail_load("could not load model from given file path");
         return;
     }
 
     jctx->vocab = llama_model_get_vocab(llama_get_model(jctx->server.get_llama_context()));
+    // The handlers read the model's metadata from this copy; taken once, as upstream does after a load.
+    jctx->routes->update_meta(jctx->server);
 
     LOG_INF("%s: model loaded\n", __func__);
 
@@ -1120,6 +1126,15 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_getModelMetaJson(J
             {"architecture", arch},
             {"ftype", m.model_ftype},
         };
+        // The input/output modalities of upstream's GET /models `architecture` object (b11429, #29987),
+        // built by the same helper; flattened to the top level because "architecture" above already
+        // names the GGUF architecture string. A native decision model reports ["decisions"].
+        {
+            const json modalities = server_model_architecture_json(m.has_inp_image, m.has_inp_audio, m.has_inp_video,
+                                                                   m.model_output_modalities);
+            j["input_modalities"] = modalities.at("input_modalities");
+            j["output_modalities"] = modalities.at("output_modalities");
+        }
         // Resolved default chat template (Jinja); empty when the model ships none.
         const char *chat_tmpl = mdl != nullptr ? llama_model_chat_template(mdl, /*name*/ nullptr) : nullptr;
         j["chat_template"] = chat_tmpl != nullptr ? std::string(chat_tmpl) : std::string();
@@ -1374,6 +1389,35 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleRerank(JNIEn
             env->ThrowNew(c_llama_error, e.what());
             return nullptr;
         }
+    });
+}
+
+/**
+ * `POST /v1/systemone` (llama.cpp b11361, #29818): answers typed questions about a state with a
+ * decision model. Forwarded to the upstream route handler rather than re-implemented -- the request
+ * parsing, the per-model prompt layout, the shared-prefix grouping and the answer formatting all live
+ * in upstream's `server_decision_context`, which is private to `server_context_impl` and reachable
+ * only through `server_routes`. The handler waits for the server to leave sleep itself
+ * (`create_response()`), and every failure it reports as an error body becomes a LlamaException
+ * carrying upstream's message ("This model is not a decision model", a malformed question, ...).
+ */
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleSystemOne(JNIEnv *env, jobject obj,
+                                                                              jstring jrequest) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> jstring {
+        REQUIRE_SERVER_CONTEXT(nullptr);
+        if (!jctx->routes) {
+            env->ThrowNew(c_llama_error, "systemone is not available in vocab-only mode");
+            return nullptr;
+        }
+
+        const std::function<bool()> should_stop = [jctx] { return jctx->closing.load(); };
+        const server_http_req req{{}, {}, "/v1/systemone", "", parse_jstring(env, jrequest), {}, should_stop};
+        const server_http_res_ptr res = jctx->routes->post_systemone(req);
+        if (res->status != 200) {
+            env->ThrowNew(c_llama_error, route_error_message(res->data).c_str());
+            return nullptr;
+        }
+        return utf8_to_jstring(env, res->data);
     });
 }
 

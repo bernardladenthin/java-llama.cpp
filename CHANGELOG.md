@@ -10,6 +10,33 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **Kolibri-1 support** (Aleph Alpha, architecture `kolibri1`, 78B German/English reasoning MoE) ahead of upstream
+  llama.cpp ([ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)), as the carried patch
+  `0016-model-kolibri1.patch`. It combines the two community ports and, unlike either of them, loads the GGUFs of
+  both community converters. Guarded by `test_kolibri1.cpp`, which compares tiny random models with an
+  independent reference written from Aleph Alpha's vLLM implementation. The patch is dropped once upstream adds
+  the architecture.
+- **`GpuSplitMode.TENSOR`** (`--split-mode tensor`, tensor parallelism, EXPERIMENTAL upstream). The mode
+  existed upstream before; since llama.cpp b11450 (#26610) it also works across RPC servers.
+- **Input/output modalities on `RouterModel` and `ModelMeta`** (llama.cpp b11429, #29987):
+  `getInputModalities()`, `getOutputModalities()` and `isDecisionModel()`, from upstream's new
+  `architecture` object of `GET /models` (the router computes it offline, so a decision model is
+  recognisable before its first load) and, for a loaded `LlamaModel`, from the same metadata in
+  `getModelMeta()`. Empty against a server before b11429.
+- **`vulkan-windows-aarch64` natives jar** (Windows on ARM with a Vulkan 1.2+ driver), following
+  upstream's new Windows arm64 Vulkan release (llama.cpp b11395, #29954). Built natively on
+  `windows-11-arm` with `clang-cl`; also in the `all-windows-aarch64` fat jar, where the loader tries it
+  before OpenCL and the CPU.
+- **`ModelParameters.setDraftSampling(DraftSampling)`** (`--spec-draft-sampling`, llama.cpp b11368):
+  `PROBABILISTIC` samples the speculative draft and has the target verify it by rejection sampling,
+  which accepts more drafted tokens at a temperature above zero; `GREEDY` is upstream's default. Applies
+  to a draft model and to a model's own MTP heads.
+- **Decision models: `LlamaModel.handleSystemOne(String)`**, llama.cpp's TypeSafe-compatible
+  `/v1/systemone` API (upstream b11361): typed `choice` / `score` / `noul` questions about a state,
+  answered with probabilities in one forward pass, for the decision models upstream supports (laya,
+  julia-1, lev, openjev, kev, ...). The JNI method forwards to upstream's own route handler, so the
+  request and response are exactly the HTTP endpoint's; `NativeServer` serves `POST /v1/systemone` in
+  classic and attach mode. A model that is not a decision model throws a `LlamaException`.
 - **`net.ladenthin:llama-atmosphere-agent` on Maven Central**, at the core's version: the agent's thin jar
   (with `Main-Class`), sources and javadoc, published right after the reactor. Its pom names
   `llama-platform` as a runtime dependency, so `jbang net.ladenthin:llama-atmosphere-agent:<version>`
@@ -18,6 +45,23 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **Upgraded the pinned llama.cpp from b11320 to b11457**, in 21 reviewed steps, each ending at a tag.
+  Every carried patch that broke was traced to the one upstream commit that broke it, and the step
+  containing that commit ends at the first tag after it: `0007` at #29818 (b11361) and #29895 (b11401), `0014` at #29895, `0008`
+  at #29987 (the commit just before b11429), `0015` at #26610 (b11450). Each refresh moved context only,
+  and all nine patches are still needed. The new
+  upstream features this binding now exposes are listed under *Added*; the build follows upstream's
+  CUDA CCCL pin (v3.4.3) and OpenVINO 2026.4.1. Per-step record:
+  `docs/history/llama-cpp-breaking-changes.md`.
+- **RPC protocol 8** (llama.cpp b11450, #26610): `RPC_PROTO_MAJOR_VERSION` 7 → 8. An `RpcServer` or
+  `--rpc` client of this release talks only to RPC peers of the same protocol -- upgrade the
+  `rpc-server`s and every JVM using `RpcServer` together.
+- **Slot state files from earlier releases no longer restore** (llama.cpp b11411, #28498): upstream
+  now stores the exact KV-cache rotation in a state file and rejects one restored under a mismatched
+  rotation, which bumps `LLAMA_SESSION_VERSION` 10 → 11 and `LLAMA_STATE_SEQ_VERSION` 3 → 4. A file
+  written by `LlamaModel.saveSlot` (or the server's `/slots/{id}?action=save`) with an earlier jar is
+  rejected by `restoreSlot` with upstream's generic "invalid slot save file" message; regenerate it.
+  `Session` snapshots taken and restored within one process are not affected.
 - **`ProcessRunner` rewritten on `ProcessBuilder`** (the helper `OSInfo` runs `uname` with): the timeout
   is now real -- a command that does not end in time is killed and reported as an `IOException`, where
   the old timeout overload ignored the result of `waitFor` and then blocked reading the output -- and the

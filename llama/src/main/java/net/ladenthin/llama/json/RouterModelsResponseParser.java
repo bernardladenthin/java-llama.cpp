@@ -27,6 +27,7 @@ import net.ladenthin.llama.value.RouterModel;
  *   "data": [
  *     {"id": "Qwen3-0.6B-Q4_K_M",
  *      "status": {"value": "loaded", "args": [...]},
+ *      "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]},
  *      "source": "models_dir", ...},
  *     {"id": "broken-model",
  *      "status": {"value": "unloaded", "failed": true, "exit_code": 1}, ...}
@@ -63,7 +64,9 @@ public class RouterModelsResponseParser {
      * identifier is read from {@code "id"} (falling back to {@code "name"}). The lifecycle
      * status comes from {@code status.value}; a missing status maps to
      * {@link RouterModel.Status#UNKNOWN} with an empty raw value. The failure marker is read
-     * from {@code status.failed} / {@code status.exit_code}.
+     * from {@code status.failed} / {@code status.exit_code}, the modalities from
+     * {@code architecture.input_modalities} / {@code architecture.output_modalities} (empty when
+     * absent, as from a server before llama.cpp b11429).
      *
      * @param root pre-parsed router {@code GET /models} response
      * @return list of models; empty list when no entry array is present
@@ -81,13 +84,25 @@ public class RouterModelsResponseParser {
             String id = entry.path("id").asText(entry.path("name").asText(""));
             JsonNode status = entry.path("status");
             String statusValue = status.path("value").asText("");
+            JsonNode architecture = entry.path("architecture");
             models.add(new RouterModel(
                     id,
                     RouterModel.Status.fromValue(statusValue),
                     statusValue,
                     status.path("failed").asBoolean(false),
-                    status.path("exit_code").asInt(0)));
+                    status.path("exit_code").asInt(0),
+                    strings(architecture.path("input_modalities")),
+                    strings(architecture.path("output_modalities"))));
         }
         return models;
+    }
+
+    /** The string elements of a JSON array; empty for a missing node (servers before b11429). */
+    private static List<String> strings(JsonNode array) {
+        List<String> values = new ArrayList<String>();
+        for (JsonNode value : array) {
+            values.add(value.asText());
+        }
+        return values;
     }
 }

@@ -14,7 +14,13 @@ public enum GpuSplitMode implements CliArg {
     /** Split by transformer layer across GPUs. */
     LAYER("layer"),
     /** Split by tensor row across GPUs. */
-    ROW("row");
+    ROW("row"),
+    /**
+     * Split weights and KV cache across GPUs and run them in parallel (tensor parallelism). Upstream
+     * marks it EXPERIMENTAL; since llama.cpp b11450 (#26610) it works across RPC servers as well, which
+     * then reduce their partial results with each other directly.
+     */
+    TENSOR("tensor");
 
     private final String argValue;
 

@@ -659,3 +659,25 @@ TEST(ServerMetricsToJson, CountersAreNumbersNotBooleans) {
         EXPECT_TRUE(j.at(key).is_number()) << "key is not a number: " << key;
     }
 }
+
+// ============================================================
+// route_error_message
+// ============================================================
+
+TEST(RouteErrorMessage, ReturnsTheMessageOfAnUpstreamErrorBody) {
+    // The shape server_res_generator::error() writes, e.g. post_systemone on a non-decision model.
+    const std::string body = safe_json_to_str(
+        {{"error", format_error_response("This model is not a decision model", ERROR_TYPE_NOT_SUPPORTED)}});
+    EXPECT_EQ(route_error_message(body), "This model is not a decision model");
+}
+
+TEST(RouteErrorMessage, ReturnsABodyThatIsNotJsonUnchanged) {
+    EXPECT_EQ(route_error_message("upstream crashed"), "upstream crashed");
+    EXPECT_EQ(route_error_message(""), "");
+}
+
+TEST(RouteErrorMessage, ReturnsJsonWithoutAnErrorMessageUnchanged) {
+    EXPECT_EQ(route_error_message(R"({"answers":{}})"), R"({"answers":{}})");
+    EXPECT_EQ(route_error_message(R"({"error":"plain"})"), R"({"error":"plain"})");
+    EXPECT_EQ(route_error_message(R"({"error":{"message":42}})"), R"({"error":{"message":42}})");
+}

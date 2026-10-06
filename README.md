@@ -11,7 +11,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b11320](https://img.shields.io/badge/llama.cpp-%23b11320-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11320)  
+[![llama.cpp b11457](https://img.shields.io/badge/llama.cpp-%23b11457-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11457)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.0%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -111,6 +111,8 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - **Runtime LoRA adapter control** — list the loaded adapters and change their scales at runtime without reloading the model (`getLoraAdapters()` / `setLoraAdapters(Map)`), the typed counterpart of the upstream `GET`/`POST /lora-adapters` endpoints.
 - **Text-to-speech** (`TextToSpeech`) over llama.cpp's Qwen3-TTS pipeline (`mtmd_helper::gen_audio`), returning WAV audio.
 - **In-JVM GGUF quantization** (`LlamaQuantizer`) over llama.cpp's `llama_model_quantize` — convert a GGUF to another quantization scheme without shelling out to `llama-quantize`.
+- **Kolibri-1** (Aleph Alpha's German/English reasoning MoE, architecture `kolibri1`) before upstream llama.cpp supports it, through a carried patch that loads the GGUFs of both community converters. See [Kolibri-1](#kolibri-1-aleph-alpha).
+- **Decision models** (`handleSystemOne`) — llama.cpp's TypeSafe-compatible `/v1/systemone` API: typed `choice` / `score` / `noul` questions about a state, answered with probabilities in one forward pass, no token generated (laya, julia-1, lev, openjev, kev and the later decision models). See [Decision models](#decision-models-v1systemone).
 - **Infilling** (fill-in-the-middle) for code models.
 - **Tokenize / detokenize** and **JSON-schema → grammar** conversion.
 - **Raw JSON endpoint handlers** mirroring the upstream llama.cpp HTTP server (`/completions`, `/v1/completions`, `/embeddings`, `/infill`, `/tokenize`, `/detokenize`).
@@ -232,6 +234,7 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 | `vulkan-linux-x86-64` | Vulkan | Linux x86-64 with a Vulkan 1.2+ GPU (NVIDIA / AMD / Intel) | A Vulkan runtime (`libvulkan.so.1`), which current GPU drivers install. The most portable Linux GPU option. glibc ≈ 2.39 (built on `ubuntu-latest`). |
 | `vulkan-linux-aarch64` | Vulkan | Linux aarch64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`libvulkan.so.1`). glibc ≥ 2.39. |
 | `vulkan-windows-x86-64` | Vulkan | Windows x86-64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`vulkan-1.dll`), which current GPU drivers install. The most portable Windows GPU option. |
+| `vulkan-windows-aarch64` | Vulkan | Windows on ARM (Snapdragon X) with a Vulkan 1.2+ GPU | A Vulkan runtime (`vulkan-1.dll`), which current GPU drivers install. Built natively on `windows-11-arm` with `clang-cl`, like upstream's Windows arm64 Vulkan release. |
 | `opencl-windows-x86-64` | OpenCL | Windows x86-64 with an OpenCL 2.0+ GPU | A vendor OpenCL ICD (`OpenCL.dll`). The GGML OpenCL backend is Adreno-tuned; on desktop GPUs CUDA or Vulkan are better supported. |
 | `opencl-windows-aarch64` | OpenCL (Adreno) | Windows on ARM (Snapdragon X) | The Adreno driver's OpenCL ICD (`OpenCL.dll`). |
 | `opencl-android-aarch64` | OpenCL (Adreno) | Android aarch64 with Adreno GPU | A device OpenCL ICD (`libOpenCL.so`); see also the `llama-android-opencl` AAR. |
@@ -361,6 +364,7 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.vision.model` | `models/SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Path to a vision-capable model GGUF. Any vision-capable GGUF works; CI default is `SmolVLM-500M-Instruct-Q8_0.gguf`. |
 | `net.ladenthin.llama.vision.mmproj` | `models/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Matching mmproj GGUF for the vision model. |
 | `net.ladenthin.llama.vision.image` | `llama/src/test/resources/images/test-image.jpg` (a CC-BY-4.0 / MIT-granted photo committed to the repo) | test | `MultimodalIntegrationTest` | Visual prompt image. Any png/jpeg/webp/gif works; the extension drives MIME detection. |
+| `net.ladenthin.llama.decision.model` | unset (test self-skips) | test | `SystemOneIntegrationTest` | Path to a decision model GGUF (laya, julia-1, lev, openjev, kev, ...) for the `/v1/systemone` tests of `LlamaModel.handleSystemOne`; upstream tests with `ggml-org/tinylaya-for-testing-gguf`. Without it only the rejection of a non-decision model runs. |
 | `net.ladenthin.llama.audio.model` | unset (test self-skips) | test | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | Path to an audio-input model GGUF (e.g. Ultravox, Qwen2.5-Omni). |
 | `net.ladenthin.llama.audio.mmproj` | unset (test self-skips) | test | `AudioInputIntegrationTest` | Matching audio mmproj (encoder) GGUF. |
 | `net.ladenthin.llama.audio.input` | `src/test/resources/audios/sample.wav` (committed) | test | `AudioInputIntegrationTest` | `.wav`/`.mp3` audio prompt clip; the extension drives format detection. |
@@ -612,6 +616,56 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
     List<float[]> embeddings = model.embed(Arrays.asList("First sentence", "Second sentence"));
 }
 ```
+
+### Kolibri-1 (Aleph Alpha)
+
+[Kolibri-1](https://huggingface.co/Aleph-Alpha/Kolibri-1) is Aleph Alpha's 78B-parameter Mixture-of-Experts
+reasoning model for German and English (about 3.5B parameters active per token, Apache-2.0). Upstream llama.cpp
+does not support its architecture yet ([ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)),
+so this library carries it as a patch (`llama/patches/0016-model-kolibri1.patch`) until upstream does. It loads the
+community GGUFs of both published converters -- e.g. [Hob-forge/Kolibri-1-GGUF](https://huggingface.co/Hob-forge/Kolibri-1-GGUF)
+and [Eliasfpv28/Kolibri-1-Q3_K_S-GGUF](https://huggingface.co/Eliasfpv28/Kolibri-1-Q3_K_S-GGUF) -- which the two
+community llama.cpp patches cannot each load from the other. The embedded chat template handles reasoning and
+Hermes-style tool calls; for a split GGUF, point the model path at the first part.
+
+```java
+ModelParameters params = new ModelParameters()
+        .setModel("/models/Kolibri-1-Q4_K_M.gguf")
+        .setCtxSize(32768)
+        .enableJinja();
+try (LlamaModel model = new LlamaModel(params)) {
+    ChatResponse answer = model.chat(ChatRequest.empty()
+            .appendMessage("user", "Warum ist der Himmel blau?"));
+}
+```
+
+The model is large (the Q4_K_M file is 47.5 GB) and runs from system RAM on the CPU, or partly offloaded to a
+GPU. The architecture is checked numerically against Aleph Alpha's reference on tiny random models in every C++
+test run; the real model was not run in this project's CI, and the GPU backends are untested for it.
+
+### Decision models (`/v1/systemone`)
+
+A decision model answers typed questions about a state without generating text: each question is
+evaluated in one forward pass and returns probabilities. `handleSystemOne` takes and returns
+llama.cpp's TypeSafe-compatible `/v1/systemone` JSON, served by the upstream handler itself (the full
+request/response description is in upstream's `tools/server/README.md`). The native server serves the
+same endpoint at `POST /v1/systemone`, in attach mode too.
+
+```java
+try (LlamaModel model = new LlamaModel(new ModelParameters().setModel("/path/to/laya.gguf"))) {
+    String answers = model.handleSystemOne("{"
+            + "\"state\": \"I was charged twice for my order and nobody replied.\","
+            + "\"questions\": {"
+            + "  \"route\":   {\"type\": \"choice\", \"instructions\": \"Which team?\","
+            + "                \"criteria\": {\"billing\": null, \"shipping\": null}},"
+            + "  \"urgency\": {\"type\": \"score\", \"instructions\": \"How urgent?\","
+            + "                \"criteria\": [\"can wait\", \"today\", \"right now\"]},"
+            + "  \"angry\":   {\"type\": \"noul\", \"instructions\": \"Is the customer angry?\"}}}");
+    // {"answers": {"route": {"choice": "billing", "probabilities": {...}, ...}, ...}, "usage": {...}}
+}
+```
+
+A model that is not a decision model throws a `LlamaException` ("This model is not a decision model").
 
 ### Runtime LoRA adapter control
 
@@ -969,9 +1023,12 @@ client.unloadModel("Qwen3-0.6B-Q4_K_M");                 // POST /models/unload
 ```
 
 `RouterModel` carries the identifier, the lifecycle status
-(`UNLOADED`/`LOADING`/`LOADED`/`SLEEPING`/`DOWNLOADING`/`DOWNLOADED`), and the router's
-failed-worker marker. Chat requests then select a model per request via the standard
-`"model"` field on `POST /v1/chat/completions`.
+(`UNLOADED`/`LOADING`/`LOADED`/`SLEEPING`/`DOWNLOADING`/`DOWNLOADED`), the router's
+failed-worker marker, and the model's input/output modalities (`getInputModalities()`,
+`getOutputModalities()`), which the router computes without loading the model: `isDecisionModel()`
+picks out a [decision model](#decision-models-v1systemone) for `/v1/systemone` before its first load.
+A loaded `LlamaModel` reports the same through `getModelMeta()`. Chat requests then select a model per
+request via the standard `"model"` field on `POST /v1/chat/completions`.
 
 Against a router started with `--api-key`, pass the key — it is sent as
 `Authorization: Bearer <key>` on every call. All of them need it: `/models/load` and

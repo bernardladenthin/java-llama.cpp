@@ -225,7 +225,8 @@ class RepositoryTest(unittest.TestCase):
         out = subprocess.run([sys.executable, cli, "fatjar-targets"], capture_output=True, text=True, check=True)
         self.assertEqual(out.stdout.split(), ["linux-aarch64", "linux-x86-64", "windows-aarch64", "windows-x86-64"])
         out = subprocess.run([sys.executable, cli, "pom"], capture_output=True, text=True, check=True)
-        self.assertEqual(out.stdout.count("<execution>"), 26)
+        rows = natives.rows(natives.read(REPO, ".github/natives.csv"))
+        self.assertEqual(out.stdout.count("<execution>"), len(rows))
         self.assertEqual(subprocess.run([sys.executable, cli, "nonsense"], capture_output=True).returncode, 2)
 
 

@@ -7,14 +7,12 @@ package net.ladenthin.llama.args;
 import java.util.Arrays;
 import java.util.Collection;
 
-public class GpuSplitModeTest extends AbstractCliArgEnumTest<GpuSplitMode> {
+public class DraftSamplingTest extends AbstractCliArgEnumTest<DraftSampling> {
 
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][] {
-            {GpuSplitMode.NONE, "none", 4},
-            {GpuSplitMode.LAYER, "layer", 4},
-            {GpuSplitMode.ROW, "row", 4},
-            {GpuSplitMode.TENSOR, "tensor", 4},
+            {DraftSampling.GREEDY, "greedy", 2},
+            {DraftSampling.PROBABILISTIC, "probabilistic", 2},
         });
     }
 }

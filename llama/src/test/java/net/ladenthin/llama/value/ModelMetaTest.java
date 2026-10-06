@@ -5,8 +5,11 @@
 package net.ladenthin.llama.value;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import net.ladenthin.llama.ClaudeGenerated;
@@ -215,5 +218,35 @@ public class ModelMetaTest {
         assertThat(meta.getEosTokenId(), is(-1));
         assertThat(meta.getEotTokenId(), is(-1));
         assertThat(meta.getMetadata("general.architecture"), is(""));
+    }
+
+    @Test
+    public void testModalitiesOfATextModel() throws Exception {
+        ModelMeta meta =
+                parse("{\"input_modalities\":[\"text\",\"image\",\"audio\"]," + "\"output_modalities\":[\"text\"]}");
+
+        assertThat(meta.getInputModalities(), contains("text", "image", "audio"));
+        assertThat(meta.getOutputModalities(), contains("text"));
+        assertThat(meta.isDecisionModel(), is(false));
+    }
+
+    @Test
+    public void testModalitiesOfADecisionModel() throws Exception {
+        ModelMeta meta = parse("{\"input_modalities\":[\"text\"],\"output_modalities\":[\"decisions\"]}");
+
+        assertThat(meta.getOutputModalities(), contains(ModelMeta.OUTPUT_MODALITY_DECISIONS));
+        assertThat(meta.isDecisionModel(), is(true));
+    }
+
+    @Test
+    public void testModalitiesAbsentAreEmptyAndUnmodifiable() throws Exception {
+        ModelMeta meta = parse("{\"n_vocab\":100}");
+
+        assertThat(meta.getInputModalities(), is(empty()));
+        assertThat(meta.getOutputModalities(), is(empty()));
+        assertThat(meta.isDecisionModel(), is(false));
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> meta.getOutputModalities().add("x"));
     }
 }

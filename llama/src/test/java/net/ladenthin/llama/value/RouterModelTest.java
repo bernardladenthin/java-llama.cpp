@@ -5,10 +5,17 @@
 package net.ladenthin.llama.value;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import net.ladenthin.llama.ClaudeGenerated;
 import org.junit.jupiter.api.Test;
 
@@ -83,5 +90,58 @@ public class RouterModelTest {
     public void toString_failedShapeIncludesExitCode() {
         RouterModel failed = new RouterModel("broken", RouterModel.Status.UNLOADED, "unloaded", true, 137);
         assertThat(failed.toString(), is("broken [unloaded, failed exit=137]"));
+    }
+
+    // -------------------------------------------------------------------------
+    // architecture modalities (llama.cpp b11429, #29987)
+    // -------------------------------------------------------------------------
+
+    private static RouterModel withModalities(List<String> input, List<String> output) {
+        return new RouterModel("m", RouterModel.Status.UNLOADED, "unloaded", false, 0, input, output);
+    }
+
+    @Test
+    public void legacyConstructorReportsNoModalities() {
+        RouterModel model = sample();
+        assertThat(model.getInputModalities(), is(empty()));
+        assertThat(model.getOutputModalities(), is(empty()));
+        assertThat(model.isDecisionModel(), is(false));
+    }
+
+    @Test
+    public void modalitiesRoundTrip() {
+        RouterModel model = withModalities(Arrays.asList("text", "image"), Collections.singletonList("text"));
+        assertThat(model.getInputModalities(), contains("text", "image"));
+        assertThat(model.getOutputModalities(), contains("text"));
+        assertThat(model.isDecisionModel(), is(false));
+    }
+
+    @Test
+    public void decisionsOutputMarksADecisionModel() {
+        RouterModel model = withModalities(Collections.singletonList("text"), Arrays.asList("text", "decisions"));
+        assertThat(model.isDecisionModel(), is(true));
+    }
+
+    @Test
+    public void modalitiesAreACopyAndUnmodifiable() {
+        List<String> input = new ArrayList<>(Collections.singletonList("text"));
+        RouterModel model = withModalities(input, Collections.singletonList("decisions"));
+        input.add("image");
+        assertThat(model.getInputModalities(), contains("text"));
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> model.getInputModalities().add("x"));
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> model.getOutputModalities().add("x"));
+    }
+
+    @Test
+    public void equals_differsPerModality() {
+        RouterModel base = withModalities(Collections.singletonList("text"), Collections.singletonList("text"));
+        assertEquals(base, withModalities(Collections.singletonList("text"), Collections.singletonList("text")));
+        assertNotEquals(base, withModalities(Arrays.asList("text", "image"), Collections.singletonList("text")));
+        assertNotEquals(
+                base, withModalities(Collections.singletonList("text"), Collections.singletonList("decisions")));
     }
 }

@@ -60,6 +60,16 @@ so everything below is genuinely still open.
   tunnel. Only worth doing if it lands upstream.
 - **RDMA transport** (`GGML_RPC_RDMA`) as its own classifier, since it needs `libibverbs` at runtime.
 - **Several clients at once.** Upstream's server serves one connection at a time.
+- **Server-to-server comm (`-sm tensor`, llama.cpp b11450) widens what a client can make the server do.**
+  #26610 lets a client tell two RPC servers to form a pair (`RPC_CMD_COMM_INIT`): the rank-0 server
+  then *listens on `0.0.0.0`* on a port the client names (`socket_t::create_server("0.0.0.0", port)`
+  in `rpc_server::comm_init`) and blocks in `accept()` until the rank-1 server connects. Two
+  consequences for the in-JVM `RpcServer`: (1) `startLocal` binds loopback only, but a local client can
+  still open a listener on every interface; (2) `close()` cannot end that wait --
+  `ggml_backend_rpc_stop_server()` shuts down the *client* socket and wakes the *main* listener, not
+  the comm listener -- so if the peer never connects, the server thread and `close()` hang. Not
+  reproduced; found reading the diff at the bump. Fix candidates for `0015`: bind the comm listener to
+  the server's own host and register it with the stop machinery so a stop also wakes it.
 
 ### Logging sink (`patches/0014`) — follow-ups
 
@@ -104,6 +114,32 @@ answered, read→write→read loop changed the file). Still open:
 - **Model recommendation table** for the agent (which local GGUFs actually complete an
   edit→build→test loop) — needs a GPU host, not CI.
 
+### NativeServer attach mode leaves a sleep callback behind (found at the b11361 bump, not reproduced)
+
+`llama_server_attach` (`patches/0007`) builds a `server_routes` on its own stack frame over the
+`LlamaModel`'s `server_context`. Its constructor registers a sleeping-state callback on the model's
+queue (`server_queue::on_sleeping_state` only appends, there is no unregister), and that callback
+captures the `server_routes`. When the attached `NativeServer` is closed, the frame returns and the
+object is gone, but the callback stays in the queue of the model, which lives on. The next time that
+model enters idle sleep, the callback runs on a destroyed object. Reachable only with a model loaded
+with `--sleep-idle-seconds` that was served by an attached `NativeServer` and then kept in use after
+the server closed. Since b11361 `LlamaModel` holds a `server_routes` of its own for its whole lifetime
+(`jllama_context::routes`, for `handleSystemOne`); the natural fix is to let attach mode serve
+*that* object instead of building a second one, which changes `llama_server_attach`'s signature in
+`0007` and `native_server.cpp`. Needs a test with sleep enabled (`IdleSleepWakeIntegrationTest` is the
+template) before the fix, to show it red first.
+
+### Router workers print the backend line onto the router's command pipe (cosmetic, since b11401)
+
+Since llama.cpp b11401 (#29895) a router child keeps its stdout for the state commands to the router
+and redirects everything else written to stdout to stderr -- but only once `llama_server()` starts.
+A JVM worker (`NativeServer.setWorkerCommand`, `patches/0008`) prints `LlamaLoader`'s
+`[jllama] using native backend '...'` line to `System.out` before that, so the router logs it as
+`unexpected output on the command pipe`. Harmless (the router warns and goes on), but misleading.
+Moving the line to `System.err` would fix it; three smoke scripts grep for it
+(`smoke-test-fatjar.sh` reads both streams, `smoke-rpc-fatjar.sh` and `smoke-natives-jars.sh` need
+checking first), so it is not a one-line change.
+
 ### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
 
 Left over from the 2026-06-20 code audit (18/18 findings fixed in PRs #258/#260, regression tests in
@@ -135,6 +171,12 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
   `/infill` applies the model's FIM tokens server-side, so low value.
 - **Multi-model registry (Java transport).** The native surface has this via router mode +
   `RouterClient`; the Java `OpenAiCompatServer` still advertises/serves a single model id.
+- **400 vs. 500 for an invalid request body.** Since llama.cpp b11337 (#29060) upstream's server
+  answers a malformed or empty embedding `"prompt"` (and any `common_json_error`) with 400. The JNI
+  layer throws a plain `LlamaException` for both, and `LlamaModelBackend` does not translate it into
+  the `IllegalArgumentException` that `completeNonStreaming` maps to 400, so `OpenAiCompatServer`
+  answers 500. A fix needs a typed signal from native (an invalid-request exception subclass, or the
+  `throw_invalid_request` JSON shape parsed on the Java side) rather than message matching.
 - **Manual real-client validation.** Server-side round-trips exist for every surface; what remains is
   pointing the actual editor clients (Copilot Ollama provider / Custom Endpoint, Claude Code, a
   Responses client) at a running server, since round-trips confirm wire shapes but not each client's
@@ -188,6 +230,19 @@ upstream-submittable verbatim**; each accepted PR (once the pin is bumped past i
 from the bump checklist. The exception is **`0003`**, a carry of upstream PR #22393, which upstream
 **closed without merging** — it is permanent and will never be droppable via a bump. (`0003` used to
 be described here as "drops automatically when that merges"; it will not.)
+
+**`0016` (Kolibri-1) is not a submission candidate but a temporary carry**: upstream will add the
+architecture itself (request [ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)).
+Drop it on the first bump whose tag registers `kolibri1` (`git grep -n kolibri src/llama-arch.cpp`),
+keep `src/test/cpp/test_kolibri1.cpp` (it compiles without the patch). Its **numerical comparisons**
+must stay green -- red there means upstream computes something else than Aleph Alpha's reference, a
+finding to report, not a test to adjust. Its **GGUF-format rows** (gating function 2 *and* 5, no gating
+key, pre-tokenizer `qwen2` *and* `kolibri1`, rejection of gating 1) follow whatever format upstream's
+converter fixes: a red row means the published GGUFs of that dialect stop loading without the patch.
+Decide that deliberately -- keep a small compatibility patch, or document that those files must be
+reconverted (and say so upstream rather than lose them silently) -- and only then move the row's
+`{gating, pre, ...}` entry to upstream's format. Open verification gaps of the carry:
+no run of the real 78B model and no GPU backend from here (see the patch header).
 
 - **`0001` Windows arg-parse embed guard** (against #24779): `common_params_parse` trusts the caller's
   argv; `common_params_parse_main()` keeps the standalone tools' UTF-8 recovery. Ship with the
