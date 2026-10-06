@@ -1,16 +1,16 @@
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
-index e129eb8e8..90d2fdc99 100644
+index 4c6052d78..cb03f239a 100644
 --- a/tools/server/server.cpp
 +++ b/tools/server/server.cpp
-@@ -89,6 +89,7 @@ int llama_server(int argc, char ** argv);
- 
+@@ -90,6 +90,7 @@ int llama_server(int argc, char ** argv);
  // to be used via CLI (argc / argv are used by router mode only)
  int llama_server(common_params & params, int argc, char ** argv);
+ int llama_server(common_params & params, int argc, char ** argv, server_child & child);
 +int llama_server_attach(int argc, char ** argv, server_context & ctx_server);
  void llama_server_terminate();
  void llama_server_terminate() {
      if (shutdown_handler) {
-@@ -137,6 +138,58 @@ static server_http_context::handler_t ex_wrapper(server_http_context::handler_t
+@@ -138,6 +139,58 @@ static server_http_context::handler_t ex_wrapper(server_http_context::handler_t
      };
  }
  
@@ -67,9 +67,9 @@ index e129eb8e8..90d2fdc99 100644
 +}
 +
  int llama_server(int argc, char ** argv) {
-     std::setlocale(LC_NUMERIC, "C");
+     server_child child;
  
-@@ -310,48 +363,7 @@ int llama_server(common_params & params, int argc, char ** argv) {
+@@ -317,48 +370,7 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
          ctx_http.del ("/models",               ex_wrapper(models_routes->del_router_models));
      }
  
@@ -119,7 +119,7 @@ index e129eb8e8..90d2fdc99 100644
  
      // resumable streaming: a child binds the local session factories, the router binds
      // proxies that resolve the owning child, see server-stream.h
-@@ -621,3 +633,91 @@ int llama_server(common_params & params, int argc, char ** argv) {
+@@ -628,3 +640,91 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
  
      return 0;
  }
