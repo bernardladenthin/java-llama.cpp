@@ -11,9 +11,10 @@ public class GpuSplitModeTest extends AbstractCliArgEnumTest<GpuSplitMode> {
 
     public static Collection<Object[]> data() {
         return Arrays.asList(new Object[][] {
-            {GpuSplitMode.NONE, "none", 3},
-            {GpuSplitMode.LAYER, "layer", 3},
-            {GpuSplitMode.ROW, "row", 3},
+            {GpuSplitMode.NONE, "none", 4},
+            {GpuSplitMode.LAYER, "layer", 4},
+            {GpuSplitMode.ROW, "row", 4},
+            {GpuSplitMode.TENSOR, "tensor", 4},
         });
     }
 }

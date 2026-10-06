@@ -60,6 +60,16 @@ so everything below is genuinely still open.
   tunnel. Only worth doing if it lands upstream.
 - **RDMA transport** (`GGML_RPC_RDMA`) as its own classifier, since it needs `libibverbs` at runtime.
 - **Several clients at once.** Upstream's server serves one connection at a time.
+- **Server-to-server comm (`-sm tensor`, llama.cpp b11450) widens what a client can make the server do.**
+  #26610 lets a client tell two RPC servers to form a pair (`RPC_CMD_COMM_INIT`): the rank-0 server
+  then *listens on `0.0.0.0`* on a port the client names (`socket_t::create_server("0.0.0.0", port)`
+  in `rpc_server::comm_init`) and blocks in `accept()` until the rank-1 server connects. Two
+  consequences for the in-JVM `RpcServer`: (1) `startLocal` binds loopback only, but a local client can
+  still open a listener on every interface; (2) `close()` cannot end that wait --
+  `ggml_backend_rpc_stop_server()` shuts down the *client* socket and wakes the *main* listener, not
+  the comm listener -- so if the peer never connects, the server thread and `close()` hang. Not
+  reproduced; found reading the diff at the bump. Fix candidates for `0015`: bind the comm listener to
+  the server's own host and register it with the stop machinery so a stop also wakes it.
 
 ### Logging sink (`patches/0014`) — follow-ups
 

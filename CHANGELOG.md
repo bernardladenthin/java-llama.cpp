@@ -10,6 +10,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`GpuSplitMode.TENSOR`** (`--split-mode tensor`, tensor parallelism, EXPERIMENTAL upstream). The mode
+  existed upstream before; since llama.cpp b11450 (#26610) it also works across RPC servers.
 - **Input/output modalities on `RouterModel` and `ModelMeta`** (llama.cpp b11429, #29987):
   `getInputModalities()`, `getOutputModalities()` and `isDecisionModel()`, from upstream's new
   `architecture` object of `GET /models` (the router computes it offline, so a decision model is
@@ -37,6 +39,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **RPC protocol 8** (llama.cpp b11450, #26610): `RPC_PROTO_MAJOR_VERSION` 7 → 8. An `RpcServer` or
+  `--rpc` client of this release talks only to RPC peers of the same protocol -- upgrade the
+  `rpc-server`s and every JVM using `RpcServer` together.
 - **Slot state files from earlier releases no longer restore** (llama.cpp b11411, #28498): upstream
   now stores the exact KV-cache rotation in a state file and rejects one restored under a mismatched
   rotation, which bumps `LLAMA_SESSION_VERSION` 10 → 11 and `LLAMA_STATE_SEQ_VERSION` 3 → 4. A file
