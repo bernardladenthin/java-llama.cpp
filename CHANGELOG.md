@@ -10,6 +10,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **Kolibri-1 support** (Aleph Alpha, architecture `kolibri1`, 78B German/English reasoning MoE) ahead of upstream
+  llama.cpp ([ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)), as the carried patch
+  `0016-model-kolibri1.patch`. It combines the two community ports and, unlike either of them, loads the GGUFs of
+  both community converters. Guarded by `test_kolibri1.cpp`, which compares tiny random models with an
+  independent reference written from Aleph Alpha's vLLM implementation. The patch is dropped once upstream adds
+  the architecture.
 - **`GpuSplitMode.TENSOR`** (`--split-mode tensor`, tensor parallelism, EXPERIMENTAL upstream). The mode
   existed upstream before; since llama.cpp b11450 (#26610) it also works across RPC servers.
 - **Input/output modalities on `RouterModel` and `ModelMeta`** (llama.cpp b11429, #29987):

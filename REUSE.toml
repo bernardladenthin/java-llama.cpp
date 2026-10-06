@@ -75,6 +75,19 @@ path = "llama/patches/**"
 SPDX-FileCopyrightText = "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>"
 SPDX-License-Identifier = "MIT"
 
+# The Kolibri-1 patch derives from two community ports (see its header): the llama.cpp-derived
+# parts are MIT, Eliasfpv28's additions Apache-2.0. Aleph Alpha's Apache-2.0 reference served as
+# the specification; no code of it is copied.
+[[annotations]]
+path = "llama/patches/0016-model-kolibri1.patch"
+precedence = "override"
+SPDX-FileCopyrightText = [
+    "2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>",
+    "2023-2026 The ggml authors",
+    "2026 Eliasfpv28 (Kolibri1 llama.cpp port)",
+]
+SPDX-License-Identifier = "MIT AND Apache-2.0"
+
 # Project logo / branding assets (binary + generated SVG, cannot carry inline SPDX
 # without corrupting the base64-embedded font). Same MIT OR Apache-2.0 dual license
 # the author ships them under in the workspace repo (the embedded Martian Mono font

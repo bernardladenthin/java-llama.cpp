@@ -231,6 +231,15 @@ from the bump checklist. The exception is **`0003`**, a carry of upstream PR #22
 **closed without merging** — it is permanent and will never be droppable via a bump. (`0003` used to
 be described here as "drops automatically when that merges"; it will not.)
 
+**`0016` (Kolibri-1) is not a submission candidate but a temporary carry**: upstream will add the
+architecture itself (request [ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)).
+Drop it on the first bump whose tag registers `kolibri1` (`git grep -n kolibri src/llama-arch.cpp`),
+keep `src/test/cpp/test_kolibri1.cpp`, and check that upstream's implementation still loads both
+community GGUF dialects the test writes (gating function 2 *and* 5, pre-tokenizer `qwen2` *and*
+`kolibri1`) -- if it accepts only one, the published GGUFs of the other converter stop loading, and
+that is worth an upstream comment rather than a silent loss. Open verification gaps of the carry:
+no run of the real 78B model and no GPU backend from here (see the patch header).
+
 - **`0001` Windows arg-parse embed guard** (against #24779): `common_params_parse` trusts the caller's
   argv; `common_params_parse_main()` keeps the standalone tools' UTF-8 recovery. Ship with the
   standalone-safe repro (synthetic argv discarded on Windows because `GetCommandLineW()` returns the

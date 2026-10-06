@@ -606,6 +606,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_tts_wav.cpp
         src/test/cpp/test_tts_params.cpp
         src/test/cpp/test_model_split.cpp
+        src/test/cpp/test_kolibri1.cpp
         src/test/cpp/test_model_flags.cpp
         src/test/cpp/test_wire_contracts.cpp
         src/test/cpp/test_rpc.cpp
