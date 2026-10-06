@@ -11,7 +11,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b11355](https://img.shields.io/badge/llama.cpp-%23b11320-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11355)  
+[![llama.cpp b11361](https://img.shields.io/badge/llama.cpp-%23b11320-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11361)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.0%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -111,6 +111,7 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - **Runtime LoRA adapter control** — list the loaded adapters and change their scales at runtime without reloading the model (`getLoraAdapters()` / `setLoraAdapters(Map)`), the typed counterpart of the upstream `GET`/`POST /lora-adapters` endpoints.
 - **Text-to-speech** (`TextToSpeech`) over llama.cpp's Qwen3-TTS pipeline (`mtmd_helper::gen_audio`), returning WAV audio.
 - **In-JVM GGUF quantization** (`LlamaQuantizer`) over llama.cpp's `llama_model_quantize` — convert a GGUF to another quantization scheme without shelling out to `llama-quantize`.
+- **Decision models** (`handleSystemOne`) — llama.cpp's TypeSafe-compatible `/v1/systemone` API: typed `choice` / `score` / `noul` questions about a state, answered with probabilities in one forward pass, no token generated (laya, julia-1, lev, openjev, kev and the later decision models). See [Decision models](#decision-models-v1systemone).
 - **Infilling** (fill-in-the-middle) for code models.
 - **Tokenize / detokenize** and **JSON-schema → grammar** conversion.
 - **Raw JSON endpoint handlers** mirroring the upstream llama.cpp HTTP server (`/completions`, `/v1/completions`, `/embeddings`, `/infill`, `/tokenize`, `/detokenize`).
@@ -361,6 +362,7 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.vision.model` | `models/SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Path to a vision-capable model GGUF. Any vision-capable GGUF works; CI default is `SmolVLM-500M-Instruct-Q8_0.gguf`. |
 | `net.ladenthin.llama.vision.mmproj` | `models/mmproj-SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Matching mmproj GGUF for the vision model. |
 | `net.ladenthin.llama.vision.image` | `llama/src/test/resources/images/test-image.jpg` (a CC-BY-4.0 / MIT-granted photo committed to the repo) | test | `MultimodalIntegrationTest` | Visual prompt image. Any png/jpeg/webp/gif works; the extension drives MIME detection. |
+| `net.ladenthin.llama.decision.model` | unset (test self-skips) | test | `SystemOneIntegrationTest` | Path to a decision model GGUF (laya, julia-1, lev, openjev, kev, ...) for the `/v1/systemone` tests of `LlamaModel.handleSystemOne`; upstream tests with `ggml-org/tinylaya-for-testing-gguf`. Without it only the rejection of a non-decision model runs. |
 | `net.ladenthin.llama.audio.model` | unset (test self-skips) | test | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | Path to an audio-input model GGUF (e.g. Ultravox, Qwen2.5-Omni). |
 | `net.ladenthin.llama.audio.mmproj` | unset (test self-skips) | test | `AudioInputIntegrationTest` | Matching audio mmproj (encoder) GGUF. |
 | `net.ladenthin.llama.audio.input` | `src/test/resources/audios/sample.wav` (committed) | test | `AudioInputIntegrationTest` | `.wav`/`.mp3` audio prompt clip; the extension drives format detection. |
@@ -612,6 +614,30 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
     List<float[]> embeddings = model.embed(Arrays.asList("First sentence", "Second sentence"));
 }
 ```
+
+### Decision models (`/v1/systemone`)
+
+A decision model answers typed questions about a state without generating text: each question is
+evaluated in one forward pass and returns probabilities. `handleSystemOne` takes and returns
+llama.cpp's TypeSafe-compatible `/v1/systemone` JSON, served by the upstream handler itself (the full
+request/response description is in upstream's `tools/server/README.md`). The native server serves the
+same endpoint at `POST /v1/systemone`, in attach mode too.
+
+```java
+try (LlamaModel model = new LlamaModel(new ModelParameters().setModel("/path/to/laya.gguf"))) {
+    String answers = model.handleSystemOne("{"
+            + "\"state\": \"I was charged twice for my order and nobody replied.\","
+            + "\"questions\": {"
+            + "  \"route\":   {\"type\": \"choice\", \"instructions\": \"Which team?\","
+            + "                \"criteria\": {\"billing\": null, \"shipping\": null}},"
+            + "  \"urgency\": {\"type\": \"score\", \"instructions\": \"How urgent?\","
+            + "                \"criteria\": [\"can wait\", \"today\", \"right now\"]},"
+            + "  \"angry\":   {\"type\": \"noul\", \"instructions\": \"Is the customer angry?\"}}}");
+    // {"answers": {"route": {"choice": "billing", "probabilities": {...}, ...}, ...}, "usage": {...}}
+}
+```
+
+A model that is not a decision model throws a `LlamaException` ("This model is not a decision model").
 
 ### Runtime LoRA adapter control
 

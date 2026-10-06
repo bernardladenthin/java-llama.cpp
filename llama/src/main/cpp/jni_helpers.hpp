@@ -52,6 +52,12 @@ struct server_response_reader;
 // ---------------------------------------------------------------------------
 struct jllama_context {
     server_context server; // value member (pimpl inside)
+    // The upstream HTTP route handlers over `server`, for endpoints this layer forwards to upstream
+    // instead of re-implementing them (`handleSystemOne` -> `post_systemone`). Constructed before
+    // `server.load_model()`, as upstream does: its constructor registers a sleeping-state callback,
+    // and upstream relies on that callback running before the server's own, which frees the model.
+    // Declared after `server`, so it is destroyed first. Null in vocab-only mode.
+    std::unique_ptr<server_routes> routes;
     std::thread worker;
     bool vocab_only = false;
     std::atomic<bool> worker_ready{false};

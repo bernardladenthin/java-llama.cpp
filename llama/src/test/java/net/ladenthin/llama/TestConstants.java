@@ -145,6 +145,14 @@ public class TestConstants {
     public static final String DEFAULT_VISION_IMAGE_PATH = resolveModelPath("src/test/resources/images/test-image.jpg");
 
     /**
+     * System property holding a path to a decision model GGUF (laya, julia-1, lev, openjev, kev, ...)
+     * for {@code SystemOneIntegrationTest}, which drives llama.cpp's {@code /v1/systemone} API. Not in
+     * the CI model set, so the decision-model half of that test self-skips when this is unset or the
+     * file is missing; upstream tests with {@code ggml-org/tinylaya-for-testing-gguf}.
+     */
+    public static final String PROP_DECISION_MODEL_PATH = LlamaSystemProperties.PREFIX + ".decision.model";
+
+    /**
      * System property holding a path to an audio-input model GGUF (e.g. Ultravox / Qwen2.5-Omni).
      * Consumed by {@code AudioInputIntegrationTest} (llama.cpp discussion #13759). The test self-skips
      * when this, the mmproj, or the audio clip is unset/missing.

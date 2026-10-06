@@ -182,7 +182,7 @@ set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b11355
+	GIT_TAG        b11361
 	PATCH_COMMAND  ${CMAKE_COMMAND}
 		-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patches
 		-DLLAMA_SRC=<SOURCE_DIR>
@@ -376,12 +376,21 @@ add_library(jllama SHARED
 # Android too and stays outside the server-models Android guard below.  jllama
 # wires its own routes and never calls g_stream_sessions.start_gc() (only the
 # standalone server.cpp main does), so the GC thread stays dormant here.
+#
+# server-decision.cpp (added upstream in b11361, #29818) implements the typed
+# decision models behind POST /v1/systemone (server_decision_context, the
+# SERVER_TASK_TYPE_DECISION prompts). server-context.cpp holds one as a member
+# and calls into it on every load, so it is mandatory for the same reason as
+# server-stream.cpp -- a missing unit is an undefined reference, latent on Linux
+# but a hard link error on macOS/ld64 and Windows/MSVC. Platform-neutral, so it
+# stays outside the Android guard too.
 target_sources(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-queue.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-task.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-schema.cpp
     ${llama.cpp_SOURCE_DIR}/tools/server/server-stream.cpp
+    ${llama.cpp_SOURCE_DIR}/tools/server/server-decision.cpp
 )
 if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
     target_sources(jllama PRIVATE
@@ -608,6 +617,7 @@ if(BUILD_TESTING)
         ${llama.cpp_SOURCE_DIR}/tools/server/server-schema.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-models.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-stream.cpp
+        ${llama.cpp_SOURCE_DIR}/tools/server/server-decision.cpp
     )
 
     target_include_directories(jllama_test PRIVATE

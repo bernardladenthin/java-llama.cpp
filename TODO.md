@@ -104,6 +104,21 @@ answered, read→write→read loop changed the file). Still open:
 - **Model recommendation table** for the agent (which local GGUFs actually complete an
   edit→build→test loop) — needs a GPU host, not CI.
 
+### NativeServer attach mode leaves a sleep callback behind (found at the b11361 bump, not reproduced)
+
+`llama_server_attach` (`patches/0007`) builds a `server_routes` on its own stack frame over the
+`LlamaModel`'s `server_context`. Its constructor registers a sleeping-state callback on the model's
+queue (`server_queue::on_sleeping_state` only appends, there is no unregister), and that callback
+captures the `server_routes`. When the attached `NativeServer` is closed, the frame returns and the
+object is gone, but the callback stays in the queue of the model, which lives on. The next time that
+model enters idle sleep, the callback runs on a destroyed object. Reachable only with a model loaded
+with `--sleep-idle-seconds` that was served by an attached `NativeServer` and then kept in use after
+the server closed. Since b11361 `LlamaModel` holds a `server_routes` of its own for its whole lifetime
+(`jllama_context::routes`, for `handleSystemOne`); the natural fix is to let attach mode serve
+*that* object instead of building a second one, which changes `llama_server_attach`'s signature in
+`0007` and `native_server.cpp`. Needs a test with sleep enabled (`IdleSleepWakeIntegrationTest` is the
+template) before the fix, to show it red first.
+
 ### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
 
 Left over from the 2026-06-20 code audit (18/18 findings fixed in PRs #258/#260, regression tests in

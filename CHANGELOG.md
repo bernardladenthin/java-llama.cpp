@@ -10,6 +10,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **Decision models: `LlamaModel.handleSystemOne(String)`**, llama.cpp's TypeSafe-compatible
+  `/v1/systemone` API (upstream b11361): typed `choice` / `score` / `noul` questions about a state,
+  answered with probabilities in one forward pass, for the decision models upstream supports (laya,
+  julia-1, lev, openjev, kev, ...). The JNI method forwards to upstream's own route handler, so the
+  request and response are exactly the HTTP endpoint's; `NativeServer` serves `POST /v1/systemone` in
+  classic and attach mode. A model that is not a decision model throws a `LlamaException`.
 - **`net.ladenthin:llama-atmosphere-agent` on Maven Central**, at the core's version: the agent's thin jar
   (with `Main-Class`), sources and javadoc, published right after the reactor. Its pom names
   `llama-platform` as a runtime dependency, so `jbang net.ladenthin:llama-atmosphere-agent:<version>`

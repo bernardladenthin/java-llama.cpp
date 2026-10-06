@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b11355**
+Current llama.cpp pinned version: **b11361**
 
 ## Natives jars: one directory per backend (`.github/natives.csv`)
 
@@ -690,7 +690,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network for the asset build; the embed step is plain cmake -P
-git clone --depth 1 --branch b11355 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b11361 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build )
 mkdir -p webui-generated /tmp/ui-gen
 cmake -DUI_SOURCE_DIR=/tmp/lc/tools/ui -DUI_BINARY_DIR=/tmp/ui-gen \
@@ -730,7 +730,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11355`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11361`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -1345,6 +1345,7 @@ below covers the model bindings:
 | `net.ladenthin.llama.tts.model` | `TtsIntegrationTest` | `Qwen3-TTS-12Hz-1.7B-Base-Q4_K_M.gguf` (any Qwen3-TTS-family model works) |
 | `net.ladenthin.llama.tts.mmproj` | `TtsIntegrationTest` | `mmproj-Qwen3-TTS-12Hz-1.7B-Base-Q8_0.gguf` |
 | `net.ladenthin.llama.train.model` | `LlamaTrainerIntegrationTest` | `stories260K.gguf` (must be **F32**) |
+| `net.ladenthin.llama.decision.model` | `SystemOneIntegrationTest` (decision-model half) | none (not in CI's set) — e.g. upstream's `ggml-org/tinylaya-for-testing-gguf` |
 | `net.ladenthin.llama.audio.model` | `AudioInputIntegrationTest` (llama.cpp discussion #13759) | none (not in CI's set) — e.g. `ultravox-v0_5-llama-3_2-1b.gguf` |
 | `net.ladenthin.llama.audio.mmproj` | `AudioInputIntegrationTest` | none — e.g. `mmproj-ultravox-v0_5-llama-3_2-1b-f16.gguf` |
 | `net.ladenthin.llama.audio.input` | `AudioInputIntegrationTest` | committed `src/test/resources/audios/sample.wav`; any `.wav`/`.mp3` |
@@ -1506,7 +1507,7 @@ If the local check passes (`BUILD SUCCESS`), the `mvn package` job in
   - The `server` package is a dedicated top layer in the ArchUnit `layeredArchitecture` rule (the only layer allowed to access the root `Api`); `noInternalJdkImports` carries an explicit exception for the supported `com.sun.net.httpserver` (the exported `jdk.httpserver` module, which `module-info.java` `requires`). See README "OpenAI-compatible HTTP server".
 
 **Native layer** (`src/main/cpp/`):
-- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp. ~1,900 lines; 34 native methods (30 `LlamaModel` + 3 `TextToSpeech` + 1 `LlamaQuantizer`) plus `JNI_OnLoad`/`JNI_OnUnload`.
+- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp. ~1,900 lines; 35 native methods (31 `LlamaModel` + 3 `TextToSpeech` + 1 `LlamaQuantizer`) plus `JNI_OnLoad`/`JNI_OnUnload`.
 - `utils.hpp` — Helper utilities (format helpers, argv stripping, token-piece serialisation).
 - `json_helpers.hpp` — Pure JSON transformation helpers (no JNI, no llama state). Independently unit-testable.
 - `jni_helpers.hpp` — JNI bridge helpers (handle management + server orchestration). Includes `json_helpers.hpp`.
@@ -1563,7 +1564,7 @@ The project C++ helpers follow a strict semantic split:
 Functions: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`,
 `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`,
 `parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk`,
-`server_metrics_to_json`.
+`server_metrics_to_json`, `route_error_message`.
 
 **`log_helpers.hpp`** — Pure log-formatting transforms.
 - Input: `ggml_log_level`, message text (`const char*`), an explicit `std::time_t` timestamp.
@@ -1627,8 +1628,8 @@ Functions with `_impl` suffix are called directly from `jllama.cpp`.
 
 An exception that escapes a native method and unwinds across the JNI boundary is **undefined
 behaviour and aborts the JVM** on most implementations. **Every `Java_*` entry point must therefore
-convert anything that escapes into a Java exception**, and there are 44 of them across four TUs —
-`jllama.cpp` (34), `native_server.cpp` (5), `rpc_bridge.cpp` (4), `train_engine.cpp` (1).
+convert anything that escapes into a Java exception**, and there are 45 of them across four TUs —
+`jllama.cpp` (35), `native_server.cpp` (5), `rpc_bridge.cpp` (4), `train_engine.cpp` (1).
 
 The mechanism is `jni_guard_impl(env, exception_class, [&]() -> Ret { … })` (`jni_helpers.hpp`,
 Layer A). It is **additive**: an entry point that already converts `std::exception` itself keeps
@@ -1765,7 +1766,8 @@ properties. That also closed a gap this file used to describe: `LlamaTrainerInte
 to `stories260K.gguf` and runs on every Java test job, so the Java → JNI → native trainer round trip
 has a runnable guard. **One** class still self-skips everywhere: `AudioInputIntegrationTest` — its
 prompt clip is committed (`src/test/resources/audios/sample.wav`), but the audio model + mmproj have no
-CI download.
+CI download. Half of `SystemOneIntegrationTest` does too (the `/v1/systemone` answers need a decision model,
+which is not in the CI set either); its rejection case runs everywhere with the draft model.
 The model set has a **single source of truth: `.github/models.csv`** (one `filename,url` row per
 model; `#` comments). Everything derives from it: the **`download-models`** job (ubuntu,
 `needs: startgate`) is the only place models are fetched from HuggingFace (one manifest-driven
@@ -1825,7 +1827,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 |------|-------|-------|
 | `src/test/cpp/test_utils.cpp` | 168 | Upstream helpers: `server_tokens`, `server_grammar_trigger`, `gen_tool_call_id`, `json_value`, `json_get_nested_values`, UTF-8 helpers, `format_response_rerank`, `format_embeddings_response_oaicompat`, `oaicompat_completion_params_parse`, `oaicompat_chat_params_parse`, `are_lora_equal`, `strip_flag_from_argv`, `token_piece_value`, `json_is_array_and_contains_numbers`, `format_oai_sse`, `format_oai_resp_sse`, `format_anthropic_sse`, `parse_lora_request`, `common_chat_parse` over malformed UTF-8 (the `ContentOnlyParseUtf8` guard, which pins upstream #29161's one-U+FFFD-per-invalid-run contract — formerly the guard for the dropped `patches/0011`) |
 | `src/test/cpp/test_server.cpp` | 206 | Upstream result types: `server_slot_stats` (the `timings` JSON payload; replaced `result_timings` in b10408), `task_params::to_json()` (incl. `dry_sequence_breakers`, `preserved_tokens`, `timings_per_token`), `completion_token_output`, `server_task_result_cmpl_partial` (non-oaicompat + `to_json_oaicompat` + logprobs + `to_json_oaicompat_chat` + `to_json_anthropic` + dispatcher), `server_task_result_cmpl_final` (non-oaicompat + `to_json_oaicompat` + `to_json_oaicompat_chat` + `to_json_oaicompat_chat_stream` + `to_json_anthropic` + `to_json_anthropic_stream` + tool_calls + dispatcher), `server_task_result_embd`, `server_task_result_rerank`, `server_task_result_metrics` (`to_metrics()` = the `/metrics` Prometheus exposition text; its `to_json()` has been unused since b10519 and returns `json{}` = JSON null), `server_task_result_slots` (`to_json()` = the `/slots` array, fed by the b10519 `SERVER_TASK_TYPE_SLOT_GET` task), `server_task_result_slot_save_load`, `server_task_result_slot_erase`, `server_task_result_apply_lora`, `server_task_result_get_lora`, `server_task_result_error`, `format_error_response`, `server_task::need_sampling()`, `server_task::n_tokens()`, `server_schema::eval_llama_cmpl_schema()` (parsing pipeline + grammar routing + error paths + per-request `dry_*` and `sse_ping_interval` field round-trips incl. hard-limit + server-default inheritance), `response_fields` projection |
-| `src/test/cpp/test_json_helpers.cpp` | 64 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json` (incl. missing/out-of-range `index` rejection), `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk`, `server_metrics_to_json` |
+| `src/test/cpp/test_json_helpers.cpp` | 67 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json` (incl. missing/out-of-range `index` rejection), `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk`, `server_metrics_to_json`, `route_error_message` |
 | `src/test/cpp/test_log_helpers.cpp` | 13 | All functions in `log_helpers.hpp`: `log_level_name`, `format_log_as_json` |
 | `src/test/cpp/test_common_log_callback.cpp` | 6 | **The runnable guard for `patches/0014`**: `common_log_set_callback()` on a private `common_log_init()` instance (never `common_log_main()`, so the process-wide logger the other tests print through is untouched) — delivery of level + bare text, no prefix/timestamp even when both are on (what `common_init()` does), clearing stops delivery, a swap drains queued entries to the *previous* sink (the property behind `LlamaModel.setLogger(format, null)` being a synchronous flush), a `--log-file` keeps being written alongside the sink, and every `ggml_log_level` passes through unchanged. The Java half (`LlamaLoggerTest`, model-free) proves the JNI trampoline on top of it. |
 | `src/test/cpp/test_jni_helpers.cpp` | 70 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock (incl. the `utf8_to_jstring_impl` byte-array string path: emoji byte-preservation, truncated-UTF-8 replace-not-throw). Seven of them pin `jni_guard_impl` — the JNI exception boundary every `Java_*` entry point runs inside — including the `catch (...)` arm that is the only backstop for a non-`std::exception` type, and its two refusals (never `ThrowNew` over a pending Java exception, never with a null class). |
@@ -1838,11 +1840,11 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 | `src/test/cpp/test_native_server_shutdown.cpp` | 3 | **The runnable guard for the shutdown-handler guard in `patches/0006`/`0007`.** Runs the real `llama_server()` in router mode over an empty `--models-dir` on an ephemeral loopback port (no model, no worker) and stops it the way `native_server.cpp` does. Pins a clean stop (exit code 0), that `llama_server_request_shutdown()` **after** the server returned is a no-op (the deterministic form of the CI `SIGSEGV` — it crashed every run before the fix), and that requests hammered from another thread while the server tears down are safe (5 rounds). Compiled on non-Android only, like `server.cpp` itself. |
 
-**Current total: 590 tests (all passing).**
+**Current total: 593 tests (all passing).**
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11355`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11361`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
