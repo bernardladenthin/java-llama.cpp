@@ -234,10 +234,14 @@ be described here as "drops automatically when that merges"; it will not.)
 **`0016` (Kolibri-1) is not a submission candidate but a temporary carry**: upstream will add the
 architecture itself (request [ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)).
 Drop it on the first bump whose tag registers `kolibri1` (`git grep -n kolibri src/llama-arch.cpp`),
-keep `src/test/cpp/test_kolibri1.cpp`, and check that upstream's implementation still loads both
-community GGUF dialects the test writes (gating function 2 *and* 5, pre-tokenizer `qwen2` *and*
-`kolibri1`) -- if it accepts only one, the published GGUFs of the other converter stop loading, and
-that is worth an upstream comment rather than a silent loss. Open verification gaps of the carry:
+keep `src/test/cpp/test_kolibri1.cpp` (it compiles without the patch). Its **numerical comparisons**
+must stay green -- red there means upstream computes something else than Aleph Alpha's reference, a
+finding to report, not a test to adjust. Its **GGUF-format rows** (gating function 2 *and* 5, no gating
+key, pre-tokenizer `qwen2` *and* `kolibri1`, rejection of gating 1) follow whatever format upstream's
+converter fixes: a red row means the published GGUFs of that dialect stop loading without the patch.
+Decide that deliberately -- keep a small compatibility patch, or document that those files must be
+reconverted (and say so upstream rather than lose them silently) -- and only then move the row's
+`{gating, pre, ...}` entry to upstream's format. Open verification gaps of the carry:
 no run of the real 78B model and no GPU backend from here (see the patch header).
 
 - **`0001` Windows arg-parse embed guard** (against #24779): `common_params_parse` trusts the caller's

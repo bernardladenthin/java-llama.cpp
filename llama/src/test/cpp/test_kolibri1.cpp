@@ -579,6 +579,12 @@ void expect_matches_reference(const Dialect &d, uint32_t seed) {
 
 } // namespace
 
+// When upstream supports Kolibri-1 and patch 0016 is dropped: the reference comparison must stay
+// green (red = upstream computes something else than Aleph Alpha's reference). The Dialect rows
+// below are GGUF format, which upstream's converter decides; a red row means GGUFs of that dialect
+// no longer load without the patch -- decide that deliberately, then move the row to upstream's
+// format and leave the reference alone.
+
 // The AFMoE-based converter's dialect: gating_func 2, pre "qwen2", an explicit output.weight.
 TEST(Kolibri1, AfmoeDialectMatchesTheReference) { expect_matches_reference({2, "qwen2", true, false, false}, 1); }
 
