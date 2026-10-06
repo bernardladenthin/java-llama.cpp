@@ -1251,7 +1251,7 @@ For the full record of upstream API breaks across version ranges (b5022 &#x2192;
 
 ### Java (Maven)
 ```bash
-mvn compile          # Compiles Java and generates JNI headers
+mvn compile          # Compiles Java (jllama.h is maintained by hand, see "The JNI exception boundary")
 mvn test             # Run all tests (requires native library and model files)
 mvn package          # Build JAR
 mvn -P assembly package  # Also build the fat jar-with-dependencies uber JAR (library + Java deps + native libs); CI builds it and uploads it in the `llama-jars` artifact
@@ -1315,7 +1315,7 @@ claims came from.
 End-to-end local workflow for running Java tests:
 
 ```bash
-# 1. Generate JNI headers (one-time per Java API change)
+# 1. Compile the Java classes (a new native method also needs its line in jllama.h, by hand)
 mvn -q compile
 
 # 2. Configure + build the native library for the current host
@@ -1442,7 +1442,7 @@ pip install "clang-format==23.1.3"
 clang-format -i src/main/cpp/*.cpp src/main/cpp/*.hpp src/test/cpp/*.cpp   # Format C++ code
 ```
 
-The generated JNI header `src/main/cpp/jllama.h` (produced by `javac -h`) is intentionally excluded.
+The JNI header `src/main/cpp/jllama.h` (originally `javac -h` output, now maintained by hand) is intentionally excluded.
 To bump the enforced version, update the pin in **both** the workflow (`CLANG_FORMAT_VERSION`) and
 this line, then reformat the whole tree with the new version in the same commit.
 
@@ -1669,6 +1669,13 @@ contract.
 
 **When you add a native method, wrap it.** The guard is not enforced by a test — a new unguarded
 entry point is invisible until something throws through it in production.
+
+**And declare it in `src/main/cpp/jllama.h` by hand.** That header is committed and maintained
+manually -- nothing regenerates it, `mvn compile` included, whatever older notes here say -- and it
+is what gives the `LlamaModel` entry points in `jllama.cpp` their C linkage (they are not inside an
+`extern "C"` block there). A method missing from it compiles and links, but under its C++-mangled
+name, so the JVM cannot find it and the first call throws `UnsatisfiedLinkError`. Caught this way
+for `handleSystemOne` at the b11361 bump, before the first build.
 
 ### Parameter Flow
 Java parameters are serialized to JSON strings and passed to native code, which deserializes them using nlohmann/json. This avoids complex JNI field mapping for the many llama.cpp parameters.

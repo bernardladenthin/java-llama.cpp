@@ -114,6 +114,13 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleRerank(JNIEn
 
 /*
  * Class:     net_ladenthin_llama_LlamaModel
+ * Method:    handleSystemOne
+ * Signature: (Ljava/lang/String;)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleSystemOne(JNIEnv *, jobject, jstring);
+
+/*
+ * Class:     net_ladenthin_llama_LlamaModel
  * Method:    applyTemplate
  * Signature: (Ljava/lang/String;)Ljava/lang/String;;
  */
