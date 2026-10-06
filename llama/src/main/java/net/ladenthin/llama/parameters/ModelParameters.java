@@ -1337,6 +1337,22 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Set how speculative decoding samples the draft ({@code --spec-draft-sampling}, llama.cpp b11368).
+     *
+     * <p>{@link DraftSampling#GREEDY}, upstream's default, drafts the argmax token at every position;
+     * {@link DraftSampling#PROBABILISTIC} samples the draft and has the target verify it by rejection
+     * sampling, which accepts more drafted tokens for a request with a temperature above zero. It
+     * applies to a draft model ({@link #setModelDraft(String)}) and to a model's own MTP heads; at
+     * temperature zero both modes behave the same.</p>
+     *
+     * @param mode the draft sampling mode
+     * @return this builder
+     */
+    public ModelParameters setDraftSampling(DraftSampling mode) {
+        return putEnum(ModelOption.SPEC_DRAFT_SAMPLING, mode);
+    }
+
+    /**
      * Set the comma-separated list of devices to use for offloading the draft model.
      *
      * @param deviceDraft comma-separated list of devices for offloading the draft model

@@ -287,6 +287,9 @@ public enum ModelOption {
     /** CLI option {@code --spec-draft-p-min}. */
     SPEC_DRAFT_P_MIN("--spec-draft-p-min"),
 
+    /** CLI option {@code --spec-draft-sampling}. */
+    SPEC_DRAFT_SAMPLING("--spec-draft-sampling"),
+
     /** CLI option {@code --split-mode}. */
     SPLIT_MODE("--split-mode"),
 

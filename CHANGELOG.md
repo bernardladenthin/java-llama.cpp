@@ -10,6 +10,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`ModelParameters.setDraftSampling(DraftSampling)`** (`--spec-draft-sampling`, llama.cpp b11368):
+  `PROBABILISTIC` samples the speculative draft and has the target verify it by rejection sampling,
+  which accepts more drafted tokens at a temperature above zero; `GREEDY` is upstream's default. Applies
+  to a draft model and to a model's own MTP heads.
 - **Decision models: `LlamaModel.handleSystemOne(String)`**, llama.cpp's TypeSafe-compatible
   `/v1/systemone` API (upstream b11361): typed `choice` / `score` / `noul` questions about a state,
   answered with probabilities in one forward pass, for the decision models upstream supports (laya,
