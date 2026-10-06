@@ -61,7 +61,7 @@ SPDX-License-Identifier: MIT
 		<!-- Checker Framework: the processor AND the checker-qual qualifiers it resolves.
 		     Both run on the build JDK and neither ships (checker-qual is provided scope), so
 		     this tracks the newest release. -->
-		<checker.version>4.2.3</checker.version>
+		<checker.version>4.3.0</checker.version>
 		<jackson.version>2.22.3</jackson.version>
 		<reactor.version>3.8.7</reactor.version>
 		<slf4j.version>2.0.20</slf4j.version>
@@ -100,7 +100,7 @@ SPDX-License-Identifier: MIT
 		<fb-contrib.version>7.7.4</fb-contrib.version>
 		<findsecbugs.version>1.14.0</findsecbugs.version>
 		<spotless.version>3.10.3</spotless.version>
-		<palantir-java-format.version>2.100.0</palantir-java-format.version>
+		<palantir-java-format.version>2.102.0</palantir-java-format.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.build.outputTimestamp>2026-09-01T07:57:45Z</project.build.outputTimestamp>
 	</properties>
@@ -206,7 +206,7 @@ SPDX-License-Identifier: MIT
 		     org.checkerframework.framework.qual.DoesNotUnrefineReceiver". Processor and
 		     qualifiers must share a major version.
 
-		     provided scope resolves both constraints at once: 4.2.3 is on the compile
+		     provided scope resolves both constraints at once: 4.3.0 is on the compile
 		     classpath where the checker needs it, and provided is excluded from consumers'
 		     transitive graph AND from the fat jar (jar-with-dependencies takes scope
 		     runtime), so no checker-qual class of any version reaches a consumer's JVM.

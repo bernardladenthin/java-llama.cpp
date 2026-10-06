@@ -65,9 +65,9 @@ SPDX-License-Identifier: MIT
 		     the java-llama.cpp reactor. Overridable, e.g. -Dllama.version=5.3.0-SNAPSHOT to try a
 		     newer core from the snapshot repository below. -->
 		<llama.version>${project.version}</llama.version>
-		<atmosphere.version>4.0.71</atmosphere.version>
-		<jline.version>4.4.6</jline.version>
-		<jetty.version>12.1.13</jetty.version>
+		<atmosphere.version>4.0.72</atmosphere.version>
+		<jline.version>4.4.7</jline.version>
+		<jetty.version>12.1.14</jetty.version>
 		<acp.version>0.18.0</acp.version>
 		<slf4j.version>2.0.20</slf4j.version>
 		<jspecify.version>1.0.1</jspecify.version>
@@ -84,7 +84,7 @@ SPDX-License-Identifier: MIT
 		<exec.plugin.version>3.6.4</exec.plugin.version>
 		<assembly.plugin.version>3.8.0</assembly.plugin.version>
 		<spotless.version>3.10.3</spotless.version>
-		<palantir-java-format.version>2.100.0</palantir-java-format.version>
+		<palantir-java-format.version>2.102.0</palantir-java-format.version>
 		<agent.main>net.ladenthin.llama.atmosphere.LocalAgent</agent.main>
 	</properties>
 
