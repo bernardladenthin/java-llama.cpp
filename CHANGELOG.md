@@ -32,6 +32,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **Slot state files from earlier releases no longer restore** (llama.cpp b11411, #28498): upstream
+  now stores the exact KV-cache rotation in a state file and rejects one restored under a mismatched
+  rotation, which bumps `LLAMA_SESSION_VERSION` 10 → 11 and `LLAMA_STATE_SEQ_VERSION` 3 → 4. A file
+  written by `LlamaModel.saveSlot` (or the server's `/slots/{id}?action=save`) with an earlier jar is
+  rejected by `restoreSlot` with upstream's generic "invalid slot save file" message; regenerate it.
+  `Session` snapshots taken and restored within one process are not affected.
 - **`ProcessRunner` rewritten on `ProcessBuilder`** (the helper `OSInfo` runs `uname` with): the timeout
   is now real -- a command that does not end in time is killed and reported as an `IOException`, where
   the old timeout overload ignored the result of `waitFor` and then blocked reading the output -- and the

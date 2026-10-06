@@ -1006,7 +1006,8 @@ public class LlamaModel implements AutoCloseable {
      * llama.cpp stamps every state file with {@code LLAMA_STATE_SEQ_VERSION} and rejects one written
      * under a different value, so a file saved by a jar built against a different
      * {@link net.ladenthin.llama.value.LlamaCppVersion#LLAMA_CPP_VERSION} may not load — b10642 bumped
-     * that constant 2&nbsp;&rarr;&nbsp;3, invalidating every file written by an earlier release. Treat
+     * that constant 2&nbsp;&rarr;&nbsp;3 and b11411 3&nbsp;&rarr;&nbsp;4, each time invalidating every file
+     * written by an earlier release. Treat
      * these files as a cache to regenerate on upgrade, never as durable storage. A rejected file
      * surfaces as a {@link net.ladenthin.llama.exception.LlamaException} whose message is upstream's
      * wrapped form, {@code "Unable to restore slot: No available space in KV cache or invalid slot
