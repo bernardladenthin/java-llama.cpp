@@ -135,6 +135,12 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
   `/infill` applies the model's FIM tokens server-side, so low value.
 - **Multi-model registry (Java transport).** The native surface has this via router mode +
   `RouterClient`; the Java `OpenAiCompatServer` still advertises/serves a single model id.
+- **400 vs. 500 for an invalid request body.** Since llama.cpp b11337 (#29060) upstream's server
+  answers a malformed or empty embedding `"prompt"` (and any `common_json_error`) with 400. The JNI
+  layer throws a plain `LlamaException` for both, and `LlamaModelBackend` does not translate it into
+  the `IllegalArgumentException` that `completeNonStreaming` maps to 400, so `OpenAiCompatServer`
+  answers 500. A fix needs a typed signal from native (an invalid-request exception subclass, or the
+  `throw_invalid_request` JSON shape parsed on the Java side) rather than message matching.
 - **Manual real-client validation.** Server-side round-trips exist for every surface; what remains is
   pointing the actual editor clients (Copilot Ollama provider / Custom Endpoint, Claude Code, a
   Responses client) at a running server, since round-trips confirm wire shapes but not each client's
