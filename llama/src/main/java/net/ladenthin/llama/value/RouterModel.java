@@ -5,6 +5,7 @@
 package net.ladenthin.llama.value;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import lombok.EqualsAndHashCode;
@@ -127,8 +128,8 @@ public final class RouterModel {
             String statusValue,
             boolean failed,
             int exitCode,
-            List<String> inputModalities,
-            List<String> outputModalities) {
+            Collection<String> inputModalities,
+            Collection<String> outputModalities) {
         this.id = id;
         this.status = status;
         this.statusValue = statusValue;

@@ -5,10 +5,10 @@
 package net.ladenthin.llama.value;
 
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -222,8 +222,8 @@ public class ModelMetaTest {
 
     @Test
     public void testModalitiesOfATextModel() throws Exception {
-        ModelMeta meta = parse("{\"input_modalities\":[\"text\",\"image\",\"audio\"],"
-                + "\"output_modalities\":[\"text\"]}");
+        ModelMeta meta =
+                parse("{\"input_modalities\":[\"text\",\"image\",\"audio\"]," + "\"output_modalities\":[\"text\"]}");
 
         assertThat(meta.getInputModalities(), contains("text", "image", "audio"));
         assertThat(meta.getOutputModalities(), contains("text"));
@@ -245,6 +245,8 @@ public class ModelMetaTest {
         assertThat(meta.getInputModalities(), is(empty()));
         assertThat(meta.getOutputModalities(), is(empty()));
         assertThat(meta.isDecisionModel(), is(false));
-        assertThrows(UnsupportedOperationException.class, () -> meta.getOutputModalities().add("x"));
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> meta.getOutputModalities().add("x"));
     }
 }

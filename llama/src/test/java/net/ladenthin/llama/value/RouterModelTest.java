@@ -5,18 +5,18 @@
 package net.ladenthin.llama.value;
 
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import net.ladenthin.llama.ClaudeGenerated;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import net.ladenthin.llama.ClaudeGenerated;
 import org.junit.jupiter.api.Test;
 
 @ClaudeGenerated(
@@ -128,8 +128,12 @@ public class RouterModelTest {
         RouterModel model = withModalities(input, Collections.singletonList("decisions"));
         input.add("image");
         assertThat(model.getInputModalities(), contains("text"));
-        assertThrows(UnsupportedOperationException.class, () -> model.getInputModalities().add("x"));
-        assertThrows(UnsupportedOperationException.class, () -> model.getOutputModalities().add("x"));
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> model.getInputModalities().add("x"));
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> model.getOutputModalities().add("x"));
     }
 
     @Test
@@ -137,6 +141,7 @@ public class RouterModelTest {
         RouterModel base = withModalities(Collections.singletonList("text"), Collections.singletonList("text"));
         assertEquals(base, withModalities(Collections.singletonList("text"), Collections.singletonList("text")));
         assertNotEquals(base, withModalities(Arrays.asList("text", "image"), Collections.singletonList("text")));
-        assertNotEquals(base, withModalities(Collections.singletonList("text"), Collections.singletonList("decisions")));
+        assertNotEquals(
+                base, withModalities(Collections.singletonList("text"), Collections.singletonList("decisions")));
     }
 }
