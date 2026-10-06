@@ -209,7 +209,12 @@ To change the CUDA version, update the following places:
    (`JLLAMA_BACKEND`), `.github/natives.csv` (the two `cuda13-*` rows), the generated pom executions
    (`check-natives.py pom`), the build jobs' artifact names, and `LlamaLoader.BACKEND_PRIORITY`.
    `check-natives.py` fails until they agree. No change for a minor bump.
-4. **`CLAUDE.md`** — the "Current CUDA version" line above.
+4. **CCCL pin** — both CUDA builds pass `-DGGML_CUDA_CCCL_VERSION=v3.4.3` (`build_cuda_linux.sh` and the
+   Windows CUDA job), as upstream's own CUDA release jobs do since llama.cpp #29792: ggml's CUB
+   `DeviceTopK` path needs CCCL >= 3.4.3 and falls back to a sort below it, and CUDA 13.4 bundles an
+   older 3.4. **Drop both flags once the toolkit is 13.5 or newer** (it bundles CCCL 3.5); follow
+   upstream's `release.yml` matrix comment, which says the same.
+5. **`CLAUDE.md`** — the "Current CUDA version" line above.
 
 Available CUDA versions for RHEL8/Manylinux_2_28 can be browsed at:
 ```

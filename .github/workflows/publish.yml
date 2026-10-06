@@ -1652,8 +1652,10 @@ jobs:
         # suite is CPU-only and fully covered by the `C++ Tests` job + the CPU Windows
         # jobs; a GPU-linked jllama_test.exe cannot be discovered/run on a GPU-less
         # GitHub runner (it errors probing for a CUDA device -> ctest *_NOT_BUILT).
+        # GGML_CUDA_CCCL_VERSION: fetch CCCL v3.4.3 like upstream's windows-cuda release job and the
+        # Linux CUDA build (see build_cuda_linux.sh) -- DeviceTopK needs it; drop it with CUDA 13.5+.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DGGML_CUDA=ON -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DGGML_CUDA=ON -DGGML_CUDA_CCCL_VERSION=v3.4.3 -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:

@@ -37,4 +37,7 @@ case "${CUDA_FAST_BUILD:-}" in
     ;;
 esac
 
-exec .github/build.sh $@ -DGGML_CUDA=1 -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.4/bin/nvcc $CUDA_ARCH_ARGS
+# CCCL v3.4.3 is fetched instead of the one CUDA 13.4 bundles, as upstream's own CUDA release builds do
+# (llama.cpp #29792): ggml's CUB DeviceTopK path needs >= 3.4.3 (an earlier race, NVIDIA/cccl#10627) and
+# falls back to a sort below it. Drop the flag once the toolkit is 13.5+, which bundles CCCL 3.5.
+exec .github/build.sh $@ -DGGML_CUDA=1 -DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.4/bin/nvcc -DGGML_CUDA_CCCL_VERSION=v3.4.3 $CUDA_ARCH_ARGS

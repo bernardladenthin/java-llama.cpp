@@ -101,6 +101,19 @@ historically caused breaks (`common.h`, `chat.h`, `speculative.h`, `mtmd.h`, `ll
 `llama.h`, `download.h`), plus the project `CMakeLists.txt` for renamed link targets. Note any new
 API surface worth wiring through the Java layer (e.g. a new completion param or model-metadata getter).
 
+Three vendor toolchain settings in the CI follow upstream's own CI rather than a version of their
+own, so a bump has to carry them along when upstream moves them -- check the chunk's `.github/` diff
+for each:
+
+- **OpenVINO** -- `OPENVINO_VERSION_MAJOR` / `OPENVINO_VERSION_FULL` in upstream's
+  `.github/workflows/release.yml`. Both OpenVINO build jobs (Linux archive, Windows zip) use the pair in
+  their download URL and in the `KEEP IN SYNC WITH UPSTREAM` comment; ggml-openvino is developed against
+  it, so lagging behind is what eventually breaks the compile.
+- **CUDA's CCCL** -- `GGML_CUDA_CCCL_VERSION` in upstream's CUDA release jobs (`v3.4.3` since #29792);
+  both CUDA builds pass the same value, see CLAUDE.md, "Upgrading CUDA Version".
+- **ROCm** -- the TheRock wheel version of upstream's `ubuntu-rocm` / `windows-rocm` release jobs (see
+  CLAUDE.md, "Additional GPU-backend natives").
+
 ---
 
 ## Applying a bump
