@@ -54,7 +54,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   GitHub retires the `macos-14` image by 2026-11-02 and fails every `macos-14` job during its October
   brownouts. The label is pinned rather than `macos-latest`, and it is not `macos-15`, which the
   shipped Metal build and the no-Metal build already run on.
-- **Upgraded the pinned llama.cpp from b11320 to b11474**, in 24 reviewed steps, each ending at a tag.
+- **Upgraded the pinned llama.cpp from b11320 to b11476**, in 25 reviewed steps, each ending at a tag.
   Every carried patch that broke was traced to the one upstream commit that broke it, and the step
   containing that commit ends at the first tag after it: `0007` at #29818 (b11361) and #29895 (b11401), `0014` at #29895, `0008`
   at #29987 (the commit just before b11429), `0015` at #26610 (b11450). Each refresh moved context only,
@@ -169,6 +169,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
 
 ### Fixed
+- **CI: snapshot deploy failed with HTTP 401 on Maven 3.10.** The runners moved to Maven 3.10, which
+  sends a `<server>`'s credentials only to the origins declared for it; for the id `central` that is
+  `https://repo.maven.apache.org`, so the upload to `central.sonatype.com/repository/maven-snapshots/`
+  went out without credentials ("Not using credentials of server 'central'"). Every `deploy` step now
+  passes `-Dmaven.repository.credentialScope=id`, Maven's own switch back to id-only matching, until a
+  setup-java release can write `<repositoryOrigins>` (`mvn-server-repository-origins`, merged upstream
+  but not yet released).
 - **`SessionConcurrencyTest` timed out on `Java Tests macOS 15 arm64 (Metal)` from llama.cpp b11457 on**
   (green through b11320, red in both runs since). Only this class slowed down -- about 130x, from
   0.45 s to 57-110 s per token, while every other class ran as fast as before. It is the one test

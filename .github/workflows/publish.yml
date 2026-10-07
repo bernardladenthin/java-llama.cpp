@@ -2858,8 +2858,13 @@ jobs:
       # (waitUntil/waitMaxTime etc.) is visible for debugging.
       - name: Show effective POM (debug)
         run: mvn --batch-mode --no-transfer-progress -P release,natives help:effective-pom
+      # -Dmaven.repository.credentialScope=id: Maven 3.10 (on the runners since 2026-10) sends a server's
+      # credentials only to its declared origins, and for the id `central` that is repo.maven.apache.org --
+      # an upload to central.sonatype.com then goes out anonymously and fails with HTTP 401.
+      # Restores id-only matching; replace with setup-java's `mvn-server-repository-origins:
+      # central:https://central.sonatype.com` once a release of setup-java ships that input.
       - name: Publish snapshot (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-platform)
-        run: mvn --batch-mode --no-transfer-progress -P release,natives -Dmaven.test.skip=true deploy
+        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -P release,natives -Dmaven.test.skip=true deploy
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
@@ -2867,8 +2872,9 @@ jobs:
       # The agent's thin jar + pom (not a reactor module, so a deploy of its own). It resolves the
       # core and the natives jars llama-platform names from the local repository, where the reactor
       # deploy above has just installed them; check-natives.py holds its version to the reactor's.
+      # -Dmaven.repository.credentialScope=id: see the first deploy step of this file (Maven 3.10).
       - name: Publish snapshot (llama-atmosphere-agent)
-        run: mvn --batch-mode --no-transfer-progress -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true deploy
+        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true deploy
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
@@ -3052,8 +3058,9 @@ jobs:
       # (waitUntil/waitMaxTime etc.) is visible for debugging.
       - name: Show effective POM (debug)
         run: mvn --batch-mode --no-transfer-progress -P release,natives help:effective-pom
+      # -Dmaven.repository.credentialScope=id: see the first deploy step of this file (Maven 3.10).
       - name: Publish release (reactor - parent + llama + llama-langchain4j + llama-kotlin + llama-platform)
-        run: mvn --batch-mode --no-transfer-progress -P release,natives -Dmaven.test.skip=true deploy
+        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -P release,natives -Dmaven.test.skip=true deploy
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
@@ -3061,8 +3068,9 @@ jobs:
       # The agent's thin jar + pom (not a reactor module, so a deploy of its own). It resolves the
       # core and the natives jars llama-platform names from the local repository, where the reactor
       # deploy above has just installed them; check-natives.py holds its version to the reactor's.
+      # -Dmaven.repository.credentialScope=id: see the first deploy step of this file (Maven 3.10).
       - name: Publish release (llama-atmosphere-agent)
-        run: mvn --batch-mode --no-transfer-progress -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true deploy
+        run: mvn --batch-mode --no-transfer-progress -Dmaven.repository.credentialScope=id -f llama-atmosphere-agent/pom.xml -P release -Dmaven.test.skip=true deploy
         env:
           MAVEN_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
           MAVEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN }}
