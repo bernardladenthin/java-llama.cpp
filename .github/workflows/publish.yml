@@ -26,7 +26,7 @@ env:
   # AGP 9.4.x needs Gradle >= 9.6.0 (android-llmservice/CLAUDE.md). Not seen by Dependabot: bump by hand,
   # together with the literal in verify-signing-key-gradle (a job kept identical in all four sibling
   # repositories, so it names its version itself).
-  GRADLE_VERSION: '9.8.0'
+  GRADLE_VERSION: '9.8.1'
   # The sccache/Depot compiler cache (CLAUDE.md, "CI build cache"). Inert without the token, which
   # stays per build job (SCCACHE_WEBDAV_TOKEN): at workflow level it would reach every job,
   # including those running third-party actions.
@@ -181,7 +181,7 @@ jobs:
           distribution: temurin
       - uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: "9.8.0"
+          gradle-version: "9.8.1"
       - name: Sign a throwaway artifact via useInMemoryPgpKeys (BouncyCastle)
         shell: bash
         env:

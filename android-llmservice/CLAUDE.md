@@ -30,7 +30,7 @@ Structure (mirrors the consumer-test's plumbing):
   `.github/android-consumer-test` fixture is pinned the same way. AGP 9.4.x requires Gradle >= 9.6.0
   and JDK 17+; CI already runs JDK 21 everywhere (`.java-version`), so only the `gradle-version`
   pin on the jobs that build this project (and the `.github/android-consumer-test` fixture)
-  needed bumping (currently `9.8.0`). AGP 9.0+ has **built-in Kotlin support** (a runtime dependency on
+  needed bumping (currently `9.8.1`). AGP 9.0+ has **built-in Kotlin support** (a runtime dependency on
   Kotlin Gradle plugin 2.2.10+), so the standalone `org.jetbrains.kotlin.android` plugin is no longer
   applied — applying it now fails the build with "no longer required for Kotlin support since
   AGP 9.0" (`app/build.gradle.kts` line 7). The Compose compiler plugin still applies
