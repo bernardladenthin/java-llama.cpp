@@ -169,6 +169,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
 
 ### Fixed
+- **CI: snapshot deploy failed with HTTP 401 on Maven 3.10.** The runners moved to Maven 3.10, which
+  sends a `<server>`'s credentials only to the origins declared for it; for the id `central` that is
+  `https://repo.maven.apache.org`, so the upload to `central.sonatype.com/repository/maven-snapshots/`
+  went out without credentials ("Not using credentials of server 'central'"). Every `deploy` step now
+  passes `-Dmaven.repository.credentialScope=id`, Maven's own switch back to id-only matching, until a
+  setup-java release can write `<repositoryOrigins>` (`mvn-server-repository-origins`, merged upstream
+  but not yet released).
 - **`SessionConcurrencyTest` timed out on `Java Tests macOS 15 arm64 (Metal)` from llama.cpp b11457 on**
   (green through b11320, red in both runs since). Only this class slowed down -- about 130x, from
   0.45 s to 57-110 s per token, while every other class ran as fast as before. It is the one test
