@@ -45,6 +45,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **CI: the host-native macOS Metal build and its Java tests moved from `macos-14` to `macos-26`.**
+  GitHub retires the `macos-14` image by 2026-11-02 and fails every `macos-14` job during its October
+  brownouts. The label is pinned rather than `macos-latest`, and it is not `macos-15`, which the
+  shipped Metal build and the no-Metal build already run on.
 - **Upgraded the pinned llama.cpp from b11320 to b11462**, in 23 reviewed steps, each ending at a tag.
   Every carried patch that broke was traced to the one upstream commit that broke it, and the step
   containing that commit ends at the first tag after it: `0007` at #29818 (b11361) and #29895 (b11401), `0014` at #29895, `0008`
@@ -160,6 +164,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
 
 ### Fixed
+- **`SessionConcurrencyTest` timed out on `Java Tests macOS 15 arm64 (Metal)` from llama.cpp b11457 on**
+  (green through b11320, red in both runs since). Only this class slowed down -- about 130x, from
+  0.45 s to 57-110 s per token, while every other class ran as fast as before. It is the one test
+  that loads the 7B model with a 4096-token context onto the GPU without `--fit`, so the weights
+  (~2.7 GB) plus the F16 KV cache (~2 GB) over-commit the runner's 4.7 GB Metal device. The context
+  is now 2048, which the longest transcript of the class (under 200 tokens) is far from. Which upstream
+  change made the over-commit expensive was not bisected.
+- **Both CUDA build jobs failed** after the CCCL pin: CCCL calls `include(CTest)`, which turned our
+  later `option(BUILD_TESTING ... OFF)` into a no-op, so the GPU-less runners built `jllama_test` and
+  its test discovery could not load the CUDA driver. The option is now declared before any subproject.
 - **`ToolCallingIntegrationTest#requiredToolCallIsParsedFromStreamingResponse` failed on both Windows
   x86-64 jobs after the b11211 bump** (the Ubuntu run and the blocking twin stayed green). The streamed
   request generated its full 512 tokens without a tool call. The prompt ("Write an example") never asked

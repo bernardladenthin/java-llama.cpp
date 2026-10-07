@@ -57,8 +57,12 @@ public class SessionConcurrencyTest {
         Assumptions.assumeTrue(
                 new File(TestConstants.MODEL_PATH).exists(), "Model file not found, skipping SessionConcurrencyTest");
         int gpuLayers = Integer.getInteger(TestConstants.PROP_TEST_NGL, TestConstants.DEFAULT_TEST_NGL);
+        // 2048, not 4096: the longest transcript any test here builds stays under 200 tokens, and
+        // with 4096 the 7B model (~2.7 GB) plus its F16 KV cache (~2 GB) over-committed the
+        // macOS 15 runner's 4.7 GB Metal device. From llama.cpp b11457 on that ran ~130x slower
+        // (0.45 s -> 57 s per token) and timed every test out; 2048 halves the cache.
         model = new LlamaModel(new ModelParameters()
-                .setCtxSize(4096)
+                .setCtxSize(2048)
                 .setModel(TestConstants.MODEL_PATH)
                 .setGpuLayers(gpuLayers)
                 .setFit(false));
