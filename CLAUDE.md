@@ -582,7 +582,17 @@ publish jobs) downloads `llama-jars` and runs `.github/smoke-native-macos.sh`, w
 dylib assembled from two builds) and a real JVM load via `.github/smoke/NativeLoadSmoke.java`
 (`java -cp <fatjar> …`, the JDK single-file source launcher), which forces
 `LlamaLoader.initialize() → System.load() → JNI_OnLoad` and then crosses JNI for
-`getLlamaCppBuildInfo()`, checked against the `LlamaCppVersion` pin.
+`getLlamaCppBuildInfo()`, checked against the `LlamaCppVersion` pin. A third check comes first:
+the dylib's `minos` (`otool -l`, `LC_BUILD_VERSION`) must not exceed **15.0**, the supported floor.
+
+**Minimum macOS: 15.0, pinned, not inherited.** `llama/CMakeLists.txt` sets
+`CMAKE_OSX_DEPLOYMENT_TARGET` to `15.0` before `project()` (an explicit `-D` or
+`MACOSX_DEPLOYMENT_TARGET` still wins). Without it the linker takes the build host's own macOS
+version, so moving the shipped build to a newer runner image would silently drop every user on the
+older release, and no test would see it -- they all run on that same newer image. `build.sh` prints
+`minos`/`sdk` of every dylib it builds, and the smoke above fails a shipped one above 15.0. Raise
+the floor in both places together, deliberately: `JLLAMA_MAX_MINOS` in the smoke and the CMake
+default.
 
 Two macOS specifics: it targets the **default** fat jar because there is no `all-macos-*` fat jar to
 target (macOS has no GPU backend besides Metal, which the default fat jar carries, so

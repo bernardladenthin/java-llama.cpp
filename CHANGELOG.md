@@ -45,6 +45,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **The macOS library now names macOS 15.0 as its minimum, explicitly.** Nothing set a deployment
+  target before, so `libjllama.dylib` required whatever macOS the build runner had; moving a build
+  job to a newer image would have dropped the older release unnoticed. `CMAKE_OSX_DEPLOYMENT_TARGET`
+  is now `15.0`, every macOS build logs the dylib's `minos`, and the macOS smoke fails a shipped
+  library above 15.0.
 - **CI: the host-native macOS Metal build and its Java tests moved from `macos-14` to `macos-26`.**
   GitHub retires the `macos-14` image by 2026-11-02 and fails every `macos-14` job during its October
   brownouts. The label is pinned rather than `macos-latest`, and it is not `macos-15`, which the
