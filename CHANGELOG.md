@@ -45,11 +45,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
-- **Upgraded the pinned llama.cpp from b11320 to b11457**, in 21 reviewed steps, each ending at a tag.
+- **Upgraded the pinned llama.cpp from b11320 to b11462**, in 23 reviewed steps, each ending at a tag.
   Every carried patch that broke was traced to the one upstream commit that broke it, and the step
   containing that commit ends at the first tag after it: `0007` at #29818 (b11361) and #29895 (b11401), `0014` at #29895, `0008`
   at #29987 (the commit just before b11429), `0015` at #26610 (b11450). Each refresh moved context only,
-  and all nine patches are still needed. The new
+  and every patch is still needed. The new
   upstream features this binding now exposes are listed under *Added*; the build follows upstream's
   CUDA CCCL pin (v3.4.3) and OpenVINO 2026.4.1. Per-step record:
   `docs/history/llama-cpp-breaking-changes.md`.

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b11457**
+Current llama.cpp pinned version: **b11462**
 
 ## Natives jars: one directory per backend (`.github/natives.csv`)
 
@@ -214,6 +214,12 @@ To change the CUDA version, update the following places:
    `DeviceTopK` path needs CCCL >= 3.4.3 and falls back to a sort below it, and CUDA 13.4 bundles an
    older 3.4. **Drop both flags once the toolkit is 13.5 or newer** (it bundles CCCL 3.5); follow
    upstream's `release.yml` matrix comment, which says the same.
+   **The pin makes ggml fetch CCCL, and CCCL calls `include(CTest)` unconditionally**, which creates
+   `BUILD_TESTING` as a cache variable defaulting to ON. That is why `llama/CMakeLists.txt` declares
+   `option(BUILD_TESTING ... OFF)` before its first `FetchContent_MakeAvailable()`: declared after,
+   the option was a no-op, both CUDA jobs built `jllama_test`, and its gtest discovery failed on the
+   GPU-less runners (no `libcuda.so.1` / `nvcuda.dll`) -- the first Publish run after the bump
+   (37550451678). Keep the option there.
 5. **`CLAUDE.md`** — the "Current CUDA version" line above.
 
 Available CUDA versions for RHEL8/Manylinux_2_28 can be browsed at:
@@ -704,7 +710,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network for the asset build; the embed step is plain cmake -P
-git clone --depth 1 --branch b11457 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b11462 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build )
 mkdir -p webui-generated /tmp/ui-gen
 cmake -DUI_SOURCE_DIR=/tmp/lc/tools/ui -DUI_BINARY_DIR=/tmp/ui-gen \
@@ -744,7 +750,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11457`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11462`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -1867,7 +1873,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11457`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11462`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
