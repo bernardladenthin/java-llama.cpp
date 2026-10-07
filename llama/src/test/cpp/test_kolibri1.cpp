@@ -483,6 +483,14 @@ bool load(const std::string &path, Loaded &out) {
     cp.n_seq_max = 1;
     cp.n_threads = 2;
     cp.n_threads_batch = 2;
+    // F32 KV cache and no flash attention: the reference is double precision, and the default F16
+    // cache with F16 flash attention rounds by up to ~1e-3 relative (0.0055 against a 0.0065
+    // tolerance on x86-64, over it on Apple silicon). This test is about the graph's math, not the
+    // cache's precision.
+    cp.type_k = GGML_TYPE_F32;
+    cp.type_v = GGML_TYPE_F32;
+    cp.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    cp.op_offload = false; // a GPU build (Metal) must not take over an op: CPU only, as the reference
     out.ctx = llama_init_from_model(out.model, cp);
     return out.ctx != nullptr;
 }
@@ -564,7 +572,10 @@ void expect_matches_reference(const Dialect &d, uint32_t seed) {
                                    << ", gating_func=" << d.gating_func << ")";
 
         const std::vector<Vec> want = reference(w, TOKENS, d.renorm);
-        const double tol = 1e-3 * std::max(1.0, max_abs(want));
+        // With an F32 cache the library matches the double reference to under 1e-6 relative (measured
+        // on x86-64); 1e-4 keeps a margin of more than 150x and stays far below what a wrong router or
+        // rope gives.
+        const double tol = 1e-4 * std::max(1.0, max_abs(want));
 
         const auto batch = run_batch(m, TOKENS);
         ASSERT_EQ(batch.size(), TOKENS.size());
