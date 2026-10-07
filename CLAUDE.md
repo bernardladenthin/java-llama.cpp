@@ -544,13 +544,18 @@ jar `metal-macos-aarch64` (directory `Mac/aarch64/metal/`, in `llama-platform`):
 | Job | Build flags | Artifact | Role |
 |---|---|---|---|
 | `build-macos-arm64-metal-15` (macos-15) | `-DLLAMA_METAL_EMBED_LIBRARY=ON -DGGML_NATIVE=OFF` | `natives-metal-macos-aarch64` | **shipped** |
-| `build-macos-arm64-metal` (macos-14) | `-DLLAMA_METAL_EMBED_LIBRARY=ON` (host-native) | `macos-14-metal` | test-only |
+| `build-macos-arm64-metal` (macos-26) | `-DLLAMA_METAL_EMBED_LIBRARY=ON` (host-native) | `macos-26-metal` | test-only |
 | `build-macos-arm64-no-metal` (macos-15) | `-DLLAMA_METAL=OFF -DGGML_NATIVE=OFF` | `macos-15-no-metal` | test-only (writes `Mac/aarch64/cpu/`) |
 
 The shipped variant is the metal-15 build because it is the only one with **both** Metal **and**
 `GGML_NATIVE=OFF` (portable across Apple-silicon generations); the other two exist to prove the
-no-Metal path and the macos-14 SDK still build and pass the Java suite. The two Metal builds write
+no-Metal path and the newest macOS SDK still build and pass the Java suite. The two Metal builds write
 the **same** directory, which is why the test-only artifacts are named outside the `natives-*` glob.
+The host-native Metal build ran on `macos-14`, which GitHub retires by 2026-11-02 (with brownouts in
+October 2026 that fail every `macos-14` job); it moved to a **pinned**
+`macos-26`, not `macos-latest`, so the image cannot change under it unnoticed, and not to `macos-15`,
+which the other two jobs already cover. Its Java test job runs with `-ngl 0`, so it exercises the
+Metal-enabled build on the CPU; only `Java Tests macOS 15 arm64 (Metal)` offloads to the GPU.
 
 **Why that naming matters (the incident).** Two artifacts sharing a relative path, downloaded with
 one glob and merged, get extracted onto one file — and the survivor can be a **byte-level hybrid** of
