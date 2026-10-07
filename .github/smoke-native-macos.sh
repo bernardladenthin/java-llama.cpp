@@ -59,6 +59,23 @@ unzip -o -q "$JAR" "$DYLIB_ENTRY" -d "$WORK" \
 DYLIB="$WORK/$DYLIB_ENTRY"
 echo "extracted: $(cd "$(dirname "$DYLIB")" && pwd)/$(basename "$DYLIB") ($(wc -c < "$DYLIB") bytes)"
 
+# 0) The oldest macOS it loads on. CMAKE_OSX_DEPLOYMENT_TARGET (llama/CMakeLists.txt) pins it;
+#    without that pin the linker takes the build host's own version, so a build job moved to a
+#    newer runner image would ship a library newer macOS releases alone can load -- and nothing
+#    else in the pipeline would notice, since every test runs on that same newer image.
+MAX_MINOS="${JLLAMA_MAX_MINOS:-15.0}"
+echo "== LC_BUILD_VERSION (minos must be <= $MAX_MINOS) =="
+otool -l "$DYLIB" | grep -A4 LC_BUILD_VERSION \
+    || fail "no LC_BUILD_VERSION load command in the dylib -- cannot tell which macOS it needs"
+MINOS="$(otool -l "$DYLIB" | awk '/cmd LC_BUILD_VERSION/{f=1} f && $1=="minos"{print $2; exit}')"
+[ -n "$MINOS" ] || fail "could not read minos from the dylib's LC_BUILD_VERSION"
+awk -v have="$MINOS" -v max="$MAX_MINOS" 'BEGIN {
+    split(have, h, "."); split(max, m, ".")
+    for (i = 1; i <= 3; i++) { if (h[i] + 0 != m[i] + 0) exit (h[i] + 0 > m[i] + 0) }
+    exit 0
+}' || fail "the dylib needs macOS $MINOS, but macOS $MAX_MINOS is the supported floor (CMAKE_OSX_DEPLOYMENT_TARGET in llama/CMakeLists.txt)"
+echo "minos $MINOS <= $MAX_MINOS: ok"
+
 # 1) Signature vs. content. `--strict` re-hashes the code pages and compares them against the
 #    signature's stored hashes, so a dylib assembled from two different builds fails here with the
 #    exact page mismatch — the direct check for the shipped corruption. An ad-hoc signature (what

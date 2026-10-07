@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b11462**
+Current llama.cpp pinned version: **b11474**
 
 ## Natives jars: one directory per backend (`.github/natives.csv`)
 
@@ -544,13 +544,18 @@ jar `metal-macos-aarch64` (directory `Mac/aarch64/metal/`, in `llama-platform`):
 | Job | Build flags | Artifact | Role |
 |---|---|---|---|
 | `build-macos-arm64-metal-15` (macos-15) | `-DLLAMA_METAL_EMBED_LIBRARY=ON -DGGML_NATIVE=OFF` | `natives-metal-macos-aarch64` | **shipped** |
-| `build-macos-arm64-metal` (macos-14) | `-DLLAMA_METAL_EMBED_LIBRARY=ON` (host-native) | `macos-14-metal` | test-only |
+| `build-macos-arm64-metal` (macos-26) | `-DLLAMA_METAL_EMBED_LIBRARY=ON` (host-native) | `macos-26-metal` | test-only |
 | `build-macos-arm64-no-metal` (macos-15) | `-DLLAMA_METAL=OFF -DGGML_NATIVE=OFF` | `macos-15-no-metal` | test-only (writes `Mac/aarch64/cpu/`) |
 
 The shipped variant is the metal-15 build because it is the only one with **both** Metal **and**
 `GGML_NATIVE=OFF` (portable across Apple-silicon generations); the other two exist to prove the
-no-Metal path and the macos-14 SDK still build and pass the Java suite. The two Metal builds write
+no-Metal path and the newest macOS SDK still build and pass the Java suite. The two Metal builds write
 the **same** directory, which is why the test-only artifacts are named outside the `natives-*` glob.
+The host-native Metal build ran on `macos-14`, which GitHub retires by 2026-11-02 (with brownouts in
+October 2026 that fail every `macos-14` job); it moved to a **pinned**
+`macos-26`, not `macos-latest`, so the image cannot change under it unnoticed, and not to `macos-15`,
+which the other two jobs already cover. Its Java test job runs with `-ngl 0`, so it exercises the
+Metal-enabled build on the CPU; only `Java Tests macOS 15 arm64 (Metal)` offloads to the GPU.
 
 **Why that naming matters (the incident).** Two artifacts sharing a relative path, downloaded with
 one glob and merged, get extracted onto one file — and the survivor can be a **byte-level hybrid** of
@@ -577,7 +582,17 @@ publish jobs) downloads `llama-jars` and runs `.github/smoke-native-macos.sh`, w
 dylib assembled from two builds) and a real JVM load via `.github/smoke/NativeLoadSmoke.java`
 (`java -cp <fatjar> …`, the JDK single-file source launcher), which forces
 `LlamaLoader.initialize() → System.load() → JNI_OnLoad` and then crosses JNI for
-`getLlamaCppBuildInfo()`, checked against the `LlamaCppVersion` pin.
+`getLlamaCppBuildInfo()`, checked against the `LlamaCppVersion` pin. A third check comes first:
+the dylib's `minos` (`otool -l`, `LC_BUILD_VERSION`) must not exceed **15.0**, the supported floor.
+
+**Minimum macOS: 15.0, pinned, not inherited.** `llama/CMakeLists.txt` sets
+`CMAKE_OSX_DEPLOYMENT_TARGET` to `15.0` before `project()` (an explicit `-D` or
+`MACOSX_DEPLOYMENT_TARGET` still wins). Without it the linker takes the build host's own macOS
+version, so moving the shipped build to a newer runner image would silently drop every user on the
+older release, and no test would see it -- they all run on that same newer image. `build.sh` prints
+`minos`/`sdk` of every dylib it builds, and the smoke above fails a shipped one above 15.0. Raise
+the floor in both places together, deliberately: `JLLAMA_MAX_MINOS` in the smoke and the CMake
+default.
 
 Two macOS specifics: it targets the **default** fat jar because there is no `all-macos-*` fat jar to
 target (macOS has no GPU backend besides Metal, which the default fat jar carries, so
@@ -710,7 +725,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network for the asset build; the embed step is plain cmake -P
-git clone --depth 1 --branch b11462 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b11474 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build )
 mkdir -p webui-generated /tmp/ui-gen
 cmake -DUI_SOURCE_DIR=/tmp/lc/tools/ui -DUI_BINARY_DIR=/tmp/ui-gen \
@@ -750,7 +765,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11462`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11474`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -1873,7 +1888,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11462`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11474`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the

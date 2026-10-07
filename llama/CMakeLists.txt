@@ -1,5 +1,13 @@
 cmake_minimum_required(VERSION 3.22)
 
+# The oldest macOS the dylib loads on. Without it the linker takes the build host's own version, so
+# moving a macOS job to a newer runner image would silently raise the floor for every user. Must be
+# set before the first project(); a -DCMAKE_OSX_DEPLOYMENT_TARGET=... or MACOSX_DEPLOYMENT_TARGET
+# from outside still wins. Ignored on every other platform. Checked by .github/smoke-native-macos.sh.
+if(NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET AND NOT DEFINED ENV{MACOSX_DEPLOYMENT_TARGET})
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version of libjllama.dylib")
+endif()
+
 project(jllama CXX)
 
 # Use static MSVC runtime (/MT) instead of the default DLL runtime (/MD).
@@ -190,7 +198,7 @@ set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b11462
+	GIT_TAG        b11474
 	PATCH_COMMAND  ${CMAKE_COMMAND}
 		-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patches
 		-DLLAMA_SRC=<SOURCE_DIR>

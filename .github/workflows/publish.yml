@@ -1344,9 +1344,9 @@ jobs:
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   build-macos-arm64-metal:
-    name: Build and Test macOS 14 arm64 (Metal)
+    name: Build and Test macOS 26 arm64 (Metal)
     needs: [startgate, build-webui]
-    runs-on: macos-14
+    runs-on: macos-26
     env:
       BUILD_JOBS: 2
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
@@ -1378,7 +1378,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: macos-14-metal
+          name: macos-26-metal
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   build-windows-x86_64-msvc:
@@ -2377,14 +2377,14 @@ jobs:
   # called with the native build under test. The ids, names and needs stay here, so `package`,
   # the release gate and every reader of this file see the same jobs as before.
   test-java-macos-arm64-metal:
-    name: Java Tests macOS 14 arm64 (Metal)
+    name: Java Tests macOS 26 arm64 (Metal)
     needs: [build-macos-arm64-metal, verify-model-cache]
     uses: ./.github/workflows/java-tests.yml
     with:
-      runs-on: macos-14
-      natives-artifact: macos-14-metal
+      runs-on: macos-26
+      natives-artifact: macos-26-metal
       maven-args: -Dnet.ladenthin.llama.test.ngl=0
-      error-artifact: error-log-macos-14-metal
+      error-artifact: error-log-macos-26-metal
 
   test-java-macos-arm64-no-metal:
     name: Java Tests macOS 15 arm64 (no Metal)
@@ -2474,7 +2474,7 @@ jobs:
       # holds exactly the <OS>/<ARCH>/<backend>/ directory its name promises and that no path is
       # claimed twice, then merges. `merge-multiple: true` would silently overwrite -- and can
       # byte-level interleave -- two artifacts with the same path, which is how a corrupt macOS
-      # dylib shipped; the test-only macOS builds (macos-14-metal, macos-15-no-metal) are named
+      # dylib shipped; the test-only macOS builds (macos-26-metal, macos-15-no-metal) are named
       # outside the glob for that reason.
       - uses: actions/download-artifact@v8
         with:
@@ -2817,7 +2817,7 @@ jobs:
       # holds exactly the <OS>/<ARCH>/<backend>/ directory its name promises and that no path is
       # claimed twice, then merges. `merge-multiple: true` would silently overwrite -- and can
       # byte-level interleave -- two artifacts with the same path, which is how a corrupt macOS
-      # dylib shipped; the test-only macOS builds (macos-14-metal, macos-15-no-metal) are named
+      # dylib shipped; the test-only macOS builds (macos-26-metal, macos-15-no-metal) are named
       # outside the glob for that reason.
       - uses: actions/download-artifact@v8
         with:
@@ -3022,7 +3022,7 @@ jobs:
       # holds exactly the <OS>/<ARCH>/<backend>/ directory its name promises and that no path is
       # claimed twice, then merges. `merge-multiple: true` would silently overwrite -- and can
       # byte-level interleave -- two artifacts with the same path, which is how a corrupt macOS
-      # dylib shipped; the test-only macOS builds (macos-14-metal, macos-15-no-metal) are named
+      # dylib shipped; the test-only macOS builds (macos-26-metal, macos-15-no-metal) are named
       # outside the glob for that reason.
       - uses: actions/download-artifact@v8
         with:

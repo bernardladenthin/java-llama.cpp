@@ -16,7 +16,7 @@ on:
   workflow_call:
     inputs:
       runs-on:
-        description: The runner label (macos-14, macos-15, windows-2025-vs2026, ...).
+        description: The runner label (macos-15, macos-26, windows-2025-vs2026, ...).
         type: string
         required: true
       natives-artifact:

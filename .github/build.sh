@@ -194,3 +194,14 @@ if [ -n "$LAUNCH" ] && command -v sccache >/dev/null 2>&1; then
     fi
   fi
 fi
+
+# macOS: put the minimum OS each built dylib was linked for into the log. It is set by
+# CMAKE_OSX_DEPLOYMENT_TARGET (llama/CMakeLists.txt, default 15.0); without it the linker takes the
+# build host's own version, so moving a job to a newer runner image would silently raise the floor
+# for every user. smoke-native-macos.sh checks the shipped dylib; this line only reports.
+if [ "$(uname -s)" = "Darwin" ]; then
+  find src/main/natives -name 'libjllama.dylib' -print0 | while IFS= read -r -d '' lib; do
+    echo "== ${lib}: LC_BUILD_VERSION (minos = the oldest macOS it loads on) =="
+    otool -l "$lib" | grep -A4 LC_BUILD_VERSION || echo "(no LC_BUILD_VERSION load command found)"
+  done
+fi
