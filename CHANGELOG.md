@@ -54,7 +54,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   GitHub retires the `macos-14` image by 2026-11-02 and fails every `macos-14` job during its October
   brownouts. The label is pinned rather than `macos-latest`, and it is not `macos-15`, which the
   shipped Metal build and the no-Metal build already run on.
-- **Upgraded the pinned llama.cpp from b11320 to b11474**, in 24 reviewed steps, each ending at a tag.
+- **Upgraded the pinned llama.cpp from b11320 to b11476**, in 25 reviewed steps, each ending at a tag.
   Every carried patch that broke was traced to the one upstream commit that broke it, and the step
   containing that commit ends at the first tag after it: `0007` at #29818 (b11361) and #29895 (b11401), `0014` at #29895, `0008`
   at #29987 (the commit just before b11429), `0015` at #26610 (b11450). Each refresh moved context only,
