@@ -43,6 +43,7 @@ jobs:
     runs-on: windows-2025-vs2026
     steps:
       - name: Toolchain inventory
+        continue-on-error: true
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -55,18 +56,24 @@ jobs:
           foreach ($t in $toolsets) { "  $($t.Name)" }
           ""
           "=== clang shipped with VS ==="
-          $clang = Get-ChildItem "$vs\VC\Tools\Llvm" -Recurse -Filter clang.exe -ErrorAction SilentlyContinue |
-                   Select-Object -First 1
-          if ($clang) { "  $($clang.FullName)"; & $clang.FullName --version } else { "  no clang in the VS tree" }
+          # Must be the x64 one by path: VC\Tools\Llvm holds ARM64 as well, and a -Recurse that
+          # takes the first hit picks ARM64 (it sorts first), which cannot run on an x64 host.
+          $clang = @("$vs\VC\Tools\Llvm\x64\bin\clang.exe", "$vs\VC\Tools\Llvm\bin\clang.exe") |
+                   Where-Object { Test-Path $_ } | Select-Object -First 1
+          "  candidates under VC\Tools\Llvm:"
+          Get-ChildItem "$vs\VC\Tools\Llvm" -Recurse -Filter clang.exe -ErrorAction SilentlyContinue |
+              ForEach-Object { "    $($_.FullName)" }
+          if ($clang) { "  using: $clang"; & $clang --version } else { "  no x64 clang in the VS tree" }
           ""
           "=== clang on PATH ==="
           $onPath = Get-Command clang -ErrorAction SilentlyContinue
           if ($onPath) { "  $($onPath.Source)"; & clang --version } else { "  none" }
           # Hand the paths to the next steps.
           "VSPATH=$vs" | Out-File -Append $env:GITHUB_ENV
-          if ($clang) { "CLANGEXE=$($clang.FullName)" | Out-File -Append $env:GITHUB_ENV }
+          if ($clang) { "CLANGEXE=$clang" | Out-File -Append $env:GITHUB_ENV }
 
       - name: How each toolset declares _mm_prefetch
+        continue-on-error: true
         shell: pwsh
         run: |
           # This is the crux: MSVC's `char const *` is what makes a typed pointer a diagnostic.
@@ -83,8 +90,10 @@ jobs:
           if (-not $any) { "no xmmintrin.h found under any toolset" }
 
       - name: Compile the unpatched and the patched form with plain clang
+        continue-on-error: true
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Continue'
           # A ten-line stand-in for ggml_vec_dot_q4_0_q8_0's SSSE3 branch: a typed pointer into
           # _mm_prefetch, compiled for SSE4.2 only (no AVX), which is what the x64 and sse42 CPU
           # variants do. UNPATCHED is upstream's expression, PATCHED is what patches/0017 produces.
@@ -103,7 +112,8 @@ jobs:
           $clang = if ($env:CLANGEXE) { $env:CLANGEXE } else { "clang" }
           $results = @()
           foreach ($form in @('UNPATCHED', 'PATCHED')) {
-            $out = & $clang -target x86_64-pc-windows-msvc -c -O2 -msse4.2 "-D$form" probe.c -o probe.obj 2>&1
+            $out = & $clang -target x86_64-pc-windows-msvc -c -O2 -msse4.2 "-D$form" probe.c -o probe.obj 2>&1 |
+                   ForEach-Object { $_.ToString() }
             $ok = ($LASTEXITCODE -eq 0)
             "=== $form : $(if ($ok) { 'COMPILES' } else { 'FAILS' }) ==="
             $out | Select-Object -First 6
