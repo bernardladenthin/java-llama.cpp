@@ -1,0 +1,132 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT
+#
+# One-question probe, dispatch-only: does plain clang on the CI runner reject the unpatched
+# _mm_prefetch call in ggml/src/ggml-cpu/arch/x86/quants.c?
+#
+# Why this exists. patches/0017 fixes two defects in those calls. The type half -- MSVC declares
+# `void _mm_prefetch(char const *, int)`, clang's own casting macro sits behind `#ifndef _MSC_VER`,
+# so a typed pointer is -Wincompatible-pointer-types, an error by default since clang 16 -- was
+# reproduced locally against MSVC 14.44.35207 headers with LLVM 20.1.8 and 23.1.3. But upstream
+# llama.cpp's own windows-cpu release job builds plain clang with GGML_CPU_ALL_VARIANTS=ON, passes
+# no suppressing flag, and ships ggml-cpu-sse42.dll -- which is the variant that compiles that
+# branch. So either their toolchain does not hit it, or something else is going on, and the honest
+# state of the patch header is "open question". The runner image is the one variable that cannot be
+# reproduced locally: actions/runner-images lists Visual Studio Enterprise 2026 (18.10) *and* the
+# 14.44.17.14 toolset on windows-2025-vs2026, so clang there may well be using newer MSVC headers
+# than any local VS 2022 install has.
+#
+# This job answers that in seconds and never fails: it prints the declaration each installed MSVC
+# toolset carries, the clang version, and the compile outcome of both the unpatched and the patched
+# form. Read the job summary, then put the answer in the patch header and in the upstream report.
+#
+# Delete this workflow once the question is settled -- it guards nothing.
+
+name: Probe MSVC _mm_prefetch declaration
+
+on:
+  # A dispatch-only workflow cannot be triggered until it sits on the default branch, so the
+  # pull_request trigger is what makes this answerable on the very PR that adds it. The paths
+  # filter keeps it off every other PR -- it only runs when this file itself changes.
+  pull_request:
+    paths:
+      - '.github/workflows/probe-msvc-prefetch.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: _mm_prefetch declaration and plain-clang outcome
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Toolchain inventory
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -property installationPath
+          "VS install   : $vs"
+          "VS version   : $(& $vswhere -latest -property catalog_productDisplayVersion)"
+          ""
+          "=== Installed MSVC toolsets ==="
+          $toolsets = Get-ChildItem "$vs\VC\Tools\MSVC" -Directory -ErrorAction SilentlyContinue
+          foreach ($t in $toolsets) { "  $($t.Name)" }
+          ""
+          "=== clang shipped with VS ==="
+          $clang = Get-ChildItem "$vs\VC\Tools\Llvm" -Recurse -Filter clang.exe -ErrorAction SilentlyContinue |
+                   Select-Object -First 1
+          if ($clang) { "  $($clang.FullName)"; & $clang.FullName --version } else { "  no clang in the VS tree" }
+          ""
+          "=== clang on PATH ==="
+          $onPath = Get-Command clang -ErrorAction SilentlyContinue
+          if ($onPath) { "  $($onPath.Source)"; & clang --version } else { "  none" }
+          # Hand the paths to the next steps.
+          "VSPATH=$vs" | Out-File -Append $env:GITHUB_ENV
+          if ($clang) { "CLANGEXE=$($clang.FullName)" | Out-File -Append $env:GITHUB_ENV }
+
+      - name: How each toolset declares _mm_prefetch
+        shell: pwsh
+        run: |
+          # This is the crux: MSVC's `char const *` is what makes a typed pointer a diagnostic.
+          # If a newer toolset uses `void const *`, the whole problem disappears on that toolchain.
+          $any = $false
+          foreach ($t in Get-ChildItem "$env:VSPATH\VC\Tools\MSVC" -Directory) {
+            $h = Join-Path $t.FullName "include\xmmintrin.h"
+            if (Test-Path $h) {
+              $any = $true
+              $line = Select-String -Path $h -Pattern "_mm_prefetch" | Where-Object { $_.Line -match "void\s+_mm_prefetch" }
+              "$($t.Name): $(if ($line) { $line.Line.Trim() } else { '(no declaration found)' })"
+            }
+          }
+          if (-not $any) { "no xmmintrin.h found under any toolset" }
+
+      - name: Compile the unpatched and the patched form with plain clang
+        shell: pwsh
+        run: |
+          # A ten-line stand-in for ggml_vec_dot_q4_0_q8_0's SSSE3 branch: a typed pointer into
+          # _mm_prefetch, compiled for SSE4.2 only (no AVX), which is what the x64 and sse42 CPU
+          # variants do. UNPATCHED is upstream's expression, PATCHED is what patches/0017 produces.
+          @'
+          #include <immintrin.h>
+          #include <stddef.h>
+          typedef struct { unsigned short d; unsigned char qs[16]; } blk;   /* like block_q4_0, 18 bytes */
+          #ifdef PATCHED
+          static inline const char * at(const void * b, size_t off) { return (const char *) b + off; }
+          void f(const blk * x, int ib) { _mm_prefetch(at(&x[ib], sizeof(blk)), _MM_HINT_T0); }
+          #else
+          void f(const blk * x, int ib) { _mm_prefetch(&x[ib] + sizeof(blk), _MM_HINT_T0); }
+          #endif
+          '@ | Set-Content -Encoding ascii probe.c
+
+          $clang = if ($env:CLANGEXE) { $env:CLANGEXE } else { "clang" }
+          $results = @()
+          foreach ($form in @('UNPATCHED', 'PATCHED')) {
+            $out = & $clang -target x86_64-pc-windows-msvc -c -O2 -msse4.2 "-D$form" probe.c -o probe.obj 2>&1
+            $ok = ($LASTEXITCODE -eq 0)
+            "=== $form : $(if ($ok) { 'COMPILES' } else { 'FAILS' }) ==="
+            $out | Select-Object -First 6
+            ""
+            $results += [pscustomobject]@{ Form = $form; Result = $(if ($ok) { 'COMPILES' } else { 'FAILS' }) }
+          }
+
+          # The answer, in one place, in the job summary.
+          $unpatched = ($results | Where-Object Form -eq 'UNPATCHED').Result
+          $patched   = ($results | Where-Object Form -eq 'PATCHED').Result
+          $verdict = if ($unpatched -eq 'FAILS') {
+            "patches/0017 is REQUIRED on this runner: the unpatched form does not compile."
+          } else {
+            "patches/0017's type half is NOT reproducible on this runner -- the unpatched form compiles. Its arithmetic half (prefetch 18x too far) still applies on every platform."
+          }
+          @(
+            "### _mm_prefetch probe",
+            "",
+            "| form | plain clang, ``-msse4.2`` |",
+            "|---|---|",
+            "| upstream (unpatched) | $unpatched |",
+            "| patches/0017 (patched) | $patched |",
+            "",
+            $verdict
+          ) | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          $verdict
