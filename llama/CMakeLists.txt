@@ -691,6 +691,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_tts_wav.cpp
         src/test/cpp/test_tts_params.cpp
         src/test/cpp/test_model_split.cpp
+        src/test/cpp/test_prefetch.cpp
         src/test/cpp/test_kolibri1.cpp
         src/test/cpp/test_model_flags.cpp
         src/test/cpp/test_wire_contracts.cpp
@@ -718,6 +719,12 @@ if(BUILD_TESTING)
         # same (tests/test-batch-alloc.cpp, tests/test-quantize-stats.cpp include "../src/...").
         # No header name in that directory collides with tools/server, tools/mtmd or src/main/cpp.
         ${llama.cpp_SOURCE_DIR}/src
+        # ggml's internal src/ and the x86 CPU-backend directory -- test_prefetch.cpp includes
+        # ggml-common.h (for block_q4_0 / block_q8_0, whose sizes the prefetch offsets depend on)
+        # and prefetch.h, the helper patches/0017 adds. Same reasoning as the line above: the
+        # guard has to drive the patched code, and that code is not on any public header path.
+        ${llama.cpp_SOURCE_DIR}/ggml/src
+        ${llama.cpp_SOURCE_DIR}/ggml/src/ggml-cpu/arch/x86
         # The generated Java-CLI-flag list consumed by test_model_flags.cpp.
         ${CMAKE_CURRENT_BINARY_DIR}/generated
     )
