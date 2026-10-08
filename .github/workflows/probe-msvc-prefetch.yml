@@ -2,26 +2,26 @@
 #
 # SPDX-License-Identifier: MIT
 #
-# One-question probe, dispatch-only: does plain clang on the CI runner reject the unpatched
-# _mm_prefetch call in ggml/src/ggml-cpu/arch/x86/quants.c?
+# One-question probe, and the question is now narrow: at which clang version does the unpatched
+# _mm_prefetch call in ggml/src/ggml-cpu/arch/x86/quants.c stop being a warning and become an error?
 #
-# Why this exists. patches/0017 fixes two defects in those calls. The type half -- MSVC declares
-# `void _mm_prefetch(char const *, int)`, clang's own casting macro sits behind `#ifndef _MSC_VER`,
-# so a typed pointer is -Wincompatible-pointer-types, an error by default since clang 16 -- was
-# reproduced locally against MSVC 14.44.35207 headers with LLVM 20.1.8 and 23.1.3. But upstream
-# llama.cpp's own windows-cpu release job builds plain clang with GGML_CPU_ALL_VARIANTS=ON, passes
-# no suppressing flag, and ships ggml-cpu-sse42.dll -- which is the variant that compiles that
-# branch. So either their toolchain does not hit it, or something else is going on, and the honest
-# state of the patch header is "open question". The runner image is the one variable that cannot be
-# reproduced locally: actions/runner-images lists Visual Studio Enterprise 2026 (18.10) *and* the
-# 14.44.17.14 toolset on windows-2025-vs2026, so clang there may well be using newer MSVC headers
-# than any local VS 2022 install has.
+# What is already measured, locally against the real file at -msse4.2 (the sse42 CPU variant is the
+# only variant that compiles that branch -- `#elif defined(__SSSE3__)`, which the x86-64 baseline
+# does not reach):
 #
-# This job answers that in seconds and never fails: it prints the declaration each installed MSVC
-# toolset carries, the clang version, and the compile outcome of both the unpatched and the patched
-# form. Read the job summary, then put the answer in the patch header and in the upstream report.
+#   clang 20.1.8  ->  4 warnings, object file produced, exit 0
+#   clang 23.1.3  ->  4 errors,   no object file,       exit 1
 #
-# Delete this workflow once the question is settled -- it guards nothing.
+# That explains upstream llama.cpp's green windows-cpu release job completely: the runner image
+# carries LLVM 20.1.8 on PATH, so upstream gets warnings. No mystery is left -- but the build does
+# break with a current LLVM, which is what patches/0017 fixes. The flip is somewhere in 21..23.
+#
+# The runner also ships clang 22.1.3 inside Visual Studio 2026, the one version neither local
+# toolchain has, so this job narrows the flip by measuring it -- on the REAL file at the pinned tag,
+# not on a stand-in, and both before and after the patch.
+#
+# It never fails: it measures. Read the job summary, then correct the patch header and the upstream
+# report from it. Delete this workflow once the answer is recorded -- it guards nothing.
 
 name: Probe MSVC _mm_prefetch declaration
 
@@ -42,101 +42,109 @@ jobs:
     name: _mm_prefetch declaration and plain-clang outcome
     runs-on: windows-2025-vs2026
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Toolchain inventory
         continue-on-error: true
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
           $vs = & $vswhere -latest -property installationPath
-          "VS install   : $vs"
-          "VS version   : $(& $vswhere -latest -property catalog_productDisplayVersion)"
+          "VS install : $vs"
+          "VS version : $(& $vswhere -latest -property catalog_productDisplayVersion)"
           ""
-          "=== Installed MSVC toolsets ==="
-          $toolsets = Get-ChildItem "$vs\VC\Tools\MSVC" -Directory -ErrorAction SilentlyContinue
-          foreach ($t in $toolsets) { "  $($t.Name)" }
-          ""
-          "=== clang shipped with VS ==="
-          # Must be the x64 one by path: VC\Tools\Llvm holds ARM64 as well, and a -Recurse that
-          # takes the first hit picks ARM64 (it sorts first), which cannot run on an x64 host.
-          $clang = @("$vs\VC\Tools\Llvm\x64\bin\clang.exe", "$vs\VC\Tools\Llvm\bin\clang.exe") |
-                   Where-Object { Test-Path $_ } | Select-Object -First 1
-          "  candidates under VC\Tools\Llvm:"
-          Get-ChildItem "$vs\VC\Tools\Llvm" -Recurse -Filter clang.exe -ErrorAction SilentlyContinue |
-              ForEach-Object { "    $($_.FullName)" }
-          if ($clang) { "  using: $clang"; & $clang --version } else { "  no x64 clang in the VS tree" }
-          ""
-          "=== clang on PATH ==="
-          $onPath = Get-Command clang -ErrorAction SilentlyContinue
-          if ($onPath) { "  $($onPath.Source)"; & clang --version } else { "  none" }
-          # Hand the paths to the next steps.
+          "=== Installed MSVC toolsets, and how each declares _mm_prefetch ==="
+          # MSVC's `char const *` is what makes a typed pointer a diagnostic at all. Measured on the
+          # first run: all three toolsets (14.29 / 14.44 / 14.51) declare it identically, so the
+          # toolset is NOT the variable here -- the clang version is.
+          foreach ($t in Get-ChildItem "$vs\VC\Tools\MSVC" -Directory) {
+            $h = Join-Path $t.FullName "include\xmmintrin.h"
+            if (Test-Path $h) {
+              $line = Select-String -Path $h -Pattern "void\s+_mm_prefetch" | Select-Object -First 1
+              "  $($t.Name): $(if ($line) { $line.Line.Trim() } else { '(no declaration found)' })"
+            }
+          }
           "VSPATH=$vs" | Out-File -Append $env:GITHUB_ENV
-          if ($clang) { "CLANGEXE=$clang" | Out-File -Append $env:GITHUB_ENV }
 
-      - name: How each toolset declares _mm_prefetch
+      - name: Fetch the real ggml source at the pinned tag
         continue-on-error: true
         shell: pwsh
         run: |
-          # This is the crux: MSVC's `char const *` is what makes a typed pointer a diagnostic.
-          # If a newer toolset uses `void const *`, the whole problem disappears on that toolchain.
-          $any = $false
-          foreach ($t in Get-ChildItem "$env:VSPATH\VC\Tools\MSVC" -Directory) {
-            $h = Join-Path $t.FullName "include\xmmintrin.h"
-            if (Test-Path $h) {
-              $any = $true
-              $line = Select-String -Path $h -Pattern "_mm_prefetch" | Where-Object { $_.Line -match "void\s+_mm_prefetch" }
-              "$($t.Name): $(if ($line) { $line.Line.Trim() } else { '(no declaration found)' })"
-            }
-          }
-          if (-not $any) { "no xmmintrin.h found under any toolset" }
+          # The pin is the single source of truth, so the probe cannot drift from what we build.
+          $tag = (Select-String -Path llama/CMakeLists.txt -Pattern 'GIT_TAG\s+(b\d+)' |
+                  Select-Object -First 1).Matches[0].Groups[1].Value
+          "pinned llama.cpp tag: $tag"
+          git -c advice.detachedHead=false clone --depth 1 --branch $tag --filter=blob:none --sparse https://github.com/ggml-org/llama.cpp lc 2>&1 |
+              Select-Object -Last 2
+          git -C lc sparse-checkout set ggml
+          "quants.c present: $(Test-Path lc/ggml/src/ggml-cpu/arch/x86/quants.c)"
+          "LCTAG=$tag" | Out-File -Append $env:GITHUB_ENV
 
-      - name: Compile the unpatched and the patched form with plain clang
+      - name: Compile the real quants.c with every clang, unpatched and patched
         continue-on-error: true
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Continue'
-          # A ten-line stand-in for ggml_vec_dot_q4_0_q8_0's SSSE3 branch: a typed pointer into
-          # _mm_prefetch, compiled for SSE4.2 only (no AVX), which is what the x64 and sse42 CPU
-          # variants do. UNPATCHED is upstream's expression, PATCHED is what patches/0017 produces.
-          @'
-          #include <immintrin.h>
-          #include <stddef.h>
-          typedef struct { unsigned short d; unsigned char qs[16]; } blk;   /* like block_q4_0, 18 bytes */
-          #ifdef PATCHED
-          static inline const char * at(const void * b, size_t off) { return (const char *) b + off; }
-          void f(const blk * x, int ib) { _mm_prefetch(at(&x[ib], sizeof(blk)), _MM_HINT_T0); }
-          #else
-          void f(const blk * x, int ib) { _mm_prefetch(&x[ib] + sizeof(blk), _MM_HINT_T0); }
-          #endif
-          '@ | Set-Content -Encoding ascii probe.c
 
-          $clang = if ($env:CLANGEXE) { $env:CLANGEXE } else { "clang" }
-          $results = @()
-          foreach ($form in @('UNPATCHED', 'PATCHED')) {
-            $out = & $clang -target x86_64-pc-windows-msvc -c -O2 -msse4.2 "-D$form" probe.c -o probe.obj 2>&1 |
-                   ForEach-Object { $_.ToString() }
-            $ok = ($LASTEXITCODE -eq 0)
-            "=== $form : $(if ($ok) { 'COMPILES' } else { 'FAILS' }) ==="
-            $out | Select-Object -First 6
+          # Every clang on this runner, by path. x64 only -- VC\Tools\Llvm also holds an ARM64
+          # clang, which cannot start on an x64 host (that killed the first run).
+          $clangs = @(
+            "$env:VSPATH\VC\Tools\Llvm\x64\bin\clang.exe",
+            "${env:ProgramFiles}\LLVM\bin\clang.exe"
+          ) | Where-Object { Test-Path $_ }
+          $fromPath = (Get-Command clang -ErrorAction SilentlyContinue).Source
+          if ($fromPath -and ($clangs -notcontains $fromPath)) { $clangs += $fromPath }
+          "clang executables found:"
+          $clangs | ForEach-Object { "  $_" }
+          ""
+
+          $src = "lc/ggml/src/ggml-cpu/arch/x86/quants.c"
+          # -msse4.2 and nothing else: exactly what ggml's GNU-flag branch passes for the sse42
+          # variant (ggml-cpu/CMakeLists.txt -- its `/arch:` branch sits behind `if (MSVC)`, which
+          # is false for plain clang). NOTE the quoting: PowerShell split a bare -msse4.2 into
+          # "-msse4" and ".2" on the previous run, so every argument is a quoted string.
+          # Not named $args -- that is a PowerShell automatic variable.
+          $cflags = @('-target','x86_64-pc-windows-msvc','-c','-O2','-msse4.2',
+                      '-Ilc/ggml/include','-Ilc/ggml/src','-Ilc/ggml/src/ggml-cpu',
+                      '-Ilc/ggml/src/ggml-cpu/arch/x86')
+
+          function Measure-Clang($exe, $label) {
+            Remove-Item probe.obj -ErrorAction SilentlyContinue
+            $out = & $exe @cflags $src -o probe.obj 2>&1 | ForEach-Object { $_.ToString() }
+            $ok  = ($LASTEXITCODE -eq 0)
+            $e   = @($out | Where-Object { $_ -match ': error:' }).Count
+            $w   = @($out | Where-Object { $_ -match ': warning:' }).Count
+            "=== $label : $(if ($ok) { 'COMPILES' } else { 'FAILS' }) -- $e errors, $w warnings ==="
+            $out | Select-Object -First 3 | ForEach-Object { "    $_" }
             ""
-            $results += [pscustomobject]@{ Form = $form; Result = $(if ($ok) { 'COMPILES' } else { 'FAILS' }) }
+            [pscustomobject]@{ Label = $label; Ok = $ok; Errors = $e; Warnings = $w }
           }
 
-          # The answer, in one place, in the job summary.
-          $unpatched = ($results | Where-Object Form -eq 'UNPATCHED').Result
-          $patched   = ($results | Where-Object Form -eq 'PATCHED').Result
-          $verdict = if ($unpatched -eq 'FAILS') {
-            "patches/0017 is REQUIRED on this runner: the unpatched form does not compile."
-          } else {
-            "patches/0017's type half is NOT reproducible on this runner -- the unpatched form compiles. Its arithmetic half (prefetch 18x too far) still applies on every platform."
+          function Clang-Version($exe) {
+            ((& $exe --version | Select-Object -First 1) -replace '.*version ([0-9.]+).*', '$1').Trim()
           }
-          @(
-            "### _mm_prefetch probe",
-            "",
-            "| form | plain clang, ``-msse4.2`` |",
-            "|---|---|",
-            "| upstream (unpatched) | $unpatched |",
-            "| patches/0017 (patched) | $patched |",
-            "",
-            $verdict
-          ) | Out-File -Append $env:GITHUB_STEP_SUMMARY
-          $verdict
+
+          $rows = @()
+          foreach ($c in $clangs) { $rows += (Measure-Clang $c "clang $(Clang-Version $c) unpatched") }
+
+          # Now apply our patch to the real tree and measure the same compilers again.
+          "--- applying patches/0017 to the real tree ---"
+          git -C lc apply --verbose ../llama/patches/0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch 2>&1 |
+              Select-Object -Last 3
+          "prefetch.h present: $(Test-Path lc/ggml/src/ggml-cpu/arch/x86/prefetch.h)"
+          ""
+          foreach ($c in $clangs) { $rows += (Measure-Clang $c "clang $(Clang-Version $c) patched") }
+
+          $table = @("### _mm_prefetch probe -- real quants.c, llama.cpp $env:LCTAG, ``-msse4.2``",
+                     "",
+                     "| compiler / state | result | errors | warnings |",
+                     "|---|---|--:|--:|")
+          foreach ($r in $rows) {
+            $verdict = if ($r.Ok) { 'compiles' } else { '**fails**' }
+            $table += "| $($r.Label) | $verdict | $($r.Errors) | $($r.Warnings) |"
+          }
+          $table += ""
+          $table += "A row that compiles *with warnings* is why upstream's ``windows-cpu`` job is green. A row that fails is what ``patches/0017`` fixes. Every patched row must compile with 0 errors and 0 warnings."
+          $table | Out-File -Append $env:GITHUB_STEP_SUMMARY
+          $table | ForEach-Object { $_ }
