@@ -1466,7 +1466,7 @@ namespace {
 // is_partial = false.
 std::string parse_content_only(const std::string &raw) {
     const common_chat_parser_params params;
-    return common_chat_parse(raw, /*is_partial=*/false, params).content;
+    return common_chat_parse(common_chat_input(raw), /*is_partial=*/false, params).content;
 }
 
 // U+FFFD REPLACEMENT CHARACTER, the byte sequence upstream substitutes for

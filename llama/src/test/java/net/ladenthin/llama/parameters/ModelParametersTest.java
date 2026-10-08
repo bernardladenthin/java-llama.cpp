@@ -781,4 +781,25 @@ public class ModelParametersTest {
         ModelParameters p = new ModelParameters().setDraftSampling(DraftSampling.PROBABILISTIC);
         assertThat(p.parameters.get("--spec-draft-sampling"), is("probabilistic"));
     }
+
+    // -------------------------------------------------------------------------
+    // setMoeCacheMib (llama.cpp b11480)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testSetMoeCacheMib() {
+        ModelParameters p = new ModelParameters().setMoeCacheMib(2048);
+        assertThat(p.parameters.get("--moe-cache-mib"), is("2048"));
+    }
+
+    @Test
+    public void testSetMoeCacheMibZeroDisables() {
+        ModelParameters p = new ModelParameters().setMoeCacheMib(0);
+        assertThat(p.parameters.get("--moe-cache-mib"), is("0"));
+    }
+
+    @Test
+    public void testSetMoeCacheMibRejectsNegative() {
+        assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setMoeCacheMib(-1));
+    }
 }

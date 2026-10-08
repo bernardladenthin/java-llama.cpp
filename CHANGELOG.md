@@ -10,6 +10,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`ModelParameters.setMoeCacheMib(int)`** (`--moe-cache-mib`, llama.cpp b11480, EXPERIMENTAL upstream): a
+  GPU cache for the MoE expert weights a `setCpuMoeLayers` / `--cpu-moe` setup keeps in host memory,
+  split among several GPUs like the layers; `0` (the default) disables it.
 - **Kolibri-1 support** (Aleph Alpha, architecture `kolibri1`, 78B German/English reasoning MoE) ahead of upstream
   llama.cpp ([ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)), as the carried patch
   `0016-model-kolibri1.patch`. It combines the two community ports and, unlike either of them, loads the GGUFs of

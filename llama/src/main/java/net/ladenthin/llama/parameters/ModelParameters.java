@@ -910,6 +910,27 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Give the MoE expert weights kept in host memory a cache on the GPU of {@code mib} MiB.
+     *
+     * <p>Experts a {@link #setCpuMoeLayers(int)} / {@code --cpu-moe} setup leaves in RAM are
+     * otherwise read from host memory on every use. With a cache, llama.cpp keeps the most recently
+     * used experts on the device up to this budget; with several GPUs the budget is split among
+     * them like the layers ({@link #setTensorSplit(String)}). Upstream {@code --moe-cache-mib}
+     * (llama.cpp b11480, marked EXPERIMENTAL there); {@code 0}, the default, disables the cache.
+     * Without a GPU backend the option has no effect.</p>
+     *
+     * @param mib the cache size in MiB, {@code 0} to disable
+     * @return this builder
+     * @throws IllegalArgumentException if {@code mib} is negative (upstream rejects it as well)
+     */
+    public ModelParameters setMoeCacheMib(int mib) {
+        if (mib < 0) {
+            throw new IllegalArgumentException("Invalid moe-cache-mib value: " + mib + " (must be >= 0; 0 = disabled)");
+        }
+        return putScalar(ModelOption.MOE_CACHE_MIB, mib);
+    }
+
+    /**
      * Keep the dense FFN weights of the first {@code n} layers on the CPU.
      *
      * <p>The dense-model counterpart of {@link #setCpuMoeLayers(int)}: it offloads the feed-forward
