@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b11476**
+Current llama.cpp pinned version: **b11512**
 
 ## Natives jars: one directory per backend (`.github/natives.csv`)
 
@@ -77,7 +77,7 @@ step, not by Maven.
 
 ## CPU variants (Linux x86-64 and aarch64): `JLLAMA_CPU_VARIANTS`
 
-The two Linux CPU jars, `cpu-linux-x86-64` and `cpu-linux-aarch64`, are built since 5.3.0 the way
+The two Linux CPU jars, `cpu-linux-x86-64` and `cpu-linux-aarch64`, are built since 5.2.0 the way
 upstream builds its own release binaries: `GGML_BACKEND_DL` + `GGML_CPU_ALL_VARIANTS`, one small
 `ggml-cpu-<level>` module per instruction-set level, of which `ggml_backend_load_best` loads the best
 at run time (it scores each module's own feature check against the running CPU). Before, each jar
@@ -787,7 +787,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network for the asset build; the embed step is plain cmake -P
-git clone --depth 1 --branch b11476 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b11512 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build )
 mkdir -p webui-generated /tmp/ui-gen
 cmake -DUI_SOURCE_DIR=/tmp/lc/tools/ui -DUI_BINARY_DIR=/tmp/ui-gen \
@@ -827,7 +827,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11476`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11512`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -1966,7 +1966,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11476`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11512`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the

@@ -191,6 +191,9 @@ public enum ModelOption {
     /** CLI option {@code --model-url}. */
     MODEL_URL("--model-url"),
 
+    /** CLI option {@code --moe-cache-mib}. */
+    MOE_CACHE_MIB("--moe-cache-mib"),
+
     /** CLI option {@code --n-cpu-ffn}. */
     N_CPU_FFN("--n-cpu-ffn"),
 

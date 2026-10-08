@@ -10,6 +10,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`ModelParameters.setMoeCacheMib(int)`** (`--moe-cache-mib`, llama.cpp b11480, EXPERIMENTAL upstream): a
+  GPU cache for the MoE expert weights a `setCpuMoeLayers` / `--cpu-moe` setup keeps in host memory,
+  split among several GPUs like the layers; `0` (the default) disables it.
 - **Kolibri-1 support** (Aleph Alpha, architecture `kolibri1`, 78B German/English reasoning MoE) ahead of upstream
   llama.cpp ([ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)), as the carried patch
   `0016-model-kolibri1.patch`. It combines the two community ports and, unlike either of them, loads the GGUFs of
@@ -76,6 +79,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   GitHub retires the `macos-14` image by 2026-11-02 and fails every `macos-14` job during its October
   brownouts. The label is pinned rather than `macos-latest`, and it is not `macos-15`, which the
   shipped Metal build and the no-Metal build already run on.
+- **Upgraded the pinned llama.cpp from b11476 to b11512**, in 7 reviewed steps, each ending at a tag.
+  No carried patch needed a refresh, and every drop-check still finds its defect. The chat parser now
+  receives the generated tokens next to the text (#29876, `common_chat_input`) -- a change in the C++
+  tests here, not on the wire: request fields, their bounds and the response keys are identical across
+  the range. Two things a user can notice: the embedded server speaks cpp-httplib 0.60.1 (b11505), and
+  a slot state file written from b11512 on carries the context checkpoints (#26004) in an appendix an
+  older file simply lacks, so files from earlier releases still restore. The new `--moe-cache-mib` is
+  under *Added*. Per-step record: `docs/history/llama-cpp-breaking-changes.md`.
 - **Upgraded the pinned llama.cpp from b11320 to b11476**, in 25 reviewed steps, each ending at a tag.
   Every carried patch that broke was traced to the one upstream commit that broke it, and the step
   containing that commit ends at the first tag after it: `0007` at #29818 (b11361) and #29895 (b11401), `0014` at #29895, `0008`

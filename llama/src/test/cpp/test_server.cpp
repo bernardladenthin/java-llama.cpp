@@ -250,7 +250,7 @@ TEST(SlotParamsToJson, GrammarValue_OutputFormatGrammarExtracted) {
 
 TEST(SlotParamsToJson, GenerationPrompt_ReflectsSyntaxField) {
     task_params p;
-    p.chat_parser_params.generation_prompt = "Think step by step:";
+    p.chat_parser_params.generation_prompt = common_chat_input("Think step by step:");
 
     const json j = p.to_json();
 
@@ -1090,7 +1090,7 @@ TEST(ServerTaskResultCmplPartial, NonOaicompat_CoreFields) {
     server_task_result_cmpl_partial p;
     p.is_updated = true;
     p.res_type = TASK_RESPONSE_TYPE_NONE;
-    p.content = "hello";
+    p.content = common_chat_input("hello");
     p.n_decoded = 3;
     p.n_prompt_tokens = 10;
 
@@ -1192,7 +1192,7 @@ TEST(ServerTaskResultCmplFinal, IsStop_ReturnsTrue) {
 
 TEST(ServerTaskResultCmplFinal, NonOaicompat_StopAlwaysTrue) {
     server_task_result_cmpl_final f;
-    f.content = "done";
+    f.content = common_chat_input("done");
     f.n_decoded = 3;
     f.n_prompt_tokens = 7;
     const json j = f.to_json_non_oaicompat();
@@ -1307,7 +1307,7 @@ TEST(ServerTaskResultCmplFinal, UsageJsonOaicompat_TotalTokensIsSumOfBoth) {
 namespace {
 server_task_result_cmpl_final make_oai_final(const std::string &content = "hello") {
     server_task_result_cmpl_final f;
-    f.content = content;
+    f.content = common_chat_input(content);
     f.oaicompat_model = "test-model";
     f.oaicompat_cmpl_id = "cmpl-test";
     f.n_decoded = 3;
@@ -1575,7 +1575,7 @@ server_task_result_cmpl_partial make_partial(const std::string &content = "tok")
     server_task_result_cmpl_partial p;
     p.is_updated = true;
     p.res_type = TASK_RESPONSE_TYPE_OAI_CMPL;
-    p.content = content;
+    p.content = common_chat_input(content);
     p.oaicompat_model = "test-model";
     p.oaicompat_cmpl_id = "cmpl-part";
     return p;
@@ -1636,7 +1636,7 @@ TEST(CmplPartialToJsonDispatch, ResTypeNone_RoutesToNonOaicompat) {
     server_task_result_cmpl_partial p;
     p.is_updated = true;
     p.res_type = TASK_RESPONSE_TYPE_NONE;
-    p.content = "hello";
+    p.content = common_chat_input("hello");
     const json j = p.to_json(); // must not assert/abort
     // non-oaicompat shape has "content" directly
     EXPECT_EQ(j.at("content").get<std::string>(), "hello");
@@ -1646,7 +1646,7 @@ TEST(CmplPartialToJsonDispatch, ResTypeOaiCmpl_RoutesToOaicompat) {
     server_task_result_cmpl_partial p;
     p.is_updated = true;
     p.res_type = TASK_RESPONSE_TYPE_OAI_CMPL;
-    p.content = "hi";
+    p.content = common_chat_input("hi");
     p.oaicompat_model = "m";
     p.oaicompat_cmpl_id = "c";
     const json j = p.to_json();
@@ -1695,7 +1695,7 @@ server_task_result_cmpl_final make_dispatched_final(task_response_type rt, bool 
     f.is_updated = true;
     f.res_type = rt;
     f.stream = stream;
-    f.content = "hi";
+    f.content = common_chat_input("hi");
     f.oaicompat_model = "m";
     f.oaicompat_cmpl_id = "id";
     return f;
@@ -2108,7 +2108,7 @@ TEST(ParamsFromJsonCmpl, PlainGrammar_NoGrammarType_SetsUserType) {
 
 TEST(CmplFinalResponseFields, EmptyList_AllFieldsPresent) {
     server_task_result_cmpl_final f;
-    f.content = "hi";
+    f.content = common_chat_input("hi");
     f.stop = STOP_TYPE_EOS;
     // response_fields is empty by default → full object returned
     const json j = f.to_json_non_oaicompat();
@@ -2119,7 +2119,7 @@ TEST(CmplFinalResponseFields, EmptyList_AllFieldsPresent) {
 
 TEST(CmplFinalResponseFields, NonEmptyList_OnlyRequestedFieldsPresent) {
     server_task_result_cmpl_final f;
-    f.content = "projected";
+    f.content = common_chat_input("projected");
     f.response_fields = {"content", "tokens_predicted"};
     const json j = f.to_json_non_oaicompat();
     EXPECT_TRUE(j.contains("content"));
@@ -2131,7 +2131,7 @@ TEST(CmplFinalResponseFields, NonEmptyList_OnlyRequestedFieldsPresent) {
 
 TEST(CmplFinalResponseFields, ContentValue_PreservedThroughProjection) {
     server_task_result_cmpl_final f;
-    f.content = "keep this";
+    f.content = common_chat_input("keep this");
     f.response_fields = {"content"};
     const json j = f.to_json_non_oaicompat();
     EXPECT_EQ(j.at("content").get<std::string>(), "keep this");
