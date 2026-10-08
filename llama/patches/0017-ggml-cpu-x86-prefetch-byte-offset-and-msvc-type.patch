@@ -10,16 +10,22 @@ else moves. The helper is header-only and included relatively, so no CMake chang
    `void _mm_prefetch(char const *, int)`. Clang's own xmmintrin.h defines a macro that casts to
    `const void *`, but it sits behind `#ifndef _MSC_VER`: on a *-windows-msvc target clang leaves
    the declaration to Microsoft. Passing `const block_q4_0 *` is then
-   -Wincompatible-pointer-types, and whether that is fatal depends on the clang version.
-   Measured on the real file at -msse4.2, Windows 11, MSVC 14.44.35207 headers, plain clang
-   (the GNU driver, which cmake/x64-windows-llvm.cmake selects):
+   -Wincompatible-pointer-types, which clang 22 promoted to an error by default (llvm-project
+   #157364; the 22.1.0 release notes say "The -Wincompatible-pointer-types diagnostic now
+   defaults to an error; it can still be downgraded to a warning by passing
+   -Wno-error=incompatible-pointer-types"). NOT clang 16 -- an earlier version of this header
+   claimed that, but clang 16 promoted only -Wincompatible-FUNCTION-pointer-types.
 
-     clang 20.1.8  ->  4 warnings, object file produced, exit 0
-     clang 23.1.3  ->  4 errors,   no object file,       exit 1
+   Measured on the real file at -msse4.2, plain clang (the GNU driver, which
+   cmake/x64-windows-llvm.cmake selects) on x86_64-pc-windows-msvc, before and after this patch:
 
-   So the diagnostic became an error by default somewhere in 21..23 -- NOT in clang 16, which an
-   earlier version of this header claimed; only -Wincompatible-FUNCTION-pointer-types was
-   promoted then. The practical consequence is that -DGGML_CPU_ALL_VARIANTS=ON cannot be built
+     clang 20.1.8   unpatched -> 4 warnings, object file produced   patched -> 0 errors, 0 warnings
+     clang 22.1.3   unpatched -> 4 errors,   no object file         patched -> 0 errors, 0 warnings
+     clang 23.1.3   unpatched -> 4 errors,   no object file         patched -> 0 errors, 0 warnings
+
+   (20.1.8 and 23.1.3 locally with MSVC 14.44.35207 headers; 20.1.8 and 22.1.3 on a
+   windows-2025-vs2026 runner, which carries both.) The practical consequence is that
+   -DGGML_CPU_ALL_VARIANTS=ON cannot be built
    with a current plain clang on Windows, because the `sse42` variant compiles this branch: ggml
    passes it -msse4.2 (its `/arch:` branch is behind `if (MSVC)`, false for plain clang), which
    defines __SSSE3__ without __AVX__ and so selects `#elif defined(__SSSE3__)`. It is the only
@@ -44,7 +50,10 @@ Why upstream's own build is green -- measured, and no longer an open question. T
 release job builds exactly this with plain clang, GGML_CPU_ALL_VARIANTS=ON and no suppressing
 flag (CMAKE_ARGS carries only build-target toggles), and ships ggml-cpu-sse42.dll. The reason it
 works is the clang version: the windows-2025-vs2026 image has LLVM 20.1.8 on PATH, where these
-are warnings. It was NOT a header difference -- all three MSVC toolsets on that image
+are warnings. Note how narrow that is -- the same image also ships clang 22.1.3 inside Visual
+Studio 2026 (VC/Tools/Llvm/x64), which fails on the unpatched file; upstream reaches the working
+one only because C:\Program Files/LLVM/bin comes first on PATH. It was NOT a header difference
+-- all three MSVC toolsets on that image
 (14.29.30133, 14.44.35207, 14.51.36231) declare _mm_prefetch identically as
 `extern void _mm_prefetch(char const*_A, int _Sel);`, which was the first hypothesis and is
 disproved. So this patch is ahead of upstream rather than diverging from it: their build breaks
