@@ -21,7 +21,8 @@ import org.junit.jupiter.api.io.TempDir;
                 + "redirecting the arch component via the osinfo.architecture override. backendtest/ "
                 + "holds only unloadable fake libraries in real backend directories (cuda13, rocm, "
                 + "vulkan), exercising every failure branch (priority probing, per-backend temp-dir "
-                + "extraction, jllama-extras.txt present and naming a missing file, clean load-failure "
+                + "extraction, jllama-extras.txt present and naming a missing file, jllama-files.txt extracted "
+                + "but not loaded, clean load-failure "
                 + "fallthrough, forced-backend fail-loud, no backend at all); backendtest-ok/ adds two "
                 + "trivial real x86-64 ELF dummies so the success path, the resident-extra bookkeeping, "
                 + "and the same-extra clash skip execute too. Linux-only (the trees are committed under "
@@ -101,9 +102,12 @@ public class BackendLoadTest {
                 tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "cuda13").resolve("libextra.so")));
         assertFalse(Files.exists(
                 tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "cuda13").resolve("libjllama.so")));
-        // vulkan (no extras): its main library is extracted, then fails to load.
-        assertTrue(Files.isRegularFile(
-                tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "vulkan").resolve("libjllama.so")));
+        // vulkan (no extras): its main library is extracted, then fails to load. The file its
+        // jllama-files.txt names is extracted next to it first -- never loaded, or this not-a-library
+        // fixture would have failed the backend before its library was reached.
+        Path vulkan = tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "vulkan");
+        assertTrue(Files.isRegularFile(vulkan.resolve("libggml-cpu-fixture.so")));
+        assertTrue(Files.isRegularFile(vulkan.resolve("libjllama.so")));
     }
 
     @Test

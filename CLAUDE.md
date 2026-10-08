@@ -75,6 +75,43 @@ to the test classpath (`additionalClasspathElements`), so `mvn test` finds the l
 is CI-only (a local tree holds one directory); a missing directory there is caught by the merge
 step, not by Maven.
 
+## CPU variants (prototype, Linux x86-64): `JLLAMA_CPU_VARIANTS`
+
+Every x86-64 natives jar is built for **one** instruction-set level, the Haswell baseline
+(x86-64-v3, the block in `llama/CMakeLists.txt` that forces `GGML_AVX2` & co.): a CPU without AVX2
+dies with SIGILL -- a JVM crash, not an exception -- at the first matrix multiplication, and
+AVX-512/VNNI/AMX stay unused on CPUs that have them. Upstream ships every level instead
+(`GGML_BACKEND_DL` + `GGML_CPU_ALL_VARIANTS`: one small `ggml-cpu-<level>` module each, chosen at
+run time by `ggml_backend_load_best`, which scores each module's own feature check against the
+running CPU). `-DJLLAMA_CPU_VARIANTS=ON` builds that, **opt-in and not wired into CI yet**:
+
+- **Only ggml becomes shared.** `FetchContent_MakeAvailable` is pointed at a non-existent
+  `SOURCE_SUBDIR`, so it only fetches and patches; ggml is then added first with
+  `BUILD_SHARED_LIBS ON` and llama.cpp afterwards with it `OFF` (llama.cpp skips its own
+  `add_subdirectory(ggml)` when a `ggml` target exists). llama, mtmd and llama-common stay static in
+  `libjllama.so`. The one ggml default llama.cpp changes itself (`GGML_LLAMAFILE`) is repeated.
+- **The directory holds 18 files**: `libjllama.so`, `libggml.so`, `libggml-base.so` (unversioned:
+  the loader extracts plain files, so file name, SONAME and `DT_NEEDED` must agree), 14
+  `libggml-cpu-<level>.so` and `libggml-rpc.so` -- all with run path `$ORIGIN` only.
+  `jllama-files.txt` lists the 17 besides `libjllama`; `LlamaLoader` extracts them next to it
+  **without loading them** (`BACKEND_FILES_FILE`, the counterpart of `jllama-extras.txt`, which
+  loads). `JNI_OnLoad` then calls `ggml_backend_load_all_from_path(<its own directory>)` (found via
+  `dladdr`): ggml's default searches next to the executable, which here is `java`.
+- **RPC is a module too**, so `rpc_bridge.cpp`/`rpc_support.hpp` resolve its four entry points through
+  `ggml_backend_reg_get_proc_address` (`rpc_proc<>()`, as upstream's `common/arg.cpp` does) in every
+  build. `jllama_test` calls the CPU/RPC backends directly, so the option refuses `BUILD_TESTING`.
+- **Measured locally** (GCC 13, a Xeon with AVX-512 + VNNI, no VBMI/BF16): the directory is 36 MB
+  (13.4 MB zipped), `libjllama.so` 15 MB of it; ggml picked `cascadelake`, and with the AVX-512
+  modules removed it fell back to `haswell` (skipping `alderlake`, whose AVX-VNNI the CPU lacks).
+  `NativeLibraryLoadSmokeTest`, `RpcServerTest`, `LlamaLoggerTest` and a real completion on a tiny
+  random-weight Llama GGUF pass through the classpath extraction.
+
+Open before it can ship (`TODO.md`): the manylinux2014 CI image has GCC 10, which lacks `-mavxvnni`
+and `-mamx-tile` (`alderlake`, `sapphirerapids`; ggml does not check), the natives-jar checks
+(`merge-native-artifacts.sh`, `package-fatjars.sh`, `verify-native-deps.py`) assume one library per
+directory, and Windows (`GetModuleHandleEx` instead of `dladdr`; DLL search path) and aarch64
+(upstream's armv8.x/SVE/SME variants) are not done.
+
 ## Build checks, shared files and the release gate (`.github/buildcheck/`)
 
 The pipeline's static checks are a small **stdlib-only Python package**, `.github/buildcheck/`, with

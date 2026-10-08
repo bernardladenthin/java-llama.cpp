@@ -113,6 +113,16 @@ public class LlamaLoader {
     static final String BACKEND_EXTRAS_FILE = "jllama-extras.txt";
 
     /**
+     * Optional file in a backend directory naming sibling files (same format as {@link
+     * #BACKEND_EXTRAS_FILE}) that are only extracted next to the library, never loaded by Java:
+     * the shared ggml libraries the library finds through its {@code $ORIGIN} run path, and the
+     * backend modules it loads itself from its own directory (one CPU module per instruction-set
+     * level in a {@code JLLAMA_CPU_VARIANTS} build, of which ggml picks the best for the running
+     * CPU). Loading them from Java would defeat exactly that choice.
+     */
+    static final String BACKEND_FILES_FILE = "jllama-files.txt";
+
+    /**
      * Prefix of the per-backend extraction subdirectory below the temp dir. Deliberately starts
      * with {@code jllama} so {@link #shouldCleanPath(Path)} matches it during cleanup.
      */
@@ -425,14 +435,16 @@ public class LlamaLoader {
     }
 
     /**
-     * Reads the {@link #BACKEND_EXTRAS_FILE} of a backend directory, if it has one.
+     * Reads a file list ({@link #BACKEND_EXTRAS_FILE} or {@link #BACKEND_FILES_FILE}) of a backend
+     * directory, if it has one.
      *
      * @param backendResourcePath the backend's classpath directory
-     * @return the listed file names, or an empty list when the backend has no extras
+     * @param listFile            the list's file name
+     * @return the listed file names, or an empty list when the backend has no such list
      * @throws IOException when the file exists but cannot be read
      */
-    private static List<String> readExtras(String backendResourcePath) throws IOException {
-        InputStream stream = resourceAsStream(backendResourcePath + "/" + BACKEND_EXTRAS_FILE);
+    private static List<String> readFileList(String backendResourcePath, String listFile) throws IOException {
+        InputStream stream = resourceAsStream(backendResourcePath + "/" + listFile);
         if (stream == null) {
             return Collections.emptyList();
         }
@@ -457,11 +469,12 @@ public class LlamaLoader {
      */
     private static boolean tryLoadBackend(String backendResourcePath, String backend, Set<String> residentExtraFiles) {
         List<String> extraFiles;
+        List<String> plainFiles;
         try {
-            extraFiles = readExtras(backendResourcePath);
+            extraFiles = readFileList(backendResourcePath, BACKEND_EXTRAS_FILE);
+            plainFiles = readFileList(backendResourcePath, BACKEND_FILES_FILE);
         } catch (IOException e) {
-            System.err.println(
-                    "Failed to read " + backendResourcePath + "/" + BACKEND_EXTRAS_FILE + ": " + e.getMessage());
+            System.err.println("Failed to read a file list of " + backendResourcePath + ": " + e.getMessage());
             return false;
         }
         for (String extraFile : extraFiles) {
@@ -488,6 +501,11 @@ public class LlamaLoader {
                 return false;
             }
             residentExtraFiles.add(extraFile);
+        }
+        for (String plainFile : plainFiles) {
+            if (extractFile(backendResourcePath, plainFile, targetFolder) == null) {
+                return false;
+            }
         }
         // Only a Metal build that does not embed its shader source ships ggml-metal.metal
         // (every CI build embeds it); ggml looks for it next to the library.

@@ -10,6 +10,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **CPU variants prototype (Linux x86-64, opt-in build option `-DJLLAMA_CPU_VARIANTS=ON`, not released).**
+  Builds ggml the way upstream builds its own release binaries: one CPU backend module per
+  instruction-set level (x64 ... zen4, sapphirerapids), of which ggml loads the best for the running
+  CPU, instead of the single Haswell-baseline build that crashes on CPUs without AVX2 and leaves
+  AVX-512/VNNI/AMX unused. `LlamaLoader` extracts the files a backend's new `jllama-files.txt` lists
+  next to its library without loading them; `libjllama` loads the modules from its own directory.
+  The RPC entry points are now resolved through ggml's proc-address table in every build.
 - **Kolibri-1 support** (Aleph Alpha, architecture `kolibri1`, 78B German/English reasoning MoE) ahead of upstream
   llama.cpp ([ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)), as the carried patch
   `0016-model-kolibri1.patch`. It combines the two community ports and, unlike either of them, loads the GGUFs of

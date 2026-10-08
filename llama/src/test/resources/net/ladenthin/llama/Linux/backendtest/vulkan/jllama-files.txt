@@ -1,0 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT
+#
+# Test fixture for BackendLoadTest: files extracted next to this backend's library, never loaded.
+libggml-cpu-fixture.so

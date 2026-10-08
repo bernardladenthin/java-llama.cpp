@@ -17,6 +17,26 @@ so everything below is genuinely still open.
 
 ## Open — jllama-specific
 
+### CPU variants (`JLLAMA_CPU_VARIANTS`) -- from prototype to shipped
+
+Prototype on Linux x86-64 works locally (see CLAUDE.md "CPU variants"). To ship it:
+
+1. **CI build job** for the variant tree, first build-only and exempt from the release gate. The
+   Linux x86-64 job runs in manylinux2014 (GCC 10, glibc 2.17): `alderlake` (`-mavxvnni`) and
+   `sapphirerapids` (`-mamx-tile`) need GCC 11+. Options: a newer devtoolset in that image, or drop
+   the two variants there (ggml would pick `icelake`/`haswell` instead) -- measure first.
+2. **Natives-jar checks** for a directory with several libraries: `merge-native-artifacts.sh`
+   (holds its library and nothing else), `package-fatjars.sh` (byte-identical library check),
+   `verify-native-deps.py` (allowlist per file: the modules need `libgomp.so.1` like the default build).
+3. **Decide the classifier**: replace `cpu-linux-x86-64`, or ship it next to it as a new backend
+   directory tried before `cpu`.
+4. **Benchmark** the gain on AVX-512/VNNI/AMX machines (prompt processing and generation) against the
+   Haswell baseline; the prototype measured only correctness.
+5. **Windows x86-64** (`GetModuleHandleExW` + `GetModuleFileNameW` instead of `dladdr`; ggml/ggml-base
+   DLLs must be found when `jllama.dll` loads -- list them in `jllama-extras.txt`) and **aarch64**
+   (upstream's armv8.0 ... armv9.2 SVE/SME variants; today `GGML_NATIVE=OFF` builds plain ARMv8 --
+   check whether dotprod/i8mm are used at all).
+
 ### macOS dylib links Homebrew OpenSSL (found by `verify-native-deps.py`)
 
 - **The shipped `Mac/aarch64/metal/libjllama.dylib` needs `/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib`

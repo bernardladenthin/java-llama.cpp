@@ -215,6 +215,19 @@ struct device_info {
 
 // ---- glue over the ggml registry ------------------------------------------------------------
 
+// Resolves an RPC entry point through the RPC backend's proc-address table instead of linking it,
+// as upstream's own common/arg.cpp does: with GGML_BACKEND_DL the RPC backend is a module loaded at
+// run time, and a direct call would not even link. Every name used here is exported there, the
+// two of patches/0015 included. Usage: rpc_proc<decltype(&ggml_backend_rpc_stop_server)>("...").
+template <typename Fn> [[nodiscard]] Fn rpc_proc(const char *name) {
+    ggml_backend_reg_t reg = ggml_backend_reg_by_name("RPC");
+    void *fn = reg != nullptr ? ggml_backend_reg_get_proc_address(reg, name) : nullptr;
+    if (fn == nullptr) {
+        throw std::runtime_error(std::string("the RPC backend does not provide ") + name);
+    }
+    return reinterpret_cast<Fn>(fn);
+}
+
 // ggml's RPC devices all belong to the one backend reg named "RPC"; their description is the
 // endpoint they were registered for.
 [[nodiscard]] inline bool is_rpc_device(ggml_backend_dev_t dev) {
@@ -248,7 +261,8 @@ struct device_info {
 // Registers one RPC server; throws std::invalid_argument when it cannot be reached (patches/0015
 // turns that case into a nullptr instead of an abort of the process).
 inline void register_server(const std::string &endpoint) {
-    ggml_backend_reg_t reg = ggml_backend_rpc_add_server(endpoint.c_str());
+    ggml_backend_reg_t reg =
+        rpc_proc<decltype(&ggml_backend_rpc_add_server)>("ggml_backend_rpc_add_server")(endpoint.c_str());
     if (reg == nullptr) {
         throw std::invalid_argument("cannot reach RPC server " + endpoint +
                                     " (is an rpc-server / RpcServer listening there?)");

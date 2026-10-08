@@ -22,6 +22,10 @@
 #include "log_helpers.hpp"
 #include "tts_engine.h"
 
+#ifdef GGML_BACKEND_DL
+#include <dlfcn.h>
+#endif
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -740,6 +744,25 @@ std::string parse_jstring(JNIEnv *env, jstring java_string) {
     auto *jctx = _jctx_guard.ptr;                                                                                      \
     server_context *ctx_server = &jctx->server
 
+#ifdef GGML_BACKEND_DL
+// With GGML_BACKEND_DL (JLLAMA_CPU_VARIANTS) the CPU and RPC backends are modules ggml loads at run
+// time, and ggml_backend_load_all() looks next to the executable -- `java`, here. LlamaLoader
+// extracts the modules next to this library, so they are loaded from this library's own directory
+// before anything touches the backend registry. ggml_backend_load_best() picks the CPU module whose
+// instruction set the running CPU supports best.
+static void load_backends_next_to_this_library() {
+    Dl_info info{};
+    if (dladdr(reinterpret_cast<void *>(&load_backends_next_to_this_library), &info) == 0 ||
+        info.dli_fname == nullptr) {
+        return;
+    }
+    std::string dir(info.dli_fname);
+    const size_t slash = dir.find_last_of('/');
+    dir = slash == std::string::npos ? std::string(".") : dir.substr(0, slash);
+    ggml_backend_load_all_from_path(dir.c_str());
+}
+#endif
+
 /**
  * The VM calls JNI_OnLoad when the native library is loaded (for example, through `System.loadLibrary`).
  * `JNI_OnLoad` must return the JNI version needed by the native library.
@@ -755,6 +778,10 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) try {
     if (JNI_OK != vm->GetEnv((void **)&env, JNI_VERSION_1_1)) {
         goto error;
     }
+
+#ifdef GGML_BACKEND_DL
+    load_backends_next_to_this_library();
+#endif
 
     // find classes
     c_llama_model = env->FindClass("net/ladenthin/llama/LlamaModel");
