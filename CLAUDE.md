@@ -77,7 +77,7 @@ step, not by Maven.
 
 ## CPU variants (Linux x86-64 and aarch64): `JLLAMA_CPU_VARIANTS`
 
-The two Linux CPU jars, `cpu-linux-x86-64` and `cpu-linux-aarch64`, are built since 5.3.0 the way
+The two Linux CPU jars, `cpu-linux-x86-64` and `cpu-linux-aarch64`, are built since 5.2.0 the way
 upstream builds its own release binaries: `GGML_BACKEND_DL` + `GGML_CPU_ALL_VARIANTS`, one small
 `ggml-cpu-<level>` module per instruction-set level, of which `ggml_backend_load_best` loads the best
 at run time (it scores each module's own feature check against the running CPU). Before, each jar

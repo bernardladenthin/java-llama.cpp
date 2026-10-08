@@ -19,7 +19,7 @@ so everything below is genuinely still open.
 
 ### CPU variants (`JLLAMA_CPU_VARIANTS`) -- Windows, GPU modules, loader follow-ups
 
-Linux x86-64 and aarch64 ship the variant build since 5.3.0 (CLAUDE.md "CPU variants"). The rest,
+Linux x86-64 and aarch64 ship the variant build since 5.2.0 (CLAUDE.md "CPU variants"). The rest,
 with what a measurement on a Windows 11 machine (Ryzen 7 5800H, RTX 3070, JDK 21, upstream b11476
 binaries; 2026-10-08) established:
 
