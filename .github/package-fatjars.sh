@@ -24,11 +24,14 @@
 #
 # Fail-loud invariants (a broken invariant must red the pipeline, never skip):
 #   * the listed natives jars and the natives jars on disk match exactly,
-#   * every natives jar holds its own directory, with its library, and nothing else, and names
-#     the Automatic-Module-Name the module path needs (without it the JVM silently drops the jar),
-#   * a combined jar keeps its own CPU library (byte-identical), carries no other OS/arch,
-#     had at least one tree removed, keeps every .class of the default fat jar, holds every
-#     added backend byte-identical to its natives jar, and keeps its Main-Class.
+#   * every natives jar holds its own directory, with its library, and nothing outside it, and
+#     names the Automatic-Module-Name the module path needs (without it the JVM silently drops
+#     the jar). A JLLAMA_CPU_VARIANTS build (CLAUDE.md, "CPU variants") has ggml's shared libraries
+#     and the CPU backend modules next to the library, so a directory is compared file by file,
+#   * a combined jar keeps its own CPU directory (every file byte-identical to the default fat
+#     jar's), carries no other OS/arch, had at least one tree removed, keeps every .class of the
+#     default fat jar, holds every file of every added backend byte-identical to its natives jar,
+#     and keeps its Main-Class.
 #
 # Usage: package-fatjars.sh <jars-dir> <out-dir>
 #   jars-dir  directory holding the `llama-jars` artifact (llama/target/*.jar)
@@ -161,13 +164,24 @@ for target in $(printf '%s\n' "${!TARGET_CLASSIFIERS[@]}" | sort); do
     (cd "$staging" && zip -q -ur "$out_jar" net)
 
     # --- Verify the combined jar --------------------------------------------------------
+    # Every file of every backend directory, not only the library: a variant build's modules
+    # must arrive exactly as built, or ggml loads a module that does not match its libggml.
     for classifier in $classifiers; do
         backend="${classifier%-"$target"}"
-        unzip -p "$out_jar" "$own$backend/$lib" | cmp -s - "$staging/$own$backend/$lib" \
-            || fail "$out_jar: $own$backend/$lib is missing or differs from its natives jar"
+        while IFS= read -r f; do
+            unzip -p "$out_jar" "$f" | cmp -s - "$staging/$f" \
+                || fail "$out_jar: $f is missing or differs from its natives jar"
+        done < <(cd "$staging" && find "$own$backend" -type f | sort)
     done
-    unzip -p "$out_jar" "${own}cpu/$lib" | cmp -s - <(unzip -p "$BASE_FAT_JAR" "${own}cpu/$lib") \
-        || fail "$out_jar: CPU fallback ${own}cpu/$lib is missing or differs from the default fat jar's"
+    base_cpu="$(unzip -Z1 "$BASE_FAT_JAR" "${own}cpu/*" | grep -v '/$' | sort)"
+    out_cpu="$(unzip -Z1 "$out_jar" "${own}cpu/*" | grep -v '/$' | sort)"
+    [ -n "$base_cpu" ] || fail "$BASE_FAT_JAR: no CPU directory ${own}cpu/ -- the default fat jar lost its natives"
+    [ "$base_cpu" = "$out_cpu" ] \
+        || fail "$out_jar: CPU fallback ${own}cpu/ holds other files than the default fat jar's: $(diff <(echo "$base_cpu") <(echo "$out_cpu") | tr '\n' ' ')"
+    while IFS= read -r f; do
+        unzip -p "$out_jar" "$f" | cmp -s - <(unzip -p "$BASE_FAT_JAR" "$f") \
+            || fail "$out_jar: CPU fallback $f differs from the default fat jar's"
+    done <<< "$base_cpu"
     out_trees="$(native_trees "$out_jar")"
     [ "$out_trees" = "$tree" ] \
         || fail "$out_jar: expected only the native tree $tree, found: $(echo "$out_trees" | tr '\n' ' ')"

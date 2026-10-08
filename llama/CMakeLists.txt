@@ -52,6 +52,16 @@ option(LLAMA_VERBOSE	"llama: verbose output"		OFF)
 # GPU-less runner. -DBUILD_TESTING=ON still enables the tests.
 option(BUILD_TESTING "Build C++ unit tests for jni_helpers / json_helpers / utils" OFF)
 
+# CPU variants (prototype, Linux x86-64): ggml is built the way upstream builds its own release
+# binaries -- GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS -- so the natives directory holds libjllama
+# plus libggml/libggml-base and one CPU backend module per instruction-set level (x64, sse42,
+# sandybridge ... zen4, sapphirerapids). ggml itself picks the best module for the running CPU at
+# load time (ggml_backend_load_best scores each module's feature check), which a single build can
+# not: the default build targets the Haswell baseline below, so it crashes with SIGILL on an older
+# CPU and leaves AVX-512/VNNI/AMX unused on a newer one. Only ggml becomes shared; llama, mtmd and
+# llama-common stay static inside libjllama. Off by default: every other build is unchanged.
+option(JLLAMA_CPU_VARIANTS "Build ggml as shared libraries with every CPU backend variant (GGML_BACKEND_DL)" OFF)
+
 #################### json ####################
 
 FetchContent_Declare(
@@ -158,6 +168,7 @@ endif()
 #   - MSVC's /arch:AVX512 applies to the entire TU — no per-function gating.
 #   - Frequency throttling and power draw make it a net loss for bursty work.
 set(GGML_NATIVE  OFF CACHE BOOL "" FORCE)
+if(NOT JLLAMA_CPU_VARIANTS)
 set(GGML_SSE42   ON  CACHE BOOL "" FORCE)
 set(GGML_AVX     ON  CACHE BOOL "" FORCE)
 set(GGML_AVX2    ON  CACHE BOOL "" FORCE)
@@ -169,6 +180,7 @@ endif()
 set(GGML_FMA     ON  CACHE BOOL "" FORCE)
 set(GGML_F16C    ON  CACHE BOOL "" FORCE)
 set(GGML_AVX512  OFF CACHE BOOL "" FORCE)
+endif()
 # RPC backend (ggml-rpc): lets a model offload layers to rpc-servers on other machines
 # (--rpc host:port) and lets this library serve its own devices (RpcServer). It is a static
 # library linked into jllama like every other ggml backend, so the shipped artifact stays ONE
@@ -195,6 +207,12 @@ set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
 # (sorted, idempotently, fail-loud) by cmake/apply-llama-patches.cmake — see that file's header.
 # This runs for every C++ build (all CI jobs + local) from one place. <SOURCE_DIR> is substituted
 # by FetchContent/ExternalProject to the fetched llama.cpp source root.
+# With JLLAMA_CPU_VARIANTS, SOURCE_SUBDIR names a directory that does not exist, so
+# FetchContent_MakeAvailable only fetches and patches the source; ggml and llama.cpp are then added
+# below in two steps (llama.cpp skips its own add_subdirectory(ggml) when a ggml target exists).
+if(JLLAMA_CPU_VARIANTS)
+    set(JLLAMA_LLAMA_SOURCE_SUBDIR SOURCE_SUBDIR jllama-added-below)
+endif()
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
@@ -203,8 +221,30 @@ FetchContent_Declare(
 		-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patches
 		-DLLAMA_SRC=<SOURCE_DIR>
 		-P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply-llama-patches.cmake
+	${JLLAMA_LLAMA_SOURCE_SUBDIR}
 )
 FetchContent_MakeAvailable(llama.cpp)
+if(JLLAMA_CPU_VARIANTS)
+    # Linux x86-64 and aarch64 (the two shipped as variant builds; see CLAUDE.md "CPU variants").
+    # Windows needs the module search and the CRT settled first, macOS has one CPU generation
+    # per Metal build, Android ships one library per ABI, s390x has no variants upstream.
+    if(NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|aarch64|arm64)$"))
+        message(FATAL_ERROR "JLLAMA_CPU_VARIANTS is supported on Linux x86-64 and aarch64 only")
+    endif()
+    if(BUILD_TESTING)
+        # jllama_test calls the CPU and RPC backends directly (ggml_backend_cpu_init, ...), which are
+        # loadable modules here, not link-time libraries.
+        message(FATAL_ERROR "JLLAMA_CPU_VARIANTS cannot be combined with BUILD_TESTING")
+    endif()
+    set(BUILD_SHARED_LIBS ON)
+    set(GGML_BACKEND_DL       ON CACHE BOOL "" FORCE)
+    set(GGML_CPU_ALL_VARIANTS ON CACHE BOOL "" FORCE)
+    # The one ggml default llama.cpp's CMakeLists changes before adding ggml itself.
+    set(GGML_LLAMAFILE_DEFAULT ON)
+    add_subdirectory(${llama.cpp_SOURCE_DIR}/ggml ${llama.cpp_BINARY_DIR}/ggml)
+    set(BUILD_SHARED_LIBS OFF)
+    add_subdirectory(${llama.cpp_SOURCE_DIR} ${llama.cpp_BINARY_DIR})
+endif()
 
 # ROCm/HIP: compress the embedded GPU code. Without it every HIP translation unit carries one
 # UNcompressed code object per GPU target, so the shipped library holds the complete kernel set
@@ -544,6 +584,36 @@ else()
 	set_target_properties(jllama llama ggml PROPERTIES
 	  LIBRARY_OUTPUT_DIRECTORY ${JLLAMA_DIR}
 	)
+endif()
+
+if(JLLAMA_CPU_VARIANTS)
+    # Every ggml library and backend module goes next to libjllama, which finds the two it links
+    # (libggml, libggml-base) through $ORIGIN and loads the backend modules from its own directory
+    # at JNI_OnLoad. jllama-files.txt lists them for LlamaLoader, which extracts them without
+    # loading them: choosing the CPU module is ggml's job.
+    set(JLLAMA_GGML_TARGETS)
+    foreach(dir ${llama.cpp_SOURCE_DIR}/ggml/src ${llama.cpp_SOURCE_DIR}/ggml/src/ggml-rpc)
+        get_property(dir_targets DIRECTORY ${dir} PROPERTY BUILDSYSTEM_TARGETS)
+        foreach(t ${dir_targets})
+            get_target_property(t_type ${t} TYPE)
+            if(t_type STREQUAL "SHARED_LIBRARY" OR t_type STREQUAL "MODULE_LIBRARY")
+                list(APPEND JLLAMA_GGML_TARGETS ${t})
+            endif()
+        endforeach()
+    endforeach()
+    set_target_properties(${JLLAMA_GGML_TARGETS} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${JLLAMA_DIR})
+    # Unversioned: LlamaLoader extracts plain files, not the libggml.so -> .so.0 -> .so.0.x.y
+    # symlink chain, so the file name, the SONAME and libjllama's DT_NEEDED entry must be one name.
+    set_property(TARGET ggml ggml-base PROPERTY VERSION)
+    set_property(TARGET ggml ggml-base PROPERTY SOVERSION)
+    # $ORIGIN only: the default build run path would also carry this machine's absolute build path.
+    set_target_properties(jllama ${JLLAMA_GGML_TARGETS} PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
+    set(JLLAMA_FILES_CONTENT "# Written by llama/CMakeLists.txt (JLLAMA_CPU_VARIANTS): extracted, not loaded\n")
+    foreach(t ${JLLAMA_GGML_TARGETS})
+        string(APPEND JLLAMA_FILES_CONTENT "$<TARGET_FILE_NAME:${t}>\n")
+    endforeach()
+    file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-files.txt CONTENT "${JLLAMA_FILES_CONTENT}")
+    message(STATUS "CPU variants: ${JLLAMA_GGML_TARGETS}")
 endif()
 
 if (LLAMA_METAL AND NOT LLAMA_METAL_EMBED_LIBRARY)

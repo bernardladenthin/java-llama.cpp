@@ -59,7 +59,6 @@ SPDX-License-Identifier = "MIT"
 path = [
     ".github/dockcross/dockcross-android-arm64",
     ".github/dockcross/dockcross-android-x86_64",
-    ".github/dockcross/dockcross-manylinux2014-x64",
     ".github/dockcross/dockcross-manylinux_2_28-x64",
 ]
 SPDX-FileCopyrightText = "2015-2021 Steeve Morin, Rob Burns, Matthew McCormick, Jean-Christophe Fillion-Robin, Bensuperpc"

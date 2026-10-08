@@ -61,18 +61,25 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_RpcServerNative_serveNative(JNIE
         }
         // Blocks until ggml_backend_rpc_stop_server(), or returns at once when the socket cannot be
         // bound; RpcServer tells the two apart with serverListeningNative().
-        ggml_backend_rpc_start_server(endpoint.c_str(), cache_dir.empty() ? nullptr : cache_dir.c_str(),
-                                      static_cast<size_t>(threads), devices.size(), devices.data());
+        jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_start_server)>("ggml_backend_rpc_start_server")(
+            endpoint.c_str(), cache_dir.empty() ? nullptr : cache_dir.c_str(), static_cast<size_t>(threads),
+            devices.size(), devices.data());
     });
 }
 
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_RpcServerNative_stopNative(JNIEnv *env, jclass) {
-    return jni_guard_impl(env, rpc_exception_class(env), [&]() -> void { ggml_backend_rpc_stop_server(); });
+    return jni_guard_impl(env, rpc_exception_class(env), [&]() -> void {
+        jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_stop_server)>("ggml_backend_rpc_stop_server")();
+    });
 }
 
 JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_RpcServerNative_serverListeningNative(JNIEnv *env, jclass) {
-    return jni_guard_impl(env, rpc_exception_class(env),
-                          [&]() -> jboolean { return ggml_backend_rpc_server_listening() ? JNI_TRUE : JNI_FALSE; });
+    return jni_guard_impl(env, rpc_exception_class(env), [&]() -> jboolean {
+        return jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_server_listening)>(
+                   "ggml_backend_rpc_server_listening")()
+                   ? JNI_TRUE
+                   : JNI_FALSE;
+    });
 }
 
 JNIEXPORT jobjectArray JNICALL Java_net_ladenthin_llama_RpcServerNative_serverDevicesNative(JNIEnv *env, jclass,

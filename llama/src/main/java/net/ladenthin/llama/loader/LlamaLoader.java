@@ -11,6 +11,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -24,7 +25,9 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.jar.JarFile;
 import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
 import lombok.ToString;
 import org.jspecify.annotations.Nullable;
 
@@ -113,8 +116,19 @@ public class LlamaLoader {
     static final String BACKEND_EXTRAS_FILE = "jllama-extras.txt";
 
     /**
-     * Prefix of the per-backend extraction subdirectory below the temp dir. Deliberately starts
-     * with {@code jllama} so {@link #shouldCleanPath(Path)} matches it during cleanup.
+     * Optional file in a backend directory naming sibling files (same format as {@link
+     * #BACKEND_EXTRAS_FILE}) that are only extracted next to the library, never loaded by Java:
+     * the shared ggml libraries the library finds through its {@code $ORIGIN} run path, and the
+     * backend modules it loads itself from its own directory (one CPU module per instruction-set
+     * level in a {@code JLLAMA_CPU_VARIANTS} build, of which ggml picks the best for the running
+     * CPU). Loading them from Java would defeat exactly that choice.
+     */
+    static final String BACKEND_FILES_FILE = "jllama-files.txt";
+
+    /**
+     * Prefix of the per-backend extraction subdirectory below the temp dir,
+     * {@code jllama-backend-<backend>-<key>} (see {@link #extractionDirectoryName}). Deliberately
+     * starts with {@code jllama} so {@link #shouldCleanPath(Path)} matches it during cleanup.
      */
     static final String BACKEND_TEMP_DIR_PREFIX = "jllama-backend-";
 
@@ -425,14 +439,16 @@ public class LlamaLoader {
     }
 
     /**
-     * Reads the {@link #BACKEND_EXTRAS_FILE} of a backend directory, if it has one.
+     * Reads a file list ({@link #BACKEND_EXTRAS_FILE} or {@link #BACKEND_FILES_FILE}) of a backend
+     * directory, if it has one.
      *
      * @param backendResourcePath the backend's classpath directory
-     * @return the listed file names, or an empty list when the backend has no extras
+     * @param listFile            the list's file name
+     * @return the listed file names, or an empty list when the backend has no such list
      * @throws IOException when the file exists but cannot be read
      */
-    private static List<String> readExtras(String backendResourcePath) throws IOException {
-        InputStream stream = resourceAsStream(backendResourcePath + "/" + BACKEND_EXTRAS_FILE);
+    private static List<String> readFileList(String backendResourcePath, String listFile) throws IOException {
+        InputStream stream = resourceAsStream(backendResourcePath + "/" + listFile);
         if (stream == null) {
             return Collections.emptyList();
         }
@@ -457,11 +473,12 @@ public class LlamaLoader {
      */
     private static boolean tryLoadBackend(String backendResourcePath, String backend, Set<String> residentExtraFiles) {
         List<String> extraFiles;
+        List<String> plainFiles;
         try {
-            extraFiles = readExtras(backendResourcePath);
+            extraFiles = readFileList(backendResourcePath, BACKEND_EXTRAS_FILE);
+            plainFiles = readFileList(backendResourcePath, BACKEND_FILES_FILE);
         } catch (IOException e) {
-            System.err.println(
-                    "Failed to read " + backendResourcePath + "/" + BACKEND_EXTRAS_FILE + ": " + e.getMessage());
+            System.err.println("Failed to read a file list of " + backendResourcePath + ": " + e.getMessage());
             return false;
         }
         for (String extraFile : extraFiles) {
@@ -471,7 +488,10 @@ public class LlamaLoader {
                 return false;
             }
         }
-        Path targetDirPath = getTempDir().toPath().resolve(BACKEND_TEMP_DIR_PREFIX + backend);
+        String libraryFileName = System.mapLibraryName("jllama");
+        Path targetDirPath = getTempDir()
+                .toPath()
+                .resolve(extractionDirectoryName(backend, resource(backendResourcePath + "/" + libraryFileName)));
         try {
             Files.createDirectories(targetDirPath);
         } catch (IOException e) {
@@ -489,12 +509,84 @@ public class LlamaLoader {
             }
             residentExtraFiles.add(extraFile);
         }
+        for (String plainFile : plainFiles) {
+            if (extractFile(backendResourcePath, plainFile, targetFolder) == null) {
+                return false;
+            }
+        }
         // Only a Metal build that does not embed its shader source ships ggml-metal.metal
         // (every CI build embeds it); ggml looks for it next to the library.
         if (resource(backendResourcePath + "/" + METAL_SOURCE_FILE) != null) {
             extractFile(backendResourcePath, METAL_SOURCE_FILE, targetFolder);
         }
-        return extractAndLoadLibraryFile(backendResourcePath, System.mapLibraryName("jllama"), targetFolder);
+        return extractAndLoadLibraryFile(backendResourcePath, libraryFileName, targetFolder);
+    }
+
+    /**
+     * Name of the directory a backend is extracted into: {@link #BACKEND_TEMP_DIR_PREFIX}, the
+     * backend and a key derived from the build of its library ({@link #extractionKey(URL)}).
+     *
+     * <p>The directory is shared by every JVM using this temp dir, and a backend is many files
+     * since {@link #BACKEND_FILES_FILE}: ggml's libraries and one CPU module per instruction-set
+     * level. Keyed only by the backend, a JVM running another build of jllama would write its files
+     * into a directory a running JVM loaded from. On Windows that replaces exactly the files the
+     * first JVM did <em>not</em> lock -- the modules ggml scored and unloaded again, which modules
+     * those are depends on the CPU -- and leaves a mixture of two builds behind for the next
+     * start; on Linux the running JVM keeps its mapped files, but the extraction of a JVM that is
+     * still starting is overtaken half-way. With the key, two builds never share a directory, and
+     * two JVMs of the same build still share one (the byte-identical copy is reused, see
+     * {@link #extractFile}).
+     *
+     * @param backend the backend directory name
+     * @param library the backend's library resource, or {@code null} when absent
+     * @return the directory name below {@link #getTempDir()}
+     */
+    static String extractionDirectoryName(String backend, @Nullable URL library) {
+        return BACKEND_TEMP_DIR_PREFIX + backend + "-" + extractionKey(library);
+    }
+
+    /**
+     * A short key that changes whenever the build of a library resource changes, without reading
+     * the library: for a resource inside a jar on disk its CRC-32 and size from the jar's central
+     * directory, for a plain file its modification time and size, otherwise a hash of the URL.
+     *
+     * <p>Not a security measure -- {@link #extractFile} still compares every extracted file with
+     * the resource byte for byte -- only what keeps two builds in two directories.
+     *
+     * @param library the resource URL, or {@code null}
+     * @return the key, hexadecimal, {@code none} for a {@code null} URL
+     */
+    static String extractionKey(@Nullable URL library) {
+        if (library == null) {
+            return "none";
+        }
+        try {
+            if ("jar".equals(library.getProtocol())) {
+                // jar:<URL of the jar>!/<entry>, taken apart by hand: a JarURLConnection would open the
+                // jar through the JVM's jar cache and keep it open.
+                String form = library.toExternalForm();
+                int separator = form.indexOf("!/");
+                if (separator > 0) {
+                    URL jarUrl = new URL(form.substring("jar:".length(), separator));
+                    String entryName = form.substring(separator + 2);
+                    if ("file".equals(jarUrl.getProtocol())) {
+                        try (JarFile jar = new JarFile(new File(jarUrl.toURI()))) {
+                            ZipEntry entry = jar.getEntry(entryName);
+                            if (entry != null && entry.getCrc() >= 0 && entry.getSize() >= 0) {
+                                return Long.toHexString(entry.getCrc()) + "-" + Long.toHexString(entry.getSize());
+                            }
+                        }
+                    }
+                }
+            } else if ("file".equals(library.getProtocol())) {
+                Path file = Paths.get(library.toURI());
+                return Long.toHexString(Files.getLastModifiedTime(file).toMillis()) + "-"
+                        + Long.toHexString(Files.size(file));
+            }
+        } catch (IOException | URISyntaxException | RuntimeException e) {
+            // fall through: the URL itself still separates one jar from another
+        }
+        return Integer.toHexString(library.toExternalForm().hashCode());
     }
 
     /**

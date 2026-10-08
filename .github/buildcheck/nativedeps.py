@@ -3,23 +3,29 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Fail when a shipped native library needs a runtime library it did not need before.
 
-Every jllama library is ONE file with llama.cpp and ggml linked in statically, so its dynamic
-dependencies are exactly what a consumer's machine must provide. A new one is a silent break on
-every machine that lacks it -- the case this guards against is ggml-rpc's RDMA transport, which
-upstream switches on whenever the build host has libibverbs/librdma and which would make the
-library unloadable without rdma-core. It reads the dependency list straight from the file (ELF
-DT_NEEDED, PE import table, Mach-O LC_LOAD_DYLIB) with the standard library only, so it runs on
-any runner and checks every architecture, including the ones binutils cannot read (Windows arm64,
-Mach-O).
+A natives jar's dynamic dependencies are exactly what a consumer's machine must provide. A new one
+is a silent break on every machine that lacks it -- the case this guards against is ggml-rpc's RDMA
+transport, which upstream switches on whenever the build host has libibverbs/librdma and which
+would make the library unloadable without rdma-core. It reads the dependency list straight from
+the file (ELF DT_NEEDED, PE import table, Mach-O LC_LOAD_DYLIB) with the standard library only, so
+it runs on any runner and checks every architecture, including the ones binutils cannot read
+(Windows arm64, Mach-O).
 
 Usage (the CLI is .github/verify-native-deps.py):
   verify-native-deps.py <natives-root>
 
-Checks every library under <natives-root>/.../<OS>/<ARCH>/<backend>/. The CPU builds (backend cpu,
-metal, msvc) and the Android OpenCL build are held to the exact allowlist in ALLOWED: a dependency
-outside it fails, and so does a CPU build without a list (a new platform must be listed
-consciously). The other GPU backends are checked against DENIED only, because they legitimately need
-their vendor runtime. Android libraries must also have every LOAD segment 16 KB aligned.
+Checks every native library (.so, .dll, .dylib) under <natives-root>/.../<OS>/<ARCH>/<backend>/.
+Most directories hold one file, libjllama with llama.cpp and ggml linked in statically; a
+JLLAMA_CPU_VARIANTS build (CLAUDE.md "CPU variants") holds libjllama next to ggml's shared
+libraries and one CPU backend module per instruction-set level, and every one of them is checked.
+The CPU builds (backend cpu, metal, msvc) and the Android OpenCL build are held to the exact
+allowlist in ALLOWED plus the files next to them in the same directory: a dependency outside it
+fails, and so does a CPU build without a list (a new platform must be listed consciously). The other
+GPU backends are checked against DENIED only, because they legitimately need their vendor runtime.
+Two more checks for ELF libraries: a library that needs a sibling must find it through the run path
+`$ORIGIN` and nothing else (a build-tree path would point at the CI runner), and the directories in
+GLIBC_CEILING, built in a manylinux image, may not reference a glibc symbol version above the floor
+they promise. Android libraries must also have every LOAD segment 16 KB aligned.
 That every listed build arrived is merge-native-artifacts.sh's check.
 
 Exit codes: 0 clean, 1 violation, 2 nothing found to check.
@@ -30,12 +36,13 @@ import struct
 import sys
 
 # What each CPU library needed when this check was introduced (5.1.0 plus the RPC backend,
-# which adds nothing: its sockets are libc/libSystem/WS2_32, all already present).
+# which adds nothing: its sockets are libc/libSystem/WS2_32, all already present). The manylinux_2_28
+# builds (glibc 2.28, before the libpthread/libdl/librt merge of 2.34) name those three separately.
 ALLOWED = {
     "Linux/x86_64/cpu": {"libdl.so.2", "libgomp.so.1", "libpthread.so.0", "librt.so.1", "libstdc++.so.6",
                      "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld-linux-x86-64.so.2"},
-    "Linux/aarch64/cpu": {"libgomp.so.1", "libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6",
-                      "ld-linux-aarch64.so.1"},
+    "Linux/aarch64/cpu": {"libdl.so.2", "libgomp.so.1", "libpthread.so.0", "librt.so.1", "libstdc++.so.6",
+                      "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld-linux-aarch64.so.1"},
     "Linux/s390x/cpu": {"libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld64.so.1"},
     "Linux-Android/aarch64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
     "Linux-Android/x86_64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
@@ -65,17 +72,31 @@ ALLOWED["Windows/x86/msvc"] = ALLOWED["Windows/x86/cpu"]
 # libc++_shared.so once shipped exactly this way and failed System.loadLibrary on every device.)
 ALLOWED["Linux-Android/aarch64/opencl"] = ALLOWED["Linux-Android/aarch64/cpu"] | {"libOpenCL.so"}
 
+# The glibc floor a directory promises (README, "Runtime requirement"): the highest GLIBC_x.y symbol
+# version any of its libraries references may not exceed it. These are the builds made in a
+# manylinux_2_28 image (publish.yml: crosscompile-linux-x86_64, crosscompile-linux-aarch64,
+# crosscompile-linux-x86_64-cuda); the other Linux builds inherit the floor of the ubuntu runner.
+GLIBC_CEILING = {
+    "Linux/x86_64/cpu": (2, 28),
+    "Linux/aarch64/cpu": (2, 28),
+    "Linux/x86_64/cuda13": (2, 28),
+}
+
 # Google Play's 16 KB page-size requirement (Android 15+ targets): every LOAD segment of an
 # Android library must be aligned to a multiple of it. CMake pins -Wl,-z,max-page-size=16384.
 ANDROID_PAGE_ALIGNMENT = 16384
 CPU_BACKENDS = ("cpu", "metal", "msvc")
-LIBRARY_NAMES = ("libjllama.so", "jllama.dll", "libjllama.dylib")
+LIBRARY_SUFFIXES = (".so", ".dll", ".dylib")
+ORIGIN = "$ORIGIN"
 
 # Never acceptable in any artifact: libraries a consumer cannot be expected to have.
 DENIED = ("libibverbs", "librdma", "rdma.dylib", "libmlx")
 
+DT_NEEDED, DT_RPATH, DT_RUNPATH = 1, 15, 29
+SHT_DYNAMIC, SHT_GNU_VERNEED = 6, 0x6FFFFFFE
 
-def elf_needed(data):
+
+def _elf_sections(data):
     if data[:4] != b"\x7fELF":
         raise ValueError("not an ELF file")
     is64 = data[4] == 2
@@ -90,24 +111,56 @@ def elf_needed(data):
     for i in range(shnum):
         off = shoff + i * shentsize
         if is64:
-            _, sh_type, _, _, sh_offset, sh_size, sh_link = struct.unpack_from(end + "IIQQQQI", data, off)
+            _, sh_type, _, _, sh_offset, sh_size, sh_link, sh_info = struct.unpack_from(end + "IIQQQQII", data, off)
         else:
-            _, sh_type, _, _, sh_offset, sh_size, sh_link = struct.unpack_from(end + "IIIIIII", data, off)
-        sections.append((sh_type, sh_offset, sh_size, sh_link))
-    out = []
-    for sh_type, sh_offset, sh_size, sh_link in sections:
-        if sh_type != 6:  # SHT_DYNAMIC
-            continue
-        strtab = sections[sh_link]
-        entry = 16 if is64 else 8
-        for off in range(sh_offset, sh_offset + sh_size, entry):
-            tag, val = struct.unpack_from(end + ("qQ" if is64 else "iI"), data, off)
-            if tag == 0:
-                break
-            if tag == 1:  # DT_NEEDED
-                start = strtab[1] + val
-                out.append(data[start:data.index(b"\0", start)].decode())
-    return out
+            _, sh_type, _, _, sh_offset, sh_size, sh_link, sh_info = struct.unpack_from(end + "IIIIIIII", data, off)
+        sections.append((sh_type, sh_offset, sh_size, sh_link, sh_info))
+    return is64, end, sections
+
+
+def _cstring(data, start):
+    return data[start:data.index(b"\0", start)].decode()
+
+
+def elf_info(data):
+    """DT_NEEDED, the run path (DT_RUNPATH, else DT_RPATH, else None) and the highest GLIBC_x.y
+    symbol version the library references (a tuple, or None when it references none)."""
+    is64, end, sections = _elf_sections(data)
+    needed, runpath, rpath, glibc = [], None, None, []
+    for sh_type, sh_offset, sh_size, sh_link, sh_info in sections:
+        strtab = sections[sh_link][1] if sh_link < len(sections) else 0
+        if sh_type == SHT_DYNAMIC:
+            entry = 16 if is64 else 8
+            for off in range(sh_offset, sh_offset + sh_size, entry):
+                tag, val = struct.unpack_from(end + ("qQ" if is64 else "iI"), data, off)
+                if tag == 0:
+                    break
+                if tag == DT_NEEDED:
+                    needed.append(_cstring(data, strtab + val))
+                elif tag == DT_RUNPATH:
+                    runpath = _cstring(data, strtab + val)
+                elif tag == DT_RPATH:
+                    rpath = _cstring(data, strtab + val)
+        elif sh_type == SHT_GNU_VERNEED:
+            off = sh_offset
+            for _ in range(sh_info):
+                _, vn_cnt, _, vn_aux, vn_next = struct.unpack_from(end + "HHIII", data, off)
+                aux = off + vn_aux
+                for _ in range(vn_cnt):
+                    _, _, _, vna_name, vna_next = struct.unpack_from(end + "IHHII", data, aux)
+                    name = _cstring(data, strtab + vna_name)
+                    if name.startswith("GLIBC_"):
+                        glibc.append(tuple(int(p) for p in name[len("GLIBC_"):].split(".")))
+                    aux += vna_next
+                if vn_next == 0:
+                    break
+                off += vn_next
+    return {"needed": needed, "runpath": runpath if runpath is not None else rpath,
+            "glibc": max(glibc) if glibc else None}
+
+
+def elf_needed(data):
+    return elf_info(data)["needed"]
 
 
 def elf_load_alignments(data):
@@ -161,7 +214,7 @@ def pe_imports(data):
         if name_rva == 0:
             break
         start = to_offset(name_rva)
-        out.append(data[start:data.index(b"\0", start)].decode())
+        out.append(_cstring(data, start))
         off += 20
     return out
 
@@ -177,8 +230,7 @@ def macho_dylibs(data):
         cmd, size = struct.unpack_from("<II", data, off)
         if cmd in (0xC, 0x80000018, 0x8000001F, 0x80000023):  # LOAD_DYLIB, WEAK, REEXPORT, UPWARD
             name_off = struct.unpack_from("<I", data, off + 8)[0]
-            start = off + name_off
-            out.append(data[start:data.index(b"\0", start)].decode())
+            out.append(_cstring(data, off + name_off))
         off += size
     return out
 
@@ -196,7 +248,7 @@ def dependencies(path):
 def find_libraries(root):
     for dirpath, _, files in os.walk(root):
         for name in files:
-            if name in LIBRARY_NAMES:
+            if name.endswith(LIBRARY_SUFFIXES):
                 yield os.path.join(dirpath, name)
 
 
@@ -204,25 +256,37 @@ def denied(deps):
     return [d for d in deps if any(bad in d.lower() for bad in DENIED)]
 
 
-def violations(rel, deps, alignments=()):
+def glibc_name(version):
+    return "GLIBC_" + ".".join(str(p) for p in version)
+
+
+def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
     """The violations of one library, `rel` being its path below the natives root
     (.../<OS>/<ARCH>/<backend>/<library>); `alignments` are its LOAD segment alignments (checked
-    for Android libraries)."""
+    for Android libraries), `siblings` the names of the other files in its directory, `runpath`
+    its ELF run path and `glibc` the highest glibc symbol version it references."""
     failures = [f"{rel} needs {d}, which no consumer can be expected to have" for d in denied(deps)]
     parts = rel.split("/")
     key = "/".join(parts[-4:-1]) if len(parts) >= 4 else ""
     if key.startswith("Linux-Android/"):
         failures += [f"{rel}: LOAD alignment {a} is not a multiple of {ANDROID_PAGE_ALIGNMENT} "
                      f"(Google Play 16 KB page-size requirement)" for a in alignments if a % ANDROID_PAGE_ALIGNMENT]
-    if parts[-1] not in LIBRARY_NAMES:
-        return failures
+    siblings = set(siblings)
+    if rel.endswith(".so") and any(d in siblings for d in deps) and runpath != ORIGIN:
+        failures.append(f"{rel} needs the sibling {sorted(d for d in deps if d in siblings)} but its run path is "
+                        f"{runpath!r}, not {ORIGIN!r} -- it would be looked up on the system instead")
+    ceiling = GLIBC_CEILING.get(key)
+    if ceiling and glibc and glibc > ceiling:
+        failures.append(f"{rel} references {glibc_name(glibc)}, above the {glibc_name(ceiling)} floor its "
+                        f"directory promises -- was it built in the manylinux image?")
     allowed = ALLOWED.get(key)
     if allowed is None:
         if key.rsplit("/", 1)[-1] not in CPU_BACKENDS:
             return failures
         return failures + [f"{rel}: no dependency allowlist for '{key}' -- add one to ALLOWED"]
-    lowered = {a.lower() for a in allowed}
-    return failures + [f"{rel} needs {d}, which it did not need before (allowed: {sorted(allowed)})"
+    lowered = {a.lower() for a in allowed} | {s.lower() for s in siblings}
+    return failures + [f"{rel} needs {d}, which it did not need before (allowed: {sorted(allowed)}"
+                       f"{' + the files next to it' if siblings else ''})"
                        for d in deps if d.lower() not in lowered]
 
 
@@ -234,15 +298,26 @@ def main(argv):
     checked = 0
     failures = []
     for path in sorted(find_libraries(root)):
-        deps = dependencies(path)
         checked += 1
         rel = os.path.relpath(path, root).replace(os.sep, "/")
-        alignments = ()
-        if "/Linux-Android/" in "/" + rel:
-            with open(path, "rb") as f:
-                alignments = elf_load_alignments(f.read())
-        print(f"{rel}: {' '.join(deps)}")
-        failures += violations(rel, deps, alignments)
+        siblings = {n for n in os.listdir(os.path.dirname(path)) if n != os.path.basename(path)}
+        alignments, runpath, glibc, note = (), None, None, ""
+        try:
+            if path.endswith(".so"):
+                with open(path, "rb") as f:
+                    data = f.read()
+                info = elf_info(data)
+                deps, runpath, glibc = info["needed"], info["runpath"], info["glibc"]
+                if "/Linux-Android/" in "/" + rel:
+                    alignments = elf_load_alignments(data)
+                note = (f" [runpath={runpath}]" if runpath else "") + (f" [{glibc_name(glibc)}]" if glibc else "")
+            else:
+                deps = dependencies(path)
+        except (ValueError, struct.error) as e:
+            failures.append(f"{rel}: not a readable native library ({e})")
+            continue
+        print(f"{rel}: {' '.join(deps)}{note}")
+        failures += violations(rel, deps, alignments, siblings, runpath, glibc)
     if checked == 0:
         print(f"no native library found under {root}", file=sys.stderr)
         return 2

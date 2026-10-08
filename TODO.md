@@ -17,6 +17,80 @@ so everything below is genuinely still open.
 
 ## Open — jllama-specific
 
+### CPU variants (`JLLAMA_CPU_VARIANTS`) -- Windows, GPU modules, loader follow-ups
+
+Linux x86-64 and aarch64 ship the variant build since 5.3.0 (CLAUDE.md "CPU variants"). The rest,
+with what a measurement on a Windows 11 machine (Ryzen 7 5800H, RTX 3070, JDK 21, upstream b11476
+binaries; 2026-10-08) established:
+
+1. **Windows x86-64 build.** Only plain `clang`/`clang++` with the GNU driver -- upstream's
+   `cmake/x64-windows-llvm.cmake`, four lines -- produces all 14 x86 variants: CMake sets `MSVC` for
+   `clang-cl` as for `cl.exe`, and ggml's `if (NOT MSVC)` then drops `ivybridge`, `piledriver`,
+   `cooperlake`, `zen4` and `sapphirerapids` (a Zen 4/5 machine falls back to `icelake` and loses the
+   BF16 kernels); the `clang-cl` build of `alderlake` also fails (`/arch:AVX2` + `__AVXVNNI__` without
+   `-mavxvnni`, an upstream gap). Consequences, all measured: **(a)** the CRT is dynamic -- the GNU
+   driver ignores `CMAKE_MSVC_RUNTIME_LIBRARY`, and a static `/MT` CRT per DLL crashed with
+   `0xC0000409` after the backend loaded (MSVC `MultiThreaded`; the same configuration with
+   `MultiThreadedDLL` ran); so `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll` become
+   dependencies, which a fresh Windows does not have. Either ship the three app-local
+   (`jllama-extras.txt`, loaded by full path before `ggml-base.dll`; +732 KB; Oracle's JDK carries
+   two of them next to `java.exe`, other vendors unverified) -- a licence/REUSE decision (Microsoft
+   "Distributable Code"), not a technical one -- or document the VC++ redistributable as a
+   requirement, as upstream does; `buildcheck/nativedeps.py`'s `Windows/*/cpu` allowlist changes
+   either way. **(b)** `GGML_OPENMP=OFF`, as on Windows arm64 and Android: saves `libomp.dll` and a
+   dependency; 14 variants build with it. **(c)** Pin the clang version (upstream: 20.1.8): LLVM 23.1.3
+   makes `-Wincompatible-pointer-types` in `ggml-cpu/arch/x86/quants.c` an error. **(d)** The MSVC build
+   stays as `msvc-windows-x86-64` (9 variants, static CRT, one library), tried before `cpu` when
+   present. 32-bit Windows and Windows arm64 get no variants (upstream builds none).
+2. **Windows loader.** `System.load` with a full path does NOT add the DLL's directory to the
+   dependency search, and a foreign llama.cpp on `PATH` (winget `ggml.llamacpp`, Ollama, LM Studio)
+   silently satisfies `ggml-base.dll` with another build's binary -- the probe passed falsely until
+   the PATH was cleaned. So `ggml-base.dll` and `ggml.dll` (after the CRT files) are preloaded by
+   full path in that order through `jllama-extras.txt`; the modules themselves stay in
+   `jllama-files.txt`. `JNI_OnLoad` finds its own directory with `GetModuleHandleExW` +
+   `GetModuleFileNameW` and must hand it to `ggml_backend_load_all_from_path` as **UTF-8** (a path
+   with an umlaut loaded nothing as ANSI, and no error was logged). A GPU module whose runtime is
+   missing fails silently and without a dialog (`SEM_FAILCRITICALERRORS`, exit 0) -- ggml logs it at
+   `GGML_LOG_DEBUG` only, so the loader should log which modules it extracted and which devices
+   ggml reports afterwards.
+3. **GPU backends as modules (stage 3).** Measured feasible from a JVM: `ggml-cuda.dll` and
+   `ggml-vulkan.dll` from upstream's zips load side by side from one directory with the CPU set
+   (4 devices, incl. the AMD iGPU through Vulkan). Upstream's GPU zips carry a byte-identical copy of
+   the whole CPU set; a GPU natives jar holding only its module would share ours and is then not
+   usable without the CPU jar of the **same build**. Decide: consumers take `llama-platform` + GPU jar
+   (the loader fails loud when the CPU part is missing or from another build -- a build key per
+   natives jar, compared across jars), or GPU jars become artifacts of their own with a POM
+   dependency. Also: `ggml-cuda.dll` imports only `cublas64_13.dll` (cudart is static) -- the
+   requirement is smaller than the README says; and device indices are not stable across the set of
+   loaded backends (`Vulkan0` was the NVIDIA GPU with CUDA loaded, the AMD iGPU without), so any
+   device setting must go by name, never by index.
+4. **Loader: reuse the extraction across runs.** The directory is keyed per build now
+   (`extractionDirectoryName`), but every start still re-extracts: `cleanup()` deletes every
+   `jllama*` path first and `deleteOnExit` removes the files at exit. Copying the 18 files costs ~1 s
+   (measured, Defender on). With the key, a start could reuse a directory of its own build and
+   cleanup could leave directories younger than a few minutes alone (a JVM still extracting). A
+   loaded DLL is locked on Windows, an unloaded variant is not -- which is why the key, not a lock,
+   separates builds.
+5. **Benchmark on AVX-512/VNNI/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra). The Zen 3
+   measurement could only show the floor: the plain x86-64 module is 10.4x slower at prompt
+   processing (313 -> 30 t/s, Qwen3-0.6B Q4_K_M) and 1.6x at generation than `haswell`, which is what
+   the single-level build was. The gain upwards (`zen4` BF16, `sapphirerapids` AMX) is unmeasured.
+6. **Smoke tests must run inference through the loaded module.** Every crash in the Windows
+   measurement came after a successful load with a correct device count; `--list-devices` does not
+   even show the CPU. The fat-jar smokes and the Java test jobs do run completions; the
+   `smoke-natives-jars.sh` load check alone is not evidence.
+7. **Unsigned binaries.** Upstream ships its DLLs unsigned, and so do we; on a WDAC/AppLocker-managed
+   client, loading unsigned DLLs from `%TEMP%` is blocked. Out of scope here; worth a README note.
+
+### CUDA job: nvcc through sccache failed once and fell back
+
+- Run 37680715063 (b11476 bump): the Linux CUDA build logged `Missing cubin file output` and
+  `sccache: Compiler killed by signal 126` on `.cu` TUs, and `build.sh`'s retry rebuilt without the
+  launcher (green, ~50 min instead of ~15). Not the CUDA 13.3 `-virtual` failure already handled
+  (that one was `fatbinary ... acc.compute_75.ptx`). Check whether sccache 0.18.0 and CUDA 13.4 disagree
+  on the device-compile pipeline, or whether it was a transient cache-storage error; a second
+  occurrence makes the CUDA cache effectively off.
+
 ### macOS dylib links Homebrew OpenSSL (found by `verify-native-deps.py`)
 
 - **The shipped `Mac/aarch64/metal/libjllama.dylib` needs `/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib`

@@ -11,11 +11,15 @@ import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.FileTime;
+import java.util.jar.JarOutputStream;
+import java.util.zip.CRC32;
+import java.util.zip.ZipEntry;
 import net.ladenthin.llama.ClaudeGenerated;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,7 +36,7 @@ import org.junit.jupiter.api.io.TempDir;
                         + "honours the 'net.ladenthin.llama.tmpdir' system-property override; and "
                         + "getNativeResourcePath produces the expected classpath resource prefix; parseExtras reads a "
                         + "backend extras file; BACKEND_PRIORITY ends with msvc then cpu; and "
-                        + "resourceMatchesFile compares a classpath resource to an on-disk file byte-for-byte; and extractFile extracts a resource, reuses an already-identical copy without rewriting it, and replaces one whose content differs.")
+                        + "resourceMatchesFile compares a classpath resource to an on-disk file byte-for-byte; extractFile extracts a resource, reuses an already-identical copy without rewriting it, and replaces one whose content differs; and extractionKey derives the per-build key of the extraction directory from a jar entry's CRC and size, a file's size and mtime, or the URL.")
 public class LlamaLoaderTest {
 
     private static final String TMPDIR_PROP = LlamaSystemProperties.PREFIX + ".tmpdir";
@@ -145,7 +149,71 @@ public class LlamaLoaderTest {
     @Test
     public void testBackendTempDirPrefixMatchesCleanup() {
         // The per-backend extraction directories must be picked up by the temp-dir cleanup.
-        assertTrue(LlamaLoader.shouldCleanPath(Paths.get("/tmp/" + LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "cuda13")));
+        assertTrue(
+                LlamaLoader.shouldCleanPath(Paths.get("/tmp/" + LlamaLoader.extractionDirectoryName("cuda13", null))));
+    }
+
+    // -------------------------------------------------------------------------
+    // extractionKey / extractionDirectoryName
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testExtractionKeyOfAJarEntryIsItsCrcAndSize(@TempDir Path dir) throws IOException {
+        byte[] content = "not really a library".getBytes(StandardCharsets.UTF_8);
+        Path jar = dir.resolve("natives.jar");
+        try (JarOutputStream out = new JarOutputStream(Files.newOutputStream(jar))) {
+            out.putNextEntry(new ZipEntry("net/ladenthin/llama/Linux/x86_64/cpu/libjllama.so"));
+            out.write(content);
+            out.closeEntry();
+        }
+        CRC32 crc = new CRC32();
+        crc.update(content, 0, content.length);
+        URL entry = new URL("jar:" + jar.toUri() + "!/net/ladenthin/llama/Linux/x86_64/cpu/libjllama.so");
+        assertEquals(
+                Long.toHexString(crc.getValue()) + "-" + Long.toHexString(content.length),
+                LlamaLoader.extractionKey(entry));
+        // the same bytes in another jar give the same key: the key names the build, not the jar
+        Path copy = dir.resolve("copy.jar");
+        Files.copy(jar, copy);
+        assertEquals(
+                LlamaLoader.extractionKey(entry),
+                LlamaLoader.extractionKey(
+                        new URL("jar:" + copy.toUri() + "!/net/ladenthin/llama/Linux/x86_64/cpu/libjllama.so")));
+        // the jar is not left open: it can be deleted (this fails on Windows while it is cached)
+        Files.delete(jar);
+        Files.delete(copy);
+    }
+
+    @Test
+    public void testExtractionKeyOfAFileFollowsItsSizeAndModificationTime(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("libjllama.so");
+        Files.write(file, new byte[] {1, 2, 3});
+        Files.setLastModifiedTime(file, FileTime.fromMillis(1_700_000_000_000L));
+        assertEquals(
+                Long.toHexString(1_700_000_000_000L) + "-3",
+                LlamaLoader.extractionKey(file.toUri().toURL()));
+        Files.write(file, new byte[] {1, 2, 3, 4});
+        Files.setLastModifiedTime(file, FileTime.fromMillis(1_700_000_000_000L));
+        assertEquals(
+                Long.toHexString(1_700_000_000_000L) + "-4",
+                LlamaLoader.extractionKey(file.toUri().toURL()));
+    }
+
+    @Test
+    public void testExtractionKeyFallsBackToTheUrlAndToNone() throws IOException {
+        URL elsewhere = new URL("https://example.invalid/natives.jar!/libjllama.so");
+        assertEquals(Integer.toHexString(elsewhere.toExternalForm().hashCode()), LlamaLoader.extractionKey(elsewhere));
+        // a jar URL whose entry does not exist
+        URL missing = new URL("jar:file:/nonexistent/natives.jar!/libjllama.so");
+        assertEquals(Integer.toHexString(missing.toExternalForm().hashCode()), LlamaLoader.extractionKey(missing));
+        assertEquals("none", LlamaLoader.extractionKey(null));
+    }
+
+    @Test
+    public void testExtractionDirectoryNameCarriesBackendAndKey() {
+        assertEquals(
+                LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "cuda13-none",
+                LlamaLoader.extractionDirectoryName("cuda13", null));
     }
 
     // -------------------------------------------------------------------------
