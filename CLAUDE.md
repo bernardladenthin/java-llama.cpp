@@ -41,9 +41,9 @@ it or is checked against it:
 | `LlamaLoader.BACKEND_PRIORITY` | must contain every backend directory |
 | the all-backends fat jars | **derived**: one `all-<os>-<arch>` per OS/arch with more than one natives jar (no `msvc`, no Android) — `check-natives.py fatjar-targets` prints them; each must be uploaded for and launched by a smoke job, named in the agent jar's `Class-Path` and in the README |
 | `.github/check-natives.py` | runs in `code-style` (first minutes of every run); fails when any row of this table disagrees with the list — including CMake's backend names, the dependency allowlists and the README rows |
-| `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library and nothing outside its directory, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows) |
-| `.github/package-fatjars.sh` | reads the list: the built natives jars match it, each holds only its directory and the right `Automatic-Module-Name`; merges the all-backends fat jars and fails unless it produced exactly the targets `check-natives.py fatjar-targets` derives |
-| `.github/verify-native-deps.py` | exact dependency allowlist per CPU directory (`cpu`/`metal`/`msvc`) and for the Android OpenCL build (bionic + `libOpenCL.so`), denylist for the other GPU ones; every Android library 16 KB page-aligned (Google Play). Runs in `package` and on the staged AAR libraries |
+| `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library and nothing outside its directory, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows -- never the files a build's own `jllama-files.txt` names, which are only extracted; each of those must exist) |
+| `.github/package-fatjars.sh` | reads the list: the built natives jars match it, each holds only its directory and the right `Automatic-Module-Name`; merges the all-backends fat jars (every file of every backend directory byte-identical to its natives jar, the CPU directory to the default fat jar's) and fails unless it produced exactly the targets `check-natives.py fatjar-targets` derives |
+| `.github/verify-native-deps.py` | every library of a directory (18 in a CPU-variants directory): exact dependency allowlist per CPU directory (`cpu`/`metal`/`msvc`) plus the files next to it, and for the Android OpenCL build (bionic + `libOpenCL.so`), denylist for the other GPU ones; a sibling dependency only through run path `$ORIGIN`; the manylinux_2_28 builds (both Linux CPU jars, CUDA) held to `GLIBC_2.28`; every Android library 16 KB page-aligned (Google Play). Runs in `package` and on the staged AAR libraries |
 | `.github/smoke-natives-jars.sh` (`package` job) | loads the real jars: classes + all 27 natives jars at once, on the classpath **and** the module path (on the GPU-less runner normally ending at `cpu`) |
 
 **Adding a natives jar:** a row in `natives.csv`, the execution `check-natives.py pom` prints, a build
@@ -75,42 +75,67 @@ to the test classpath (`additionalClasspathElements`), so `mvn test` finds the l
 is CI-only (a local tree holds one directory); a missing directory there is caught by the merge
 step, not by Maven.
 
-## CPU variants (prototype, Linux x86-64): `JLLAMA_CPU_VARIANTS`
+## CPU variants (Linux x86-64 and aarch64): `JLLAMA_CPU_VARIANTS`
 
-Every x86-64 natives jar is built for **one** instruction-set level, the Haswell baseline
-(x86-64-v3, the block in `llama/CMakeLists.txt` that forces `GGML_AVX2` & co.): a CPU without AVX2
-dies with SIGILL -- a JVM crash, not an exception -- at the first matrix multiplication, and
-AVX-512/VNNI/AMX stay unused on CPUs that have them. Upstream ships every level instead
-(`GGML_BACKEND_DL` + `GGML_CPU_ALL_VARIANTS`: one small `ggml-cpu-<level>` module each, chosen at
-run time by `ggml_backend_load_best`, which scores each module's own feature check against the
-running CPU). `-DJLLAMA_CPU_VARIANTS=ON` builds that, **opt-in and not wired into CI yet**:
+The two Linux CPU jars, `cpu-linux-x86-64` and `cpu-linux-aarch64`, are built since 5.3.0 the way
+upstream builds its own release binaries: `GGML_BACKEND_DL` + `GGML_CPU_ALL_VARIANTS`, one small
+`ggml-cpu-<level>` module per instruction-set level, of which `ggml_backend_load_best` loads the best
+at run time (it scores each module's own feature check against the running CPU). Before, each jar
+was **one** library for one level -- x86-64 the Haswell baseline (x86-64-v3, the block in
+`llama/CMakeLists.txt` that forces `GGML_AVX2` & co.: a CPU without AVX2 died with SIGILL, a JVM
+crash and not an exception, at the first matrix multiplication, and AVX-512/VNNI/AMX stayed unused
+on CPUs that have them), aarch64 plain ARMv8. `-DJLLAMA_CPU_VARIANTS=ON` builds it; the two Linux
+build jobs pass it, every other platform still ships the single static library, and the option
+refuses them (the Windows plan is in `TODO.md`):
 
 - **Only ggml becomes shared.** `FetchContent_MakeAvailable` is pointed at a non-existent
   `SOURCE_SUBDIR`, so it only fetches and patches; ggml is then added first with
   `BUILD_SHARED_LIBS ON` and llama.cpp afterwards with it `OFF` (llama.cpp skips its own
   `add_subdirectory(ggml)` when a `ggml` target exists). llama, mtmd and llama-common stay static in
   `libjllama.so`. The one ggml default llama.cpp changes itself (`GGML_LLAMAFILE`) is repeated.
-- **The directory holds 18 files**: `libjllama.so`, `libggml.so`, `libggml-base.so` (unversioned:
-  the loader extracts plain files, so file name, SONAME and `DT_NEEDED` must agree), 14
-  `libggml-cpu-<level>.so` and `libggml-rpc.so` -- all with run path `$ORIGIN` only.
-  `jllama-files.txt` lists the 17 besides `libjllama`; `LlamaLoader` extracts them next to it
-  **without loading them** (`BACKEND_FILES_FILE`, the counterpart of `jllama-extras.txt`, which
-  loads). `JNI_OnLoad` then calls `ggml_backend_load_all_from_path(<its own directory>)` (found via
-  `dladdr`): ggml's default searches next to the executable, which here is `java`.
+- **The directory holds 18 files on x86-64**: `libjllama.so`, `libggml.so`, `libggml-base.so`
+  (unversioned: the loader extracts plain files, so file name, SONAME and `DT_NEEDED` must agree), 14
+  `libggml-cpu-<level>.so` (`x64`, `sse42`, `sandybridge`, `ivybridge`, `piledriver`, `haswell`,
+  `skylakex`, `cannonlake`, `cascadelake`, `icelake`, `cooperlake`, `zen4`, `alderlake`,
+  `sapphirerapids`) and `libggml-rpc.so`; **12 on aarch64** (8 modules, `armv8.0_1` to `armv9.2_2`:
+  dotprod, fp16, SVE, i8mm, SVE2, SME) -- all with run path `$ORIGIN` only. `jllama-files.txt` lists
+  everything besides `libjllama`; `LlamaLoader` extracts them next to it **without loading them**
+  (`BACKEND_FILES_FILE`, the counterpart of `jllama-extras.txt`, which loads). `JNI_OnLoad` then calls
+  `ggml_backend_load_all_from_path(<its own directory>)` (found via `dladdr`): ggml's default
+  searches next to the executable, which here is `java`.
+- **The extraction directory is keyed by the build**
+  (`LlamaLoader.extractionDirectoryName`: `jllama-backend-<backend>-<CRC and size of the library's
+  jar entry>`), because it is shared between JVMs and now holds many files. Keyed by the backend
+  alone, a JVM running another jllama build wrote into the directory of a running one; on Windows
+  that replaces exactly the modules the first JVM scored and unloaded again (which ones depends on
+  the CPU) and leaves a mixture of two builds for the next start -- measured with upstream's DLLs.
 - **RPC is a module too**, so `rpc_bridge.cpp`/`rpc_support.hpp` resolve its four entry points through
   `ggml_backend_reg_get_proc_address` (`rpc_proc<>()`, as upstream's `common/arg.cpp` does) in every
-  build. `jllama_test` calls the CPU/RPC backends directly, so the option refuses `BUILD_TESTING`.
-- **Measured locally** (GCC 13, a Xeon with AVX-512 + VNNI, no VBMI/BF16): the directory is 36 MB
-  (13.4 MB zipped), `libjllama.so` 15 MB of it; ggml picked `cascadelake`, and with the AVX-512
+  build.
+- **Built in manylinux_2_28** (AlmaLinux 8, gcc-toolset-14, glibc 2.28): x86-64 in the dockcross
+  image the CUDA job already used, aarch64 natively on `ubuntu-24.04-arm` inside the pypa image
+  (`.github/manylinux/manylinux_2_28-aarch64`, see "Linux aarch64"). manylinux2014's GCC 10 lacked
+  `-mavxvnni` and `-mamx-tile` (`alderlake`, `sapphirerapids`; ggml does not check). The glibc floors
+  meet at **2.28**: x86-64 rises from 2.17, aarch64 falls from ~2.39. `verify-native-deps.py` reads
+  every library's version-needs table and holds both directories (and CUDA) to `GLIBC_2.28`; the
+  modules themselves reference `GLIBC_2.27` at most (measured in the image).
+- **No `ctest` in the two build jobs**: `jllama_test` calls the CPU/RPC backends directly, so the
+  option refuses `BUILD_TESTING`; `test-cpp-linux-x86_64` and `test-cpp-linux-aarch64` build the
+  default static library with the tests. The Java suite (`test-java-linux-x86_64`, the langchain4j
+  integration job through `-Dnet.ladenthin.llama.lib.path`, the fat-jar smokes) runs real inference
+  through the variant build -- a load alone proves little: in the Windows measurement every crash
+  came after a successful load with a correct device count.
+- **The natives-jar checks know directories with many files**: `merge-native-artifacts.sh` requires
+  every file `jllama-files.txt` names and keeps them out of `jllama-extras.txt`; `package-fatjars.sh`
+  compares every file of a backend directory; `verify-native-deps.py` checks every library and allows
+  a sibling as a dependency only through `$ORIGIN`.
+- **Measured.** Locally (GCC 13, a Xeon with AVX-512 + VNNI, no VBMI/BF16): the x86-64 directory is
+  36 MB (13.4 MB zipped), `libjllama.so` 15 MB of it; ggml picked `cascadelake`, and with the AVX-512
   modules removed it fell back to `haswell` (skipping `alderlake`, whose AVX-VNNI the CPU lacks).
-  `NativeLibraryLoadSmokeTest`, `RpcServerTest`, `LlamaLoggerTest` and a real completion on a tiny
-  random-weight Llama GGUF pass through the classpath extraction.
-
-Open before it can ship (`TODO.md`): the manylinux2014 CI image has GCC 10, which lacks `-mavxvnni`
-and `-mamx-tile` (`alderlake`, `sapphirerapids`; ggml does not check), the natives-jar checks
-(`merge-native-artifacts.sh`, `package-fatjars.sh`, `verify-native-deps.py`) assume one library per
-directory, and Windows (`GetModuleHandleEx` instead of `dladdr`; DLL search path) and aarch64
-(upstream's armv8.x/SVE/SME variants) are not done.
+  On a Ryzen 7 5800H (Zen 3; upstream's b11476 Windows binaries, Qwen3-0.6B Q4_K_M, 8 threads):
+  `haswell` 313 t/s pp512 and 14.3 t/s tg128, the plain `x64` module 30.0 and 8.8 -- a baseline-only
+  build would be unusable for prompt processing, and the 14 x86 modules together are ~20 MB. The gain
+  on AVX-512/AMX hardware is unmeasured (`TODO.md`).
 
 ## Build checks, shared files and the release gate (`.github/buildcheck/`)
 
@@ -847,9 +872,10 @@ to enable them all at once — any container where sccache crashes falls back to
 build automatically. (The first attempt enabled all four at once without the probe and was
 reverted: the static-musl sccache v0.8.2 panicked in-container and redded the build. With
 v0.16.0 + the probe this is no longer a risk.) Job-by-job status:
-1. `crosscompile-linux-x86_64` (manylinux2014) — ✅ **verified green** in PR #245: sccache
+1. `crosscompile-linux-x86_64` — ✅ **verified green** in PR #245, then on manylinux2014: sccache
    **v0.16.0** probe passed in-container (devtoolset-10 gcc), `sccache ON` over Depot WebDAV,
-   warm cache 277/278 hits (99.64%), 1m46s build time.
+   warm cache 277/278 hits (99.64%), 1m46s build time. Since the CPU variants it runs in the
+   manylinux_2_28 image the CUDA job already used (gcc-toolset-14), with the same env.
 2. `crosscompile-linux-x86_64-cuda` (via `build_cuda_linux.sh`, which execs `build.sh`) —
    ✅ **verified green with nvcc caching, full-arch always.** `build.sh` also wraps nvcc
    (`-DCMAKE_CUDA_COMPILER_LAUNCHER=sccache`, scoped to CUDA builds), so both the gcc C/C++ TUs
@@ -878,10 +904,11 @@ v0.16.0 + the probe this is no longer a risk.) Job-by-job status:
    -Bbuild` now also passes `-DGGML_CCACHE=OFF`, so a genuinely uncached build is guaranteed
    regardless of what's left on `PATH`. This fallback now falls back to a real, green `-O3` build
    like every other sccache/nvcc incompatibility instead of redding the job.
-3. `crosscompile-linux-aarch64` — ✅ **enabled**, now a **native `ubuntu-24.04-arm` build** (not
-   dockcross): `build.sh` self-fetches the aarch64 static-musl sccache (the fetch block in
+3. `crosscompile-linux-aarch64` — ✅ **enabled**, a **native `ubuntu-24.04-arm` build** inside the
+   pypa manylinux_2_28 aarch64 image (`MANYLINUX_ARGS` forwards the env like `DOCKCROSS_ARGS`):
+   `build.sh` self-fetches the aarch64 static-musl sccache in the container (the fetch block in
    `build.sh` maps `uname -m` → `x86_64`/`aarch64`) and the probe guards it. See "Linux aarch64:
-   native ARM build" below for why it moved off the cross-compiler.
+   native build in the manylinux_2_28 image" below.
 4. `crosscompile-android-aarch64` — ✅ **enabled** (same steady-state env; probe guards it).
 5. `crosscompile-android-aarch64-opencl` — ✅ **enabled**. `build_opencl_android.sh` stages the
    OpenCL headers/loader, then delegates the jllama cmake build to `build.sh` via `exec`
@@ -1024,9 +1051,11 @@ remaining patch ask whether the *defect* is still there, not only whether the pa
 ## RPC backend: `--rpc` client and the in-JVM `RpcServer`
 
 llama.cpp's RPC backend (`ggml-rpc`) is compiled into **every** natives jar — CPU and GPU — with `GGML_RPC=ON` forced in `llama/CMakeLists.txt`. It stays **one** `jllama`
-library: `ggml_add_backend_library` makes `ggml-rpc` a static library linked into `ggml` (only
-`GGML_BACKEND_DL`, which needs shared libs, would split it out), and its registration is compiled in
-(`GGML_USE_RPC`). Client and server live in the same file, so the flag brings both.
+library: `ggml_add_backend_library` makes `ggml-rpc` a static library linked into `ggml`, and its
+registration is compiled in (`GGML_USE_RPC`) -- except in the two Linux CPU-variant builds
+(`GGML_BACKEND_DL`, see "CPU variants"), where `libggml-rpc.so` is a module next to the library that
+`JNI_OnLoad` loads with the CPU modules; the entry points are resolved through
+`ggml_backend_reg_get_proc_address` in every build for that reason. Client and server live in the same file, so the flag brings both.
 
 **No new runtime dependency — and this is enforced, not assumed.** The transport is plain TCP:
 BSD sockets from libc/libSystem/bionic, Winsock on Windows (`jllama.dll` already imported
@@ -1361,13 +1390,15 @@ folder name is produced on both ends.
 | macOS Apple Silicon | `libjllama.dylib` | `src/main/natives/net/ladenthin/llama/Mac/aarch64/metal/` |
 | Windows x86_64 | `jllama.dll` | `src/main/natives/net/ladenthin/llama/Windows/x86_64/cpu/` (Ninja) or `…/msvc/` (Visual Studio generator) |
 
-On every platform exactly **one** `jllama` library is produced: `CMakeLists.txt` forces
+On every platform but Linux x86-64/aarch64 exactly **one** `jllama` library is produced: `CMakeLists.txt` forces
 `BUILD_SHARED_LIBS OFF`, so upstream `llama` and `ggml` are static libraries linked into
 `jllama` (the `RUNTIME_OUTPUT_DIRECTORY_*` block that also names the `llama`/`ggml` targets
 is a no-op for them — verified against the published 5.0.5 jars, which contain only
 `jllama.dll` per Windows arch). `LlamaLoader` accordingly extracts and loads a single file
 per backend (plus the files in its `jllama-extras.txt`, and `ggml-metal.metal` from a Metal build
-that does not embed it). Historical note: upstream kherud once
+that does not embed it). The two Linux CPU jars are the exception (`JLLAMA_CPU_VARIANTS`, see "CPU
+variants"): there ggml is shared, and the directory holds its libraries and CPU modules, which the
+loader extracts without loading them (`jllama-files.txt`). Historical note: upstream kherud once
 shipped split `ggml` + `jllama` libraries, which is where stale "three co-located DLLs"
 claims came from.
 
@@ -1747,35 +1778,45 @@ Java parameters are serialized to JSON strings and passed to native code, which 
    `BACKEND_PRIORITY` order, extracted and loaded until one loads (see "Natives jars")
 
 ### Cross-compilation
-Docker-based cross-compilation scripts are in `.github/dockcross/` for **Android** targets (and the
-x86_64 manylinux jobs). **Linux `aarch64` is no longer cross-compiled** — it builds natively on a
-GitHub `ubuntu-24.04-arm` runner (see "Linux aarch64: native ARM build" below). Its former
-`dockcross-linux-arm64-lts` wrapper and the never-wired 32-bit `dockcross-android-arm` were deleted.
+Docker-based cross-compilation scripts are in `.github/dockcross/` for **Android** targets and the
+two x86_64 manylinux_2_28 jobs (CPU variants, CUDA). **Linux `aarch64` is built natively** on a
+GitHub `ubuntu-24.04-arm` runner inside the pypa manylinux_2_28 image, through
+`.github/manylinux/manylinux_2_28-aarch64` (see "Linux aarch64" below). Deleted wrappers: the
+`dockcross-linux-arm64-lts` cross-compiler (GCC 8.5), the never-wired 32-bit `dockcross-android-arm`,
+and `dockcross-manylinux2014-x64` (GCC 10 cannot build the AVX-VNNI/AMX CPU variants).
 
-### Linux aarch64: native ARM build
+### Linux aarch64: native build in the manylinux_2_28 image
 
-The `crosscompile-linux-aarch64` job (id kept for its downstream `needs:` reference; display name is
-now **"Build and Test Linux aarch64"**) builds **natively on `ubuntu-24.04-arm`**, mirroring upstream
-llama.cpp's own `ubuntu-cpu` aarch64 release job (`ubuntu-24.04-arm` + **GCC 14**).
+The `crosscompile-linux-aarch64` job (id kept for its downstream `needs:` reference; display name
+**"Build manylinux_2_28 aarch64 (CPU variants)"**) builds **natively on `ubuntu-24.04-arm`, inside
+`quay.io/pypa/manylinux_2_28_aarch64`** (AlmaLinux 8, gcc-toolset-14 = GCC 14.2.1, glibc 2.28),
+through the wrapper `.github/manylinux/manylinux_2_28-aarch64`, with the CPU variants
+(`-DJLLAMA_CPU_VARIANTS=ON`, see "CPU variants").
 
-**Why it moved off dockcross.** The old `dockcross/linux-arm64-lts` image ships **GCC 8.5 / glibc
-2.17**; llama.cpp **b9789** uses C++17 CTAD-in-`new`, which needs **GCC ≥ 12**, so the cross build
-stopped compiling. Upstream solved the same problem by building natively on `ubuntu-24.04-arm` with
-GCC 14 and ships a **glibc ≈ 2.39** ARM binary with no old-glibc compatibility layer. This repo now
-does the same: the aarch64 artifact's **glibc floor rises 2.17 → ~2.39** — the same envelope
-upstream's own ARM binaries require (the x86_64 artifact stays at manylinux2014 / glibc 2.17).
+**History, because each step had a reason.** The original `dockcross/linux-arm64-lts` cross image
+(GCC 8.5 / glibc 2.17) could not compile llama.cpp b9789 (its C++17 CTAD-in-`new` needs GCC >= 12),
+so the job moved to a native build on the arm64 runner with Ubuntu's `gcc-14`, as upstream's own
+`ubuntu-cpu` aarch64 release job does -- at the price of a **glibc ~2.39** floor. The CPU variants
+then asked for the same image generation as x86-64, and the pypa manylinux_2_28 aarch64 image gives
+GCC 14 **and** glibc 2.28: the floor **falls** to 2.28 (RHEL 8, Ubuntu 20.04, Debian 10, Amazon Linux
+2023 and later). Not dockcross's `manylinux_2_28-aarch64`: that is an **amd64 image with a
+crosstool-NG cross-compiler** (measured: platform `linux/amd64`, 1.9 GB), i.e. a cross build on an
+x86 runner; the pypa image is native arm64 (0.5 GB) and runs where the artifact runs.
 
-Wiring (mirrors the macOS native jobs, not the dockcross jobs):
-- `runs-on: ubuntu-24.04-arm`; `setup-java` → `mvn compile` (generates the JNI header) → `build.sh`.
-- Installs `gcc-14`/`g++-14` and exports `CC`/`CXX` (upstream parity).
-- `build.sh` flags: `-DGGML_NATIVE=OFF` (portable across ARMv8 CPU generations — no build-host
-  `-march` baked in) `-DBUILD_TESTING=ON`, then **`ctest` runs the C++ unit suite on real ARM
-  hardware** (the cross build ran no tests at all).
-- sccache: `build.sh`'s Linux auto-fetch now covers `aarch64` as well as `x86_64` (it maps
-  `uname -m` to the matching static-musl release); the probe still gates it, so a miss just builds
-  uncached.
-- Branch protection: if a required check pinned the old name "Cross-Compile Linux aarch64 (LTS)",
-  repoint it to "Build and Test Linux aarch64".
+Wiring:
+- `runs-on: ubuntu-24.04-arm`; no `setup-java`/`mvn compile` (the JNI header is committed, and the
+  dockcross x86-64 jobs never ran Maven either). The wrapper runs `build.sh` in the container as the
+  runner's uid, with the repository mounted at `/work` and `HOME=/tmp`.
+- `MANYLINUX_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"` forwards the
+  cache env like `DOCKCROSS_ARGS`; `build.sh` fetches the aarch64 static-musl sccache inside the
+  container (curl is in the image) and the probe guards it.
+- The image is pinned by **digest** in the wrapper (tag `2026.10.03-1`). Bump it deliberately, with a
+  Publish run: it decides the glibc floor `verify-native-deps.py` enforces (`GLIBC_2.28`) and the
+  compiler.
+- No `ctest` (the variant build has no static CPU backend for `jllama_test`): **`test-cpp-linux-aarch64`**
+  builds the default static library with `gcc-14` on the same runner and runs the C++ suite on real
+  ARM hardware, as this job did before.
+- Branch protection: a required check pinned to "Build and Test Linux aarch64" must be repointed.
 
 ### Linux s390x: big-endian cross-build + qemu test gate
 

@@ -10,13 +10,6 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
-- **CPU variants prototype (Linux x86-64, opt-in build option `-DJLLAMA_CPU_VARIANTS=ON`, not released).**
-  Builds ggml the way upstream builds its own release binaries: one CPU backend module per
-  instruction-set level (x64 ... zen4, sapphirerapids), of which ggml loads the best for the running
-  CPU, instead of the single Haswell-baseline build that crashes on CPUs without AVX2 and leaves
-  AVX-512/VNNI/AMX unused. `LlamaLoader` extracts the files a backend's new `jllama-files.txt` lists
-  next to its library without loading them; `libjllama` loads the modules from its own directory.
-  The RPC entry points are now resolved through ggml's proc-address table in every build.
 - **Kolibri-1 support** (Aleph Alpha, architecture `kolibri1`, 78B German/English reasoning MoE) ahead of upstream
   llama.cpp ([ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)), as the carried patch
   `0016-model-kolibri1.patch`. It combines the two community ports and, unlike either of them, loads the GGUFs of
@@ -52,6 +45,28 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **`cpu-linux-x86-64` and `cpu-linux-aarch64` ship CPU backend variants** -- upstream's
+  `GGML_BACKEND_DL` + `GGML_CPU_ALL_VARIANTS`, the way its own release binaries are built: one
+  `libggml-cpu-<level>.so` per instruction-set level (x86-64: baseline, SSE4.2, AVX, AVX2, AVX-512,
+  AVX-VNNI, AMX -- 14 modules; aarch64: `armv8.0_1` to `armv9.2_2` with dotprod, fp16, SVE, i8mm, SVE2,
+  SME -- 8) next to `libjllama.so`, `libggml.so`, `libggml-base.so` and `libggml-rpc.so`, of which ggml
+  loads the best for the running CPU at start-up. Before, each jar was one library for one level
+  (x86-64: the Haswell/AVX2 baseline; aarch64: plain ARMv8): a CPU without AVX2 crashed the JVM with
+  SIGILL, and AVX-512/VNNI/AMX stayed unused. Measured with upstream's binaries, the plain x86-64
+  module alone is 10x slower at prompt processing than the AVX2 one, and the 14 modules cost ~20 MB
+  per jar. `LlamaLoader` extracts the modules next to the library without loading them (a new
+  `jllama-files.txt` per backend directory), into a directory keyed by the library's build so that two
+  JVMs running different jllama versions never share one; the RPC entry points are resolved through
+  ggml's proc-address table in every build. Build option `-DJLLAMA_CPU_VARIANTS=ON`; the other
+  platforms still ship the single static library.
+- **The Linux glibc floors meet at 2.28 (manylinux_2_28).** `cpu-linux-x86-64` rises from 2.17
+  (manylinux2014, whose GCC 10 cannot build the AVX-VNNI/AMX variants) to 2.28 -- RHEL 8, Ubuntu 20.04,
+  Debian 10 and later; `cpu-linux-aarch64` falls from ~2.39 (the native Ubuntu 24.04 build) to 2.28,
+  built in the pypa manylinux_2_28 aarch64 image on the arm64 runner, with the C++ tests moved to a job
+  of their own (`test-cpp-linux-aarch64`). `verify-native-deps.py` now checks every library of a
+  natives directory, allows a sibling as a dependency only through run path `$ORIGIN`, and holds the
+  manylinux builds (both CPU jars and CUDA) to `GLIBC_2.28` by reading each library's version-needs
+  table. The `dockcross-manylinux2014-x64` wrapper is gone.
 - **The macOS library now names macOS 15.0 as its minimum, explicitly.** Nothing set a deployment
   target before, so `libjllama.dylib` required whatever macOS the build runner had; moving a build
   job to a newer image would have dropped the older release unnoticed. `CMAKE_OSX_DEPLOYMENT_TARGET`

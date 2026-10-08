@@ -24,7 +24,11 @@
 #
 # After the merge, a backend directory holding files beside its library gets a
 # jllama-extras.txt listing them; LlamaLoader loads those first (e.g. the OpenCL ICD loader that
-# OpenVINO ships on Windows).
+# OpenVINO ships on Windows). Not listed there: the files a build's own jllama-files.txt names --
+# ggml's shared libraries and the CPU backend modules of a JLLAMA_CPU_VARIANTS build (CLAUDE.md,
+# "CPU variants"), which the loader only extracts next to the library; loading them from Java would
+# bypass ggml's choice of the module. Each file that list names must exist, or the loader would fail
+# the backend on every machine.
 #
 # Usage: merge-native-artifacts.sh <staging-dir> <dest-dir>
 #   <staging-dir>  output of `actions/download-artifact` with `pattern: "natives-*"` and
@@ -101,9 +105,21 @@ for a in "${artifacts[@]}"; do
   cp -R "$STAGING/$a/." "$DEST/"
 done
 
-# Sibling files of a backend's library are loaded before it, in name order.
+# Sibling files of a backend's library are loaded before it, in name order -- except the ones its
+# jllama-files.txt names (extracted, never loaded; see the header) and that list itself.
 find "$DEST" -mindepth 3 -maxdepth 3 -type d | sort | while IFS= read -r dir; do
-  extras="$(cd "$dir" && find . -maxdepth 1 -type f ! -name 'libjllama.*' ! -name 'jllama.dll' ! -name '*.metal' ! -name jllama-extras.txt | sed 's|^\./||' | sort)"
+  plain=""
+  if [ -f "$dir/jllama-files.txt" ]; then
+    plain="$(grep -v -e '^#' -e '^$' "$dir/jllama-files.txt" || true)"
+    while IFS= read -r f; do
+      [ -z "$f" ] || [ -f "$dir/$f" ] \
+        || { echo "::error::${dir#"$DEST"}/jllama-files.txt names '$f', which the build did not produce" >&2; exit 1; }
+    done <<< "$plain"
+    echo "files extracted, not loaded, for ${dir#"$DEST"}: $(echo "$plain" | tr '\n' ' ')"
+  fi
+  extras="$(cd "$dir" && find . -maxdepth 1 -type f ! -name 'libjllama.*' ! -name 'jllama.dll' ! -name '*.metal' \
+    ! -name jllama-extras.txt ! -name jllama-files.txt | sed 's|^\./||' | sort \
+    | awk -v plain="$plain" 'BEGIN { n = split(plain, a, "\n"); for (i = 1; i <= n; i++) skip[a[i]] = 1 } !($0 in skip)')"
   if [ -n "$extras" ]; then
     printf '%s\n' "$extras" > "$dir/jllama-extras.txt"
     echo "extras for ${dir#"$DEST"}: $(echo "$extras" | tr '\n' ' ')"

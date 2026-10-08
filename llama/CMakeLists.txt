@@ -225,8 +225,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama.cpp)
 if(JLLAMA_CPU_VARIANTS)
-    if(NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"))
-        message(FATAL_ERROR "JLLAMA_CPU_VARIANTS is a prototype for Linux x86-64 only")
+    # Linux x86-64 and aarch64 (the two shipped as variant builds; see CLAUDE.md "CPU variants").
+    # Windows needs the module search and the CRT settled first, macOS has one CPU generation
+    # per Metal build, Android ships one library per ABI, s390x has no variants upstream.
+    if(NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|aarch64|arm64)$"))
+        message(FATAL_ERROR "JLLAMA_CPU_VARIANTS is supported on Linux x86-64 and aarch64 only")
     endif()
     if(BUILD_TESTING)
         # jllama_test calls the CPU and RPC backends directly (ggml_backend_cpu_init, ...), which are

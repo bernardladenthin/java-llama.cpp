@@ -221,8 +221,8 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 
 | Classifier | Backend | Target platform | Runtime requirement |
 |---|---|---|---|
-| `cpu-linux-x86-64` | CPU | Linux x86-64 | A JDK 8+ JVM; glibc ≥ 2.17 (manylinux2014). |
-| `cpu-linux-aarch64` | CPU | Linux aarch64 | glibc ≥ 2.39 (e.g. Ubuntu 24.04+, Debian 13+) — built natively on `ubuntu-24.04-arm`, matching upstream llama.cpp's own ARM binaries; older-glibc ARM hosts (Ubuntu 22.04, Debian 12, RHEL 8/9, Amazon Linux 2023) are not supported. |
+| `cpu-linux-x86-64` | CPU | Linux x86-64 | A JDK 8+ JVM; glibc ≥ 2.28 (manylinux_2_28: RHEL 8, Ubuntu 20.04, Debian 10 and later). Ships one CPU backend module per instruction-set level (x86-64 baseline, SSE4.2, AVX, AVX2, AVX-512, AVX-VNNI, AMX), of which ggml loads the best for the running CPU at start-up — a CPU without AVX2 works, and an AVX-512/AMX machine uses its kernels. |
+| `cpu-linux-aarch64` | CPU | Linux aarch64 | glibc ≥ 2.28 (RHEL 8, Ubuntu 20.04, Debian 10, Amazon Linux 2023 and later) — built in the manylinux_2_28 image on an arm64 runner. Ships one CPU backend module per ARM feature level (armv8.0 up to armv9.2: dotprod, fp16, SVE, i8mm, SVE2, SME), chosen at start-up like the x86-64 ones. |
 | `cpu-linux-s390x` | CPU | Linux s390x (IBM Z, big-endian) | A JDK 8+ JVM. |
 | `cpu-windows-x86-64` / `cpu-windows-x86` | CPU | Windows x86-64 / x86 | A JDK 8+ JVM. Built with Ninja Multi-Config + MSVC (static `/MT` CRT). |
 | `cpu-windows-aarch64` | CPU | Windows on ARM (Snapdragon X / Surface) | A JDK 8+ JVM. Built natively on `windows-11-arm` with `clang-cl`. |

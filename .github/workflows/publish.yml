@@ -662,14 +662,19 @@ jobs:
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   crosscompile-linux-x86_64:
-    name: Cross-Compile manylinux2014 x86_64
+    name: Cross-Compile manylinux_2_28 x86_64 (CPU variants)
     needs: [startgate, build-webui]
     runs-on: ubuntu-latest
-    # Phase 2 dockcross cache rollout — job 1, VERIFIED green in CI (PR #245): sccache v0.16.0
-    # probe passed in-container (devtoolset-10 gcc), cache ON over Depot WebDAV (cold run: 275
-    # objects stored). Steady-state env below — the first-run diagnostics (SCCACHE_LOG /
-    # SCCACHE_ERROR_LOG / RUST_BACKTRACE) were dropped now that it is proven. Inert without
-    # DEPOT_TOKEN (fork PRs) or with use_cache=false; a crashing sccache still falls back to a
+    # The shipped Linux x86-64 CPU build: ggml as shared libraries with one CPU backend module per
+    # instruction-set level (x64 ... zen4, sapphirerapids), of which ggml loads the best for the
+    # running CPU -- JLLAMA_CPU_VARIANTS, see CLAUDE.md "CPU variants". Built in the same
+    # manylinux_2_28 image as the CUDA job (AlmaLinux 8, GCC 14, glibc 2.28): manylinux2014's GCC 10
+    # lacked -mavxvnni and -mamx-tile (the alderlake and sapphirerapids variants), and the artifact's
+    # glibc floor is 2.28 now (RHEL 8, Ubuntu 20.04, Debian 10 and later; verify-native-deps.py holds
+    # it there). No ctest here: jllama_test links the CPU backend statically, which this build has as
+    # a module -- test-cpp-linux-x86_64 builds the default static library with the tests instead.
+    # sccache (CLAUDE.md "CI build cache"): same steady-state env as the CUDA job; inert without
+    # DEPOT_TOKEN (fork PRs) or with use_cache=false, and a crashing sccache still falls back to a
     # green uncached build via the build.sh probe.
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
@@ -687,7 +692,7 @@ jobs:
       - name: Build libraries
         shell: bash
         run: |
-          .github/dockcross/dockcross-manylinux2014-x64 .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=x86_64"
+          .github/dockcross/dockcross-manylinux_2_28-x64 .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=x86_64 -DJLLAMA_CPU_VARIANTS=ON"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -695,20 +700,23 @@ jobs:
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   crosscompile-linux-aarch64:
-    name: Build and Test Linux aarch64
+    name: Build manylinux_2_28 aarch64 (CPU variants)
     needs: [startgate, build-webui]
-    # Native ARM64 build on GitHub's free arm64 runner, mirroring upstream llama.cpp's
-    # `ubuntu-cpu` aarch64 release job (ubuntu-24.04-arm + GCC 14). Replaces the former dockcross
-    # `linux-arm64-lts` cross-compile (GCC 8.5, glibc 2.17), which can no longer compile llama.cpp
-    # b9789 — its C++17 CTAD-in-`new` needs GCC >= 12. Building natively also lets us run the C++
-    # unit suite (ctest) on real ARM hardware for the first time (the cross build ran no tests).
-    # Trade-off: the glibc floor rises 2.17 -> ~2.39, the same envelope upstream's own ARM binaries
-    # require. GGML_NATIVE=OFF keeps the artifact portable across ARMv8 CPU generations (no
-    # build-host -march baked in). The job id is kept (a `needs:` target downstream); only the
-    # display name changed, so update any branch-protection required-check that pinned the old name.
+    # The shipped Linux aarch64 CPU build, the counterpart of crosscompile-linux-x86_64: built
+    # natively on GitHub's arm64 runner inside the pypa manylinux_2_28 aarch64 image (AlmaLinux 8,
+    # GCC 14, glibc 2.28 -- .github/manylinux/manylinux_2_28-aarch64), with upstream's armv8.0 ...
+    # armv9.2 CPU backend variants (dotprod, fp16, SVE, i8mm, SVE2, SME), of which ggml loads the
+    # best at run time. The glibc floor FALLS from ~2.39 (the former native ubuntu-24.04-arm build)
+    # to 2.28, the same as x86-64 -- upstream's own ARM release binaries need ~2.39. GGML_NATIVE=OFF
+    # is forced by llama/CMakeLists.txt, so no build-host -march is baked in. No ctest here (the
+    # variant build has no static CPU backend for jllama_test): test-cpp-linux-aarch64 runs the C++
+    # suite on the same runner against the default static build. The job id is kept (a `needs:`
+    # target downstream); the display name changed with the build, so update any branch-protection
+    # required check that pinned "Build and Test Linux aarch64".
     runs-on: ubuntu-24.04-arm
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+      MANYLINUX_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
@@ -716,26 +724,13 @@ jobs:
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version-file: .java-version
-      - name: Install toolchain (GCC 14, mirrors upstream llama.cpp ARM release)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-14 g++-14
-          echo "CC=gcc-14" >> "$GITHUB_ENV"
-          echo "CXX=g++-14" >> "$GITHUB_ENV"
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
       - name: Build libraries
         shell: bash
         run: |
-          mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=aarch64 -DGGML_NATIVE=OFF -DBUILD_TESTING=ON"
-      - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
+          .github/manylinux/manylinux_2_28-aarch64 .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=aarch64 -DJLLAMA_CPU_VARIANTS=ON"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2224,6 +2219,39 @@ jobs:
       - name: Run C++ unit tests
         run: ctest --test-dir llama/build --output-on-failure
 
+  test-cpp-linux-aarch64:
+    name: C++ Tests Ubuntu 24.04 aarch64
+    needs: startgate
+    # The C++ unit suite on real ARM hardware, against the default static build with GCC 14 (as
+    # upstream's ARM release job compiles). It ran in crosscompile-linux-aarch64 until that job
+    # moved to the CPU-variant build, whose CPU backend is a module jllama_test cannot link.
+    runs-on: ubuntu-24.04-arm
+    env:
+      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: 'temurin'
+          java-version-file: .java-version
+      - name: Install toolchain (GCC 14, mirrors upstream llama.cpp ARM release)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-14 g++-14
+          echo "CC=gcc-14" >> "$GITHUB_ENV"
+          echo "CXX=g++-14" >> "$GITHUB_ENV"
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
+      - name: Build libraries
+        run: |
+          mvn -q --no-transfer-progress -f llama/pom.xml compile
+          .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=aarch64 -DGGML_NATIVE=OFF -DBUILD_TESTING=ON"
+      - name: Verify llama.cpp patches are applied
+        run: .github/verify-patches-applied.sh
+      - name: Run C++ unit tests
+        run: ctest --test-dir llama/build --output-on-failure
+
   build-macos-arm64-metal-15:
     name: Build and Test macOS 15 arm64 (Metal)
     needs: [startgate, build-webui]
@@ -2459,6 +2487,7 @@ jobs:
       - build-linux-x86_64-openvino
       - build-windows-x86_64-openvino
       - test-cpp-linux-x86_64
+      - test-cpp-linux-aarch64
       - build-macos-arm64-metal-15
       - test-java-linux-x86_64
       - test-java-macos-arm64-metal
