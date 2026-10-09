@@ -232,6 +232,21 @@ class MainTest(unittest.TestCase):
         self.assertEqual(nativedeps.violations("x/Mac/aarch64/metal/libjllama.dylib",
                                                ["/usr/lib/libSystem.B.dylib"]), [])
 
+    def test_any_ucrt_forwarder_is_allowed_not_an_enumerated_eleven(self):
+        # Which forwarders a library imports depends on the CRT functions it happens to use, so it
+        # differs between architectures and compilers. Only "the UCRT is dynamic" is the invariant.
+        for extra in ("api-ms-win-crt-process-l1-1-0.dll",   # outside the set measured on one build
+                      "api-ms-win-crt-conio-l1-1-0.dll",
+                      "API-MS-WIN-CRT-PRIVATE-L1-1-0.DLL"):
+            self.assertEqual(nativedeps.violations("x/Windows/x86/cpu/jllama.dll",
+                                                   ["KERNEL32.dll", extra]), [], extra)
+        # it is a prefix rule, not "anything that looks like an api set"
+        found = nativedeps.violations("x/Windows/x86/cpu/jllama.dll",
+                                      ["KERNEL32.dll", "api-ms-win-crt-runtime-l1-1-0.dll",
+                                       "api-ms-win-core-synch-l1-2-0.dll"])
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("api-ms-win-core-synch", found[0])
+
     def test_nothing_to_check_is_a_failure(self):
         with tempfile.TemporaryDirectory() as root:
             self.assertEqual(nativedeps.main(["x", root]), 2)

@@ -10,7 +10,8 @@ endif()
 
 project(jllama CXX)
 
-# HYBRID CRT on Windows, for every toolchain: the STL and vcruntime are linked statically (/MT),
+# HYBRID CRT on Windows, for every toolchain but the two named below: the STL and vcruntime are
+# linked statically (/MT),
 # the UCRT stays dynamic. So msvcp140.dll / vcruntime140.dll / vcruntime140_1.dll are not required
 # on the end-user's machine, while ucrtbase.dll comes from the OS.
 # Must be set before any FetchContent_MakeAvailable() so that llama.cpp and all

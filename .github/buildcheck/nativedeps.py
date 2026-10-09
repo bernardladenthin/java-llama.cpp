@@ -45,9 +45,22 @@ WINDOWS_OS = {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll"}
 # the hybrid -- their appearance would mean the CRT went dynamic) and vcomp140.dll (MSVC's OpenMP:
 # every Windows CPU job passes -DGGML_OPENMP=OFF, a measured ~2x on token generation, so this list
 # is the guard that fails the build if that flag is dropped).
-WINDOWS_UCRT = {f"api-ms-win-crt-{part}-l1-1-0.dll" for part in
-                ("convert", "environment", "filesystem", "heap", "locale", "math",
-                 "runtime", "stdio", "string", "time", "utility")}
+WINDOWS_UCRT_PREFIX = "api-ms-win-crt-"
+
+
+def ucrt_forwarder(name):
+    """Whether `name` is a Universal CRT forwarder, i.e. evidence of a DYNAMIC UCRT.
+
+    Matched by PREFIX, not by an enumerated list, and that is the point: the invariant worth
+    guarding is "the UCRT is the operating system's", and any api-ms-win-crt-* import proves it.
+    Which of the ~11 forwarders a given library ends up importing depends on the CRT functions it
+    happens to use, so it legitimately differs between x86-64 and x86, between cl.exe, clang-cl and
+    plain clang, and after any upstream change that calls one more CRT function. Enumerating them
+    would add no safety whatsoever -- a static UCRT shows up as *none* of them, which the
+    WINDOWS_UCRT_REQUIRED check below catches either way -- while turning every such difference
+    into a red `package` job. (An earlier version did enumerate eleven names, measured on one
+    plain-clang build.)"""
+    return name.lower().startswith(WINDOWS_UCRT_PREFIX)
 # Where at least one of those must be PRESENT, which is the other direction of the same guard --
 # see the check in violations(). The GPU directories are left out: they are held to a denylist, and
 # a vendor toolchain may link its own runtime.
@@ -65,11 +78,12 @@ ALLOWED = {
     "Linux/s390x/cpu": {"libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld64.so.1"},
     "Linux-Android/aarch64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
     "Linux-Android/x86_64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
-    # Exactly WINDOWS_OS | WINDOWS_UCRT -- see those two definitions above for what is deliberately
-    # absent (msvcp140/vcruntime140 and vcomp140) and why that makes this list a guard.
-    "Windows/x86_64/cpu": WINDOWS_OS | WINDOWS_UCRT,
-    "Windows/x86/cpu": WINDOWS_OS | WINDOWS_UCRT,
-    "Windows/aarch64/cpu": WINDOWS_OS | WINDOWS_UCRT,
+    # Exactly WINDOWS_OS, plus any api-ms-win-crt-* forwarder through ucrt_forwarder() -- see
+    # WINDOWS_OS above for what is deliberately absent (msvcp140/vcruntime140 and vcomp140) and why
+    # that makes this list a guard, and WINDOWS_UCRT_REQUIRED below for the other direction.
+    "Windows/x86_64/cpu": WINDOWS_OS,
+    "Windows/x86/cpu": WINDOWS_OS,
+    "Windows/aarch64/cpu": WINDOWS_OS,
     "Mac/aarch64/metal": {"/usr/lib/libc++.1.dylib", "/usr/lib/libSystem.B.dylib",
                     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
                     "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
@@ -303,7 +317,7 @@ def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
     # inside the library so Microsoft's security updates never reach it -- would pass unnoticed,
     # because a static CRT only ever REMOVES imports. Measured on a real variants build: all 18
     # libraries import between 5 and 11 of these, so "at least one" holds for modules too.
-    if key in WINDOWS_UCRT_REQUIRED and not any(d.lower().startswith("api-ms-win-crt") for d in deps):
+    if key in WINDOWS_UCRT_REQUIRED and not any(ucrt_forwarder(d) for d in deps):
         failures.append(f"{rel} imports no api-ms-win-crt-* forwarder, so its UCRT is statically linked. "
                         f"The Windows builds use the hybrid CRT on purpose (llama/CMakeLists.txt): a static "
                         f"UCRT cannot receive Microsoft's security updates. Was a linker flag lost?")
@@ -319,7 +333,7 @@ def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
     lowered = {a.lower() for a in allowed} | {s.lower() for s in siblings}
     return failures + [f"{rel} needs {d}, which it did not need before (allowed: {sorted(allowed)}"
                        f"{' + the files next to it' if siblings else ''})"
-                       for d in deps if d.lower() not in lowered]
+                       for d in deps if d.lower() not in lowered and not ucrt_forwarder(d)]
 
 
 def main(argv):

@@ -49,9 +49,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ### Changed
 - **Windows natives: no Visual C++ redistributable, and `ucrtbase.dll` stays serviceable — but
-  Windows 10 or newer is now required.** All Windows builds (`cpu-windows-*`, `msvc-windows-*` and
-  the GPU jars) use the **hybrid CRT**: the C++ standard library and vcruntime are linked
-  statically, so `msvcp140.dll` / `vcruntime140.dll` / `vcruntime140_1.dll` are not needed on the
+  Windows 10 or newer is now required.** The Windows CPU jars (`cpu-windows-*`,
+  `msvc-windows-*`) and the CUDA, Vulkan, OpenCL and ROCm jars use the **hybrid CRT**: the C++
+  standard library and vcruntime are linked statically, so `msvcp140.dll` / `vcruntime140.dll` / `vcruntime140_1.dll` are not needed on the
   target machine, while the Universal CRT remains the operating system's. A plain `/MT` would link
   the UCRT in as well and freeze a copy of it inside `jllama.dll`, where Microsoft's UCRT security
   updates could never reach it — for a library that parses network data and untrusted GGUF files
@@ -60,7 +60,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   floor:** the UCRT is an OS component from Windows 10 on, so the Windows natives no longer run on
   Windows 7 / 8.1 without the Universal CRT update. `.github/buildcheck/nativedeps.py` enforces
   both halves per release — `msvcp140` appearing fails the build, and the `api-ms-win-crt-*`
-  forwarders disappearing fails it too.
+  forwarders disappearing fails it too. **The SYCL and OpenVINO jars are the exception** and keep
+  the dynamic `/MD` runtime, because `icx -fsycl` rejects `/MT` outright and the OpenVINO import
+  libraries are built `/MD`; they require their vendor runtime on the host anyway, so the
+  self-contained-library argument does not apply to them.
 - **Windows CPU inference generates tokens about twice as fast** (`-DGGML_OPENMP=OFF` on all four
   Windows x86-64/x86 CPU build jobs, which the arm64 jobs already used for a dependency reason).
   Measured on a Ryzen 7 5800H with Qwen3-0.6B Q4_0 at 8 threads, four static builds from one
