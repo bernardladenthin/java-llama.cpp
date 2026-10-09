@@ -424,6 +424,36 @@ which the loader tries before `cpu`) for anyone who wants the Visual-Studio-gene
 Ninja Multi-Config + MSVC.) Both Windows CPU builds are validated end-to-end with the full
 model-backed Java suite (`test-java-windows-x86_64` = Ninja, `test-java-windows-x86_64-msvc` = MSVC).
 
+**`GGML_OPENMP=OFF` on every Windows CPU job -- it is faster, not a concession.** All four x86-64/x86
+CPU jobs (both generators) pass it, as the arm64 jobs already did for a dependency reason. Measured
+on 2026-10-09 (Ryzen 7 5800H, Qwen3-0.6B Q4_0, 8 threads, `GGML_NATIVE=ON`, static builds, runs
+interleaved, t/s):
+
+| | pp512 | tg128 |
+|---|---:|---:|
+| MSVC, OpenMP on | 359.8 | 41.7 |
+| MSVC, OpenMP off | 371.0 | **79.9** |
+| clang, OpenMP on | 390.6 | 30.2 |
+| clang, OpenMP off | 391.6 | **82.3** |
+
+Token generation is **1.9x (MSVC) / 2.7x (clang)** faster without OpenMP and prompt processing is
+unchanged within error, so there is nothing to trade away. The cause is visible in the thread
+scaling (clang, tg64): OpenMP peaks at 4 threads and *degrades* above it -- 36.0 (t=2), 37.6 (t=4),
+29.1 (t=8), 21.5 (t=16) -- while ggml's own `std::thread` pool gives 54.5 / 74.2 / 71.4. Generation
+is synchronisation-bound (little work per barrier), so the OpenMP runtime's barrier cost swamps it;
+prompt processing has enough work per barrier to hide it. It drops `vcomp140.dll` from the
+dependency list as a side effect (MSVC's OpenMP, a third redistributable DLL after `msvcp140` and
+`vcruntime140`). **Do not remove the flag as redundant**: without it a *clang* Windows build also
+imports `libomp140.x86_64.dll`, which no redistributable carries -- the same `0xc0000135` class the
+arm64 job hit. The 32-bit job follows by analogy, not by measurement.
+
+**Linux is the open counterpart, deliberately unchanged.** The Linux CPU jobs pass no `GGML_OPENMP`
+either, so they ship with it ON (ggml's default) through **libgomp**, a third implementation that
+was not measured -- two of two measured implementations (LLVM `libomp`, MSVC `vcomp`) show the
+penalty, which makes it a strong suspicion and not a result. There is no dependency argument on
+Linux (libgomp is everywhere), only the throughput one, so it needs a measurement on a Linux host
+before the same one-line change is made (`TODO.md`).
+
 **GPU runtime libraries are NOT bundled.** The GPU natives jars ship only the single monolithic
 `jllama.dll` (llama.cpp + ggml + the backend are statically linked in — `BUILD_SHARED_LIBS OFF`). The consumer's driver/toolkit must supply the runtime: CUDA needs the
 installed CUDA 13 Toolkit (`cudart64_13.dll`/`cublas64_13.dll`/`cublasLt64_13.dll` on `PATH`); Vulkan
