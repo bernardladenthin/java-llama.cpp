@@ -149,6 +149,21 @@ In Gradle it is just `implementation("net.ladenthin:llama-platform:5.2.0")`.)
 
 There are multiple [examples](llama/src/test/java/examples).
 
+### Try it with JBang, no project needed
+
+[`examples/jbang/Chat.java`](examples/jbang/Chat.java) is a one-file console chat that
+[JBang](https://www.jbang.dev) runs straight from the repository, with any JDK 8+ and a GGUF of an
+instruction-tuned model:
+
+```bash
+jbang https://github.com/bernardladenthin/java-llama.cpp/blob/main/examples/jbang/Chat.java model.gguf
+```
+
+Its `//DEPS` lines name the classes jar and the CPU natives jar of every desktop platform (the jars
+`llama-platform` names; JBang treats a `pom` dependency as a BOM and puts nothing of it on the
+classpath), and the loader picks this machine's. Copy the file as a starting point; a GPU backend is
+one more `//DEPS` line (see [Choosing the natives jars](#choosing-the-natives-jars)).
+
 ### Snapshot builds
 
 Every push to `main` publishes a snapshot to the [Sonatype Central snapshot repository](https://central.sonatype.com/repository/maven-snapshots/net/ladenthin/llama/).

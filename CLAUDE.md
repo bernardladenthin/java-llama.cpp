@@ -2492,6 +2492,8 @@ missed again.)
   (The per-classifier snippets were **deduplicated** to a single canonical + template pair, so the
   release version now appears in only ~4 spots here, not ~20 — the runtime details live once in the
   classifier table.)
+- **`examples/jbang/Chat.java`** — the version in its `//DEPS` lines; `check-natives.py` holds it to
+  the README install snippet's version, so forgetting it fails `code-style`.
 - **`llama-langchain4j/README.md`** — its own `<dependency>` snippet.
 - **`llama-atmosphere-agent/pom.xml`** — its own `<version>`, which must equal the reactor's
   (standalone project outside the reactor, so `versions:set` skips it; `check-natives.py` fails until

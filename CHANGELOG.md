@@ -10,6 +10,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`examples/jbang/Chat.java`**, a one-file console chat that [JBang](https://www.jbang.dev) runs without a
+  checkout or a build (`jbang https://github.com/bernardladenthin/java-llama.cpp/blob/main/examples/jbang/Chat.java
+  model.gguf`). Its `//DEPS` lines name the classes jar and the CPU natives jar of every desktop platform
+  themselves -- JBang treats a `pom` dependency such as `llama-platform` as a BOM and puts nothing of it on the
+  classpath -- and `check-natives.py` holds them to the `platform=yes` rows of `natives.csv` and to the README's
+  release version.
 - **`ModelParameters.setMoeCacheMib(int)`** (`--moe-cache-mib`, llama.cpp b11480, EXPERIMENTAL upstream): a
   GPU cache for the MoE expert weights a `setCpuMoeLayers` / `--cpu-moe` setup keeps in host memory,
   split among several GPUs like the layers; `0` (the default) disables it.

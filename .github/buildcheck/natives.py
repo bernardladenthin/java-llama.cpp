@@ -247,6 +247,37 @@ def check_readme(natives, readme_text):
     return failures + compare("README.md all-backends fat jars", fatjar_targets(natives), fatjar_names(readme_text))
 
 
+JBANG_EXAMPLE = "examples/jbang/Chat.java"
+
+
+def check_jbang_example(natives, script_text, readme_text):
+    """The one-file JBang example runs without a checkout, so it cannot take `llama-platform`: JBang
+    treats a `pom` dependency as a BOM and puts nothing of it on the classpath (measured). It therefore
+    names the classes jar and the platform=yes natives jars itself -- exactly those, at the version of
+    the README's install snippet, which the version bump moves by hand."""
+    deps = [line.split()[1] for line in script_text.splitlines() if line.startswith("//DEPS ")]
+    coords = [d.split(":") for d in deps]
+    good = [c for c in coords if c[:2] == ["net.ladenthin", "llama"] and len(c) in (3, 4)]
+    failures = [f"{JBANG_EXAMPLE}: `{d}` is not net.ladenthin:llama:<version>[:<classifier>]"
+                for d, c in zip(deps, coords) if c not in good]
+    match = re.search(r"<artifactId>llama-platform</artifactId>\s*<version>([^<]+)</version>", readme_text)
+    expected = match.group(1) if match else None
+    versions = {c[2] for c in good}
+    if versions != {expected}:
+        failures.append(f"{JBANG_EXAMPLE}: DEPS version(s) {sorted(versions)} must be the README install "
+                        f"snippet's {expected}")
+    if not any(len(c) == 3 for c in good):
+        failures.append(f"{JBANG_EXAMPLE}: the classes jar net.ladenthin:llama:<version> is missing")
+    named = [c[3] for c in good if len(c) == 4]
+    platform = [r["classifier"] for r in natives if r["platform"] == "yes"]
+    failures += [f"{JBANG_EXAMPLE}: missing the platform natives jar {c}" for c in platform if c not in named]
+    failures += [f"{JBANG_EXAMPLE}: names {c}, which is not a platform=yes row of .github/natives.csv"
+                 for c in named if c not in platform]
+    if len(set(named)) != len(named):
+        failures.append(f"{JBANG_EXAMPLE}: a natives jar is named twice")
+    return failures
+
+
 def check_agent_class_path(natives, agent_pom_text):
     """`java -jar` on the agent jar finds the core through its manifest Class-Path, which names
     every all-backends fat jar."""
@@ -284,5 +315,6 @@ def check(root):
             + check_cmake(natives, read(root, "llama/CMakeLists.txt"))
             + check_dependency_allowlist(natives, nativedeps.ALLOWED)
             + check_readme(natives, read(root, "README.md"))
+            + check_jbang_example(natives, read(root, JBANG_EXAMPLE), read(root, "README.md"))
             + check_agent_class_path(natives, read(root, "llama-atmosphere-agent/pom.xml"))
             + check_agent_version(read(root, "pom.xml"), read(root, "llama-atmosphere-agent/pom.xml")))
