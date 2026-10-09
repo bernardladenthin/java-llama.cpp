@@ -10,6 +10,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`InvalidRequestException`** (`net.ladenthin.llama.exception`, a `LlamaException`): the JNI layer now
+  throws it wherever llama.cpp's own HTTP server answers `400` (`invalid_request_error`) -- a body that is
+  not valid JSON, a missing `"prompt"` / `"messages"` / `"input_prefix"`, an empty embedding input, an
+  unknown `encoding_format`, a parameter outside its hard limits, a prompt over the context size, and a
+  `std::invalid_argument` or `common_json_error` out of tokenization, prompt formatting or the
+  `/v1/systemone` handler (the same rule as upstream's `ex_wrapper`). Everything else stays a plain
+  `LlamaException`. A `catch (LlamaException)` keeps catching both.
+- **`RouterModel.getContextLength()`** (llama.cpp b11538, #30228): the context length a model was
+  trained with, which the router now reads offline from the GGUF for `GET /models` (`context_length`,
+  `<arch>.context_length`) -- known before the first load, like the modalities; `0` from a server before
+  b11538 or for a file without the key.
 - **CI proves HTTPS in both directions on the release assets.** The fat-jar smokes (Linux x86-64 /
   aarch64, Windows x86-64 / arm64) and the macOS smoke each start the server behind a self-signed
   certificate (`--ssl-key-file` / `--ssl-cert-file`; a plain-HTTP request to the port must be refused)
@@ -60,6 +71,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **The message of a rejected request is the bare reason** (`"prompt" must not be empty`), no longer the
+  JSON object `{"code":400,"message":…,"type":"invalid_request_error"}` the old `throw_invalid_request`
+  wrapped it in: the type is the exception class now (`InvalidRequestException`), as it is for every
+  other `LlamaException`.
 - **`NativeServer` binds port 9931 when no `--port` is given** (llama.cpp b11521,
   [#30159](https://github.com/ggml-org/llama.cpp/pull/30159) moved the server default off 8080), in classic and
   attach mode alike; `NativeServer.getPort()` reports 9931 accordingly. `OpenAiCompatServer` keeps its own default
@@ -69,6 +84,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   in `build.sh` opts back in). With CUDA 13.4 and sccache 0.18.0 the nvcc launcher failed on the first `.cu`
   files in two confirmed runs (`Missing "cubin" file output`, `Compiler killed by signal 126`), and the
   uncached retry that followed made those jobs slower than a cold build; the C/C++ objects stay cached.
+- **Upgraded the pinned llama.cpp from b11534 to b11538**, one reviewed step. All eleven patches apply
+  unchanged and every drop-check still finds its defect. In the range: the router's `GET /models` carries
+  `context_length` per model (#30228, the `RouterModel` getter above; `common_get_decision_type(fname)`
+  became `common_get_gguf_info()`, which no project code called), the embedding `get_rows` is built after
+  the inputs (#30160), a CUDA rounding mismatch between CPU and GPU under MSVC is fixed (#30229), and
+  `llama-bench` respects `-fitc` (#28331). Per-step record: `docs/history/llama-cpp-breaking-changes.md`.
 - **CI: the three dockcross images are pinned by digest** (`android-arm64`, `android-x86_64`,
   `manylinux_2_28-x64`, all tag `20260712-79e54f9`), as the manylinux aarch64 image already was.
 - **Upgraded the pinned llama.cpp from b11529 to b11534**, in 3 reviewed steps, each ending at a tag. No
@@ -283,6 +304,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
 
 ### Fixed
+- **`OpenAiCompatServer` answers `400`, not `500`, for a request the native layer rejects** -- an empty
+  `input` array for `/v1/embeddings`, a `/v1/completions` body without a `prompt`, a malformed body, a
+  message the chat template cannot take, a prompt over the context size -- on every surface (OpenAI,
+  Ollama, Anthropic, Responses; as an `invalid_request_error` SSE event once a stream has started).
+  Upstream's server has answered these with `400` since b11337 (#29060); the Java transport reported them
+  as `server_error`, because the JNI layer threw the same `LlamaException` for a rejected request and a
+  failed inference. The server now maps `InvalidRequestException` like the `IllegalArgumentException` of
+  its own validation, without matching on message text; a plain `LlamaException` stays `500`.
 - **HTTPS works out of every desktop natives jar, and the macOS dylib no longer needs Homebrew's OpenSSL.**
   `jllama` compiled cpp-httplib itself, without SSL, next to the SSL-enabled copy upstream's `llama-common`
   (the download code) links -- two incompatible copies of the same classes in one link, and which one the

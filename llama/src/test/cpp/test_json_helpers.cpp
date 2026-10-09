@@ -681,3 +681,38 @@ TEST(RouteErrorMessage, ReturnsJsonWithoutAnErrorMessageUnchanged) {
     EXPECT_EQ(route_error_message(R"({"error":"plain"})"), R"({"error":"plain"})");
     EXPECT_EQ(route_error_message(R"({"error":{"message":42}})"), R"({"error":{"message":42}})");
 }
+
+// ============================================================
+// get_result_error_code
+// ============================================================
+
+namespace {
+
+// An error result of a given type: to_json() → format_error_response() maps the type to the code.
+static server_task_result_ptr make_error_of_type(int id_, const std::string &msg, error_type type) {
+    auto r = std::make_unique<server_task_result_error>();
+    r->id = id_;
+    r->err_msg = msg;
+    r->err_type = type;
+    return r;
+}
+
+} // namespace
+
+TEST(GetResultErrorCode, AServerErrorIs500) { EXPECT_EQ(get_result_error_code(make_error(1, "boom")), 500); }
+
+TEST(GetResultErrorCode, AnInvalidRequestAndAnExceededContextAre400) {
+    EXPECT_EQ(get_result_error_code(make_error_of_type(2, "bad", ERROR_TYPE_INVALID_REQUEST)), 400);
+    EXPECT_EQ(get_result_error_code(make_error_of_type(3, "too long", ERROR_TYPE_EXCEED_CONTEXT_SIZE)), 400);
+}
+
+TEST(GetResultErrorCode, TheOtherTypesKeepUpstreamsCodes) {
+    EXPECT_EQ(get_result_error_code(make_error_of_type(4, "no", ERROR_TYPE_NOT_SUPPORTED)), 501);
+    EXPECT_EQ(get_result_error_code(make_error_of_type(5, "gone", ERROR_TYPE_UNAVAILABLE)), 503);
+    EXPECT_EQ(get_result_error_code(make_error_of_type(6, "who", ERROR_TYPE_AUTHENTICATION)), 401);
+}
+
+TEST(GetResultErrorCode, AResultWithoutACodeIsZero) {
+    EXPECT_EQ(get_result_error_code(make_ok(7, "fine")), 0);
+    EXPECT_EQ(get_result_error_code(make_embedding(8)), 0);
+}

@@ -74,6 +74,15 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
     }
 
     @Test
+    public void aCompletionWithoutAPromptIsAnswered400LikeUpstream() throws IOException {
+        // oaicompat_completion_params_parse refuses the body natively; the typed rejection reaches the
+        // server as InvalidRequestException and is a 400, not the 500 it used to be
+        Response response = post(port, "/v1/completions", "{\"model\":\"" + MODEL_ID + "\",\"max_tokens\":1}", "");
+        assertThat(response.code, is(400));
+        assertThat(MAPPER.readTree(response.body).path("error").path("type").asText(), is("invalid_request_error"));
+    }
+
+    @Test
     public void infillReturnsContent() throws IOException {
         String body = "{\"input_prefix\":\"def add(a, b):\\n    return \",\"input_suffix\":\"\\n\",\"n_predict\":16}";
         Response response = post(port, "/infill", body, "");

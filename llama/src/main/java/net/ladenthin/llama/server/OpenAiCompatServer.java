@@ -28,6 +28,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.ladenthin.llama.LlamaModel;
+import net.ladenthin.llama.exception.InvalidRequestException;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -329,7 +330,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                         TimeUnit.MILLISECONDS);
                 backend.streamCompletions(request, chunkJson -> out.writeStrict(OpenAiSseFormatter.sseData(chunkJson)));
                 out.writeStrict(OpenAiSseFormatter.sseDone());
-            } catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException | InvalidRequestException e) {
                 out.writeQuietly(
                         OpenAiSseFormatter.sseData(OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null)));
             } catch (IOException e) {
@@ -381,14 +382,17 @@ public final class OpenAiCompatServer implements AutoCloseable {
 
     /**
      * Run a non-streaming request through {@code producer} and write its JSON body, translating an
-     * {@link IllegalArgumentException} to {@code 400} and any other failure to {@code 500}.
+     * {@link IllegalArgumentException} (a request this layer rejected) or an
+     * {@link InvalidRequestException} (one the native layer rejected, where upstream's server answers
+     * {@code 400}) to {@code 400} and any other failure to {@code 500}. The streaming routes make the
+     * same distinction for the error event they write once the headers are out.
      */
     private void completeNonStreaming(HttpExchange exchange, JsonNode request, BodyProducer producer)
             throws IOException {
         final String body;
         try {
             body = producer.produce(request);
-        } catch (IllegalArgumentException e) {
+        } catch (IllegalArgumentException | InvalidRequestException e) {
             sendError(exchange, HTTP_BAD_REQUEST, ERROR_TYPE_REQUEST, message(e));
             return;
         } catch (IOException | RuntimeException e) {
@@ -416,7 +420,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                         chunkJson -> out.writeStrict(
                                 OpenAiSseFormatter.sseData(OpenAiSseFormatter.ensureUsageCachedTokens(chunkJson))));
                 out.writeStrict(OpenAiSseFormatter.sseDone());
-            } catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException | InvalidRequestException e) {
                 out.writeQuietly(
                         OpenAiSseFormatter.sseData(OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null)));
             } catch (IOException e) {
@@ -492,7 +496,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 final String body;
                 try {
                     body = backend.complete(openAiRequest);
-                } catch (IllegalArgumentException e) {
+                } catch (IllegalArgumentException | InvalidRequestException e) {
                     sendJson(exchange, HTTP_BAD_REQUEST, ollamaError(message(e)));
                     return;
                 } catch (IOException | RuntimeException e) {
@@ -523,7 +527,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     }
                 });
                 out.writeStrict(OllamaApiSupport.toOllamaDoneLine(model, accumulator));
-            } catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException | InvalidRequestException e) {
                 out.writeQuietly(ollamaError(message(e)) + "\n");
             } catch (IOException e) {
                 LOG.debug("ollama client disconnected during stream", e);
@@ -552,7 +556,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     text = OllamaApiSupport.extractCompletionText(
                             backend.completions(OllamaApiSupport.toOpenAiCompletionRequest(request)));
                 }
-            } catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException | InvalidRequestException e) {
                 sendJson(exchange, HTTP_BAD_REQUEST, ollamaError(message(e)));
                 return;
             } catch (IOException | RuntimeException e) {
@@ -596,7 +600,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 final String body;
                 try {
                     body = backend.complete(openAiRequest);
-                } catch (IllegalArgumentException e) {
+                } catch (IllegalArgumentException | InvalidRequestException e) {
                     sendJson(exchange, HTTP_BAD_REQUEST, anthropicError(message(e)));
                     return;
                 } catch (IOException | RuntimeException e) {
@@ -634,7 +638,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     }
                 });
                 out.writeStrict(translator.end());
-            } catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException | InvalidRequestException e) {
                 out.writeQuietly(AnthropicApiSupport.sseEvent("error", anthropicError(message(e))));
             } catch (IOException e) {
                 LOG.debug("anthropic client disconnected during stream", e);
@@ -684,7 +688,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 final String body;
                 try {
                     body = backend.complete(openAiRequest);
-                } catch (IllegalArgumentException e) {
+                } catch (IllegalArgumentException | InvalidRequestException e) {
                     sendError(exchange, HTTP_BAD_REQUEST, ERROR_TYPE_REQUEST, message(e));
                     return;
                 } catch (IOException | RuntimeException e) {
@@ -722,7 +726,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     }
                 });
                 out.writeStrict(translator.end());
-            } catch (IllegalArgumentException e) {
+            } catch (IllegalArgumentException | InvalidRequestException e) {
                 out.writeQuietly("event: error\ndata: "
                         + OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null) + "\n\n");
             } catch (IOException e) {

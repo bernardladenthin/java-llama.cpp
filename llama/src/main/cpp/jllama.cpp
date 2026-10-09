@@ -91,6 +91,7 @@ jclass c_integer = nullptr;
 jclass c_float = nullptr;
 jclass c_biconsumer = nullptr;
 jclass c_llama_error = nullptr;
+jclass c_llama_invalid_request = nullptr;
 jclass c_log_level = nullptr;
 jclass c_log_format = nullptr;
 jclass c_error_oom = nullptr;
@@ -145,8 +146,9 @@ jobject o_log_callback = nullptr;
 // within each table only matters for the human reader.
 // ---------------------------------------------------------------------------
 static jclass *const g_global_class_refs[] = {
-    &c_llama_model, &c_string, &c_hash_map,   &c_map,         &c_set,       &c_entry,      &c_iterator,
-    &c_integer,     &c_float,  &c_biconsumer, &c_llama_error, &c_log_level, &c_log_format, &c_error_oom,
+    &c_llama_model, &c_string,     &c_hash_map,  &c_map,        &c_set,         &c_entry,
+    &c_iterator,    &c_integer,    &c_float,     &c_biconsumer, &c_llama_error, &c_llama_invalid_request,
+    &c_log_level,   &c_log_format, &c_error_oom,
 };
 
 static jobject *const g_global_object_refs[] = {
@@ -203,11 +205,35 @@ static const static_object_binding g_static_object_bindings[] = {
 }
 
 /**
- * Formats e as a JSON invalid-request error and throws it via JNI.
+ * Throws e as an InvalidRequestException: the request was rejected while it was parsed, which
+ * upstream's HTTP server answers with 400 (ERROR_TYPE_INVALID_REQUEST). The message is the bare
+ * reason, as upstream puts it into `error.message`; the type is the Java class. Request parsing is
+ * an invalid request whatever it throws (upstream's parsers mix std::invalid_argument and
+ * std::runtime_error for the same kind of defect); for the paths that run upstream code whose
+ * exception type carries the verdict, see throw_by_exception_type.
  */
 static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
-    const auto &err = format_error_response(e.what(), ERROR_TYPE_INVALID_REQUEST);
-    env->ThrowNew(c_llama_error, err.dump().c_str());
+    env->ThrowNew(c_llama_invalid_request, e.what());
+}
+
+/**
+ * Throws e as the class upstream's `ex_wrapper` (tools/server/server.cpp) would answer with:
+ * std::invalid_argument and common_json_error are invalid requests (400), anything else is a server
+ * error (500). For tokenization, prompt formatting and the route handlers called directly.
+ */
+static void throw_by_exception_type(JNIEnv *env, const std::exception &e) {
+    const bool invalid = dynamic_cast<const std::invalid_argument *>(&e) != nullptr ||
+                         dynamic_cast<const common_json_error *>(&e) != nullptr;
+    env->ThrowNew(invalid ? c_llama_invalid_request : c_llama_error, e.what());
+}
+
+/**
+ * The Java class for a failed task result: an error the server reports with code 400
+ * (ERROR_TYPE_INVALID_REQUEST, ERROR_TYPE_EXCEED_CONTEXT_SIZE) is an InvalidRequestException, every
+ * other one a LlamaException.
+ */
+[[nodiscard]] static jclass error_class_for(const server_task_result_ptr &result) {
+    return get_result_error_code(result) == 400 ? c_llama_invalid_request : c_llama_error;
 }
 
 /**
@@ -215,8 +241,12 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
  * On failure throws via JNI and returns false.  Callers must return immediately.
  */
 [[nodiscard]] static bool result_ok_or_throw(JNIEnv *env, const server_task_result_ptr &result) {
-    if (!result || result->is_error()) {
-        env->ThrowNew(c_llama_error, result ? get_result_error_message(result).c_str() : "No result");
+    if (!result) {
+        env->ThrowNew(c_llama_error, "No result");
+        return false;
+    }
+    if (result->is_error()) {
+        env->ThrowNew(error_class_for(result), get_result_error_message(result).c_str());
         return false;
     }
     return true;
@@ -228,7 +258,7 @@ static void throw_invalid_request(JNIEnv *env, const std::exception &e) {
  */
 [[nodiscard]] static bool batch_ok_or_throw(JNIEnv *env, const server_response_reader::batch_response &br) {
     if (br.error) {
-        env->ThrowNew(c_llama_error, get_result_error_message(br.error).c_str());
+        env->ThrowNew(error_class_for(br.error), get_result_error_message(br.error).c_str());
         return false;
     }
     if (br.is_terminated) {
@@ -432,24 +462,26 @@ static void wake_and_post(server_response_reader &rd, std::vector<server_task> &
  * function needs before it can read its arguments.
  */
 // Parse the JSON request body. On malformed input, converts the C++ parse error into a Java
-// LlamaException (so it never crosses the JNI boundary — which is undefined behavior) and returns
-// false; callers must return their sentinel when this returns false.
+// InvalidRequestException (upstream answers a common_json_error with 400) so it never crosses the
+// JNI boundary — which is undefined behavior — and returns false; callers must return their sentinel
+// when this returns false.
 [[nodiscard]] static bool parse_json_params(JNIEnv *env, jstring jparams, json &out) {
     try {
         out = json::parse(parse_jstring(env, jparams));
         return true;
     } catch (const std::exception &e) {
-        env->ThrowNew(c_llama_error, e.what());
+        throw_invalid_request(env, e);
         return false;
     }
 }
 
 /**
  * Convenience wrapper around require_json_field_impl (jni_helpers.hpp).
- * Returns false and throws if `field` is absent from `data`.
+ * Returns false and throws an InvalidRequestException if `field` is absent from `data` (upstream:
+ * `"input_prefix" is required`, ERROR_TYPE_INVALID_REQUEST).
  */
 [[nodiscard]] static bool require_json_field(JNIEnv *env, const json &data, const char *field) {
-    return require_json_field_impl(env, data, field, c_llama_error);
+    return require_json_field_impl(env, data, field, c_llama_invalid_request);
 }
 
 // Build a single indexed token task for batch submission (rerank and embedding).
@@ -861,12 +893,14 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) try {
     c_float = env->FindClass("java/lang/Float");
     c_biconsumer = env->FindClass("java/util/function/BiConsumer");
     c_llama_error = env->FindClass("net/ladenthin/llama/exception/LlamaException");
+    c_llama_invalid_request = env->FindClass("net/ladenthin/llama/exception/InvalidRequestException");
     c_log_level = env->FindClass("net/ladenthin/llama/value/LogLevel");
     c_log_format = env->FindClass("net/ladenthin/llama/args/LogFormat");
     c_error_oom = env->FindClass("java/lang/OutOfMemoryError");
 
     if (!(c_llama_model && c_standard_charsets && c_string && c_hash_map && c_map && c_set && c_entry && c_iterator &&
-          c_integer && c_float && c_biconsumer && c_llama_error && c_log_level && c_log_format && c_error_oom)) {
+          c_integer && c_float && c_biconsumer && c_llama_error && c_llama_invalid_request && c_log_level &&
+          c_log_format && c_error_oom)) {
         goto error;
     }
 
@@ -1404,7 +1438,7 @@ JNIEXPORT jfloatArray JNICALL Java_net_ladenthin_llama_LlamaModel_embed(JNIEnv *
         try {
             tokens = tokenize_mixed(jctx->vocab, prompt, true, true);
         } catch (const std::exception &e) {
-            env->ThrowNew(c_llama_error, e.what());
+            throw_by_exception_type(env, e);
             return nullptr;
         }
         auto rd = ctx_server->get_response_reader();
@@ -1504,9 +1538,18 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleSystemOne(JN
 
         const std::function<bool()> should_stop = [jctx] { return jctx->closing.load(); };
         const server_http_req req{{}, {}, "/v1/systemone", "", parse_jstring(env, jrequest), {}, should_stop};
-        const server_http_res_ptr res = jctx->routes->post_systemone(req);
+        server_http_res_ptr res;
+        try {
+            res = jctx->routes->post_systemone(req);
+        } catch (const std::exception &e) {
+            // upstream's ex_wrapper: a std::invalid_argument / common_json_error out of a handler is a 400
+            throw_by_exception_type(env, e);
+            return nullptr;
+        }
         if (res->status != 200) {
-            env->ThrowNew(c_llama_error, route_error_message(res->data).c_str());
+            // the handler's own verdict: server_res_generator::error() sets the status from the error code
+            env->ThrowNew(res->status == 400 ? c_llama_invalid_request : c_llama_error,
+                          route_error_message(res->data).c_str());
             return nullptr;
         }
         return utf8_to_jstring(env, res->data);
@@ -1876,7 +1919,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleInfill(JNIEn
                 jctx->params.n_batch, jctx->params.n_predict, meta.slot_n_ctx, jctx->params.spm_infill,
                 tokenized_prompts.empty() ? llama_tokens() : tokenized_prompts[0].get_tokens());
         } catch (const std::exception &e) {
-            env->ThrowNew(c_llama_error, e.what());
+            throw_by_exception_type(env, e);
             return nullptr;
         }
 
@@ -1898,7 +1941,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleEmbeddings(J
         {
             auto meta = wake_and_get_meta(jctx);
             if (res_type != TASK_RESPONSE_TYPE_NONE && meta.pooling_type == LLAMA_POOLING_TYPE_NONE) {
-                env->ThrowNew(c_llama_error,
+                env->ThrowNew(c_llama_invalid_request,
                               "Pooling type 'none' is not OAI compatible. Please use a different pooling type");
                 return nullptr;
             }
@@ -1916,7 +1959,7 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleEmbeddings(J
             prompt = extract_embedding_prompt(body, force_no_oaicompat);
             use_base64 = parse_encoding_format(body);
         } catch (const std::exception &e) {
-            env->ThrowNew(c_llama_error, e.what());
+            throw_invalid_request(env, e);
             return nullptr;
         }
         if (force_no_oaicompat)
@@ -1927,13 +1970,14 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleEmbeddings(J
             tokenized_prompts =
                 tokenize_input_prompts(jctx->vocab, nullptr, prompt, true, true, mtmd_helper_init_opt_default());
         } catch (const std::exception &e) {
-            env->ThrowNew(c_llama_error, e.what());
+            // `"prompt" must not be empty` is a std::invalid_argument, as upstream throws it
+            throw_by_exception_type(env, e);
             return nullptr;
         }
 
         for (const auto &toks : tokenized_prompts) {
             if (toks.get_tokens().empty()) {
-                env->ThrowNew(c_llama_error, "Input content cannot be empty");
+                env->ThrowNew(c_llama_invalid_request, "Input content cannot be empty");
                 return nullptr;
             }
         }

@@ -20,6 +20,14 @@ import java.io.IOException;
  * incrementally. The {@code GET /v1/models} response is built from configuration alone and so is not
  * part of this seam.
  *
+ * <p><b>Errors.</b> An {@link IllegalArgumentException} or a
+ * {@link net.ladenthin.llama.exception.InvalidRequestException} thrown by any method is answered as the
+ * client's fault: {@code 400} with {@code "type":"invalid_request_error"}, or the same error object as
+ * an SSE {@code data:} event once a stream has started. Every other exception is {@code 500}
+ * ({@code "type":"server_error"}). The production backend lets the native layer's typed exception
+ * through untouched; it is thrown exactly where llama.cpp's own server would answer {@code 400}, so
+ * the two transports agree without matching on message text.
+ *
  * <p>Public so that sibling modules can drive the real HTTP surface with a scripted backend — the
  * {@code llama-atmosphere-agent} wire-contract tests replay llama.cpp-shaped
  * {@code chat.completion.chunk} sequences through {@link OpenAiCompatServer} to prove an OpenAI client's

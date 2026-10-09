@@ -21,7 +21,12 @@ so everything below is genuinely still open.
 
 Linux x86-64 and aarch64 ship the variant build since 5.2.0 (CLAUDE.md "CPU variants"). The rest,
 with what a measurement on a Windows 11 machine (Ryzen 7 5800H, RTX 3070, JDK 21, upstream b11476
-binaries; 2026-10-08) established:
+binaries; 2026-10-08) established. The local agent's follow-up measurements at b11534 on the same
+machine, through this project's own CMake (plain clang 23.1.3 builds all 14 variants, 18 DLLs,
+`verify-native-deps.py` 0 violations) and the four items still `OPEN` for the CI job -- the
+`build.bat` command line, the Java suite against the variant build, which variant ggml picks on
+Zen 3, pp512/tg128 against the static build -- are in `docs/handover/local-agent-pr-a.md`,
+deliverable 6:
 
 1. **Windows x86-64 build.** Only plain `clang`/`clang++` with the GNU driver -- upstream's
    `cmake/x64-windows-llvm.cmake`, four lines -- produces all 14 x86 variants: CMake sets `MSVC` for
@@ -250,12 +255,17 @@ binaries; 2026-10-08) established:
 The headless loop is verified, including the model-backed CI job (run 35600558852: tool call
 answered, read→write→read loop changed the file). Still open:
 
-- **Tool rounds are not carried across REPL turns** — only `user`/`assistant` text is replayed, so a
-  second question cannot refer to a tool result of the first. Keep the full Atmosphere
-  `ChatMessage` list (incl. `tool_calls`/`tool` messages) per turn instead.
-- **Approval for destructive tools.** `write_file`/`delete`/`run_command` run unasked. Atmosphere's
-  `ToolDefinition.requiresApproval` + an `ApprovalStrategy` on the context would give a Claude-Code
-  style "allow this?" prompt on the console.
+- **Tool rounds across REPL turns ride as a note, not as `tool_calls` messages -- and that cannot
+  change on this Atmosphere.** The earlier entry here asked to keep the full `ChatMessage` list
+  (incl. `tool_calls`/`tool`) per turn; measured against `atmosphere-ai` 4.0.72, that is impossible:
+  `AbstractAgentRuntime.assembleMessages` rebuilds every history entry as
+  `new ChatMessage(h.role(), h.content())` (checked in the bytecode), so the tool-call array and the
+  tool-call id never leave the framework. What ships instead: `AgentSession.toolNote` carries each
+  turn's calls and results (cut at 400 chars) in front of the next user message, pinned by
+  `LocalAgentTest.aToolCallStaysInTheHistorySoTheNextTurnSeesItHappened`; the full placement
+  argument is in `llama-atmosphere-agent/CLAUDE.md`, point 8. Reopen only with an Atmosphere
+  release whose `assembleMessages` preserves tool calls (then a protocol-faithful replay is the
+  better form, and the note goes).
 - **In-stream engine errors are swallowed by Atmosphere** (pinned in
   `AtmosphereWireContractTest.midStreamEngineFailureCompletesSilentlyRatherThanErroring`): an SSE
   `data: {"error":…}` after HTTP 200 is ignored by `OpenAiCompatibleClient.processSSELine` (it reads
@@ -314,12 +324,6 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
   `/infill` applies the model's FIM tokens server-side, so low value.
 - **Multi-model registry (Java transport).** The native surface has this via router mode +
   `RouterClient`; the Java `OpenAiCompatServer` still advertises/serves a single model id.
-- **400 vs. 500 for an invalid request body.** Since llama.cpp b11337 (#29060) upstream's server
-  answers a malformed or empty embedding `"prompt"` (and any `common_json_error`) with 400. The JNI
-  layer throws a plain `LlamaException` for both, and `LlamaModelBackend` does not translate it into
-  the `IllegalArgumentException` that `completeNonStreaming` maps to 400, so `OpenAiCompatServer`
-  answers 500. A fix needs a typed signal from native (an invalid-request exception subclass, or the
-  `throw_invalid_request` JSON shape parsed on the Java side) rather than message matching.
 - **Manual real-client validation.** Server-side round-trips exist for every surface; what remains is
   pointing the actual editor clients (Copilot Ollama provider / Custom Endpoint, Claude Code, a
   Responses client) at a running server, since round-trips confirm wire shapes but not each client's

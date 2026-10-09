@@ -35,6 +35,7 @@
 //   9.  wrap_stream_chunk               — used by nothing above it
 //  10.  server_metrics_to_json          — used by nothing above it
 //  11.  route_error_message            — used by nothing above it
+//  12.  get_result_error_code           — used by nothing above it
 
 #include <cmath>
 #include <optional>
@@ -326,4 +327,22 @@
         // not JSON: fall through and report the raw body
     }
     return body;
+}
+
+// ---------------------------------------------------------------------------
+// get_result_error_code
+//
+// The HTTP status code a failed task result carries: format_error_response()
+// derives it from the result's error_type (400 for ERROR_TYPE_INVALID_REQUEST
+// and ERROR_TYPE_EXCEED_CONTEXT_SIZE, 501 for ERROR_TYPE_NOT_SUPPORTED, 503 for
+// ERROR_TYPE_UNAVAILABLE, 500 for ERROR_TYPE_SERVER). 0 when the result's JSON
+// carries no integral "code" -- a result that is not an error.
+//
+// Used by result_ok_or_throw / batch_ok_or_throw in jllama.cpp to choose
+// between InvalidRequestException (400) and LlamaException, so a task-level
+// rejection (a prompt over the context size, a parameter the slot refuses)
+// reaches the OpenAI-compatible server as the 400 upstream answers.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline int get_result_error_code(const server_task_result_ptr &result) {
+    return json_value(result->to_json(), "code", 0);
 }
