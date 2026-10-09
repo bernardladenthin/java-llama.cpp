@@ -207,7 +207,7 @@ class MainTest(unittest.TestCase):
                 f.write(elf64(["libggml-base.so", "libc.so.6"], runpath="$ORIGIN", glibc=["GLIBC_2.17"]))
             with open(os.path.join(cpu, "libggml-base.so"), "wb") as f:
                 f.write(elf64(["libc.so.6"], glibc=["GLIBC_2.27"]))
-            with open(os.path.join(cpu, "jllama-files.txt"), "w", encoding="utf-8") as f:
+            with open(os.path.join(cpu, "jllama-files.txt"), "w", encoding="utf-8", newline="") as f:
                 f.write("libggml.so\nlibggml-base.so\n")
             self.assertEqual(nativedeps.main(["x", root]), 0)
             # a module, not only the main library, is held to the floor

@@ -588,6 +588,45 @@ the load-time failure class is already covered, and a slow smoke tends to get ma
 **Not yet observed green in CI** — the job and the two sibling-repo smokes landed in one change set
 and have only run locally so far.
 
+### `buildcheck` unit tests are red on a Windows checkout (cross-repo, needs the four-repo workflow)
+
+`CLAUDE.md` tells developers to run
+`python3 -m unittest discover -s .github/buildcheck/tests -t .github` from the repo root. On a
+**Windows checkout that uses `core.autocrlf`** exactly one of the 103 tests fails, and has since
+the suite existed:
+
+```
+FAIL: test_sharedfiles.RepoEntryTest.test_the_repository_name_is_replaced_by_a_placeholder
+AssertionError: b'...issues\r\n' != b'...issues\n'
+```
+
+**Cause, measured and not a defect in the checker:** `sharedfiles.content()` reads `"rb"` and
+`sharedfiles.write_manifest()` writes with `newline="\n"`, so the tool is byte-exact on purpose.
+The four fixture writers in the *tests* are the ones that forgot it — `open(..., "w",
+encoding="utf-8")` without `newline=`, which Python translates to CRLF on Windows, while the
+assertions compare LF bytes. The fix is `newline=""` on four `open()` calls in
+`.github/buildcheck/tests/test_sharedfiles.py` (lines 40, 117, 160) and one in
+`test_nativedeps.py` (line 210, already done -- that file is jllama-only).
+
+**Why it is not simply fixed here:** `test_sharedfiles.py` is itself listed in
+`.github/shared-files.sha256`, so changing it in this repository alone makes
+`test_this_repository_matches_its_manifest` fail and reds the `shared-files` job -- which is the
+gate working as designed, and how this was found. It needs the documented workflow: the same
+change in java-llama.cpp, BitcoinAddressFinder, srcmorph and streambuffer, then
+`python3 .github/check-shared-files.py --write` in each.
+
+**This one belongs to whoever has all four repositories**, not to a session working in
+java-llama.cpp alone -- a shared file plus its checksum has to move in all four or the manifests
+disagree, and the `shared-files` job then warns in three repos until the last one lands. Note when
+picking it up that two of the three siblings did not have the file in their local checkout at the
+time this was written (only `streambuffer` did), so their `buildcheck` package may be at a
+different state and should be checked first.
+
+**Why it is worth doing anyway:** a suite that is permanently red on a documented command teaches
+whoever runs it to ignore failures, which is the opposite of what every other guard in this
+repository is for. CI is unaffected (Linux, LF), so this is developer experience, not release
+safety.
+
 ### Test-coverage gaps found by the b10679 mutation audit (PR #403)
 
 > **Update.** The `IdleSleepWakeIntegrationTest` added to close the `wake_and_post` gap immediately
