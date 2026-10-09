@@ -186,10 +186,14 @@ set(LLAMA_BUILD_COMMON ON)
 # windows-*, android-*). jllama links upstream's cpp-httplib target (further down) instead of
 # compiling httplib.cpp a second time, so the download code and the embedded server see ONE copy of
 # cpp-httplib built with ONE setting. Off where BoringSSL is not built here: Android (the dockcross
-# cross-clang, and the AAR has no download use case) and s390x (big-endian is outside BoringSSL's
-# supported set). LLAMA_OPENSSL=OFF there keeps find_package from linking a system OpenSSL by
-# accident, which verify-native-deps.py would reject.
-if(ANDROID_ABI OR OS_NAME MATCHES "Android" OR OS_ARCH STREQUAL "s390x" OR CMAKE_SYSTEM_PROCESSOR MATCHES "s390x")
+# cross-clang, and the AAR has no download use case), s390x (big-endian is outside BoringSSL's
+# supported set) and the Linux SYCL builds (icx/icpx, compiler id IntelLLVM, which BoringSSL's CMake
+# treats as neither GCC nor Clang; upstream's ubuntu-24-sycl release job passes LLAMA_OPENSSL=OFF too,
+# while its windows-sycl job builds BoringSSL -- as this file did before). LLAMA_OPENSSL=OFF there
+# keeps find_package from linking a system OpenSSL by accident, which verify-native-deps.py would
+# reject.
+if(ANDROID_ABI OR OS_NAME MATCHES "Android" OR OS_ARCH STREQUAL "s390x" OR CMAKE_SYSTEM_PROCESSOR MATCHES "s390x"
+   OR (GGML_SYCL AND NOT WIN32))
     set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
     set(LLAMA_BUILD_BORINGSSL OFF CACHE BOOL "" FORCE)
 else()

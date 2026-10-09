@@ -291,7 +291,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   and failed to load on a Mac without that formula (`verify-native-deps.py` carried the two paths as a
   known defect). Now `jllama` links upstream's `cpp-httplib` target, and BoringSSL is built from source
   and linked statically on Linux x86-64 / aarch64, macOS and Windows (where it already was), as
-  upstream's own release builds do; Android and s390x stay without SSL (`LLAMA_OPENSSL=OFF`). The
+  upstream's own release builds do; Android, s390x and the Linux SYCL jars stay without SSL
+  (`LLAMA_OPENSSL=OFF`, as upstream's `ubuntu-24-sycl` job). The
   embedded server's `--ssl-key-file` / `--ssl-cert-file` work as a result. Certificates are verified
   against the OS store: crypt32 on Windows (the one new import of `jllama.dll`, allowlisted),
   Security.framework on macOS, `/etc/ssl/certs` and `/etc/ssl/cert.pem` on Linux (`SSL_CERT_FILE` /

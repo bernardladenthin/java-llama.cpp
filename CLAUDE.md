@@ -1299,10 +1299,13 @@ Every desktop natives jar can fetch a model from an `https://` URL (`--model-url
 (`--ssl-key-file` / `--ssl-cert-file`). The SSL library is **BoringSSL, built from source and linked
 statically** -- `LLAMA_BUILD_BORINGSSL ON` in `llama/CMakeLists.txt` (the "HTTPS" block), the flag
 upstream's own release builds pass; upstream's `vendor/cpp-httplib/CMakeLists.txt` fetches the pinned
-tag and links `ssl`/`crypto` into its `cpp-httplib` target. **Android and s390x are the exceptions**
-(`LLAMA_OPENSSL=OFF`, so `find_package` cannot link a system OpenSSL by accident): the dockcross
-cross-clang is not a configuration BoringSSL is built for here, and big-endian is outside its
-supported set. `verify-native-deps.py` is what holds the line: a `libssl` of any kind in a shipped
+tag and links `ssl`/`crypto` into its `cpp-httplib` target. **Android, s390x and the Linux SYCL jars
+are the exceptions** (`LLAMA_OPENSSL=OFF`, so `find_package` cannot link a system OpenSSL by
+accident): the dockcross cross-clang is not a configuration BoringSSL is built for here, big-endian
+is outside its supported set, and `icx`/`icpx` (compiler id `IntelLLVM`) is neither GCC nor Clang to
+BoringSSL's CMake -- upstream's `ubuntu-24-sycl` release job passes `LLAMA_OPENSSL=OFF` as well,
+while its `windows-sycl` job (C by `cl`, C++ by `icx`) builds BoringSSL, as the Windows SYCL job here
+did before. `verify-native-deps.py` is what holds the line: a `libssl` of any kind in a shipped
 library's dependency list fails `package`. The one import this adds is Windows' `crypt32.dll`
 (cpp-httplib's certificate-store lookup), an OS component since Windows 2000, in `WINDOWS_OS`.
 
