@@ -447,12 +447,17 @@ dependency list as a side effect (MSVC's OpenMP, a third redistributable DLL aft
 imports `libomp140.x86_64.dll`, which no redistributable carries -- the same `0xc0000135` class the
 arm64 job hit. The 32-bit job follows by analogy, not by measurement.
 
-**Linux is the open counterpart, deliberately unchanged.** The Linux CPU jobs pass no `GGML_OPENMP`
-either, so they ship with it ON (ggml's default) through **libgomp**, a third implementation that
-was not measured -- two of two measured implementations (LLVM `libomp`, MSVC `vcomp`) show the
-penalty, which makes it a strong suspicion and not a result. There is no dependency argument on
-Linux (libgomp is everywhere), only the throughput one, so it needs a measurement on a Linux host
-before the same one-line change is made (`TODO.md`).
+**Linux keeps OpenMP, and that is measured, not an omission.** The Linux CPU jobs pass no
+`GGML_OPENMP`, so they ship with it ON (ggml's default) through **libgomp** -- and libgomp does
+*not* show the penalty. Measured the same way in the project's own `manylinux_2_28_x86_64` image
+(gcc 14.2.1, the compiler and libgomp the `crosscompile-linux-x86_64` job uses; same model, 8
+threads, interleaved): tg128 72.8 with OpenMP against 77.3 without, pp512 357.0 against 358.7 --
+roughly 6% on generation with one ON sample at 76.1 +- 0.9, i.e. inside the spread rather than a
+result, and nothing like the 1.9x/2.7x the Windows runtimes cost. libgomp evidently keeps its
+thread team alive across regions where LLVM's `libomp` and MSVC's `vcomp` do not. So the Windows
+numbers must **not** be generalised into a one-line change on Linux, where there is no dependency
+argument either (libgomp is present everywhere). The remaining unknown is a machine with many more
+cores than the 8 measured here (`TODO.md`).
 
 **GPU runtime libraries are NOT bundled.** The GPU natives jars ship only the single monolithic
 `jllama.dll` (llama.cpp + ggml + the backend are statically linked in — `BUILD_SHARED_LIBS OFF`). The consumer's driver/toolkit must supply the runtime: CUDA needs the

@@ -46,8 +46,13 @@ ALLOWED = {
     "Linux/s390x/cpu": {"libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld64.so.1"},
     "Linux-Android/aarch64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
     "Linux-Android/x86_64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
-    "Windows/x86_64/cpu": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll", "vcomp140.dll"},
-    "Windows/x86/cpu": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll", "vcomp140.dll"},
+    # No vcomp140.dll (MSVC's OpenMP runtime): every Windows CPU job passes -DGGML_OPENMP=OFF, which
+    # is a measured throughput WIN -- token generation is 1.9x (MSVC) / 2.7x (clang) faster with
+    # ggml's own std::thread pool, prompt processing unchanged (CLAUDE.md, "Windows natives").
+    # Leaving it off the list is therefore a guard, not tidiness: drop the flag from a build job and
+    # this check fails with "needs vcomp140.dll, which it did not need before". Do not re-add it.
+    "Windows/x86_64/cpu": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll"},
+    "Windows/x86/cpu": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll"},
     "Windows/aarch64/cpu": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll"},
     "Mac/aarch64/metal": {"/usr/lib/libc++.1.dylib", "/usr/lib/libSystem.B.dylib",
                     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",

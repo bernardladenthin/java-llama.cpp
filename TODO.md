@@ -81,7 +81,17 @@ binaries; 2026-10-08) established:
    **This applies to the artifact shipped today**, which is MSVC with OpenMP on -- and which
    therefore also imports `vcomp140.dll`, a third redistributable DLL this entry did not list. One
    line in the build job roughly doubles interactive generation throughput, independently of
-   everything else here. An earlier reading of a non-interleaved run suggested OpenMP was 8.6% ahead
+   everything else here; it is set on all four Windows x86-64/x86 CPU jobs now, and
+   `nativedeps.py`'s allowlist no longer carries `vcomp140.dll`, so dropping the flag again fails
+   the `package` job instead of silently costing the throughput back.
+   **It is a Windows-runtime property, not an OpenMP one -- do NOT generalise it to Linux.**
+   Measured the same way in the project's own `manylinux_2_28_x86_64` image (gcc 14.2.1, i.e. the
+   compiler and libgomp `crosscompile-linux-x86_64` uses; same model, 8 threads, interleaved):
+   tg128 72.8 with OpenMP against 77.3 without, pp512 357.0 against 358.7 -- about 6% with one ON
+   sample at 76.1 +- 0.9, inside the spread rather than a result. libgomp evidently keeps its thread
+   team alive across parallel regions where LLVM's `libomp` and MSVC's `vcomp` do not. The Linux
+   jobs therefore keep OpenMP, deliberately. What is still unmeasured is a machine with many more
+   cores than the 8 here -- ggml's own pool could scale differently there. An earlier reading of a non-interleaved run suggested OpenMP was 8.6% ahead
    on pp512; that did **not** reproduce once the runs were interleaved (thermal skew, +-22 t/s
    spread) -- there is no trade-off to weigh.
 
