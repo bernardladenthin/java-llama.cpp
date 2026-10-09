@@ -279,7 +279,7 @@ public class LlamaLoader {
                 continue;
             }
             if (tryLoadBackend(backendResourcePath, backend, residentExtraFiles)) {
-                System.out.println("[jllama] using native backend '" + backend + "'");
+                System.err.println("[jllama] using native backend '" + backend + "'");
                 return;
             }
             triedPaths.add(backendResourcePath);
@@ -388,7 +388,7 @@ public class LlamaLoader {
             permissionSetter.apply(extractedFile);
             extractedFile.deleteOnExit();
 
-            System.out.println("Extracted '" + fileName + "' to '" + extractedFilePath + "'");
+            System.err.println("[jllama] extracted '" + fileName + "' to '" + extractedFilePath + "'");
             return extractedFilePath;
         } catch (IOException e) {
             System.err.println(e.getMessage());

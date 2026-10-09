@@ -295,17 +295,6 @@ the server closed. Since b11361 `LlamaModel` holds a `server_routes` of its own 
 `0007` and `native_server.cpp`. Needs a test with sleep enabled (`IdleSleepWakeIntegrationTest` is the
 template) before the fix, to show it red first.
 
-### Router workers print the backend line onto the router's command pipe (cosmetic, since b11401)
-
-Since llama.cpp b11401 (#29895) a router child keeps its stdout for the state commands to the router
-and redirects everything else written to stdout to stderr -- but only once `llama_server()` starts.
-A JVM worker (`NativeServer.setWorkerCommand`, `patches/0008`) prints `LlamaLoader`'s
-`[jllama] using native backend '...'` line to `System.out` before that, so the router logs it as
-`unexpected output on the command pipe`. Harmless (the router warns and goes on), but misleading.
-Moving the line to `System.err` would fix it; three smoke scripts grep for it
-(`smoke-test-fatjar.sh` reads both streams, `smoke-rpc-fatjar.sh` and `smoke-natives-jars.sh` need
-checking first), so it is not a one-line change.
-
 ### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
 
 Left over from the 2026-06-20 code audit (18/18 findings fixed in PRs #258/#260, regression tests in

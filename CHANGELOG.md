@@ -255,6 +255,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
 
 ### Fixed
+- **`LlamaLoader` prints its two diagnostic lines to stderr**, `[jllama] using native backend '…'` and
+  `[jllama] extracted '…'`, where they went to stdout before. A router worker JVM
+  (`NativeServer.setWorkerCommand`) printed them onto the router's command pipe, which since llama.cpp b11401
+  the router reports as `unexpected output on the command pipe` (harmless, misleading); and the stdout of a
+  `java -jar` server is otherwise the upstream server's. The CI smokes read both streams already.
 - **`llama/patches/0017`** fixes two defects in the four `_mm_prefetch` calls of ggml's x86
   `quants.c` (the SSSE3-without-AVX branch of `ggml_vec_dot_q4_0_q8_0`, and the only
   `_mm_prefetch` calls in the whole ggml tree), both by routing the address through one new
