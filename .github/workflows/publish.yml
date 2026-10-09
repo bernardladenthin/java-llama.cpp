@@ -292,6 +292,12 @@ jobs:
       # .github/buildcheck/natives.py; its unit tests run in the shared-files job.
       - name: Natives list check (everything that names a natives jar agrees with natives.csv)
         run: python3 .github/check-natives.py
+      # .github/buildcheck/patches.py. Static, so it runs here rather than after a build: a hunk
+      # header that under-counts its body makes `git apply` write a TRUNCATED file, which
+      # `git apply --check` accepts and verify-patches-applied.sh cannot see (the patch IS applied
+      # and the tree IS dirty). That cost one Publish run 23 red jobs.
+      - name: Patch hunk sizes (a miscounted header truncates the file git apply writes)
+        run: python3 .github/check-patches.py
       - name: Spotless check (fail fast on format violations)
         run: mvn -B --no-transfer-progress -f llama/pom.xml spotless:check
       - name: SpotBugs check (fail fast on static-analysis findings)

@@ -163,6 +163,7 @@ shapes this repo writes and rejects anything else loudly.
 | `sharedfiles.py` | `check-shared-files.py` (`shared-files`) | the files kept byte-identical across the four sibling repos |
 | `versions.py` | `check-versions.py` (`shared-files`) | **warns** where a Maven dependency or plugin is used in another version than in a sibling repo |
 | `runscripts.py` | `check-run-scripts.py` (`shared-files`) | every `run:` script of the workflows and composite actions that runs in bash parses (`bash -n`) |
+| `patches.py` | `check-patches.py` (`code-style`) | every hunk header in `llama/patches/` declares the size its body actually has -- a header that **under-counts** makes `git apply` write a TRUNCATED file, which `git apply --check` accepts and `verify-patches-applied.sh` cannot see (the patch *is* applied, the tree *is* dirty). That shipped once: a comment edit left `0017`'s new-file hunk at `+1,25` for 27 lines, so `prefetch.h` arrived without its closing brace and `quants.c` failed 19x with "function definition is not allowed here" on **every** platform -- 23 red jobs in one Publish run, after `--check` had reported the patch as fine. Static, so it runs in the first minutes rather than after a build |
 
 **The release gate.** A job nothing waits for can go red while a release still ships — the natives
 builds `package` once forgot to wait for, and the aarch64 fat jars that were signed and attached
