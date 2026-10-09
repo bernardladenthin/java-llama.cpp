@@ -2696,6 +2696,8 @@ jobs:
           path: |
             server-out.log
             server-err.log
+            server-tls-out.log
+            server-tls-err.log
             rpc-server.log
             rpc-client-out.log
             rpc-client-err.log
@@ -2759,9 +2761,11 @@ jobs:
   # no `all-macos-*` fat jar to target: macOS has no GPU classifier (Metal ships in the default
   # jar), so package-fatjars builds no macOS variant. And it asserts native loadability rather than
   # a CLI exit code — this jar's Main-Class is a server that never returns, and `codesign --strict`
-  # is what actually detects a dylib assembled from two builds. Deliberately model-free (no GGUF,
-  # no cache restore, ~1 min): a full model-backed macOS server smoke would be strictly more, but
-  # this catches the failure class that shipped and is cheap enough to always run.
+  # is what actually detects a dylib assembled from two builds. No cache restore (~1 min): a full
+  # model-backed macOS server smoke would be strictly more, but this catches the failure class that
+  # shipped and is cheap enough to always run. Its last step downloads the 1 MB stories260K.gguf
+  # over HTTPS and serves it behind a self-signed certificate -- the proof that the dylib's SSL is
+  # the statically linked BoringSSL and not the runner's Homebrew OpenSSL, which it used to be.
   # ---------------------------------------------------------------------------
 
   smoke-fatjar-macos:
@@ -2780,6 +2784,15 @@ jobs:
           java-version-file: .java-version
       - name: Run packaged-native smoke test
         run: .github/smoke-native-macos.sh jars 'llama-*-jar-with-dependencies.jar'
+      - name: Upload server logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fatjar-smoke-macos-logs
+          path: |
+            server-tls-out.log
+            server-tls-err.log
+          if-no-files-found: warn
 
   report:
     name: Report

@@ -1201,10 +1201,10 @@ commands — and holds every CPU directory (`cpu`, `metal`, `msvc`) and the Andr
 exact per-directory allowlist (the other GPU directories only to a denylist, since they need their
 vendor runtime). A new CPU
 directory without an allowlist fails too. (That every build arrived is the merge step's check against
-`natives.csv`.) **It found a pre-existing defect on its first run**: the macOS dylib links Homebrew's
-`openssl@3` (`/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib` + `libcrypto`), so it does not load on a
-Mac without that formula. Those two paths are in the allowlist marked as a known defect so the
-check reports only *new* dependencies; the fix is on file in `TODO.md`.
+`natives.csv`.) **It found a pre-existing defect on its first run**: the macOS dylib linked Homebrew's
+`openssl@3` (`/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib` + `libcrypto`), so it did not load on a
+Mac without that formula. Fixed in 5.2.0 by linking BoringSSL statically (see "HTTPS: BoringSSL,
+statically" below); the allowlist no longer carries those paths, so their return reds `package`.
 
 **Three places every argv goes through (`src/main/cpp/rpc_support.hpp`).** ggml's backend registry
 is process-wide and has no unregister, so an RPC server registered by one `--rpc` load stays a
@@ -1291,6 +1291,73 @@ block), and upstream's own release binaries, which all build with `GGML_RPC=ON`,
 **Known limits (in `TODO.md`):** a server lost *mid-inference* still aborts the process (upstream has
 no error path for it); Android needs the app's `INTERNET` permission even on loopback, which the AAR
 deliberately does not request; the server serves one client at a time; no authentication or TLS.
+
+## HTTPS: BoringSSL, statically
+
+Every desktop natives jar can fetch a model from an `https://` URL (`--model-url`, `-hf`, the
+`ModelParameters` setters behind them) and serve the embedded server behind its own TLS certificate
+(`--ssl-key-file` / `--ssl-cert-file`). The SSL library is **BoringSSL, built from source and linked
+statically** -- `LLAMA_BUILD_BORINGSSL ON` in `llama/CMakeLists.txt` (the "HTTPS" block), the flag
+upstream's own release builds pass; upstream's `vendor/cpp-httplib/CMakeLists.txt` fetches the pinned
+tag and links `ssl`/`crypto` into its `cpp-httplib` target. **Android, s390x and the Linux SYCL jars
+are the exceptions** (`LLAMA_OPENSSL=OFF`, so `find_package` cannot link a system OpenSSL by
+accident): the dockcross cross-clang is not a configuration BoringSSL is built for here, big-endian
+is outside its supported set, and `icx`/`icpx` (compiler id `IntelLLVM`) is neither GCC nor Clang to
+BoringSSL's CMake -- upstream's `ubuntu-24-sycl` release job passes `LLAMA_OPENSSL=OFF` as well,
+while its `windows-sycl` job (C by `cl`, C++ by `icx`) builds BoringSSL, as the Windows SYCL job here
+did before. `verify-native-deps.py` is what holds the line: a `libssl` of any kind in a shipped
+library's dependency list fails `package`. The one import this adds is Windows' `crypt32.dll`
+(cpp-httplib's certificate-store lookup), an OS component since Windows 2000, in `WINDOWS_OS`.
+
+**The defect this replaced was a link-order lottery, not a missing flag.** Until 5.2.0 `jllama`
+compiled `vendor/cpp-httplib/httplib.cpp` itself, deliberately without `CPPHTTPLIB_OPENSSL_SUPPORT`
+(the embedded server was "plain HTTP, front it with a TLS proxy"), while upstream's `llama-common`
+-- `common/download.cpp` -- linked its own `cpp-httplib` static library *with* the define whenever an
+OpenSSL was found. Two copies of the same classes with different layouts in one link; the linker's
+choice per platform decided the behaviour: on **Linux** our objects won, `libssl` was never pulled in
+(measured: no `NEEDED` on it even though CMake had found OpenSSL 3.0.13), and an `https://` download
+threw `HTTPS is not supported` -- in **every** Linux jar ever shipped; on **macOS** the archive member
+was pulled and the dylib depended on `/opt/homebrew/opt/openssl@3` (found by `verify-native-deps.py`,
+carried as a known defect); on **Windows** BoringSSL was already configured but the same duplicate
+sat in the link. The fix is one copy: `jllama` and `jllama_test` link upstream's `cpp-httplib` target
+(PUBLIC define, so `server-http.cpp` and the download code agree) and no longer compile `httplib.cpp`.
+
+**Certificates.** cpp-httplib loads the OS store: `crypt32` on Windows, Security.framework on macOS
+(the two frameworks were already in the Mac allowlist), and on Linux BoringSSL's compiled-in defaults
+`/etc/ssl/certs` (hashed directory) and `/etc/ssl/cert.pem`, overridable with `SSL_CERT_FILE` /
+`SSL_CERT_DIR` -- which is also how a private CA or a corporate proxy's certificate is trusted.
+Upstream's download code has no `--insecure` and no proxy support; this project adds neither.
+
+**Measured locally (Linux x86-64, the sandbox, BoringSSL `0.20260929.0`)** before the CI run: the
+same `NEEDED` list as before (no `libssl`, no `libcrypto`), 56 `httplib::SSLClient` symbols linked,
+603/603 C++ tests and the model-free Java suite green; the embedded server in router mode behind a
+self-signed certificate answered `/health` and `/models` over TLS 1.3 and refused a plain-HTTP
+request on the same port (curl exit 52); a download from a local TLS server was **refused** with
+the certificate untrusted (`HEAD failed, status: -1`, nothing written) and **completed** with
+`SSL_CERT_FILE` pointing at it (the 64 KB dummy landed at the `-m` path, then failed the GGUF magic,
+as intended). Two things learned on the way, both now in the smokes: `--model-url` **alone** starts
+the server in **router mode** (`is_router_server` looks at `model.path`, `hf_repo` and `docker_repo`
+before the URL is resolved), so a download run names its target with `-m` too; and hostname
+verification needs an IP SAN for an IP-literal host, which a bare `CN=127.0.0.1` certificate lacks
+-- `curl -k` for the server round, a SAN for the client proof.
+
+**What CI proves, per platform.** `verify-native-deps.py` (package): the allowlists above.
+`smoke-fatjar` (Linux x86-64 / aarch64 in bash, Windows x86-64 / arm64 in PowerShell) and
+`smoke-fatjar-macos`: a second server round behind a self-signed certificate, serving a model it
+downloaded itself from the `https://` URL of `stories260K.gguf` (1 MB, `models.csv`) into a
+`LLAMA_CACHE` of the run -- `/health` and a chat completion over HTTPS, plain HTTP on the TLS port
+refused, the `.gguf` present in the cache. That download is the only place besides `download-models`
+that reaches Hugging Face, on purpose: it is the end-to-end HTTPS client test with a real
+certificate chain and the OS store, which no local check can give. The macOS smoke thereby stopped
+being model-free; it is still cache-free and ~1 min.
+
+**Cost.** BoringSSL is ~400 C/C++ files compiled with `OPENSSL_NO_ASM` (upstream's setting, no
+assembler needed), cached by sccache like everything else; the shipped library grows by its
+`libssl` + `libcrypto` text. **On a BoringSSL or llama.cpp bump:** the tag is upstream's
+(`BORINGSSL_VERSION` in `vendor/cpp-httplib/CMakeLists.txt`); it needs CMake >= 3.22, the floor of
+every image here. A local build in a sandbox that cannot reach `boringssl.googlesource.com` passes
+`-DBORINGSSL_GIT=https://github.com/google/boringssl` (the mirror carries the tags) or
+`-DFETCHCONTENT_SOURCE_DIR_BORINGSSL=<clone>`.
 
 ## Qwen3-TTS via `mtmd_helper::gen_audio` (was: OuteTTS build-time extraction)
 
@@ -1751,7 +1818,7 @@ If the local check passes (`BUILD SUCCESS`), the `mvn package` job in
   2. **`common_json` converts to `std::string` implicitly**, so it binds happily to a `const nlohmann::json &` parameter (via nlohmann's string-constructible converting constructor) and then throws `json::type_error 302` at runtime. Never declare a project helper as taking `nlohmann::json` when callers pass the `json` alias — `require_json_field_impl` is a template for exactly this reason.
   Other differences to know: no `get_ref`/`array_t`/`type_name()`; a braced list in *value* position does not build an array (write `json::array({...})`); `at(key)` needs an explicit `.get<T>()`; errors are `common_json_error`; and `get<T>()` is limited to the types explicitly specialised in `common/json.cpp`. `log_helpers.hpp` and `train_engine.cpp` keep their own `nlohmann::json` alias — they never touch the server's `json`.
 - Uses `nlohmann/json` for JSON deserialization of parameters in the two files named above; everything on the server path uses `common_json`.
-- The upstream server library (`server-context.cpp`, `server-queue.cpp`, `server-task.cpp`, `server-schema.cpp`, `server-models.cpp`, and — since b9829 — `server-stream.cpp`) is compiled directly into `jllama` via CMake — there is no hand-ported `server.hpp` fork. **`server-stream.cpp` is mandatory, not optional:** it defines the resumable-streaming SSE replay buffer (`g_stream_sessions`, `stream_session_attach_pipe`, `stream_aware_should_stop`, `stream_conv_id_from_headers`, the `stream_pipe_*` types) that `server-context.cpp` / `server-http.cpp` / `server-models.cpp` now `#include "server-stream.h"` and call, so omitting it fails the link with undefined references. It is platform-neutral (threads + std mutex/condvar, no `subprocess.h`/`posix_spawn_*`), so it builds on Android too and sits outside the `server-models.cpp` Android guard. `jllama` wires its own JNI routes and never calls `g_stream_sessions.start_gc()` (only the excluded standalone `server.cpp` `main()` does), so its GC thread stays dormant. **Phase 2:** the upstream HTTP transport (`tools/server/server-http.cpp`) and its `cpp-httplib` backend (`vendor/cpp-httplib/httplib.cpp`) are now compiled into `jllama` too, so the OpenAI-compatible server can be driven natively from JNI *inside* `libjllama` — no separate `llama-server` executable (a JNI shared library loads anywhere a JVM runs, which a standalone binary does not). `server-http.cpp` does `#include "ui.h"` (the WebUI asset table that `tools/ui`/`llama-ui` normally generates); since the Svelte WebUI is not shipped, `src/main/cpp/webui_stub/ui.h` supplies the upstream **empty-asset** interface and leaves `LLAMA_UI_HAS_ASSETS` undefined (all static-asset-serving blocks compile out). `<cpp-httplib/httplib.h>` already resolves through `llama-common` — since upstream #27304 (b10488) not from a `PUBLIC ../vendor` include dir of its own but transitively, via the `vendor::nlohmann` / `vendor::sheredom` INTERFACE targets it links PUBLIC, each of which exports the `vendor/` root (same nlohmann/json 3.12.0 as the FetchContent copy). No SSL: `CPPHTTPLIB_OPENSSL_SUPPORT` is left undefined (plain-HTTP; bind localhost / front with a TLS proxy). **`server.cpp`, `server-tools.cpp` and `server-mcp.cpp` are now compiled in too** (on non-Android — they pull in `subprocess.h`/`posix_spawn_*`, so they share `server-models.cpp`'s Android guard): b9870 exposes `server.cpp`'s entry as `int llama_server(int, char**)` (no `main` in the file), and `patches/0006` makes it embeddable (no process signal handlers, forwarded-argv parse, out-of-band shutdown). **`server-mcp.cpp` is new in b10154** (upstream MCP-server support): both `server.cpp` (`llama_server`'s `mcp_mgr` lifecycle) and `server-tools.cpp` (`tools.setup(..., mcp_mgr)` / `server_mcp::call_tool`) reference `server_mcp`, so it **must** be in the `target_sources` list or the link fails with undefined `server_mcp::{start,shutdown,call_tool,list_tools,~server_mcp}` — **latent on Linux** (a shared object tolerates undefined symbols) but a **hard link error on macOS/ld64 and Windows/MSVC**. It is compiled into `jllama` and — on non-Android — into `jllama_test` too, together with `server.cpp`, `server-tools.cpp`, `server-http.cpp` and `httplib.cpp`, so `test_native_server_shutdown.cpp` can drive the real `llama_server()`. The `NativeServer` JNI bridge (`src/main/cpp/native_server.cpp`) calls `llama_server` on a worker thread, so the **full** upstream server — WebUI and all — runs inside `libjllama`. See "Two server modes" below.
+- The upstream server library (`server-context.cpp`, `server-queue.cpp`, `server-task.cpp`, `server-schema.cpp`, `server-models.cpp`, and — since b9829 — `server-stream.cpp`) is compiled directly into `jllama` via CMake — there is no hand-ported `server.hpp` fork. **`server-stream.cpp` is mandatory, not optional:** it defines the resumable-streaming SSE replay buffer (`g_stream_sessions`, `stream_session_attach_pipe`, `stream_aware_should_stop`, `stream_conv_id_from_headers`, the `stream_pipe_*` types) that `server-context.cpp` / `server-http.cpp` / `server-models.cpp` now `#include "server-stream.h"` and call, so omitting it fails the link with undefined references. It is platform-neutral (threads + std mutex/condvar, no `subprocess.h`/`posix_spawn_*`), so it builds on Android too and sits outside the `server-models.cpp` Android guard. `jllama` wires its own JNI routes and never calls `g_stream_sessions.start_gc()` (only the excluded standalone `server.cpp` `main()` does), so its GC thread stays dormant. **Phase 2:** the upstream HTTP transport (`tools/server/server-http.cpp`) is compiled into `jllama` too, and `jllama` links upstream's `cpp-httplib` static target (`vendor/cpp-httplib/`) instead of compiling `httplib.cpp` a second time (it did until 5.2.0, without SSL -- see "HTTPS: BoringSSL, statically" for what that cost), so the OpenAI-compatible server can be driven natively from JNI *inside* `libjllama` — no separate `llama-server` executable (a JNI shared library loads anywhere a JVM runs, which a standalone binary does not). `server-http.cpp` does `#include "ui.h"` (the WebUI asset table that `tools/ui`/`llama-ui` normally generates); since the Svelte WebUI is not shipped, `src/main/cpp/webui_stub/ui.h` supplies the upstream **empty-asset** interface and leaves `LLAMA_UI_HAS_ASSETS` undefined (all static-asset-serving blocks compile out). `<cpp-httplib/httplib.h>` already resolves through `llama-common` — since upstream #27304 (b10488) not from a `PUBLIC ../vendor` include dir of its own but transitively, via the `vendor::nlohmann` / `vendor::sheredom` INTERFACE targets it links PUBLIC, each of which exports the `vendor/` root (same nlohmann/json 3.12.0 as the FetchContent copy). **HTTPS is on**: the `cpp-httplib` target carries `CPPHTTPLIB_OPENSSL_SUPPORT` as a PUBLIC define whenever an SSL library is configured, and BoringSSL is linked statically on every desktop platform, so `server-http.cpp` serves TLS with `--ssl-key-file`/`--ssl-cert-file` and `common/download.cpp` fetches `https://` URLs (not on Android and s390x, where `LLAMA_OPENSSL=OFF`). **`server.cpp`, `server-tools.cpp` and `server-mcp.cpp` are now compiled in too** (on non-Android — they pull in `subprocess.h`/`posix_spawn_*`, so they share `server-models.cpp`'s Android guard): b9870 exposes `server.cpp`'s entry as `int llama_server(int, char**)` (no `main` in the file), and `patches/0006` makes it embeddable (no process signal handlers, forwarded-argv parse, out-of-band shutdown). **`server-mcp.cpp` is new in b10154** (upstream MCP-server support): both `server.cpp` (`llama_server`'s `mcp_mgr` lifecycle) and `server-tools.cpp` (`tools.setup(..., mcp_mgr)` / `server_mcp::call_tool`) reference `server_mcp`, so it **must** be in the `target_sources` list or the link fails with undefined `server_mcp::{start,shutdown,call_tool,list_tools,~server_mcp}` — **latent on Linux** (a shared object tolerates undefined symbols) but a **hard link error on macOS/ld64 and Windows/MSVC**. It is compiled into `jllama` and — on non-Android — into `jllama_test` too, together with `server.cpp`, `server-tools.cpp` and `server-http.cpp` (and the linked `cpp-httplib` target), so `test_native_server_shutdown.cpp` can drive the real `llama_server()`. The `NativeServer` JNI bridge (`src/main/cpp/native_server.cpp`) calls `llama_server` on a worker thread, so the **full** upstream server — WebUI and all — runs inside `libjllama`. See "Two server modes" below.
 
 ### Two server modes (`OpenAiCompatServer` vs `NativeServer`)
 

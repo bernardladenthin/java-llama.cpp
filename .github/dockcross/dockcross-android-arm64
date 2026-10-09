@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-DEFAULT_DOCKCROSS_IMAGE=dockcross/android-arm64:20260712-79e54f9
+# Pinned by digest (tag 20260712-79e54f9, the manifest Docker Hub served for it on 2026-10-09);
+# the one line of this generated wrapper that is edited. Bump it deliberately, with a Publish run.
+DEFAULT_DOCKCROSS_IMAGE=dockcross/android-arm64@sha256:60f04acad0d16fccbefc221d0c3419163f5c65f77c5246cb5302380db0762dac
 
 #------------------------------------------------------------------------------
 # Helpers

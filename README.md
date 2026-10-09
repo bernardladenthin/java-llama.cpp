@@ -123,6 +123,7 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - **Distributed inference over RPC** — offload a model's layers to llama.cpp RPC servers on other machines (`ModelParameters.setRpcServers(...)` / `--rpc host:port`), and serve this machine's devices to them with `RpcServer` (the in-JVM `rpc-server`). See [Distributed inference over RPC](#distributed-inference-over-rpc).
 - **Local agent** ([`llama-atmosphere-agent`](llama-atmosphere-agent/), release asset, JDK 21+) — a fully offline agent on top of this library that reads and edits files and, if allowed, runs commands. One agent session, three ways to use it: a **terminal** (full console or line-oriented `--plain`, fine over SSH/PuTTY), a **browser** (`--web`, token-protected, loopback by default — reach it from elsewhere through an SSH tunnel), and **IDEs** over the [Agent Client Protocol](https://agentclientprotocol.com) (`--acp`: JetBrains IDEs and Zed natively, VS Code through an ACP extension). See [Local agent](#local-agent-terminal-browser-ide-via-acp).
 - **Multi-model router mode** (`--models-dir` + per-request model selection, managed via the typed `RouterClient`) and **attach mode** (`NativeServer(LlamaModel, ...)` serves an already-loaded model over the full upstream HTTP frontend — one copy of the weights).
+- **HTTPS built in** — model downloads from `https://` URLs (`--model-url`, `-hf`) and a TLS-capable embedded server (`--ssl-key-file`/`--ssl-cert-file`) on every desktop platform, with BoringSSL linked statically: no OpenSSL to install, and no dependency on one (Android and s390x ship without SSL).
 - Pre-built native binaries for Linux (x86-64, aarch64, s390x), macOS (arm64, Metal included), Windows (x86-64, x86, arm64) and Android (arm64, x86-64), plus GPU backends (CUDA, Vulkan, OpenCL, ROCm/HIP, SYCL, OpenVINO) — one natives jar each, all loadable side by side with automatic CPU fallback; see [Choosing the natives jars](#choosing-the-natives-jars). Android additionally ships as the [`llama-android` AAR](#importing-in-android) with the optional `llama-kotlin` coroutines façade.
 
 ## Quick Start
@@ -981,8 +982,12 @@ Differences from `OpenAiCompatServer`: with the classic constructor it **loads i
 the arguments (an independent lifecycle, like `llama-server.exe`), it is **single-instance per
 process**, it serves the **WebUI** (in released jars — local `cmake` builds ship the empty-asset
 stub, so no UI there), and it is **not available on Android** (the upstream server needs
-`posix_spawn`). Readiness: poll `GET /health`. No SSL (plain HTTP — bind localhost or front with a
-TLS proxy).
+`posix_spawn`). Readiness: poll `GET /health`. TLS: pass `--ssl-key-file` and `--ssl-cert-file`
+(BoringSSL is linked statically into every desktop natives jar, nothing to install). The same
+build fetches models from `https://` URLs (`--model-url`, `-hf`), verified against the OS
+certificate store -- on Linux `/etc/ssl/certs` or `/etc/ssl/cert.pem`, overridable with
+`SSL_CERT_FILE` / `SSL_CERT_DIR`. Note that `--model-url` alone starts the router; name the
+download target with `-m` as well.
 
 #### Attach mode — serve an already-loaded `LlamaModel`
 
