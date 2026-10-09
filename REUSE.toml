@@ -13,6 +13,7 @@ path = [
     "android-llmservice/CLAUDE.md",
     "CLAUDE_TEST_GENERATION_PROMPT.md",
     "docs/RELEASE.md",
+    "docs/handover/**",
     "docs/feature-investigation-llama-stack-client-kotlin.md",
     "docs/history/49be664_24918e4.md",
     "docs/history/49be664_open_issues.md",
