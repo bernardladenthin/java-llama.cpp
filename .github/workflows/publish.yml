@@ -292,6 +292,8 @@ jobs:
       # .github/buildcheck/natives.py; its unit tests run in the shared-files job.
       - name: Natives list check (everything that names a natives jar agrees with natives.csv)
         run: python3 .github/check-natives.py
+      - name: Patch hunk check (every hunk of llama/patches/*.patch declares exactly the lines it carries)
+        run: python3 .github/check-patches.py
       - name: Spotless check (fail fast on format violations)
         run: mvn -B --no-transfer-progress -f llama/pom.xml spotless:check
       - name: SpotBugs check (fail fast on static-analysis findings)

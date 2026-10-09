@@ -156,6 +156,7 @@ shapes this repo writes and rejects anything else loudly.
 |---|---|---|
 | `natives.py` | `check-natives.py` (`code-style`) | everything that names a natives jar agrees with `natives.csv` (see "Natives jars") |
 | `models.py` | `check-natives.py` | every `*_MODEL_NAME` of publish.yml's `env:` is a filename of `models.csv` |
+| `patches.py` | `check-patches.py` (`code-style`) | every hunk of `llama/patches/*.patch` declares exactly the lines it carries -- the half `git apply --check` does not see (see "Local llama.cpp source patches") |
 | `nativedeps.py` | `verify-native-deps.py` (`package`, `package-android-aar`) | dependency allowlists, 16 KB Android alignment |
 | `hipoffload.py` | `verify-hip-offload-compressed.py` (the two ROCm jobs) | no uncompressed GPU code bundle |
 | `workflow.py` | — | the job graph of a workflow (`needs`, uploads, transitive closure) |
@@ -1125,6 +1126,15 @@ The fetched llama.cpp source is patched before it compiles, via a generic mechan
   aborted every reconfigure of an existing build dir with a misleading "does not apply cleanly".
   A source tree supplied via `-DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<path>` that is not a git work
   tree has neither oracle and falls back to the old per-patch path (same caveat as before).
+- **`.github/check-patches.py`** (`buildcheck/patches.py`, the `code-style` job) -- audits every hunk of
+  every patch **as text**: its header must declare exactly the lines its body carries. `git apply --check`
+  does not see this -- it reads a hunk by its counts and skips what follows as the start of the next
+  header -- so a new-file hunk with more `+` lines than its header says applies "cleanly" and writes a
+  **truncated file**. That shipped in #489: two comment lines added inside `0017`'s `prefetch.h` without
+  recounting, `prefetch.h` cut off inside its one function, run 37922404867 red in 24 jobs, corrected by
+  #492. The check costs milliseconds, needs no llama.cpp source, and runs in the first minutes of every
+  run; `test_patches.py` pins the exact historic patch text as its negative case. Checking that a patch
+  applies is not checking that it applies correctly -- after editing a patch by hand, run it.
 - **`llama/CMakeLists.txt`** — wired as the llama.cpp `FetchContent_Declare(... PATCH_COMMAND ...)`, so it
   runs for **every** C++ build (all CI jobs *and* local `cmake -B build`) from one place — no
   per-build-step plumbing.
