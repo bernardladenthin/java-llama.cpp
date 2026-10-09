@@ -93,7 +93,7 @@ jobs:
       # zero check is the sensitive half.
       - name: Verify tests actually ran
         shell: bash
-        run: .github/verify-test-counts.sh llama/target/surefire-reports --min-total 1500
+        run: .github/verify-test-counts.sh llama/target/surefire-reports --min-executed 1800
       - name: Memory after tests
         if: always() && runner.os == 'macOS'
         run: vm_stat && sysctl hw.memsize hw.physmem

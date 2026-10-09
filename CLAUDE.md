@@ -1996,7 +1996,9 @@ as *nothing at all* while the job still went green, on every `test-java-*` job. 
 shape, because it defeats the obvious guard: a class-level `@BeforeAll` assumption makes Surefire
 record `tests="0" errors="0" skipped="0"` — the class contributes **no** test entries, so a check of
 the form "did this run skip anything?" is blind to it. The only thing that catches it directly is a
-floor on the number of tests actually executed (see `TODO.md`). It is why several stale
+floor on the number of tests actually executed -- `.github/verify-test-counts.sh`, run by every
+`test-java-*` job: no class with zero entries, and at least 1800 tests executed (run minus skipped;
+the jobs execute 1856 to 1865, a checkout without models 1589). It is why several stale
 assertions (e.g. `LlamaModelTest#testGetMetrics` against a payload shape upstream had dropped at
 b10408) never failed in CI. The fix is **`TestConstants.resolveModelPath` /
 `resolveModelProperty`**, which accept either layout — module-relative first, then the reactor root

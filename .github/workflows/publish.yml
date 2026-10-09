@@ -2329,7 +2329,7 @@ jobs:
       # muted on every test-java-* job for months. The floor is deliberately slack; the per-class
       # zero check is the sensitive half.
       - name: Verify tests actually ran
-        run: .github/verify-test-counts.sh llama/target/surefire-reports --min-total 1500
+        run: .github/verify-test-counts.sh llama/target/surefire-reports --min-executed 1800
       - uses: actions/upload-artifact@v7
         if: success()
         with:
