@@ -10,6 +10,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`RouterModel.getContextLength()`** (llama.cpp b11538, #30228): the context length a model was
+  trained with, which the router now reads offline from the GGUF for `GET /models` (`context_length`,
+  `<arch>.context_length`) -- known before the first load, like the modalities; `0` from a server before
+  b11538 or for a file without the key.
 - **CI proves HTTPS in both directions on the release assets.** The fat-jar smokes (Linux x86-64 /
   aarch64, Windows x86-64 / arm64) and the macOS smoke each start the server behind a self-signed
   certificate (`--ssl-key-file` / `--ssl-cert-file`; a plain-HTTP request to the port must be refused)
@@ -69,6 +73,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   in `build.sh` opts back in). With CUDA 13.4 and sccache 0.18.0 the nvcc launcher failed on the first `.cu`
   files in two confirmed runs (`Missing "cubin" file output`, `Compiler killed by signal 126`), and the
   uncached retry that followed made those jobs slower than a cold build; the C/C++ objects stay cached.
+- **Upgraded the pinned llama.cpp from b11534 to b11538**, one reviewed step. All eleven patches apply
+  unchanged and every drop-check still finds its defect. In the range: the router's `GET /models` carries
+  `context_length` per model (#30228, the `RouterModel` getter above; `common_get_decision_type(fname)`
+  became `common_get_gguf_info()`, which no project code called), the embedding `get_rows` is built after
+  the inputs (#30160), a CUDA rounding mismatch between CPU and GPU under MSVC is fixed (#30229), and
+  `llama-bench` respects `-fitc` (#28331). Per-step record: `docs/history/llama-cpp-breaking-changes.md`.
 - **CI: the three dockcross images are pinned by digest** (`android-arm64`, `android-x86_64`,
   `manylinux_2_28-x64`, all tag `20260712-79e54f9`), as the manylinux aarch64 image already was.
 - **Upgraded the pinned llama.cpp from b11529 to b11534**, in 3 reviewed steps, each ending at a tag. No

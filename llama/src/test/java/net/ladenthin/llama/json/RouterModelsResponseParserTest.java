@@ -116,6 +116,19 @@ public class RouterModelsResponseParserTest {
     }
 
     @Test
+    public void parsesTheContextLength() {
+        // GET /models since llama.cpp b11538 (#30228): <arch>.context_length, read offline from the GGUF.
+        String json = "{\"data\":[{\"id\":\"qwen\",\"status\":{\"value\":\"unloaded\"},\"context_length\":40960}]}";
+        assertThat(parser.parse(json).get(0).getContextLength(), is(40960));
+    }
+
+    @Test
+    public void missingContextLengthYieldsZero() {
+        // A server before b11538, or a GGUF without the key: the router omits the field.
+        assertThat(parser.parse("{\"data\":[{\"id\":\"old\"}]}").get(0).getContextLength(), is(0));
+    }
+
+    @Test
     public void missingArchitectureYieldsNoModalities() {
         // A server before b11429 omits the object; upstream asks clients to fall back, not to guess.
         RouterModel model = parser.parse("{\"data\":[{\"id\":\"old\"}]}").get(0);

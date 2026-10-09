@@ -137,6 +137,53 @@ public class RouterModelTest {
     }
 
     @Test
+    public void legacyAndModalityConstructorsReportNoContextLength() {
+        assertThat(new RouterModel("m", RouterModel.Status.LOADED, "loaded", false, 0).getContextLength(), is(0));
+        assertThat(
+                withModalities(Collections.singletonList("text"), Collections.singletonList("text"))
+                        .getContextLength(),
+                is(0));
+    }
+
+    @Test
+    public void contextLengthRoundTrips() {
+        RouterModel model = new RouterModel(
+                "m",
+                RouterModel.Status.UNLOADED,
+                "unloaded",
+                false,
+                0,
+                Collections.singletonList("text"),
+                Collections.singletonList("text"),
+                40960);
+        assertThat(model.getContextLength(), is(40960));
+    }
+
+    @Test
+    public void equals_differsPerContextLength() {
+        RouterModel a = new RouterModel(
+                "m",
+                RouterModel.Status.UNLOADED,
+                "unloaded",
+                false,
+                0,
+                Collections.singletonList("text"),
+                Collections.singletonList("text"),
+                4096);
+        RouterModel b = new RouterModel(
+                "m",
+                RouterModel.Status.UNLOADED,
+                "unloaded",
+                false,
+                0,
+                Collections.singletonList("text"),
+                Collections.singletonList("text"),
+                8192);
+        assertNotEquals(a, b);
+        assertNotEquals(a.hashCode(), b.hashCode());
+    }
+
+    @Test
     public void equals_differsPerModality() {
         RouterModel base = withModalities(Collections.singletonList("text"), Collections.singletonList("text"));
         assertEquals(base, withModalities(Collections.singletonList("text"), Collections.singletonList("text")));

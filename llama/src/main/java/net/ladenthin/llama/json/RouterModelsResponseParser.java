@@ -66,7 +66,8 @@ public class RouterModelsResponseParser {
      * {@link RouterModel.Status#UNKNOWN} with an empty raw value. The failure marker is read
      * from {@code status.failed} / {@code status.exit_code}, the modalities from
      * {@code architecture.input_modalities} / {@code architecture.output_modalities} (empty when
-     * absent, as from a server before llama.cpp b11429).
+     * absent, as from a server before llama.cpp b11429), and the trained context length from
+     * {@code context_length} ({@code 0} when absent, as from a server before b11538).
      *
      * @param root pre-parsed router {@code GET /models} response
      * @return list of models; empty list when no entry array is present
@@ -92,7 +93,8 @@ public class RouterModelsResponseParser {
                     status.path("failed").asBoolean(false),
                     status.path("exit_code").asInt(0),
                     strings(architecture.path("input_modalities")),
-                    strings(architecture.path("output_modalities"))));
+                    strings(architecture.path("output_modalities")),
+                    entry.path("context_length").asInt(0)));
         }
         return models;
     }
