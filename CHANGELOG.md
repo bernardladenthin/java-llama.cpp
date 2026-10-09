@@ -69,6 +69,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   in `build.sh` opts back in). With CUDA 13.4 and sccache 0.18.0 the nvcc launcher failed on the first `.cu`
   files in two confirmed runs (`Missing "cubin" file output`, `Compiler killed by signal 126`), and the
   uncached retry that followed made those jobs slower than a cold build; the C/C++ objects stay cached.
+- **CI: the three dockcross images are pinned by digest** (`android-arm64`, `android-x86_64`,
+  `manylinux_2_28-x64`, all tag `20260712-79e54f9`), as the manylinux aarch64 image already was.
 - **Upgraded the pinned llama.cpp from b11529 to b11534**, in 3 reviewed steps, each ending at a tag. No
   carried patch needed a refresh, and every drop-check still finds its defect. The one step with project
   code is b11531, **#30210 "chat : refactor API"**: the prompt and the parser state of a chat generation now

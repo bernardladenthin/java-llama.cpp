@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-DEFAULT_DOCKCROSS_IMAGE=dockcross/manylinux_2_28-x64:20260712-79e54f9
+# Pinned by digest (tag 20260712-79e54f9, the manifest Docker Hub served for it on 2026-10-09);
+# the one line of this generated wrapper that is edited. Bump it deliberately, with a Publish run.
+DEFAULT_DOCKCROSS_IMAGE=dockcross/manylinux_2_28-x64@sha256:44fa969013dd9a27d25b2f2d2d86651bf961c02c66bce785890a0ea4ff4190fa
 
 #------------------------------------------------------------------------------
 # Helpers

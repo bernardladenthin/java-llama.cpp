@@ -55,8 +55,9 @@ SPDX-FileCopyrightText = [
 SPDX-License-Identifier = "MIT"
 
 # The dockcross wrappers are generated, unmodified output of dockcross's own wrapper template
-# (imagefiles/dockcross.sh), printed by `docker run --rm dockcross/<image>:<tag>`; copyright and
-# license as in https://github.com/dockcross/dockcross/blob/master/LICENSE.
+# (imagefiles/dockcross.sh), printed by `docker run --rm dockcross/<image>:<tag>` -- except for the
+# DEFAULT_DOCKCROSS_IMAGE line, which pins the image by digest; copyright and license as in
+# https://github.com/dockcross/dockcross/blob/master/LICENSE.
 [[annotations]]
 path = [
     ".github/dockcross/dockcross-android-arm64",
