@@ -5,6 +5,12 @@ AMD iGPU, MSVC + LLVM + Docker + JDK 21 + Maven). It describes what this branch 
 what the remote session cannot verify from its sandbox, and the exact deliverables. The file is
 deleted again once PR A is merged.
 
+**Deliverable 6 (B2) carries measurements taken on this same workstation on 2026-10-09**, marked
+`MEASURED` or `OPEN` per item: four are done and only need confirming, three are genuinely open, and
+the Java suite among them is the one that decides whether the variant path works at all. Verify a
+`MEASURED` line rather than skipping it -- a different result there is a finding -- but spend the
+time on the `OPEN` ones.
+
 ---
 
 You are working in a checkout of `bernardladenthin/java-llama.cpp` on the branch
@@ -62,21 +68,59 @@ Everything below is what only your machine can show.
 
 6. **B2 pre-verification -- Windows CPU variants, before the CI job is written.** Build the variant
    library with plain clang (not `clang-cl`, not `cl.exe`: ggml drops 5 of the 14 variants under
-   `MSVC`, see CLAUDE.md "CPU variants"):
-   - Which clang: LLVM 20.1.8 from `PATH` versus the clang 22.x inside Visual Studio 2026. Try the
-     newer one first; patch `0017` is what makes `quants.c` compile there, so a failure on it is a
-     finding, not a toolchain problem.
-   - The exact `build.bat` command line that works (`-G "Ninja Multi-Config"`, `-DJLLAMA_CPU_VARIANTS=ON`,
-     the clang toolchain, `-DGGML_OPENMP=OFF`, `-DOS_NAME=Windows -DOS_ARCH=x86_64`), with and without
-     sccache on `PATH` (does the probe accept clang?).
-   - The resulting directory listing of `src/main/natives/net/ladenthin/llama/Windows/x86_64/cpu/`
-     (expect 18 DLLs: `jllama.dll`, `ggml.dll`, `ggml-base.dll`, 14 `ggml-cpu-<level>.dll`,
-     `ggml-rpc.dll`) and the content of `jllama-files.txt`; whether `jllama-extras.txt` exists.
-   - `python .github/verify-native-deps.py` over that directory: paste its output.
-   - The Java suite (`mvn -f llama/pom.xml test`) against the variant build, with models.
-   - Which variant ggml picks on the 5800H (Zen 3 has AVX2 and no AVX-512, so expect `haswell`; the
-     loader log at `-lv 4` names it), and `llama-bench`-style numbers through the library if cheap: pp512 and
-     tg128 for Qwen3-0.6B Q4_K_M with 8 threads, variant build versus the single static CPU build.
+   `MSVC`, see CLAUDE.md "CPU variants").
+
+   **Four of these were already measured on this workstation on 2026-10-09, so VERIFY them rather
+   than discover them -- a different result is a finding worth reporting.** The three that are open
+   are marked as such, and the Java suite is the one that matters most, because it is the only step
+   that proves the variant path end to end and the only one the measuring session could not run (its
+   `mvn compile` dies in an Error Prone / NullAway crash on `args/package-info.java`, unrelated to
+   the native work; disabling annotation processing then breaks Lombok, so there was no quick
+   bypass).
+
+   - **MEASURED -- which clang.** Plain clang **23.1.3** from `C:\Program Files\LLVM\bin` builds all
+     14 variants with **0 errors**. Note two things the earlier draft of this prompt got wrong about
+     this machine: `PATH` carries **23.1.3**, not 20.1.8, and **Visual Studio ships no clang here**
+     (neither `2022\Community` nor `18\BuildTools` has a `VC\Tools\Llvm\x64`), so there is no "newer
+     versus older clang" choice to make -- the 20.1.8 used in the earlier comparison was unpacked
+     separately. 23.1.3 is the stricter of the two (it makes `-Wincompatible-pointer-types` an
+     error, which clang 22 introduced), and `patches/0017` is what makes `quants.c` compile there at
+     all: a failure on that file is a finding, not a toolchain problem.
+   - **OPEN -- the exact `build.bat` command line that works.** The measurement used `cmake`
+     directly, so `build.bat` itself is unverified for this configuration. Report the line that
+     works (`-G "Ninja Multi-Config"`, `-DJLLAMA_CPU_VARIANTS=ON`, the clang toolchain,
+     `-DGGML_OPENMP=OFF`, `-DOS_NAME=Windows -DOS_ARCH=x86_64`), with and without sccache on `PATH`
+     -- does `build.bat`'s probe accept clang, or does it fall back to an uncached build? The probe
+     only ever proved `cl.exe`, so this is genuinely unknown.
+   - **MEASURED -- the directory.** 18 DLLs in
+     `src/main/natives/net/ladenthin/llama/Windows/x86_64/cpu/`: `jllama.dll`, `ggml.dll`,
+     `ggml-base.dll`, 14 `ggml-cpu-<level>.dll` (`x64`, `sse42`, `sandybridge`, `ivybridge`,
+     `piledriver`, `haswell`, `skylakex`, `cannonlake`, `cascadelake`, `icelake`, `cooperlake`,
+     `zen4`, `alderlake`, `sapphirerapids`) and `ggml-rpc.dll`, nothing in a `Release/`
+     subdirectory, and `jllama-files.txt` naming **15** of them -- the modules plus `ggml-rpc`.
+     **`jllama-extras.txt` is absent, and that is correct, not a defect:** CMake never writes it;
+     `merge-native-artifacts.sh` derives it in CI from everything in the directory that
+     `jllama-files.txt` does *not* name, which on Windows is exactly `ggml.dll` and `ggml-base.dll`
+     (they must be pre-loaded by full path -- there is no `$ORIGIN` on Windows).
+   - **MEASURED -- `python .github/verify-native-deps.py llama/src/main/natives`.**
+     "18 native libraries checked, 0 violations". Paste yours anyway; it is one line and it covers
+     the hybrid-CRT guard in both directions.
+   - **OPEN and the important one -- the Java suite** (`mvn -f llama/pom.xml test`) against the
+     variant build, with the models in place. CLAUDE.md's warning applies directly here: a
+     successful load proves little, because in the earlier Windows measurement *every* crash came
+     after a load that reported the right device count. So report the Surefire summary line, and
+     whether `RpcIntegrationTest` and the model-backed classes pass against a build whose CPU
+     backend is a loadable module rather than a linked library.
+   - **OPEN -- which variant ggml picks on the 5800H.** Zen 3 has AVX2 and no AVX-512, and
+     `alderlake` needs AVX-VNNI it does not have, so `haswell` is the expectation. Caveat before you
+     spend time on the log: CLAUDE.md records that ggml logs module decisions at `GGML_LOG_DEBUG`
+     only, so `-lv 4` may not name the chosen one. If it does not, list the DLLs the JVM actually
+     has mapped (Process Explorer, `listdlls`, or `tasklist /m`) instead of guessing.
+   - **OPEN -- pp512 and tg128** for Qwen3-0.6B Q4_K_M at 8 threads, variant build versus the single
+     static CPU build. For orientation, measured with `llama-bench` on this machine at
+     `GGML_NATIVE=ON` (so a single kernel, not the variant selection): clang static reached pp512
+     391.6 and tg128 82.3 t/s with `GGML_OPENMP=OFF`. A variant build landing near that means the
+     module indirection costs nothing; well below it is a finding.
 
 ## How to work on the branch
 
