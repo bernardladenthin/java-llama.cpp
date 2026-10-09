@@ -48,6 +48,11 @@ WINDOWS_OS = {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll"}
 WINDOWS_UCRT = {f"api-ms-win-crt-{part}-l1-1-0.dll" for part in
                 ("convert", "environment", "filesystem", "heap", "locale", "math",
                  "runtime", "stdio", "string", "time", "utility")}
+# Where at least one of those must be PRESENT, which is the other direction of the same guard --
+# see the check in violations(). The GPU directories are left out: they are held to a denylist, and
+# a vendor toolchain may link its own runtime.
+WINDOWS_UCRT_REQUIRED = {"Windows/x86_64/cpu", "Windows/x86/cpu", "Windows/aarch64/cpu",
+                         "Windows/x86_64/msvc", "Windows/x86/msvc"}
 
 # What each CPU library needed when this check was introduced (5.1.0 plus the RPC backend,
 # which adds nothing: its sockets are libc/libSystem/WS2_32, all already present). The manylinux_2_28
@@ -291,6 +296,17 @@ def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
     if rel.endswith(".so") and any(d in siblings for d in deps) and runpath != ORIGIN:
         failures.append(f"{rel} needs the sibling {sorted(d for d in deps if d in siblings)} but its run path is "
                         f"{runpath!r}, not {ORIGIN!r} -- it would be looked up on the system instead")
+    # The allowlist below only reports dependencies that should NOT be there. For the Windows CPU
+    # directories one dependency must be there, and its disappearance is just as much a regression:
+    # an api-ms-win-crt-* forwarder means the UCRT is the OS one (hybrid CRT). Without this, a build
+    # that silently went back to a fully static CRT -- a plain /MT, which freezes a copy of the UCRT
+    # inside the library so Microsoft's security updates never reach it -- would pass unnoticed,
+    # because a static CRT only ever REMOVES imports. Measured on a real variants build: all 18
+    # libraries import between 5 and 11 of these, so "at least one" holds for modules too.
+    if key in WINDOWS_UCRT_REQUIRED and not any(d.lower().startswith("api-ms-win-crt") for d in deps):
+        failures.append(f"{rel} imports no api-ms-win-crt-* forwarder, so its UCRT is statically linked. "
+                        f"The Windows builds use the hybrid CRT on purpose (llama/CMakeLists.txt): a static "
+                        f"UCRT cannot receive Microsoft's security updates. Was a linker flag lost?")
     ceiling = GLIBC_CEILING.get(key)
     if ceiling and glibc and glibc > ceiling:
         failures.append(f"{rel} references {glibc_name(glibc)}, above the {glibc_name(ceiling)} floor its "
