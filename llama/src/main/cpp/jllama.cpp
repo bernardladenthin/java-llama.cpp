@@ -23,7 +23,19 @@
 #include "tts_engine.h"
 
 #ifdef GGML_BACKEND_DL
+// load_backends_next_to_this_library() needs this library's own path: dladdr on POSIX,
+// GetModuleHandleExW + GetModuleFileNameW on Windows.
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX // or windows.h's min/max macros break std::min / std::max below
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <dlfcn.h>
+#endif
 #endif
 
 #include <atomic>
@@ -751,6 +763,43 @@ std::string parse_jstring(JNIEnv *env, jstring java_string) {
 // before anything touches the backend registry. ggml_backend_load_best() picks the CPU module whose
 // instruction set the running CPU supports best.
 static void load_backends_next_to_this_library() {
+#ifdef _WIN32
+    // GetModuleHandleExW on an address inside this DLL -- GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT
+    // so the handle needs no release. The path must reach ggml as UTF-8: it opens the modules with
+    // the narrow CRT, and a directory holding a non-ASCII character (an umlaut in a Windows user
+    // name reaches the temp directory LlamaLoader extracts into) loaded nothing at all when the
+    // path was handed over in the active ANSI code page -- without any error being logged.
+    HMODULE self = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(&load_backends_next_to_this_library), &self)) {
+        return;
+    }
+    std::wstring wpath(MAX_PATH, L'\0');
+    for (;;) {
+        const DWORD n = GetModuleFileNameW(self, wpath.data(), static_cast<DWORD>(wpath.size()));
+        if (n == 0) {
+            return;
+        }
+        if (n < wpath.size()) {
+            wpath.resize(n);
+            break;
+        }
+        if (wpath.size() > 32768) { // the documented ceiling for an extended-length path
+            return;
+        }
+        wpath.resize(wpath.size() * 2);
+    }
+    const size_t sep = wpath.find_last_of(L"\\/");
+    const std::wstring wdir = sep == std::wstring::npos ? std::wstring(L".") : wpath.substr(0, sep);
+    const int bytes = WideCharToMultiByte(CP_UTF8, 0, wdir.c_str(), -1, nullptr, 0, nullptr, nullptr);
+    if (bytes <= 0) {
+        return;
+    }
+    std::string dir(static_cast<size_t>(bytes - 1), '\0');
+    if (WideCharToMultiByte(CP_UTF8, 0, wdir.c_str(), -1, dir.data(), bytes, nullptr, nullptr) <= 0) {
+        return;
+    }
+#else
     Dl_info info{};
     if (dladdr(reinterpret_cast<void *>(&load_backends_next_to_this_library), &info) == 0 ||
         info.dli_fname == nullptr) {
@@ -759,6 +808,7 @@ static void load_backends_next_to_this_library() {
     std::string dir(info.dli_fname);
     const size_t slash = dir.find_last_of('/');
     dir = slash == std::string::npos ? std::string(".") : dir.substr(0, slash);
+#endif
     ggml_backend_load_all_from_path(dir.c_str());
 }
 #endif

@@ -10,12 +10,24 @@ endif()
 
 project(jllama CXX)
 
-# Use static MSVC runtime (/MT) instead of the default DLL runtime (/MD).
-# This embeds the C++ runtime into jllama.dll so msvcp140.dll / vcruntime140.dll
-# are not required on the end-user's machine.
+# HYBRID CRT on Windows, for every toolchain: the STL and vcruntime are linked statically (/MT),
+# the UCRT stays dynamic. So msvcp140.dll / vcruntime140.dll / vcruntime140_1.dll are not required
+# on the end-user's machine, while ucrtbase.dll comes from the OS.
 # Must be set before any FetchContent_MakeAvailable() so that llama.cpp and all
 # other subprojects inherit the same CRT choice (mixing /MT and /MD in a single
 # link is a linker error).
+#
+# WHY NOT A PLAIN /MT, which would need no UCRT at all: /MT links all THREE layers statically,
+# the UCRT included, which freezes a copy of it inside jllama.dll -- so Microsoft's UCRT security
+# updates, which Windows Update delivers through ucrtbase.dll, never reach a shipped artifact
+# until we rebuild and release. For a library that parses network data (cpp-httplib, JSON) and
+# untrusted files (GGUF) that is the deciding argument, not the 0.3 MB the hybrid also saves
+# (measured: 10.1 MB with /MT, 9.8 MB hybrid). It is Microsoft's own recommendation for
+# self-contained binaries, and it makes both toolchains use ONE CRT strategy instead of two.
+# The cost is one requirement, which README.md states: **Windows 10 or newer**, where the UCRT is
+# an OS component. `nativedeps.py` therefore allows the api-ms-win-crt-* forwarders in every
+# Windows CPU directory -- they are the dynamic UCRT, and their absence from the import table
+# would mean the static one is back.
 #
 # EXCEPTION: the Intel oneAPI SYCL and OpenVINO backends must use the DYNAMIC /MD
 # runtime — `icx -fsycl` rejects /MT outright ("invalid argument 'MT' not allowed
@@ -23,8 +35,38 @@ project(jllama CXX)
 # link error). Those classifiers already require the vendor runtime on the host, so
 # the self-contained-DLL rationale does not apply to them; the CPU + CUDA/Vulkan/OpenCL
 # classifiers keep /MT.
+#
+# PLAIN CLANG on Windows needs the HYBRID CRT instead, and gets it from the second branch.
+# CMake's `MSVC` is TRUE for cl.exe and for clang-cl, but FALSE for clang with the GNU driver
+# (upstream's cmake/x64-windows-llvm.cmake, the only toolchain that yields all 14 CPU variants --
+# see CLAUDE.md "CPU variants"), so without that branch such a build silently links the DLL
+# runtime and needs msvcp140.dll / vcruntime140.dll after all. Three facts, all measured on
+# 2026-10-09 (clang 23.1.3, MSVC 14.51.36231 headers):
+#   * The GNU driver does NOT ignore CMAKE_MSVC_RUNTIME_LIBRARY -- it emits -D_DLL -D_MT from it,
+#     which is why passing it alone fails to link (undefined __declspec(dllimport) expf). The flag
+#     that actually selects the libraries is -fms-runtime-lib.
+#   * A FULLY static CRT (static UCRT too) combined with shared libraries -- which
+#     JLLAMA_CPU_VARIANTS requires, since GGML_BACKEND_DL needs BUILD_SHARED_LIBS -- gives every
+#     DLL its own CRT heap; such a build does not even start (and crashed with 0xC0000409 in an
+#     earlier attempt).
+#   * Hybrid CRT (static STL + vcruntime, dynamic UCRT -- Microsoft's own recommendation for
+#     self-contained binaries) leaves the complete jllama.dll with NO non-OS dependency at all:
+#     KERNEL32, ADVAPI32, SHELL32, WS2_32 and the api-ms-win-crt-* forwarders, nothing else.
+#     ucrtbase.dll is an OS component from Windows 10 on and is not the DLL behind the
+#     msvcp140 incident in README.md.
 if(MSVC AND NOT GGML_SYCL AND NOT GGML_OPENVINO)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+    # Keep the UCRT dynamic: drop the static import /MT pulls in, add the DLL one.
+    add_link_options(
+        $<IF:$<CONFIG:Debug>,/NODEFAULTLIB:libucrtd.lib,/NODEFAULTLIB:libucrt.lib>
+        $<IF:$<CONFIG:Debug>,/DEFAULTLIB:ucrtd.lib,/DEFAULTLIB:ucrt.lib>)
+elseif(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT GGML_SYCL AND NOT GGML_OPENVINO)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "" FORCE)
+    add_compile_options($<IF:$<CONFIG:Debug>,-fms-runtime-lib=static_dbg,-fms-runtime-lib=static>)
+    # Same hybrid, through the GNU driver: these have to reach the linker, not clang.
+    add_link_options(
+        "SHELL:-Xlinker $<IF:$<CONFIG:Debug>,/nodefaultlib:libucrtd.lib,/nodefaultlib:libucrt.lib>"
+        "SHELL:-Xlinker $<IF:$<CONFIG:Debug>,ucrtd.lib,ucrt.lib>")
 endif()
 
 include(FetchContent)
@@ -225,11 +267,28 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(llama.cpp)
 if(JLLAMA_CPU_VARIANTS)
-    # Linux x86-64 and aarch64 (the two shipped as variant builds; see CLAUDE.md "CPU variants").
-    # Windows needs the module search and the CRT settled first, macOS has one CPU generation
-    # per Metal build, Android ships one library per ABI, s390x has no variants upstream.
-    if(NOT (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|aarch64|arm64)$"))
-        message(FATAL_ERROR "JLLAMA_CPU_VARIANTS is supported on Linux x86-64 and aarch64 only")
+    # Linux x86-64 / aarch64 and Windows x86-64 (see CLAUDE.md "CPU variants"). macOS has one CPU
+    # generation per Metal build, Android ships one library per ABI, s390x has no variants upstream,
+    # and 32-bit Windows / Windows arm64 have none upstream either.
+    set(_jllama_variants_ok OFF)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|aarch64|arm64)$")
+        set(_jllama_variants_ok ON)
+    elseif(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+        # Only PLAIN clang produces the full set here: CMake sets MSVC for clang-cl as for cl.exe,
+        # and ggml's `if (NOT MSVC)` then drops ivybridge, piledriver, cooperlake, zen4 and
+        # sapphirerapids -- a Zen 4/5 machine would fall back to icelake and lose the BF16 kernels.
+        # clang-cl additionally fails to build alderlake (/arch:AVX2 + __AVXVNNI__ without
+        # -mavxvnni, an upstream gap). Fail loud rather than silently shipping 9 variants.
+        if(MSVC)
+            message(FATAL_ERROR
+                "JLLAMA_CPU_VARIANTS on Windows needs plain clang (the GNU driver), not cl.exe or "
+                "clang-cl: ggml's `if (NOT MSVC)` block drops 5 of the 14 x86 variants, and "
+                "clang-cl cannot build alderlake. Use upstream's cmake/x64-windows-llvm.cmake.")
+        endif()
+        set(_jllama_variants_ok ON)
+    endif()
+    if(NOT _jllama_variants_ok)
+        message(FATAL_ERROR "JLLAMA_CPU_VARIANTS is supported on Linux x86-64/aarch64 and Windows x86-64 only")
     endif()
     if(BUILD_TESTING)
         # jllama_test calls the CPU and RPC backends directly (ggml_backend_cpu_init, ...), which are
@@ -601,7 +660,28 @@ if(JLLAMA_CPU_VARIANTS)
             endif()
         endforeach()
     endforeach()
-    set_target_properties(${JLLAMA_GGML_TARGETS} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${JLLAMA_DIR})
+    if(OS_NAME STREQUAL "Windows")
+        # Windows needs BOTH properties, per configuration, and that is not a belt-and-braces
+        # guess -- CMake routes the two artifact kinds in this list differently:
+        #   * ggml / ggml-base are SHARED libraries, whose .dll is a RUNTIME artifact.
+        #   * the CPU backend variants and ggml-rpc are MODULE libraries, whose output CMake treats
+        #     as a LIBRARY artifact on EVERY platform, Windows included.
+        # And a multi-config generator appends the configuration name unless the per-config form is
+        # set. Measured both ways: with only LIBRARY_OUTPUT_DIRECTORY the 14 modules landed in
+        # <dir>/Release/, with only the RUNTIME ones they stayed in the build tree entirely -- while
+        # jllama-files.txt names them next to jllama.dll either way, so the loader would extract
+        # nothing and ggml would find no backend at all.
+        set_target_properties(${JLLAMA_GGML_TARGETS} PROPERTIES
+          RUNTIME_OUTPUT_DIRECTORY_DEBUG ${JLLAMA_DIR}
+          RUNTIME_OUTPUT_DIRECTORY_RELEASE ${JLLAMA_DIR}
+          RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${JLLAMA_DIR}
+          LIBRARY_OUTPUT_DIRECTORY_DEBUG ${JLLAMA_DIR}
+          LIBRARY_OUTPUT_DIRECTORY_RELEASE ${JLLAMA_DIR}
+          LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO ${JLLAMA_DIR}
+        )
+    else()
+        set_target_properties(${JLLAMA_GGML_TARGETS} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${JLLAMA_DIR})
+    endif()
     # Unversioned: LlamaLoader extracts plain files, not the libggml.so -> .so.0 -> .so.0.x.y
     # symlink chain, so the file name, the SONAME and libjllama's DT_NEEDED entry must be one name.
     set_property(TARGET ggml ggml-base PROPERTY VERSION)
@@ -610,6 +690,22 @@ if(JLLAMA_CPU_VARIANTS)
     set_target_properties(jllama ${JLLAMA_GGML_TARGETS} PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
     set(JLLAMA_FILES_CONTENT "# Written by llama/CMakeLists.txt (JLLAMA_CPU_VARIANTS): extracted, not loaded\n")
     foreach(t ${JLLAMA_GGML_TARGETS})
+        # On WINDOWS the two libraries jllama LINKS (ggml, ggml-base) must be left out of this list,
+        # which puts them into jllama-extras.txt instead (merge-native-artifacts.sh derives that from
+        # everything not named here) so LlamaLoader loads them by full path BEFORE jllama.dll.
+        # There is no $ORIGIN on Windows: System.load with a full path does not add the DLL's own
+        # directory to the dependency search, so jllama.dll's import of ggml.dll would be resolved
+        # from the *executable's* directory (java.exe) or PATH -- where a foreign llama.cpp install
+        # (winget ggml.llamacpp, Ollama, LM Studio) can satisfy it with another build's binary.
+        # Pre-loading by full path puts ours in the loaded-module list first, which the Windows
+        # loader checks before any directory search. The alphabetical order the merge script writes
+        # is also the dependency order (ggml-base.dll < ggml.dll), and it has to be: loading
+        # ggml.dll first would have Windows resolve ggml-base.dll by directory search again.
+        # The backend MODULES stay in this list -- extracted, never loaded from Java, because
+        # choosing one is ggml_backend_load_best()'s job.
+        if(OS_NAME STREQUAL "Windows" AND (t STREQUAL "ggml" OR t STREQUAL "ggml-base"))
+            continue()
+        endif()
         string(APPEND JLLAMA_FILES_CONTENT "$<TARGET_FILE_NAME:${t}>\n")
     endforeach()
     file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-files.txt CONTENT "${JLLAMA_FILES_CONTENT}")

@@ -35,6 +35,20 @@ import os
 import struct
 import sys
 
+# The four OS DLLs every Windows build imports, and the dynamic UCRT.
+WINDOWS_OS = {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll"}
+# The Universal CRT forwarders. Present because the Windows builds use the HYBRID CRT (static STL +
+# vcruntime, dynamic UCRT -- llama/CMakeLists.txt explains why), which is what keeps Microsoft's
+# UCRT security updates reaching a shipped artifact instead of freezing a copy inside jllama.dll.
+# They are an OS component from Windows 10 on, which README.md states as the requirement.
+# Note what is NOT here and must not be added: msvcp140.dll / vcruntime140.dll (the static half of
+# the hybrid -- their appearance would mean the CRT went dynamic) and vcomp140.dll (MSVC's OpenMP:
+# every Windows CPU job passes -DGGML_OPENMP=OFF, a measured ~2x on token generation, so this list
+# is the guard that fails the build if that flag is dropped).
+WINDOWS_UCRT = {f"api-ms-win-crt-{part}-l1-1-0.dll" for part in
+                ("convert", "environment", "filesystem", "heap", "locale", "math",
+                 "runtime", "stdio", "string", "time", "utility")}
+
 # What each CPU library needed when this check was introduced (5.1.0 plus the RPC backend,
 # which adds nothing: its sockets are libc/libSystem/WS2_32, all already present). The manylinux_2_28
 # builds (glibc 2.28, before the libpthread/libdl/librt merge of 2.34) name those three separately.
@@ -51,9 +65,9 @@ ALLOWED = {
     # ggml's own std::thread pool, prompt processing unchanged (CLAUDE.md, "Windows natives").
     # Leaving it off the list is therefore a guard, not tidiness: drop the flag from a build job and
     # this check fails with "needs vcomp140.dll, which it did not need before". Do not re-add it.
-    "Windows/x86_64/cpu": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll"},
-    "Windows/x86/cpu": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll"},
-    "Windows/aarch64/cpu": {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll"},
+    "Windows/x86_64/cpu": WINDOWS_OS | WINDOWS_UCRT,
+    "Windows/x86/cpu": WINDOWS_OS | WINDOWS_UCRT,
+    "Windows/aarch64/cpu": WINDOWS_OS | WINDOWS_UCRT,
     "Mac/aarch64/metal": {"/usr/lib/libc++.1.dylib", "/usr/lib/libSystem.B.dylib",
                     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
                     "/System/Library/Frameworks/Metal.framework/Versions/A/Metal",
