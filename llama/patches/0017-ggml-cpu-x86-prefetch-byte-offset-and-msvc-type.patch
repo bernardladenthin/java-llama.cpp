@@ -75,7 +75,7 @@ new file mode 100644
 index 0000000..9be944e
 --- /dev/null
 +++ b/ggml/src/ggml-cpu/arch/x86/prefetch.h
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,27 @@
 +#pragma once
 +
 +#include <stddef.h>
