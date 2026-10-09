@@ -1517,27 +1517,32 @@ Forward-looking ideas being tracked for this fork:
 
 ### Windows: EXCEPTION_ACCESS_VIOLATION with msvcp140.dll
 
-If you encounter a native crash like:
+A crash of this shape was reported against early releases:
+
 ```
 EXCEPTION_ACCESS_VIOLATION (0xc0000005) at pc=0x00007ffa8f4b2f58
 C [msvcp140.dll+0x12f58]
 ```
 
-This is a known issue where the C++ runtime library (`msvcp140.dll`) bundled with some JDK versions is outdated. 
+**This cannot come from this library any more, and the old advice here — deleting
+`msvcp140.dll` from your JDK — is obsolete. Do not do it.** The Windows natives link the C++
+standard library and vcruntime statically (hybrid CRT), so they do not import `msvcp140.dll`,
+`vcruntime140.dll` or `vcruntime140_1.dll` at all; the only non-OS import left is the Universal
+CRT, which Windows itself provides and keeps updated. Measured on the current build, the whole
+import table of `jllama.dll` is `KERNEL32`, `ADVAPI32`, `SHELL32`, `WS2_32` and the
+`api-ms-win-crt-*` forwarders. CI enforces that per release
+(`.github/buildcheck/nativedeps.py` holds every Windows CPU directory to an exact allowlist).
 
-**Solution:** Remove the outdated `msvcp140.dll` from your JDK:
-```bash
-# Locate and remove msvcp140.dll from JDK directory
-# Example for JDK 21:
-del "C:\Program Files\Java\jdk-21\bin\msvcp140.dll"
-del "C:\Program Files\Java\jdk-21\bin\vcruntime140.dll"
-del "C:\Program Files\Java\jdk-21\bin\vcruntime140_1.dll"
+The report dates from before that: the troubleshooting note was written on 2026-04-04 and the
+switch from the DLL runtime (`/MD`) to a static one landed on 2026-05-13, so releases from
+**5.0.0** on are unaffected. An older JDK does ship its own outdated `msvcp140.dll` next to
+`java.exe`, and Windows resolves an import from the already-loaded module list before searching
+any directory -- which is why a library that *did* import it got the JDK's copy. Removing the
+dependency fixes that by construction, where moving files around could not.
 
-# Or on Linux with OpenJDK:
-rm /usr/lib/jvm/java-21/bin/msvcp140.dll
-```
-
-The system's updated C++ runtime will be used instead, resolving the crash.
+If you still see a crash inside `msvcp140.dll`, it originates in **another** native library loaded
+into the same JVM, not in `jllama.dll` -- check the rest of the `hs_err` frame list. Please open an
+issue with that file rather than editing your JDK installation.
 
 ### Contributors: do not upgrade jqwik past 1.9.3
 

@@ -60,11 +60,8 @@ ALLOWED = {
     "Linux/s390x/cpu": {"libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld64.so.1"},
     "Linux-Android/aarch64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
     "Linux-Android/x86_64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
-    # No vcomp140.dll (MSVC's OpenMP runtime): every Windows CPU job passes -DGGML_OPENMP=OFF, which
-    # is a measured throughput WIN -- token generation is 1.9x (MSVC) / 2.7x (clang) faster with
-    # ggml's own std::thread pool, prompt processing unchanged (CLAUDE.md, "Windows natives").
-    # Leaving it off the list is therefore a guard, not tidiness: drop the flag from a build job and
-    # this check fails with "needs vcomp140.dll, which it did not need before". Do not re-add it.
+    # Exactly WINDOWS_OS | WINDOWS_UCRT -- see those two definitions above for what is deliberately
+    # absent (msvcp140/vcruntime140 and vcomp140) and why that makes this list a guard.
     "Windows/x86_64/cpu": WINDOWS_OS | WINDOWS_UCRT,
     "Windows/x86/cpu": WINDOWS_OS | WINDOWS_UCRT,
     "Windows/aarch64/cpu": WINDOWS_OS | WINDOWS_UCRT,

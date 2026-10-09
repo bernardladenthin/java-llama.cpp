@@ -86,7 +86,12 @@ was **one** library for one level -- x86-64 the Haswell baseline (x86-64-v3, the
 crash and not an exception, at the first matrix multiplication, and AVX-512/VNNI/AMX stayed unused
 on CPUs that have them), aarch64 plain ARMv8. `-DJLLAMA_CPU_VARIANTS=ON` builds it; the two Linux
 build jobs pass it, every other platform still ships the single static library, and the option
-refuses them (the Windows plan is in `TODO.md`):
+refuses them. **Windows x86-64 is buildable this way since 5.2.x and not yet wired into CI**
+(`TODO.md`): the option accepts it, refuses `cl.exe`/`clang-cl` loudly -- ggml's `if (NOT MSVC)`
+block drops 5 of the 14 variants and `clang-cl` cannot build `alderlake` at all -- and the CMake
+side is verified locally (18 DLLs in one directory, `verify-native-deps.py` clean). What is
+missing is the CI job, which needs the ctest split the Linux jobs have (see "Where C++ tests run"
+below):
 
 - **Only ggml becomes shared.** `FetchContent_MakeAvailable` is pointed at a non-existent
   `SOURCE_SUBDIR`, so it only fetches and patches; ggml is then added first with
@@ -253,6 +258,71 @@ none of the four repositories has a required status check (each has only a rules
 no force push, PR required — and classic branch protection is off), so no setting pins a check
 name. Should required checks ever be added, name these new forms.
 
+## Where C++ tests run: one build per shipped artifact
+
+**The policy, which was implicit until it was written down here and therefore re-guessed at every
+new job:**
+
+> **One build per shipped artifact. The C++ tests ride along in that same job wherever the shipped
+> configuration can host them, and get a job of their own only where it cannot. The risks that are
+> specific to a configuration the tests cannot run in are covered by the layers that *can* see
+> them -- the packaging check and the Java suite against the real artifact.**
+
+Today that means 7 jobs build an artifact **and** run `ctest` (`build-linux-s390x`,
+`build-macos-arm64-metal-15`, `build-windows-arm64`, `build-windows-x86`, `build-windows-x86-msvc`,
+`build-windows-x86_64`, `build-windows-x86_64-msvc`) and 4 only test
+(`test-cpp-linux-x86_64`, `test-cpp-linux-aarch64` -- forced, see below -- plus
+`build-macos-arm64-metal` and `build-macos-arm64-no-metal`, whose artifacts are not shipped at all).
+
+**Why riding along is safe, measured rather than assumed:** `-DBUILD_TESTING=ON` does not change
+the shipped library. Compared on a Windows MSVC configure with the flag off and on, the `jllama`
+target's `DEFINES`, `FLAGS` and `INCLUDES` are byte-identical
+(`/DWIN32 /D_WINDOWS /EHsc /O2 /Ob2 /DNDEBUG -std:c++17 -MT /utf-8`) and no gtest/gmock reaches its
+link line -- the option only adds the googletest FetchContent and the `jllama_test` target beside
+it. So a combined job ships exactly what it tested, which is a property worth having: the test sees
+the same compiler, the same flags and the same sccache state as the artifact.
+
+**Why splitting is not better as a default.** It doubles the compilation of llama.cpp for that
+platform (134 model TUs plus the 16.6k-line `httplib.cpp` at `-O3`) and buys nothing where the
+configuration can host the tests -- it even gives up the property above.
+
+**Where it is forced:** `JLLAMA_CPU_VARIANTS` implies `GGML_BACKEND_DL`, which turns the CPU
+backend and ggml-rpc into loadable modules, so their symbols are not available at link time.
+`src/test/cpp/test_rpc.cpp` calls `ggml_backend_cpu_init()` and the four
+`ggml_backend_rpc_*` entry points **directly and on purpose** -- that is the runnable guard for
+`patches/0015`, built to fail at *link* time if the patch is dropped -- so `jllama_test` cannot
+link in that configuration, and `llama/CMakeLists.txt` refuses the combination with a
+`FATAL_ERROR` rather than letting it fail obscurely.
+
+**A second "variants + tests" job was considered and rejected, with numbers.** Exactly **one** of
+the 14 test files is affected by `GGML_BACKEND_DL` -- `test_rpc.cpp`, which is also the only one
+whose behaviour depends on ggml's device registry (populated by loaded modules there instead of at
+link time). The other 13 test pure helpers and patch guards over statically linked llama code and
+return the same result in any configuration. So such a job would either exclude `test_rpc.cpp` and
+re-run 13 configuration-independent tests for the price of a full extra build (no information
+gained), or adapt `test_rpc.cpp` to resolve the symbols through
+`ggml_backend_reg_get_proc_address` under `#ifdef GGML_BACKEND_DL` -- which duplicates, in C++,
+what `RpcIntegrationTest` already proves end to end against the shipped artifact on every platform.
+
+**And the decisive check: the two defects the Windows variants work actually had would have been
+caught by neither.** Both only appear when the library is loaded out of the jar:
+
+| Defect | `ctest` would catch it | what does |
+|---|---|---|
+| the 14 module DLLs built into `<dir>/Release/` instead of beside the library | no -- they exist, just in the wrong place for packaging | **`merge-native-artifacts.sh`**, which fails with "`jllama-files.txt` names '<f>', which the build did not produce" |
+| `ggml.dll` not pre-loaded, so `jllama.dll`'s import resolves from `java.exe`'s directory or `PATH` | no | the Java test job and the fat-jar smokes -- `System.load` fails |
+
+So the safety of a variants build rests on the packaging check and on the Java suite running real
+inference against the **shipped** natives artifact (`test-java-windows-x86_64` takes
+`natives-cpu-windows-x86-64`), not on `ctest`. That is the same argument this file already makes
+for Linux: a successful load proves little, since in the Windows measurement every crash came
+*after* a load that reported the right device count.
+
+**Consequence for a new job:** if the configuration you ship can build `jllama_test`, run `ctest`
+in the same job. If it cannot, add a `test-cpp-<platform>` job that builds the default static
+library with `-DBUILD_TESTING=ON`, and make sure the artifact itself is exercised by a
+model-backed Java job or a smoke job -- not by the C++ suite alone.
+
 ## Upgrading CUDA Version
 
 Current CUDA version: **13.4** (Linux `cuda-toolkit-13-4` from NVIDIA's rhel8 repo; Windows 13.4 redist archives)
@@ -415,8 +485,8 @@ three GPU backends, **`cuda13-windows-x86-64`**, **`vulkan-windows-x86-64`** and
 
 **Why Ninja is the default (the flip).** The Visual Studio generator ignores
 `CMAKE_{C,CXX}_COMPILER_LAUNCHER`, so only Ninja Multi-Config can front `cl.exe` with sccache over
-Depot WebDAV. **Both generators use the same MSVC toolchain** (`cl.exe`, static `/MT` CRT via
-`CMAKE_MSVC_RUNTIME_LIBRARY`, same Release flags, same runner), so the produced
+Depot WebDAV. **Both generators use the same MSVC toolchain** (`cl.exe`, hybrid CRT via
+`CMAKE_MSVC_RUNTIME_LIBRARY` + the UCRT linker flags, same Release flags, same runner), so the produced
 `jllama.dll` binaries are **functionally equivalent with identical runtime
 dependencies** — the only difference is build-system plumbing + caching. Making Ninja the `cpu`
 build gives the most-pulled natives the sccache cache; MSVC stays available (directory `msvc`,
@@ -559,18 +629,20 @@ sccache runs here too, from its native `aarch64-pc-windows-msvc` release (it wra
 "sccache on every Windows Ninja job" above). **Compiler: `clang-cl`, not MSVC
 `cl.exe`.** ggml's `ggml-cpu/CMakeLists.txt` aborts with *"MSVC is not supported for ARM, use clang"*
 via `if (MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")`; `clang-cl` (LLVM's MSVC-compatible driver)
-satisfies that guard (compiler id `"Clang"`) while keeping CMake's `MSVC=TRUE`, so the static `/MT` CRT
+satisfies that guard (compiler id `"Clang"`) while keeping CMake's `MSVC=TRUE`, so the hybrid-CRT
 block still applies and the generator stays Ninja Multi-Config. The job passes
 `-DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl`; `msvc-dev-cmd` supplies the MSVC
 headers/libs/linker **and the bundled clang-cl/lld-link** (`VC\Tools\Llvm\ARM64`), so no separate
 LLVM install is needed. It also passes **`-DGGML_OPENMP=OFF`**: with clang-cl, ggml links LLVM's
-OpenMP (`libomp.lib` → `libomp140.aarch64.dll` at runtime), which — unlike MSVC's ambient
-`vcomp140.dll` on x64 — is not on `PATH`, so the test exe (and any consumer) failed to launch with
-`0xc0000135` (`STATUS_DLL_NOT_FOUND`). Disabling OpenMP makes ggml use its own `std::thread`
-threadpool, leaving the arm64 `jllama.dll` self-contained (the x86_64/x86 jobs keep OpenMP via MSVC
-`vcomp`). (Upstream llama.cpp instead cross-compiles arm64 from an
+OpenMP (`libomp.lib` → `libomp140.aarch64.dll` at runtime), which — unlike MSVC's `vcomp140.dll`,
+which at least ships in the VC++ redistributable — is in no redistributable at all, so the test exe
+(and any consumer) failed to launch with `0xc0000135` (`STATUS_DLL_NOT_FOUND`). Disabling OpenMP
+makes ggml use its own `std::thread` threadpool, leaving the arm64 `jllama.dll` self-contained.
+**Every** Windows CPU job passes the flag now, arm64 and x86 alike -- for arm64 it was the
+dependency, for x86 it is a measured ~2x on token generation (see "`GGML_OPENMP=OFF` on every
+Windows CPU job" above), so the two reasons converged on one setting. (Upstream llama.cpp instead cross-compiles arm64 from an
 x64 runner with `vcvarsall amd64_arm64` + a `clang`/`clang++` toolchain file and no arm64 tests; the
-native-runner + `clang-cl` route here keeps the `/MT` CRT and lets `ctest` run on real ARM hardware.)
+native-runner + `clang-cl` route here keeps the hybrid CRT and lets `ctest` run on real ARM hardware.)
 
 ## Additional GPU-backend natives (ROCm/HIP, SYCL, Win-arm64 OpenCL, OpenVINO)
 
