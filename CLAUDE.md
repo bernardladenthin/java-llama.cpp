@@ -1440,7 +1440,7 @@ git show <old>:tools/server/server-task.cpp | { grep -oE '\{ *"[A-Za-z_0-9.]+" *
 | File | What to watch for |
 |------|-------------------|
 | `common/common.h` | `common_params`/`common_params_speculative` struct fields, `model_alias` container type, `common_init_result` shape, `build_info` symbol (removed in b8831 — now `llama_build_info()` from `build-info.h`) |
-| `common/chat.h` | `common_chat_parser_params` (was `common_chat_syntax`), `to_json_oaicompat`, `common_chat_msg_diff_to_json_oaicompat`, `set_tool_call_ids` |
+| `common/chat.h` | `common_chat_session` (b11531, #30210: one object per generation owning the prompt and the parser state; `oaicompat_chat_params_parse` fills it as its last argument, `server_task::apply_chat_session` consumes it, `server_response_reader::post_tasks` takes it -- `jllama.cpp` threads one through every chat entry point), `common_chat_parser_params` (was `common_chat_syntax`), `to_json_oaicompat`, `common_chat_msg_diff_to_json_oaicompat`, `set_tool_call_ids` |
 | `common/speculative.h` | `common_speculative_init`, `common_speculative_draft`, `common_speculative_accept` signatures, struct names |
 | `tools/mtmd/mtmd.h` | `mtmd_context_params` fields, `image_marker`/`media_marker` API, deprecated symbols (was `common/mtmd.h` before ~b8190) |
 | `include/llama-cpp.h` | `common_init_result_ptr` type, access pattern changes (`.get()` vs `->method()`) |

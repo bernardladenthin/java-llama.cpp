@@ -63,6 +63,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   in `build.sh` opts back in). With CUDA 13.4 and sccache 0.18.0 the nvcc launcher failed on the first `.cu`
   files in two confirmed runs (`Missing "cubin" file output`, `Compiler killed by signal 126`), and the
   uncached retry that followed made those jobs slower than a cold build; the C/C++ objects stay cached.
+- **Upgraded the pinned llama.cpp from b11529 to b11534**, in 3 reviewed steps, each ending at a tag. No
+  carried patch needed a refresh, and every drop-check still finds its defect. The one step with project
+  code is b11531, **#30210 "chat : refactor API"**: the prompt and the parser state of a chat generation now
+  live in a `common_chat_session` that `oaicompat_chat_params_parse` fills and the server task applies,
+  replacing the `chat_format` / `chat_parser` / `generation_prompt` / `parse_tool_calls` request fields
+  (none was a `RequestField`, so the Java wire surface is unchanged); `jllama.cpp` threads a session through
+  its four chat entry points and the C++ tests follow the new signatures. Also in the range: OpenCL kernels
+  that compile on Adreno A6x (#30176, the `opencl-android-aarch64` jar and the `llama-android-opencl` AAR on
+  that family), exact GELU for ModernBERT encoders (#30108), and no redundant CUDA copies after `SSM_SCAN`
+  (#29807). Per-step record: `docs/history/llama-cpp-breaking-changes.md`.
 - **CI: every `test-java-*` job now requires at least 1800 tests *executed*** (`verify-test-counts.sh
   --min-executed`, run minus skipped), where it required 1500 *run* before. The run count cannot see the
   other shape of the muted-suite failure -- method-level assumptions skipping in bulk -- while the executed
