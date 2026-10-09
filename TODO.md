@@ -166,14 +166,22 @@ binaries; 2026-10-08) established:
 7. **Unsigned binaries.** Upstream ships its DLLs unsigned, and so do we; on a WDAC/AppLocker-managed
    client, loading unsigned DLLs from `%TEMP%` is blocked. Out of scope here; worth a README note.
 
-### CUDA job: nvcc through sccache failed once and fell back
+### CUDA job: nvcc through sccache (`SCCACHE_WRAP_NVCC`, off since the second failure)
 
-- Run 37680715063 (b11476 bump): the Linux CUDA build logged `Missing cubin file output` and
-  `sccache: Compiler killed by signal 126` on `.cu` TUs, and `build.sh`'s retry rebuilt without the
-  launcher (green, ~50 min instead of ~15). Not the CUDA 13.3 `-virtual` failure already handled
-  (that one was `fatbinary ... acc.compute_75.ptx`). Check whether sccache 0.18.0 and CUDA 13.4 disagree
-  on the device-compile pipeline, or whether it was a transient cache-storage error; a second
-  occurrence makes the CUDA cache effectively off.
+- Run 37680715063 (b11476 bump) and run 37925157175 (#492, 2026-10-09): the Linux CUDA build logged
+  `sccache: caused by: Missing "cubin" file output` and `sccache: Compiler killed by signal 126` on
+  the first three `.cu` TUs, one minute into the build, and `build.sh`'s retry rebuilt everything
+  without any launcher (green; 86 min in total the second time, longer than a cold build). Not the
+  CUDA 13.3 `-virtual` `.ptx` failure, and not a storage error (the gcc probe passed and the gcc TUs
+  were being served): sccache 0.18.0 and CUDA 13.4's nvcc disagree on the device-compile command
+  line, in every job log examined since the 13.4 bump of 2026-09-27 (also runs 37643964068 and
+  37831180985; the retry alone takes 47-80 min depending on the runner, and no job came near the warm
+  ~15 min). Since the second confirmed occurrence `build.sh`
+  wraps nvcc only with `SCCACHE_WRAP_NVCC=true` (CLAUDE.md "Fast local CUDA builds"), so the gcc TUs
+  stay cached and nvcc runs directly from the start. **Open:** re-test the opt-in with a newer
+  sccache (bump `SCCACHE_DL_VERSION` on a branch, set the variable on the CUDA job for one PR run,
+  look for CUDA hits in the stats table) and flip the default back when a warm run shows them -- the
+  win was ~51 -> ~15 min with CUDA 13.2.
 
 ### macOS dylib links Homebrew OpenSSL (found by `verify-native-deps.py`)
 

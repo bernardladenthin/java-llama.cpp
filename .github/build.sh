@@ -105,18 +105,29 @@ if [ "${USE_CACHE:-true}" = "true" ] && command -v sccache >/dev/null 2>&1 \
    && [ -n "${SCCACHE_WEBDAV_TOKEN:-}${SCCACHE_GHA_ENABLED:-}" ] \
    && sccache_can_wrap_compiler; then
   LAUNCH="-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
-  # CUDA builds: also wrap nvcc so the per-arch .cu device passes are cached too — not just
-  # the gcc host TUs. Those per-architecture device-pass objects are the dominant cost of the
-  # full-arch CUDA job, and sccache does support nvcc as a compiler. Scoped to CUDA builds
-  # (GGML_CUDA in the cmake args): CMAKE_CUDA_COMPILER_LAUNCHER is inert when CUDA is not an
-  # enabled language, but keeping it scoped leaves the CPU/Android jobs' configure output clean.
-  # If sccache cannot wrap nvcc it runs it directly (uncached); and the mid-build retry below
-  # also catches an sccache "Compiler not supported" failure and rebuilds without the launcher,
-  # so an nvcc-hostile sccache can never red the build.
+  # CUDA builds: nvcc through sccache is OPT-IN (SCCACHE_WRAP_NVCC=true), off by default.
+  # Wrapping nvcc cached the per-arch .cu device passes too, which are the dominant cost of the
+  # full-arch CUDA job (measured: ~51 min cold -> ~15 min warm with CUDA 13.2). Since the CUDA
+  # 13.4 toolkit (2026-09-27), sccache 0.18.0 fails on the very first .cu TUs, ten seconds into
+  # the build, in every job log examined (four of four: runs 37643964068, 37680715063,
+  # 37831180985, 37925157175): `Missing "cubin" file output` / `Compiler killed by signal 126`
+  # -- sccache's nvcc command-line parsing, not a compile error. The retry below then rebuilt
+  # EVERYTHING without a launcher, gcc TUs included (47-80 min depending on the runner). Not
+  # wrapping nvcc keeps the ~280 gcc objects cached and runs nvcc directly from the start, with
+  # no wasted first attempt. Re-try the opt-in on a PR run after bumping SCCACHE_DL_VERSION (or
+  # a CUDA bump); flip the default back once a warm run shows CUDA hits in the stats table.
+  # Scoped to CUDA builds (GGML_CUDA in the cmake args): CMAKE_CUDA_COMPILER_LAUNCHER is inert
+  # when CUDA is not an enabled language, but keeping it scoped leaves the CPU/Android jobs'
+  # configure output clean. ggml does not wrap nvcc on its own here: its GGML_CCACHE block only
+  # fires when neither CMAKE_C_COMPILER_LAUNCHER nor CMAKE_CXX_COMPILER_LAUNCHER is set.
   case " $* " in
     *" -DGGML_CUDA=1 "* | *" -DGGML_CUDA=ON "* | *" -DGGML_CUDA=on "*)
-      LAUNCH="$LAUNCH -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache"
-      echo "build.sh: sccache will also wrap nvcc (CUDA build detected)" ;;
+      if [ "${SCCACHE_WRAP_NVCC:-false}" = "true" ]; then
+        LAUNCH="$LAUNCH -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache"
+        echo "build.sh: sccache will also wrap nvcc (CUDA build detected, SCCACHE_WRAP_NVCC=true)"
+      else
+        echo "build.sh: nvcc runs uncached (CUDA build detected, SCCACHE_WRAP_NVCC is not 'true'); sccache wraps the C/C++ TUs only"
+      fi ;;
   esac
   echo "build.sh: sccache ON (endpoint=${SCCACHE_WEBDAV_ENDPOINT:-default}), building with -j${JOBS}"
 else

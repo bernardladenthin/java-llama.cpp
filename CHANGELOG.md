@@ -53,6 +53,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   attach mode alike; `NativeServer.getPort()` reports 9931 accordingly. `OpenAiCompatServer` keeps its own default
   of 8080 (`OpenAiServerConfig.DEFAULT_PORT`, a public constant of this project with no upstream coupling). Pass
   `--port` explicitly where a fixed port matters; every README example already does.
+- **CI: the Linux CUDA build no longer routes nvcc through sccache by default** (`SCCACHE_WRAP_NVCC=true`
+  in `build.sh` opts back in). With CUDA 13.4 and sccache 0.18.0 the nvcc launcher failed on the first `.cu`
+  files in two confirmed runs (`Missing "cubin" file output`, `Compiler killed by signal 126`), and the
+  uncached retry that followed made those jobs slower than a cold build; the C/C++ objects stay cached.
 - **Upgraded the pinned llama.cpp from b11512 to b11529**, in 5 reviewed steps, each ending at a tag. No
   carried patch needed a refresh, and every drop-check still finds its defect. In the range: the server's
   default port moves from 8080 to 9931 (#30159, the `NativeServer` entry above); CUDA top-k selection is

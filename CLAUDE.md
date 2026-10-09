@@ -368,13 +368,16 @@ and the Windows redist components at `https://developer.download.nvidia.com/comp
 The CUDA artifact must ship kernels for **every supported GPU generation**, so the default
 build — and every CI build — compiles the **full `CMAKE_CUDA_ARCHITECTURES` set** that
 ggml/llama.cpp selects. nvcc recompiles each `.cu` kernel once per architecture, which is the
-dominant cost of the ~70 min CUDA job. **`sccache` now wraps nvcc too:** `build.sh` adds
-`-DCMAKE_CUDA_COMPILER_LAUNCHER=sccache` for CUDA builds (it detects `GGML_CUDA` in the cmake
-args), so the per-arch `.cu` device passes are cached over Depot alongside the gcc C/C++ TUs.
-Because the kernels are content-addressed and llama.cpp is pinned, a **warm** cache recompiles
-only what changed — so CI keeps the **full arch set on every run** (release-safe everywhere)
-and relies on the cache, not a reduced arch set, for speed. The first (cold-cache) run still
-pays the full nvcc cost; the win shows on subsequent warm runs.
+dominant cost of the CUDA job. **nvcc through `sccache` is opt-in since CUDA 13.4**
+(`SCCACHE_WRAP_NVCC=true`: `build.sh` then adds `-DCMAKE_CUDA_COMPILER_LAUNCHER=sccache` when it
+detects `GGML_CUDA` in the cmake args) and **off by default** -- the rollout item 2 below has the
+measurements. With CUDA 13.2 it cached the per-arch `.cu` device passes over Depot alongside the
+gcc C/C++ TUs (~51 min cold, ~15 min warm); with CUDA 13.4 and sccache 0.18.0 it fails on the first
+`.cu` TUs of every run examined (`Missing "cubin" file output`, `Compiler killed by signal 126`), and
+the retry that follows rebuilds everything without any launcher, gcc TUs included (47-80 min
+depending on the runner). Today the gcc TUs are cached and nvcc runs directly: CI keeps the **full
+arch set on every run** (release-safe everywhere) at roughly the cold nvcc cost, never a reduced
+arch set.
 
 `CUDA_FAST_BUILD` remains as a **local-dev** single-arch knob (CI no longer sets it).
 `build_cuda_linux.sh` honors it — default **off** (full arch set, release-safe):
@@ -395,15 +398,14 @@ runs on only the single GPU generation it was compiled for, so the **distributed
 the full arch set**. The script default is **off** (full) so any *local/manual* build is
 release-safe, and **CI no longer sets `CUDA_FAST_BUILD` at all** — the `crosscompile-linux-x86_64-cuda`
 job always builds the full set on PR / push / dispatch / publish, so every artifact (not just the ones
-that reach Central) runs on every GPU generation. The full-arch CI cost is absorbed by the
-sccache-over-Depot cache, which now wraps nvcc (`-DCMAKE_CUDA_COMPILER_LAUNCHER=sccache`, added by
-`build.sh` for CUDA builds, gated behind the same probe). The launcher is safe to enable
-unconditionally: if sccache cannot wrap nvcc it runs it directly (uncached), and `build.sh`'s
-mid-build retry treats an sccache `Compiler not supported` failure like any other cache error and
-rebuilds the job without the launcher rather than redding it. **Verified:** a warm run in the
-manylinux_2_28 container hit **100%** on CUDA / CUBIN / device-code (139 CUDA hits, 99.86% overall,
-3 misses) and cut the job from **~51 min cold to ~15 min warm** — nvcc caching works here. `build.sh`
-prints `sccache --show-stats` at the end of every run so the hit table stays visible.
+that reach Central) runs on every GPU generation. The full-arch CI cost is paid by the job
+itself since CUDA 13.4 (nvcc uncached, see above); the sccache-over-Depot cache still covers the gcc
+TUs, and `SCCACHE_WRAP_NVCC=true` re-enables the nvcc launcher (gated behind the same probe;
+`build.sh`'s mid-build retry treats an sccache `Compiler not supported` / `Compiler killed by signal`
+failure like any other cache error and rebuilds the job without any launcher rather than redding it).
+**Measured with CUDA 13.2:** a warm run in the manylinux_2_28 container hit **100%** on CUDA / CUBIN /
+device-code (139 CUDA hits, 99.86% overall, 3 misses) and cut the job from **~51 min cold to ~15 min
+warm**. `build.sh` prints `sccache --show-stats` at the end of every run so the hit table stays visible.
 
 ## Android minimum API level
 
@@ -985,9 +987,10 @@ v0.16.0 + the probe this is no longer a risk.) Job-by-job status:
    warm cache 277/278 hits (99.64%), 1m46s build time. Since the CPU variants it runs in the
    manylinux_2_28 image the CUDA job already used (gcc-toolset-14), with the same env.
 2. `crosscompile-linux-x86_64-cuda` (via `build_cuda_linux.sh`, which execs `build.sh`) —
-   ✅ **verified green with nvcc caching, full-arch always.** `build.sh` also wraps nvcc
+   ✅ **green, full-arch always; the gcc TUs cache, nvcc has been uncached since CUDA 13.4** (the
+   paragraph at the end of this item). With CUDA 13.2 `build.sh` also wrapped nvcc
    (`-DCMAKE_CUDA_COMPILER_LAUNCHER=sccache`, scoped to CUDA builds), so both the gcc C/C++ TUs
-   (134 model files + ggml + httplib) **and** the per-arch `.cu` device passes cache over Depot.
+   (134 model files + ggml + httplib) **and** the per-arch `.cu` device passes cached over Depot.
    CI dropped the single-arch validation shortcut (`CUDA_FAST_BUILD`/`CUDA_ARCH` removed from the
    job) — every run builds the full arch set and leans on the warm cache for speed. A warm run hit
    **100%** on CUDA / CUBIN / device-code (139 CUDA hits, 99.86% overall, 3 misses), cutting the job
@@ -1011,7 +1014,17 @@ v0.16.0 + the probe this is no longer a risk.) Job-by-job status:
    retry silently re-enabled the very launcher it was trying to avoid. Fix: the retry's `cmake
    -Bbuild` now also passes `-DGGML_CCACHE=OFF`, so a genuinely uncached build is guaranteed
    regardless of what's left on `PATH`. This fallback now falls back to a real, green `-O3` build
-   like every other sccache/nvcc incompatibility instead of redding the job.
+   like every other sccache/nvcc incompatibility instead of redding the job. **CUDA 13.4 with sccache 0.18.0: a third
+   failure shape, and the reason nvcc wrapping is opt-in now (`SCCACHE_WRAP_NVCC=true`).**
+   `sccache: caused by: Missing "cubin" file output` followed by `sccache: Compiler killed by signal
+   126`, on the first `.cu` TUs ten seconds into the build, in **every** CUDA job log examined since
+   the 13.4 bump of 2026-09-27 -- runs 37643964068 and 37831180985 (2026-10-07/08), 37680715063 (the
+   b11476 bump) and 37925157175 (#492, 2026-10-09). Each fell back to the uncached retry, which took
+   47 to 80 minutes depending on the runner (job totals of 54 to 93 min; none came near the warm
+   ~15 min), so the launcher never paid anything back and the retry threw the gcc cache away with it.
+   `build.sh` therefore wraps nvcc only when `SCCACHE_WRAP_NVCC=true` (the CUDA job does not set it)
+   and keeps the gcc TUs cached. To re-test: bump `SCCACHE_DL_VERSION`, set the variable on the CUDA
+   job for one PR run, and flip the default back once a warm run shows CUDA hits in the stats table.
 3. `crosscompile-linux-aarch64` — ✅ **enabled**, a **native `ubuntu-24.04-arm` build** inside the
    pypa manylinux_2_28 aarch64 image (`MANYLINUX_ARGS` forwards the env like `DOCKCROSS_ARGS`):
    `build.sh` self-fetches the aarch64 static-musl sccache in the container (the fetch block in
