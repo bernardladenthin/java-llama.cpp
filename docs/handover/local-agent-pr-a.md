@@ -28,8 +28,8 @@ Everything below is what only your machine can show.
 1. **Toolchain inventory** (once): clang versions and paths (LLVM on `PATH`, the one inside Visual
    Studio under `VC\Tools\Llvm\x64`), Visual Studio and MSVC toolset versions, Windows SDK, Ninja,
    sccache, JDK(s), Docker images you have pulled, CUDA toolkit and driver version, Vulkan SDK,
-   Android SDK/NDK. Two questions: do you have access to a Mac (package B1 needs one, otherwise it is
-   CI-only)? Do you have an Android device, ideally with a Qualcomm Adreno GPU (package E2)?
+   Android SDK/NDK. (There is no Mac and no Android device; macOS and Android are verified through
+   CI runners and the CI emulator only, so do not plan work that needs either.)
 
 2. **A1 -- the Java suite with models on Windows.** Build the Ninja CPU library at b11534 the way CI
    does (`mvn -q compile` in `llama/`, then `.github\build.bat -G "Ninja Multi-Config" -DOS_NAME=Windows
