@@ -295,17 +295,6 @@ the server closed. Since b11361 `LlamaModel` holds a `server_routes` of its own 
 `0007` and `native_server.cpp`. Needs a test with sleep enabled (`IdleSleepWakeIntegrationTest` is the
 template) before the fix, to show it red first.
 
-### Router workers print the backend line onto the router's command pipe (cosmetic, since b11401)
-
-Since llama.cpp b11401 (#29895) a router child keeps its stdout for the state commands to the router
-and redirects everything else written to stdout to stderr -- but only once `llama_server()` starts.
-A JVM worker (`NativeServer.setWorkerCommand`, `patches/0008`) prints `LlamaLoader`'s
-`[jllama] using native backend '...'` line to `System.out` before that, so the router logs it as
-`unexpected output on the command pipe`. Harmless (the router warns and goes on), but misleading.
-Moving the line to `System.err` would fix it; three smoke scripts grep for it
-(`smoke-test-fatjar.sh` reads both streams, `smoke-rpc-fatjar.sh` and `smoke-natives-jars.sh` need
-checking first), so it is not a one-line change.
-
 ### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
 
 Left over from the 2026-06-20 code audit (18/18 findings fixed in PRs #258/#260, regression tests in
@@ -601,8 +590,8 @@ and have only run locally so far.
 > **Update.** The `IdleSleepWakeIntegrationTest` added to close the `wake_and_post` gap immediately
 > found a real JVM crash (SIGSEGV on all six CI platforms) — see the CHANGELOG "Fixed" entry. Both
 > facets are fixed in that PR via the `wake_server()` choke point. This is the clearest evidence for
-> the entry below about a floor on executed tests: the defect had been reachable from public API for
-> as long as `--sleep-idle-seconds` has existed, and nothing ran that path.
+> the floor on executed tests that `.github/verify-test-counts.sh` enforces since: the defect had been
+> reachable from public API for as long as `--sleep-idle-seconds` has existed, and nothing ran that path.
 
 A mutation pass over the branch applied 27 mutations and 26 went red on the test that claims them,
 so no test here passes with its subject deleted. What it did find is code with **no runnable guard**.
@@ -620,13 +609,6 @@ away with the patch itself at the b11080 bump. This is what remains.
   over the `String` constants and require each `models/…`-shaped one to equal
   `resolveModelPath(literal)` against a `@TempDir` fixture planted at the reactor root, so the
   assertion does not depend on a real model being present.
-
-- **Nothing asserts a floor on the number of tests actually executed.** A class-level `@BeforeAll`
-  assumption makes Surefire record `tests="0" errors="0" skipped="0"` — the class contributes no
-  entries at all, so "did the run skip anything?" is structurally blind to it. This is exactly how
-  the model-gated suite stayed silently muted for months. Summing `tests=` across
-  `target/surefire-reports/TEST-*.xml` in each `test-java-*` job and failing below a pinned minimum
-  is the one check that would have caught it directly, and it is cheap.
 
 ### Test-coverage debt found during the b10649 review (PR #403)
 

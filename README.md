@@ -11,7 +11,7 @@
 **Build:**  
 ![Java 8+](https://img.shields.io/badge/Java-8%2B-informational)  
 ![Platform](https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows%20%7C%20Android-lightgrey)  
-[![llama.cpp b11529](https://img.shields.io/badge/llama.cpp-%23b11529-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11529)  
+[![llama.cpp b11534](https://img.shields.io/badge/llama.cpp-%23b11534-informational)](https://github.com/ggml-org/llama.cpp/releases/tag/b11534)  
 [![JPMS](https://img.shields.io/badge/JPMS-modular%20JAR-25A162)](https://openjdk.org/projects/jigsaw/)  
 ![JUnit](https://img.shields.io/badge/tested%20with-JUnit6-25A162)  
 [![JSpecify](https://img.shields.io/badge/JSpecify-1.0.0%20%40NullMarked-25A162)](https://jspecify.dev)  
@@ -148,6 +148,21 @@ In Gradle it is just `implementation("net.ladenthin:llama-platform:5.2.0")`.)
 > replacement for it.
 
 There are multiple [examples](llama/src/test/java/examples).
+
+### Try it with JBang, no project needed
+
+[`examples/jbang/Chat.java`](examples/jbang/Chat.java) is a one-file console chat that
+[JBang](https://www.jbang.dev) runs straight from the repository, with any JDK 8+ and a GGUF of an
+instruction-tuned model:
+
+```bash
+jbang https://github.com/bernardladenthin/java-llama.cpp/blob/main/examples/jbang/Chat.java model.gguf
+```
+
+Its `//DEPS` lines name the classes jar and the CPU natives jar of every desktop platform (the jars
+`llama-platform` names; JBang treats a `pom` dependency as a BOM and puts nothing of it on the
+classpath), and the loader picks this machine's. Copy the file as a starting point; a GPU backend is
+one more `//DEPS` line (see [Choosing the natives jars](#choosing-the-natives-jars)).
 
 ### Snapshot builds
 

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Java bindings for [llama.cpp](https://github.com/ggerganov/llama.cpp) via JNI, providing a high-level API for LLM inference in Java. The Java layer communicates with a native C++ library through JNI.
 
-Current llama.cpp pinned version: **b11529**
+Current llama.cpp pinned version: **b11534**
 
 ## Natives jars: one directory per backend (`.github/natives.csv`)
 
@@ -897,7 +897,7 @@ needs no extra step here, `build-webui` re-reads the tag and rebuilds the matchi
 ships no UI):
 ```bash
 # needs node/npm + network for the asset build; the embed step is plain cmake -P
-git clone --depth 1 --branch b11529 https://github.com/ggml-org/llama.cpp /tmp/lc
+git clone --depth 1 --branch b11534 https://github.com/ggml-org/llama.cpp /tmp/lc
 ( cd /tmp/lc/tools/ui && npm ci && npm run build )
 mkdir -p webui-generated /tmp/ui-gen
 cmake -DUI_SOURCE_DIR=/tmp/lc/tools/ui -DUI_BINARY_DIR=/tmp/ui-gen \
@@ -937,7 +937,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11529`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11534`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -1440,7 +1440,7 @@ git show <old>:tools/server/server-task.cpp | { grep -oE '\{ *"[A-Za-z_0-9.]+" *
 | File | What to watch for |
 |------|-------------------|
 | `common/common.h` | `common_params`/`common_params_speculative` struct fields, `model_alias` container type, `common_init_result` shape, `build_info` symbol (removed in b8831 — now `llama_build_info()` from `build-info.h`) |
-| `common/chat.h` | `common_chat_parser_params` (was `common_chat_syntax`), `to_json_oaicompat`, `common_chat_msg_diff_to_json_oaicompat`, `set_tool_call_ids` |
+| `common/chat.h` | `common_chat_session` (b11531, #30210: one object per generation owning the prompt and the parser state; `oaicompat_chat_params_parse` fills it as its last argument, `server_task::apply_chat_session` consumes it, `server_response_reader::post_tasks` takes it -- `jllama.cpp` threads one through every chat entry point), `common_chat_parser_params` (was `common_chat_syntax`), `to_json_oaicompat`, `common_chat_msg_diff_to_json_oaicompat`, `set_tool_call_ids` |
 | `common/speculative.h` | `common_speculative_init`, `common_speculative_draft`, `common_speculative_accept` signatures, struct names |
 | `tools/mtmd/mtmd.h` | `mtmd_context_params` fields, `image_marker`/`media_marker` API, deprecated symbols (was `common/mtmd.h` before ~b8190) |
 | `include/llama-cpp.h` | `common_init_result_ptr` type, access pattern changes (`.get()` vs `->method()`) |
@@ -1996,7 +1996,9 @@ as *nothing at all* while the job still went green, on every `test-java-*` job. 
 shape, because it defeats the obvious guard: a class-level `@BeforeAll` assumption makes Surefire
 record `tests="0" errors="0" skipped="0"` — the class contributes **no** test entries, so a check of
 the form "did this run skip anything?" is blind to it. The only thing that catches it directly is a
-floor on the number of tests actually executed (see `TODO.md`). It is why several stale
+floor on the number of tests actually executed -- `.github/verify-test-counts.sh`, run by every
+`test-java-*` job: no class with zero entries, and at least 1800 tests executed (run minus skipped;
+the jobs execute 1856 to 1865, a checkout without models 1589). It is why several stale
 assertions (e.g. `LlamaModelTest#testGetMetrics` against a payload shape upstream had dropped at
 b10408) never failed in CI. The fix is **`TestConstants.resolveModelPath` /
 `resolveModelProperty`**, which accept either layout — module-relative first, then the reactor root
@@ -2098,7 +2100,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11529`.
+llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11534`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
@@ -2490,6 +2492,8 @@ missed again.)
   (The per-classifier snippets were **deduplicated** to a single canonical + template pair, so the
   release version now appears in only ~4 spots here, not ~20 — the runtime details live once in the
   classifier table.)
+- **`examples/jbang/Chat.java`** — the version in its `//DEPS` lines; `check-natives.py` holds it to
+  the README install snippet's version, so forgetting it fails `code-style`.
 - **`llama-langchain4j/README.md`** — its own `<dependency>` snippet.
 - **`llama-atmosphere-agent/pom.xml`** — its own `<version>`, which must equal the reactor's
   (standalone project outside the reactor, so `versions:set` skips it; `check-natives.py` fails until

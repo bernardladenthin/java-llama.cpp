@@ -193,6 +193,27 @@ class ConsumerTest(unittest.TestCase):
         failures = natives.check_readme(ROWS, text.replace("`cpu-linux-s390x`", "cpu-linux-s390x"))
         self.assertEqual(failures, ["README.md does not document the natives jar `cpu-linux-s390x`"])
 
+    def test_jbang_example(self):
+        readme = "<artifactId>llama-platform</artifactId>\n    <version>5.2.0</version>\n</dependency>"
+        platform = [r["classifier"] for r in ROWS if r["platform"] == "yes"]
+        lines = ["//DEPS net.ladenthin:llama:5.2.0"] + [f"//DEPS net.ladenthin:llama:5.2.0:{c}" for c in platform]
+        script = "///usr/bin/env jbang\n" + "\n".join(lines) + "\n// a comment naming net.ladenthin:llama:5.2.0:cuda13-linux-x86-64 is not a dependency\n"
+        self.assertEqual(natives.check_jbang_example(ROWS, script, readme), [])
+        # a platform jar missing, a GPU jar named instead
+        broken = script.replace(":cpu-linux-s390x", ":cuda13-linux-x86-64")
+        self.assertEqual(natives.check_jbang_example(ROWS, broken, readme),
+                         ["examples/jbang/Chat.java: missing the platform natives jar cpu-linux-s390x",
+                          "examples/jbang/Chat.java: names cuda13-linux-x86-64, which is not a platform=yes row of .github/natives.csv"])
+        # the classes jar missing
+        failures = natives.check_jbang_example(ROWS, script.replace("//DEPS net.ladenthin:llama:5.2.0\n", ""), readme)
+        self.assertEqual(failures, ["examples/jbang/Chat.java: the classes jar net.ladenthin:llama:<version> is missing"])
+        # a version the README has moved past (the bump edits both by hand)
+        failures = natives.check_jbang_example(ROWS, script, readme.replace("5.2.0", "5.3.0"))
+        self.assertEqual(failures, ["examples/jbang/Chat.java: DEPS version(s) ['5.2.0'] must be the README install snippet's 5.3.0"])
+        # another artifact, or JBang's BOM-only pom form
+        failures = natives.check_jbang_example(ROWS, script + "//DEPS net.ladenthin:llama-platform:5.2.0@pom\n", readme)
+        self.assertEqual(failures, ["examples/jbang/Chat.java: `net.ladenthin:llama-platform:5.2.0@pom` is not net.ladenthin:llama:<version>[:<classifier>]"])
+
     def test_agent_class_path(self):
         good = "<Class-Path>llama-${v}-all-linux-x86-64-jar-with-dependencies.jar llama-${v}-jar-with-dependencies.jar</Class-Path>"
         self.assertEqual(natives.check_agent_class_path(ROWS, good), [])

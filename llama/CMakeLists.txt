@@ -261,7 +261,7 @@ endif()
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b11529
+	GIT_TAG        b11534
 	PATCH_COMMAND  ${CMAKE_COMMAND}
 		-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patches
 		-DLLAMA_SRC=<SOURCE_DIR>

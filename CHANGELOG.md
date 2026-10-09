@@ -10,6 +10,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`examples/jbang/Chat.java`**, a one-file console chat that [JBang](https://www.jbang.dev) runs without a
+  checkout or a build (`jbang https://github.com/bernardladenthin/java-llama.cpp/blob/main/examples/jbang/Chat.java
+  model.gguf`). Its `//DEPS` lines name the classes jar and the CPU natives jar of every desktop platform
+  themselves -- JBang treats a `pom` dependency such as `llama-platform` as a BOM and puts nothing of it on the
+  classpath -- and `check-natives.py` holds them to the `platform=yes` rows of `natives.csv` and to the README's
+  release version.
 - **`ModelParameters.setMoeCacheMib(int)`** (`--moe-cache-mib`, llama.cpp b11480, EXPERIMENTAL upstream): a
   GPU cache for the MoE expert weights a `setCpuMoeLayers` / `--cpu-moe` setup keeps in host memory,
   split among several GPUs like the layers; `0` (the default) disables it.
@@ -57,6 +63,20 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   in `build.sh` opts back in). With CUDA 13.4 and sccache 0.18.0 the nvcc launcher failed on the first `.cu`
   files in two confirmed runs (`Missing "cubin" file output`, `Compiler killed by signal 126`), and the
   uncached retry that followed made those jobs slower than a cold build; the C/C++ objects stay cached.
+- **Upgraded the pinned llama.cpp from b11529 to b11534**, in 3 reviewed steps, each ending at a tag. No
+  carried patch needed a refresh, and every drop-check still finds its defect. The one step with project
+  code is b11531, **#30210 "chat : refactor API"**: the prompt and the parser state of a chat generation now
+  live in a `common_chat_session` that `oaicompat_chat_params_parse` fills and the server task applies,
+  replacing the `chat_format` / `chat_parser` / `generation_prompt` / `parse_tool_calls` request fields
+  (none was a `RequestField`, so the Java wire surface is unchanged); `jllama.cpp` threads a session through
+  its four chat entry points and the C++ tests follow the new signatures. Also in the range: OpenCL kernels
+  that compile on Adreno A6x (#30176, the `opencl-android-aarch64` jar and the `llama-android-opencl` AAR on
+  that family), exact GELU for ModernBERT encoders (#30108), and no redundant CUDA copies after `SSM_SCAN`
+  (#29807). Per-step record: `docs/history/llama-cpp-breaking-changes.md`.
+- **CI: every `test-java-*` job now requires at least 1800 tests *executed*** (`verify-test-counts.sh
+  --min-executed`, run minus skipped), where it required 1500 *run* before. The run count cannot see the
+  other shape of the muted-suite failure -- method-level assumptions skipping in bulk -- while the executed
+  count does: the jobs execute 1856 (Windows) to 1865 (Linux) tests, a checkout without the models 1589.
 - **Upgraded the pinned llama.cpp from b11512 to b11529**, in 5 reviewed steps, each ending at a tag. No
   carried patch needed a refresh, and every drop-check still finds its defect. In the range: the server's
   default port moves from 8080 to 9931 (#30159, the `NativeServer` entry above); CUDA top-k selection is
@@ -255,6 +275,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
 
 ### Fixed
+- **`LlamaLoader` prints its two diagnostic lines to stderr**, `[jllama] using native backend '…'` and
+  `[jllama] extracted '…'`, where they went to stdout before. A router worker JVM
+  (`NativeServer.setWorkerCommand`) printed them onto the router's command pipe, which since llama.cpp b11401
+  the router reports as `unexpected output on the command pipe` (harmless, misleading); and the stdout of a
+  `java -jar` server is otherwise the upstream server's. The CI smokes read both streams already.
 - **`llama/patches/0017`** fixes two defects in the four `_mm_prefetch` calls of ggml's x86
   `quants.c` (the SSSE3-without-AVX branch of `ggml_vec_dot_q4_0_q8_0`, and the only
   `_mm_prefetch` calls in the whole ggml tree), both by routing the address through one new

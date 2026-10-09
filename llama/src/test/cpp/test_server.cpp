@@ -177,6 +177,10 @@ TEST(ServerSlotStats, DraftFieldsAbsent_WhenExplicitlyZero) {
 //        reasoning_format    from oaicompat_chat_syntax.reasoning_format
 //        reasoning_in_content from oaicompat_chat_syntax.reasoning_in_content
 //        generation_prompt   from oaicompat_chat_syntax.generation_prompt
+//   Since b11531 (#30210) the parser state lives in common_chat_session, and
+//   task_params keeps only chat_format + reasoning_format: reasoning_in_content
+//   is derived (stream && DEEPSEEK_LEGACY), generation_prompt comes from
+//   sampling.generation_prompt.
 // ============================================================
 
 TEST(SlotParamsToJson, CoreFields_Present) {
@@ -201,13 +205,11 @@ TEST(SlotParamsToJson, NewChatSyntaxFields_Present) {
     task_params p;
     const json j = p.to_json();
 
-    EXPECT_TRUE(j.contains("chat_format")) << "chat_format must come from oaicompat_chat_syntax.format";
-    EXPECT_TRUE(j.contains("reasoning_format"))
-        << "reasoning_format must come from oaicompat_chat_syntax.reasoning_format";
+    EXPECT_TRUE(j.contains("chat_format")) << "chat_format must come from task_params::chat_format";
+    EXPECT_TRUE(j.contains("reasoning_format")) << "reasoning_format must come from task_params::reasoning_format";
     EXPECT_TRUE(j.contains("reasoning_in_content"))
-        << "reasoning_in_content must come from oaicompat_chat_syntax.reasoning_in_content";
-    EXPECT_TRUE(j.contains("generation_prompt"))
-        << "generation_prompt must come from oaicompat_chat_syntax.generation_prompt";
+        << "reasoning_in_content must be derived from stream + reasoning_format (b11531)";
+    EXPECT_TRUE(j.contains("generation_prompt")) << "generation_prompt must come from sampling.generation_prompt";
 }
 
 TEST(SlotParamsToJson, OldChatFormatEnum_NotPresent) {
@@ -248,22 +250,25 @@ TEST(SlotParamsToJson, GrammarValue_OutputFormatGrammarExtracted) {
     EXPECT_EQ(j.at("grammar").get<std::string>(), "root ::= object");
 }
 
-TEST(SlotParamsToJson, GenerationPrompt_ReflectsSyntaxField) {
+TEST(SlotParamsToJson, GenerationPrompt_ReflectsSamplingField) {
     task_params p;
-    p.chat_parser_params.generation_prompt = common_chat_input("Think step by step:");
+    p.sampling.generation_prompt = "Think step by step:";
 
     const json j = p.to_json();
 
     EXPECT_EQ(j.at("generation_prompt").get<std::string>(), "Think step by step:");
 }
 
-TEST(SlotParamsToJson, ReasoningInContent_ReflectsSyntaxField) {
+TEST(SlotParamsToJson, ReasoningInContent_DerivedFromStreamAndLegacyFormat) {
+    // b11531: no longer a stored flag -- true exactly for a streamed request in the legacy
+    // DeepSeek reasoning format, the one case upstream inlines reasoning into the content.
     task_params p;
-    p.chat_parser_params.reasoning_in_content = true;
+    p.stream = true;
+    p.reasoning_format = COMMON_REASONING_FORMAT_DEEPSEEK_LEGACY;
+    EXPECT_TRUE(p.to_json().at("reasoning_in_content").get<bool>());
 
-    const json j = p.to_json();
-
-    EXPECT_TRUE(j.at("reasoning_in_content").get<bool>());
+    p.stream = false;
+    EXPECT_FALSE(p.to_json().at("reasoning_in_content").get<bool>()) << "non-streamed: never inlined";
 }
 
 TEST(SlotParamsToJson, ReasoningInContent_FalseByDefault) {
