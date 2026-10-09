@@ -54,13 +54,13 @@ public class NativeServerSmokeTest {
         NativeServer server = new NativeServer("-m", "m.gguf");
         assertThat(server.getHost(), is("127.0.0.1"));
         assertThat(server.getHosts(), contains("127.0.0.1"));
-        assertThat(server.getPort(), is(8080));
+        assertThat(server.getPort(), is(9931));
     }
 
     @Test
     public void nonIntegerPortFallsBackToDefault() {
         NativeServer server = new NativeServer("-m", "m.gguf", "--port", "abc");
-        assertThat(server.getPort(), is(8080));
+        assertThat(server.getPort(), is(9931));
     }
 
     @Test

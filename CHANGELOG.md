@@ -48,6 +48,24 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **`NativeServer` binds port 9931 when no `--port` is given** (llama.cpp b11521,
+  [#30159](https://github.com/ggml-org/llama.cpp/pull/30159) moved the server default off 8080), in classic and
+  attach mode alike; `NativeServer.getPort()` reports 9931 accordingly. `OpenAiCompatServer` keeps its own default
+  of 8080 (`OpenAiServerConfig.DEFAULT_PORT`, a public constant of this project with no upstream coupling). Pass
+  `--port` explicitly where a fixed port matters; every README example already does.
+- **CI: the Linux CUDA build no longer routes nvcc through sccache by default** (`SCCACHE_WRAP_NVCC=true`
+  in `build.sh` opts back in). With CUDA 13.4 and sccache 0.18.0 the nvcc launcher failed on the first `.cu`
+  files in two confirmed runs (`Missing "cubin" file output`, `Compiler killed by signal 126`), and the
+  uncached retry that followed made those jobs slower than a cold build; the C/C++ objects stay cached.
+- **Upgraded the pinned llama.cpp from b11512 to b11529**, in 5 reviewed steps, each ending at a tag. No
+  carried patch needed a refresh, and every drop-check still finds its defect. In the range: the server's
+  default port moves from 8080 to 9931 (#30159, the `NativeServer` entry above); CUDA top-k selection is
+  reworked (#28713) and the MMQ config helpers take the `src1` precision (#30168); SYCL gains a Q5_K
+  reorder-layout MMVQ and a fused GLU (#29375); Metal gets flash-attention kernels for the 128/96 head-size
+  pair (#30209); Vulkan's `rms_norm` no longer overflows its workgroup count (#30145); `ggml_acc` no longer
+  writes out of bounds for a large offset (#30135); the meta backend handles host views under
+  `--split-mode tensor` (#30217); the WebUI gains a models manager (#29583, auto-followed by `build-webui`).
+  Per-step record: `docs/history/llama-cpp-breaking-changes.md`.
 - **Windows natives: no Visual C++ redistributable, and `ucrtbase.dll` stays serviceable — but
   Windows 10 or newer is now required.** The Windows CPU jars (`cpu-windows-*`,
   `msvc-windows-*`) and the CUDA, Vulkan, OpenCL and ROCm jars use the **hybrid CRT**: the C++

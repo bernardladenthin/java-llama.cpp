@@ -80,8 +80,11 @@ public final class NativeServer implements AutoCloseable {
     /** Default bind host reported by {@link #getHost()} when {@code --host} is not passed. */
     private static final String DEFAULT_HOST = "127.0.0.1";
 
-    /** Default port reported by {@link #getPort()} when no port flag is passed. */
-    private static final int DEFAULT_PORT = 8080;
+    /**
+     * Default port reported by {@link #getPort()} when no port flag is passed: llama.cpp's own
+     * default, 9931 since b11521 (upstream #30159; 8080 before), in classic and attach mode alike.
+     */
+    private static final int DEFAULT_PORT = 9931;
 
     /** The llama-server argument vector, forwarded verbatim to the native entry point. */
     private final String[] args;
@@ -230,8 +233,8 @@ public final class NativeServer implements AutoCloseable {
     }
 
     /**
-     * Returns the port parsed from the arguments ({@code --port} / {@code -p}), or {@code 8080} when
-     * absent or unparseable. Best-effort convenience for logging.
+     * Returns the port parsed from the arguments ({@code --port} / {@code -p}), or {@code 9931} (the
+     * upstream default since llama.cpp b11521) when absent or unparseable. Best-effort convenience for logging.
      *
      * @return the configured port
      */
