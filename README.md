@@ -224,11 +224,11 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 | `cpu-linux-x86-64` | CPU | Linux x86-64 | A JDK 8+ JVM; glibc ≥ 2.28 (manylinux_2_28: RHEL 8, Ubuntu 20.04, Debian 10 and later). Ships one CPU backend module per instruction-set level (x86-64 baseline, SSE4.2, AVX, AVX2, AVX-512, AVX-VNNI, AMX), of which ggml loads the best for the running CPU at start-up — a CPU without AVX2 works, and an AVX-512/AMX machine uses its kernels. |
 | `cpu-linux-aarch64` | CPU | Linux aarch64 | glibc ≥ 2.28 (RHEL 8, Ubuntu 20.04, Debian 10, Amazon Linux 2023 and later) — built in the manylinux_2_28 image on an arm64 runner. Ships one CPU backend module per ARM feature level (armv8.0 up to armv9.2: dotprod, fp16, SVE, i8mm, SVE2, SME), chosen at start-up like the x86-64 ones. |
 | `cpu-linux-s390x` | CPU | Linux s390x (IBM Z, big-endian) | A JDK 8+ JVM. |
-| `cpu-windows-x86-64` / `cpu-windows-x86` | CPU | Windows x86-64 / x86 | A JDK 8+ JVM. Built with Ninja Multi-Config + MSVC (static `/MT` CRT). |
-| `cpu-windows-aarch64` | CPU | Windows on ARM (Snapdragon X / Surface) | A JDK 8+ JVM. Built natively on `windows-11-arm` with `clang-cl`. |
+| `cpu-windows-x86-64` / `cpu-windows-x86` | CPU | Windows x86-64 / x86 | A JDK 8+ JVM; **Windows 10 or newer**. Built with Ninja Multi-Config + MSVC, hybrid CRT: the STL and vcruntime are static (no `msvcp140.dll` / `vcruntime140.dll`, no VC++ redistributable), the Universal CRT is the OS one (`ucrtbase.dll`), so Microsoft's UCRT security updates apply. |
+| `cpu-windows-aarch64` | CPU | Windows on ARM (Snapdragon X / Surface) | A JDK 8+ JVM; **Windows 10 or newer**. Built natively on `windows-11-arm` with `clang-cl`, same hybrid CRT as the x86 jars. |
 | `metal-macos-aarch64` | Metal + CPU | macOS aarch64 (Apple silicon) | A JDK 8+ JVM. |
 | `cpu-android-aarch64` / `cpu-android-x86-64` | CPU | Android | For Android use the [`llama-android` AAR](#importing-in-android); these jars are the same libraries for other Android JVM setups. |
-| `msvc-windows-x86-64` / `msvc-windows-x86` | CPU (Visual Studio generator) | Windows x86-64 / x86 | Same CPU backend and MSVC toolchain as `cpu-windows-*`, built with the Visual Studio generator instead of Ninja — an alternate-toolchain option; tried before the `cpu` jar when both are present. |
+| `msvc-windows-x86-64` / `msvc-windows-x86` | CPU (Visual Studio generator) | Windows x86-64 / x86 | Same CPU backend and MSVC toolchain as `cpu-windows-*`, built with the Visual Studio generator instead of Ninja — an alternate-toolchain option; tried before the `cpu` jar when both are present. **Windows 10 or newer**, like every Windows jar. |
 | `cuda13-linux-x86-64` | CUDA 13 | Linux x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 runtime libraries (`libcudart.so.13`, `libcublas.so.13`). |
 | `cuda13-windows-x86-64` | CUDA 13 | Windows x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 Toolkit (`cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` on `PATH`). |
 | `vulkan-linux-x86-64` | Vulkan | Linux x86-64 with a Vulkan 1.2+ GPU (NVIDIA / AMD / Intel) | A Vulkan runtime (`libvulkan.so.1`), which current GPU drivers install. The most portable Linux GPU option. glibc ≈ 2.39 (built on `ubuntu-latest`). |
@@ -1517,27 +1517,32 @@ Forward-looking ideas being tracked for this fork:
 
 ### Windows: EXCEPTION_ACCESS_VIOLATION with msvcp140.dll
 
-If you encounter a native crash like:
+A crash of this shape was reported against early releases:
+
 ```
 EXCEPTION_ACCESS_VIOLATION (0xc0000005) at pc=0x00007ffa8f4b2f58
 C [msvcp140.dll+0x12f58]
 ```
 
-This is a known issue where the C++ runtime library (`msvcp140.dll`) bundled with some JDK versions is outdated. 
+**This cannot come from this library any more, and the old advice here — deleting
+`msvcp140.dll` from your JDK — is obsolete. Do not do it.** The Windows natives link the C++
+standard library and vcruntime statically (hybrid CRT), so they do not import `msvcp140.dll`,
+`vcruntime140.dll` or `vcruntime140_1.dll` at all; the only non-OS import left is the Universal
+CRT, which Windows itself provides and keeps updated. Measured on the current build, the whole
+import table of `jllama.dll` is `KERNEL32`, `ADVAPI32`, `SHELL32`, `WS2_32` and the
+`api-ms-win-crt-*` forwarders. CI enforces that per release
+(`.github/buildcheck/nativedeps.py` holds every Windows CPU directory to an exact allowlist).
 
-**Solution:** Remove the outdated `msvcp140.dll` from your JDK:
-```bash
-# Locate and remove msvcp140.dll from JDK directory
-# Example for JDK 21:
-del "C:\Program Files\Java\jdk-21\bin\msvcp140.dll"
-del "C:\Program Files\Java\jdk-21\bin\vcruntime140.dll"
-del "C:\Program Files\Java\jdk-21\bin\vcruntime140_1.dll"
+The report dates from before that: the troubleshooting note was written on 2026-04-04 and the
+switch from the DLL runtime (`/MD`) to a static one landed on 2026-05-13, so releases from
+**5.0.0** on are unaffected. An older JDK does ship its own outdated `msvcp140.dll` next to
+`java.exe`, and Windows resolves an import from the already-loaded module list before searching
+any directory -- which is why a library that *did* import it got the JDK's copy. Removing the
+dependency fixes that by construction, where moving files around could not.
 
-# Or on Linux with OpenJDK:
-rm /usr/lib/jvm/java-21/bin/msvcp140.dll
-```
-
-The system's updated C++ runtime will be used instead, resolving the crash.
+If you still see a crash inside `msvcp140.dll`, it originates in **another** native library loaded
+into the same JVM, not in `jllama.dll` -- check the rest of the `hs_err` frame list. Please open an
+issue with that file rather than editing your JDK installation.
 
 ### Contributors: do not upgrade jqwik past 1.9.3
 

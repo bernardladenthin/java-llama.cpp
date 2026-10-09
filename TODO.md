@@ -28,20 +28,104 @@ binaries; 2026-10-08) established:
    `clang-cl` as for `cl.exe`, and ggml's `if (NOT MSVC)` then drops `ivybridge`, `piledriver`,
    `cooperlake`, `zen4` and `sapphirerapids` (a Zen 4/5 machine falls back to `icelake` and loses the
    BF16 kernels); the `clang-cl` build of `alderlake` also fails (`/arch:AVX2` + `__AVXVNNI__` without
-   `-mavxvnni`, an upstream gap). Consequences, all measured: **(a)** the CRT is dynamic -- the GNU
-   driver ignores `CMAKE_MSVC_RUNTIME_LIBRARY`, and a static `/MT` CRT per DLL crashed with
-   `0xC0000409` after the backend loaded (MSVC `MultiThreaded`; the same configuration with
-   `MultiThreadedDLL` ran); so `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll` become
-   dependencies, which a fresh Windows does not have. Either ship the three app-local
-   (`jllama-extras.txt`, loaded by full path before `ggml-base.dll`; +732 KB; Oracle's JDK carries
-   two of them next to `java.exe`, other vendors unverified) -- a licence/REUSE decision (Microsoft
-   "Distributable Code"), not a technical one -- or document the VC++ redistributable as a
-   requirement, as upstream does; `buildcheck/nativedeps.py`'s `Windows/*/cpu` allowlist changes
-   either way. **(b)** `GGML_OPENMP=OFF`, as on Windows arm64 and Android: saves `libomp.dll` and a
-   dependency; 14 variants build with it. **(c)** Pin the clang version (upstream: 20.1.8): LLVM 23.1.3
-   makes `-Wincompatible-pointer-types` in `ggml-cpu/arch/x86/quants.c` an error. **(d)** The MSVC build
-   stays as `msvc-windows-x86-64` (9 variants, static CRT, one library), tried before `cpu` when
-   present. 32-bit Windows and Windows arm64 get no variants (upstream builds none).
+   `-mavxvnni`, an upstream gap). Consequences, all measured -- **(a) and (c) were re-measured on
+   2026-10-09 and the earlier answer to both is superseded; read this version:**
+
+   **(a) The CRT dependency is removable entirely -- Hybrid CRT, no DLLs to ship, no licence
+   question.** The earlier finding ("the GNU driver ignores `CMAKE_MSVC_RUNTIME_LIBRARY`", a static
+   `/MT` crashing with `0xC0000409`, so ship `msvcp140`/`vcruntime140`/`vcruntime140_1` app-local or
+   require the VC++ redistributable) rested on two mistakes. The driver does *not* ignore the
+   variable -- it emits `-D_DLL -D_MT` from it, which is why a naive static attempt failed to link;
+   the control that works is **`-fms-runtime-lib=static`**. And the `0xC0000409` came from a *fully*
+   static CRT (static UCRT included) **combined with shared libraries**, i.e. the known-bad
+   configuration where every DLL gets its own CRT heap -- reproduced again on 2026-10-09, where such
+   a build does not even start. **Microsoft's own Hybrid CRT** (static STL + vcruntime, dynamic
+   UCRT) is the answer:
+
+   ```
+   -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+   -DCMAKE_C_FLAGS="-fms-runtime-lib=static"   (same for CXX)
+   -DCMAKE_{SHARED,EXE}_LINKER_FLAGS="-Xlinker /nodefaultlib:libucrt.lib -Xlinker ucrt.lib"
+   ```
+
+   Measured on the **complete** `jllama.dll` built through this project's own `CMakeLists.txt`
+   (plain clang 23.1.3, MSVC 14.51.36231 headers, llama + mtmd + cpp-httplib + the server sources,
+   14.6 MB): its imports are `KERNEL32`, `ADVAPI32`, `SHELL32`, `WS2_32` and 11 `api-ms-win-crt-*`
+   forwarders -- **no non-OS dependency at all**. UCRT stays, by design: `ucrtbase.dll` is an OS
+   component from Windows 10 on, and it is not the DLL behind the README incident. That incident
+   disappears *structurally* rather than being worked around -- the loader race over an old resident
+   `msvcp140.dll` cannot happen when there is no import to resolve. So **the licence/REUSE decision
+   on Microsoft "Distributable Code" is void**, and `nativedeps.py`'s `Windows/*/cpu` allowlist gets
+   *shorter*, not longer. One wiring consequence: `llama/CMakeLists.txt`'s static-CRT block is
+   `if(MSVC AND ...)`, and CMake's `MSVC` is **false** for plain clang -- widen that guard or pass
+   the flags from the job, or the clang build silently gets the dynamic CRT back.
+
+   **(b) `GGML_OPENMP=OFF` -- and it is a throughput *win*, not a trade.** It was known to save the
+   `libomp.dll` dependency (confirmed: without it the clang build imports `libomp140.x86_64.dll`,
+   which no redistributable carries -- the same class as the Windows-arm64 `0xc0000135`). Measured
+   on 2026-10-09 (Ryzen 7 5800H, Qwen3-0.6B Q4_0, 8 threads, `GGML_NATIVE=ON`, all four builds
+   static, runs interleaved, t/s):
+
+   | | pp512 | tg128 |
+   |---|---:|---:|
+   | MSVC, OpenMP on | 359.8 | 41.7 |
+   | MSVC, OpenMP off | 371.0 | **79.9** |
+   | clang, OpenMP on | 390.6 | 30.2 |
+   | clang, OpenMP off | 391.6 | **82.3** |
+
+   Token generation is **1.9x (MSVC) / 2.7x (clang)** faster without OpenMP; prompt processing is
+   unchanged within error on both. Cause, confirmed by thread scaling (clang, tg64): OpenMP peaks at
+   4 threads and *degrades* above it -- 36.0 (t=2), 37.6 (t=4), 29.1 (t=8), 21.5 (t=16) -- while
+   without it 54.5 / 74.2 / 71.4. Generation is synchronisation-bound (little work per barrier), so
+   the runtime's barrier cost swamps it; prompt processing has enough work per barrier to hide it.
+   **This applies to the artifact shipped today**, which is MSVC with OpenMP on -- and which
+   therefore also imports `vcomp140.dll`, a third redistributable DLL this entry did not list. One
+   line in the build job roughly doubles interactive generation throughput, independently of
+   everything else here; it is set on all four Windows x86-64/x86 CPU jobs now, and
+   `nativedeps.py`'s allowlist no longer carries `vcomp140.dll`, so dropping the flag again fails
+   the `package` job instead of silently costing the throughput back.
+   **It is a Windows-runtime property, not an OpenMP one -- do NOT generalise it to Linux.**
+   Measured the same way in the project's own `manylinux_2_28_x86_64` image (gcc 14.2.1, i.e. the
+   compiler and libgomp `crosscompile-linux-x86_64` uses; same model, 8 threads, interleaved):
+   tg128 72.8 with OpenMP against 77.3 without, pp512 357.0 against 358.7 -- about 6% with one ON
+   sample at 76.1 +- 0.9, inside the spread rather than a result. libgomp evidently keeps its thread
+   team alive across parallel regions where LLVM's `libomp` and MSVC's `vcomp` do not. The Linux
+   jobs therefore keep OpenMP, deliberately. What is still unmeasured is a machine with many more
+   cores than the 8 here -- ggml's own pool could scale differently there. An earlier reading of a non-interleaved run suggested OpenMP was 8.6% ahead
+   on pp512; that did **not** reproduce once the runs were interleaved (thermal skew, +-22 t/s
+   spread) -- there is no trade-off to weigh.
+
+   **(c) Do NOT pin clang to 20.1.8 -- `patches/0017` fixes the cause.**
+   `-Wincompatible-pointer-types` became an error by default in **clang 22**
+   ([llvm-project #157364](https://github.com/llvm/llvm-project/pull/157364)), not 16, and the four
+   `_mm_prefetch` calls in `ggml-cpu/arch/x86/quants.c` are the only thing it hits here: a full
+   `GGML_CPU_ALL_VARIANTS=ON` build with clang 23.1.3 produced **exactly four errors, all of them
+   these**, and nothing in the AVX512/BF16/AMX/AVX-VNNI paths. With the patch that build is green
+   and emits all 14 module DLLs (17.03 MB in total; `x64` 0.85 MB to `sapphirerapids` 1.56 MB).
+   Upstream is pinned to clang 20 for a *second* reason worth knowing: `GGML_OPENMP_FETCH`
+   `FATAL_ERROR`s unless the clang major matches its bundled LLVM OpenMP 20.1.8 -- so `0017`
+   together with `GGML_OPENMP=OFF` is what makes a current clang possible here, while upstream ships
+   `libomp.dll` next to its binaries rather than having no dependency.
+
+   **(d) clang is not slower than MSVC -- it is ahead**, which removes the last argument for keeping
+   MSVC as the primary build. Static against static, both with OpenMP off: generation equal within
+   error (82.3 vs 79.9), prompt processing **+5.6%** for clang (391.6 vs 371.0). A first comparison
+   appeared to favour MSVC; that was an invalid measurement pitting *static* MSVC against *shared*
+   clang -- the same clang source gives 71.0 t/s shared and 82.3 static, so shared libraries cost
+   ~13% on generation. The MSVC build stays as `msvc-windows-x86-64` (9 variants, static CRT, one
+   library), tried before `cpu` when present; its value is being a second, independent toolchain,
+   not its user count. Packaging stays as it is -- one CPU backend in the default jar, `msvc` opt-in
+   by dependency, `net.ladenthin.llama.backend` as the switch: shipping both in one jar would add
+   14.6 MB for every Windows consumer, and both the structure and the switch already exist.
+   32-bit Windows and Windows arm64 get no variants (upstream builds none).
+
+   **Measurement hygiene, learned the hard way on 2026-10-09:** this machine has the winget package
+   `ggml.llamacpp` on `PATH`, carrying its own `llama-bench.exe` *and* `ggml-base.dll` /
+   `ggml-vulkan.dll` / `ggml-cpu-haswell.dll`. `cmd /c "llama-bench.exe ..."` ran **that** binary
+   even from inside the build's own directory -- caught only by `build: 689e227db (10357)` in the
+   output where `(11512)` was expected, and by Vulkan results of 7047 t/s. Always invoke the full
+   path and check the `build:` line. And a `grep -c` for a marker reports 0 for *empty* output too,
+   so it cannot tell "ran clean" from "did not run".
 2. **Windows loader.** `System.load` with a full path does NOT add the DLL's directory to the
    dependency search, and a foreign llama.cpp on `PATH` (winget `ggml.llamacpp`, Ollama, LM Studio)
    silently satisfies `ggml-base.dll` with another build's binary -- the probe passed falsely until

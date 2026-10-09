@@ -1393,7 +1393,7 @@ jobs:
       - name: Build libraries
         shell: cmd
         run: |
-          .github\build.bat -G "Visual Studio 18 2026" -A "x64" -DOS_NAME=Windows -DOS_ARCH=x86_64 -DBUILD_TESTING=ON
+          .github\build.bat -G "Visual Studio 18 2026" -A "x64" -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64 -DBUILD_TESTING=ON
       - name: Run C++ unit tests
         run: ctest --test-dir llama/build --output-on-failure
       - name: Upload artifacts
@@ -1419,7 +1419,7 @@ jobs:
       - name: Build libraries
         shell: cmd
         run: |
-          .github\build.bat -G "Visual Studio 18 2026" -A "Win32" -DOS_NAME=Windows -DOS_ARCH=x86 -DBUILD_TESTING=ON
+          .github\build.bat -G "Visual Studio 18 2026" -A "Win32" -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86 -DBUILD_TESTING=ON
       - name: Run C++ unit tests
         run: ctest --test-dir llama/build --output-on-failure
       - name: Upload artifacts
@@ -1468,7 +1468,7 @@ jobs:
       - name: Build libraries
         shell: cmd
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DOS_NAME=Windows -DOS_ARCH=x86_64 -DBUILD_TESTING=ON
+          .github\build.bat -G "Ninja Multi-Config" -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64 -DBUILD_TESTING=ON
       - name: Run C++ unit tests
         run: ctest --test-dir llama/build --output-on-failure
       - name: Upload artifacts
@@ -1504,7 +1504,7 @@ jobs:
       - name: Build libraries
         shell: cmd
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DOS_NAME=Windows -DOS_ARCH=x86 -DBUILD_TESTING=ON
+          .github\build.bat -G "Ninja Multi-Config" -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86 -DBUILD_TESTING=ON
       - name: Run C++ unit tests
         run: ctest --test-dir llama/build --output-on-failure
       - name: Upload artifacts

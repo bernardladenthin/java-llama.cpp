@@ -1,0 +1,137 @@
+ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets
+
+The four _mm_prefetch calls in ggml/src/ggml-cpu/arch/x86/quants.c (the SSSE3-without-AVX
+branch of ggml_vec_dot_q4_0_q8_0) carry two independent defects. Both are fixed by routing the
+address through one new static inline helper, ggml/src/ggml-cpu/arch/x86/prefetch.h; the call
+sites change from a raw expression to ggml_prefetch_at(&x[ib], sizeof(block_q4_0)) and nothing
+else moves. The helper is header-only and included relatively, so no CMake change is needed.
+
+1. Type -- this breaks the build on a current clang. MSVC declares the intrinsic as
+   `void _mm_prefetch(char const *, int)`. Clang's own xmmintrin.h defines a macro that casts to
+   `const void *`, but it sits behind `#ifndef _MSC_VER`: on a *-windows-msvc target clang leaves
+   the declaration to Microsoft. Passing `const block_q4_0 *` is then
+   -Wincompatible-pointer-types, which clang 22 promoted to an error by default (llvm-project
+   #157364; the 22.1.0 release notes say "The -Wincompatible-pointer-types diagnostic now
+   defaults to an error; it can still be downgraded to a warning by passing
+   -Wno-error=incompatible-pointer-types"). NOT clang 16 -- an earlier version of this header
+   claimed that, but clang 16 promoted only -Wincompatible-FUNCTION-pointer-types.
+
+   Measured on the real file at -msse4.2, plain clang (the GNU driver, which
+   cmake/x64-windows-llvm.cmake selects) on x86_64-pc-windows-msvc, before and after this patch:
+
+     clang 20.1.8   unpatched -> 4 warnings, object file produced   patched -> 0 errors, 0 warnings
+     clang 22.1.3   unpatched -> 4 errors,   no object file         patched -> 0 errors, 0 warnings
+     clang 23.1.3   unpatched -> 4 errors,   no object file         patched -> 0 errors, 0 warnings
+
+   (20.1.8 and 23.1.3 locally with MSVC 14.44.35207 headers; 20.1.8 and 22.1.3 on a
+   windows-2025-vs2026 runner, which carries both.) The practical consequence is that
+   -DGGML_CPU_ALL_VARIANTS=ON cannot be built
+   with a current plain clang on Windows, because the `sse42` variant compiles this branch: ggml
+   passes it -msse4.2 (its `/arch:` branch is behind `if (MSVC)`, false for plain clang), which
+   defines __SSSE3__ without __AVX__ and so selects `#elif defined(__SSSE3__)`. It is the only
+   such variant -- the x86-64 baseline (`x64`) has no SSSE3 and takes the scalar branch, and
+   every richer variant has AVX. -msse4.2 -mavx builds for that reason. clang-cl and MSVC are
+   unaffected (the macro and the warning level differ), as is clang on a GNU target.
+
+2. Arithmetic -- wrong on every platform, including where the call compiles.
+   `&x[ib] + sizeof(block_q4_0)` adds sizeof() *elements*, not bytes. With the sizes that
+   ggml-common.h pins by static_assert (block_q4_0 == 18, block_q8_0 == 34) the prefetch targets
+   +324 and +1156 bytes instead of +18 and +34, and the "+ 2 *" pair targets +648 instead of
+   +36 -- 18 and 34 times too far. The call sites plainly intend "the next block" and "two blocks
+   ahead", which is what byte-wise arithmetic gives. Measured: no throughput difference on a
+   Ryzen 7 5800H forced onto the sse42 kernel with a 0.6B Q4_0 model (pp512 101.3 vs 100.9,
+   tg128 37.3 vs 37.0, both inside the other's error bars), so this is a correctness fix, not a
+   performance one; a genuine SSE4.2-era machine was not available to measure.
+
+Upstream-submittable, and intended to be submitted: the fix is confined to one new header plus
+four call sites and changes no behaviour beyond the prefetch address.
+
+Why upstream's own build is green -- measured, and no longer an open question. Their windows-cpu
+release job builds exactly this with plain clang, GGML_CPU_ALL_VARIANTS=ON and no suppressing
+flag (CMAKE_ARGS carries only build-target toggles), and ships ggml-cpu-sse42.dll. The reason it
+works is the clang version: the windows-2025-vs2026 image has LLVM 20.1.8 on PATH, where these
+are warnings. Note how narrow that is -- the same image also ships clang 22.1.3 inside Visual
+Studio 2026 (VC/Tools/Llvm/x64), which fails on the unpatched file; upstream reaches the working
+one only because C:\Program Files/LLVM/bin comes first on PATH. It was NOT a header difference
+-- all three MSVC toolsets on that image
+(14.29.30133, 14.44.35207, 14.51.36231) declare _mm_prefetch identically as
+`extern void _mm_prefetch(char const*_A, int _Sel);`, which was the first hypothesis and is
+disproved. So this patch is ahead of upstream rather than diverging from it: their build breaks
+the moment the runner image ships a clang that makes the diagnostic fatal, and until then they
+compile four warnings and a prefetch address that is 18x/34x too far.
+
+Runnable guard: src/test/cpp/test_prefetch.cpp drives ggml_prefetch_at against the real
+block_q4_0 / block_q8_0 types and asserts the offsets are byte-wise. That test is red if this
+patch is dropped, and -- the case that matters -- also red if the cast is written around the
+whole expression, `(const char *)(&x[ib] + sizeof(block_q4_0))`, which fixes (1) and silently
+keeps (2).
+
+On a bump, check whether upstream fixed this themselves:
+`git grep -n _mm_prefetch ggml/src/ggml-cpu/arch/x86/quants.c` in the new tag. If the call sites
+already cast before the addition, DROP this patch rather than refreshing it.
+
+diff --git a/ggml/src/ggml-cpu/arch/x86/prefetch.h b/ggml/src/ggml-cpu/arch/x86/prefetch.h
+new file mode 100644
+index 0000000..9be944e
+--- /dev/null
++++ b/ggml/src/ggml-cpu/arch/x86/prefetch.h
+@@ -0,0 +1,25 @@
++#pragma once
++
++#include <stddef.h>
++
++// Byte-wise address arithmetic for _mm_prefetch.
++//
++// Two reasons this helper exists instead of casting at the call site:
++//
++// 1. Type. MSVC declares the intrinsic as `void _mm_prefetch(char const *, int)`
++//    (VC\Tools\MSVC\<ver>\include\xmmintrin.h). Clang's own header defines a macro that casts
++//    to `const void *`, but only `#ifndef _MSC_VER` -- on a *-windows-msvc target clang leaves
++//    the declaration to Microsoft. Passing a typed pointer there is -Wincompatible-pointer-types,
++//    which clang 16 and later report as an error by default, so plain clang (the GNU driver, as
++//    used by cmake/x64-windows-llvm.cmake) cannot compile such a call. MSVC and clang-cl only
++//    warn, and clang on a GNU target never sees it because its macro casts first.
++//
++// 2. Arithmetic. `&x[ib] + sizeof(block_q4_0)` adds sizeof() *elements*, not bytes: with
++//    sizeof(block_q4_0) == 18 that is 324 bytes ahead instead of the next block, and
++//    sizeof(block_q8_0) == 34 gives 1156 instead of 34. Casting to `const char *` first -- what
++//    this helper does -- is what makes the offset byte-wise, which is plainly what the call
++//    sites intend ("the next block", "two blocks ahead"). This half is wrong on every platform,
++//    including the ones where the call compiles.
++static inline const char * ggml_prefetch_at(const void * base, size_t byte_offset) {
++    return (const char *) base + byte_offset;
++}
+diff --git a/ggml/src/ggml-cpu/arch/x86/quants.c b/ggml/src/ggml-cpu/arch/x86/quants.c
+index ea54cfe..dea0952 100644
+--- a/ggml/src/ggml-cpu/arch/x86/quants.c
++++ b/ggml/src/ggml-cpu/arch/x86/quants.c
+@@ -7,6 +7,7 @@
+ 
+ #include "../../quants.h"
+ #include "../../ggml-cpu-impl.h"
++#include "prefetch.h"
+ 
+ #include <math.h>
+ #include <string.h>
+@@ -779,8 +780,8 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
+     __m128 acc_3 = _mm_setzero_ps();
+ 
+     for (; ib + 1 < nb; ib += 2) {
+-        _mm_prefetch(&x[ib] + sizeof(block_q4_0), _MM_HINT_T0);
+-        _mm_prefetch(&y[ib] + sizeof(block_q8_0), _MM_HINT_T0);
++        _mm_prefetch(ggml_prefetch_at(&x[ib], sizeof(block_q4_0)), _MM_HINT_T0);
++        _mm_prefetch(ggml_prefetch_at(&y[ib], sizeof(block_q8_0)), _MM_HINT_T0);
+ 
+         // Compute combined scale for the block 0 and 1
+         const __m128 d_0_1 = _mm_set1_ps( GGML_CPU_FP16_TO_FP32(x[ib].d) * GGML_CPU_FP16_TO_FP32(y[ib].d) );
+@@ -797,8 +798,8 @@ void ggml_vec_dot_q4_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const voi
+         bx_1 = _mm_sub_epi8(bx_1, off);
+         const __m128i i32_1 = mul_sum_i8_pairs(bx_1, by_1);
+ 
+-        _mm_prefetch(&x[ib] + 2 * sizeof(block_q4_0), _MM_HINT_T0);
+-        _mm_prefetch(&y[ib] + 2 * sizeof(block_q8_0), _MM_HINT_T0);
++        _mm_prefetch(ggml_prefetch_at(&x[ib], 2 * sizeof(block_q4_0)), _MM_HINT_T0);
++        _mm_prefetch(ggml_prefetch_at(&y[ib], 2 * sizeof(block_q8_0)), _MM_HINT_T0);
+ 
+         // Compute combined scale for the block 2 and 3
+         const __m128 d_2_3 = _mm_set1_ps( GGML_CPU_FP16_TO_FP32(x[ib + 1].d) * GGML_CPU_FP16_TO_FP32(y[ib + 1].d) );
