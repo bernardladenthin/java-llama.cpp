@@ -25,9 +25,11 @@ project(jllama CXX)
 # (measured: 10.1 MB with /MT, 9.8 MB hybrid). It is Microsoft's own recommendation for
 # self-contained binaries, and it makes both toolchains use ONE CRT strategy instead of two.
 # The cost is one requirement, which README.md states: **Windows 10 or newer**, where the UCRT is
-# an OS component. `nativedeps.py` therefore allows the api-ms-win-crt-* forwarders in every
-# Windows CPU directory -- they are the dynamic UCRT, and their absence from the import table
-# would mean the static one is back.
+# an OS component. `nativedeps.py` guards this in BOTH directions for every Windows CPU directory:
+# msvcp140/vcruntime140 appearing fails the build (the static half went dynamic), and the
+# api-ms-win-crt-* forwarders disappearing fails it too (the dynamic half went static) -- the second
+# matters because a static CRT only ever REMOVES imports, so losing one of the linker flags below
+# would otherwise pass unnoticed.
 #
 # EXCEPTION: the Intel oneAPI SYCL and OpenVINO backends must use the DYNAMIC /MD
 # runtime — `icx -fsycl` rejects /MT outright ("invalid argument 'MT' not allowed

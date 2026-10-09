@@ -48,6 +48,32 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **Windows natives: no Visual C++ redistributable, and `ucrtbase.dll` stays serviceable — but
+  Windows 10 or newer is now required.** All Windows builds (`cpu-windows-*`, `msvc-windows-*` and
+  the GPU jars) use the **hybrid CRT**: the C++ standard library and vcruntime are linked
+  statically, so `msvcp140.dll` / `vcruntime140.dll` / `vcruntime140_1.dll` are not needed on the
+  target machine, while the Universal CRT remains the operating system's. A plain `/MT` would link
+  the UCRT in as well and freeze a copy of it inside `jllama.dll`, where Microsoft's UCRT security
+  updates could never reach it — for a library that parses network data and untrusted GGUF files
+  that is the deciding argument (it is also Microsoft's own recommendation for self-contained
+  binaries, and the library shrinks slightly: 10.1 MB → 9.8 MB). **The one cost is the new
+  floor:** the UCRT is an OS component from Windows 10 on, so the Windows natives no longer run on
+  Windows 7 / 8.1 without the Universal CRT update. `.github/buildcheck/nativedeps.py` enforces
+  both halves per release — `msvcp140` appearing fails the build, and the `api-ms-win-crt-*`
+  forwarders disappearing fails it too.
+- **Windows CPU inference generates tokens about twice as fast** (`-DGGML_OPENMP=OFF` on all four
+  Windows x86-64/x86 CPU build jobs, which the arm64 jobs already used for a dependency reason).
+  Measured on a Ryzen 7 5800H with Qwen3-0.6B Q4_0 at 8 threads, four static builds from one
+  source tree with the runs interleaved: token generation 41.7 → 79.9 t/s with MSVC (1.9×) and
+  30.2 → 82.3 t/s with clang (2.7×), prompt processing unchanged within error (359.8 → 371.0 and
+  390.6 → 391.6). ggml uses OpenMP only to manage threads, never for the arithmetic: with it every
+  graph computation enters a `#pragma omp parallel` region, and one generated token *is* one graph
+  computation, so the per-region barrier cost is paid per token and grows with the thread count
+  (37.6 → 29.1 → 21.5 t/s at 4/8/16 threads), while prompt processing amortises it over 512 tokens
+  of work. ggml's own `std::thread` pool is persistent and does not pay it. `vcomp140.dll` leaves
+  the dependency list as a side effect. **Linux keeps OpenMP deliberately** — measured in the
+  project's own manylinux image, libgomp does not show the effect (72.8 → 77.3 t/s, inside the
+  spread), so the Windows result must not be generalised there.
 - **`cpu-linux-x86-64` and `cpu-linux-aarch64` ship CPU backend variants** -- upstream's
   `GGML_BACKEND_DL` + `GGML_CPU_ALL_VARIANTS`, the way its own release binaries are built: one
   `libggml-cpu-<level>.so` per instruction-set level (x86-64: baseline, SSE4.2, AVX, AVX2, AVX-512,
@@ -202,6 +228,21 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
 
 ### Fixed
+- **`llama/patches/0017`** fixes two defects in the four `_mm_prefetch` calls of ggml's x86
+  `quants.c` (the SSSE3-without-AVX branch of `ggml_vec_dot_q4_0_q8_0`, and the only
+  `_mm_prefetch` calls in the whole ggml tree), both by routing the address through one new
+  `static inline` helper. **(1)** MSVC declares the intrinsic as `void _mm_prefetch(char const *,
+  int)` and clang's own casting macro sits behind `#ifndef _MSC_VER`, so a typed pointer is
+  `-Wincompatible-pointer-types` — which clang 22 promoted to an error by default
+  ([llvm-project #157364](https://github.com/llvm/llvm-project/pull/157364)). Measured on the real
+  file at `-msse4.2`: 4 warnings with clang 20.1.8, 4 errors with 22.1.3 and 23.1.3. This is what
+  stops `GGML_CPU_ALL_VARIANTS=ON` from building with a current plain clang on Windows, which is
+  the only toolchain that produces all 14 CPU variants. **(2)** `&x[ib] + sizeof(block_q4_0)` adds
+  `sizeof()` *elements* rather than bytes, so the prefetch targets +324 and +1156 bytes instead of
+  +18 and +34 — wrong on every platform, including those where the call compiles. Measured as
+  having no effect on throughput, so this half is a correctness fix rather than a performance one.
+  Runnable guard: `src/test/cpp/test_prefetch.cpp` (598 → 603 C++ tests). Upstream-submittable and
+  not yet filed.
 - **CI: snapshot deploy failed with HTTP 401 on Maven 3.10.** The runners moved to Maven 3.10, which
   sends a `<server>`'s credentials only to the origins declared for it; for the id `central` that is
   `https://repo.maven.apache.org`, so the upload to `central.sonatype.com/repository/maven-snapshots/`

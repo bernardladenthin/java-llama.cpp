@@ -122,7 +122,12 @@ class ParserTest(unittest.TestCase):
 class ViolationsTest(unittest.TestCase):
 
     def test_allowed_cpu_dependencies_pass_case_insensitively(self):
-        self.assertEqual(nativedeps.violations("x/Windows/x86_64/cpu/jllama.dll", ["KERNEL32.dll", "WS2_32.dll"]), [])
+        # The UCRT forwarder is not incidental: a Windows CPU library must import one (see
+        # test_a_windows_cpu_library_without_the_ucrt_forwarders_is_a_violation). This case is
+        # about the allowlist matching regardless of case.
+        self.assertEqual(nativedeps.violations("x/Windows/x86_64/cpu/jllama.dll",
+                                               ["KERNEL32.dll", "WS2_32.dll",
+                                                "API-MS-WIN-CRT-RUNTIME-L1-1-0.DLL"]), [])
 
     def test_a_new_cpu_dependency_fails(self):
         failures = nativedeps.violations("x/Linux/x86_64/cpu/libjllama.so", ["libc.so.6", "libssl.so.3"])
@@ -209,6 +214,23 @@ class MainTest(unittest.TestCase):
             with open(os.path.join(cpu, "libggml-base.so"), "wb") as f:
                 f.write(elf64(["libc.so.6"], glibc=["GLIBC_2.34"]))
             self.assertEqual(nativedeps.main(["x", root]), 1)
+
+    def test_a_windows_cpu_library_without_the_ucrt_forwarders_is_a_violation(self):
+        """The other direction of the allowlist: a static UCRT only REMOVES imports, so only a
+        positive requirement catches a build that lost the hybrid-CRT linker flags."""
+        hybrid = ["KERNEL32.dll", "api-ms-win-crt-runtime-l1-1-0.dll"]
+        self.assertEqual(nativedeps.violations("x/Windows/x86_64/cpu/jllama.dll", hybrid), [])
+        static_ucrt = ["KERNEL32.dll"]
+        found = nativedeps.violations("x/Windows/x86_64/cpu/jllama.dll", static_ucrt)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("statically linked", found[0])
+        # the modules of a variants build are held to it as well, not only the main library
+        self.assertEqual(len(nativedeps.violations("x/Windows/x86_64/cpu/ggml-cpu-zen4.dll", static_ucrt)), 1)
+        # a GPU directory is on a denylist and keeps its vendor runtime free
+        self.assertEqual(nativedeps.violations("x/Windows/x86_64/cuda13/jllama.dll", static_ucrt), [])
+        # and a non-Windows directory is unaffected
+        self.assertEqual(nativedeps.violations("x/Mac/aarch64/metal/libjllama.dylib",
+                                               ["/usr/lib/libSystem.B.dylib"]), [])
 
     def test_nothing_to_check_is_a_failure(self):
         with tempfile.TemporaryDirectory() as root:
