@@ -1710,7 +1710,7 @@ root from the loader's own package (which moved to `…loader`) and (b)
 `jllama.cpp` still `FindClass`-ing the old flat paths — and neither was visible
 to a local `mvn test` (model tests skipped) or to the pure-Java unit tests.
 **When you move a Java class the JNI layer references by name** (`LlamaModel`
-[root], `exception.LlamaException`, `value.LogLevel`, `args.LogFormat`,
+[root], `exception.LlamaException`, `exception.InvalidRequestException`, `value.LogLevel`, `args.LogFormat`,
 `callback.LoadProgressCallback`), update the matching `FindClass` / `"L…;"`
 signature string in `src/main/cpp/jllama.cpp` and keep the native-resource root
 anchored at `net/ladenthin/llama` in `LlamaLoader.NATIVE_RESOURCE_BASE` (it must
@@ -1866,7 +1866,7 @@ The project C++ helpers follow a strict semantic split:
 Functions: `get_result_error_message`, `results_to_json`, `rerank_results_to_json`,
 `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`,
 `parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk`,
-`server_metrics_to_json`, `route_error_message`.
+`server_metrics_to_json`, `route_error_message`, `get_result_error_code`.
 
 **`log_helpers.hpp`** — Pure log-formatting transforms.
 - Input: `ggml_log_level`, message text (`const char*`), an explicit `std::time_t` timestamp.
@@ -1954,6 +1954,25 @@ with — `JNI_OnLoad` returns `JNI_ERR` (the JVM surfaces that as `UnsatisfiedLi
 rather than a Java exception, and `train_engine.cpp` deliberately keeps its own `nlohmann` alias
 and never includes `jni_helpers.hpp`, so its backstop returns an error string to preserve that
 contract.
+
+**Two Java classes, chosen by what upstream would answer.** `c_llama_error` (`LlamaException`) is the
+backstop and the class for everything that is not the request's fault; `c_llama_invalid_request`
+(`InvalidRequestException`, a subclass) is thrown wherever llama.cpp's own HTTP server answers `400`,
+so that `OpenAiCompatServer` can answer `400` too without matching on message text (it maps the type
+like the `IllegalArgumentException` of its own validation; everything else is `500`). Three helpers
+in `jllama.cpp` decide it: `throw_invalid_request` for request *parsing* (an invalid request whatever
+the parser threw — upstream's parsers mix `std::invalid_argument` and `std::runtime_error` for the
+same kind of defect; also behind `parse_json_params` and `require_json_field`),
+`throw_by_exception_type` for upstream code whose exception type carries the verdict
+(`std::invalid_argument` and `common_json_error` → 400, else 500 — the rule of upstream's `ex_wrapper`
+in `tools/server/server.cpp`; tokenization, `format_prompt_infill`, the `/v1/systemone` handler), and
+`error_class_for` for a failed task result (`get_result_error_code` reads the code
+`format_error_response` put into it: 400 for `ERROR_TYPE_INVALID_REQUEST` and
+`ERROR_TYPE_EXCEED_CONTEXT_SIZE`). A `ThrowNew(c_llama_error, …)` is still right for a missing
+capability (`--embedding`, `--reranking`, FIM tokens: upstream answers those `501`) and for a broken
+result. Pinned model-free by `OpenAiCompatServerHttpTest` (a backend throwing the typed exception is
+`400` on every surface, a plain `LlamaException` `500`) and model-backed by `ErrorHandlingTest` and
+the two server integration tests (an empty `input` array, a `/v1/completions` body without a prompt).
 
 **When you add a native method, wrap it.** The guard is not enforced by a test — a new unguarded
 entry point is invisible until something throws through it in production.
@@ -2148,7 +2167,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 |------|-------|-------|
 | `src/test/cpp/test_utils.cpp` | 168 | Upstream helpers: `server_tokens`, `server_grammar_trigger`, `gen_tool_call_id`, `json_value`, `json_get_nested_values`, UTF-8 helpers, `format_response_rerank`, `format_embeddings_response_oaicompat`, `oaicompat_completion_params_parse`, `oaicompat_chat_params_parse`, `are_lora_equal`, `strip_flag_from_argv`, `token_piece_value`, `json_is_array_and_contains_numbers`, `format_oai_sse`, `format_oai_resp_sse`, `format_anthropic_sse`, `parse_lora_request`, `common_chat_parse` over malformed UTF-8 (the `ContentOnlyParseUtf8` guard, which pins upstream #29161's one-U+FFFD-per-invalid-run contract — formerly the guard for the dropped `patches/0011`) |
 | `src/test/cpp/test_server.cpp` | 206 | Upstream result types: `server_slot_stats` (the `timings` JSON payload; replaced `result_timings` in b10408), `task_params::to_json()` (incl. `dry_sequence_breakers`, `preserved_tokens`, `timings_per_token`), `completion_token_output`, `server_task_result_cmpl_partial` (non-oaicompat + `to_json_oaicompat` + logprobs + `to_json_oaicompat_chat` + `to_json_anthropic` + dispatcher), `server_task_result_cmpl_final` (non-oaicompat + `to_json_oaicompat` + `to_json_oaicompat_chat` + `to_json_oaicompat_chat_stream` + `to_json_anthropic` + `to_json_anthropic_stream` + tool_calls + dispatcher), `server_task_result_embd`, `server_task_result_rerank`, `server_task_result_metrics` (`to_metrics()` = the `/metrics` Prometheus exposition text; its `to_json()` has been unused since b10519 and returns `json{}` = JSON null), `server_task_result_slots` (`to_json()` = the `/slots` array, fed by the b10519 `SERVER_TASK_TYPE_SLOT_GET` task), `server_task_result_slot_save_load`, `server_task_result_slot_erase`, `server_task_result_apply_lora`, `server_task_result_get_lora`, `server_task_result_error`, `format_error_response`, `server_task::need_sampling()`, `server_task::n_tokens()`, `server_schema::eval_llama_cmpl_schema()` (parsing pipeline + grammar routing + error paths + per-request `dry_*` and `sse_ping_interval` field round-trips incl. hard-limit + server-default inheritance), `response_fields` projection |
-| `src/test/cpp/test_json_helpers.cpp` | 67 | All functions in `json_helpers.hpp`: `get_result_error_message`, `results_to_json`, `rerank_results_to_json` (incl. missing/out-of-range `index` rejection), `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk`, `server_metrics_to_json`, `route_error_message` |
+| `src/test/cpp/test_json_helpers.cpp` | 71 | All functions in `json_helpers.hpp`: `get_result_error_message`, `get_result_error_code` (the HTTP code of a failed task result, from which `jllama.cpp` picks `InvalidRequestException` or `LlamaException`), `results_to_json`, `rerank_results_to_json` (incl. missing/out-of-range `index` rejection), `parse_encoding_format`, `extract_embedding_prompt`, `is_infill_request`, `parse_slot_prompt_similarity`, `parse_positive_int_config`, `wrap_stream_chunk`, `server_metrics_to_json`, `route_error_message` |
 | `src/test/cpp/test_log_helpers.cpp` | 13 | All functions in `log_helpers.hpp`: `log_level_name`, `format_log_as_json` |
 | `src/test/cpp/test_common_log_callback.cpp` | 6 | **The runnable guard for `patches/0014`**: `common_log_set_callback()` on a private `common_log_init()` instance (never `common_log_main()`, so the process-wide logger the other tests print through is untouched) — delivery of level + bare text, no prefix/timestamp even when both are on (what `common_init()` does), clearing stops delivery, a swap drains queued entries to the *previous* sink (the property behind `LlamaModel.setLogger(format, null)` being a synchronous flush), a `--log-file` keeps being written alongside the sink, and every `ggml_log_level` passes through unchanged. The Java half (`LlamaLoggerTest`, model-free) proves the JNI trampoline on top of it. |
 | `src/test/cpp/test_jni_helpers.cpp` | 70 | All functions in `jni_helpers.hpp` using a zero-filled `JNINativeInterface_` mock (incl. the `utf8_to_jstring_impl` byte-array string path: emoji byte-preservation, truncated-UTF-8 replace-not-throw). Seven of them pin `jni_guard_impl` — the JNI exception boundary every `Java_*` entry point runs inside — including the `catch (...)` arm that is the only backstop for a non-`std::exception` type, and its two refusals (never `ThrowNew` over a pending Java exception, never with a null class). |
@@ -2163,7 +2182,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 | `src/test/cpp/test_native_server_shutdown.cpp` | 3 | **The runnable guard for the shutdown-handler guard in `patches/0006`/`0007`.** Runs the real `llama_server()` in router mode over an empty `--models-dir` on an ephemeral loopback port (no model, no worker) and stops it the way `native_server.cpp` does. Pins a clean stop (exit code 0), that `llama_server_request_shutdown()` **after** the server returned is a no-op (the deterministic form of the CI `SIGSEGV` — it crashed every run before the fix), and that requests hammered from another thread while the server tears down are safe (5 rounds). Compiled on non-Android only, like `server.cpp` itself. |
 
-**Current total: 603 tests (all passing).**
+**Current total: 607 tests (all passing).**
 
 #### Upstream source location (in CMake build tree)
 

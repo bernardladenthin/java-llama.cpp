@@ -101,7 +101,9 @@ public class LlamaArchitectureTest {
      * optional OpenAI-compatible HTTP / native-server entry point; it is the only layer permitted to
      * access the {@code Api} root, and it also reaches the {@code Loader} ({@code NativeServer}
      * triggers {@code LlamaLoader.initialize()} before starting the embedded native server) and the
-     * {@code Args} enums ({@code OpenAiServerCli} maps {@code -ctk}/{@code -ctv} to {@code CacheType}).
+     * {@code Args} enums ({@code OpenAiServerCli} maps {@code -ctk}/{@code -ctv} to {@code CacheType}), and
+     * the {@code Exception} layer ({@code OpenAiCompatServer} answers an {@code InvalidRequestException}
+     * with {@code 400}).
      */
     @ArchTest
     static final ArchRule layeredArchitecture = layeredArchitecture()
@@ -139,7 +141,7 @@ public class LlamaArchitectureTest {
             .whereLayer("Callback")
             .mayOnlyBeAccessedByLayers("Api")
             .whereLayer("Exception")
-            .mayOnlyBeAccessedByLayers("Api", "Loader")
+            .mayOnlyBeAccessedByLayers("Api", "Loader", "Server")
             .whereLayer("Args")
             .mayOnlyBeAccessedByLayers("Api", "Loader", "Parameters", "Server")
             .whereLayer("Server")

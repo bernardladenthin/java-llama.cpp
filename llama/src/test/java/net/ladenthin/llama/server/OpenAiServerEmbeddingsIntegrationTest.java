@@ -5,6 +5,7 @@
 package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.is;
 
@@ -83,6 +84,26 @@ public class OpenAiServerEmbeddingsIntegrationTest extends OpenAiServerTestSuppo
         assertThat(first.path("object").asText(), is("embedding"));
         assertThat(first.path("embedding").isArray(), is(true));
         assertThat(first.path("embedding").size(), greaterThan(0));
+    }
+
+    @Test
+    public void anEmptyInputArrayIsAnswered400LikeUpstream() throws IOException {
+        // llama.cpp's own server answers this with 400 since b11337 (#29060); the JNI layer throws the
+        // typed InvalidRequestException for it, which the server maps to 400 rather than 500
+        String body = "{\"model\":\"" + MODEL_ID + "\",\"input\":[]}";
+        Response response = post(port, "/v1/embeddings", body, "");
+        assertThat(response.code, is(400));
+        JsonNode error = MAPPER.readTree(response.body).path("error");
+        assertThat(error.path("type").asText(), is("invalid_request_error"));
+        assertThat(error.path("message").asText(), containsString("must not be empty"));
+    }
+
+    @Test
+    public void anUnknownEncodingFormatIsAnswered400() throws IOException {
+        String body = "{\"model\":\"" + MODEL_ID + "\",\"input\":\"hello\",\"encoding_format\":\"hex\"}";
+        Response response = post(port, "/v1/embeddings", body, "");
+        assertThat(response.code, is(400));
+        assertThat(MAPPER.readTree(response.body).path("error").path("type").asText(), is("invalid_request_error"));
     }
 
     @Test

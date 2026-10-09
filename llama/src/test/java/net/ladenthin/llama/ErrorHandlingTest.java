@@ -7,6 +7,7 @@ package net.ladenthin.llama;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.File;
+import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.parameters.ModelParameters;
 import org.junit.jupiter.api.AfterAll;
@@ -120,8 +121,9 @@ public class ErrorHandlingTest {
         String json = "{\"input\":\"hello world\",\"encoding_format\":\"invalid\"}";
         try {
             String result = model.handleEmbeddings(json, false);
-            fail("Expected LlamaException for invalid encoding_format");
-        } catch (LlamaException e) {
+            fail("Expected InvalidRequestException for invalid encoding_format");
+        } catch (InvalidRequestException e) {
+            // the typed rejection is what lets OpenAiCompatServer answer 400 instead of 500
             assertTrue(e.getMessage().contains("encoding_format"), "Error should mention encoding_format");
         }
     }
@@ -137,8 +139,36 @@ public class ErrorHandlingTest {
             String result = model.handleEmbeddings(json, false);
             // Native code may handle empty input gracefully — that's acceptable
             assertNotNull(result, "Result should not be null");
-        } catch (LlamaException e) {
-            // Also acceptable if the native code rejects empty input
+        } catch (InvalidRequestException e) {
+            // Also acceptable if the native code rejects empty input -- but then as the typed rejection
+            assertNotNull(e.getMessage(), "Exception message should not be null");
+        }
+    }
+
+    @Test
+    public void testHandleEmbeddingsEmptyInputArrayIsAnInvalidRequest() {
+        // upstream tokenize_input_prompts: `"prompt" must not be empty` (std::invalid_argument), a 400
+        try {
+            model.handleEmbeddings("{\"input\":[]}", false);
+            fail("Expected InvalidRequestException for an empty input array");
+        } catch (InvalidRequestException e) {
+            assertTrue(e.getMessage().contains("must not be empty"), "Error should name the reason: " + e.getMessage());
+        }
+    }
+
+    @Test
+    public void testMalformedJsonBodyIsAnInvalidRequest() {
+        // upstream answers a common_json_error with 400; the JNI layer parses the body the same way
+        try {
+            model.handleEmbeddings("{not json", false);
+            fail("Expected InvalidRequestException for a malformed body");
+        } catch (InvalidRequestException e) {
+            assertNotNull(e.getMessage(), "Exception message should not be null");
+        }
+        try {
+            model.handleCompletions("[1, 2");
+            fail("Expected InvalidRequestException for a malformed body");
+        } catch (InvalidRequestException e) {
             assertNotNull(e.getMessage(), "Exception message should not be null");
         }
     }
@@ -165,7 +195,8 @@ public class ErrorHandlingTest {
         try {
             model.handleInfill(json);
             // May succeed with empty suffix or throw
-        } catch (LlamaException e) {
+        } catch (InvalidRequestException e) {
+            // a missing required field is upstream's `"input_suffix" is required`, a 400
             assertTrue(e.getMessage().contains("input_suffix"), "Error should mention input_suffix");
         }
     }
@@ -217,11 +248,11 @@ public class ErrorHandlingTest {
     @Test
     public void testHandleCompletionsMissingPromptThrows() {
         // No "prompt" key → data.at("prompt") throws json::out_of_range →
-        // caught by the std::exception catch → throw_invalid_request → LlamaException
+        // caught by the std::exception catch → throw_invalid_request → InvalidRequestException
         try {
             model.handleCompletions("{\"n_predict\":1}");
-            fail("Expected LlamaException for missing 'prompt' key");
-        } catch (LlamaException e) {
+            fail("Expected InvalidRequestException for missing 'prompt' key");
+        } catch (InvalidRequestException e) {
             assertNotNull(e.getMessage(), "Exception message must not be null");
         }
     }
@@ -230,8 +261,8 @@ public class ErrorHandlingTest {
     public void testHandleCompletionsOaiMissingPromptThrows() {
         try {
             model.handleCompletionsOai("{\"n_predict\":1}");
-            fail("Expected LlamaException for missing 'prompt' key");
-        } catch (LlamaException e) {
+            fail("Expected InvalidRequestException for missing 'prompt' key");
+        } catch (InvalidRequestException e) {
             assertNotNull(e.getMessage(), "Exception message must not be null");
         }
     }

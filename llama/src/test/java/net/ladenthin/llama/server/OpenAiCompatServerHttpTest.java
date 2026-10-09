@@ -10,6 +10,8 @@ import static org.hamcrest.Matchers.is;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
+import net.ladenthin.llama.exception.InvalidRequestException;
+import net.ladenthin.llama.exception.LlamaException;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -362,6 +364,74 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // A request the NATIVE layer rejects (InvalidRequestException, thrown by the JNI layer where
+    // llama.cpp's own server answers 400) is the client's fault on every surface; a plain
+    // LlamaException stays a server error. Pins the fix for the "400 vs. 500" entry of TODO.md.
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void nativeRejectionOfAChatCompletionReturns400() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new RejectingBackend(), config()).start()) {
+            Response response = post(server.getPort(), "/v1/chat/completions", CHAT_BODY, "");
+            assertThat(response.code, is(400));
+            assertThat(response.body, containsString("\"type\":\"invalid_request_error\""));
+            assertThat(response.body, containsString(RejectingBackend.REASON_FRAGMENT));
+        }
+    }
+
+    @Test
+    public void nativeRejectionOfAnEmbeddingReturns400() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new RejectingBackend(), config()).start()) {
+            Response response = post(server.getPort(), "/v1/embeddings", "{\"input\":[]}", "");
+            assertThat(response.code, is(400));
+            assertThat(response.body, containsString("\"type\":\"invalid_request_error\""));
+        }
+    }
+
+    @Test
+    public void nativeRejectionOfACompletionReturns400() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new RejectingBackend(), config()).start()) {
+            Response response = post(server.getPort(), "/v1/completions", "{\"prompt\":\"\"}", "");
+            assertThat(response.code, is(400));
+            assertThat(response.body, containsString("\"type\":\"invalid_request_error\""));
+        }
+    }
+
+    @Test
+    public void nativeRejectionOfAStreamedChatCompletionIsAnInvalidRequestEvent() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new RejectingBackend(), config()).start()) {
+            String body = "{\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+            Response response = post(server.getPort(), "/v1/chat/completions", body, "");
+            // the headers are out before the backend runs, so the verdict travels as an SSE data event
+            assertThat(response.code, is(200));
+            assertThat(response.body, containsString("data: "));
+            assertThat(response.body, containsString("\"type\":\"invalid_request_error\""));
+            assertThat(response.body, containsString(RejectingBackend.REASON_FRAGMENT));
+        }
+    }
+
+    @Test
+    public void nativeRejectionOnTheOllamaAndAnthropicSurfacesReturns400() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new RejectingBackend(), config()).start()) {
+            String ollama = "{\"model\":\"test-model\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                    + "\"stream\":false}";
+            assertThat(post(server.getPort(), "/api/chat", ollama, "").code, is(400));
+            String anthropic = "{\"model\":\"test-model\",\"max_tokens\":8,"
+                    + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+            assertThat(post(server.getPort(), "/v1/messages", anthropic, "").code, is(400));
+        }
+    }
+
+    @Test
+    public void aPlainLlamaExceptionStaysAServerError() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FailingBackend(), config()).start()) {
+            Response response = post(server.getPort(), "/v1/chat/completions", CHAT_BODY, "");
+            assertThat(response.code, is(500));
+            assertThat(response.body, containsString("\"type\":\"server_error\""));
+        }
+    }
+
     @Test
     public void getOnChatCompletionsReturns405() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
@@ -508,6 +578,44 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         public String rerank(JsonNode request) {
             return "{\"object\":\"list\",\"results\":[{\"index\":0,\"relevance_score\":0.9}],"
                     + "\"data\":[{\"index\":0,\"relevance_score\":0.9}]}";
+        }
+    }
+
+    /**
+     * Backend whose every operation is rejected the way the JNI layer rejects a request llama.cpp's
+     * validation refuses: an {@link InvalidRequestException} with the bare upstream reason.
+     */
+    static final class RejectingBackend extends FakeBackend {
+        static final String REASON = "\"prompt\" must not be empty";
+        /** The part of {@link #REASON} without the quotes, which the error JSON escapes. */
+        static final String REASON_FRAGMENT = "must not be empty";
+
+        @Override
+        public String complete(JsonNode request) {
+            throw new InvalidRequestException(REASON);
+        }
+
+        @Override
+        public void stream(JsonNode request, ChunkSink sink) {
+            throw new InvalidRequestException(REASON);
+        }
+
+        @Override
+        public String completions(JsonNode request) {
+            throw new InvalidRequestException(REASON);
+        }
+
+        @Override
+        public String embeddings(JsonNode request) {
+            throw new InvalidRequestException(REASON);
+        }
+    }
+
+    /** Backend whose chat completion fails like an inference failure: a plain {@link LlamaException}. */
+    static final class FailingBackend extends FakeBackend {
+        @Override
+        public String complete(JsonNode request) {
+            throw new LlamaException("decoding failed");
         }
     }
 

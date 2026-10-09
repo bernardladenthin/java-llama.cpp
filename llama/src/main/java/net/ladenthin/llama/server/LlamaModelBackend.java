@@ -27,6 +27,12 @@ import net.ladenthin.llama.value.StopReason;
  * model API takes a {@link java.util.function.Consumer} (no checked exceptions), that failure is
  * relayed across the boundary via {@link java.io.UncheckedIOException} and unwrapped here so the
  * in-flight native task is cancelled.
+ *
+ * <p>A request the native layer rejects -- a body that is not valid JSON, a missing field, an empty
+ * embedding input, a prompt over the context size -- arrives as
+ * {@link net.ladenthin.llama.exception.InvalidRequestException} and is left untouched: the server maps
+ * that type to {@code 400}, as upstream's HTTP server does for the same failures. Every other
+ * {@link net.ladenthin.llama.exception.LlamaException} stays a {@code 500}.
  */
 final class LlamaModelBackend implements OpenAiBackend {
 
