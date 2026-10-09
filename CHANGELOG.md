@@ -48,6 +48,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **`NativeServer` binds port 9931 when no `--port` is given** (llama.cpp b11521,
+  [#30159](https://github.com/ggml-org/llama.cpp/pull/30159) moved the server default off 8080), in classic and
+  attach mode alike; `NativeServer.getPort()` reports 9931 accordingly. `OpenAiCompatServer` keeps its own default
+  of 8080 (`OpenAiServerConfig.DEFAULT_PORT`, a public constant of this project with no upstream coupling). Pass
+  `--port` explicitly where a fixed port matters; every README example already does.
 - **Windows natives: no Visual C++ redistributable, and `ucrtbase.dll` stays serviceable — but
   Windows 10 or newer is now required.** The Windows CPU jars (`cpu-windows-*`,
   `msvc-windows-*`) and the CUDA, Vulkan, OpenCL and ROCm jars use the **hybrid CRT**: the C++
