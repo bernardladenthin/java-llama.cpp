@@ -36,7 +36,11 @@ import struct
 import sys
 
 # The four OS DLLs every Windows build imports, and the dynamic UCRT.
-WINDOWS_OS = {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll"}
+# crypt32.dll: cpp-httplib loads the Windows certificate store for HTTPS clients
+# (CertOpenSystemStoreW, `#pragma comment(lib, "crypt32.lib")` under CPPHTTPLIB_OPENSSL_SUPPORT); an
+# OS component since Windows 2000. BoringSSL itself adds no import: its RNG loads bcryptprimitives
+# at run time (LoadLibraryW), and everything else is in the static libraries.
+WINDOWS_OS = {"ws2_32.dll", "kernel32.dll", "shell32.dll", "advapi32.dll", "crypt32.dll"}
 # The Universal CRT forwarders. Present because the Windows builds use the HYBRID CRT (static STL +
 # vcruntime, dynamic UCRT -- llama/CMakeLists.txt explains why), which is what keeps Microsoft's
 # UCRT security updates reaching a shipped artifact instead of freezing a copy inside jllama.dll.
@@ -91,13 +95,11 @@ ALLOWED = {
                     "/System/Library/Frameworks/Accelerate.framework/Versions/A/Accelerate",
                     "/usr/lib/libobjc.A.dylib",
                     "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation",
-                    "/System/Library/Frameworks/Security.framework/Versions/A/Security",
-                    # KNOWN DEFECT, allowed only so this check reports NEW dependencies: the macOS
-                    # build picks up the runner's Homebrew OpenSSL, so the shipped dylib does not load
-                    # on a Mac without `brew install openssl@3`. See TODO.md ("macOS dylib links
-                    # Homebrew OpenSSL"); remove these two lines with the fix.
-                    "/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib",
-                    "/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib"},
+                    # Security + CoreFoundation: cpp-httplib's system-certificate lookup under
+                    # CPPHTTPLIB_OPENSSL_SUPPORT. The SSL library itself is BoringSSL, linked
+                    # statically (llama/CMakeLists.txt, "HTTPS"); a /opt/homebrew/.../libssl line
+                    # here would mean the build picked up the runner's OpenSSL again.
+                    "/System/Library/Frameworks/Security.framework/Versions/A/Security"},
 }
 # The Visual Studio generator build of the same compiler and runtime.
 ALLOWED["Windows/x86_64/msvc"] = ALLOWED["Windows/x86_64/cpu"]

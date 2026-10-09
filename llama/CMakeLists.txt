@@ -85,7 +85,6 @@ if(ANDROID_ABI)
     set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
     set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 endif()
-set(LLAMA_CURL OFF)
 
 option(LLAMA_VERBOSE	"llama: verbose output"		OFF)
 
@@ -176,10 +175,24 @@ if(ANDROID OR ANDROID_ABI OR OS_NAME MATCHES "Android" OR CMAKE_CXX_COMPILER MAT
 endif()
 
 set(LLAMA_BUILD_COMMON ON)
-# Enable HTTPS model downloads via curl
-set(LLAMA_CURL ON)
-# Build BoringSSL to include OpenSSL DLLs in Windows packages for HTTPS support
-if(WIN32)
+
+# HTTPS -- model downloads from https:// URLs (common/download.cpp: --model-url, --hf-repo) and the
+# embedded server's --ssl-key-file / --ssl-cert-file -- comes from BoringSSL, which upstream's
+# vendor/cpp-httplib/CMakeLists.txt fetches at a pinned tag and links STATICALLY, on every platform
+# that ships a desktop jar. A shipped library must not depend on an OpenSSL the target machine may
+# not have: the macOS build used to pick up the runner's Homebrew openssl@3 and failed to load on a
+# Mac without it, and the manylinux images have no OpenSSL that upstream's version check accepts, so
+# the Linux jars had no HTTPS at all. Upstream's own release builds pass the same flag (macos-cpu,
+# windows-*, android-*). jllama links upstream's cpp-httplib target (further down) instead of
+# compiling httplib.cpp a second time, so the download code and the embedded server see ONE copy of
+# cpp-httplib built with ONE setting. Off where BoringSSL is not built here: Android (the dockcross
+# cross-clang, and the AAR has no download use case) and s390x (big-endian is outside BoringSSL's
+# supported set). LLAMA_OPENSSL=OFF there keeps find_package from linking a system OpenSSL by
+# accident, which verify-native-deps.py would reject.
+if(ANDROID_ABI OR OS_NAME MATCHES "Android" OR OS_ARCH STREQUAL "s390x" OR CMAKE_SYSTEM_PROCESSOR MATCHES "s390x")
+    set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
+    set(LLAMA_BUILD_BORINGSSL OFF CACHE BOOL "" FORCE)
+else()
     set(LLAMA_BUILD_BORINGSSL ON CACHE BOOL "" FORCE)
 endif()
 
@@ -573,22 +586,16 @@ endif()
 # same 3.12.0 as our FetchContent copy, so nothing added here shadows it.
 target_sources(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server/server-http.cpp
-    ${llama.cpp_SOURCE_DIR}/vendor/cpp-httplib/httplib.cpp
 )
 
-# cpp-httplib is third-party: silence its warnings (matching upstream's own
-# cpp-httplib target, which compiles it with -w / /w).  No SSL is enabled —
-# CPPHTTPLIB_OPENSSL_SUPPORT is left undefined — so the embedded server is
-# plain-HTTP for now (bind to localhost or front it with a TLS proxy).
-if(MSVC)
-    set_source_files_properties(
-        ${llama.cpp_SOURCE_DIR}/vendor/cpp-httplib/httplib.cpp
-        PROPERTIES COMPILE_FLAGS "/w")
-else()
-    set_source_files_properties(
-        ${llama.cpp_SOURCE_DIR}/vendor/cpp-httplib/httplib.cpp
-        PROPERTIES COMPILE_FLAGS "-w")
-endif()
+# cpp-httplib itself is upstream's `cpp-httplib` static target (vendor/cpp-httplib/CMakeLists.txt,
+# built whenever LLAMA_BUILD_COMMON is on), linked below -- NOT compiled into jllama a second time.
+# That target carries CPPHTTPLIB_OPENSSL_SUPPORT as a PUBLIC definition whenever an SSL library is
+# configured (BoringSSL here, see the HTTPS block above), so server-http.cpp, jllama's own TUs and
+# common/download.cpp all agree on it. Until 5.2.0 this file compiled httplib.cpp itself, without
+# SSL, which put two incompatible copies of the same classes into one link; which copy the linker
+# chose decided per platform whether download.cpp got an SSL-capable client (macOS: yes, via the
+# Homebrew libssl it then depended on) or not (Linux: an https:// download threw).
 
 # MinGW needs ws2_32 explicitly; MSVC auto-links it via a #pragma in httplib.h.
 if(WIN32 AND NOT MSVC)
@@ -622,13 +629,13 @@ target_include_directories(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server)
 # Note: the WebUI ui.h include dir (generated webui-generated/ or the empty stub
 # src/main/cpp/webui_stub) is added by the "WebUI assets" conditional above.
-target_link_libraries(jllama PRIVATE llama-common mtmd llama nlohmann_json)
+target_link_libraries(jllama PRIVATE llama-common mtmd llama nlohmann_json cpp-httplib)
 target_compile_features(jllama PRIVATE cxx_std_11)
 
 target_compile_definitions(jllama PRIVATE
     SERVER_VERBOSE=$<BOOL:${LLAMA_VERBOSE}>
-    # cpp-httplib tuning — mirror the defines upstream's cpp-httplib target sets so
-    # httplib.cpp and every TU that includes httplib.h (server-http.cpp) agree on
+    # cpp-httplib tuning — mirror the defines upstream's cpp-httplib target sets PRIVATELY for
+    # httplib.cpp, so every TU here that includes httplib.h (server-http.cpp) agrees with it on
     # the inline behaviour these macros control.
     CPPHTTPLIB_FORM_URL_ENCODED_PAYLOAD_MAX_LENGTH=1048576
     CPPHTTPLIB_LISTEN_BACKLOG=512
@@ -827,12 +834,13 @@ if(BUILD_TESTING)
         # The generated Java-CLI-flag list consumed by test_model_flags.cpp.
         ${CMAKE_CURRENT_BINARY_DIR}/generated
     )
-    target_link_libraries(jllama_test PRIVATE llama-common mtmd llama nlohmann_json GTest::gtest_main)
+    target_link_libraries(jllama_test PRIVATE llama-common mtmd llama nlohmann_json cpp-httplib GTest::gtest_main)
     target_compile_features(jllama_test PRIVATE cxx_std_17)
 
     # The embedded llama-server's shutdown path (test_native_server_shutdown.cpp) drives the real
     # llama_server() in router mode, so the test binary needs server.cpp and what it pulls in: the
-    # HTTP transport, its cpp-httplib backend, and the tools/MCP units server.cpp references. Same
+    # HTTP transport (cpp-httplib itself is the linked upstream target) and the tools/MCP units
+    # server.cpp references. Same
     # non-Android guard as jllama (subprocess.h / posix_spawn_*). The empty-asset WebUI stub is
     # always enough here: no test serves the UI.
     if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
@@ -842,7 +850,6 @@ if(BUILD_TESTING)
             ${llama.cpp_SOURCE_DIR}/tools/server/server-tools.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server-mcp.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server-http.cpp
-            ${llama.cpp_SOURCE_DIR}/vendor/cpp-httplib/httplib.cpp
         )
         target_include_directories(jllama_test PRIVATE ${CMAKE_SOURCE_DIR}/src/main/cpp/webui_stub)
         if(MSVC)

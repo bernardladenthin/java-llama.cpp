@@ -183,18 +183,6 @@ binaries; 2026-10-08) established:
   look for CUDA hits in the stats table) and flip the default back when a warm run shows them -- the
   win was ~51 -> ~15 min with CUDA 13.2.
 
-### macOS dylib links Homebrew OpenSSL (found by `verify-native-deps.py`)
-
-- **The shipped `Mac/aarch64/metal/libjllama.dylib` needs `/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib`
-  and `libcrypto.3.dylib`** (verified on the published 5.1.0 jar and the current snapshot). The macOS
-  build finds the runner's Homebrew OpenSSL and links it dynamically, so the macOS natives do not load
-  on a Mac without `brew install openssl@3` — and the macOS smoke cannot see it, because the runner
-  has it. Likely fix: build BoringSSL statically on macOS as on Windows
-  (`LLAMA_BUILD_BORINGSSL`, `llama/CMakeLists.txt`), or turn HTTPS off there (`-DLLAMA_OPENSSL=OFF`;
-  the library only needs it for URL model downloads). Then delete the two allowlist lines marked
-  KNOWN DEFECT in `.github/buildcheck/nativedeps.py`. Needs a macOS CI run to verify, which is why it is
-  not folded into the RPC PR that surfaced it.
-
 ### RPC backend — follow-ups
 
 - **A server lost mid-inference still aborts the JVM.** Patch `0015` makes *registration* fail

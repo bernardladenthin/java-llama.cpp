@@ -21,18 +21,27 @@
 # that never exits, and the assertion that matters here is native-library loadability, not a CLI
 # exit code. Same job shape, repo-specific assertions.
 #
-# Deliberately model-free: no GGUF, no cache restore, no network — it runs in ~1 min. A full
-# model-backed macOS server smoke would be strictly more, but the failure class that actually
-# shipped is caught here, so this is the version that is cheap enough to always run.
+# No cache restore and no model of the CI set: it runs in ~1 min. A full model-backed macOS server
+# smoke would be strictly more, but the failure class that actually shipped is caught here, so this
+# is the version that is cheap enough to always run. The one model it touches is the 1 MB
+# stories260K.gguf of .github/models.csv, which step 3 downloads itself over HTTPS -- that download
+# IS the check: the library links BoringSSL statically (llama/CMakeLists.txt, "HTTPS") and this
+# dylib used to depend on the runner's Homebrew OpenSSL, which no check here could see because the
+# runner has it. Step 3 proves the HTTPS client against the macOS certificate store and the
+# embedded server behind its own TLS certificate, the same round the Linux and Windows rows of
+# smoke-fatjar run.
 #
-# Usage: smoke-native-macos.sh <jar-dir> <jar-glob>
+# Usage: smoke-native-macos.sh <jar-dir> <jar-glob> [port]
+# Server output of step 3 is written to server-tls-out.log / server-tls-err.log in the working dir.
 #   <jar-dir>   directory to search for the jar (recursively)
 #   <jar-glob>  filename glob; must match EXACTLY ONE jar
 
 set -euo pipefail
 
-JAR_DIR="${1:?usage: smoke-native-macos.sh <jar-dir> <jar-glob>}"
-JAR_GLOB="${2:?usage: smoke-native-macos.sh <jar-dir> <jar-glob>}"
+JAR_DIR="${1:?usage: smoke-native-macos.sh <jar-dir> <jar-glob> [port]}"
+JAR_GLOB="${2:?usage: smoke-native-macos.sh <jar-dir> <jar-glob> [port]}"
+TLS_PORT="${3:-18081}"
+HTTPS_MODEL_NAME="stories260K.gguf"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -90,5 +99,46 @@ codesign --verify --strict --verbose=2 "$DYLIB" \
 echo "== JVM load + JNI round-trip =="
 java -cp "$JAR" "$SCRIPT_DIR/smoke/NativeLoadSmoke.java" \
     || fail "the packaged native library did not load in a JVM"
+
+# 3) HTTPS in both directions out of the packaged jar: the server behind a self-signed certificate
+#    (--ssl-key-file / --ssl-cert-file) serving a model it downloaded from an https:// URL, verified
+#    against the macOS certificate store (Security.framework). -ngl 0: this is about TLS, not Metal.
+echo "== HTTPS server + https:// model download =="
+HTTPS_MODEL_URL="$(grep -E "^${HTTPS_MODEL_NAME//./\\.}," "$SCRIPT_DIR/models.csv" | cut -d, -f2- || true)"
+[ -n "$HTTPS_MODEL_URL" ] || fail "$HTTPS_MODEL_NAME has no row in $SCRIPT_DIR/models.csv"
+openssl req -x509 -newkey rsa:2048 -nodes -keyout "$WORK/tls-key.pem" -out "$WORK/tls-cert.pem" -days 2 \
+    -subj "/CN=127.0.0.1" > /dev/null 2>&1 || fail "could not create the self-signed TLS certificate"
+export LLAMA_CACHE="$WORK/llama-cache"
+mkdir -p "$LLAMA_CACHE"
+# -m names where the download lands; with --model-url alone the server starts in ROUTER mode.
+java -jar "$JAR" -m "$LLAMA_CACHE/$HTTPS_MODEL_NAME" --model-url "$HTTPS_MODEL_URL" \
+    --host 127.0.0.1 --port "$TLS_PORT" --chat-template chatml \
+    -ngl 0 --ssl-key-file "$WORK/tls-key.pem" --ssl-cert-file "$WORK/tls-cert.pem" \
+    > server-tls-out.log 2> server-tls-err.log &
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2> /dev/null || true; rm -rf "$WORK"' EXIT
+CODE=""
+for _ in $(seq 1 100); do
+    if ! kill -0 "$SERVER_PID" 2> /dev/null; then
+        echo "--- server-tls-out.log ---" && cat server-tls-out.log
+        echo "--- server-tls-err.log ---" && cat server-tls-err.log
+        fail "the TLS server exited before becoming healthy (download or load failed)"
+    fi
+    CODE="$(curl -sk -o /dev/null -w '%{http_code}' "https://127.0.0.1:$TLS_PORT/health" || true)"
+    [ "$CODE" = "200" ] && break
+    sleep 3
+done
+if [ "$CODE" != "200" ]; then
+    echo "--- server-tls-err.log (tail) ---" && tail -50 server-tls-err.log
+    fail "https://127.0.0.1:$TLS_PORT/health never returned 200 (last code: ${CODE:-none})"
+fi
+echo "HTTPS health OK"
+if curl -s -o /dev/null --max-time 10 "http://127.0.0.1:$TLS_PORT/health"; then
+    fail "the TLS port answered a plain-HTTP request — the server did not use the certificate"
+fi
+echo "plain HTTP on the TLS port refused: OK"
+find "$LLAMA_CACHE" -type f -name '*.gguf' | grep -q . \
+    || fail "no .gguf under $LLAMA_CACHE — the https:// download did not happen"
+echo "https:// model download OK: $(find "$LLAMA_CACHE" -type f -name '*.gguf' -exec basename {} \; | head -1)"
 
 echo "smoke test PASSED"

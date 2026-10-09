@@ -10,6 +10,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **CI proves HTTPS in both directions on the release assets.** The fat-jar smokes (Linux x86-64 /
+  aarch64, Windows x86-64 / arm64) and the macOS smoke each start the server behind a self-signed
+  certificate (`--ssl-key-file` / `--ssl-cert-file`; a plain-HTTP request to the port must be refused)
+  serving a model it downloaded itself from an `https://` URL (the 1 MB `stories260K.gguf` of
+  `models.csv`) with the operating system's certificate store -- the check that would have caught the
+  Linux defect below, and the only one that can see the macOS one (the runner has Homebrew's OpenSSL).
 - **`examples/jbang/Chat.java`**, a one-file console chat that [JBang](https://www.jbang.dev) runs without a
   checkout or a build (`jbang https://github.com/bernardladenthin/java-llama.cpp/blob/main/examples/jbang/Chat.java
   model.gguf`). Its `//DEPS` lines name the classes jar and the CPU natives jar of every desktop platform
@@ -275,6 +281,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
 
 ### Fixed
+- **HTTPS works out of every desktop natives jar, and the macOS dylib no longer needs Homebrew's OpenSSL.**
+  `jllama` compiled cpp-httplib itself, without SSL, next to the SSL-enabled copy upstream's `llama-common`
+  (the download code) links -- two incompatible copies of the same classes in one link, and which one the
+  linker took was decided per platform: on Linux `--model-url https://…` and `-hf` threw
+  "HTTPS is not supported", and on macOS the dylib came to depend on `/opt/homebrew/opt/openssl@3`
+  and failed to load on a Mac without that formula (`verify-native-deps.py` carried the two paths as a
+  known defect). Now `jllama` links upstream's `cpp-httplib` target, and BoringSSL is built from source
+  and linked statically on Linux x86-64 / aarch64, macOS and Windows (where it already was), as
+  upstream's own release builds do; Android and s390x stay without SSL (`LLAMA_OPENSSL=OFF`). The
+  embedded server's `--ssl-key-file` / `--ssl-cert-file` work as a result. Certificates are verified
+  against the OS store: crypt32 on Windows (the one new import of `jllama.dll`, allowlisted),
+  Security.framework on macOS, `/etc/ssl/certs` and `/etc/ssl/cert.pem` on Linux (`SSL_CERT_FILE` /
+  `SSL_CERT_DIR` override). The library grows by about 2.5 MB, the code of BoringSSL's two static libraries.
 - **`LlamaLoader` prints its two diagnostic lines to stderr**, `[jllama] using native backend '…'` and
   `[jllama] extracted '…'`, where they went to stdout before. A router worker JVM
   (`NativeServer.setWorkerCommand`) printed them onto the router's command pipe, which since llama.cpp b11401
