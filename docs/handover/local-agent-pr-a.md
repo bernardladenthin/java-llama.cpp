@@ -2,8 +2,13 @@
 
 Paste the text below the line into the local agent (Windows workstation: Ryzen 7 5800H, RTX 3070,
 AMD iGPU, MSVC + LLVM + Docker + JDK 21 + Maven). It describes what this branch already contains,
-what the remote session cannot verify from its sandbox, and the exact deliverables. The file is
-deleted again once PR A is merged.
+what the remote session cannot verify from its sandbox, and the exact deliverables.
+
+**Status (2026-10-09).** PR A (#496) and the agent's own corrections to this file (#498) are merged;
+the branch has since moved on (b11538, `InvalidRequestException`). The file stays for one reason:
+deliverable 6 (B2) carries the agent's measurements and the four `OPEN` items that the Windows
+CPU-variants CI job still needs, and `TODO.md` ("CPU variants") points here for them. Deliverables
+1-5 were not reported and are not asked for again; delete the file when B2 lands.
 
 **Deliverable 6 (B2) carries measurements taken on this same workstation on 2026-10-09**, marked
 `MEASURED` or `OPEN` per item: four are done and only need confirming, three are genuinely open, and
