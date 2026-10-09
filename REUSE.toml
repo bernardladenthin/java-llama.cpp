@@ -22,6 +22,7 @@ path = [
     "llama/src/test/resources/images/README.md",
     "llama/src/test/resources/audios/README.md",
     ".claude/commands/find-cpp-duplication.md",
+    ".claude/skills/java-tdd-guide/SKILL.pointer.md",
     "llama-langchain4j/README.md",
     "models/README.md",
 ]

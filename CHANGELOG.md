@@ -108,6 +108,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   GitHub retires the `macos-14` image by 2026-11-02 and fails every `macos-14` job during its October
   brownouts. The label is pinned rather than `macos-latest`, and it is not `macos-15`, which the
   shipped Metal build and the no-Metal build already run on.
+- **CI: every hunk of `llama/patches/*.patch` is checked as text** (`.github/check-patches.py`,
+  `code-style` job): the header must declare exactly the lines the body carries. `git apply --check`
+  cannot see a header that undercounts -- it skips the surplus lines and writes a truncated file -- which
+  is how two comment lines added to `prefetch.h` in patch `0017` cut the header off inside its function
+  and reddened 24 jobs before the count was corrected. The check needs no llama.cpp source and runs in
+  the first minutes of a run; the historic broken patch text is its pinned negative case.
 - **Upgraded the pinned llama.cpp from b11476 to b11512**, in 7 reviewed steps, each ending at a tag.
   No carried patch needed a refresh, and every drop-check still finds its defect. The chat parser now
   receives the generated tokens next to the text (#29876, `common_chat_input`) -- a change in the C++
