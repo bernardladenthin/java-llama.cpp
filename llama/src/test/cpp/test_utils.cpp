@@ -996,13 +996,21 @@ TEST(SafeJsonToStr, InvalidUtf8InString_DoesNotThrow) {
 
 // ============================================================
 // oaicompat_chat_params_parse — early validation throws
-//   These all fire BEFORE common_chat_templates_apply is called,
-//   so opt.tmpls can remain nullptr safely.
+//   These all fire BEFORE the chat session is built (llama.cpp b11531, #30210:
+//   the function takes the vocab and returns a common_chat_session), so
+//   opt.tmpls and the vocab can remain nullptr safely.
 // ============================================================
 
 namespace {
 // Minimal helper: build body + options + out_files for early-throw tests
 std::vector<raw_buffer> g_out_files;
+
+// The new signature with a throwaway session and no vocab -- every test below throws before
+// either is touched.
+json parse_chat_params(json &body, const server_chat_params &opt, std::vector<raw_buffer> &files) {
+    common_chat_session session;
+    return oaicompat_chat_params_parse(nullptr, body, opt, files, session);
+}
 
 json make_chat_body_with_messages(const json &messages_override = json::array({{{"role", "user"},
                                                                                 {"content", "hello"}}})) {
@@ -1021,14 +1029,14 @@ TEST(OaicompatChatParams, MissingMessages_Throws) {
     json body = {{"model", "x"}};
     server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
+    EXPECT_THROW(parse_chat_params(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, MessagesNotArray_Throws) {
     json body = {{"messages", "not-an-array"}};
     server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
+    EXPECT_THROW(parse_chat_params(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, NonAssistantMissingContent_Throws) {
@@ -1036,7 +1044,7 @@ TEST(OaicompatChatParams, NonAssistantMissingContent_Throws) {
     json body = {{"messages", json::array({{{"role", "user"}}})}};
     server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
+    EXPECT_THROW(parse_chat_params(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, AssistantMissingBothContentAndToolCalls_Throws) {
@@ -1044,7 +1052,7 @@ TEST(OaicompatChatParams, AssistantMissingBothContentAndToolCalls_Throws) {
     json body = {{"messages", json::array({{{"role", "assistant"}}})}};
     server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
+    EXPECT_THROW(parse_chat_params(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, ToolsWithoutJinja_Throws) {
@@ -1052,14 +1060,14 @@ TEST(OaicompatChatParams, ToolsWithoutJinja_Throws) {
                  {"tools", json::array({{{"type", "function"}}})}};
     server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
+    EXPECT_THROW(parse_chat_params(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, NonAutoToolChoiceWithoutJinja_Throws) {
     json body = {{"messages", json::array({{{"role", "user"}, {"content", "hi"}}})}, {"tool_choice", "none"}};
     server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
+    EXPECT_THROW(parse_chat_params(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, GrammarAndJsonSchema_Throws) {
@@ -1068,7 +1076,7 @@ TEST(OaicompatChatParams, GrammarAndJsonSchema_Throws) {
                  {"json_schema", {{"type", "object"}}}};
     server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
+    EXPECT_THROW(parse_chat_params(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, InvalidResponseFormatType_Throws) {
@@ -1076,7 +1084,7 @@ TEST(OaicompatChatParams, InvalidResponseFormatType_Throws) {
                  {"response_format", {{"type", "invalid_type"}}}};
     server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
+    EXPECT_THROW(parse_chat_params(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, ContentPartTypeUnsupported_Throws) {
@@ -1084,7 +1092,7 @@ TEST(OaicompatChatParams, ContentPartTypeUnsupported_Throws) {
                                             {"content", json::array({{{"type", "video_url"}, {"url", "x"}}})}}})}};
     server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
+    EXPECT_THROW(parse_chat_params(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, ImageUrlWithoutAllowImage_Throws) {
@@ -1096,7 +1104,7 @@ TEST(OaicompatChatParams, ImageUrlWithoutAllowImage_Throws) {
     server_chat_params opt = make_no_jinja_opts();
     opt.allow_image = false;
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
+    EXPECT_THROW(parse_chat_params(body, opt, files), std::exception);
 }
 
 TEST(OaicompatChatParams, ContentNotStringOrArray_Throws) {
@@ -1104,7 +1112,7 @@ TEST(OaicompatChatParams, ContentNotStringOrArray_Throws) {
     json body = {{"messages", json::array({{{"role", "user"}, {"content", 42}}})}};
     server_chat_params opt = make_no_jinja_opts();
     std::vector<raw_buffer> files;
-    EXPECT_THROW(oaicompat_chat_params_parse(body, opt, files), std::exception);
+    EXPECT_THROW(parse_chat_params(body, opt, files), std::exception);
 }
 
 // ============================================================

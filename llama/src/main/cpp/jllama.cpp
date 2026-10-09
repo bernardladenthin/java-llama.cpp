@@ -293,14 +293,17 @@ static void wake_server(jllama_context *jctx) {
 
 /**
  * Parse the OAI chat-completion body through oaicompat_chat_params_parse and
- * write the result into `out`, preserving decoded media in `files`. Returns
- * true on success; on failure throws and returns false.
+ * write the result into `out`, preserving decoded media in `files` and the chat
+ * session (prompt, parser state, sampling additions; llama.cpp b11531, #30210) in
+ * `session`. The session must reach the task (`apply_chat_session`) and the
+ * reader (`post_tasks`), which the two dispatchers below do. Returns true on
+ * success; on failure throws and returns false.
  */
 [[nodiscard]] static bool parse_oai_chat_params(JNIEnv *env, jllama_context *jctx, json &body, json &out,
-                                                std::vector<raw_buffer> &files) {
+                                                std::vector<raw_buffer> &files, common_chat_session &session) {
     try {
         auto meta = wake_and_get_meta(jctx);
-        out = oaicompat_chat_params_parse(body, meta.chat_params, files);
+        out = oaicompat_chat_params_parse(jctx->vocab, body, meta.chat_params, files, session);
         return true;
     } catch (const std::exception &e) {
         throw_invalid_request(env, e);
@@ -354,14 +357,19 @@ static void wake_and_post(server_response_reader &rd, server_task &&task, bool f
     rd.post_task(std::move(task), front);
 }
 
-static void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks) {
+// The chat session (if any) is what the reader builds its task_result_state from -- the
+// parser that turns generated text into content, reasoning and tool calls. A default session
+// is the non-chat case (content only).
+static void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks,
+                          const common_chat_session &session = {}) {
     rd.queue_tasks.wait_until_no_sleep();
-    rd.post_tasks(std::move(tasks));
+    rd.post_tasks(std::move(tasks), session);
 }
 
 [[nodiscard]] static jint dispatch_streaming_completion(JNIEnv *env, jllama_context *jctx, const json &data,
                                                         server_task_type task_type, task_response_type res_type,
-                                                        std::vector<raw_buffer> files = {}) {
+                                                        std::vector<raw_buffer> files = {},
+                                                        const common_chat_session &session = {}) {
     server_context *ctx_server = &jctx->server;
     auto meta = wake_and_get_meta(jctx);
     auto *rd = new server_response_reader(ctx_server->get_response_reader());
@@ -370,8 +378,11 @@ static void wake_and_post(server_response_reader &rd, std::vector<server_task> &
         server_task task(task_type);
         task.id = tid;
         populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
+        task.apply_chat_session(session);
         task.params.res_type = res_type;
-        wake_and_post(*rd, std::move(task));
+        std::vector<server_task> tasks;
+        tasks.push_back(std::move(task));
+        wake_and_post(*rd, std::move(tasks), session);
     } catch (const std::exception &e) {
         delete rd;
         throw_invalid_request(env, e);
@@ -391,7 +402,8 @@ static void wake_and_post(server_response_reader &rd, std::vector<server_task> &
  */
 [[nodiscard]] static jstring dispatch_blocking_completion(JNIEnv *env, jllama_context *jctx, const json &data,
                                                           server_task_type task_type, task_response_type res_type,
-                                                          std::vector<raw_buffer> files = {}) {
+                                                          std::vector<raw_buffer> files = {},
+                                                          const common_chat_session &session = {}) {
     server_context *ctx_server = &jctx->server;
     auto meta = wake_and_get_meta(jctx);
     auto rd = ctx_server->get_response_reader();
@@ -403,8 +415,11 @@ static void wake_and_post(server_response_reader &rd, std::vector<server_task> &
         throw_invalid_request(env, e);
         return nullptr;
     }
+    task.apply_chat_session(session);
     task.params.res_type = res_type;
-    wake_and_post(rd, std::move(task));
+    std::vector<server_task> tasks;
+    tasks.push_back(std::move(task));
+    wake_and_post(rd, std::move(tasks), session);
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
     if (!batch_ok_or_throw(env, br))
         return nullptr;
@@ -1509,7 +1524,8 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_applyTemplate(JNIE
 
         json templateData;
         std::vector<raw_buffer> files;
-        if (!parse_oai_chat_params(env, jctx, data, templateData, files))
+        common_chat_session session; // built with the prompt, not needed afterwards
+        if (!parse_oai_chat_params(env, jctx, data, templateData, files, session))
             return nullptr;
 
         if (!templateData.contains("prompt") || !templateData.at("prompt").is_string()) {
@@ -1532,11 +1548,12 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleChatCompleti
         }
         json data;
         std::vector<raw_buffer> files;
-        if (!parse_oai_chat_params(env, jctx, body, data, files))
+        common_chat_session session;
+        if (!parse_oai_chat_params(env, jctx, body, data, files, session))
             return nullptr;
 
         return dispatch_blocking_completion(env, jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CHAT,
-                                            std::move(files));
+                                            std::move(files), session);
     });
 }
 
@@ -1552,11 +1569,12 @@ JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestChatCompletion
         // Chat template already applied by parse_oai_chat_params; no OAI wrapping on the streaming path.
         json data;
         std::vector<raw_buffer> files;
-        if (!parse_oai_chat_params(env, jctx, body, data, files))
+        common_chat_session session;
+        if (!parse_oai_chat_params(env, jctx, body, data, files, session))
             return 0;
 
         return dispatch_streaming_completion(env, jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_NONE,
-                                             std::move(files));
+                                             std::move(files), session);
     });
 }
 
@@ -1576,11 +1594,12 @@ JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestChatCompletion
         }
         json data;
         std::vector<raw_buffer> files;
-        if (!parse_oai_chat_params(env, jctx, body, data, files))
+        common_chat_session session;
+        if (!parse_oai_chat_params(env, jctx, body, data, files, session))
             return 0;
 
         return dispatch_streaming_completion(env, jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CHAT,
-                                             std::move(files));
+                                             std::move(files), session);
     });
 }
 
