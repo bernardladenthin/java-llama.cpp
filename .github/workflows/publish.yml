@@ -1156,6 +1156,28 @@ jobs:
           find models -type f ! -name "${DRAFT_MODEL_NAME}" -delete 2>/dev/null || true
           sudo rm -rf /usr/local/share/powershell /opt/hostedtoolcache/CodeQL 2>/dev/null || true
           echo "Disk after cleanup:"; df -h / | tail -1
+      - name: Pre-install the Android emulator package (retried)
+        # reactivecircus/android-emulator-runner runs `sdkmanager --install emulator --channel=0`
+        # itself, exactly once, and a bad download fails the whole job before the emulator even
+        # starts -- run 38069595101: both emulator jobs died in the same minute with "Error on
+        # ZipFile unknown archive" (a corrupt archive from dl.google.com), an hour after the same
+        # jobs were green. Installing the package here first, with retries, turns the action's own
+        # install into a no-op; if the download stays broken, this step says so instead of the
+        # action's "adb emu kill" exit code 1.
+        shell: bash
+        run: |
+          set +o pipefail  # `yes` dies of SIGPIPE once sdkmanager stops reading; that is not a failure
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          for attempt in 1 2 3 4; do
+            if sdkmanager --install emulator --channel=0 >/dev/null; then
+              echo "emulator package installed (attempt ${attempt})"
+              exit 0
+            fi
+            echo "sdkmanager --install emulator failed (attempt ${attempt} of 4)"
+            sleep $((attempt * 20))
+          done
+          echo "::error::the Android emulator package could not be installed in 4 attempts (dl.google.com download or archive broken)"
+          exit 1
       - name: Run on-emulator instrumentation (connectedDebugAndroidTest)
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -1305,6 +1327,28 @@ jobs:
           find models -type f ! -name "${DRAFT_MODEL_NAME}" -delete 2>/dev/null || true
           sudo rm -rf /usr/local/share/powershell /opt/hostedtoolcache/CodeQL 2>/dev/null || true
           echo "Disk after cleanup:"; df -h / | tail -1
+      - name: Pre-install the Android emulator package (retried)
+        # reactivecircus/android-emulator-runner runs `sdkmanager --install emulator --channel=0`
+        # itself, exactly once, and a bad download fails the whole job before the emulator even
+        # starts -- run 38069595101: both emulator jobs died in the same minute with "Error on
+        # ZipFile unknown archive" (a corrupt archive from dl.google.com), an hour after the same
+        # jobs were green. Installing the package here first, with retries, turns the action's own
+        # install into a no-op; if the download stays broken, this step says so instead of the
+        # action's "adb emu kill" exit code 1.
+        shell: bash
+        run: |
+          set +o pipefail  # `yes` dies of SIGPIPE once sdkmanager stops reading; that is not a failure
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          for attempt in 1 2 3 4; do
+            if sdkmanager --install emulator --channel=0 >/dev/null; then
+              echo "emulator package installed (attempt ${attempt})"
+              exit 0
+            fi
+            echo "sdkmanager --install emulator failed (attempt ${attempt} of 4)"
+            sleep $((attempt * 20))
+          done
+          echo "::error::the Android emulator package could not be installed in 4 attempts (dl.google.com download or archive broken)"
+          exit 1
       - name: Run LLM Service UI test on emulator (connectedDebugAndroidTest)
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -1451,10 +1495,13 @@ jobs:
   #   * -DBUILD_TESTING: the option refuses it (jllama_test calls the CPU and RPC backends, which
   #     are modules here, not link-time libraries) -- test-cpp-windows-x86_64 runs the C++ suite in
   #     a static build with the same compiler, the split the Linux CPU jobs have.
-  #   * sccache: upstream adds `-Xclang -fno-pch-timestamp` to every clang TU (llama.cpp's
-  #     CMakeLists), which sccache 0.18.0 refuses to cache -- measured: every TU a miss, the build
-  #     green and the cache inert -- so the install would only cost time. The cl.exe TUs of the
-  #     other Windows Ninja jobs still cache; this one builds cold on every run.
+  #   * sccache: sccache 0.18.0 refuses any TU carrying an `-Xclang` argument, and CMake's
+  #     Platform/Windows-Clang.cmake puts one on every plain-clang TU for the runtime-library
+  #     selection (`-Xclang --dependent-lib=libcmt`; llama.cpp adds `-Xclang -fno-pch-timestamp`
+  #     on top for its own TUs) -- measured: every TU a miss, the build green and the cache inert
+  #     -- so the install would only cost time. The cl.exe TUs of the other Windows Ninja jobs
+  #     still cache; this one builds cold on every run, and so does the ROCm job (TheRock's clang
+  #     is a plain clang too; CLAUDE.md "sccache on every Windows Ninja job but one").
   # The MSVC job above keeps the Visual Studio generator as the test-only second toolchain; 32-bit
   # Windows is not built any more (upstream builds none either, and a 32-bit process addresses
   # ~2 GB, less than most models).

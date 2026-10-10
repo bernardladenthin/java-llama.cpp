@@ -189,8 +189,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`verify-native-deps.py` holds the directory to the OS imports). `LlamaLoader` pre-loads
   `ggml-base.dll` and `ggml.dll` by full path from `jllama-extras.txt` before `jllama.dll`, so the
   import never resolves against a foreign llama.cpp install on `PATH`. The job no longer installs
-  sccache (upstream's `-Xclang -fno-pch-timestamp` makes every clang TU a cache miss) and no longer
-  runs `ctest` (the option refuses `BUILD_TESTING`; see `test-cpp-windows-x86_64` under Added).
+  sccache (sccache 0.18.0 refuses the `-Xclang` CMake puts on every plain-clang Windows TU, so every
+  TU is a cache miss) and no longer runs `ctest` (the option refuses `BUILD_TESTING`; see
+  `test-cpp-windows-x86_64` under Added).
 - **The message of a rejected request is the bare reason** (`"prompt" must not be empty`), no longer the
   JSON object `{"code":400,"message":…,"type":"invalid_request_error"}` the old `throw_invalid_request`
   wrapped it in: the type is the exception class now (`InvalidRequestException`), as it is for every
@@ -444,6 +445,15 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **A Windows build on an AMX CPU (Sapphire, Emerald or Granite Rapids) crashed the JVM with
+  `STATUS_HEAP_CORRUPTION` when a model was unloaded.** ggml's AMX weight buffer -- used by the
+  `sapphirerapids` CPU module for Q4_0/Q4_1/Q8_0/Q4_K/Q5_K/Q6_K/IQ4_XS weights -- is allocated with
+  `_aligned_malloc()` on Windows and was freed with `free()`; `patches/0018` frees it with
+  `ggml_aligned_free()`, as the plain CPU buffer does (no change on Linux). Never shipped: the
+  5.1.0 Windows jar was a static Haswell-level build that carried no AMX code. Found by the second
+  full CI run of the modular natives, whose Windows Java test job landed on an Intel Xeon 6973P-C
+  runner; the first run's AMD EPYC 7763 never reached the code (the Windows runners are a CPU
+  lottery, CLAUDE.md "Modular natives").
 - **`NativeServer` attach mode no longer leaves a sleep callback into freed memory behind.**
   `llama_server_attach` (`patches/0007`) built a `server_routes` on its own stack frame; its
   constructor registers a sleeping-state callback on the model's task queue, which has no unregister,
