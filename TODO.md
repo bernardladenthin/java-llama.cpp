@@ -338,18 +338,15 @@ cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) cov
 - **AVX-512/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra): item 2 of "CPU variants" above.
 - **Kolibri-1 on the real 78B model** (after a full build; the shards need more than 64 GB of RAM).
 
-### GraalVM Native Image evaluation
+### GraalVM Native Image -- evaluated, parked until a consumer asks
 
-- **Evaluate GraalVM Native Image as an alternative distribution target.** Reference: [GraalVM Native Image](https://www.graalvm.org/latest/reference-manual/native-image/). The pure-Java sibling projects in the README's "Similar Projects" list (mukel's `llama3.java` / `gemma4.java` / `gptoss.java` / `qwen35.java` / `nemotron3.java`) demonstrate that single-jar, no-JNI Java inference is viable for individual model architectures. Native Image opens an orthogonal direction for THIS project: AOT-compile the Java layer + JNI bridge to a self-contained binary that bundles the libjllama.so (or per-OS equivalent) and starts in milliseconds without a JVM, which would make jllama usable in CLI tools, serverless functions, and short-lived processes where JVM startup is the dominant cost.
-
-  **What to investigate before committing**:
-  - **JNI-loading shape.** Native Image supports JNI but requires `--enable-native-access=ALL-UNNAMED` + reflection/JNI configuration files (`reflect-config.json`, `jni-config.json`, `resource-config.json`) describing every class/method/field reachable across the JNI boundary. The 34 native methods in `jllama.cpp` plus the JNI-side `FindClass` / `GetFieldID` / `GetMethodID` calls at `JNI_OnLoad` need to be mapped. The GraalVM tracing agent (`-agentlib:native-image-agent=config-output-dir=...`) can auto-generate the config during a representative test run, but the `LlamaLoader` JAR-extraction path needs at least one resource-config rule for `net/ladenthin/llama/{OS}/{ARCH}/lib*.so`.
-  - **Native-library packaging.** The current `LlamaLoader` extracts the OS-specific `.so`/`.dll`/`.dylib` from the JAR to a tmp dir at first use. Native Image needs the same file at AOT-execution time, so either (a) ship the native lib alongside the produced binary as a sidecar file and adjust `LlamaLoader` to find it on the same directory, or (b) embed the native lib as a resource and keep the existing extract-to-tmpdir flow (which Native Image supports via `resource-config.json`).
-  - **CUDA / Metal / OpenCL backend selection.** `LlamaLoader` already selects at runtime among the natives jars on the classpath (one directory per backend, fixed priority order). Native Image would need those directories as bundled resources (`resource-config.json`) or as sidecar files next to the binary.
-  - **Startup-time benchmark to justify the work.** Measure cold-start of a current java-llama.cpp `LlamaModel(new ModelParameters().setModel("...").setNPredict(1))` invocation: how much is JVM startup + class load vs JNI load + model parse + tokenize + 1 token? If JVM startup is < 10 % of cold-start, Native Image yields little. If JVM startup is > 50 %, it's a clear win for CLI / serverless use cases.
-  - **Maintenance cost.** Native Image adds a second build matrix (per OS × per backend × per JDK) and a new failure surface (Native Image config drift when a llama.cpp version bump adds new JNI-reachable types). Should ship only with a CI job that exercises the Native Image build on at least one OS, otherwise the config files will rot silently.
-
-  **Out of scope until evidence supports it**: actually implementing any of the above. This entry exists so that when someone asks "can I ship java-llama.cpp as a single 30 MB binary?" the answer points to a concrete investigation plan rather than restarting from zero.
+The evaluation is written down in
+[`docs/graalvm-native-image-evaluation.md`](docs/graalvm-native-image-evaluation.md): what the
+library needs from Native Image (a closed JNI surface, resource or sidecar natives, no reflection of
+its own), the two decisions a real attempt has to take, the cost (a second build matrix and metadata
+that rots silently without an image-build-plus-smoke job), and the one measurement that decides it:
+the share of JVM start-up in a cold one-token run, which needs a model and therefore the local agent
+("Needs a machine" above). Nothing to do here until that number or a consumer request exists.
 
 ### macOS model-backed server smoke (optional depth, not scheduled)
 
