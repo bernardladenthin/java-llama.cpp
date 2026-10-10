@@ -41,7 +41,7 @@ import org.junit.jupiter.api.io.TempDir;
                         + "including BufferedInputStream wrapping and length mismatches; getTempDir "
                         + "honours the 'net.ladenthin.llama.tmpdir' system-property override; and "
                         + "getNativeResourcePath produces the expected classpath resource prefix; parseExtras reads a "
-                        + "backend extras file; BACKEND_PRIORITY ends with msvc then cpu; and "
+                        + "backend extras file and parseBuild a build file; LIBRARY_BACKENDS tries metal before cpu and MODULE_BACKENDS names the GPU module directories; selectModules applies the net.ladenthin.llama.backend filter and requireSameBuild refuses a module of another llama.cpp tag; and "
                         + "resourceMatchesFile compares a classpath resource to an on-disk file byte-for-byte; extractFile extracts a resource, reuses an already-identical copy without rewriting it, and replaces one whose content differs; and extractionKey derives the per-build key of the extraction directory from a jar entry's CRC and size, a file's size and mtime, or the URL.")
 public class LlamaLoaderTest {
 
@@ -145,11 +145,85 @@ public class LlamaLoaderTest {
     }
 
     @Test
-    public void testBackendPriorityTriesAcceleratorsBeforeCpuAndMsvcBeforeCpu() {
-        java.util.List<String> priority = LlamaLoader.BACKEND_PRIORITY;
-        assertEquals("cpu", priority.get(priority.size() - 1));
-        assertEquals("msvc", priority.get(priority.size() - 2));
-        assertEquals("cuda13", priority.get(0));
+    public void testLibraryBackendsAreMetalThenCpuAndModuleBackendsAreTheGpuOnes() {
+        assertEquals(java.util.Arrays.asList("metal", "cpu"), new java.util.ArrayList<>(LlamaLoader.LIBRARY_BACKENDS));
+        assertEquals(
+                java.util.Arrays.asList("cuda13", "rocm", "sycl", "vulkan", "opencl", "openvino"),
+                new java.util.ArrayList<>(LlamaLoader.MODULE_BACKENDS));
+        for (String module : LlamaLoader.MODULE_BACKENDS) {
+            assertFalse(LlamaLoader.LIBRARY_BACKENDS.contains(module), module);
+        }
+    }
+
+    @Test
+    public void testParseBuildReadsKeyValueLinesAndSkipsTheRest() throws IOException {
+        java.util.Map<String, String> build =
+                LlamaLoader.parseBuild(new java.io.BufferedReader(new java.io.StringReader(
+                        "# Written by CMake\r\nllama.cpp = b11538\nbackend=cuda13\nno separator\n\nkind=module\n")));
+        assertEquals("b11538", build.get(LlamaLoader.BUILD_KEY_LLAMA_CPP));
+        assertEquals("cuda13", build.get("backend"));
+        assertEquals("module", build.get("kind"));
+        assertEquals(3, build.size());
+    }
+
+    // -------------------------------------------------------------------------
+    // selectModules / requireSameBuild
+    // -------------------------------------------------------------------------
+
+    private static final java.util.List<String> PRESENT = java.util.Arrays.asList("cuda13", "vulkan", "opencl");
+
+    @Test
+    public void selectModulesTakesEveryPresentModuleWhenThePropertyIsUnset() {
+        assertEquals(PRESENT, LlamaLoader.selectModules(PRESENT, null));
+        assertEquals(PRESENT, LlamaLoader.selectModules(PRESENT, "  "));
+    }
+
+    @Test
+    public void selectModulesNarrowsToTheNamedModulesInListOrder() {
+        assertEquals(java.util.Arrays.asList("cuda13", "opencl"), LlamaLoader.selectModules(PRESENT, "opencl, cuda13"));
+        assertEquals(
+                java.util.Collections.singletonList("vulkan"), LlamaLoader.selectModules(PRESENT, "vulkan,vulkan,"));
+    }
+
+    @Test
+    public void selectModulesWithALibraryBackendAloneMeansNoModule() {
+        assertTrue(LlamaLoader.selectModules(PRESENT, "cpu").isEmpty());
+        assertTrue(LlamaLoader.selectModules(PRESENT, "metal").isEmpty());
+        assertEquals(java.util.Collections.singletonList("vulkan"), LlamaLoader.selectModules(PRESENT, "cpu,vulkan"));
+    }
+
+    @Test
+    public void selectModulesFailsLoudOnAnUnknownOrAbsentBackend() {
+        UnsatisfiedLinkError unknown =
+                assertThrows(UnsatisfiedLinkError.class, () -> LlamaLoader.selectModules(PRESENT, "msvc"));
+        assertTrue(unknown.getMessage().contains("'msvc'"), unknown.getMessage());
+        UnsatisfiedLinkError absent =
+                assertThrows(UnsatisfiedLinkError.class, () -> LlamaLoader.selectModules(PRESENT, "rocm"));
+        assertTrue(absent.getMessage().contains("rocm-<os>-<arch>"), absent.getMessage());
+        assertTrue(absent.getMessage().contains("present: [cuda13, vulkan, opencl]"), absent.getMessage());
+    }
+
+    @Test
+    public void requireSameBuildAcceptsTheSameTagAndRefusesEverythingElse() {
+        java.util.Map<String, String> b1 =
+                java.util.Collections.singletonMap(LlamaLoader.BUILD_KEY_LLAMA_CPP, "b11538");
+        java.util.Map<String, String> b2 =
+                java.util.Collections.singletonMap(LlamaLoader.BUILD_KEY_LLAMA_CPP, "b11600");
+        LlamaLoader.requireSameBuild("cpu", b1, "cuda13", new java.util.HashMap<>(b1));
+        UnsatisfiedLinkError differs =
+                assertThrows(UnsatisfiedLinkError.class, () -> LlamaLoader.requireSameBuild("cpu", b1, "cuda13", b2));
+        assertTrue(differs.getMessage().contains("'cuda13' was built from llama.cpp b11600"), differs.getMessage());
+        assertTrue(differs.getMessage().contains("'cpu' from llama.cpp b11538"), differs.getMessage());
+        UnsatisfiedLinkError missing = assertThrows(
+                UnsatisfiedLinkError.class,
+                () -> LlamaLoader.requireSameBuild(
+                        "cpu", b1, "vulkan", java.util.Collections.<String, String>emptyMap()));
+        assertTrue(missing.getMessage().contains("no " + LlamaLoader.BACKEND_BUILD_FILE), missing.getMessage());
+        // a library without the file cannot vouch for anything either
+        assertThrows(
+                UnsatisfiedLinkError.class,
+                () -> LlamaLoader.requireSameBuild(
+                        "cpu", java.util.Collections.<String, String>emptyMap(), "vulkan", b1));
     }
 
     @Test
@@ -218,8 +292,23 @@ public class LlamaLoaderTest {
     @Test
     public void testExtractionDirectoryNameCarriesBackendAndKey() {
         assertEquals(
-                LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "cuda13-none",
-                LlamaLoader.extractionDirectoryName("cuda13", null));
+                LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "cpu-none", LlamaLoader.extractionDirectoryName("cpu", null));
+    }
+
+    @Test
+    public void testExtractionDirectoryNameWithModulesAddsAHashOverTheirKeys() throws IOException {
+        URL a = new URL("https://example.invalid/a.jar!/net/ladenthin/llama/Linux/x86_64/cuda13/jllama-files.txt");
+        URL b = new URL("https://example.invalid/b.jar!/net/ladenthin/llama/Linux/x86_64/vulkan/jllama-files.txt");
+        String none = LlamaLoader.extractionDirectoryName("cpu", null, java.util.Collections.<URL>emptyList());
+        String withA = LlamaLoader.extractionDirectoryName("cpu", null, java.util.Collections.singletonList(a));
+        String withAB = LlamaLoader.extractionDirectoryName("cpu", null, java.util.Arrays.asList(a, b));
+        assertEquals(LlamaLoader.extractionDirectoryName("cpu", null), none);
+        assertTrue(withA.startsWith(none + "-m"), withA);
+        assertNotEquals(none, withA);
+        assertNotEquals(withA, withAB);
+        // the same modules give the same directory: it is the cache of the next start
+        assertEquals(withAB, LlamaLoader.extractionDirectoryName("cpu", null, java.util.Arrays.asList(a, b)));
+        assertTrue(LlamaLoader.shouldCleanPath(Paths.get("/tmp/" + withAB)));
     }
 
     // -------------------------------------------------------------------------
@@ -539,27 +628,43 @@ public class LlamaLoaderTest {
     }
 
     @Test
-    public void extractionDirectoriesOfThisClasspathNameEveryBackendPresent() {
+    public void extractionDirectoriesOfThisClasspathNameTheLibraryWithItsModules() {
         String archProp = LlamaSystemProperties.PREFIX + ".osinfo.architecture";
-        String previous = System.getProperty(archProp);
+        String backendProp = LlamaSystemProperties.PREFIX + ".backend";
+        String previousArch = System.getProperty(archProp);
+        String previousBackend = System.getProperty(backendProp);
         System.setProperty(archProp, "backendtest");
+        System.clearProperty(backendProp);
         try {
             assumeTrue("Linux".equals(OSInfo.getOSName()), "backend fixtures are committed for Linux only");
-            Set<String> names = LlamaLoader.extractionDirectoriesOfThisClasspath();
-            Set<String> expected = new HashSet<>();
-            for (String backend : new String[] {"cuda13", "rocm", "vulkan"}) {
-                expected.add(LlamaLoader.extractionDirectoryName(
-                        backend,
-                        LlamaLoader.resource("net/ladenthin/llama/Linux/backendtest/" + backend + "/libjllama.so")));
+            String base = "net/ladenthin/llama/Linux/backendtest";
+            URL library = LlamaLoader.resource(base + "/cpu/libjllama.so");
+            // every module present (cuda13, rocm, vulkan): one directory, keyed by all of them
+            java.util.List<URL> modules = new java.util.ArrayList<>();
+            for (String module : new String[] {"cuda13", "rocm", "vulkan"}) {
+                modules.add(LlamaLoader.resource(base + "/" + module + "/jllama-files.txt"));
             }
-            assertEquals(expected, names);
-            assertTrue(names.stream().allMatch(n -> n.startsWith(LlamaLoader.BACKEND_TEMP_DIR_PREFIX)));
+            assertEquals(
+                    new HashSet<>(java.util.Collections.singletonList(
+                            LlamaLoader.extractionDirectoryName("cpu", library, modules))),
+                    LlamaLoader.extractionDirectoriesOfThisClasspath());
+            // the filter changes the directory, so a filtered start never meets the other start's modules
+            System.setProperty(backendProp, "cpu");
+            assertEquals(
+                    new HashSet<>(
+                            java.util.Collections.singletonList(LlamaLoader.extractionDirectoryName("cpu", library))),
+                    LlamaLoader.extractionDirectoriesOfThisClasspath());
         } finally {
-            if (previous == null) {
-                System.clearProperty(archProp);
-            } else {
-                System.setProperty(archProp, previous);
-            }
+            restore(archProp, previousArch);
+            restore(backendProp, previousBackend);
+        }
+    }
+
+    private static void restore(String key, @org.jspecify.annotations.Nullable String value) {
+        if (value == null) {
+            System.clearProperty(key);
+        } else {
+            System.setProperty(key, value);
         }
     }
 }

@@ -61,11 +61,13 @@ public class LlamaSystemProperties {
     }
 
     /**
-     * Native-backend override. Names one backend directory (e.g. {@code cuda13}, {@code vulkan},
-     * {@code cpu}) to load exclusively; loading then fails loud instead of trying the next
-     * backend. Unset, every backend on the classpath is tried in the loader's priority order.
+     * GPU-module filter. A comma-separated list of backend names: the named GPU modules ({@code cuda13},
+     * {@code vulkan}, ...) are the only ones put next to the library, and {@code cpu} (or {@code metal})
+     * alone means none, so the model runs on the CPU with every GPU natives jar still on the classpath.
+     * Naming a backend that is not on the classpath fails loud. Unset, every GPU module on the classpath
+     * is loaded (see {@code LlamaLoader.selectModules}).
      *
-     * @return the configured backend name, or {@code null} if unset
+     * @return the configured value, or {@code null} if unset
      */
     public @Nullable String getBackend() {
         return getProperty(".backend");

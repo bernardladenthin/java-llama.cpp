@@ -11,27 +11,26 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import net.ladenthin.llama.ClaudeGenerated;
-import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 @ClaudeGenerated(
-        purpose = "Drive LlamaLoader.initialize() end-to-end against the committed backend fixture "
-                + "trees (src/test/resources/net/ladenthin/llama/Linux/backendtest*/<backend>/) by "
-                + "redirecting the arch component via the osinfo.architecture override. backendtest/ "
-                + "holds only unloadable fake libraries in real backend directories (cuda13, rocm, "
-                + "vulkan), exercising every failure branch (priority probing, per-backend temp-dir "
-                + "extraction, jllama-extras.txt present and naming a missing file, jllama-files.txt extracted "
-                + "but not loaded, clean load-failure "
-                + "fallthrough, forced-backend fail-loud, no backend at all); backendtest-ok/ adds two "
-                + "trivial real x86-64 ELF dummies so the success path, the resident-extra bookkeeping, "
-                + "and the same-extra clash skip execute too. Linux-only (the trees are committed under "
-                + "the Linux OS folder); self-skips elsewhere.")
+        purpose = "Drive LlamaLoader.initialize() end-to-end against the committed fixture trees "
+                + "(src/test/resources/net/ladenthin/llama/Linux/backendtest*/<backend>/) by redirecting the "
+                + "arch component via the osinfo.architecture override. backendtest/ holds an unloadable fake "
+                + "library in cpu/ (with a fixture CPU module in its jllama-files.txt) and fake GPU modules in "
+                + "cuda13/ (plus an unloadable extra), rocm/ (built from another llama.cpp tag) and vulkan/, "
+                + "exercising the build check, the module filter, the extraction of every selected module into "
+                + "the library's directory, an extra that fails to load, the clean failure of the library load "
+                + "and the no-library case; backendtest-ok/ has a trivial real x86-64 ELF dummy as the library "
+                + "and as cuda13's extra, so the success path executes too, with and without modules. "
+                + "Linux-only (the trees are committed under the Linux OS folder); self-skips elsewhere.")
 public class BackendLoadTest {
 
     /** Arch-folder override selecting the committed fixture tree {@code Linux/backendtest/}. */
@@ -73,25 +72,20 @@ public class BackendLoadTest {
         }
     }
 
-    /**
-     * The extraction directory of {@code backend} below the temp dir, {@code null} when there is
-     * none. Its name carries a key derived from the fixture library's file, so it is found by its
-     * prefix (there is never more than one per backend here: one fixture tree per test).
-     */
-    private @Nullable Path backendDir(String backend) throws IOException {
-        String prefix = LlamaLoader.BACKEND_TEMP_DIR_PREFIX + backend + "-";
+    /** The extraction directories below the temp dir (there is one per library-and-modules combination). */
+    private List<Path> extractionDirs() throws IOException {
         try (Stream<Path> entries = Files.list(tempDir)) {
-            List<Path> found = entries.filter(p -> p.getFileName().toString().startsWith(prefix))
+            return entries.filter(p -> p.getFileName().toString().startsWith(LlamaLoader.BACKEND_TEMP_DIR_PREFIX))
+                    .sorted()
                     .collect(Collectors.toList());
-            assertTrue(found.size() <= 1, "several extraction directories for " + backend + ": " + found);
-            return found.isEmpty() ? null : found.get(0);
         }
     }
 
-    private Path requireBackendDir(String backend) throws IOException {
-        Path dir = backendDir(backend);
-        assertNotNull(dir, "no extraction directory for " + backend);
-        return dir;
+    /** The one extraction directory this start used. */
+    private Path theExtractionDir() throws IOException {
+        List<Path> dirs = extractionDirs();
+        assertEquals(1, dirs.size(), "expected exactly one extraction directory: " + dirs);
+        return dirs.get(0);
     }
 
     private static void assumeLinuxFixtureTree() {
@@ -111,38 +105,102 @@ public class BackendLoadTest {
                 "loadable dummy backend libraries are built for x86-64 only");
     }
 
-    @Test
-    public void triesEveryBackendOnTheClasspathInPriorityOrderThenFails() throws IOException {
-        assumeLinuxFixtureTree();
-        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
-        // Every backend present in the fixture tree was attempted (and failed cleanly); backends
-        // with no directory there (sycl, opencl, cpu, ...) are not listed as tried.
-        String message = error.getMessage();
-        String base = "net/ladenthin/llama/Linux/" + FIXTURE_ARCH;
-        assertTrue(message.indexOf(base + "/cuda13") < message.indexOf(base + "/rocm"), message);
-        assertTrue(message.indexOf(base + "/rocm") < message.indexOf(base + "/vulkan"), message);
-        assertFalse(message.contains(base + "/cpu"), message);
-        // cuda13: the extra file is extracted into the per-backend temp subdir before its
-        // load fails; the main library is never reached for that backend.
-        Path cuda13 = requireBackendDir("cuda13");
-        assertTrue(Files.isRegularFile(cuda13.resolve("libextra.so")));
-        assertFalse(Files.exists(cuda13.resolve("libjllama.so")));
-        // vulkan (no extras): its main library is extracted, then fails to load. The file its
-        // jllama-files.txt names is extracted next to it first -- never loaded, or this not-a-library
-        // fixture would have failed the backend before its library was reached.
-        Path vulkan = requireBackendDir("vulkan");
-        assertTrue(Files.isRegularFile(vulkan.resolve("libggml-cpu-fixture.so")));
-        assertTrue(Files.isRegularFile(vulkan.resolve("libjllama.so")));
-        // The directory is keyed by the backend's library (two builds never share one).
-        assertEquals(
-                LlamaLoader.extractionDirectoryName(
-                        "vulkan",
-                        LlamaLoader.resource("net/ladenthin/llama/Linux/" + FIXTURE_ARCH + "/vulkan/libjllama.so")),
-                vulkan.getFileName().toString());
+    private static Set<String> names(Path dir) throws IOException {
+        try (Stream<Path> entries = Files.list(dir)) {
+            return entries.map(p -> p.getFileName().toString()).collect(Collectors.toSet());
+        }
     }
 
     @Test
-    public void loadsFirstWorkingBackendAndSkipsResidentClash() throws java.io.IOException {
+    public void aModuleOfAnotherBuildIsRefusedBeforeAnythingIsExtracted() throws IOException {
+        assumeLinuxFixtureTree();
+        // rocm's jllama-build.txt names another llama.cpp tag than cpu's; with every module selected
+        // the start must refuse it, and the refusal comes before the first file is written.
+        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
+        String message = error.getMessage();
+        assertTrue(message.contains("'rocm' was built from llama.cpp bOTHER"), message);
+        assertTrue(message.contains("'cpu' from llama.cpp bTEST"), message);
+        assertTrue(extractionDirs().isEmpty(), "nothing may be extracted: " + extractionDirs());
+    }
+
+    @Test
+    public void theSelectedModulesLandNextToTheLibraryWhichThenFailsToLoadCleanly() throws IOException {
+        assumeLinuxFixtureTree();
+        System.setProperty(BACKEND_PROP, "vulkan");
+        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
+        String message = error.getMessage();
+        assertTrue(message.contains("backend 'cpu' could not be loaded"), message);
+        assertTrue(message.contains("GPU modules: vulkan"), message);
+        // One directory, keyed by the library and the vulkan module: the library's own module file and
+        // the GPU module were put in place (never loaded by the JVM -- the fixtures are not libraries),
+        // then the fake library failed its load. cuda13 and rocm were not selected: nothing of theirs.
+        Path dir = theExtractionDir();
+        String base = "net/ladenthin/llama/Linux/" + FIXTURE_ARCH;
+        assertEquals(
+                LlamaLoader.extractionDirectoryName(
+                        "cpu",
+                        LlamaLoader.resource(base + "/cpu/libjllama.so"),
+                        java.util.Collections.singletonList(LlamaLoader.resource(base + "/vulkan/jllama-files.txt"))),
+                dir.getFileName().toString());
+        Set<String> files = names(dir);
+        assertTrue(files.contains("libggml-cpu-fixture.so"), files.toString());
+        assertTrue(files.contains("libggml-vulkan.so"), files.toString());
+        assertTrue(files.contains("libjllama.so"), files.toString());
+        assertFalse(files.contains("libggml-cuda.so"), files.toString());
+        assertFalse(files.contains("libggml-hip.so"), files.toString());
+    }
+
+    @Test
+    public void anExtraOfAModuleThatFailsToLoadFailsTheStartBeforeTheLibrary() throws IOException {
+        assumeLinuxFixtureTree();
+        System.setProperty(BACKEND_PROP, "cuda13,vulkan");
+        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
+        assertTrue(error.getMessage().contains("GPU modules: cuda13, vulkan"), error.getMessage());
+        // cuda13's jllama-extras.txt names libextra.so, a fake: extracted, its load fails, and the start
+        // stops there -- the plain files and the library are never written.
+        Set<String> files = names(theExtractionDir());
+        assertTrue(files.contains("libextra.so"), files.toString());
+        assertFalse(files.contains("libggml-vulkan.so"), files.toString());
+        assertFalse(files.contains("libjllama.so"), files.toString());
+    }
+
+    @Test
+    public void cpuAloneSelectsNoModuleAndUsesTheLibrarysOwnDirectory() throws IOException {
+        assumeLinuxFixtureTree();
+        System.setProperty(BACKEND_PROP, "cpu");
+        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
+        assertTrue(error.getMessage().contains("GPU modules: none"), error.getMessage());
+        Path dir = theExtractionDir();
+        assertEquals(
+                LlamaLoader.extractionDirectoryName(
+                        "cpu", LlamaLoader.resource("net/ladenthin/llama/Linux/" + FIXTURE_ARCH + "/cpu/libjllama.so")),
+                dir.getFileName().toString());
+        Set<String> files = names(dir);
+        assertEquals(new java.util.HashSet<>(java.util.Arrays.asList("libggml-cpu-fixture.so", "libjllama.so")), files);
+    }
+
+    @Test
+    public void aNamedModuleThatIsNotOnTheClasspathFailsLoud() throws IOException {
+        assumeLinuxFixtureTree();
+        System.setProperty(BACKEND_PROP, "opencl");
+        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
+        assertTrue(error.getMessage().contains("names 'opencl', but no natives jar"), error.getMessage());
+        assertTrue(extractionDirs().isEmpty(), extractionDirs().toString());
+    }
+
+    @Test
+    public void withoutAnyLibraryTheErrorNamesTheMissingNativesJar() {
+        assumeLinuxFixtureTree();
+        System.setProperty(ARCH_PROP, "backendtest-none");
+        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
+        String message = error.getMessage();
+        assertTrue(message.contains("os.arch=backendtest-none"), message);
+        assertTrue(message.contains("cpu-<os>-<arch>"), message);
+        assertTrue(message.contains("A GPU natives jar alone is not enough"), message);
+    }
+
+    @Test
+    public void loadsTheLibraryWithEveryModuleNextToIt() throws IOException {
         assumeLinuxFixtureTree();
         assumeX86_64();
         System.setProperty(ARCH_PROP, "backendtest-ok");
@@ -153,41 +211,31 @@ public class BackendLoadTest {
                 tempDir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "stale").resolve("nested");
         Files.createDirectories(stale);
         Files.write(stale.resolve("libjllama.so"), new byte[] {1});
-        // Must succeed: cuda13's real extra library loads but its fake main library fails;
-        // rocm lists the same extra file name and is skipped (already resident, so its temp
-        // dir is never even created); vulkan's real dummy library loads.
+        // Must succeed: cuda13's real extra library loads, both fake modules are only put in place,
+        // and the real dummy library loads (it has no JNI_OnLoad, so nothing looks at the modules).
         LlamaLoader.initialize();
-        assertTrue(Files.isRegularFile(requireBackendDir("cuda13").resolve("libextra.so")));
-        assertNull(backendDir("rocm"));
-        assertTrue(Files.isRegularFile(requireBackendDir("vulkan").resolve("libjllama.so")));
+        List<Path> dirs = extractionDirs().stream()
+                .filter(p -> !p.getFileName().toString().equals(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "stale"))
+                .collect(Collectors.toList());
+        assertEquals(1, dirs.size(), dirs.toString());
+        Set<String> files = names(dirs.get(0));
+        for (String expected : new String[] {"libjllama.so", "libextra.so", "libggml-cuda.so", "libggml-vulkan.so"}) {
+            assertTrue(files.contains(expected), expected + " missing in " + files);
+        }
     }
 
     @Test
-    public void withoutAnyBackendTheErrorNamesTheMissingNativesJar() {
+    public void loadsTheLibraryAloneWhenCpuIsForced() throws IOException {
         assumeLinuxFixtureTree();
-        System.setProperty(ARCH_PROP, "backendtest-none");
-        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
-        String message = error.getMessage();
-        assertFalse(message.contains("backendtest-none/"), message);
-        assertTrue(message.contains("os.arch=backendtest-none"), message);
-        assertTrue(message.contains("natives jar"), message);
-    }
-
-    @Test
-    public void forcedBackendFailsLoudInsteadOfFallingBack() throws IOException {
-        assumeLinuxFixtureTree();
-        System.setProperty(BACKEND_PROP, "cuda13");
-        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
-        assertTrue(error.getMessage().contains("Forced native backend 'cuda13'"), error.getMessage());
-        // Only the forced backend was attempted.
-        assertNull(backendDir("vulkan"));
-    }
-
-    @Test
-    public void forcedAbsentBackendFailsLoud() {
-        assumeLinuxFixtureTree();
+        assumeX86_64();
+        System.setProperty(ARCH_PROP, "backendtest-ok");
         System.setProperty(BACKEND_PROP, "cpu");
-        UnsatisfiedLinkError error = assertThrows(UnsatisfiedLinkError.class, LlamaLoader::initialize);
-        assertTrue(error.getMessage().contains("Forced native backend 'cpu'"), error.getMessage());
+        LlamaLoader.initialize();
+        Path dir = theExtractionDir();
+        assertEquals(
+                LlamaLoader.extractionDirectoryName(
+                        "cpu", LlamaLoader.resource("net/ladenthin/llama/Linux/backendtest-ok/cpu/libjllama.so")),
+                dir.getFileName().toString());
+        assertEquals(java.util.Collections.singleton("libjllama.so"), names(dir));
     }
 }

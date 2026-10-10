@@ -2,5 +2,5 @@
 #
 # SPDX-License-Identifier: MIT
 #
-# Test fixture for BackendLoadTest: files loaded, in order, before this backend's library.
-libmissing.so
+# Test fixture for BackendLoadTest: extracted next to the library, never loaded by the JVM.
+libggml-hip.so

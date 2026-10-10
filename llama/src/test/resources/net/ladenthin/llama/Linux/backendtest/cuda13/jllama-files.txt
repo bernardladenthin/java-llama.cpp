@@ -3,4 +3,4 @@
 # SPDX-License-Identifier: MIT
 #
 # Test fixture for BackendLoadTest: extracted next to the library, never loaded by the JVM.
-libggml-vulkan.so
+libggml-cuda.so

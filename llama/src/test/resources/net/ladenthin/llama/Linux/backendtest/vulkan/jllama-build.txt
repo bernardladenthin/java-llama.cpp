@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT
+#
+# Test fixture for BackendLoadTest: the build this directory came from.
+llama.cpp=bTEST
+backend=vulkan
+kind=module

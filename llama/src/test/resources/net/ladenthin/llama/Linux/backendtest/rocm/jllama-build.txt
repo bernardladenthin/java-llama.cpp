@@ -2,5 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 #
-# Test fixture for BackendLoadTest: extracted next to the library, never loaded by the JVM.
-libggml-vulkan.so
+# Test fixture for BackendLoadTest: the build this directory came from.
+llama.cpp=bOTHER
+backend=rocm
+kind=module
