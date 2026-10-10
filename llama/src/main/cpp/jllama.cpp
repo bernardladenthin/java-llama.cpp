@@ -672,20 +672,36 @@ JNIEnv *get_jni_env_or_null() noexcept {
 }
 
 /**
- * A JNIEnv for the current thread, attaching the thread to the JVM if it is not attached yet.
+ * A JNIEnv for the current thread, attaching the thread to the JVM once if it is not attached yet.
  *
- * The log sink runs on common_log's worker thread, a plain std::thread that llama.cpp creates
- * (and re-creates on every pause/resume) and that has never seen the JVM. The thread is not ours,
- * and a thread that exits while attached leaves a dangling JavaThread behind, so this attaches per
- * call and the caller detaches again. That is the simple, leak-free choice, not the cheapest one:
- * every attach creates a java.lang.Thread object (and fires JVMTI thread events), which is
- * noticeable at --verbose volumes. A thread_local guard whose destructor detaches once at thread
- * exit would keep the thread attached across lines; see TODO.md. Returns nullptr (nothing to log
- * through) when the JVM is gone or refuses the attach. `attached` tells the caller whether it owes
- * a DetachCurrentThread.
+ * The log sink runs on common_log's worker thread, a plain std::thread that llama.cpp creates (and
+ * re-creates on every pause/resume) and that has never seen the JVM. Until 5.2.x the trampoline
+ * attached and detached per log line -- leak-free, but every attach creates a java.lang.Thread
+ * object and fires the JVMTI thread events (measured: 13 lines of a failed load, 13 Thread objects),
+ * which is noticeable at --verbose volumes. Now the attach lasts for the life of the thread: a
+ * thread_local guard records it, and its destructor detaches when the thread exits.
+ * common_log::pause() joins the worker, a normal exit on which C++ TLS destructors run (glibc,
+ * macOS, MSVC -- also for a dlopen'd library, whose registered TLS destructors keep it mapped until
+ * those threads are gone, and JNI_OnUnload joins the worker through common_log_set_callback(nullptr)
+ * before anything else). Attached as a daemon, so DestroyJavaVM never waits for the singleton
+ * logger's worker; should the worker outlive the VM (the static common_log is destroyed at process
+ * exit, after DestroyJavaVM), HotSpot's DetachCurrentThread returns as soon as it sees the VM has
+ * exited. A thread the JVM already owns (GetEnv == JNI_OK) is used as it is and never detached.
+ * Returns nullptr (nothing to log through) when the JVM is gone or refuses the attach.
  */
-JNIEnv *get_jni_env_attaching(bool &attached) noexcept {
-    attached = false;
+namespace {
+struct jni_thread_attachment {
+    bool attached = false;
+    ~jni_thread_attachment() {
+        if (attached && g_vm != nullptr) {
+            g_vm->DetachCurrentThread();
+        }
+    }
+};
+thread_local jni_thread_attachment t_jni_attachment;
+} // namespace
+
+JNIEnv *get_jni_env_attaching() noexcept {
     JNIEnv *env = nullptr;
     if (g_vm == nullptr) {
         return nullptr;
@@ -694,11 +710,16 @@ JNIEnv *get_jni_env_attaching(bool &attached) noexcept {
     if (res == JNI_OK) {
         return env;
     }
-    if (res == JNI_EDETACHED && g_vm->AttachCurrentThread(reinterpret_cast<void **>(&env), nullptr) == JNI_OK) {
-        attached = true;
-        return env;
+    if (res != JNI_EDETACHED) {
+        return nullptr;
     }
-    return nullptr;
+    char name[] = "jllama-log-worker"; // the JVM copies it; shows in thread dumps instead of Thread-N
+    JavaVMAttachArgs args = {JNI_VERSION_1_6, name, nullptr};
+    if (g_vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void **>(&env), &args) != JNI_OK) {
+        return nullptr;
+    }
+    t_jni_attachment.attached = true;
+    return env;
 }
 
 bool log_json;
@@ -1791,10 +1812,16 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_setLogger(JNIEnv *env
                 jobject cb_ref = o_log_callback;
                 log_callback = [cb_ref](enum ggml_log_level level, const char *text, void *user_data) noexcept {
                     // common_log delivers from its own worker thread, which is not attached to the
-                    // JVM; attach for the call and detach again (see get_jni_env_attaching).
-                    bool attached = false;
-                    JNIEnv *env = get_jni_env_attaching(attached);
+                    // JVM; it is attached once per worker thread and detached when that thread exits
+                    // (see get_jni_env_attaching).
+                    JNIEnv *env = get_jni_env_attaching();
                     if (env == nullptr || text == nullptr) {
+                        return;
+                    }
+                    // The thread stays attached and has no Java frame, so local references would
+                    // accumulate until it exits: scope every call's references to a local frame.
+                    if (env->PushLocalFrame(4) != JNI_OK) {
+                        env->ExceptionClear(); // out of memory; drop this log line
                         return;
                     }
                     // Log lines can embed payload text (prompts, model metadata), so the
@@ -1808,11 +1835,8 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_setLogger(JNIEnv *env
                         if (env->ExceptionCheck()) {
                             env->ExceptionClear(); // a throwing logger must not poison the worker
                         }
-                        env->DeleteLocalRef(message);
                     }
-                    if (attached) {
-                        g_vm->DetachCurrentThread();
-                    }
+                    env->PopLocalFrame(nullptr);
                 };
             }
         }

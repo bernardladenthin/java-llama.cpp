@@ -83,6 +83,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **The log sink attaches llama.cpp's log worker to the JVM once per thread, not once per line.**
+  `LlamaModel.setLogger`'s trampoline used to `AttachCurrentThread` + `DetachCurrentThread` for every
+  log line, i.e. one `java.lang.Thread` object and a pair of JVMTI thread events per line (13 lines of a
+  failed load, 13 `Thread` objects). A `thread_local` guard now keeps the attach (as a daemon thread
+  named `jllama-log-worker`, visible in thread dumps) until the worker thread exits, which
+  `common_log::pause()` makes a normal exit; each delivery runs in its own local-reference frame.
+  `LlamaLoggerTest` pins both.
 - **`cpu-windows-x86-64` is the CPU-variants build, built with clang** (`build-windows-x86_64`,
   `-DJLLAMA_CPU_VARIANTS=ON`): like the two Linux CPU jars since 5.2.0, the directory holds
   `jllama.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-rpc.dll` and one `ggml-cpu-<level>.dll` per
