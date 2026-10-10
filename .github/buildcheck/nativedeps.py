@@ -26,9 +26,11 @@ the library jar's files: it is checked against DENIED only, because it legitimat
 runtime, and it must import ggml-base -- the proof that it is a module built against the shared ggml
 and not a second monolithic library. Two more checks for ELF libraries: one that needs a sibling,
 or is a module (whose libggml-base lies next to it only after extraction), must carry the run path
-`$ORIGIN` and nothing else (a build-tree path would point at the CI runner), and the directories in
-GLIBC_CEILING, built in a manylinux image, may not reference a glibc symbol version above the floor
-they promise. Android libraries must also have every LOAD segment 16 KB aligned.
+`$ORIGIN` and nothing else (a build-tree path would point at the CI runner) -- except on Android,
+where a library carries no run path at all and only a build-tree path fails (see violations()) --
+and the directories in GLIBC_CEILING, built in a manylinux image, may not reference a glibc symbol
+version above the floor they promise. Android libraries must also have every LOAD segment 16 KB
+aligned.
 That every listed build arrived is merge-native-artifacts.sh's check.
 
 Exit codes: 0 clean, 1 violation, 2 nothing found to check.
@@ -310,11 +312,28 @@ def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
         failures += [f"{rel}: LOAD alignment {a} is not a multiple of {ANDROID_PAGE_ALIGNMENT} "
                      f"(Google Play 16 KB page-size requirement)" for a in alignments if a % ANDROID_PAGE_ALIGNMENT]
     siblings = set(siblings)
-    is_module = bool(key) and key.rsplit("/", 1)[-1] not in CPU_BACKENDS and not key.startswith("Linux-Android/")
+    android = key.startswith("Linux-Android/")
+    is_module = bool(key) and key.rsplit("/", 1)[-1] not in CPU_BACKENDS and not android
     if is_module and not any(d.lower() in GGML_BASE for d in deps):
         failures.append(f"{rel} does not import ggml-base, so it is not a backend module built against the shared "
                         f"ggml (a JLLAMA_MODULE_ONLY build) -- a GPU jar must hold the module alone")
-    if rel.endswith(".so") and (is_module or any(d in siblings for d in deps)) and runpath != ORIGIN:
+    if android and rel.endswith(".so"):
+        # An Android library carries NO run path, and needs none. CMake's Android platform drops the
+        # flag (Modules/Platform/Android.cmake: "Android reportedly ignores RPATH, and we cannot
+        # predict the install location anyway"; dockcross's toolchain file sets CMAKE_SYSTEM_NAME
+        # Android, which is also why ggml builds its android_armv* variant list), so the
+        # INSTALL_RPATH "$ORIGIN" of llama/CMakeLists.txt writes nothing there. And bionic resolves
+        # an app's DT_NEEDED through the classloader namespace's search path -- the app's
+        # native-library directory, or the APK itself with extractNativeLibs=false, where $ORIGIN
+        # would be a zip path -- the same lookup System.loadLibrary("jllama") relies on;
+        # test-android-emulator loads the whole modular set that way. What must not ship is a
+        # build-tree path. (The first full run of the modular natives, 38065017595, had the
+        # desktop rule below demand $ORIGIN here and failed 27 libraries that load on the device.)
+        if runpath not in (None, ORIGIN):
+            failures.append(f"{rel} carries the run path {runpath!r}: an Android library has none (bionic finds "
+                            f"its siblings through the app's native-library directory), and a build-tree path "
+                            f"points at the CI runner")
+    elif rel.endswith(".so") and (is_module or any(d in siblings for d in deps)) and runpath != ORIGIN:
         failures.append(f"{rel} needs {sorted(d for d in deps if d in siblings) or list(GGML_BASE[:1])} next to it "
                         f"but its run path is {runpath!r}, not {ORIGIN!r} -- it would be looked up on the system "
                         f"instead")
@@ -338,9 +357,6 @@ def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
         if key.rsplit("/", 1)[-1] not in CPU_BACKENDS:
             return failures
         return failures + [f"{rel}: no dependency allowlist for '{key}' -- add one to ALLOWED"]
-    if is_module:
-        # the Android module: its ggml-base is the CPU AAR's, not a sibling of its own directory
-        siblings = siblings | set(GGML_BASE)
     lowered = {a.lower() for a in allowed} | {s.lower() for s in siblings}
     return failures + [f"{rel} needs {d}, which it did not need before (allowed: {sorted(allowed)}"
                        f"{' + the files next to it' if siblings else ''})"

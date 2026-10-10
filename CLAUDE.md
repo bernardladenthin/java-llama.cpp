@@ -78,7 +78,7 @@ it or is checked against it:
 | `.github/check-natives.py` | runs in `code-style` (first minutes of every run); fails when any row of this table disagrees with the list — including CMake's backend names, the dependency allowlists and the README rows |
 | `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library (or module) and nothing outside its directory, each with a `jllama-build.txt` naming a tag, a module directory holding nothing but its module and the `jllama-*.txt` lists, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows -- never the files a build's own `jllama-files.txt` names, which are only extracted; each of those must exist) |
 | `.github/package-smoke-sets.sh` | reads the list through `check-natives.py smoke-targets` / `smoke-set`: fails when a natives jar of a set was not built |
-| `.github/verify-native-deps.py` | every library of a directory: exact dependency allowlist per library directory (`cpu`/`metal`) plus the files next to it, and for the Android OpenCL module (bionic + `libOpenCL.so` + `libggml-base.so`); denylist for the other GPU modules, each of which must import `ggml-base` and, as ELF, reach it only through run path `$ORIGIN`; the manylinux_2_28 builds (both Linux CPU jars, CUDA) held to `GLIBC_2.28`; every Android library 16 KB page-aligned (Google Play). Runs in `package` and on the staged AAR libraries |
+| `.github/verify-native-deps.py` | every library of a directory: exact dependency allowlist per library directory (`cpu`/`metal`) plus the files next to it, and for the Android OpenCL module (bionic + `libOpenCL.so` + `libggml-base.so`); denylist for the other GPU modules, each of which must import `ggml-base` and, as ELF, reach it only through run path `$ORIGIN` (an Android library carries no run path -- bionic's search path is the app's native-library directory -- and only a build-tree one fails there); the manylinux_2_28 builds (both Linux CPU jars, CUDA) held to `GLIBC_2.28`; every Android library 16 KB page-aligned (Google Play). Runs in `package` and on the staged AAR libraries |
 | `.github/smoke-natives-jars.sh` (`package` job) | loads the real jars: classes + all 23 natives jars at once, on the classpath **and** the module path; the loader line must name every GPU module of the runner's platform (from the list), so a module jar the loader skipped fails here |
 
 **Adding a natives jar:** a row in `natives.csv`, the execution `check-natives.py pom` prints, a build
@@ -165,12 +165,21 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   has no equivalent, lost nothing). `ggml` and `ggml-base` are built **unversioned** (`VERSION` /
   `SOVERSION` cleared: the loader extracts plain files, so file name, SONAME and `DT_NEEDED` must
   agree).
-- **The library directory holds 18 files on Linux/Windows x86-64**: `libjllama.so`, `libggml.so`,
-  `libggml-base.so`, 14 `libggml-cpu-<level>.so` (`x64`, `sse42`, `sandybridge`, `ivybridge`,
-  `piledriver`, `haswell`, `skylakex`, `cannonlake`, `cascadelake`, `cooperlake`, `icelake`, `zen4`,
-  `alderlake`, `sapphirerapids`) and `libggml-rpc.so`; **12 on Linux/Android aarch64** (8 modules,
-  `armv8.0_1` to `armv9.2_2`: dotprod, fp16, SVE, i8mm, SVE2, SME); **5 on Windows arm64** (one
-  `ggml-cpu.dll`) -- ELF with run path `$ORIGIN` only. `jllama-files.txt` lists everything besides
+- **The library directory holds 18 files on Linux, Android and Windows x86-64**: `libjllama.so`,
+  `libggml.so`, `libggml-base.so`, 14 `libggml-cpu-<level>.so` (`x64`, `sse42`, `sandybridge`,
+  `ivybridge`, `piledriver`, `haswell`, `skylakex`, `cannonlake`, `cascadelake`, `cooperlake`,
+  `icelake`, `zen4`, `alderlake`, `sapphirerapids`) and `libggml-rpc.so`; **12 on Linux aarch64**
+  (8 modules, `armv8.0_1` to `armv9.2_2`: dotprod, fp16, SVE, i8mm, SVE2, SME); **11 on Android
+  aarch64** (ggml's own Android list of 7, `android_armv8.0_1` to `android_armv9.2_2`); **5 on
+  Windows arm64** (one `ggml-cpu.dll`) -- ELF with run path `$ORIGIN` only, **except on Android,
+  where the libraries carry no run path at all**: CMake's Android platform drops the flag
+  (`Modules/Platform/Android.cmake`, "Android reportedly ignores RPATH"; dockcross's toolchain file
+  sets `CMAKE_SYSTEM_NAME Android`), so `INSTALL_RPATH "$ORIGIN"` writes nothing there, and none is
+  needed -- bionic resolves the siblings through the app's native-library directory, the lookup
+  `System.loadLibrary` itself uses, which `test-android-emulator` proves on the device.
+  `verify-native-deps.py` therefore accepts an absent run path on Android (a build-tree path still
+  fails); the first full run of the modular natives (38065017595) applied the desktop rule there and
+  failed 27 libraries that load fine. `jllama-files.txt` lists everything besides
   `libjllama`; `LlamaLoader` extracts them next to it **without loading them** (`BACKEND_FILES_FILE`,
   the counterpart of `jllama-extras.txt`, which loads). `JNI_OnLoad` then calls
   `ggml_backend_load_all_from_path(<its own directory>)` (found via `dladdr`, on Windows
@@ -549,7 +558,10 @@ The CI cross-compiler is the `dockcross-android-arm64` image, which is **not**
 the Google NDK CMake toolchain — it is a Debian-style cross-clang at
 `/usr/aarch64-linux-android/bin/clang`. Consequently:
 
-- It never sets the `ANDROID` / `ANDROID_ABI` CMake variables, so any
+- Its toolchain file sets `CMAKE_SYSTEM_NAME Android`, so CMake's **own** Android platform is
+  active (`ANDROID` is 1 from `Platform/Android-Initialize.cmake`, ggml takes its `android_armv*`
+  variant list, and no run path is ever emitted -- see "Modular natives"), but the NDK toolchain
+  file's `ANDROID_ABI` / `ANDROID_PLATFORM` variables are never set, so any
   `if(ANDROID_ABI)`-guarded logic silently does nothing.
 - It **ignores** `-DANDROID_PLATFORM=android-28` (CMake prints it as a
   "Manually-specified variables were not used by the project" warning).
@@ -2820,8 +2832,9 @@ dockcross cross-clang emitted `DT_NEEDED` on `libomp.so` + `libc++_shared.so`, w
 `System.loadLibrary("jllama")` fail with `UnsatisfiedLinkError` on every device (caught by the
 `test-android-emulator` job; the released 5.0.5 arm64 lib had the same latent defect). The
 `nativedeps.ALLOWED` holds each Android directory to an exact `DT_NEEDED` list (`libc.so libm.so
-libdl.so liblog.so libandroid.so`, the siblings through `$ORIGIN`, plus `libOpenCL.so` and
-`libggml-base.so` for the module in `Linux-Android/aarch64/opencl`) — the
+libdl.so liblog.so libandroid.so`, the siblings next to it -- which bionic finds through the app's
+native-library directory, not through a run path: an Android library carries none, see "Modular
+natives" -- plus `libOpenCL.so` and `libggml-base.so` for the module in `Linux-Android/aarch64/opencl`) — the
 same allowlist mechanism as every desktop CPU build, where the AAR job used to carry a copy of its
 own; the AAR job additionally asserts the AAR's `jni/` library is the staged one. And
 `LlamaLoader` now includes the swallowed `System.loadLibrary` message in its

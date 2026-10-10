@@ -27,8 +27,9 @@ dependencies {
   automatically.
 - **16 KB page-size compliant** native libraries (Google Play requirement for Android 15+ targets).
 - **Modular natives, as on the desktop**: `libjllama.so` plus ggml's shared libraries and one
-  `libggml-cpu-<variant>.so` module per ARM instruction-set level (`armv8.0_1` … `armv9.2_2`:
-  dotprod, fp16, SVE, i8mm, SVE2, SME); at start the library scores every module against the
+  `libggml-cpu-<variant>.so` module per ARM instruction-set level (ggml's seven Android levels,
+  `android_armv8.0_1` … `android_armv9.2_2`: dotprod, fp16, i8mm, SVE/SVE2, SME; the x86-64 ABI
+  the 14 desktop levels); at start the library scores every module against the
   device's CPU and loads the best one. The OpenCL AAR adds `libggml-opencl.so`, which the same
   start loads when it is in the APK.
 - The Kotlin coroutines/Flow façade lives in the separate, optional

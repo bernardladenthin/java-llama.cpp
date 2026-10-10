@@ -199,6 +199,25 @@ class ViolationsTest(unittest.TestCase):
         # a desktop library is not held to it
         self.assertEqual(nativedeps.violations("x/Linux/s390x/cpu/libjllama.so", ["libc.so.6"], [4096]), [])
 
+    def test_android_libraries_carry_no_run_path(self):
+        # bionic finds the siblings through the app's native-library directory (the lookup
+        # System.loadLibrary itself uses) and CMake's Android platform emits no run path, so none is
+        # demanded; only a build-tree path fails. Run 38065017595 failed 27 libraries that load on the
+        # device because the desktop rule was applied here.
+        rel = "x/Linux-Android/aarch64/cpu/libggml-cpu-android_armv8.2_1.so"
+        siblings = {"libjllama.so", "libggml.so", "libggml-base.so", "jllama-files.txt"}
+        deps = ["libggml-base.so", "libm.so", "libdl.so", "libc.so"]
+        self.assertEqual(nativedeps.violations(rel, deps, siblings=siblings), [])
+        self.assertEqual(nativedeps.violations(rel, deps, siblings=siblings, runpath="$ORIGIN"), [])
+        failures = nativedeps.violations(rel, deps, siblings=siblings, runpath="/home/runner/work/llama/build")
+        self.assertEqual(len(failures), 1, failures)
+        self.assertIn("/home/runner/work/llama/build", failures[0])
+        self.assertIn("build-tree path", failures[0])
+        # the OpenCL module finds the CPU AAR's libggml-base the same way
+        self.assertEqual(nativedeps.violations("x/Linux-Android/aarch64/opencl/libggml-opencl.so",
+                                               ["libggml-base.so", "libOpenCL.so", "libm.so", "libdl.so", "libc.so"],
+                                               siblings={"jllama-build.txt", "jllama-files.txt"}), [])
+
 
 class MainTest(unittest.TestCase):
 

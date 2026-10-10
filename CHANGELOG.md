@@ -41,9 +41,11 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   modular platform.
 - **The Android AARs are modular too.** `llama-android` carries `libjllama.so`, `libggml.so`,
   `libggml-base.so`, `libggml-rpc.so` and one `libggml-cpu-<variant>.so` per ARM feature level
-  (`armv8.0_1` ... `armv9.2_2`: dotprod, fp16, SVE, i8mm, SVE2, SME; x86-64 its own set) under
-  `jni/<abi>/`, of which `JNI_OnLoad` scores and loads the best **by soname** (an app's libraries
-  may stay inside the APK, so there is no directory to scan); `llama-android-opencl` holds
+  (ggml's Android list, `android_armv8.0_1` ... `android_armv9.2_2`: dotprod, fp16, i8mm, SVE/SVE2,
+  SME; x86-64 the 14 desktop levels) under `jni/<abi>/`, of which `JNI_OnLoad` scores and loads the
+  best **by soname** (an app's libraries may stay inside the APK, so there is no directory to scan;
+  the libraries carry no run path either -- bionic's search path is the app's native-library
+  directory, and CMake's Android platform emits none); `llama-android-opencl` holds
   `libggml-opencl.so` alone and **depends on `llama-android`** (type `aar`), so declaring the OpenCL
   AAR is enough and AGP merges the two `jni/` trees -- additive, like the module jars on the desktop.
   A device without an OpenCL ICD runs on the CPU modules with a log line instead of needing the other
