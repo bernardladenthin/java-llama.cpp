@@ -97,7 +97,12 @@ of `jllama-files.txt` and named in `jllama-extras.txt` instead, which `LlamaLoad
 path **before** `jllama.dll` (otherwise Windows resolves the import from `java.exe`'s directory or
 `PATH`, where a foreign llama.cpp install can answer); CMake writes that file itself since 5.2.x,
 byte-identical to what `merge-native-artifacts.sh` derives, so a local build is loadable without
-the merge step (before, 57 Java tests failed on the load). And sccache is off on that job: upstream
+the merge step (before, 57 Java tests failed on the load). `JNI_OnLoad` finds its own directory with
+`GetModuleHandleExW` + `GetModuleFileNameW` and hands it to `ggml_backend_load_all_from_path` as
+**UTF-8** (a path with an umlaut loaded nothing as ANSI, and no error was logged); a GPU module whose
+runtime is missing fails silently (`SEM_FAILCRITICALERRORS`, ggml logs it at `GGML_LOG_DEBUG` only),
+which is why `JNI_OnLoad` logs the backend registry and the devices ggml ends up with at INFO, and
+`LlamaLoader` says how many module files it extracted. And sccache is off on that job: upstream
 adds `-Xclang -fno-pch-timestamp` to every clang TU, which sccache 0.18.0 does not cache (measured:
 every TU a miss, build green) -- the job builds cold. 32-bit Windows and Windows arm64 ship no
 variants (upstream builds none either).
@@ -130,6 +135,20 @@ variants (upstream builds none either).
   alone, a JVM running another jllama build wrote into the directory of a running one; on Windows
   that replaces exactly the modules the first JVM scored and unloaded again (which ones depends on
   the CPU) and leaves a mixture of two builds for the next start -- measured with upstream's DLLs.
+  **And it is reused across starts** (since 5.2.x): `cleanup()` spares the directories of the builds
+  on the classpath (`extractionDirectoriesOfThisClasspath`, computed before anything is extracted),
+  nothing is registered for `deleteOnExit` any more, and `extractFile`'s reuse branch -- compare the
+  file with the jar byte for byte, write only what differs, atomically -- does the rest, so a second
+  start copies nothing (18 files, ~1 s with an on-access scanner on Windows, on every JVM start
+  before; the same for every surefire fork). What `cleanup()` removes: the flat files of the pre-5.2.0
+  layout, and the directory of a build that is **not** on this classpath once it is older than
+  `STALE_EXTRACTION_AGE` (10 min) -- a start touches its directory's mtime before extracting, so a JVM
+  that is still starting from a directory is never swept; every delete is best-effort, and a DLL a
+  running JVM holds is locked on Windows and stays (the modules ggml scored and unloaded are not, and
+  may go -- that JVM no longer needs them, and the next start of its build re-extracts exactly the
+  missing ones). Isolating the extraction per process was considered and rejected for the same
+  reason: a per-build directory shared by every JVM of that build, with content-checked reuse, is
+  the cache; a per-process one would copy on every start again.
 - **RPC is a module too**, so `rpc_bridge.cpp`/`rpc_support.hpp` resolve its four entry points through
   `ggml_backend_reg_get_proc_address` (`rpc_proc<>()`, as upstream's `common/arg.cpp` does) in every
   build.

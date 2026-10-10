@@ -10,6 +10,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **The loaded backends and devices are logged at start-up.** `JNI_OnLoad` logs, after loading the CPU
+  modules next to the library, how many backends ggml registered and which devices they report (reaches
+  `LlamaModel.setLogger`), and `LlamaLoader` prints how many module files it extracted for a backend:
+  a module ggml cannot load fails silently (`GGML_LOG_DEBUG` only, no dialog on Windows), and without
+  these lines a GPU module with a missing runtime was indistinguishable from one that was never there.
+- **README: Windows clients under WDAC / AppLocker.** The DLLs are not Authenticode-signed and are
+  extracted to `%TEMP%`; the troubleshooting section names the way out (`net.ladenthin.llama.lib.path`
+  pointing at an allow-listed directory) and why the OpenPGP release key cannot sign them.
 - **`ModelParameters.enableMetricsEndpoint()` / `enablePropsEndpoint()` / `enableSlotsEndpoint()` /
   `disableSlotsEndpoint()`** (`--metrics`, `--props`, `--slots`, `--no-slots`): the HTTP frontend's
   endpoint toggles, needed since `NativeServer` attach mode serves the model's own routes (see Fixed).
@@ -83,6 +91,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **The extracted natives are reused across JVM starts.** `LlamaLoader` used to delete every extracted
+  file at exit and every `jllama*` entry of the temp directory at the next start, so each JVM copied
+  the whole backend directory again (18 files for a CPU-variants build, ~1 s with an on-access scanner
+  on Windows, for every surefire fork too). The per-build extraction directory
+  (`jllama-backend-<backend>-<key>`) now stays: a later start of the same build compares each file
+  with the jar byte for byte and writes only what differs; a directory of a build that is not on the
+  classpath is removed once it is 10 minutes old (a JVM that is still starting touches its directory
+  first). `net.ladenthin.llama.tmpdir` still chooses the location.
 - **The log sink attaches llama.cpp's log worker to the JVM once per thread, not once per line.**
   `LlamaModel.setLogger`'s trampoline used to `AttachCurrentThread` + `DetachCurrentThread` for every
   log line, i.e. one `java.lang.Thread` object and a pair of JVMTI thread events per line (13 lines of a

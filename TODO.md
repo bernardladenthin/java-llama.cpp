@@ -20,137 +20,10 @@ so everything below is genuinely still open.
 ### CPU variants (`JLLAMA_CPU_VARIANTS`) -- Windows, GPU modules, loader follow-ups
 
 Linux x86-64 and aarch64 ship the variant build since 5.2.0, Windows x86-64 since 5.2.x
-(CLAUDE.md "CPU variants"). The rest, with what a measurement on a Windows 11 machine (Ryzen 7
-5800H, RTX 3070, JDK 21, upstream b11476 binaries; 2026-10-08) established. The local agent's
-follow-up measurements at b11534/b11538 on the same machine, through this project's own CMake
-(plain clang 23.1.3 builds all 14 variants, 18 DLLs, `verify-native-deps.py` 0 violations; the
-`build.bat` command line the CI job now runs, the Java suite green against the variant build once
-`jllama-extras.txt` exists, `haswell` picked on Zen 3, pp512/tg128 against the static build) are in
-`docs/handover/local-agent-report-b11538-windows.md`, deliverable 3 (the GPU measurements and the
-module-beside-the-CPU-set experiment in its addenda 2 and 3):
+(CLAUDE.md "CPU variants"; the measurements behind it are in
+`docs/handover/local-agent-report-b11538-windows.md`). What is still open:
 
-1. **Windows x86-64 build -- DONE in 5.2.x**: `build-windows-x86_64` builds it with plain clang
-   (no sccache: the clang TUs do not cache, see CLAUDE.md "Windows natives"),
-   `test-cpp-windows-x86_64` runs the C++ suite in a static clang build, `test-java-windows-x86_64`
-   and the `windows-x86-64` fat-jar smoke run inference through it; CMake writes
-   `jllama-extras.txt` itself. Not yet verified: the first CI run (no Windows machine in the
-   session that wired it). The findings that led there, all still valid: only plain `clang`/`clang++` with the GNU driver -- upstream's
-   `cmake/x64-windows-llvm.cmake`, four lines -- produces all 14 x86 variants: CMake sets `MSVC` for
-   `clang-cl` as for `cl.exe`, and ggml's `if (NOT MSVC)` then drops `ivybridge`, `piledriver`,
-   `cooperlake`, `zen4` and `sapphirerapids` (a Zen 4/5 machine falls back to `icelake` and loses the
-   BF16 kernels); the `clang-cl` build of `alderlake` also fails (`/arch:AVX2` + `__AVXVNNI__` without
-   `-mavxvnni`, an upstream gap). Consequences, all measured -- **(a) and (c) were re-measured on
-   2026-10-09 and the earlier answer to both is superseded; read this version:**
-
-   **(a) The CRT dependency is removable entirely -- Hybrid CRT, no DLLs to ship, no licence
-   question.** The earlier finding ("the GNU driver ignores `CMAKE_MSVC_RUNTIME_LIBRARY`", a static
-   `/MT` crashing with `0xC0000409`, so ship `msvcp140`/`vcruntime140`/`vcruntime140_1` app-local or
-   require the VC++ redistributable) rested on two mistakes. The driver does *not* ignore the
-   variable -- it emits `-D_DLL -D_MT` from it, which is why a naive static attempt failed to link;
-   the control that works is **`-fms-runtime-lib=static`**. And the `0xC0000409` came from a *fully*
-   static CRT (static UCRT included) **combined with shared libraries**, i.e. the known-bad
-   configuration where every DLL gets its own CRT heap -- reproduced again on 2026-10-09, where such
-   a build does not even start. **Microsoft's own Hybrid CRT** (static STL + vcruntime, dynamic
-   UCRT) is the answer:
-
-   ```
-   -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
-   -DCMAKE_C_FLAGS="-fms-runtime-lib=static"   (same for CXX)
-   -DCMAKE_{SHARED,EXE}_LINKER_FLAGS="-Xlinker /nodefaultlib:libucrt.lib -Xlinker ucrt.lib"
-   ```
-
-   Measured on the **complete** `jllama.dll` built through this project's own `CMakeLists.txt`
-   (plain clang 23.1.3, MSVC 14.51.36231 headers, llama + mtmd + cpp-httplib + the server sources,
-   14.6 MB): its imports are `KERNEL32`, `ADVAPI32`, `SHELL32`, `WS2_32` and 11 `api-ms-win-crt-*`
-   forwarders -- **no non-OS dependency at all**. UCRT stays, by design: `ucrtbase.dll` is an OS
-   component from Windows 10 on, and it is not the DLL behind the README incident. That incident
-   disappears *structurally* rather than being worked around -- the loader race over an old resident
-   `msvcp140.dll` cannot happen when there is no import to resolve. So **the licence/REUSE decision
-   on Microsoft "Distributable Code" is void**, and `nativedeps.py`'s `Windows/*/cpu` allowlist gets
-   *shorter*, not longer. One wiring consequence, since handled: `llama/CMakeLists.txt`'s
-   static-CRT block was `if(MSVC AND ...)`, and CMake's `MSVC` is **false** for plain clang -- it
-   now has an `elseif(WIN32 AND Clang)` branch spelling the same hybrid CRT, so the clang build
-   cannot silently get the dynamic CRT back (and `verify-native-deps.py` would red `package` if it
-   did).
-
-   **(b) `GGML_OPENMP=OFF` -- and it is a throughput *win*, not a trade.** It was known to save the
-   `libomp.dll` dependency (confirmed: without it the clang build imports `libomp140.x86_64.dll`,
-   which no redistributable carries -- the same class as the Windows-arm64 `0xc0000135`). Measured
-   on 2026-10-09 (Ryzen 7 5800H, Qwen3-0.6B Q4_0, 8 threads, `GGML_NATIVE=ON`, all four builds
-   static, runs interleaved, t/s):
-
-   | | pp512 | tg128 |
-   |---|---:|---:|
-   | MSVC, OpenMP on | 359.8 | 41.7 |
-   | MSVC, OpenMP off | 371.0 | **79.9** |
-   | clang, OpenMP on | 390.6 | 30.2 |
-   | clang, OpenMP off | 391.6 | **82.3** |
-
-   Token generation is **1.9x (MSVC) / 2.7x (clang)** faster without OpenMP; prompt processing is
-   unchanged within error on both. Cause, confirmed by thread scaling (clang, tg64): OpenMP peaks at
-   4 threads and *degrades* above it -- 36.0 (t=2), 37.6 (t=4), 29.1 (t=8), 21.5 (t=16) -- while
-   without it 54.5 / 74.2 / 71.4. Generation is synchronisation-bound (little work per barrier), so
-   the runtime's barrier cost swamps it; prompt processing has enough work per barrier to hide it.
-   **This applies to the artifact shipped today**, which is MSVC with OpenMP on -- and which
-   therefore also imports `vcomp140.dll`, a third redistributable DLL this entry did not list. One
-   line in the build job roughly doubles interactive generation throughput, independently of
-   everything else here; it is set on all four Windows x86-64/x86 CPU jobs now, and
-   `nativedeps.py`'s allowlist no longer carries `vcomp140.dll`, so dropping the flag again fails
-   the `package` job instead of silently costing the throughput back.
-   **It is a Windows-runtime property, not an OpenMP one -- do NOT generalise it to Linux.**
-   Measured the same way in the project's own `manylinux_2_28_x86_64` image (gcc 14.2.1, i.e. the
-   compiler and libgomp `crosscompile-linux-x86_64` uses; same model, 8 threads, interleaved):
-   tg128 72.8 with OpenMP against 77.3 without, pp512 357.0 against 358.7 -- about 6% with one ON
-   sample at 76.1 +- 0.9, inside the spread rather than a result. libgomp evidently keeps its thread
-   team alive across parallel regions where LLVM's `libomp` and MSVC's `vcomp` do not. The Linux
-   jobs therefore keep OpenMP, deliberately. What is still unmeasured is a machine with many more
-   cores than the 8 here -- ggml's own pool could scale differently there. An earlier reading of a non-interleaved run suggested OpenMP was 8.6% ahead
-   on pp512; that did **not** reproduce once the runs were interleaved (thermal skew, +-22 t/s
-   spread) -- there is no trade-off to weigh.
-
-   **(c) Do NOT pin clang to 20.1.8 -- `patches/0017` fixes the cause.**
-   `-Wincompatible-pointer-types` became an error by default in **clang 22**
-   ([llvm-project #157364](https://github.com/llvm/llvm-project/pull/157364)), not 16, and the four
-   `_mm_prefetch` calls in `ggml-cpu/arch/x86/quants.c` are the only thing it hits here: a full
-   `GGML_CPU_ALL_VARIANTS=ON` build with clang 23.1.3 produced **exactly four errors, all of them
-   these**, and nothing in the AVX512/BF16/AMX/AVX-VNNI paths. With the patch that build is green
-   and emits all 14 module DLLs (17.03 MB in total; `x64` 0.85 MB to `sapphirerapids` 1.56 MB).
-   Upstream is pinned to clang 20 for a *second* reason worth knowing: `GGML_OPENMP_FETCH`
-   `FATAL_ERROR`s unless the clang major matches its bundled LLVM OpenMP 20.1.8 -- so `0017`
-   together with `GGML_OPENMP=OFF` is what makes a current clang possible here, while upstream ships
-   `libomp.dll` next to its binaries rather than having no dependency.
-
-   **(d) clang is not slower than MSVC -- it is ahead**, which removes the last argument for keeping
-   MSVC as the primary build. Static against static, both with OpenMP off: generation equal within
-   error (82.3 vs 79.9), prompt processing **+5.6%** for clang (391.6 vs 371.0). A first comparison
-   appeared to favour MSVC; that was an invalid measurement pitting *static* MSVC against *shared*
-   clang -- the same clang source gives 71.0 t/s shared and 82.3 static, so shared libraries cost
-   ~13% on generation. The MSVC build stays as `msvc-windows-x86-64` (9 variants, static CRT, one
-   library), tried before `cpu` when present; its value is being a second, independent toolchain,
-   not its user count. Packaging stays as it is -- one CPU backend in the default jar, `msvc` opt-in
-   by dependency, `net.ladenthin.llama.backend` as the switch: shipping both in one jar would add
-   14.6 MB for every Windows consumer, and both the structure and the switch already exist.
-   32-bit Windows and Windows arm64 get no variants (upstream builds none).
-
-   **Measurement hygiene, learned the hard way on 2026-10-09:** this machine has the winget package
-   `ggml.llamacpp` on `PATH`, carrying its own `llama-bench.exe` *and* `ggml-base.dll` /
-   `ggml-vulkan.dll` / `ggml-cpu-haswell.dll`. `cmd /c "llama-bench.exe ..."` ran **that** binary
-   even from inside the build's own directory -- caught only by `build: 689e227db (10357)` in the
-   output where `(11512)` was expected, and by Vulkan results of 7047 t/s. Always invoke the full
-   path and check the `build:` line. And a `grep -c` for a marker reports 0 for *empty* output too,
-   so it cannot tell "ran clean" from "did not run".
-2. **Windows loader.** `System.load` with a full path does NOT add the DLL's directory to the
-   dependency search, and a foreign llama.cpp on `PATH` (winget `ggml.llamacpp`, Ollama, LM Studio)
-   silently satisfies `ggml-base.dll` with another build's binary -- the probe passed falsely until
-   the PATH was cleaned. So `ggml-base.dll` and `ggml.dll` (after the CRT files) are preloaded by
-   full path in that order through `jllama-extras.txt`; the modules themselves stay in
-   `jllama-files.txt`. `JNI_OnLoad` finds its own directory with `GetModuleHandleExW` +
-   `GetModuleFileNameW` and must hand it to `ggml_backend_load_all_from_path` as **UTF-8** (a path
-   with an umlaut loaded nothing as ANSI, and no error was logged). A GPU module whose runtime is
-   missing fails silently and without a dialog (`SEM_FAILCRITICALERRORS`, exit 0) -- ggml logs it at
-   `GGML_LOG_DEBUG` only, so the loader should log which modules it extracted and which devices
-   ggml reports afterwards.
-3. **GPU backends as modules (stage 3).** Measured feasible from a JVM: `ggml-cuda.dll` and
+1. **GPU backends as modules (stage 3).** Measured feasible from a JVM: `ggml-cuda.dll` and
    `ggml-vulkan.dll` from upstream's zips load side by side from one directory with the CPU set
    (4 devices, incl. the AMD iGPU through Vulkan). Upstream's GPU zips carry a byte-identical copy of
    the whole CPU set; a GPU natives jar holding only its module would share ours and is then not
@@ -171,24 +44,18 @@ module-beside-the-CPU-set experiment in its addenda 2 and 3):
    module lost two thirds of its token generation because the variants path did not repeat
    `GGML_CUDA_GRAPHS_DEFAULT ON` -- fixed in the CMakeLists (both llama.cpp defaults are repeated now,
    CLAUDE.md "CPU variants"), not yet re-measured with CUDA. And such a jar is 18 files plus a 44-50 MB
-   GPU module that `LlamaLoader` extracts on every first use (item 4 below).
-4. **Loader: reuse the extraction across runs.** The directory is keyed per build now
-   (`extractionDirectoryName`), but every start still re-extracts: `cleanup()` deletes every
-   `jllama*` path first and `deleteOnExit` removes the files at exit. Copying the 18 files costs ~1 s
-   (measured, Defender on). With the key, a start could reuse a directory of its own build and
-   cleanup could leave directories younger than a few minutes alone (a JVM still extracting). A
-   loaded DLL is locked on Windows, an unloaded variant is not -- which is why the key, not a lock,
-   separates builds.
-5. **Benchmark on AVX-512/VNNI/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra). The Zen 3
+   GPU module that `LlamaLoader` extracts once per build (reused across starts since 5.2.x).
+2. **Benchmark on AVX-512/VNNI/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra). The Zen 3
    measurement could only show the floor: the plain x86-64 module is 10.4x slower at prompt
    processing (313 -> 30 t/s, Qwen3-0.6B Q4_K_M) and 1.6x at generation than `haswell`, which is what
    the single-level build was. The gain upwards (`zen4` BF16, `sapphirerapids` AMX) is unmeasured.
-6. **Smoke tests must run inference through the loaded module.** Every crash in the Windows
-   measurement came after a successful load with a correct device count; `--list-devices` does not
-   even show the CPU. The fat-jar smokes and the Java test jobs do run completions; the
-   `smoke-natives-jars.sh` load check alone is not evidence.
-7. **Unsigned binaries.** Upstream ships its DLLs unsigned, and so do we; on a WDAC/AppLocker-managed
-   client, loading unsigned DLLs from `%TEMP%` is blocked. Out of scope here; worth a README note.
+3. **Unsigned binaries.** Upstream ships its DLLs unsigned, and so do we; on a WDAC/AppLocker-managed
+   client, loading unsigned DLLs from `%TEMP%` is blocked. The README's troubleshooting section now
+   says so and names the way out (`net.ladenthin.llama.lib.path` to an allow-listed directory). The
+   project's GPG key cannot sign them: Windows checks Authenticode signatures (an X.509 code-signing
+   certificate, `signtool`/`osslsigncode`), not OpenPGP. **Owner's decision**, not scheduled: a
+   code-signing certificate (Azure Trusted Signing or an OV/EV certificate, both paid, identity-
+   validated) plus a signing step over every `.dll` before `package`.
 
 ### CUDA job: nvcc through sccache (`SCCACHE_WRAP_NVCC`, off since the second failure)
 
@@ -224,8 +91,6 @@ module-beside-the-CPU-set experiment in its addenda 2 and 3):
   JVM down on the first inference. Mitigated, not fixed: `RpcServer`'s device list (`--device CPU`)
   and the tests serve the CPU. The fix is upstream — forward `supports_op` over the protocol (a new
   command, with a per-op cache on the client) — and belongs there, not in `0015`.
-- **File patch `0015` upstream** (non-aborting registration, `ggml_backend_rpc_stop_server()`,
-  `ggml_backend_rpc_server_listening()`, the transport fd/SIGPIPE fixes) and drop it once merged.
 - **Android RPC is untested on a device.** Bionic sockets build (upstream ships RPC in its Android
   release too), but the app needs `android.permission.INTERNET` even for loopback, which the AAR
   deliberately does not declare and the emulator fixture does not have. A loopback test on the
@@ -248,11 +113,6 @@ module-beside-the-CPU-set experiment in its addenda 2 and 3):
   the comm listener -- so if the peer never connects, the server thread and `close()` hang. Not
   reproduced; found reading the diff at the bump. Fix candidates for `0015`: bind the comm listener to
   the server's own host and register it with the stop machinery so a stop also wakes it.
-
-### Logging sink (`patches/0014`) — follow-ups
-
-- **File the patch upstream.** `common_log_set_callback` is a small, self-contained addition to
-  `common/log.{h,cpp}` with no jllama specifics; upstream acceptance would retire the carry.
 
 ### Atmosphere coding agent (`llama-atmosphere-agent/`) — follow-ups
 
@@ -282,14 +142,6 @@ answered, read→write→read loop changed the file). Still open:
 - **Model recommendation table** for the agent (which local GGUFs actually complete an
   edit→build→test loop) — needs a GPU host, not CI.
 
-### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
-
-Left over from the 2026-06-20 code audit (18/18 findings fixed in PRs #258/#260, regression tests in
-#261/#262): full per-process extraction **directory** isolation + a `cleanup()`
-that recursively removes dead-process dirs. Since extraction writes are atomic and content-checked,
-this is a tidiness improvement (stops the shared-tmpdir `cleanup()` racing a live peer's flat file),
-not a correctness fix — and it needs Windows locked-file co-design.
-
 ### OpenAI-compatible HTTP endpoint — open follow-ups (Java transport; deprioritized)
 
 The `OpenAiCompatServer` surface itself is shipped (routes, protocol translations, integration
@@ -318,99 +170,46 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
   Responses client) at a running server, since round-trips confirm wire shapes but not each client's
   parser.
 
-### SonarCloud "Security Rating on New Code" gate — PR #248 (open)
+### License compliance gate (owner's decision)
 
-The PR's **only** red is SonarCloud's "Security Rating on New Code" gate (every build/test job is
-green; SonarCloud is **not** a merge-blocking build job). The findings are GitHub-Actions/Java
-analyzer issues from the Maven scanner — **"C" is the rating *grade* (A–E), not the C language**;
-there is no CFamily/C-C++ scan configured. Addressed:
+The FSFE REUSE check is green on every run. A FOSSA-style *dependency-license* gate (the scanner
+whose "17 issues found" status once posted on PRs #248/#298; it posts nothing on `main` today) was
+never set up deliberately. Whether the project wants one, with which policy, is the owner's call;
+nothing here blocks on it.
 
-- **`clang-format.yml`** — `pip install` without `--only-binary :all:` can run a package's `setup.py`;
-  forced wheels-only (`84297e0`, block scalar so `:all:` doesn't break YAML). *If Sonar still flags it,
-  try the `--only-binary=:all:` equals form.*
-- **`osv-scanner.yml` / `scorecard.yml`** — top-level `permissions: read-all` → `contents: read`
-  (`84297e0`); safe because every job in both files already declares its own exact permissions.
-- **`publish.yml`** — workflow-level `permissions: contents: read` (Sonar wants it per-job); **owner
-  marked it Accept/"Won't fix" on the dashboard** rather than spreading perms across ~25 release jobs.
-  Alternative if ever desired: add `permissions: contents: read` to the ~19 read-only jobs (the 5
-  publish/report jobs already declare `contents: write`) and drop the top-level block.
-- **`PairTest.java`** — 3 Critical *Reliability* bugs (`assertNotNull` on the primitive `hashCode()`)
-  replaced with a determinism check (`9f0d377`). Reliability rating, **not** the Security gate.
+### Upstream submissions -- not before the release (policy)
 
-**Still open:** the gate was still red as of `9f0d377`. SonarCloud's issues API is auth-gated (403 from
-CI), so the exact remaining new-code Vulnerability must be read off the dashboard. Resolve the last
-finding, accept it on the dashboard, or merge on the green build/test checks.
+**Nothing is filed upstream before the release is out**, neither issues nor PRs; the drafts are not
+written before that either. Everything below is the inventory for that day, so it is not rediscovered.
 
-### License Compliance (FOSSA-style dependency-license gate) — PR #248 (open)
+There are **eleven** patches today (`0001`-`0003`, `0006`-`0008`, `0012`, `0014`-`0017`). Each
+accepted upstream change deletes a patch from the bump checklist once the pin is bumped past it.
 
-Separate from the FSFE **REUSE** check (which is green — `reuse lint` reports 266/266 files compliant)
-and from SonarCloud: the PR's combined commit status shows a **"License Compliance" check failing with
-"17 issues found"** (an error-state commit status posted by a license-scanner GitHub App, not a
-workflow in `.github/workflows/`). It contributes to the `mergeable_state: blocked` on #248.
+- **Submittable as they are** (self-contained, no jllama specifics): `0001` (Windows arg-parse embed
+  guard, already reported as ggml-org/llama.cpp#26416 with the reproducer in
+  `docs/upstream-investigation-win32-argv-substitution.md`; the maintainers have not picked a
+  direction), `0002` (preserve the caller's load-progress callback), `0006` (embeddable
+  `llama_server`), `0007` (`llama_server_attach`), `0008` (`LLAMA_SERVER_WORKER_CMD`), `0012` (zero
+  split-sum guard, ships `tests/test-model-split.cpp`), `0014` (`common_log_set_callback`), `0015`
+  (non-aborting RPC registration, stoppable server, transport fixes), `0017` (x86 prefetch helper).
+- **Permanent:** `0003` carries upstream PR #22393, which upstream closed without merging.
+- **Temporary carry, not a submission:** `0016` (Kolibri-1). Upstream will add the architecture itself
+  ([ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)). Drop it on the
+  first bump whose tag registers `kolibri1` (`git grep -n kolibri src/llama-arch.cpp`) and keep
+  `src/test/cpp/test_kolibri1.cpp`: its numerical comparisons must stay green (red there is a finding
+  about upstream, not a test to adjust), its GGUF-format rows follow upstream's converter -- a red row
+  means the published GGUFs of that dialect stop loading without the patch, which is decided
+  deliberately (a small compatibility patch, or a note that those files must be reconverted). Open
+  verification gaps: no run of the real 78B model (60 GB of shards need more than the 63 GB of RAM
+  the measuring machine had) and no GPU backend.
+- **Two upstream-only defects worth an issue on that day, no patch here:** a lost RPC server
+  mid-inference still aborts the process (the ggml backend interface has no error return for a lost
+  device), and ggml-rpc's client answers every `supports_op` with `true`, so a served device without
+  an op aborts the server (both under "RPC backend" above). And sccache 0.18.0 cannot cache a TU that
+  carries llama.cpp's unconditional `-Xclang -fno-pch-timestamp` (CLAUDE.md "Windows natives").
 
-- **Almost certainly pre-existing**, not introduced by this PR: #248 changes **no dependencies** (the
-  `pom.xml` edit only adds the `windows-ninja` build profile), so the 17 are dependency-license policy
-  findings already present on `main` (e.g. GPL-2.0 carried by the llama.cpp sources).
-- **Not yet inspected** — the scanner's dashboard/host is outside this sandbox's egress allowlist, same
-  as `sonarcloud.io`. To triage: open the check's details link from the PR (or allowlist the host), read
-  the 17 findings, then accept policy-OK licenses on the dashboard or adjust the policy. Confirm whether
-  it is a *required* status (if so it blocks merge; if advisory it does not).
-- **Still red on PR #298 (2026-07-05):** the same status ("17 issues found") posts on every head there
-  too and contributes to its `mergeable_state: blocked`. Same triage path: read the findings on the
-  scanner's dashboard, accept policy-OK licenses or adjust the policy.
-
-### Upstream PR submissions — drop the carried patches (open)
-
-There are **eight** patches today (`0001`–`0003`, `0006`–`0008`, `0012`, `0014`). **Seven are
-upstream-submittable verbatim**; each accepted PR (once the pin is bumped past it) deletes a patch
-from the bump checklist. The exception is **`0003`**, a carry of upstream PR #22393, which upstream
-**closed without merging** — it is permanent and will never be droppable via a bump. (`0003` used to
-be described here as "drops automatically when that merges"; it will not.)
-
-**`0016` (Kolibri-1) is not a submission candidate but a temporary carry**: upstream will add the
-architecture itself (request [ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)).
-Drop it on the first bump whose tag registers `kolibri1` (`git grep -n kolibri src/llama-arch.cpp`),
-keep `src/test/cpp/test_kolibri1.cpp` (it compiles without the patch). Its **numerical comparisons**
-must stay green -- red there means upstream computes something else than Aleph Alpha's reference, a
-finding to report, not a test to adjust. Its **GGUF-format rows** (gating function 2 *and* 5, no gating
-key, pre-tokenizer `qwen2` *and* `kolibri1`, rejection of gating 1) follow whatever format upstream's
-converter fixes: a red row means the published GGUFs of that dialect stop loading without the patch.
-Decide that deliberately -- keep a small compatibility patch, or document that those files must be
-reconverted (and say so upstream rather than lose them silently) -- and only then move the row's
-`{gating, pre, ...}` entry to upstream's format. Open verification gaps of the carry:
-no run of the real 78B model and no GPU backend from here (see the patch header).
-
-- **`0001` Windows arg-parse embed guard** (against #24779): `common_params_parse` trusts the caller's
-  argv; `common_params_parse_main()` keeps the standalone tools' UTF-8 recovery. Ship with the
-  standalone-safe repro (synthetic argv discarded on Windows because `GetCommandLineW()` returns the
-  host process line) — written up, with the reproducer executed, in
-  `docs/upstream-investigation-win32-argv-substitution.md`. Reported upstream as
-  ggml-org/llama.cpp#26416; waiting on the maintainers to pick a direction before a PR.
-- **`0002` preserve caller load-progress callback** (b9789 regression: server clobbers
-  `params_base.load_progress_callback`).
-- **`0006` embeddable `llama_server`** (no process signal handlers, forwarded-argv parse, out-of-band
-  shutdown).
-- **`0007` `llama_server_attach`** (HTTP frontend on an existing `server_context`).
-- **`0008` `LLAMA_SERVER_WORKER_CMD` router worker override** (also useful for containerized/wrapped
-  deployments).
-- **`0012` guard the zero split-sum and name the device index** (a GPU reporting zero free memory —
-  or a cancelling `--tensor-split` such as `-ts 1,-1` on any backend — makes every model load fail
-  with the unactionable `error loading model: vector`). Ships an upstream `tests/test-model-split.cpp`.
-  **Not yet filed upstream.**
-- **`0014` add a callback sink to `common_log`** (`common_log_set_callback`, what `LlamaModel.setLogger`
-  hooks; upstream has file/colors/prefix/timestamps/verbosity/JSONL but no hook, so an embedding host
-  cannot route the server's own `SRV_*`/`SLT_*` lines anywhere). **Not yet filed upstream.**
-
-(`0009` is **not** in this list and the number is burned: upstream merged the subprocess.h fix via
-ggml-org/llama.cpp#26606, so the patch was dropped at the b10280 bump. `0013` is likewise gone —
-upstream merged this project's own PR ggml-org/llama.cpp#28775 and it was dropped at b10948. `0011`
-went the same way at b11069: upstream fixed the invalid-UTF-8 PEG-parser failure independently and
-more broadly via ggml-org/llama.cpp#29161 (one U+FFFD per undecodable run, text after it kept) before
-the patch was ever filed, so the `ContentOnlyParseUtf8` guard now pins upstream's contract instead.
-`0010` followed at b11080: upstream gave `common_json_value` an enum constructor via
-ggml-org/llama.cpp#28518, fixing at the root the enum-to-bool trap the patch cast around, so it became
-a redundant carry — note that it still *applied* cleanly, which is why the by-hand drop-check exists.
-All four drops are recorded in `docs/history/dropped-llama-patches.md`.)
+(`0009`, `0010`, `0011` and `0013` are gone -- upstream fixed each defect itself -- and recorded in
+`docs/history/dropped-llama-patches.md`.)
 
 ### llama.cpp upstream feature exposure (queued, deferred by policy)
 
@@ -513,58 +312,49 @@ These are JNI plumbing items for upstream API additions. Policy: add only after 
 
 - **Expose `llama_vocab::get_suppress_tokens()` via `LlamaModel.getSuppressTokens()`.** Added in b9490–b9495 alongside the new `tokenizer.ggml.suppress_tokens` GGUF key and the `LLM_KV_TOKENIZER_SUPPRESS_TOKENS` constant. When a GGUF declares this array, upstream stores it on `llama_vocab::impl::suppress_tokens` and exposes it via the new `llama_vocab::get_suppress_tokens()` accessor. The bias is **applied automatically** inside the model forward graph — the Gemma4 Unified graph (`src/models/gemma4.cpp`) reads the list and adds a `-INFINITY` logit bias to those token IDs via a new `llm_graph_input_logits_bias` input so the model cannot emit them (used to block `<image|>` / `<audio|>` placeholders). A Java mirror would be `public int[] getSuppressTokens()` on `LlamaModel`: a read-only inspector returning the suppression list for debugging or for callers running their own sampling who want to replicate the same bias. Value is low (the bias is auto-applied, Java callers cannot change it; java-llama.cpp does not expose custom logit-bias hooks at this level); cost is trivial (one JNI passthrough + a `getSuppressTokens()` Java method).
 
-### Feature backlog from similar projects (remainder: jbang example)
+### Feature backlog from similar projects
 
 The consolidated investigation lives in
 [`docs/feature-investigation-similar-projects.md`](docs/feature-investigation-similar-projects.md)
 (18 candidates across the 5 pure-Java sibling runtimes + llamacpp4j, with effort sizing). Everything
-high-value from it has shipped — README system-properties table, per-run timing line
-(`TimingsLogger`), UTF-8 boundary safety (native `utf8_to_jstring_impl` path), runtime LoRA control,
-typed batch embeddings, in-JVM router mode, in-JVM GGUF quantization, GGUF metadata inspector,
-session fork/rewind. **Remaining:**
+high-value from it has shipped, the jbang one-file example (`examples/jbang/Chat.java`) included.
+Further per-repo findings in the doc can be pulled on demand; none is prioritized.
 
-- **jbang single-file example** (XS-S): a `//DEPS net.ladenthin:llama` one-file runnable demo so new
-  users can try the binding without a Maven project.
-- Further per-repo unique findings in the doc can be pulled on demand; none is currently prioritized.
+### Needs a machine the sessions do not have
 
-### Android example app (own session; the remaining Android item)
+Everything here is implemented or decided; what is missing is hardware or a model the cloud sessions
+cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) covers the first three.
 
-The AAR + Kotlin façade + multi-ABI (arm64-v8a/x86_64) + emulator CI shipped, and the emulator job is
-a release gate (see CLAUDE.md "Android AAR + Kotlin façade"). Remaining: a minimal
-sample app under e.g. `examples/android-sample/` (single Activity, model picker, streaming text view)
-consuming `net.ladenthin:llama-android` + `llama-kotlin` — it validates what the emulator cannot:
-real arm64 hardware and the Adreno/OpenCL flavor. Treat LLaMAndroid as prior art.
+- **CUDA as a module, re-measured with the graphs default** (`GGML_CUDA_GRAPHS_DEFAULT` repeated in
+  5.2.x): the 88.8 tg128 against 265.6 static should close; same build command as addendum 3 of
+  `docs/handover/local-agent-report-b11538-windows.md`.
+- **Extraction reuse on Windows**: a second JVM start of the same build must copy nothing (no
+  `[jllama] extracted` lines), a running JVM's locked DLLs must survive another build's cleanup, and
+  the start must not block on them.
+- **On-device Android**: the AAR + Kotlin facade are exercised on the x86_64 emulator in CI
+  (`test-android-emulator`) and the LLM Service app (`android-llmservice/`) is the example app, built
+  and UI-tested there too; what no session has is a real arm64 device, and the Adreno/OpenCL flavor
+  needs one. Nothing to write, only to run.
+- **AVX-512/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra): item 2 of "CPU variants" above.
+- **Kolibri-1 on the real 78B model** (after a full build; the shards need more than 64 GB of RAM).
 
-### GraalVM Native Image evaluation
+### GraalVM Native Image -- evaluated, parked until a consumer asks
 
-- **Evaluate GraalVM Native Image as an alternative distribution target.** Reference: [GraalVM Native Image](https://www.graalvm.org/latest/reference-manual/native-image/). The pure-Java sibling projects in the README's "Similar Projects" list (mukel's `llama3.java` / `gemma4.java` / `gptoss.java` / `qwen35.java` / `nemotron3.java`) demonstrate that single-jar, no-JNI Java inference is viable for individual model architectures. Native Image opens an orthogonal direction for THIS project: AOT-compile the Java layer + JNI bridge to a self-contained binary that bundles the libjllama.so (or per-OS equivalent) and starts in milliseconds without a JVM, which would make jllama usable in CLI tools, serverless functions, and short-lived processes where JVM startup is the dominant cost.
+The evaluation is written down in
+[`docs/graalvm-native-image-evaluation.md`](docs/graalvm-native-image-evaluation.md): what the
+library needs from Native Image (a closed JNI surface, resource or sidecar natives, no reflection of
+its own), the two decisions a real attempt has to take, the cost (a second build matrix and metadata
+that rots silently without an image-build-plus-smoke job), and the one measurement that decides it:
+the share of JVM start-up in a cold one-token run, which needs a model and therefore the local agent
+("Needs a machine" above). Nothing to do here until that number or a consumer request exists.
 
-  **What to investigate before committing**:
-  - **JNI-loading shape.** Native Image supports JNI but requires `--enable-native-access=ALL-UNNAMED` + reflection/JNI configuration files (`reflect-config.json`, `jni-config.json`, `resource-config.json`) describing every class/method/field reachable across the JNI boundary. The 34 native methods in `jllama.cpp` plus the JNI-side `FindClass` / `GetFieldID` / `GetMethodID` calls at `JNI_OnLoad` need to be mapped. The GraalVM tracing agent (`-agentlib:native-image-agent=config-output-dir=...`) can auto-generate the config during a representative test run, but the `LlamaLoader` JAR-extraction path needs at least one resource-config rule for `net/ladenthin/llama/{OS}/{ARCH}/lib*.so`.
-  - **Native-library packaging.** The current `LlamaLoader` extracts the OS-specific `.so`/`.dll`/`.dylib` from the JAR to a tmp dir at first use. Native Image needs the same file at AOT-execution time, so either (a) ship the native lib alongside the produced binary as a sidecar file and adjust `LlamaLoader` to find it on the same directory, or (b) embed the native lib as a resource and keep the existing extract-to-tmpdir flow (which Native Image supports via `resource-config.json`).
-  - **CUDA / Metal / OpenCL backend selection.** `LlamaLoader` already selects at runtime among the natives jars on the classpath (one directory per backend, fixed priority order). Native Image would need those directories as bundled resources (`resource-config.json`) or as sidecar files next to the binary.
-  - **Startup-time benchmark to justify the work.** Measure cold-start of a current java-llama.cpp `LlamaModel(new ModelParameters().setModel("...").setNPredict(1))` invocation: how much is JVM startup + class load vs JNI load + model parse + tokenize + 1 token? If JVM startup is < 10 % of cold-start, Native Image yields little. If JVM startup is > 50 %, it's a clear win for CLI / serverless use cases.
-  - **Maintenance cost.** Native Image adds a second build matrix (per OS × per backend × per JDK) and a new failure surface (Native Image config drift when a llama.cpp version bump adds new JNI-reachable types). Should ship only with a CI job that exercises the Native Image build on at least one OS, otherwise the config files will rot silently.
+### macOS model-backed server smoke (optional depth, not scheduled)
 
-  **Out of scope until evidence supports it**: actually implementing any of the above. This entry exists so that when someone asks "can I ship java-llama.cpp as a single 30 MB binary?" the answer points to a concrete investigation plan rather than restarting from zero.
-
-### macOS packaged-artifact gate — landed cheap, optional depth remains
-
-**Done:** `smoke-fatjar-macos` (`needs: [package]`, gates both publish jobs) now verifies the dylib
-inside the packaged jar — `codesign --verify --strict` plus a real JVM load and JNI round-trip via
-`.github/smoke/NativeLoadSmoke.java`. See CLAUDE.md, "macOS arm64: three build jobs, one shipped
-dylib". This closes the gap that let a SIGKILL-on-load binary ship through three releases with a
-green pipeline, and is the macOS member of the cross-repo convention in
-[`../workspace/policies/fat-jar-release-assets.md`](../workspace/policies/fat-jar-release-assets.md).
-
-**Optional depth, not scheduled:** a full model-backed macOS server smoke (poll `/health`, assert a
-`/v1/chat/completions` choice) as Linux and Windows run. It would need `verify-model-cache` +
-a cache restore, and — since there is no `all-macos-*` fat jar — either a macOS variant from
-`package-fatjars` or running `smoke-test-fatjar.sh` against the default jar. Worth doing only if a macOS-specific *inference* regression ever appears;
-the load-time failure class is already covered, and a slow smoke tends to get made non-gating.
-
-**Not yet observed green in CI** — the job and the two sibling-repo smokes landed in one change set
-and have only run locally so far.
+`smoke-fatjar-macos` verifies the dylib inside the packaged jar (code signature + a real JVM load
+and JNI round-trip; green in CI since run 37985786772). A full model-backed macOS server smoke as
+Linux and Windows run would need `verify-model-cache` plus a cache restore and -- there is no
+`all-macos-*` fat jar -- `smoke-test-fatjar.sh` against the default jar. Worth doing only if a
+macOS-specific *inference* regression ever appears; the load-time failure class is covered.
 
 ### Test-coverage gaps found by the b10679 mutation audit (PR #403)
 
@@ -594,50 +384,14 @@ away with the patch itself at the b11080 bump. This is what remains.
 ### Test-coverage debt found during the b10649 review (PR #403)
 
 Each item below was verified against pristine upstream tags and is real, but none is a regression
-introduced by the version bump — they were deferred to keep that PR landable.
-
-- ~~**`ModelParameters` emits five CLI flags the server arg parser rejects, so any caller of them
-  cannot load a model.**~~ **DONE** — and it turned out to be **seven**, not five. The fix is the one
-  this entry prescribed: `cmake/extract-java-cli-flags.cmake` extracts every `"--flag"` literal
-  `ModelFlag.java`/`ModelParameters.java` can emit into a generated header, and
-  `src/test/cpp/test_model_flags.cpp` asserts each is registered in
-  `common_params_parser_init(params, LLAMA_EXAMPLE_SERVER).options`, exempting only `--vocab-only`
-  (which `strip_flag_from_argv` removes on purpose). Run against the pre-fix Java sources it reported
-  exactly the predicted set, which is how the count grew: the five named here plus `--mlock` and
-  `--no-mmap`, deleted upstream at b10878 while this entry was open. Those two have a faithful
-  replacement, so `enableMlock()`/`disableMmap()` were **repointed** to upstream's own deprecation-shim
-  mapping (`--load-mode mlock` / `--load-mode none`) behind a new `setLoadMode(LoadMode)` rather than
-  retired — no API loss. The other five became no-ops (`@Deprecated`, never write the map), and
-  `ModelFlag.MLOCK`/`NO_MMAP`/`DUMP_KV_CACHE` were removed from the enum so a broken argv is not
-  reachable through `setFlag` either — the same reasoning that already excluded `FLASH_ATTN`. The
-  replaced Java assertions now compare against a pristine `ModelParameters`, not against the old
-  "still has this key" shape that would have passed forever.
-
-- **`acquire_jllama_context_impl` / `release_jllama_context_impl` / `jllama_context_guard` have no
-  model-free unit guard.** These three (`jni_helpers.hpp`) are the whole `close()`-vs-inference
-  use-after-free defence, and grep finds zero references across all seven `test_*.cpp` files, while
-  their sibling `get_jllama_context_impl` has three tests. A dropped `fetch_add`, or a guard whose
-  destructor stops calling release, produces a use-after-free during `close()` or a `close()` that
-  hangs forever. `LlamaModelTest#testCloseDuringInference` covers the mechanism end to end but only
-  bluntly. They are absent from `jllama_test` only because they are `inline` and never odr-used
-  there: `g_ctx_mutex` is `extern` in the header and defined in `jllama.cpp`, which `jllama_test`
-  does not compile — a test-local definition at global scope unblocks it.
-
-- **`OSInfo`: the `archMapping` alias branch is untested.** `getArchName()`'s map lookup has no
-  assertion anywhere — the two test call sites either take the override early-return or only assert
-  non-empty — so a lost `amd64 -> x86_64` entry would send `LlamaLoader` to a resource directory
-  that does not exist. Cheap to close: set `os.arch`, assert the non-identity aliases only (identity
-  entries such as `s390x` are behaviourally redundant with the `\W`-stripping fallback).
+introduced by the version bump — they were deferred to keep that PR landable. (The seven dead CLI
+flags, the `acquire`/`release` context-guard unit tests, the `OSInfo` alias test and the dead
+`Java8CompatibilityHelper` from the original list are done.)
 
 - **`LlamaLoader`'s jar-extraction internals are tested only through directory fixtures.**
   `BackendLoadTest` drives backend probing, extras, fallthrough and forcing over the committed
   `Linux/backendtest*/` trees on the test classpath (directories, not jars); extraction out of a real
   jar is exercised in CI by `smoke-natives-jars.sh` and the fat-jar smokes, not by a unit test.
-
-- **`Java8CompatibilityHelper` is mostly dead code — decide delete vs. test.** Six of its seven
-  public methods have zero call sites repo-wide; the only live one is
-  `toString(ByteArrayOutputStream, Charset)`, used once in `ProcessRunner`. Writing tests for the
-  rest would pin dead code.
 
 - **`ContentPart.videoFile(...)` — see the video-input entry above** for the wire shape upstream
   expects (`input_video`, raw base64, not a `data:` URI).

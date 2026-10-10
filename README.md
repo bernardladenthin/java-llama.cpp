@@ -372,7 +372,7 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | Property | Default | Scope | Consumer | Description |
 |---|---|---|---|---|
 | `net.ladenthin.llama.lib.path` | unset (falls back to `java.library.path`) | runtime | `LlamaLoader` | Directory containing the native `jllama` shared library. Checked first, before `java.library.path`. Set with `-Dnet.ladenthin.llama.lib.path=/path/to/dir`. |
-| `net.ladenthin.llama.tmpdir` | unset (falls back to `java.io.tmpdir`) | runtime | `LlamaLoader` | Custom temporary directory used when extracting the native library from the JAR. |
+| `net.ladenthin.llama.tmpdir` | unset (falls back to `java.io.tmpdir`) | runtime | `LlamaLoader` | Directory the natives are extracted into, one subdirectory per backend and build (`jllama-backend-<backend>-<key>`). It is kept across runs: the next start of the same build compares each file with the jar and copies nothing; a directory of a build that is no longer on the classpath is removed by a later start once it is 10 minutes old. Point it elsewhere when the default temp directory is on a slow or policy-restricted volume. |
 | `net.ladenthin.llama.osinfo.architecture` | unset (uses `os.arch`) | runtime | `OSInfo` | Override for the architecture string used to locate the bundled library inside the JAR. Useful when `os.arch` reports an unexpected value (e.g. inside dockcross / chrooted environments). |
 | `net.ladenthin.llama.backend` | unset (auto: the first backend on the classpath whose library loads) | runtime | `LlamaLoader` | Names one backend directory (e.g. `cuda13`, `vulkan`, `cpu`) to load exclusively — failure is then fatal instead of trying the next backend. See [Choosing the natives jars](#choosing-the-natives-jars). |
 | `net.ladenthin.llama.test.ngl` | `43` for the general suite; `0` for `ToolCallingIntegrationTest` | test | Model-backed integration tests | Number of GPU layers used during testing. Pin to `0` on CPU-only hosts: `mvn test -Dnet.ladenthin.llama.test.ngl=0`. The tool test also selects device `none` at zero layers so Metal/CUDA is not initialized. |
@@ -1572,6 +1572,18 @@ dependency fixes that by construction, where moving files around could not.
 If you still see a crash inside `msvcp140.dll`, it originates in **another** native library loaded
 into the same JVM, not in `jllama.dll` -- check the rest of the `hs_err` frame list. Please open an
 issue with that file rather than editing your JDK installation.
+
+### Windows: unsigned DLLs on a WDAC / AppLocker-managed client
+
+The native libraries are **not Authenticode-signed** (upstream llama.cpp ships its DLLs unsigned
+too), and `LlamaLoader` extracts them into the temp directory on first use. A client whose
+application-control policy (WDAC, AppLocker) blocks unsigned DLLs, or any DLL under `%TEMP%`,
+refuses the load with `UnsatisfiedLinkError`. The way out is a directory the policy allows: put the
+contents of the natives jar's `net/ladenthin/llama/Windows/x86_64/cpu/` directory there and start
+the JVM with `-Dnet.ladenthin.llama.lib.path=<that directory>`, which loads from it without
+extracting anything. (The project's release-signing key is an OpenPGP key, which signs the jars and
+fat jars with detached `.asc` files; Windows does not look at those, so the DLLs would need a
+separate code-signing certificate.)
 
 ### Contributors: build with Temurin 21, not Oracle JDK 21
 
