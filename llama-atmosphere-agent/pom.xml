@@ -14,10 +14,12 @@ SPDX-License-Identifier: MIT
 		OpenAI-compatible agent runtime to java-llama.cpp. Not in the reactor because it is an
 		application, built without a parent so the folder can be copied out and run on its own.
 		Its version moves in lockstep with the core's (check-natives.py fails otherwise), and it
-		ships two ways: this thin jar + pom on Maven Central (`jbang net.ladenthin:llama-atmosphere-agent:<v>`
-		resolves and starts it, natives included through llama-platform), and the `-P assembly` jar
-		(without the core, see src/assembly/agent-jar.xml) on the GitHub Release next to the core
-		fat jars. See README.md.
+		ships one way: this thin jar + pom on Maven Central. `jbang net.ladenthin:llama-atmosphere-agent:<v>`
+		resolves and starts it with the CPU natives of every desktop platform (through llama-platform);
+		a GPU is one additional natives jar, JBang's deps option with
+		net.ladenthin:llama:<v>:<backend>-<os>-<arch> (or the `llama.classifier` profile below for a Maven run). There is no fat jar: the natives
+		are modular, and a jar carrying every backend of every platform would be the opposite of
+		that. See README.md.
 	-->
 	<groupId>net.ladenthin</groupId>
 	<artifactId>llama-atmosphere-agent</artifactId>
@@ -82,7 +84,6 @@ SPDX-License-Identifier: MIT
 		<gpg.plugin.version>3.2.8</gpg.plugin.version>
 		<central.publishing.version>0.11.0</central.publishing.version>
 		<exec.plugin.version>3.6.4</exec.plugin.version>
-		<assembly.plugin.version>3.8.0</assembly.plugin.version>
 		<spotless.version>3.10.3</spotless.version>
 		<palantir-java-format.version>2.102.0</palantir-java-format.version>
 		<agent.main>net.ladenthin.llama.atmosphere.LocalAgent</agent.main>
@@ -174,7 +175,7 @@ SPDX-License-Identifier: MIT
 		</dependency>
 
 		<!-- The editor front end (the acp option): the official Java SDK of the Agent Client Protocol,
-		     spoken over stdin/stdout. Jackson 2 binding, which the core fat jar already carries. -->
+		     spoken over stdin/stdout. Jackson 2 binding, which the core already depends on. -->
 		<dependency>
 			<groupId>com.agentclientprotocol</groupId>
 			<artifactId>acp-core</artifactId>
@@ -332,56 +333,9 @@ SPDX-License-Identifier: MIT
 			</dependencies>
 		</profile>
 		<!--
-			`mvn -P assembly package`: the GitHub Release asset
-			llama-atmosphere-agent-<llama.version>-jar-with-dependencies.jar. Named after the core
-			version it was built and tested against (the agent's own 1.0.0-SNAPSHOT is not a
-			release line anyone downloads by). It carries NO core: run it next to a core fat jar of
-			the same version, either on one explicit classpath
-			  java -cp agent.jar:llama-<v>-all-linux-x86-64-jar-with-dependencies.jar ...LocalAgent
-			or with `java -jar agent.jar`, which picks the core up through the Class-Path below when
-			it lies in the same directory. Class-Path entries that do not exist are ignored; the
-			all-backends jars come first so a GPU backend is found before the CPU-only default.
-		-->
-		<profile>
-			<id>assembly</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-assembly-plugin</artifactId>
-						<version>${assembly.plugin.version}</version>
-						<configuration>
-							<finalName>llama-atmosphere-agent-${llama.version}</finalName>
-							<descriptors>
-								<descriptor>src/assembly/agent-jar.xml</descriptor>
-							</descriptors>
-							<archive>
-								<manifest>
-									<mainClass>${agent.main}</mainClass>
-								</manifest>
-								<manifestEntries>
-									<Class-Path>llama-${llama.version}-all-linux-x86-64-jar-with-dependencies.jar llama-${llama.version}-all-linux-aarch64-jar-with-dependencies.jar llama-${llama.version}-all-windows-x86-64-jar-with-dependencies.jar llama-${llama.version}-all-windows-aarch64-jar-with-dependencies.jar llama-${llama.version}-jar-with-dependencies.jar</Class-Path>
-								</manifestEntries>
-							</archive>
-						</configuration>
-						<executions>
-							<execution>
-								<id>build-agent-jar</id>
-								<phase>package</phase>
-								<goals>
-									<goal>single</goal>
-								</goals>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-		<!--
 			`-P release deploy`: signs the thin jar, its sources and javadoc jars and the pom, and
 			publishes them to Maven Central. Run by the publish jobs after the reactor deploy, which
-			installs the core and its natives jars this resolves against. The assembly jar is never
-			part of it.
+			installs the core and its natives jars this resolves against.
 		-->
 		<profile>
 			<id>release</id>
