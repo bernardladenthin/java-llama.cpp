@@ -24,7 +24,11 @@
 
 #ifdef GGML_BACKEND_DL
 // load_backends_next_to_this_library() needs this library's own path: dladdr on POSIX,
-// GetModuleHandleExW + GetModuleFileNameW on Windows.
+// GetModuleHandleExW + GetModuleFileNameW on Windows. On Android the modules are loaded by soname
+// instead (load_backends_by_soname, JLLAMA_MODULES_BY_SONAME), through dlopen/dlsym.
+#ifdef JLLAMA_MODULES_BY_SONAME
+#include "jllama_modules.h"
+#endif
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -825,11 +829,91 @@ std::string parse_jstring(JNIEnv *env, jstring java_string) {
     server_context *ctx_server = &jctx->server
 
 #ifdef GGML_BACKEND_DL
-// With GGML_BACKEND_DL (JLLAMA_CPU_VARIANTS) the CPU and RPC backends are modules ggml loads at run
-// time, and ggml_backend_load_all() looks next to the executable -- `java`, here. LlamaLoader
-// extracts the modules next to this library, so they are loaded from this library's own directory
-// before anything touches the backend registry. ggml_backend_load_best() picks the CPU module whose
-// instruction set the running CPU supports best.
+// What the process ended up with after the modules were loaded: a module whose runtime is missing
+// fails silently (ggml logs it at GGML_LOG_DEBUG only, and on Windows SEM_FAILCRITICALERRORS
+// suppresses the dialog), so say which backends ggml registered and which devices they report.
+// Reaches LlamaModel.setLogger.
+static void log_backend_registry(const char *where, const std::string &from) {
+    std::string devices;
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        devices += (i == 0 ? "" : ", ");
+        devices += ggml_backend_dev_name(dev);
+        devices += " (";
+        devices += ggml_backend_reg_name(ggml_backend_dev_backend_reg(dev));
+        devices += ")";
+    }
+    std::string backends;
+    for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
+        backends += (i == 0 ? "" : ", ");
+        backends += ggml_backend_reg_name(ggml_backend_reg_get(i));
+    }
+    LOG_INF("%s: %zu backend(s) registered from %s [%s], %zu device(s): %s\n", where, ggml_backend_reg_count(),
+            from.c_str(), backends.c_str(), ggml_backend_dev_count(), devices.c_str());
+}
+
+#ifdef JLLAMA_MODULES_BY_SONAME
+// Android: an app's native libraries stay inside the APK (extractNativeLibs=false is the default from
+// API 23 on), so there is no directory to scan -- dladdr() reports a path into the zip, and ggml's
+// directory iteration finds nothing. bionic resolves a bare soname against the app's own libraries
+// (the same lookup System.loadLibrary uses), so the modules are opened by name instead: the CPU
+// variants of this build (generated into jllama_modules.h at configure time) are scored the way
+// ggml_backend_load_best() scores them and the best one is registered, every other module of the
+// build (ggml-rpc) and every GPU module another AAR may add next to this one (the fixed list below)
+// is registered when it is there. A missing one is silent, as a missing module is on the desktop.
+static int score_module_by_soname(const char *soname) {
+    void *handle = dlopen(soname, RTLD_NOW | RTLD_LOCAL);
+    if (handle == nullptr) {
+        return -1;
+    }
+    int score = 1; // ggml treats a module without a score function as always usable
+    using score_fn_t = int (*)();
+    if (auto score_fn = reinterpret_cast<score_fn_t>(dlsym(handle, "ggml_backend_score"))) {
+        score = score_fn();
+    }
+    dlclose(handle);
+    return score;
+}
+
+static void load_backends_by_soname() {
+    const std::vector<const char *> cpu_modules = JLLAMA_CPU_MODULE_SONAMES;
+    const std::vector<const char *> other_modules = JLLAMA_OTHER_MODULE_SONAMES;
+    static const char *const gpu_modules[] = {"libggml-opencl.so", "libggml-vulkan.so"};
+    const char *best = nullptr;
+    int best_score = 0;
+    for (const char *soname : cpu_modules) {
+        const int score = score_module_by_soname(soname);
+        if (score > best_score) {
+            best = soname;
+            best_score = score;
+        }
+    }
+    if (best != nullptr) {
+        ggml_backend_load(best);
+    } else {
+        LOG_ERR("%s: none of the %zu CPU backend module(s) of this build is usable on this device\n", __func__,
+                cpu_modules.size());
+    }
+    for (const char *soname : other_modules) {
+        if (score_module_by_soname(soname) > 0) {
+            ggml_backend_load(soname);
+        }
+    }
+    for (const char *soname : gpu_modules) {
+        if (score_module_by_soname(soname) > 0) {
+            ggml_backend_load(soname);
+        }
+    }
+    log_backend_registry(__func__, "the APK (by soname)");
+}
+#else
+// With GGML_BACKEND_DL (JLLAMA_BACKEND_DL) the CPU and RPC backends -- and every GPU backend whose
+// natives jar is on the classpath -- are modules ggml loads at run time, and ggml_backend_load_all()
+// looks next to the executable -- `java`, here. LlamaLoader extracts the modules next to this
+// library, so they are loaded from this library's own directory before anything touches the backend
+// registry. ggml_backend_load_best() picks the CPU module whose instruction set the running CPU
+// supports best, and loads the GPU modules in its fixed order (cuda, hip, sycl, vulkan, opencl,
+// openvino): one whose vendor runtime is missing fails to open and registers nothing.
 static void load_backends_next_to_this_library() {
 #ifdef _WIN32
     // GetModuleHandleExW on an address inside this DLL -- GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT
@@ -878,22 +962,10 @@ static void load_backends_next_to_this_library() {
     dir = slash == std::string::npos ? std::string(".") : dir.substr(0, slash);
 #endif
     ggml_backend_load_all_from_path(dir.c_str());
-    // A module whose runtime is missing fails silently (ggml logs it at GGML_LOG_DEBUG only, and on
-    // Windows SEM_FAILCRITICALERRORS suppresses the dialog), so say what the process ended up with:
-    // the backends ggml registered and the devices they report. Reaches LlamaModel.setLogger.
-    std::string devices;
-    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
-        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
-        devices += (i == 0 ? "" : ", ");
-        devices += ggml_backend_dev_name(dev);
-        devices += " (";
-        devices += ggml_backend_reg_name(ggml_backend_dev_backend_reg(dev));
-        devices += ")";
-    }
-    LOG_INF("%s: %zu backend(s) registered from %s, %zu device(s): %s\n", __func__, ggml_backend_reg_count(),
-            dir.c_str(), ggml_backend_dev_count(), devices.c_str());
+    log_backend_registry(__func__, dir);
 }
-#endif
+#endif // JLLAMA_MODULES_BY_SONAME
+#endif // GGML_BACKEND_DL
 
 /**
  * The VM calls JNI_OnLoad when the native library is loaded (for example, through `System.loadLibrary`).
@@ -911,7 +983,9 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) try {
         goto error;
     }
 
-#ifdef GGML_BACKEND_DL
+#ifdef JLLAMA_MODULES_BY_SONAME
+    load_backends_by_soname();
+#elif defined(GGML_BACKEND_DL)
     load_backends_next_to_this_library();
 #endif
 

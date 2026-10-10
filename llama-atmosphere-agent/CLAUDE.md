@@ -30,39 +30,41 @@ whose `dependencyManagement` excludes everything `llama-platform` names, so only
 The model-backed job loads a downloaded library through `-Dnet.ladenthin.llama.lib.path`. The
 `gpu-natives` profile (`-Dllama.classifier=<natives jar>`) adds a GPU backend next to the CPU natives.
 
-**Release asset: the agent jar WITHOUT the core.** `mvn -P assembly package` (the pom's `assembly`
-profile, descriptor `src/assembly/agent-jar.xml`) builds
-`llama-atmosphere-agent-<llama.version>-jar-with-dependencies.jar` — named after the **core** version
-it was built against (the agent's own version is the same), because it only runs next to that core.
-It excludes `net.ladenthin:llama` **with its whole runtime graph** (`useTransitiveFiltering`: Jackson 2,
-slf4j-api, and Jackson 3's `jackson-annotations`, which resolves through the core's trail) plus
-`jspecify` and `slf4j-simple`, all of which every core fat jar already bundles — so the asset is ~14 MB
-(most of it Jetty, the ACP SDK with Reactor, and the Atmosphere console pages) instead of hundreds, the natives are not in the release twice, and there are never two SLF4J providers.
-The manifest's `Class-Path` names the four `llama-<v>-all-<os>-<arch>-…` fat jars and then the default
-`llama-<v>-jar-with-dependencies.jar`, so `java -jar` works when the agent lies next to any of them
-(missing entries are ignored; note that a manifest `Class-Path` is honoured under `java -cp` too).
-**Rename a core fat jar and this list must follow** — `smoke-agent-linux` is what notices.
-CI wiring (`publish.yml`): the model-free job builds it, writes the `.sha256` and uploads artifact
-`llama-atmosphere-agent-jar`; `github-snapshot` / `github-release-signed` download it into the asset
-directory next to `llama-fatjars`, so `sign-fatjars.sh` signs it (`*-jar-with-dependencies*.jar`) and
-the one upload attaches it. **`smoke-agent-linux`** (`.github/smoke-agent-jar.sh`) runs the asset the
-way the README tells a user to — `java -jar` next to the real `all-linux-x86-64` fat jar — and checks:
-bytecode ≤ 65 (Java 21, unlike the core's 52 — with one `--allow` for JLine's FFM terminal provider `org/jline/terminal/impl/ffm/*`, 25 classes shipped as Java 22 bytecode that JLine discovers through `META-INF/jline/providers/ffm` and never loads on 21, where it picks its JNI provider; the first CI run of the smoke caught them), that the jar started **alone** fails with
+**No release asset -- the published thin jar is the whole deliverable.** Until the modular natives
+(core `CLAUDE.md`, "Modular natives") the agent also shipped as
+`llama-atmosphere-agent-<v>-jar-with-dependencies.jar` on the GitHub Release, a jar without the core
+whose manifest `Class-Path` pointed at the core's all-backends fat jars lying next to it. Those fat jars
+are gone (a jar carrying every backend of every platform is the opposite of modular natives), and with
+them the assembly profile, `src/assembly/agent-jar.xml` and the `Class-Path`. A user runs the agent
+through its coordinates -- `jbang net.ladenthin:llama-atmosphere-agent:<v>` resolves the thin jar, its
+dependencies and, through `llama-platform`, the CPU natives jar of every desktop platform; a GPU is one
+additional natives jar (`--deps net.ladenthin:llama:<v>:<backend>-<os>-<arch>` on the JBang line, the
+`gpu-natives` profile here) -- or clones this folder. The thin jar's manifest names the main class, so
+`jbang <coordinates>` and `java -cp <resolved classpath> -jar` both start it; nothing is bundled twice,
+and there is never a second SLF4J provider, because the classpath is what Maven resolves.
+CI wiring (`publish.yml`): the model-free job builds the thin jar and copies its runtime dependencies
+**without `net.ladenthin:*`** next to it (`dependency:copy-dependencies -DexcludeGroupIds=net.ladenthin`,
+artifact `llama-atmosphere-agent-jar`). **`smoke-agent-linux`** (`.github/smoke-agent.sh`) puts that
+directory on one classpath with the core's Linux x86-64 **smoke set** (`.github/package-smoke-sets.sh`:
+the classes jar, its dependencies, `cpu-linux-x86-64` and every GPU module jar of the platform, as a
+consumer's classpath resolves them), after dropping the jars the set already holds, and checks:
+bytecode ≤ 65 (Java 21, unlike the core's 52 — with one `--allow` for JLine's FFM terminal provider `org/jline/terminal/impl/ffm/*`, 25 classes shipped as Java 22 bytecode that JLine discovers through `META-INF/jline/providers/ffm` and never loads on 21, where it picks its JNI provider; the first CI run of the smoke caught them), that the agent directory started **alone** fails with
 `NoClassDefFoundError: net/ladenthin/llama/LlamaModel` (i.e. it really carries no core), `--help`, a
 one-shot `2 + 2` answer and a `read_file` round that must surface a marker from `--workspace`, all on
 the cached `TOOL_MODEL_NAME` with `--ngl 0`; then `--web` on port 0 (the console is `401` without the
 token, the token link answers `302` with the `jllama_agent` cookie, the console page is served with it)
 and `--acp` through `.github/smoke/agent_acp_smoke.py` (standard-library Python playing the editor:
 handshake, modes, a streamed `4`, the announced commands, a `read_file` tool card that brings a marker
-back, a clean exit when stdin closes, and nothing but JSON-RPC on stdout). **All three agent jobs gate
-both publish jobs** (model-free, model-backed integration, smoke).
+back, a clean exit when stdin closes, and nothing but JSON-RPC on stdout). The loader line of the
+answer run must name the GPU module jars of the set (`smoke_assert_loader_line`), so the agent's
+classpath is proven to carry them and ggml to have tried them. **All three agent jobs gate both
+publish jobs** (model-free, model-backed integration, smoke).
 
-**The console pages come from a jar the assembly otherwise leaves out.** Atmosphere's prebuilt AI
-console lives in `atmosphere-spring-boot-starter` under `META-INF/resources/atmosphere/console/`. The
-pom depends on that starter with a `*:*` exclusion (no Spring on the classpath), the assembly's main
-dependency set excludes it, and a second dependency set unpacks **only** that resource path. Remove
-either half and the jar either grows by the whole starter or `--web` starts with nothing to open
-(`WebConsole.available()` says so at startup).
+**The console pages come from a jar that is on the classpath for nothing else.** Atmosphere's prebuilt
+AI console lives in `atmosphere-spring-boot-starter` under `META-INF/resources/atmosphere/console/`.
+The pom depends on that starter with a `*:*` exclusion, so no Spring class reaches the classpath and
+only the starter jar itself does, which is where `WebConsole` reads the pages from. Drop the dependency
+and `--web` starts with nothing to open (`WebConsole.available()` says so at startup).
 
 **What Atmosphere is, for this purpose.** `org.atmosphere:atmosphere-ai` (4.0.72) ships
 `BuiltInAgentRuntime` + `OpenAiCompatibleClient`: a zero-framework OpenAI client that *always*
@@ -901,6 +903,6 @@ Windows; never skip it per OS, give a new test both command forms instead.
 **Version bump note.** The pom's own `<version>` must equal the reactor's (`check-natives.py` enforces
 it); `versions:set` does not touch this standalone pom, so a release bumps it by hand, together with the
 version in the two READMEs (`README.md` "Local coding agent" + the project's own README: the JBang
-coordinates and the fat-jar filenames) — the same class as the `llama-langchain4j/README.md` snippet.
+coordinates and the `java -cp` examples) — the same class as the `llama-langchain4j/README.md` snippet.
 `llama.version` follows by itself (`${project.version}`); `-Dllama.version=<x>-SNAPSHOT` still runs it
 against another core (the pom keeps the Sonatype snapshot repository for exactly that).

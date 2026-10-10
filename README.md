@@ -116,7 +116,7 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - **Infilling** (fill-in-the-middle) for code models.
 - **Tokenize / detokenize** and **JSON-schema → grammar** conversion.
 - **Raw JSON endpoint handlers** mirroring the upstream llama.cpp HTTP server (`/completions`, `/v1/completions`, `/embeddings`, `/infill`, `/tokenize`, `/detokenize`).
-- **Two runnable HTTP server modes, one fat-jar entry.** The fat jar's `Main-Class` is `ServerLauncher`, which dispatches on the `--jllama-openai-compat` flag. Without it, `java -jar …-jar-with-dependencies.jar -m model.gguf --port 8080` runs the full upstream llama.cpp server (embedded **WebUI**, every llama-server flag forwarded) hosted inside `libjllama` over JNI — no separate `llama-server.exe`. With it, `java -jar … --jllama-openai-compat --model model.gguf --port 8080` runs the Java-transport, zero-extra-dependency **OpenAI-compatible** server (`OpenAiCompatServer`, streaming SSE) instead. Both are also runnable directly by class name via `java -cp … net.ladenthin.llama.server.{NativeServer,OpenAiCompatServer}`.
+- **Two runnable HTTP server modes, one entry point.** The classes jar's `Main-Class` is `ServerLauncher`, which dispatches on the `--jllama-openai-compat` flag. Without it, `jbang --deps net.ladenthin:llama:5.2.0:cpu-linux-x86-64 net.ladenthin:llama:5.2.0 -m model.gguf --port 8080` runs the full upstream llama.cpp server (embedded **WebUI**, every llama-server flag forwarded) hosted inside `libjllama` over JNI — no separate `llama-server.exe`. With it, the same line plus `--jllama-openai-compat --model model.gguf --port 8080` runs the Java-transport, zero-extra-dependency **OpenAI-compatible** server (`OpenAiCompatServer`, streaming SSE) instead. Both are also runnable directly by class name via `java -cp … net.ladenthin.llama.server.{NativeServer,OpenAiCompatServer}`; see [Running the server from Maven Central](#running-the-server-from-maven-central).
 - **Model metadata** access (`getModelMeta()`) and **server management** (metrics, slot save/restore, runtime thread reconfiguration).
 - **Conversation checkpoints** — `Session.checkpoint(...)` / `rewind(...)` / `fork(...)` branch and roll back a chat (KV-cache slot save/restore + transcript snapshot) without re-prefilling.
 - **GGUF metadata inspection** without loading the model (`GgufInspector` — pure Java, reads header + key/value table only, big-endian aware).
@@ -197,24 +197,37 @@ We support CPU inference for the following platforms out of the box:
 
 - Linux x86-64, aarch64, s390x
 - macOS aarch64 (Apple silicon, with Metal)
-- Windows x86-64, x86, aarch64
+- Windows x86-64, aarch64
 - Android aarch64, x86-64 (see [Importing in Android](#importing-in-android))
 
 If any of these match your platform, you can include the Maven dependency and get started.
 
 ### Choosing the natives jars
 
-`net.ladenthin:llama` is the Java classes only. The native libraries ship as separate jars of
-the same artifact, one per backend and platform, selected by a Maven `<classifier>` of the form
-`<backend>-<os>-<arch>`. Each holds exactly one directory,
-`net/ladenthin/llama/<OS>/<ARCH>/<backend>/`, so **any combination can share one classpath**.
-At startup the loader tries the backends it finds in a fixed order — CUDA → ROCm → SYCL
-(fp16, fp32) → Vulkan → OpenCL → OpenVINO → Metal → MSVC → CPU — and uses the first whose
-library loads. A GPU jar next to the CPU jar therefore just works on a machine without that GPU
-or its runtime: the GPU library fails to load and the CPU one is used.
+`net.ladenthin:llama` is the Java classes only. The native code ships as separate jars of the
+same artifact, selected by a Maven `<classifier>` of the form `<backend>-<os>-<arch>`, of two kinds:
 
-`llama-platform` is the classes jar plus the CPU jars of every desktop platform. For GPU
-acceleration, add the jar for your GPU next to it:
+- **One library jar per platform** (`cpu-<os>-<arch>`, `metal-macos-aarch64`): `libjllama` with
+  llama.cpp, ggml's shared libraries and the CPU backend modules (one per instruction-set level,
+  the best one for the running CPU is loaded at start). Exactly one is loaded, the one of the
+  running platform; `llama-platform` collects them for every desktop platform.
+- **GPU module jars** (`cuda13-…`, `rocm-…`, `sycl-…`, `vulkan-…`, `opencl-…`, `openvino-…`): each
+  holds only ggml's backend module for that GPU (`libggml-cuda.so`, `ggml-vulkan.dll`, …). They are
+  **additive**: the loader puts every GPU module jar of the platform next to the library, ggml loads
+  each module whose vendor runtime is installed and registers its devices, and a module whose runtime
+  is missing is skipped with a log line — the model then runs on the CPU, so a GPU jar on a machine
+  without that GPU just works. Several GPU jars together are fine (llama.cpp lists every device they
+  bring, the same GPU seen through two backends once). A module jar alone is not enough: it needs
+  the library jar of its platform, **from the same release** — the loader compares the build stamp
+  (`jllama-build.txt`, the llama.cpp tag) of every module jar with the library's and refuses a
+  mismatch before loading anything, which the module's own export check at load time cannot see.
+
+Each jar holds exactly one directory, `net/ladenthin/llama/<OS>/<ARCH>/<backend>/`, so **any
+combination can share one classpath**. The start-up log names the library, the modules put in place
+and the backends and devices ggml registered.
+
+`llama-platform` is the classes jar plus the library jars of every desktop platform. For GPU
+acceleration, add the module jar for your GPU next to it:
 
 ```xml
 <dependency>
@@ -241,11 +254,9 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 | `cpu-linux-aarch64` | CPU | Linux aarch64 | glibc ≥ 2.28 (RHEL 8, Ubuntu 20.04, Debian 10, Amazon Linux 2023 and later) — built in the manylinux_2_28 image on an arm64 runner. Ships one CPU backend module per ARM feature level (armv8.0 up to armv9.2: dotprod, fp16, SVE, i8mm, SVE2, SME), chosen at start-up like the x86-64 ones. |
 | `cpu-linux-s390x` | CPU | Linux s390x (IBM Z, big-endian) | A JDK 8+ JVM. |
 | `cpu-windows-x86-64` | CPU | Windows x86-64 | A JDK 8+ JVM; **Windows 10 or newer**. Ships one CPU backend module per instruction-set level (as the Linux x86-64 jar: x86-64 baseline, SSE4.2, AVX, AVX2, AVX-512, AVX-VNNI, AMX), of which ggml loads the best for the running CPU at start-up. Built with clang, hybrid CRT: the STL and vcruntime are static (no `msvcp140.dll` / `vcruntime140.dll`, no VC++ redistributable), the Universal CRT is the OS one (`ucrtbase.dll`), so Microsoft's UCRT security updates apply. |
-| `cpu-windows-x86` | CPU | Windows x86 (32-bit JVM) | A JDK 8+ JVM; **Windows 10 or newer**. Built with Ninja Multi-Config + MSVC, same hybrid CRT. |
-| `cpu-windows-aarch64` | CPU | Windows on ARM (Snapdragon X / Surface) | A JDK 8+ JVM; **Windows 10 or newer**. Built natively on `windows-11-arm` with `clang-cl`, same hybrid CRT as the x86 jars. |
+| `cpu-windows-aarch64` | CPU | Windows on ARM (Snapdragon X / Surface) | A JDK 8+ JVM; **Windows 10 or newer**. Built natively on `windows-11-arm` with `clang-cl`, same hybrid CRT as the x86-64 jar; one CPU backend module (ggml builds no ARM variant set for Windows), so the Vulkan and OpenCL module jars can join it. |
 | `metal-macos-aarch64` | Metal + CPU | macOS aarch64 (Apple silicon) | A JDK 8+ JVM. |
-| `cpu-android-aarch64` / `cpu-android-x86-64` | CPU | Android | For Android use the [`llama-android` AAR](#importing-in-android); these jars are the same libraries for other Android JVM setups. |
-| `msvc-windows-x86-64` / `msvc-windows-x86` | CPU (Visual Studio generator) | Windows x86-64 / x86 | One static library built with the Visual Studio generator and MSVC (`cl.exe`), same hybrid CRT — the second, independent toolchain next to the clang-built `cpu-windows-x86-64`; tried before the `cpu` jar when both are present. **Windows 10 or newer**, like every Windows jar. |
+| `cpu-android-aarch64` / `cpu-android-x86-64` | CPU | Android | For Android use the [`llama-android` AAR](#importing-in-android); these jars are the same libraries (with the CPU modules, aarch64 one per ARM feature level) for other Android JVM setups. |
 | `cuda13-linux-x86-64` | CUDA 13 | Linux x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 runtime libraries (`libcudart.so.13`, `libcublas.so.13`). |
 | `cuda13-windows-x86-64` | CUDA 13 | Windows x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 Toolkit (`cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` on `PATH`). |
 | `vulkan-linux-x86-64` | Vulkan | Linux x86-64 with a Vulkan 1.2+ GPU (NVIDIA / AMD / Intel) | A Vulkan runtime (`libvulkan.so.1`), which current GPU drivers install. The most portable Linux GPU option. glibc ≈ 2.39 (built on `ubuntu-latest`). |
@@ -257,20 +268,20 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 | `opencl-android-aarch64` | OpenCL (Adreno) | Android aarch64 with Adreno GPU | A device OpenCL ICD (`libOpenCL.so`); see also the `llama-android-opencl` AAR. |
 | `rocm-linux-x86-64` | ROCm / HIP | Linux x86-64 with AMD GPU | An AMD ROCm **10** runtime (`libamdhip64.so`, `librocblas.so`, `libhipblas.so`) — built against ROCm 10.0 (TheRock), like upstream llama.cpp; every GPU TheRock builds for Linux, Instinct included (gfx900/gfx906/gfx90c/gfx1153 best effort — built, but not release-ready in ROCm 10). |
 | `rocm-windows-x86-64` | ROCm / HIP | Windows x86-64 with AMD GPU | The AMD ROCm **10** runtime DLLs (`amdhip64.dll`, `rocblas.dll`, `hipblas.dll`) on `PATH`; every Radeon target TheRock builds for Windows, gfx900 through RDNA4 (gfx900/gfx906/gfx90c/gfx1153 best effort). |
-| `sycl-fp16-linux-x86-64` | SYCL (Intel oneAPI, fp16) | Linux x86-64 with Intel GPU (Arc / iGPU) | An Intel oneAPI / Level-Zero runtime. fp16 accumulation (faster, slightly lower precision). |
-| `sycl-fp32-linux-x86-64` | SYCL (Intel oneAPI, fp32) | Linux x86-64 with Intel GPU (Arc / iGPU) | An Intel oneAPI / Level-Zero runtime. fp32 accumulation (higher precision). |
-| `sycl-windows-x86-64` | SYCL (Intel oneAPI) | Windows x86-64 with Intel GPU (Arc / iGPU) | The Intel oneAPI / Level-Zero runtime DLLs on `PATH`. |
+| `sycl-linux-x86-64` | SYCL (Intel oneAPI, fp16) | Linux x86-64 with Intel GPU (Arc / iGPU) | An Intel oneAPI / Level-Zero runtime. fp16 accumulation, as upstream's SYCL release builds. |
+| `sycl-windows-x86-64` | SYCL (Intel oneAPI, fp16) | Windows x86-64 with Intel GPU (Arc / iGPU) | The Intel oneAPI / Level-Zero runtime DLLs on `PATH`. |
 | `openvino-linux-x86-64` | OpenVINO | Linux x86-64 (Intel GPU / NPU / CPU) | An Intel OpenVINO runtime. |
 | `openvino-windows-x86-64` | OpenVINO | Windows x86-64 (Intel GPU / NPU / CPU) | The Intel OpenVINO runtime DLLs on `PATH`. |
 
 > [!NOTE]
 > No vendor runtime is bundled; it comes from the GPU driver or toolkit on the host. The GPU
-> jars are validated **build-only** in CI (GitHub runners have no GPU), so end-to-end GPU
-> inference is verified locally / on self-hosted hardware. A GPU library that loads but finds
-> no usable device (e.g. CUDA installed, no NVIDIA GPU) runs on the CPU inside that library and
-> keeps the loader from trying the next backend; force one with
-> `-Dnet.ladenthin.llama.backend=<backend>` (e.g. `vulkan` or `cpu`), which fails loud instead
-> of falling back.
+> module jars are validated **build-only** in CI (GitHub runners have no GPU): the smoke jobs put
+> every GPU module of the platform next to the library and see ggml skip each one for lack of a
+> runtime, so end-to-end GPU inference is verified locally / on self-hosted hardware. A module
+> whose runtime is installed but finds no device (e.g. the CUDA toolkit without an NVIDIA GPU)
+> simply registers none. `-Dnet.ladenthin.llama.backend=<a>,<b>` restricts the modules put in
+> place to the named ones (`cpu` for none) and fails loud when a named jar is not on the
+> classpath; unset, every GPU module jar on the classpath is used.
 
 > [!NOTE]
 > On the **module path** each natives jar is an automatic module
@@ -289,38 +300,44 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 > The minimum required Android version is **API 28 (Android 9.0 Pie)**.
 > Devices running Android 8.1 (API 27) or earlier are not supported.
 
-### Standalone server fat jars (GitHub Releases)
+### Running the server from Maven Central
 
-For running the [embedded server](#native-server-with-the-built-in-webui-nativeserver)
-without any Maven setup, every tagged [GitHub Release](https://github.com/bernardladenthin/java-llama.cpp/releases)
-(and the rolling `snapshot` pre-release from `main`) attaches self-contained
-**all-backends fat jars** — one download per OS/arch, runnable directly:
+There is no all-in-one jar to download: the natives are modular, and every combination of them is
+a classpath Maven resolves. The classes jar's `Main-Class` is `ServerLauncher`, so the
+[embedded server](#native-server-with-the-built-in-webui-nativeserver) starts straight from the
+coordinates with [JBang](https://www.jbang.dev) — the library jar of your platform, plus any GPU
+module jars, as `--deps`:
 
 ```bash
-java -jar llama-<version>-all-linux-x86-64-jar-with-dependencies.jar -m model.gguf --port 8080
+# CPU only (Linux x86-64; cpu-windows-x86-64, metal-macos-aarch64, ... for the others)
+jbang --deps net.ladenthin:llama:5.2.0:cpu-linux-x86-64 net.ladenthin:llama:5.2.0 -m model.gguf --port 8080
+# with a GPU backend -- several may be named, ggml uses the ones whose runtime is installed
+jbang --deps net.ladenthin:llama:5.2.0:cpu-linux-x86-64,net.ladenthin:llama:5.2.0:vulkan-linux-x86-64 \
+    net.ladenthin:llama:5.2.0 -m model.gguf --port 8080 -ngl 99
 ```
 
-| Release asset | Bundled GPU backends | CPU fallback |
-|---|---|---|
-| `llama-<version>-all-linux-x86-64-jar-with-dependencies.jar` | CUDA 13, ROCm, SYCL fp16/fp32, Vulkan, OpenVINO | yes |
-| `llama-<version>-all-linux-aarch64-jar-with-dependencies.jar` | Vulkan | yes |
-| `llama-<version>-all-windows-x86-64-jar-with-dependencies.jar` | CUDA 13, ROCm, SYCL, Vulkan, OpenCL, OpenVINO | yes |
-| `llama-<version>-all-windows-aarch64-jar-with-dependencies.jar` | OpenCL (Adreno / Snapdragon X) | yes |
-| `llama-<version>-jar-with-dependencies.jar` | none (CPU only, incl. macOS Metal) | — |
+Every llama-server flag works, the WebUI included; add `--jllama-openai-compat` to run the Java
+[OpenAI-compatible server](#openai-compatible-http-server) instead. With Maven, from a checkout,
+[`examples/server/pom.xml`](examples/server/pom.xml) depends on `llama-platform` and carries one
+profile per GPU module jar, named after its classifier:
 
-Each all-backends jar is the classes, all Java runtime dependencies, and every natives jar
-of **its named OS/arch** (except `msvc`) merged into one file — pick the jar that matches
-your platform. (A 32-bit JVM on 64-bit Windows, for example, needs the default
-`llama-<version>-jar-with-dependencies.jar`, which carries the CPU natives of every platform.)
-The loader picks the backend exactly as described [above](#choosing-the-natives-jars), so the
-jar starts on every host of its OS/arch, with or without a GPU. A `.sha256` checksum file and a
-detached GPG `.asc` signature accompany every jar. These fat jars are GitHub download assets
-only — they are **not** published to Maven Central.
+```bash
+mvn -f examples/server/pom.xml exec:java -Dexec.args="-m model.gguf --port 8080"                      # CPU
+mvn -f examples/server/pom.xml -P cuda13-linux-x86-64 exec:java -Dexec.args="-m model.gguf -ngl 99"   # + CUDA
+# a local jar-with-dependencies of exactly that combination, for a machine without Maven
+mvn -f examples/server/pom.xml -P assembly,cuda13-linux-x86-64 package
+java -jar examples/server/target/llama-server-5.2.0-jar-with-dependencies.jar -m model.gguf -ngl 99
+```
+
+The GitHub Release of a version attaches the Maven artifacts themselves — the classes jar, every
+natives jar, the poms, sources and javadoc, each with the detached GPG `.asc` that signed it for
+Central — and nothing else; a jar of every backend of every platform would be the opposite of
+modular natives.
 
 ### Setup required
 
-If none of the above listed platforms matches yours, currently you have to compile the library yourself (also if you 
-want GPU acceleration).
+If none of the above listed platforms matches yours, or you want a GPU backend no module jar exists
+for (e.g. ROCm on Linux aarch64), you have to compile the library yourself.
 
 This consists of two steps: 1) Compiling the libraries and 2) putting them in the right location.
 
@@ -374,7 +391,7 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.lib.path` | unset (falls back to `java.library.path`) | runtime | `LlamaLoader` | Directory containing the native `jllama` shared library. Checked first, before `java.library.path`. Set with `-Dnet.ladenthin.llama.lib.path=/path/to/dir`. |
 | `net.ladenthin.llama.tmpdir` | unset (falls back to `java.io.tmpdir`) | runtime | `LlamaLoader` | Directory the natives are extracted into, one subdirectory per backend and build (`jllama-backend-<backend>-<key>`). It is kept across runs: the next start of the same build compares each file with the jar and copies nothing; a directory of a build that is no longer on the classpath is removed by a later start once it is 10 minutes old. Point it elsewhere when the default temp directory is on a slow or policy-restricted volume. |
 | `net.ladenthin.llama.osinfo.architecture` | unset (uses `os.arch`) | runtime | `OSInfo` | Override for the architecture string used to locate the bundled library inside the JAR. Useful when `os.arch` reports an unexpected value (e.g. inside dockcross / chrooted environments). |
-| `net.ladenthin.llama.backend` | unset (auto: the first backend on the classpath whose library loads) | runtime | `LlamaLoader` | Names one backend directory (e.g. `cuda13`, `vulkan`, `cpu`) to load exclusively — failure is then fatal instead of trying the next backend. See [Choosing the natives jars](#choosing-the-natives-jars). |
+| `net.ladenthin.llama.backend` | unset (every GPU module jar on the classpath is put next to the library) | runtime | `LlamaLoader` | A comma-separated filter over the GPU module jars (e.g. `vulkan`, `cuda13,vulkan`): only the named modules are put in place, `cpu` names none; a named module whose jar is not on the classpath, or an unknown name, fails the load. The library jar is never a choice — it is the one of the running platform. See [Choosing the natives jars](#choosing-the-natives-jars). |
 | `net.ladenthin.llama.test.ngl` | `43` for the general suite; `0` for `ToolCallingIntegrationTest` | test | Model-backed integration tests | Number of GPU layers used during testing. Pin to `0` on CPU-only hosts: `mvn test -Dnet.ladenthin.llama.test.ngl=0`. The tool test also selects device `none` at zero layers so Metal/CUDA is not initialized. |
 | `net.ladenthin.llama.text.model` | `models/codellama-7b.Q2_K.gguf` (tests self-skip if missing) | test | `LlamaModelTest` and most model-backed tests (`TestConstants.MODEL_PATH`) | Path to the main text-generation GGUF. Most tests only need an instruct-capable model; a few assertions are tuned to the CI model. |
 | `net.ladenthin.llama.draft.model` | `models/AMD-Llama-135m-code.Q2_K.gguf` (tests self-skip if missing) | test | Speculative-decoding tests and the tests that need a small, fast model (`TestConstants.DRAFT_MODEL_PATH`) | Path to the draft GGUF. |
@@ -831,9 +848,9 @@ array alone at `GET /slots`. OpenAI responses preserve
 `net.ladenthin.llama.server.OpenAiCompatServer` turns a loaded model into a local
 OpenAI-compatible HTTP endpoint using only the JDK's built-in `com.sun.net.httpserver` — no extra
 dependency and no separate server process. It is embeddable, and runnable via
-`java -cp <jar> net.ladenthin.llama.server.OpenAiCompatServer …` (the fat jar's default
-`Main-Class` is instead `NativeServer` — see "Native server with the built-in WebUI" below). It
-serves:
+`java -cp <jar> net.ladenthin.llama.server.OpenAiCompatServer …` (the classes jar's
+`Main-Class`, `ServerLauncher`, starts `NativeServer` by default — see "Native server with the
+built-in WebUI" below). It serves:
 
 | Method &amp; path | Backed by |
 |---|---|
@@ -887,18 +904,18 @@ try (LlamaModel model = new LlamaModel(modelParams);
 }
 ```
 
-…or run it standalone. The fat jar's `Main-Class` is the `ServerLauncher` dispatcher, so add
+…or run it standalone. The classes jar's `Main-Class` is the `ServerLauncher` dispatcher, so add
 `--jllama-openai-compat` to select this Java server (the launcher strips that flag and forwards the rest);
 or name the class explicitly via `-cp`:
 
 ```bash
-# fat jar (bundles the native lib + Java deps) — select the Java server with --jllama-openai-compat
-java -jar target/llama-<version>-jar-with-dependencies.jar --jllama-openai-compat \
+# from Maven Central (JBang resolves the classes jar, the natives jar named and the Java deps)
+jbang --deps net.ladenthin:llama:5.2.0:cpu-linux-x86-64 net.ladenthin:llama:5.2.0 --jllama-openai-compat \
     --model models/Qwen3-0.6B-Q4_K_M.gguf --host 0.0.0.0 --port 8080 --n-gpu-layers 99
 
-# or name the class explicitly (fat jar or plain library jar)
-java -cp target/llama-<version>.jar net.ladenthin.llama.server.OpenAiCompatServer \
-  --model models/model.gguf --port 8080 --model-id local-model
+# or name the class explicitly, with the jars on the classpath
+java -cp 'target/llama-<version>.jar:target/llama-<version>-cpu-linux-x86-64.jar:<deps>' \
+  net.ladenthin.llama.server.OpenAiCompatServer --model models/model.gguf --port 8080 --model-id local-model
 ```
 
 Run with `--help` for the full option list (`-m/--model`, `--host`, `-p/--port`, `-c/--ctx-size`,
@@ -957,12 +974,12 @@ tool calling depends on the model's own tool-calling quality. Pass `--api-key` (
 the **full upstream llama.cpp server, including its bundled Svelte WebUI**, use
 `net.ladenthin.llama.server.NativeServer`. It runs the real `llama_server` inside `libjllama` over
 JNI — no separate `llama-server.exe` — and **forwards the raw llama-server arguments verbatim**, so
-every flag works exactly as it does for the standalone binary. The fat jar runs it **by default**
-(when `--jllama-openai-compat` is absent), forwarding its args to the native server (pass `--help` for the
-full llama-server option list):
+every flag works exactly as it does for the standalone binary. `ServerLauncher` (the classes jar's
+`Main-Class`) runs it **by default** (when `--jllama-openai-compat` is absent), forwarding its args to
+the native server (pass `--help` for the full llama-server option list):
 
 ```bash
-java -jar target/llama-<version>-jar-with-dependencies.jar \
+jbang --deps net.ladenthin:llama:5.2.0:cpu-linux-x86-64 net.ladenthin:llama:5.2.0 \
     -m models/model.gguf --host 127.0.0.1 --port 8080 -c 65536 --jinja
 # then open http://127.0.0.1:8080/ for the WebUI
 ```
@@ -1091,10 +1108,11 @@ try (RpcServer server = RpcServer.startLocal(RpcEndpoint.DEFAULT_PORT)) {   // 1
 }
 ```
 
-or from the command line, with the fat jar:
+or from the command line, from Maven Central:
 
 ```bash
-java -cp llama-<version>-jar-with-dependencies.jar net.ladenthin.llama.RpcServer --port 50052
+jbang --main net.ladenthin.llama.RpcServer --deps net.ladenthin:llama:5.2.0:cpu-linux-x86-64 \
+    net.ladenthin:llama:5.2.0 --port 50052
 ```
 
 Use the servers from a model:
@@ -1224,26 +1242,23 @@ mvn -q compile exec:java \
     -Dexec.args="--model models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ctx-size 16384 --workspace /path/to/project --allow-shell"
 ```
 
-**Download instead of cloning.** Every [GitHub release](https://github.com/bernardladenthin/java-llama.cpp/releases)
-carries `llama-atmosphere-agent-<version>-jar-with-dependencies.jar` (with `.sha256` and a GPG `.asc`,
-like the other fat jars). It is a few MB because it holds **no core**: it runs next to one of the core
-fat jars of the same release, so the natives are downloaded once. Put both in one directory and
-`java -jar` finds the core through the agent's manifest (the all-backends jars are tried before the
-CPU-only default jar):
+**Straight from Maven Central instead of cloning.** The agent is published as a thin jar whose pom
+names `llama-platform`, so [JBang](https://www.jbang.dev) resolves it with the CPU natives of every
+desktop platform and starts it; a GPU is one more natives jar on the same line (the module jars are
+additive, see [Choosing the natives jars](#choosing-the-natives-jars)):
 
 ```bash
-# e.g. Linux x86-64: the agent + the all-backends core fat jar of the same version
-java -jar llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar \
+jbang net.ladenthin:llama-atmosphere-agent:5.2.0 \
     --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ctx-size 16384 --workspace /path/to/project --allow-shell
 
-# or with the classpath spelled out (any directory layout; `;` instead of `:` on Windows)
-java -cp llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar:llama-5.2.0-all-linux-x86-64-jar-with-dependencies.jar \
-    net.ladenthin.llama.atmosphere.LocalAgent --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --workspace /path/to/project
+# e.g. with Vulkan on Linux x86-64 (any current GPU driver), all layers offloaded
+jbang --deps net.ladenthin:llama:5.2.0:vulkan-linux-x86-64 net.ladenthin:llama-atmosphere-agent:5.2.0 \
+    --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --workspace /path/to/project
 ```
 
-Started without a core jar next to it, the agent stops with `NoClassDefFoundError:
-net/ladenthin/llama/LlamaModel`. CI launches exactly this pair on every run (`smoke-agent-linux`)
-before anything is published.
+The agent carries no core of its own (started without one it stops with `NoClassDefFoundError:
+net/ladenthin/llama/LlamaModel`); CI launches the published thin jar on one classpath with the
+published core jars on every run (`smoke-agent-linux`) before anything is published.
 
 > [!WARNING]
 > `--allow-shell` lets the model run any command with your user's rights. By default every write and
@@ -1264,21 +1279,22 @@ and VS Code through an ACP extension — run it as their chat agent, with the ed
 dialog for writes and commands:
 
 ```bash
-java -jar llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar --model model.gguf --allow-shell --web
-# JetBrains, ~/.jetbrains/acp.json: {"agent_servers": {"Local llama": {"command": "java",
-#   "args": ["-jar", "/path/llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar", "--acp", "--model", "/path/model.gguf"]}}}
+jbang net.ladenthin:llama-atmosphere-agent:5.2.0 --model model.gguf --allow-shell --web
+# JetBrains, ~/.jetbrains/acp.json: {"agent_servers": {"Local llama": {"command": "jbang",
+#   "args": ["net.ladenthin:llama-atmosphere-agent:5.2.0", "--acp", "--model", "/path/model.gguf"]}}}
 ```
 
 On Windows PowerShell quote the whole argument (`"-Dexec.args=--model models\… --allow-shell"`); for
 the GPU add e.g. `-Dllama.classifier=vulkan-windows-x86-64` and `--ngl 99`. The agent's
 [README](llama-atmosphere-agent/) walks through all of it step by step. Other ways to run it, e.g.
 against a java-llama.cpp server that is already running (`--jinja` is required for tool calling;
-the fat jars are [GitHub release](https://github.com/bernardladenthin/java-llama.cpp/releases) assets,
-`llama-<version>-all-<os>-<arch>-jar-with-dependencies.jar` picks a GPU backend itself):
+see [Running the server from Maven Central](#running-the-server-from-maven-central) for a GPU
+backend):
 
 ```bash
-# 1. the server, e.g. from the release fat jar
-java -jar llama-5.2.0-jar-with-dependencies.jar -m models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --jinja --port 8080
+# 1. the server, from Maven Central
+jbang --deps net.ladenthin:llama:5.2.0:cpu-linux-x86-64 net.ladenthin:llama:5.2.0 \
+    -m models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --jinja --port 8080
 
 # 2. the agent, from the llama-atmosphere-agent/ folder — a you> prompt appears (/clear, /exit)
 mvn -q compile exec:java \
@@ -1444,21 +1460,24 @@ One dependency line in Android Studio — no submodule, no NDK build, no manual 
 
 ```kotlin
 dependencies {
-    implementation("net.ladenthin:llama-android:5.1.0")
-    // or, for Qualcomm Adreno GPUs (device must provide an OpenCL ICD):
-    // implementation("net.ladenthin:llama-android-opencl:5.1.0")
+    implementation("net.ladenthin:llama-android:5.2.0")
+    // additionally, for Qualcomm Adreno GPUs (device must provide an OpenCL ICD) -- the OpenCL
+    // backend module; it depends on llama-android, so the line above may also be left out:
+    // implementation("net.ladenthin:llama-android-opencl:5.2.0")
 
     // optional Kotlin coroutines facade (Flow streaming + suspend wrappers):
-    implementation("net.ladenthin:llama-kotlin:5.1.0")
+    implementation("net.ladenthin:llama-kotlin:5.2.0")
 }
 ```
 
-The AAR carries the full `net.ladenthin:llama` Java API, the CI-built native libraries for
+The AAR carries the full `net.ladenthin:llama` Java API, the CI-built native library with ggml's
+CPU backend modules (one per ARM feature level, the best for the device loaded at start) for
 `arm64-v8a` (devices) **and** `x86_64` (Android Studio emulator, Chromebooks — app bundles
-split per ABI so phones download only arm64), both 16 KB page-size compliant, consumer
+split per ABI so phones download only arm64), all 16 KB page-size compliant, consumer
 R8/ProGuard rules (applied automatically), and a manifest `minSdkVersion 28` that AGP
-enforces against your app. CI boots an x86_64 emulator and runs real on-device inference
-against every AAR build.
+enforces against your app. The OpenCL AAR adds the `libggml-opencl.so` module, which the same
+start loads when the device has an OpenCL ICD and skips otherwise. CI boots an x86_64 emulator
+and runs real on-device inference against every AAR build.
 Do **not** also depend on the desktop `net.ladenthin:llama` JAR in the same app — the AAR
 already contains those classes, and the JAR would drag ~70 MB of desktop natives into your
 APK. See [`llama-android/README.md`](llama-android/README.md) and
@@ -1581,9 +1600,9 @@ application-control policy (WDAC, AppLocker) blocks unsigned DLLs, or any DLL un
 refuses the load with `UnsatisfiedLinkError`. The way out is a directory the policy allows: put the
 contents of the natives jar's `net/ladenthin/llama/Windows/x86_64/cpu/` directory there and start
 the JVM with `-Dnet.ladenthin.llama.lib.path=<that directory>`, which loads from it without
-extracting anything. (The project's release-signing key is an OpenPGP key, which signs the jars and
-fat jars with detached `.asc` files; Windows does not look at those, so the DLLs would need a
-separate code-signing certificate.)
+extracting anything. (The project's release-signing key is an OpenPGP key, which signs the jars with detached `.asc`
+files; Windows does not look at those, so the DLLs would need a separate code-signing
+certificate.)
 
 ### Contributors: build with Temurin 21, not Oracle JDK 21
 

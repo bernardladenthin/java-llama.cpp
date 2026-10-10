@@ -4,14 +4,14 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# Smoke test for the llama-atmosphere-agent release asset, run exactly the way the README
-# tells a user to run it: the agent jar lies next to a core fat jar and is started with
-# `java -jar`, so the core is found only through the agent manifest's Class-Path. That
-# makes this the check that the two release assets actually fit together (same version in
-# the file names, nothing missing on either side), which no test run from the source tree
-# can see.
+# Smoke test for the published llama-atmosphere-agent on the published core jars: the agent's thin
+# jar with its own dependencies (what Maven Central resolves for `jbang net.ladenthin:llama-atmosphere-agent`)
+# on one classpath with a smoke set of the core (.github/package-smoke-sets.sh: the classes jar, its
+# dependencies, the CPU natives jar and every GPU module jar of this platform). That is the check
+# that the two publications fit together -- the agent built against this very core, the natives
+# reached through the loader -- which no test run from the source tree can see.
 #
-#   1. the agent jar carries no core: started alone, loading a model fails with
+#   1. the agent carries no core: started without the core set, loading a model fails with
 #      NoClassDefFoundError for net.ladenthin.llama.LlamaModel;
 #   2. --help exits 0 and prints the usage;
 #   3. a one-shot prompt with the model loaded in-process answers "2+2" with a 4;
@@ -25,14 +25,19 @@
 #      (smoke/agent_acp_smoke.py): handshake, a streamed answer, a read_file round, and a
 #      clean exit when the editor hangs up.
 #
-# Usage: smoke-agent-jar.sh <jar-dir> <model-path>
-# <jar-dir> must hold exactly one llama-atmosphere-agent-*-jar-with-dependencies.jar and at
-# least one core fat jar its Class-Path names. Output of each run is kept in agent-*.log in
-# the working directory (uploaded by the CI job on failure).
+# Usage: smoke-agent.sh <agent-dir> <set-dir> <model-path>
+# <agent-dir> holds the agent's thin jar (llama-atmosphere-agent-<v>.jar) and its dependency jars
+# without the core (mvn dependency:copy-dependencies -DexcludeGroupIds=net.ladenthin); <set-dir> is
+# the core's smoke set. Output of each run is kept in agent-*.log in the working directory
+# (uploaded by the CI job on failure).
 set -euo pipefail
 
-JAR_DIR="${1:?usage: smoke-agent-jar.sh <jar-dir> <model-path>}"
-MODEL="${2:?usage: smoke-agent-jar.sh <jar-dir> <model-path>}"
+AGENT_DIR="${1:?usage: smoke-agent.sh <agent-dir> <set-dir> <model-path>}"
+SET_DIR="${2:?usage: smoke-agent.sh <agent-dir> <set-dir> <model-path>}"
+MODEL="${3:?usage: smoke-agent.sh <agent-dir> <set-dir> <model-path>}"
+AGENT_MAIN="net.ladenthin.llama.atmosphere.LocalAgent"
+# shellcheck source=smoke-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/smoke-lib.sh"
 TIMEOUT="${AGENT_SMOKE_TIMEOUT:-600}"
 # The checks grep plain text; never let a CI runner that forces colour put escapes in it.
 export NO_COLOR=1
@@ -45,45 +50,33 @@ fail() {
 
 [ -f "$MODEL" ] || fail "model not found: $MODEL"
 MODEL="$(cd "$(dirname "$MODEL")" && pwd)/$(basename "$MODEL")"
-JAR_DIR="$(cd "$JAR_DIR" && pwd)"
+AGENT_DIR="$(cd "$AGENT_DIR" && pwd)"
+SET_DIR="$(cd "$SET_DIR" && pwd)"
 
-mapfile -t AGENTS < <(find "$JAR_DIR" -maxdepth 1 -name 'llama-atmosphere-agent-*-jar-with-dependencies.jar' | sort)
-[ "${#AGENTS[@]}" -eq 1 ] || fail "expected exactly 1 agent jar in $JAR_DIR, got ${#AGENTS[@]}: ${AGENTS[*]:-none}"
+mapfile -t AGENTS < <(find "$AGENT_DIR" -maxdepth 1 -name 'llama-atmosphere-agent-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' | sort)
+[ "${#AGENTS[@]}" -eq 1 ] || fail "expected exactly 1 agent jar in $AGENT_DIR, got ${#AGENTS[@]}: ${AGENTS[*]:-none}"
 AGENT="${AGENTS[0]}"
-echo "Agent jar: $(basename "$AGENT") ($(du -h "$AGENT" | cut -f1))"
+echo "Agent jar: $(basename "$AGENT") ($(du -h "$AGENT" | cut -f1)), $(find "$AGENT_DIR" -maxdepth 1 -name '*.jar' | wc -l) jar(s) in $AGENT_DIR"
+if find "$AGENT_DIR" -maxdepth 1 -name 'llama-[0-9]*.jar' | grep -q .; then
+    fail "the agent directory carries a core jar: $(find "$AGENT_DIR" -maxdepth 1 -name 'llama-[0-9]*.jar')"
+fi
+CORE_CP="$(smoke_classpath "$SET_DIR")" || exit 1
+CP="$AGENT_DIR/*:$CORE_CP"
+echo "Core smoke set: $SET_DIR (GPU module jars: $(smoke_set_modules "$SET_DIR" | tr '\n' ' '))"
 
-# The manifest names the core jars by file name; at least one of them must be here, or
-# `java -jar` would start without a core. unzip wraps manifest lines at 72 bytes with a
-# leading space, so the continuation lines are joined first.
-CLASS_PATH="$(unzip -p "$AGENT" META-INF/MANIFEST.MF | tr -d '\r' | sed -e ':a' -e 'N' -e '$!ba' -e 's/\n //g' \
-    | sed -n 's/^Class-Path: //p')"
-[ -n "$CLASS_PATH" ] || fail "agent manifest has no Class-Path"
-found=""
-for entry in $CLASS_PATH; do
-    if [ -f "$JAR_DIR/$entry" ]; then
-        found="$entry"
-        break
-    fi
-done
-[ -n "$found" ] || fail "none of the core jars the agent manifest names is in $JAR_DIR: $CLASS_PATH (present: $(ls "$JAR_DIR"))"
-echo "Core jar picked up via Class-Path: $found"
-
-# 1. Without a core next to it the agent must not work: that is what makes it small.
-ALONE="$(mktemp -d)"
-cp "$AGENT" "$ALONE/"
+# 1. Without the core on the classpath the agent must not work: it brings none of its own.
 set +e
-timeout "$TIMEOUT" java -jar "$ALONE/$(basename "$AGENT")" --model "$MODEL" --plain --prompt hi \
+timeout "$TIMEOUT" java -cp "$AGENT_DIR/*" "$AGENT_MAIN" --model "$MODEL" --plain --prompt hi \
     > agent-alone.log 2>&1 < /dev/null
 rc=$?
 set -e
-rm -rf "$ALONE"
-[ "$rc" -ne 0 ] || fail "the agent jar ran without a core jar next to it - does it bundle the core?"
+[ "$rc" -ne 0 ] || fail "the agent ran without the core on the classpath - does it bundle the core?"
 grep -q 'NoClassDefFoundError: net/ladenthin/llama/LlamaModel' agent-alone.log \
     || { cat agent-alone.log; fail "agent without core failed, but not for the missing core (see above)"; }
-echo "OK: the agent jar carries no core"
+echo "OK: the agent carries no core"
 
 # 2. --help
-java -jar "$AGENT" --help > agent-help.log 2>&1 < /dev/null || { cat agent-help.log; fail "--help exited non-zero"; }
+java -cp "$CP" "$AGENT_MAIN" --help > agent-help.log 2>&1 < /dev/null || { cat agent-help.log; fail "--help exited non-zero"; }
 grep -q 'Usage: LocalAgent' agent-help.log || { cat agent-help.log; fail "--help printed no usage"; }
 echo "OK: --help"
 
@@ -91,7 +84,7 @@ run_agent() {
     local log="$1"
     shift
     set +e
-    timeout "$TIMEOUT" java -jar "$AGENT" --model "$MODEL" --ngl 0 --plain --temperature 0 "$@" \
+    timeout "$TIMEOUT" java -cp "$CP" "$AGENT_MAIN" --model "$MODEL" --ngl 0 --plain --temperature 0 "$@" \
         > "$log" 2>"${log%.log}.err.log" < /dev/null
     local status=$?
     set -e
@@ -121,7 +114,7 @@ echo "OK: tool round (read_file)"
 
 # 5. The browser front end. Port 0 lets the OS pick; the banner says which one it got.
 WEB_LOG=agent-web.log
-java -jar "$AGENT" --model "$MODEL" --ngl 0 --web --web-port 0 > agent-web.out.log 2> "$WEB_LOG" < /dev/null &
+java -cp "$CP" "$AGENT_MAIN" --model "$MODEL" --ngl 0 --web --web-port 0 > agent-web.out.log 2> "$WEB_LOG" < /dev/null &
 WEB_PID=$!
 trap 'kill "$WEB_PID" 2>/dev/null || true' EXIT
 URL=""
@@ -154,9 +147,11 @@ echo "OK: --web (token, cookie, console page)"
 # 6. The editor front end.
 WORKSPACE="$(mktemp -d)"
 python3 "$(dirname "$0")/smoke/agent_acp_smoke.py" "$WORKSPACE" agent-acp.log -- \
-    java -jar "$AGENT" --model "$MODEL" --ngl 0 --temperature 0 --acp \
+    java -cp "$CP" "$AGENT_MAIN" --model "$MODEL" --ngl 0 --temperature 0 --acp \
     || { tail -n 80 agent-acp.err.log 2>/dev/null || true; fail "--acp smoke failed"; }
 rm -rf "$WORKSPACE"
 echo "OK: --acp"
 
-echo "Agent release asset smoke test passed."
+# The core was reached through the loader: the line names every GPU module jar of the set.
+smoke_assert_loader_line "$SET_DIR" agent-answer.err.log || fail "loader line check failed"
+echo "Agent smoke test passed."

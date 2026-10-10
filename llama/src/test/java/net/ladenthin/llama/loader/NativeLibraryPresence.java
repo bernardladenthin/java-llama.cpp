@@ -16,13 +16,14 @@ public final class NativeLibraryPresence {
     private NativeLibraryPresence() {}
 
     /**
-     * Checks every backend directory the loader would try.
+     * Checks every library-backend directory the loader would try ({@code metal}, {@code cpu}); a GPU
+     * module jar holds no library and cannot make the native tests runnable on its own.
      *
      * @return whether any of them holds the {@code jllama} library for this platform
      */
     public static boolean onClasspath() {
         ClassLoader loader = NativeLibraryPresence.class.getClassLoader();
-        for (String backend : LlamaLoader.BACKEND_PRIORITY) {
+        for (String backend : LlamaLoader.LIBRARY_BACKENDS) {
             String resource = "net/ladenthin/llama/" + OSInfo.getNativeLibFolderPathForCurrentOS() + "/" + backend + "/"
                     + System.mapLibraryName("jllama");
             if (loader.getResource(resource) != null) {

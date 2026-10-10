@@ -61,27 +61,21 @@ jbang net.ladenthin:llama-atmosphere-agent:5.2.0 \
 ```
 
 The same coordinates work in any Maven project (`mvn exec:java` with `mainClass`
-`net.ladenthin.llama.atmosphere.LocalAgent`). For a GPU backend, add the matching natives jar next to it,
-e.g. `net.ladenthin:llama:5.2.0` with the classifier `cuda13-linux-x86-64` — the loader prefers it and
-falls back to the CPU when its runtime is missing.
-
-**Or skip Maven entirely.** Every [GitHub release](https://github.com/bernardladenthin/java-llama.cpp/releases)
-carries `llama-atmosphere-agent-<version>-jar-with-dependencies.jar` (+ `.sha256`, GPG `.asc`). It holds
-**no core** — that is why it is a few MB — so download it together with a core fat jar of the same
-release (`llama-<version>-all-<os>-<arch>-jar-with-dependencies.jar`, or the CPU-only
-`llama-<version>-jar-with-dependencies.jar`) into one directory, and `java -jar` finds the core through
-its manifest:
+`net.ladenthin.llama.atmosphere.LocalAgent`). **A GPU is one more natives jar** — the GPU backends are
+additive modules the loader puts next to the CPU natives, and a module whose vendor runtime is missing
+is skipped with a log line, so the CPU stays the fallback:
 
 ```bash
-java -jar llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar \
-    --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --workspace /path/to/project
-# any other layout: name both on the classpath (`;` instead of `:` on Windows)
-java -cp llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar:/downloads/llama-5.2.0-all-linux-x86-64-jar-with-dependencies.jar \
-    net.ladenthin.llama.atmosphere.LocalAgent --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --workspace /path/to/project
+# e.g. Vulkan on Linux x86-64 (any current GPU driver); cuda13-linux-x86-64 needs the CUDA 13 toolkit
+jbang --deps net.ladenthin:llama:5.2.0:vulkan-linux-x86-64 net.ladenthin:llama-atmosphere-agent:5.2.0 \
+    --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --workspace /path/to/project
 ```
 
-Every option below works the same way; only `mvn -q compile exec:java -Dexec.args="…"` becomes
-`java -jar llama-atmosphere-agent-….jar …`.
+The root README's natives table lists every backend (`<backend>-<os>-<arch>`); several GPU jars may
+be on the classpath at once. There is no fat jar to download: the natives are modular, and the
+resolved classpath above is exactly what a jar of everything would have had to bundle for every
+platform at once. Every option below works the same way; only
+`mvn -q compile exec:java -Dexec.args="…"` becomes `jbang net.ladenthin:llama-atmosphere-agent:5.2.0 …`.
 
 **1. Get this folder.** To build it yourself instead, clone the repository (or download it
 as a ZIP from GitHub) and work in `llama-atmosphere-agent/`. The folder is self-contained — you can
@@ -126,20 +120,23 @@ natives table lists every backend.
 
 **A. Against a java-llama.cpp server that is already running** (you keep every llama.cpp flag):
 
-1. java-llama.cpp is running, for example started from a release fat jar
+1. java-llama.cpp is running, for example started from Maven Central with JBang
    (`--jinja` is required for tool calling: it enables the model's tool-call chat template):
 
    ```bash
-   java -jar llama-5.2.0-jar-with-dependencies.jar -m models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --jinja --port 8080
+   jbang --main net.ladenthin.llama.server.ServerLauncher \
+       --deps net.ladenthin:llama:5.2.0:cpu-linux-x86-64 net.ladenthin:llama:5.2.0 \
+       -m models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --jinja --port 8080
    ```
 
-   The fat jars are assets of each [GitHub release](https://github.com/bernardladenthin/java-llama.cpp/releases):
-   `llama-5.2.0-jar-with-dependencies.jar` runs on the CPU (and Metal on macOS);
-   `llama-5.2.0-all-<os>-<arch>-jar-with-dependencies.jar` (`linux-x86-64`, `linux-aarch64`,
-   `windows-x86-64`, `windows-aarch64`) additionally carries every GPU backend for that platform and
-   uses the first one whose vendor runtime loads — CUDA, ROCm, SYCL, Vulkan, OpenCL, OpenVINO — falling
-   back to the CPU; `-Dnet.ladenthin.llama.backend=vulkan` (or `cpu`) forces one. Upstream
-   `llama-server` with the same flags works too; any OpenAI-compatible endpoint does.
+   The classes jar `net.ladenthin:llama` plus the CPU natives jar of the platform (`cpu-<os>-<arch>`,
+   `metal-macos-aarch64` on a Mac) is the whole server; a GPU backend is one more `--deps` jar
+   (`cuda13-linux-x86-64`, `vulkan-windows-x86-64`, … -- CUDA, ROCm, SYCL, Vulkan, OpenCL, OpenVINO;
+   the root README's table names them all). ggml loads every module whose vendor runtime is present
+   and runs the rest on the CPU; `-Dnet.ladenthin.llama.backend=vulkan` (or `cpu`) restricts the
+   modules put in place. `examples/server/pom.xml` in the repository is the same thing as a Maven
+   project (`mvn -P cuda13-linux-x86-64 exec:java -Dexec.args="…"`). Upstream `llama-server` with the
+   same flags works too; any OpenAI-compatible endpoint does.
 
 2. Start the agent from this folder (`llama-atmosphere-agent/`):
 
@@ -277,7 +274,7 @@ turn is shown and how an approval is asked.
 #### In the browser (`--web`)
 
 ```bash
-java -jar llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar --model model.gguf --allow-shell --web
+jbang net.ladenthin:llama-atmosphere-agent:5.2.0 --model model.gguf --allow-shell --web
 # Open in a browser: http://127.0.0.1:8787/?token=…
 ```
 
@@ -315,8 +312,8 @@ that project. JetBrains IDEs (AI Assistant, `~/.jetbrains/acp.json`):
 {
   "agent_servers": {
     "Local llama": {
-      "command": "java",
-      "args": ["-jar", "/path/llama-atmosphere-agent-5.2.0-jar-with-dependencies.jar",
+      "command": "jbang",
+      "args": ["net.ladenthin:llama-atmosphere-agent:5.2.0",
                "--acp", "--model", "/path/model.gguf", "--allow-shell"]
     }
   }
@@ -850,9 +847,10 @@ llama.cpp-shaped chunks; no native library, no model, seconds, on every PR. *mod
 `AtmosphereToolLoopIntegrationTest`: the same loop against the Qwen2.5-1.5B-Instruct tool model in
 CI (plain chat, streaming, a tool call whose result is answered, a read→write→read loop that
 changes a temp file). It self-skips without the GGUF. Both gate every publish, together with
-`smoke-agent-linux`, which starts the **release jar** next to the real Linux fat jar (`java -jar`,
-the core found only through the manifest `Class-Path`) and runs a one-shot answer and a `read_file`
-round on the same model, then starts it with `--web` (token, cookie, console page) and with `--acp`
+`smoke-agent-linux`, which starts the **published thin jar** with its dependencies on one classpath
+with the published core jars (the classes jar, `cpu-linux-x86-64` and every Linux x86-64 GPU module
+jar, as Maven resolves them for a consumer) and runs a one-shot answer and a `read_file` round on the
+same model, then starts it with `--web` (token, cookie, console page) and with `--acp`
 (handshake, a streamed answer and a `read_file` round the way an editor sends them). The browser and
 editor front ends are also covered model-free on every PR: `WebServerTest` drives the real Jetty +
 Atmosphere endpoint over a WebSocket speaking the atmosphere.js protocol (streaming, approvals, `/stop`,

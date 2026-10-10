@@ -208,8 +208,8 @@ SPDX-License-Identifier: MIT
 
 		     provided scope resolves both constraints at once: 4.3.0 is on the compile
 		     classpath where the checker needs it, and provided is excluded from consumers'
-		     transitive graph AND from the fat jar (jar-with-dependencies takes scope
-		     runtime), so no checker-qual class of any version reaches a consumer's JVM.
+		     transitive graph AND from a consumer's own jar-with-dependencies (which takes
+		     scope runtime), so no checker-qual class of any version reaches a consumer's JVM.
 		     Safe because no source in this module imports org.checkerframework: the
 		     annotations exist for the processor, not for our code.
 		     .github/verify-bytecode-version.sh enforces the resulting class-file floor. -->
@@ -357,11 +357,6 @@ SPDX-License-Identifier: MIT
 					<groupId>io.github.git-commit-id</groupId>
 					<artifactId>git-commit-id-maven-plugin</artifactId>
 					<version>10.0.1</version>
-				</plugin>
-				<plugin>
-					<groupId>org.apache.maven.plugins</groupId>
-					<artifactId>maven-assembly-plugin</artifactId>
-					<version>3.8.0</version>
 				</plugin>
 				<plugin>
 					<groupId>org.apache.maven.plugins</groupId>
@@ -682,8 +677,8 @@ SPDX-License-Identifier: MIT
 					  and CompletionResponseParserTest).
 
 					  Excluding it here leaves logback as the sole provider during tests and does
-					  not touch the artifact: the shipped jar and the fat jar still carry
-					  slf4j-simple. The tests assert what our code logs, which is binding-agnostic;
+					  not touch the artifact: the shipped jar's pom still names slf4j-simple at
+					  runtime scope. The tests assert what our code logs, which is binding-agnostic;
 					  which binding renders it is not what they are about.
 					-->
 					<classpathDependencyExcludes>
@@ -844,7 +839,7 @@ SPDX-License-Identifier: MIT
 					  The same exclusion Surefire carries above, and it has to be repeated here
 					  because PIT builds its OWN classpath and does not read Surefire's
 					  configuration. Two SLF4J providers are on the test classpath: slf4j-simple
-					  arrives at runtime scope (it is the binding shipped in the fat jar) and
+					  arrives at runtime scope (the binding the pom ships with the jar) and
 					  logback-classic at test scope (LogCaptor requires logback specifically).
 					  SLF4J's ServiceLoader then picks one arbitrarily; when it picks
 					  slf4j-simple, every LogCaptor assertion fails and PIT aborts the whole run
@@ -854,7 +849,7 @@ SPDX-License-Identifier: MIT
 
 					  The parameter is pitest-maven's own, modelled on Surefire's and taking the
 					  same "groupId:artifactId" form. It changes nothing about the artifact: the
-					  jar and the fat jar still ship slf4j-simple.
+					  jar's pom still ships slf4j-simple.
 					-->
 					<classpathDependencyExcludes>
 						<classpathDependencyExclude>org.slf4j:slf4j-simple</classpathDependencyExclude>
@@ -886,8 +881,9 @@ SPDX-License-Identifier: MIT
 		<!--
 			The natives jars. The main jar carries classes only; every native build ships as its
 			own jar holding exactly one directory, net/ladenthin/llama/<OS>/<ARCH>/<backend>/, so
-			any combination of them can share one classpath and LlamaLoader picks the first one
-			that loads (LlamaLoader.BACKEND_PRIORITY).
+			any combination of them can share one classpath: LlamaLoader loads the library jar of
+			the running platform (LlamaLoader.LIBRARY_BACKENDS) and puts every GPU module jar of
+			the platform next to it (LlamaLoader.MODULE_BACKENDS), see CLAUDE.md "Natives jars".
 
 			The executions below are generated from .github/natives.csv, the single list of natives
 			jars: `python3 .github/check-natives.py pom` prints them, and the same script (run in
@@ -1028,26 +1024,6 @@ SPDX-License-Identifier: MIT
 								</configuration>
 							</execution>
 							<execution>
-								<id>natives-cpu-windows-x86</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>cpu-windows-x86</classifier>
-									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
-									<includes>
-										<include>net/ladenthin/llama/Windows/x86/cpu/**</include>
-									</includes>
-									<archive>
-										<addMavenDescriptor>false</addMavenDescriptor>
-										<manifestEntries>
-											<Automatic-Module-Name>net.ladenthin.llama.natives.cpu_windows_x86</Automatic-Module-Name>
-										</manifestEntries>
-									</archive>
-								</configuration>
-							</execution>
-							<execution>
 								<id>natives-cpu-windows-aarch64</id>
 								<phase>package</phase>
 								<goals>
@@ -1083,46 +1059,6 @@ SPDX-License-Identifier: MIT
 										<addMavenDescriptor>false</addMavenDescriptor>
 										<manifestEntries>
 											<Automatic-Module-Name>net.ladenthin.llama.natives.metal_macos_aarch64</Automatic-Module-Name>
-										</manifestEntries>
-									</archive>
-								</configuration>
-							</execution>
-							<execution>
-								<id>natives-msvc-windows-x86-64</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>msvc-windows-x86-64</classifier>
-									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
-									<includes>
-										<include>net/ladenthin/llama/Windows/x86_64/msvc/**</include>
-									</includes>
-									<archive>
-										<addMavenDescriptor>false</addMavenDescriptor>
-										<manifestEntries>
-											<Automatic-Module-Name>net.ladenthin.llama.natives.msvc_windows_x86_64</Automatic-Module-Name>
-										</manifestEntries>
-									</archive>
-								</configuration>
-							</execution>
-							<execution>
-								<id>natives-msvc-windows-x86</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>msvc-windows-x86</classifier>
-									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
-									<includes>
-										<include>net/ladenthin/llama/Windows/x86/msvc/**</include>
-									</includes>
-									<archive>
-										<addMavenDescriptor>false</addMavenDescriptor>
-										<manifestEntries>
-											<Automatic-Module-Name>net.ladenthin.llama.natives.msvc_windows_x86</Automatic-Module-Name>
 										</manifestEntries>
 									</archive>
 								</configuration>
@@ -1168,146 +1104,6 @@ SPDX-License-Identifier: MIT
 								</configuration>
 							</execution>
 							<execution>
-								<id>natives-vulkan-linux-x86-64</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>vulkan-linux-x86-64</classifier>
-									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
-									<includes>
-										<include>net/ladenthin/llama/Linux/x86_64/vulkan/**</include>
-									</includes>
-									<archive>
-										<addMavenDescriptor>false</addMavenDescriptor>
-										<manifestEntries>
-											<Automatic-Module-Name>net.ladenthin.llama.natives.vulkan_linux_x86_64</Automatic-Module-Name>
-										</manifestEntries>
-									</archive>
-								</configuration>
-							</execution>
-							<execution>
-								<id>natives-vulkan-linux-aarch64</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>vulkan-linux-aarch64</classifier>
-									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
-									<includes>
-										<include>net/ladenthin/llama/Linux/aarch64/vulkan/**</include>
-									</includes>
-									<archive>
-										<addMavenDescriptor>false</addMavenDescriptor>
-										<manifestEntries>
-											<Automatic-Module-Name>net.ladenthin.llama.natives.vulkan_linux_aarch64</Automatic-Module-Name>
-										</manifestEntries>
-									</archive>
-								</configuration>
-							</execution>
-							<execution>
-								<id>natives-vulkan-windows-x86-64</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>vulkan-windows-x86-64</classifier>
-									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
-									<includes>
-										<include>net/ladenthin/llama/Windows/x86_64/vulkan/**</include>
-									</includes>
-									<archive>
-										<addMavenDescriptor>false</addMavenDescriptor>
-										<manifestEntries>
-											<Automatic-Module-Name>net.ladenthin.llama.natives.vulkan_windows_x86_64</Automatic-Module-Name>
-										</manifestEntries>
-									</archive>
-								</configuration>
-							</execution>
-							<execution>
-								<id>natives-vulkan-windows-aarch64</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>vulkan-windows-aarch64</classifier>
-									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
-									<includes>
-										<include>net/ladenthin/llama/Windows/aarch64/vulkan/**</include>
-									</includes>
-									<archive>
-										<addMavenDescriptor>false</addMavenDescriptor>
-										<manifestEntries>
-											<Automatic-Module-Name>net.ladenthin.llama.natives.vulkan_windows_aarch64</Automatic-Module-Name>
-										</manifestEntries>
-									</archive>
-								</configuration>
-							</execution>
-							<execution>
-								<id>natives-opencl-android-aarch64</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>opencl-android-aarch64</classifier>
-									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
-									<includes>
-										<include>net/ladenthin/llama/Linux-Android/aarch64/opencl/**</include>
-									</includes>
-									<archive>
-										<addMavenDescriptor>false</addMavenDescriptor>
-										<manifestEntries>
-											<Automatic-Module-Name>net.ladenthin.llama.natives.opencl_android_aarch64</Automatic-Module-Name>
-										</manifestEntries>
-									</archive>
-								</configuration>
-							</execution>
-							<execution>
-								<id>natives-opencl-windows-x86-64</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>opencl-windows-x86-64</classifier>
-									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
-									<includes>
-										<include>net/ladenthin/llama/Windows/x86_64/opencl/**</include>
-									</includes>
-									<archive>
-										<addMavenDescriptor>false</addMavenDescriptor>
-										<manifestEntries>
-											<Automatic-Module-Name>net.ladenthin.llama.natives.opencl_windows_x86_64</Automatic-Module-Name>
-										</manifestEntries>
-									</archive>
-								</configuration>
-							</execution>
-							<execution>
-								<id>natives-opencl-windows-aarch64</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>opencl-windows-aarch64</classifier>
-									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
-									<includes>
-										<include>net/ladenthin/llama/Windows/aarch64/opencl/**</include>
-									</includes>
-									<archive>
-										<addMavenDescriptor>false</addMavenDescriptor>
-										<manifestEntries>
-											<Automatic-Module-Name>net.ladenthin.llama.natives.opencl_windows_aarch64</Automatic-Module-Name>
-										</manifestEntries>
-									</archive>
-								</configuration>
-							</execution>
-							<execution>
 								<id>natives-rocm-linux-x86-64</id>
 								<phase>package</phase>
 								<goals>
@@ -1348,41 +1144,21 @@ SPDX-License-Identifier: MIT
 								</configuration>
 							</execution>
 							<execution>
-								<id>natives-sycl-fp16-linux-x86-64</id>
+								<id>natives-sycl-linux-x86-64</id>
 								<phase>package</phase>
 								<goals>
 									<goal>jar</goal>
 								</goals>
 								<configuration>
-									<classifier>sycl-fp16-linux-x86-64</classifier>
+									<classifier>sycl-linux-x86-64</classifier>
 									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
 									<includes>
-										<include>net/ladenthin/llama/Linux/x86_64/sycl-fp16/**</include>
+										<include>net/ladenthin/llama/Linux/x86_64/sycl/**</include>
 									</includes>
 									<archive>
 										<addMavenDescriptor>false</addMavenDescriptor>
 										<manifestEntries>
-											<Automatic-Module-Name>net.ladenthin.llama.natives.sycl_fp16_linux_x86_64</Automatic-Module-Name>
-										</manifestEntries>
-									</archive>
-								</configuration>
-							</execution>
-							<execution>
-								<id>natives-sycl-fp32-linux-x86-64</id>
-								<phase>package</phase>
-								<goals>
-									<goal>jar</goal>
-								</goals>
-								<configuration>
-									<classifier>sycl-fp32-linux-x86-64</classifier>
-									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
-									<includes>
-										<include>net/ladenthin/llama/Linux/x86_64/sycl-fp32/**</include>
-									</includes>
-									<archive>
-										<addMavenDescriptor>false</addMavenDescriptor>
-										<manifestEntries>
-											<Automatic-Module-Name>net.ladenthin.llama.natives.sycl_fp32_linux_x86_64</Automatic-Module-Name>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.sycl_linux_x86_64</Automatic-Module-Name>
 										</manifestEntries>
 									</archive>
 								</configuration>
@@ -1403,6 +1179,146 @@ SPDX-License-Identifier: MIT
 										<addMavenDescriptor>false</addMavenDescriptor>
 										<manifestEntries>
 											<Automatic-Module-Name>net.ladenthin.llama.natives.sycl_windows_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-vulkan-linux-aarch64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>vulkan-linux-aarch64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux/aarch64/vulkan/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.vulkan_linux_aarch64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-vulkan-linux-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>vulkan-linux-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux/x86_64/vulkan/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.vulkan_linux_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-vulkan-windows-aarch64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>vulkan-windows-aarch64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/aarch64/vulkan/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.vulkan_windows_aarch64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-vulkan-windows-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>vulkan-windows-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/x86_64/vulkan/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.vulkan_windows_x86_64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-opencl-android-aarch64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>opencl-android-aarch64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Linux-Android/aarch64/opencl/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.opencl_android_aarch64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-opencl-windows-aarch64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>opencl-windows-aarch64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/aarch64/opencl/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.opencl_windows_aarch64</Automatic-Module-Name>
+										</manifestEntries>
+									</archive>
+								</configuration>
+							</execution>
+							<execution>
+								<id>natives-opencl-windows-x86-64</id>
+								<phase>package</phase>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<configuration>
+									<classifier>opencl-windows-x86-64</classifier>
+									<classesDirectory>${project.basedir}/src/main/natives</classesDirectory>
+									<includes>
+										<include>net/ladenthin/llama/Windows/x86_64/opencl/**</include>
+									</includes>
+									<archive>
+										<addMavenDescriptor>false</addMavenDescriptor>
+										<manifestEntries>
+											<Automatic-Module-Name>net.ladenthin.llama.natives.opencl_windows_x86_64</Automatic-Module-Name>
 										</manifestEntries>
 									</archive>
 								</configuration>
@@ -1447,6 +1363,7 @@ SPDX-License-Identifier: MIT
 									</archive>
 								</configuration>
 							</execution>
+
 						</executions>
 					</plugin>
 				</plugins>
@@ -1508,50 +1425,6 @@ SPDX-License-Identifier: MIT
 										<argument>default</argument>
 									</arguments>
 								</configuration>
-							</execution>
-						</executions>
-					</plugin>
-				</plugins>
-			</build>
-		</profile>
-		<profile>
-			<!--
-				Builds the fat jar-with-dependencies uber JAR: the library classes, the
-				default-platform native libs from src/main/resources, and all runtime Java
-				dependencies in one drop-on-classpath JAR, with ServerLauncher as the fat-jar
-				Main-Class (set below), which dispatches on an `jllama-openai-compat` selector flag: with it, runs
-					OpenAiCompatServer (Java OpenAI API); without it, the default NativeServer (native
-					server, embedded WebUI, all flags forwarded). Both mains stay runnable by class name via `java -cp <jar> …`. Off by
-				default; the CI `package` job activates it so the uber JAR rides along in the
-				`llama-jars` upload-artifact bundle. Documented in CLAUDE.md "Build Commands"
-				as `mvn -P assembly package`.
-			-->
-			<id>assembly</id>
-			<build>
-				<plugins>
-					<plugin>
-						<groupId>org.apache.maven.plugins</groupId>
-						<artifactId>maven-assembly-plugin</artifactId>
-						<configuration>
-							<!-- Our own descriptor, not the predefined jar-with-dependencies ref: it is
-							     a verbatim copy of that one plus simplelogger.properties, which must
-							     reach the runnable jar without being published in the library jar. -->
-							<descriptors>
-								<descriptor>src/assembly/fat-jar.xml</descriptor>
-							</descriptors>
-							<archive>
-								<manifest>
-									<mainClass>net.ladenthin.llama.server.ServerLauncher</mainClass>
-								</manifest>
-							</archive>
-						</configuration>
-						<executions>
-							<execution>
-								<id>build-fat-jar</id>
-								<phase>package</phase>
-								<goals>
-									<goal>single</goal>
-								</goals>
 							</execution>
 						</executions>
 					</plugin>

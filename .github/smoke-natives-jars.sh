@@ -10,9 +10,11 @@
 # classpath; on the module path each is an automatic module and needs a unique
 # Automatic-Module-Name, or the JVM refuses to start ("Two versions of module ... found").
 #
-# On a GPU-less runner the GPU backends normally fail their load (no vendor runtime) and the loader
-# falls through to the CPU library. A GPU library whose runtime happens to be installed may load and
-# find no device, which is benign, so any selected backend passes; the log names the one chosen.
+# The library jar of this runner's platform is loaded, and every GPU module jar of the platform is
+# put next to it (the loader line names them all -- checked against .github/natives.csv, so a module
+# jar the loader skipped would fail here). On a GPU-less runner ggml then fails to open each module
+# (no vendor runtime) and runs on the CPU, which is benign; a module whose runtime happens to be
+# installed registers no device, which is benign too.
 #
 # Usage: smoke-natives-jars.sh <llama/target> <runtime-classpath>
 #   <llama/target>       directory holding llama-<v>.jar and the llama-<v>-<classifier>.jar natives jars
@@ -22,6 +24,17 @@ set -euo pipefail
 TARGET="${1:?usage: smoke-natives-jars.sh <llama/target> <runtime-classpath>}"
 DEPS="${2:?usage: smoke-natives-jars.sh <llama/target> <runtime-classpath>}"
 SMOKE="$(dirname "$0")/smoke/NativeLoadSmoke.java"
+LIST="$(dirname "$0")/natives.csv"
+
+# The module backends of this runner's platform, from the list: what the loader line must name.
+case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) tree="Linux/x86_64" ;;
+    Linux-aarch64) tree="Linux/aarch64" ;;
+    Darwin-arm64) tree="Mac/aarch64" ;;
+    *) echo "::error::no smoke expectation for $(uname -s)-$(uname -m)" >&2; exit 2 ;;
+esac
+expected_modules="$(grep -v -e '^#' -e '^classifier,' -e '^$' "$LIST" | tr -d '\r' \
+    | awk -F, -v t="$tree/" 'index($2, t) == 1 && $5 == "module" { sub(t, "", $2); print $2 }')"
 
 # The classes jar is the one without a classifier; every other jar but sources/javadoc/the fat jar
 # is a natives jar.
@@ -38,8 +51,16 @@ run() {
     shift
     local out
     out="$(java "$@" "$SMOKE" 2>&1)" || { echo "$out" >&2; echo "::error::$label: the library did not load" >&2; exit 1; }
-    backend="$(grep -o "\[jllama\] using native backend '[^']*'" <<< "$out" || true)"
+    backend="$(grep -o "\[jllama\] native backend '[^']*' loaded .*" <<< "$out" || true)"
     [ -n "$backend" ] || { echo "$out" >&2; echo "::error::$label: the loader reported no backend" >&2; exit 1; }
+    if [ -n "$expected_modules" ]; then
+        while IFS= read -r module; do
+            grep -qE "GPU module\(s\) ([a-z0-9-]+, )*$module(,|;|$)" <<< "$backend" \
+                || { echo "$out" >&2; echo "::error::$label: the loader did not put the $module module jar of $tree in place" >&2; exit 1; }
+        done <<< "$expected_modules"
+    else
+        grep -q "with no GPU module" <<< "$backend" || { echo "$out" >&2; echo "::error::$label: unexpected modules" >&2; exit 1; }
+    fi
     echo "OK ($label): $backend; $(grep 'native load smoke OK' <<< "$out")"
 }
 

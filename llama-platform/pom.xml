@@ -20,15 +20,17 @@ SPDX-License-Identifier: MIT
 		A dependency list, nothing else: packaging pom, so it publishes a .pom and no jar and
 		adds nothing to the upload. Depending on it (Maven: <type>pom</type>) brings the classes
 		plus the CPU natives of every desktop platform, which is what the one-jar artifact used to
-		be. GPU backends are added next to it by classifier; the loader prefers them when their
-		runtime is present. Android uses the llama-android AAR instead.
+		be. A GPU backend is added next to it by classifier (net.ladenthin:llama:<version>:<backend>-<os>-<arch>,
+		a jar holding only that backend's ggml module): the loader puts the module next to the CPU
+		library, and ggml uses the GPU when its runtime is present. Android uses the llama-android AAR
+		instead.
 	-->
 	<artifactId>llama-platform</artifactId>
 	<packaging>pom</packaging>
 
 	<name>${project.groupId}:${project.artifactId}</name>
 	<description>net.ladenthin:llama with the CPU natives of every desktop platform
-		(Linux x86-64/aarch64/s390x, Windows x86-64/x86/aarch64, macOS aarch64 with Metal).</description>
+		(Linux x86-64/aarch64/s390x, Windows x86-64/aarch64, macOS aarch64 with Metal).</description>
 	<url>https://github.com/bernardladenthin/java-llama.cpp</url>
 
 	<licenses>
@@ -81,12 +83,6 @@ SPDX-License-Identifier: MIT
 			<artifactId>llama</artifactId>
 			<version>${project.version}</version>
 			<classifier>cpu-windows-x86-64</classifier>
-		</dependency>
-		<dependency>
-			<groupId>net.ladenthin</groupId>
-			<artifactId>llama</artifactId>
-			<version>${project.version}</version>
-			<classifier>cpu-windows-x86</classifier>
 		</dependency>
 		<dependency>
 			<groupId>net.ladenthin</groupId>

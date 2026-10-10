@@ -11,7 +11,7 @@ library is back to carrying every GPU target's code uncompressed (~1 GB on Windo
 
 Usage (the CLI is .github/verify-hip-offload-compressed.py): verify-hip-offload-compressed.py <dir-or-file>...
 
-Scans every jllama.dll / libjllama.so found, prints its size and the bundle counts, and exits
+Scans every ggml-hip.dll / libggml-hip.so found (the ROCm module of a JLLAMA_MODULE_ONLY build), prints its size and the bundle counts, and exits
 non-zero if a library has an uncompressed bundle, has no compressed bundle at all, or if no
 library was found. Only the standard library, so it runs on any runner.
 """
@@ -21,7 +21,7 @@ import sys
 
 UNCOMPRESSED = b"__CLANG_OFFLOAD_BUNDLE__"
 COMPRESSED = b"CCOB"
-NAMES = ("jllama.dll", "libjllama.so")
+NAMES = ("ggml-hip.dll", "libggml-hip.so")
 CHUNK = 64 * 1024 * 1024
 
 

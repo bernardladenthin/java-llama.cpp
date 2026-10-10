@@ -15,14 +15,17 @@ Usage (the CLI is .github/verify-native-deps.py):
   verify-native-deps.py <natives-root>
 
 Checks every native library (.so, .dll, .dylib) under <natives-root>/.../<OS>/<ARCH>/<backend>/.
-Most directories hold one file, libjllama with llama.cpp and ggml linked in statically; a
-JLLAMA_CPU_VARIANTS build (CLAUDE.md "CPU variants") holds libjllama next to ggml's shared
-libraries and one CPU backend module per instruction-set level, and every one of them is checked.
-The CPU builds (backend cpu, metal, msvc) and the Android OpenCL build are held to the exact
+A library directory (backend cpu or metal) holds libjllama -- alone where llama.cpp and ggml are
+linked in statically (macOS, s390x), next to ggml's shared libraries and one CPU backend module per
+instruction-set level in a JLLAMA_BACKEND_DL build (CLAUDE.md "Modular natives") -- and every one of
+them is checked. The library directories and the Android OpenCL module are held to the exact
 allowlist in ALLOWED plus the files next to them in the same directory: a dependency outside it
-fails, and so does a CPU build without a list (a new platform must be listed consciously). The other
-GPU backends are checked against DENIED only, because they legitimately need their vendor runtime.
-Two more checks for ELF libraries: a library that needs a sibling must find it through the run path
+fails, and so does a library directory without a list (a new platform must be listed consciously).
+A module directory (every other backend) holds one GPU backend module that LlamaLoader puts next to
+the library jar's files: it is checked against DENIED only, because it legitimately needs its vendor
+runtime, and it must import ggml-base -- the proof that it is a module built against the shared ggml
+and not a second monolithic library. Two more checks for ELF libraries: one that needs a sibling,
+or is a module (whose libggml-base lies next to it only after extraction), must carry the run path
 `$ORIGIN` and nothing else (a build-tree path would point at the CI runner), and the directories in
 GLIBC_CEILING, built in a manylinux image, may not reference a glibc symbol version above the floor
 they promise. Android libraries must also have every LOAD segment 16 KB aligned.
@@ -68,8 +71,7 @@ def ucrt_forwarder(name):
 # Where at least one of those must be PRESENT, which is the other direction of the same guard --
 # see the check in violations(). The GPU directories are left out: they are held to a denylist, and
 # a vendor toolchain may link its own runtime.
-WINDOWS_UCRT_REQUIRED = {"Windows/x86_64/cpu", "Windows/x86/cpu", "Windows/aarch64/cpu",
-                         "Windows/x86_64/msvc", "Windows/x86/msvc"}
+WINDOWS_UCRT_REQUIRED = {"Windows/x86_64/cpu", "Windows/aarch64/cpu"}
 
 # What each CPU library needed when this check was introduced (5.1.0 plus the RPC backend,
 # which adds nothing: its sockets are libc/libSystem/WS2_32, all already present). The manylinux_2_28
@@ -86,7 +88,6 @@ ALLOWED = {
     # WINDOWS_OS above for what is deliberately absent (msvcp140/vcruntime140 and vcomp140) and why
     # that makes this list a guard, and WINDOWS_UCRT_REQUIRED below for the other direction.
     "Windows/x86_64/cpu": WINDOWS_OS,
-    "Windows/x86/cpu": WINDOWS_OS,
     "Windows/aarch64/cpu": WINDOWS_OS,
     "Mac/aarch64/metal": {"/usr/lib/libc++.1.dylib", "/usr/lib/libSystem.B.dylib",
                     "/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation",
@@ -101,13 +102,11 @@ ALLOWED = {
                     # here would mean the build picked up the runner's OpenSSL again.
                     "/System/Library/Frameworks/Security.framework/Versions/A/Security"},
 }
-# The Visual Studio generator build of the same compiler and runtime.
-ALLOWED["Windows/x86_64/msvc"] = ALLOWED["Windows/x86_64/cpu"]
-ALLOWED["Windows/x86/msvc"] = ALLOWED["Windows/x86/cpu"]
-# The OpenCL AAR flavour: an app bundles no other native library, so the Android GPU build is held
-# to an exact list as well -- the bionic system libraries plus the vendor ICD. (libomp.so and
+# The OpenCL AAR flavour: an app bundles no other native library, so the Android GPU module is held
+# to an exact list as well -- the bionic system libraries, the vendor ICD and the ggml-base it is a
+# module of (the CPU AAR's, resolved by soname in the app's linker namespace). (libomp.so and
 # libc++_shared.so once shipped exactly this way and failed System.loadLibrary on every device.)
-ALLOWED["Linux-Android/aarch64/opencl"] = ALLOWED["Linux-Android/aarch64/cpu"] | {"libOpenCL.so"}
+ALLOWED["Linux-Android/aarch64/opencl"] = ALLOWED["Linux-Android/aarch64/cpu"] | {"libOpenCL.so", "libggml-base.so"}
 
 # The glibc floor a directory promises (README, "Runtime requirement"): the highest GLIBC_x.y symbol
 # version any of its libraries references may not exceed it. These are the builds made in a
@@ -122,9 +121,11 @@ GLIBC_CEILING = {
 # Google Play's 16 KB page-size requirement (Android 15+ targets): every LOAD segment of an
 # Android library must be aligned to a multiple of it. CMake pins -Wl,-z,max-page-size=16384.
 ANDROID_PAGE_ALIGNMENT = 16384
-CPU_BACKENDS = ("cpu", "metal", "msvc")
+CPU_BACKENDS = ("cpu", "metal")
 LIBRARY_SUFFIXES = (".so", ".dll", ".dylib")
 ORIGIN = "$ORIGIN"
+# What a GPU module must import: the shared ggml-base of the library jar it is extracted next to.
+GGML_BASE = ("libggml-base.so", "ggml-base.dll")
 
 # Never acceptable in any artifact: libraries a consumer cannot be expected to have.
 DENIED = ("libibverbs", "librdma", "rdma.dylib", "libmlx")
@@ -309,9 +310,14 @@ def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
         failures += [f"{rel}: LOAD alignment {a} is not a multiple of {ANDROID_PAGE_ALIGNMENT} "
                      f"(Google Play 16 KB page-size requirement)" for a in alignments if a % ANDROID_PAGE_ALIGNMENT]
     siblings = set(siblings)
-    if rel.endswith(".so") and any(d in siblings for d in deps) and runpath != ORIGIN:
-        failures.append(f"{rel} needs the sibling {sorted(d for d in deps if d in siblings)} but its run path is "
-                        f"{runpath!r}, not {ORIGIN!r} -- it would be looked up on the system instead")
+    is_module = bool(key) and key.rsplit("/", 1)[-1] not in CPU_BACKENDS and not key.startswith("Linux-Android/")
+    if is_module and not any(d.lower() in GGML_BASE for d in deps):
+        failures.append(f"{rel} does not import ggml-base, so it is not a backend module built against the shared "
+                        f"ggml (a JLLAMA_MODULE_ONLY build) -- a GPU jar must hold the module alone")
+    if rel.endswith(".so") and (is_module or any(d in siblings for d in deps)) and runpath != ORIGIN:
+        failures.append(f"{rel} needs {sorted(d for d in deps if d in siblings) or list(GGML_BASE[:1])} next to it "
+                        f"but its run path is {runpath!r}, not {ORIGIN!r} -- it would be looked up on the system "
+                        f"instead")
     # The allowlist below only reports dependencies that should NOT be there. For the Windows CPU
     # directories one dependency must be there, and its disappearance is just as much a regression:
     # an api-ms-win-crt-* forwarder means the UCRT is the OS one (hybrid CRT). Without this, a build
@@ -332,6 +338,9 @@ def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
         if key.rsplit("/", 1)[-1] not in CPU_BACKENDS:
             return failures
         return failures + [f"{rel}: no dependency allowlist for '{key}' -- add one to ALLOWED"]
+    if is_module:
+        # the Android module: its ggml-base is the CPU AAR's, not a sibling of its own directory
+        siblings = siblings | set(GGML_BASE)
     lowered = {a.lower() for a in allowed} | {s.lower() for s in siblings}
     return failures + [f"{rel} needs {d}, which it did not need before (allowed: {sorted(allowed)}"
                        f"{' + the files next to it' if siblings else ''})"

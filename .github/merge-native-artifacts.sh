@@ -23,12 +23,13 @@
 #     file on the path, a corrupt one — so it has to run before the merge.
 #
 # After the merge, a backend directory holding files beside its library gets a
-# jllama-extras.txt listing them; LlamaLoader loads those first (e.g. the OpenCL ICD loader that
-# OpenVINO ships on Windows). Not listed there: the files a build's own jllama-files.txt names --
-# ggml's shared libraries and the CPU backend modules of a JLLAMA_CPU_VARIANTS build (CLAUDE.md,
-# "CPU variants"), which the loader only extracts next to the library; loading them from Java would
-# bypass ggml's choice of the module. Each file that list names must exist, or the loader would fail
-# the backend on every machine.
+# jllama-extras.txt listing them; LlamaLoader loads those first (e.g. a vendor loader a build ships
+# next to itself). Not listed there: the files a build's own jllama-files.txt names -- ggml's shared
+# libraries and the CPU backend modules of a JLLAMA_BACKEND_DL build, and the one GPU module of a
+# JLLAMA_MODULE_ONLY build (CLAUDE.md, "Modular natives"), which the loader only extracts next to the
+# library; loading them from Java would bypass ggml's choice of the module. Each file that list names
+# must exist, or the loader would fail the backend on every machine. Every directory must carry its
+# jllama-build.txt (the llama.cpp tag, CMake writes it): LlamaLoader refuses a GPU module without one.
 #
 # Usage: merge-native-artifacts.sh <staging-dir> <dest-dir>
 #   <staging-dir>  output of `actions/download-artifact` with `pattern: "natives-*"` and
@@ -60,7 +61,7 @@ fi
 
 echo "Merging ${#artifacts[@]} native-library artifact(s) into $DEST"
 listed=0
-while IFS=, read -r classifier dir lib _; do
+while IFS=, read -r classifier dir lib _platform kind; do
   listed=$((listed + 1))
   a="natives-$classifier"
   if [ ! -d "$STAGING/$a" ]; then
@@ -73,8 +74,20 @@ while IFS=, read -r classifier dir lib _; do
     printf '%s\n' "$stray" | sed 's|^|::error::  |' >&2
     exit 1
   fi
-  echo "  - $a -> $dir/"
-done < <(grep -v -e '^#' -e '^classifier,' -e '^$' "$LIST")
+  if [ ! -f "$STAGING/$a/$dir/jllama-build.txt" ] || ! grep -q '^llama.cpp=b[0-9]' "$STAGING/$a/$dir/jllama-build.txt"; then
+    echo "::error::artifact '$a' has no $dir/jllama-build.txt naming its llama.cpp tag -- llama/CMakeLists.txt writes it for every build" >&2
+    exit 1
+  fi
+  if [ "$kind" = "module" ]; then
+    # a GPU jar is its module and the two list files, nothing else: no second library, no CPU set
+    others="$(cd "$STAGING/$a/$dir" && find . -maxdepth 1 -type f ! -name "$lib" ! -name 'jllama-*.txt' | sed 's|^\./||' || true)"
+    if [ -n "$others" ] || ! grep -qx "$lib" "$STAGING/$a/$dir/jllama-files.txt" 2>/dev/null; then
+      echo "::error::artifact '$a' is a module jar: $dir/ must hold $lib (named in jllama-files.txt) and the jllama-*.txt lists only; found: $others" >&2
+      exit 1
+    fi
+  fi
+  echo "  - $a -> $dir/ ($kind)"
+done < <(grep -v -e '^#' -e '^classifier,' -e '^$' "$LIST" | tr -d '\r')
 if [ "$listed" -ne "${#artifacts[@]}" ]; then
   echo "::error::$STAGING holds ${#artifacts[@]} natives-* artifacts but $LIST lists $listed: $(printf '%s ' "${artifacts[@]}")" >&2
   exit 1
@@ -121,7 +134,7 @@ find "$DEST" -mindepth 3 -maxdepth 3 -type d | sort | while IFS= read -r dir; do
     echo "files extracted, not loaded, for ${dir#"$DEST"}: $(echo "$plain" | tr '\n' ' ')"
   fi
   extras="$(cd "$dir" && find . -maxdepth 1 -type f ! -name 'libjllama.*' ! -name 'jllama.dll' ! -name '*.metal' \
-    ! -name jllama-extras.txt ! -name jllama-files.txt | sed 's|^\./||' | sort \
+    ! -name jllama-extras.txt ! -name jllama-files.txt ! -name jllama-build.txt | sed 's|^\./||' | sort \
     | awk -v plain="$plain" 'BEGIN { n = split(plain, a, "\n"); for (i = 1; i <= n; i++) skip[a[i]] = 1 } !($0 in skip)')"
   if [ -n "$extras" ]; then
     printf '%s\n' "$extras" > "$dir/jllama-extras.txt"

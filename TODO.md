@@ -17,34 +17,21 @@ so everything below is genuinely still open.
 
 ## Open — jllama-specific
 
-### CPU variants (`JLLAMA_CPU_VARIANTS`) -- Windows, GPU modules, loader follow-ups
+### Modular natives -- follow-ups
 
-Linux x86-64 and aarch64 ship the variant build since 5.2.0, Windows x86-64 since 5.2.x
-(CLAUDE.md "CPU variants"; the measurements behind it are in
-`docs/handover/local-agent-report-b11538-windows.md`). What is still open:
+Every platform a GPU can join ships modular since 5.2.0 (CLAUDE.md "Modular natives": `JLLAMA_BACKEND_DL`
+library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still open:
 
-1. **GPU backends as modules (stage 3).** Measured feasible from a JVM: `ggml-cuda.dll` and
-   `ggml-vulkan.dll` from upstream's zips load side by side from one directory with the CPU set
-   (4 devices, incl. the AMD iGPU through Vulkan). Upstream's GPU zips carry a byte-identical copy of
-   the whole CPU set; a GPU natives jar holding only its module would share ours and is then not
-   usable without the CPU jar of the **same build**. Decide: consumers take `llama-platform` + GPU jar
-   (the loader fails loud when the CPU part is missing or from another build -- a build key per
-   natives jar, compared across jars), or GPU jars become artifacts of their own with a POM
-   dependency. Also: `ggml-cuda.dll` imports only `cublas64_13.dll` (cudart is static) -- the
-   requirement is smaller than the README says; and device indices are not stable across the set of
-   loaded backends (`Vulkan0` was the NVIDIA GPU with CUDA loaded, the AMD iGPU without), so any
-   device setting must go by name, never by index. **Measured through this project's own CMake at
-   b11538** (`docs/handover/local-agent-report-b11538-windows.md`, addendum 3): `-DJLLAMA_CPU_VARIANTS=ON`
-   together with `-DGGML_CUDA=ON` or `-DGGML_VULKAN=ON` builds (nvcc accepts the plain-clang host
-   compiler), and a directory holding the 14 CPU modules plus the GPU module offloads all layers;
-   `verify-native-deps.py` accepts it. Two things stand between that and a shippable jar: **(A)** the
-   GPU module is built into `build/bin/Release/` and never copied -- the file-list block in
-   `llama/CMakeLists.txt` knows only the CPU modules, `ggml`, `ggml-base` and `ggml-rpc`, so
-   `jllama-files.txt` and the copy would have to learn about GPU backend modules; **(B)** the CUDA
-   module lost two thirds of its token generation because the variants path did not repeat
-   `GGML_CUDA_GRAPHS_DEFAULT ON` -- fixed in the CMakeLists (both llama.cpp defaults are repeated now,
-   CLAUDE.md "CPU variants"), not yet re-measured with CUDA. And such a jar is 18 files plus a 44-50 MB
-   GPU module that `LlamaLoader` extracts once per build (reused across starts since 5.2.x).
+1. **GPU modules on real hardware.** The 12 module-only jobs are build-only in CI; what no session can
+   see is a module *registering a device* out of the published jars: `cuda13-windows-x86-64` and
+   `vulkan-windows-x86-64` next to `cpu-windows-x86-64` on the local agent's machine (RTX 3070 + AMD
+   iGPU), the loader line naming both, llama.cpp listing the devices once each (`device_id` dedup),
+   all layers offloaded, and the tg128 of the CUDA module against the 265.6 the static build measured
+   (`GGML_CUDA_GRAPHS_DEFAULT` is repeated in the modular path, so the 88.8 of addendum 3 of
+   `docs/handover/local-agent-report-b11538-windows.md` should be gone). Device indices are not stable
+   across the set of loaded modules (`Vulkan0` was the NVIDIA GPU with CUDA loaded, the AMD iGPU
+   without), so any device setting must go by name, never by index -- worth a README sentence once
+   measured.
 2. **Benchmark on AVX-512/VNNI/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra). The Zen 3
    measurement could only show the floor: the plain x86-64 module is 10.4x slower at prompt
    processing (313 -> 30 t/s, Qwen3-0.6B Q4_K_M) and 1.6x at generation than `haswell`, which is what
@@ -56,6 +43,13 @@ Linux x86-64 and aarch64 ship the variant build since 5.2.0, Windows x86-64 sinc
    certificate, `signtool`/`osslsigncode`), not OpenPGP. **Owner's decision**, not scheduled: a
    code-signing certificate (Azure Trusted Signing or an OV/EV certificate, both paid, identity-
    validated) plus a signing step over every `.dll` before `package`.
+4. **A Vulkan module for Android** (`vulkan-android-aarch64`, upstream ships none either): `JNI_OnLoad`
+   already tries `libggml-vulkan.so` by soname, so it is one more module-only dockcross job plus the
+   natives-jar wiring and an AAR flavor -- if anyone asks.
+5. **srcmorph's fat-jar matrix names the old classifiers** (`cpu-windows-x86`, `msvc-windows-*`,
+   `sycl-fp16/fp32`; one CLI fat jar per llama natives jar, `workspace/policies/fat-jar-release-assets.md`):
+   when srcmorph moves to the llama release with modular natives, its classifier loop and that policy
+   row must follow the 15 module classifiers (`check-natives.py smoke-set` style: library jar + modules).
 
 ### CUDA job: nvcc through sccache (`SCCACHE_WRAP_NVCC`, off since the second failure)
 
@@ -95,10 +89,10 @@ Linux x86-64 and aarch64 ship the variant build since 5.2.0, Windows x86-64 sinc
   release too), but the app needs `android.permission.INTERNET` even for loopback, which the AAR
   deliberately does not declare and the emulator fixture does not have. A loopback test on the
   emulator needs that permission in the fixture's manifest only.
-- **RPC smoke on the other fat-jar platforms.** `smoke-rpc-fatjar.sh` runs in the `linux-x86-64` row
-  of the `smoke-fatjar` matrix only (widening it to `linux-aarch64` is a change of that step's `if:`;
+- **RPC smoke on the other smoke-set platforms.** `smoke-rpc.sh` runs in the `linux-x86-64` row
+  of the `smoke-natives` matrix only (widening it to `linux-aarch64` is a change of that step's `if:`;
   Windows needs a PowerShell port of the script); the Java `RpcServerTest`/`RpcIntegrationTest` already run on every `test-java-*` job
-  (Windows and macOS included), so this is about the packaged asset, not the code path.
+  (Windows and macOS included), so this is about the published jars, not the code path.
 - **Authentication / TLS.** Upstream has none; the documented answer is a trusted network or a
   tunnel. Only worth doing if it lands upstream.
 - **RDMA transport** (`GGML_RPC_RDMA`) as its own classifier, since it needs `libibverbs` at runtime.
@@ -325,9 +319,8 @@ Further per-repo findings in the doc can be pulled on demand; none is prioritize
 Everything here is implemented or decided; what is missing is hardware or a model the cloud sessions
 cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) covers the first three.
 
-- **CUDA as a module, re-measured with the graphs default** (`GGML_CUDA_GRAPHS_DEFAULT` repeated in
-  5.2.x): the 88.8 tg128 against 265.6 static should close; same build command as addendum 3 of
-  `docs/handover/local-agent-report-b11538-windows.md`.
+- **The GPU module jars on a GPU**: item 1 of "Modular natives -- follow-ups" above (CUDA + Vulkan
+  modules next to the Windows CPU jar, devices, offload, the CUDA graphs re-measurement).
 - **Extraction reuse on Windows**: a second JVM start of the same build must copy nothing (no
   `[jllama] extracted` lines), a running JVM's locked DLLs must survive another build's cleanup, and
   the start must not block on them.
@@ -335,7 +328,7 @@ cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) cov
   (`test-android-emulator`) and the LLM Service app (`android-llmservice/`) is the example app, built
   and UI-tested there too; what no session has is a real arm64 device, and the Adreno/OpenCL flavor
   needs one. Nothing to write, only to run.
-- **AVX-512/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra): item 2 of "CPU variants" above.
+- **AVX-512/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra): item 2 of "Modular natives" above.
 - **Kolibri-1 on the real 78B model** (after a full build; the shards need more than 64 GB of RAM).
 
 ### GraalVM Native Image -- evaluated, parked until a consumer asks
@@ -350,11 +343,12 @@ the share of JVM start-up in a cold one-token run, which needs a model and there
 
 ### macOS model-backed server smoke (optional depth, not scheduled)
 
-`smoke-fatjar-macos` verifies the dylib inside the packaged jar (code signature + a real JVM load
-and JNI round-trip; green in CI since run 37985786772). A full model-backed macOS server smoke as
-Linux and Windows run would need `verify-model-cache` plus a cache restore and -- there is no
-`all-macos-*` fat jar -- `smoke-test-fatjar.sh` against the default jar. Worth doing only if a
-macOS-specific *inference* regression ever appears; the load-time failure class is covered.
+`smoke-natives-macos` verifies the dylib inside the published `metal-macos-aarch64` jar (code
+signature + a real JVM load and JNI round-trip, plus the HTTPS round over the 1 MB model it downloads;
+green as `smoke-fatjar-macos` in CI since run 37985786772). A full model-backed macOS server smoke as
+Linux and Windows run would need `verify-model-cache` plus a cache restore and
+`smoke-test-natives.sh` against the `macos-aarch64` smoke set. Worth doing only if a macOS-specific
+*inference* regression ever appears; the load-time failure class is covered.
 
 ### Test-coverage gaps found by the b10679 mutation audit (PR #403)
 
@@ -391,7 +385,7 @@ flags, the `acquire`/`release` context-guard unit tests, the `OSInfo` alias test
 - **`LlamaLoader`'s jar-extraction internals are tested only through directory fixtures.**
   `BackendLoadTest` drives backend probing, extras, fallthrough and forcing over the committed
   `Linux/backendtest*/` trees on the test classpath (directories, not jars); extraction out of a real
-  jar is exercised in CI by `smoke-natives-jars.sh` and the fat-jar smokes, not by a unit test.
+  jar is exercised in CI by `smoke-natives-jars.sh` and the smoke sets, not by a unit test.
 
 - **`ContentPart.videoFile(...)` — see the video-input entry above** for the wire shape upstream
   expects (`input_video`, raw base64, not a `data:` URI).

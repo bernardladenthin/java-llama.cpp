@@ -5,8 +5,9 @@
 // Builds the Android AAR artifacts for java-llama.cpp WITHOUT the Android Gradle
 // Plugin and without an Android SDK:
 //
-//   net.ladenthin:llama-android          — CPU natives (arm64-v8a)
-//   net.ladenthin:llama-android-opencl   — OpenCL/Adreno natives (arm64-v8a)
+//   net.ladenthin:llama-android          — the library + CPU backend modules (arm64-v8a, x86_64)
+//   net.ladenthin:llama-android-opencl   — the OpenCL/Adreno backend module only (arm64-v8a),
+//                                          depends on llama-android (the module is additive)
 //
 // An AAR is a documented zip (AndroidManifest.xml + classes.jar + jni/<abi>/ +
 // proguard.txt + R.txt). AGP is only required to *consume* it — which the CI
@@ -15,8 +16,11 @@
 //   1. classes.jar carries the BYTE-IDENTICAL Maven-built core classes (no
 //      recompilation, no Lombok/AGP coupling, no drift from the tested jar);
 //      only module-info.class is stripped. The core jar carries no natives (they
-//      ship as separate natives jars); here the .so ships under jni/ instead —
-//      LlamaLoader calls System.loadLibrary("jllama") first on Android.
+//      ship as separate natives jars); here the .so files ship under jni/ instead —
+//      LlamaLoader calls System.loadLibrary("jllama") first on Android, and
+//      JNI_OnLoad then loads the ggml backend modules by soname (libggml-cpu-*.so,
+//      the best one for the device; libggml-opencl.so if an app packages the
+//      OpenCL AAR too) -- the modular natives of CLAUDE.md, "Modular natives".
 //   2. The published POM says <packaging>aar</packaging>, which plain Maven
 //      cannot produce — this is exactly how AGP-built libraries on Central
 //      declare themselves, so `implementation("net.ladenthin:llama-android:V")`
@@ -28,9 +32,13 @@
 //
 // Inputs expected before running the aar tasks (fail-loud checks below):
 //   ../llama/target/llama-<version>.jar       mvn -pl llama -am -DskipTests package
-//   natives/cpu/arm64-v8a/libjllama.so        CI artifact natives-cpu-android-aarch64
-//   natives/cpu/x86_64/libjllama.so           CI artifact natives-cpu-android-x86-64
-//   natives/opencl/arm64-v8a/libjllama.so     CI artifact natives-opencl-android-aarch64
+//   natives/cpu/arm64-v8a/*.so                CI artifact natives-cpu-android-aarch64
+//   natives/cpu/x86_64/*.so                   CI artifact natives-cpu-android-x86-64
+//   natives/opencl/arm64-v8a/libggml-opencl.so  CI artifact natives-opencl-android-aarch64
+// Each natives/<flavor>/<abi>/ holds the .so files of one natives-* artifact
+// (libjllama.so, libggml.so, libggml-base.so, libggml-rpc.so and the
+// libggml-cpu-<variant>.so modules for cpu; the one module for opencl); the
+// jllama-*.txt lists next to them are desktop-loader input and stay out of the AAR.
 
 import org.w3c.dom.Document
 import org.w3c.dom.Element
@@ -152,7 +160,13 @@ val javadocJar = tasks.register<Jar>("javadocJar") {
     from(readme.map { it.asFile.parentFile })
 }
 
-fun registerAarTask(taskName: String, artifactBase: String, nativesSubdir: String, requiredAbis: List<String>) =
+fun registerAarTask(
+    taskName: String,
+    artifactBase: String,
+    nativesSubdir: String,
+    requiredAbis: List<String>,
+    requiredLibrary: String
+) =
     tasks.register<Zip>(taskName) {
         description = "Assembles $artifactBase-$reactorVersion.aar from the core classes and natives/$nativesSubdir."
         archiveBaseName.set(artifactBase)
@@ -165,14 +179,15 @@ fun registerAarTask(taskName: String, artifactBase: String, nativesSubdir: Strin
         doFirst {
             // Fail-loud per ABI: a missing staging copy must never silently produce an
             // AAR that lacks an advertised ABI (emulator/x86_64 consumers would crash
-            // at load time instead).
+            // at load time instead). The check names the file that makes the flavor
+            // what it is; the CI job validates the complete set (publish.yml).
             for (abi in requiredAbis) {
-                val so = File(nativesDir, "$abi/libjllama.so")
+                val so = File(nativesDir, "$abi/$requiredLibrary")
                 require(so.isFile) {
-                    "Missing Android native library: $so — stage the CI-built libjllama.so there " +
+                    "Missing Android native library: $so — stage the CI-built .so files there " +
                             "(artifacts 'natives-cpu-android-aarch64' / 'natives-cpu-android-x86-64' " +
                             "for cpu, 'natives-opencl-android-aarch64' for opencl; the artifact tree is " +
-                            "<OS>/<arch>/<backend>/libjllama.so, e.g. Linux-Android/aarch64/cpu/libjllama.so)"
+                            "<OS>/<arch>/<backend>/*.so, e.g. Linux-Android/aarch64/cpu/libjllama.so)"
                 }
             }
         }
@@ -180,14 +195,21 @@ fun registerAarTask(taskName: String, artifactBase: String, nativesSubdir: Strin
         from(coreClassesJar) { rename { "classes.jar" } }
         from("consumer-proguard.txt") { rename { "proguard.txt" } }
         from(generateRTxt)
-        from(nativesDir) { into("jni") }
+        // Only the libraries: the jllama-build.txt / jllama-files.txt lists a natives artifact
+        // carries are read by the desktop loader (natives jars), not by System.loadLibrary.
+        from(nativesDir) {
+            into("jni")
+            include("**/*.so")
+        }
     }
 
 // CPU AAR is multi-ABI: arm64-v8a for devices, x86_64 for emulators / x86_64 Android
 // hardware (Chromebooks etc.). App bundles split per ABI, so phones download only arm64.
-// The OpenCL flavor stays arm64-only (Adreno = Qualcomm ARM hardware).
-val aarCpu = registerAarTask("aarCpu", "llama-android", "cpu", listOf("arm64-v8a", "x86_64"))
-val aarOpencl = registerAarTask("aarOpencl", "llama-android-opencl", "opencl", listOf("arm64-v8a"))
+// The OpenCL flavor stays arm64-only (Adreno = Qualcomm ARM hardware) and holds the
+// OpenCL backend module alone -- libjllama.so and the CPU modules come from the CPU AAR
+// it depends on, so an app's jni/arm64-v8a/ ends up with both sets side by side.
+val aarCpu = registerAarTask("aarCpu", "llama-android", "cpu", listOf("arm64-v8a", "x86_64"), "libjllama.so")
+val aarOpencl = registerAarTask("aarOpencl", "llama-android-opencl", "opencl", listOf("arm64-v8a"), "libggml-opencl.so")
 
 // ---------------------------------------------------------------------------
 // Publishing: POM <packaging>aar</packaging> + mirrored core dependencies.
@@ -199,12 +221,13 @@ val aarOpencl = registerAarTask("aarOpencl", "llama-android-opencl", "opencl", l
 // variant attributes AGP expects and could confuse resolution.
 tasks.withType<GenerateModuleMetadata>().configureEach { enabled = false }
 
-fun org.gradle.api.publish.maven.MavenPom.commonMetadata(artifactDisplayName: String, backendNote: String) {
+fun org.gradle.api.publish.maven.MavenPom.commonMetadata(
+    artifactDisplayName: String,
+    descriptionText: String,
+    dependsOnCpuAar: Boolean
+) {
     name.set(artifactDisplayName)
-    description.set(
-        "Android AAR for java-llama.cpp: the net.ladenthin:llama Java API with the $backendNote " +
-                "arm64-v8a native library packaged under jni/, consumer R8/ProGuard rules, and minSdk 28."
-    )
+    description.set(descriptionText)
     url.set("https://github.com/bernardladenthin/java-llama.cpp")
     licenses {
         license {
@@ -242,6 +265,16 @@ fun org.gradle.api.publish.maven.MavenPom.commonMetadata(artifactDisplayName: St
         dependency("org.slf4j", "slf4j-api", "slf4j.version")
         dependency("org.jspecify", "jspecify", "jspecify.version")
         dependency("org.checkerframework", "checker-qual", "checker.version")
+        if (dependsOnCpuAar) {
+            // The OpenCL AAR is one backend module; the library it plugs into is the CPU AAR
+            // of the same version (type aar, so AGP merges both jni/ trees into the APK).
+            val node = dependencies.appendNode("dependency")
+            node.appendNode("groupId", "net.ladenthin")
+            node.appendNode("artifactId", "llama-android")
+            node.appendNode("version", reactorVersion)
+            node.appendNode("type", "aar")
+            node.appendNode("scope", "compile")
+        }
     }
 }
 
@@ -253,7 +286,13 @@ publishing {
             artifact(sourcesJar)
             artifact(javadocJar)
             pom.packaging = "aar"
-            pom.commonMetadata("llama-android", "CPU")
+            pom.commonMetadata(
+                "llama-android",
+                "Android AAR for java-llama.cpp: the net.ladenthin:llama Java API with the native library " +
+                        "and the ggml CPU backend modules (arm64-v8a, x86_64) packaged under jni/, " +
+                        "consumer R8/ProGuard rules, and minSdk 28.",
+                dependsOnCpuAar = false
+            )
         }
         create<MavenPublication>("llamaAndroidOpencl") {
             artifactId = "llama-android-opencl"
@@ -261,7 +300,13 @@ publishing {
             artifact(sourcesJar)
             artifact(javadocJar)
             pom.packaging = "aar"
-            pom.commonMetadata("llama-android-opencl", "OpenCL/Adreno")
+            pom.commonMetadata(
+                "llama-android-opencl",
+                "Android AAR for java-llama.cpp: the ggml OpenCL backend module (Adreno-tuned kernels, " +
+                        "arm64-v8a) packaged under jni/, additive to net.ladenthin:llama-android, which it " +
+                        "depends on; needs the device's OpenCL ICD.",
+                dependsOnCpuAar = true
+            )
         }
     }
     repositories {

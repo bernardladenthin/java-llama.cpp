@@ -49,7 +49,7 @@ project(jllama CXX)
 #     which is why passing it alone fails to link (undefined __declspec(dllimport) expf). The flag
 #     that actually selects the libraries is -fms-runtime-lib.
 #   * A FULLY static CRT (static UCRT too) combined with shared libraries -- which
-#     JLLAMA_CPU_VARIANTS requires, since GGML_BACKEND_DL needs BUILD_SHARED_LIBS -- gives every
+#     JLLAMA_BACKEND_DL requires, since GGML_BACKEND_DL needs BUILD_SHARED_LIBS -- gives every
 #     DLL its own CRT heap; such a build does not even start (and crashed with 0xC0000409 in an
 #     earlier attempt).
 #   * Hybrid CRT (static STL + vcruntime, dynamic UCRT -- Microsoft's own recommendation for
@@ -96,15 +96,26 @@ option(LLAMA_VERBOSE	"llama: verbose output"		OFF)
 # GPU-less runner. -DBUILD_TESTING=ON still enables the tests.
 option(BUILD_TESTING "Build C++ unit tests for jni_helpers / json_helpers / utils" OFF)
 
-# CPU variants (prototype, Linux x86-64): ggml is built the way upstream builds its own release
-# binaries -- GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS -- so the natives directory holds libjllama
-# plus libggml/libggml-base and one CPU backend module per instruction-set level (x64, sse42,
-# sandybridge ... zen4, sapphirerapids). ggml itself picks the best module for the running CPU at
-# load time (ggml_backend_load_best scores each module's feature check), which a single build can
-# not: the default build targets the Haswell baseline below, so it crashes with SIGILL on an older
-# CPU and leaves AVX-512/VNNI/AMX unused on a newer one. Only ggml becomes shared; llama, mtmd and
-# llama-common stay static inside libjllama. Off by default: every other build is unchanged.
-option(JLLAMA_CPU_VARIANTS "Build ggml as shared libraries with every CPU backend variant (GGML_BACKEND_DL)" OFF)
+# Modular natives (CLAUDE.md "Modular natives"): ggml is built the way upstream builds its own
+# release binaries -- GGML_BACKEND_DL, with GGML_CPU_ALL_VARIANTS where upstream has a variant list
+# -- so the CPU natives directory holds libjllama plus libggml/libggml-base and the backend modules
+# ggml loads at run time: one CPU module per instruction-set level (x64, sse42, sandybridge ...
+# zen4, sapphirerapids on x86-64; armv8.0_1 ... armv9.2_2 on aarch64), of which
+# ggml_backend_load_best picks the best for the running CPU, and ggml-rpc. A single static build can
+# not do that: it targets the Haswell baseline below, so it crashes with SIGILL on an older CPU and
+# leaves AVX-512/VNNI/AMX unused on a newer one. Only ggml becomes shared; llama, mtmd and
+# llama-common stay static inside libjllama.
+#
+# JLLAMA_MODULE_ONLY is the other half: a GPU natives jar holds ONLY its backend module
+# (libggml-cuda.so, ggml-vulkan.dll, ...), built against the same ggml with GGML_CPU=OFF, and
+# LlamaLoader puts it next to the CPU jar's libraries, where ggml finds it. Exactly upstream's
+# Windows release layout (win-cpu + win-cuda holding one ggml-cuda.dll). Both OFF by default: a plain
+# `cmake -B build` is the static single-library build (macOS/Metal and s390x ship that way).
+option(JLLAMA_BACKEND_DL "Build ggml as shared libraries and the backends as modules ggml loads at run time (GGML_BACKEND_DL)" OFF)
+option(JLLAMA_MODULE_ONLY "Build only the GPU backend module of the one GGML_<backend> flag set, for a GPU natives jar (implies JLLAMA_BACKEND_DL)" OFF)
+if(JLLAMA_MODULE_ONLY)
+    set(JLLAMA_BACKEND_DL ON)
+endif()
 
 #################### json ####################
 
@@ -230,7 +241,7 @@ endif()
 #   - MSVC's /arch:AVX512 applies to the entire TU — no per-function gating.
 #   - Frequency throttling and power draw make it a net loss for bursty work.
 set(GGML_NATIVE  OFF CACHE BOOL "" FORCE)
-if(NOT JLLAMA_CPU_VARIANTS)
+if(NOT JLLAMA_BACKEND_DL)
 set(GGML_SSE42   ON  CACHE BOOL "" FORCE)
 set(GGML_AVX     ON  CACHE BOOL "" FORCE)
 set(GGML_AVX2    ON  CACHE BOOL "" FORCE)
@@ -269,10 +280,11 @@ set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
 # (sorted, idempotently, fail-loud) by cmake/apply-llama-patches.cmake — see that file's header.
 # This runs for every C++ build (all CI jobs + local) from one place. <SOURCE_DIR> is substituted
 # by FetchContent/ExternalProject to the fetched llama.cpp source root.
-# With JLLAMA_CPU_VARIANTS, SOURCE_SUBDIR names a directory that does not exist, so
+# With JLLAMA_BACKEND_DL, SOURCE_SUBDIR names a directory that does not exist, so
 # FetchContent_MakeAvailable only fetches and patches the source; ggml and llama.cpp are then added
-# below in two steps (llama.cpp skips its own add_subdirectory(ggml) when a ggml target exists).
-if(JLLAMA_CPU_VARIANTS)
+# below in two steps (llama.cpp skips its own add_subdirectory(ggml) when a ggml target exists), and a
+# JLLAMA_MODULE_ONLY build adds ggml alone.
+if(JLLAMA_BACKEND_DL)
     set(JLLAMA_LLAMA_SOURCE_SUBDIR SOURCE_SUBDIR jllama-added-below)
 endif()
 FetchContent_Declare(
@@ -286,38 +298,66 @@ FetchContent_Declare(
 	${JLLAMA_LLAMA_SOURCE_SUBDIR}
 )
 FetchContent_MakeAvailable(llama.cpp)
-if(JLLAMA_CPU_VARIANTS)
-    # Linux x86-64 / aarch64 and Windows x86-64 (see CLAUDE.md "CPU variants"). macOS has one CPU
-    # generation per Metal build, Android ships one library per ABI, s390x has no variants upstream,
-    # and 32-bit Windows / Windows arm64 have none upstream either.
-    set(_jllama_variants_ok OFF)
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|aarch64|arm64)$")
-        set(_jllama_variants_ok ON)
+if(JLLAMA_BACKEND_DL)
+    # Where ggml can be loaded as modules here (CLAUDE.md "Modular natives"): Linux x86-64 / aarch64
+    # (the dockcross Android toolchain reports Linux too, see the Android block above) and Windows
+    # x86-64 / arm64. CPU variants wherever ggml has a list for the OS/arch: x86-64 everywhere, ARM on
+    # Linux/Android (ggml-cpu/CMakeLists.txt has no ARM list for Windows, so Windows arm64 gets the
+    # one ggml-cpu module upstream ships there too). macOS stays static (Metal is compiled in, one
+    # CPU generation per Metal build), s390x has no variants upstream and no GPU.
+    set(_jllama_dl_ok OFF)
+    set(_jllama_all_variants OFF)
+    if(CMAKE_SYSTEM_NAME MATCHES "^(Linux|Android)$" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|aarch64|arm64)$")
+        set(_jllama_dl_ok ON)
+        set(_jllama_all_variants ON)
     elseif(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
-        # Only PLAIN clang produces the full set here: CMake sets MSVC for clang-cl as for cl.exe,
-        # and ggml's `if (NOT MSVC)` then drops ivybridge, piledriver, cooperlake, zen4 and
-        # sapphirerapids -- a Zen 4/5 machine would fall back to icelake and lose the BF16 kernels.
-        # clang-cl additionally fails to build alderlake (/arch:AVX2 + __AVXVNNI__ without
-        # -mavxvnni, an upstream gap). Fail loud rather than silently shipping 9 variants.
-        if(MSVC)
-            message(FATAL_ERROR
-                "JLLAMA_CPU_VARIANTS on Windows needs plain clang (the GNU driver), not cl.exe or "
-                "clang-cl: ggml's `if (NOT MSVC)` block drops 5 of the 14 x86 variants, and "
-                "clang-cl cannot build alderlake. Use upstream's cmake/x64-windows-llvm.cmake.")
-        endif()
-        set(_jllama_variants_ok ON)
+        set(_jllama_dl_ok ON)
+        set(_jllama_all_variants ON)
+    elseif(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|aarch64|arm64)$")
+        set(_jllama_dl_ok ON)
     endif()
-    if(NOT _jllama_variants_ok)
-        message(FATAL_ERROR "JLLAMA_CPU_VARIANTS is supported on Linux x86-64/aarch64 and Windows x86-64 only")
+    if(NOT _jllama_dl_ok)
+        message(FATAL_ERROR "JLLAMA_BACKEND_DL is supported on Linux/Android x86-64 and aarch64 and on Windows x86-64 and arm64 only")
     endif()
     if(BUILD_TESTING)
         # jllama_test calls the CPU and RPC backends directly (ggml_backend_cpu_init, ...), which are
         # loadable modules here, not link-time libraries.
-        message(FATAL_ERROR "JLLAMA_CPU_VARIANTS cannot be combined with BUILD_TESTING")
+        message(FATAL_ERROR "JLLAMA_BACKEND_DL cannot be combined with BUILD_TESTING")
+    endif()
+    if(JLLAMA_MODULE_ONLY)
+        # One GPU backend, nothing else: no CPU backend (GGML_CPU=OFF, as upstream's windows-vulkan
+        # release job builds its module) and no ggml-rpc -- both come with the CPU jar. The module
+        # is the only shipped file; ggml and ggml-base are built because the module links them, and
+        # are discarded (the CPU jar's copies are the ones loaded next to the module).
+        set(_jllama_gpu_flags)
+        foreach(flag GGML_CUDA GGML_HIP GGML_SYCL GGML_VULKAN GGML_OPENCL GGML_OPENVINO)
+            if(${flag})
+                list(APPEND _jllama_gpu_flags ${flag})
+            endif()
+        endforeach()
+        list(LENGTH _jllama_gpu_flags _jllama_gpu_count)
+        if(NOT _jllama_gpu_count EQUAL 1)
+            message(FATAL_ERROR "JLLAMA_MODULE_ONLY needs exactly one of GGML_CUDA, GGML_HIP, GGML_SYCL, GGML_VULKAN, GGML_OPENCL, GGML_OPENVINO (got: '${_jllama_gpu_flags}')")
+        endif()
+        set(GGML_CPU OFF CACHE BOOL "" FORCE)
+        set(GGML_RPC OFF CACHE BOOL "" FORCE)
+        set(_jllama_all_variants OFF)
+    elseif(_jllama_all_variants AND WIN32 AND MSVC)
+        # Only PLAIN clang produces the full x86 set here: CMake sets MSVC for clang-cl as for
+        # cl.exe, and ggml's `if (NOT MSVC)` then drops ivybridge, piledriver, cooperlake, zen4 and
+        # sapphirerapids -- a Zen 4/5 machine would fall back to icelake and lose the BF16 kernels.
+        # clang-cl additionally fails to build alderlake (/arch:AVX2 + __AVXVNNI__ without
+        # -mavxvnni, an upstream gap). Fail loud rather than silently shipping 9 variants. A
+        # module-only build is exempt: it builds no CPU variant (upstream builds its CUDA module
+        # with cl.exe), and so is Windows arm64 (one module, clang-cl as the arm64 job uses).
+        message(FATAL_ERROR
+            "The CPU variants on Windows x86-64 need plain clang (the GNU driver), not cl.exe or "
+            "clang-cl: ggml's `if (NOT MSVC)` block drops 5 of the 14 x86 variants, and "
+            "clang-cl cannot build alderlake. Use upstream's cmake/x64-windows-llvm.cmake.")
     endif()
     set(BUILD_SHARED_LIBS ON)
     set(GGML_BACKEND_DL       ON CACHE BOOL "" FORCE)
-    set(GGML_CPU_ALL_VARIANTS ON CACHE BOOL "" FORCE)
+    set(GGML_CPU_ALL_VARIANTS ${_jllama_all_variants} CACHE BOOL "" FORCE)
     # The ggml defaults llama.cpp's own CMakeLists changes before its add_subdirectory(ggml): every
     # `set(GGML_*_DEFAULT ...)` there ("change the default for these ggml options") must be
     # repeated here, because adding ggml first skips that block entirely. Re-check on every bump
@@ -328,7 +368,15 @@ if(JLLAMA_CPU_VARIANTS)
     set(GGML_CUDA_GRAPHS_DEFAULT ON)
     add_subdirectory(${llama.cpp_SOURCE_DIR}/ggml ${llama.cpp_BINARY_DIR}/ggml)
     set(BUILD_SHARED_LIBS OFF)
-    add_subdirectory(${llama.cpp_SOURCE_DIR} ${llama.cpp_BINARY_DIR})
+    # Unversioned: LlamaLoader extracts plain files, not the libggml.so -> .so.0 -> .so.0.x.y
+    # symlink chain, so the file name, the SONAME and every DT_NEEDED entry naming it -- libjllama's
+    # and each module's -- must be one name. Set in both build kinds for that reason: a module built
+    # here records `libggml-base.so`, which is what the CPU jar's library is called.
+    set_property(TARGET ggml ggml-base PROPERTY VERSION)
+    set_property(TARGET ggml ggml-base PROPERTY SOVERSION)
+    if(NOT JLLAMA_MODULE_ONLY)
+        add_subdirectory(${llama.cpp_SOURCE_DIR} ${llama.cpp_BINARY_DIR})
+    endif()
 endif()
 
 # ROCm/HIP: compress the embedded GPU code. Without it every HIP translation unit carries one
@@ -344,18 +392,10 @@ if(TARGET ggml-hip)
     target_compile_options(ggml-hip PRIVATE $<$<COMPILE_LANGUAGE:HIP,CXX>:--offload-compress>)
 endif()
 
-# b8831 added ggml_graph_next_uid() which calls _InterlockedIncrement64 via
-# <intrin.h> on x86. The intrinsic only exists on x64; provide the
-# implementation in a compat TU so the linker resolves __InterlockedIncrement64.
-if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 4)
-    target_sources(ggml-base PRIVATE
-        ${CMAKE_SOURCE_DIR}/src/main/cpp/compat/ggml_x86_compat.c)
-endif()
-
 # mtmd lives in tools/mtmd, which is only built when LLAMA_BUILD_TOOLS=ON.
 # LLAMA_BUILD_TOOLS defaults to LLAMA_STANDALONE, which is OFF when llama.cpp
 # is consumed via FetchContent.  Build mtmd explicitly so the target exists.
-if(NOT TARGET mtmd)
+if(NOT JLLAMA_MODULE_ONLY AND NOT TARGET mtmd)
     # LLAMA_VERSION_BASE / LLAMA_VERSION_MAJOR are set inside llama.cpp's directory
     # scope and are not visible here.  tools/mtmd/CMakeLists.txt uses them in
     # set_target_properties() as VERSION/SOVERSION values; if a variable is empty the
@@ -424,11 +464,13 @@ endif()
 # Native-library output tree: src/main/natives/net/ladenthin/llama/<OS>/<ARCH>/<backend>/.
 # Every build writes into its own backend directory, so all builds of one pipeline share one
 # tree without overwriting each other, and each directory becomes exactly one natives jar
-# (classifier <backend>-<os>-<arch>, see llama/pom.xml). LlamaLoader tries the directories in a
-# fixed priority order (LlamaLoader.BACKEND_PRIORITY), which must list every name set here.
-# `cuda13` names the CUDA major version the classifier promises; change it together with the
-# classifiers when CUDA's major version changes. `msvc` is the Visual Studio generator build,
-# which ships next to the default Ninja build of the same compiler.
+# (classifier <backend>-<os>-<arch>, see llama/pom.xml and .github/natives.csv). `cpu` and `metal`
+# hold the library (LlamaLoader.LIBRARY_BACKENDS), every other name a GPU backend module
+# (LlamaLoader.MODULE_BACKENDS); both lists must name every backend set here. `cuda13` names the
+# CUDA major version the classifier promises; change it together with the classifiers when CUDA's
+# major version changes. `sycl` is the fp16 build on every platform (GGML_SYCL_F16, upstream's
+# recommended setting): two SYCL builds would both be called libggml-sycl.so and could not share
+# the CPU jar's directory.
 if(NOT DEFINED JLLAMA_BACKEND)
     if(GGML_CUDA)
         set(JLLAMA_BACKEND cuda13)
@@ -438,24 +480,77 @@ if(NOT DEFINED JLLAMA_BACKEND)
         set(JLLAMA_BACKEND opencl)
     elseif(GGML_HIP)
         set(JLLAMA_BACKEND rocm)
-    elseif(GGML_SYCL AND OS_NAME STREQUAL "Windows")
-        set(JLLAMA_BACKEND sycl)
-    elseif(GGML_SYCL AND GGML_SYCL_F16)
-        set(JLLAMA_BACKEND sycl-fp16)
     elseif(GGML_SYCL)
-        set(JLLAMA_BACKEND sycl-fp32)
+        set(JLLAMA_BACKEND sycl)
     elseif(GGML_OPENVINO)
         set(JLLAMA_BACKEND openvino)
     elseif(APPLE AND GGML_METAL)
         set(JLLAMA_BACKEND metal)
-    elseif(CMAKE_GENERATOR MATCHES "^Visual Studio")
-        set(JLLAMA_BACKEND msvc)
     else()
         set(JLLAMA_BACKEND cpu)
     endif()
 endif()
 set(JLLAMA_DIR ${CMAKE_SOURCE_DIR}/src/main/natives/net/ladenthin/llama/${OS_NAME}/${OS_ARCH}/${JLLAMA_BACKEND})
 message(STATUS "Backend '${JLLAMA_BACKEND}' - installing files to ${JLLAMA_DIR}")
+
+# jllama-build.txt: the build every natives directory came from, read by LlamaLoader before it puts
+# a GPU module next to a CPU jar's library -- the two must be the same llama.cpp tag (the ggml ABI
+# between libggml-base and a module is that commit's), and a mismatch is a LlamaException naming
+# both, never a silent attempt. The tag is read back from this file's own GIT_TAG line so the
+# version bump keeps touching that one line (build-webui and llama-next-version.sh grep it too).
+file(READ ${CMAKE_CURRENT_LIST_FILE} _jllama_self)
+string(REGEX MATCH "GIT_TAG[ \t]+(b[0-9]+)" _jllama_tag_match "${_jllama_self}")
+set(JLLAMA_LLAMA_CPP_TAG "${CMAKE_MATCH_1}")
+unset(_jllama_self)
+if(NOT JLLAMA_LLAMA_CPP_TAG)
+    message(FATAL_ERROR "could not read the llama.cpp GIT_TAG (b<nnnn>) from ${CMAKE_CURRENT_LIST_FILE}")
+endif()
+if(JLLAMA_MODULE_ONLY)
+    set(_jllama_kind module)
+else()
+    set(_jllama_kind library)
+endif()
+file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-build.txt CONTENT
+     "# Written by llama/CMakeLists.txt: the build this directory came from (read by LlamaLoader)\nllama.cpp=${JLLAMA_LLAMA_CPP_TAG}\nbackend=${JLLAMA_BACKEND}\nkind=${_jllama_kind}\n"
+     NEWLINE_STYLE LF)
+
+if(JLLAMA_MODULE_ONLY)
+    # The GPU natives jar: exactly one file, the backend module, next to the two list files. Built
+    # with the plain `cmake --build` of the CI scripts -- everything below this block (llama, mtmd,
+    # jllama, the tests) is skipped, so `all` is ggml, ggml-base and the module.
+    set(_jllama_module_targets cuda13 ggml-cuda rocm ggml-hip sycl ggml-sycl vulkan ggml-vulkan opencl ggml-opencl openvino ggml-openvino)
+    list(FIND _jllama_module_targets ${JLLAMA_BACKEND} _jllama_module_index)
+    if(_jllama_module_index EQUAL -1)
+        message(FATAL_ERROR "JLLAMA_MODULE_ONLY: '${JLLAMA_BACKEND}' is not a GPU backend module")
+    endif()
+    math(EXPR _jllama_module_index "${_jllama_module_index} + 1")
+    list(GET _jllama_module_targets ${_jllama_module_index} JLLAMA_MODULE_TARGET)
+    if(NOT TARGET ${JLLAMA_MODULE_TARGET})
+        message(FATAL_ERROR "JLLAMA_MODULE_ONLY: ggml did not create the target ${JLLAMA_MODULE_TARGET} for backend '${JLLAMA_BACKEND}'")
+    endif()
+    # A MODULE library is a LIBRARY artifact on every platform, Windows included, and a multi-config
+    # generator appends the configuration name unless the per-config form is set (measured on the
+    # CPU variants, see the output-directory block further down).
+    set_target_properties(${JLLAMA_MODULE_TARGET} PROPERTIES
+      LIBRARY_OUTPUT_DIRECTORY ${JLLAMA_DIR}
+      LIBRARY_OUTPUT_DIRECTORY_DEBUG ${JLLAMA_DIR}
+      LIBRARY_OUTPUT_DIRECTORY_RELEASE ${JLLAMA_DIR}
+      LIBRARY_OUTPUT_DIRECTORY_RELWITHDEBINFO ${JLLAMA_DIR}
+      RUNTIME_OUTPUT_DIRECTORY ${JLLAMA_DIR}
+      RUNTIME_OUTPUT_DIRECTORY_DEBUG ${JLLAMA_DIR}
+      RUNTIME_OUTPUT_DIRECTORY_RELEASE ${JLLAMA_DIR}
+      RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${JLLAMA_DIR}
+      # $ORIGIN only: libggml-base.so is the sibling LlamaLoader extracts next to the module.
+      BUILD_WITH_INSTALL_RPATH TRUE
+      INSTALL_RPATH "$ORIGIN")
+    # The counterpart of the CPU jar's list: LlamaLoader extracts what is named here into the CPU
+    # library's directory and never loads it from Java -- ggml loads the module from there.
+    file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-files.txt
+         CONTENT "# Written by llama/CMakeLists.txt (JLLAMA_MODULE_ONLY): extracted next to the CPU library, loaded by ggml\n$<TARGET_FILE_NAME:${JLLAMA_MODULE_TARGET}>\n"
+         NEWLINE_STYLE LF)
+    message(STATUS "Module-only build: ${JLLAMA_MODULE_TARGET} -> ${JLLAMA_DIR}")
+    return()
+endif()
 
 # include jni.h and jni_md.h
 if(NOT DEFINED JNI_INCLUDE_DIRS)
@@ -665,7 +760,7 @@ else()
 	)
 endif()
 
-if(JLLAMA_CPU_VARIANTS)
+if(JLLAMA_BACKEND_DL)
     # Every ggml library and backend module goes next to libjllama, which finds the two it links
     # (libggml, libggml-base) through $ORIGIN and loads the backend modules from its own directory
     # at JNI_OnLoad. jllama-files.txt lists them for LlamaLoader, which extracts them without
@@ -702,13 +797,10 @@ if(JLLAMA_CPU_VARIANTS)
     else()
         set_target_properties(${JLLAMA_GGML_TARGETS} PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${JLLAMA_DIR})
     endif()
-    # Unversioned: LlamaLoader extracts plain files, not the libggml.so -> .so.0 -> .so.0.x.y
-    # symlink chain, so the file name, the SONAME and libjllama's DT_NEEDED entry must be one name.
-    set_property(TARGET ggml ggml-base PROPERTY VERSION)
-    set_property(TARGET ggml ggml-base PROPERTY SOVERSION)
     # $ORIGIN only: the default build run path would also carry this machine's absolute build path.
+    # (VERSION/SOVERSION of ggml and ggml-base are cleared where ggml is added, see there.)
     set_target_properties(jllama ${JLLAMA_GGML_TARGETS} PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
-    set(JLLAMA_FILES_CONTENT "# Written by llama/CMakeLists.txt (JLLAMA_CPU_VARIANTS): extracted, not loaded\n")
+    set(JLLAMA_FILES_CONTENT "# Written by llama/CMakeLists.txt (JLLAMA_BACKEND_DL): extracted, not loaded\n")
     foreach(t ${JLLAMA_GGML_TARGETS})
         # On WINDOWS the two libraries jllama LINKS (ggml, ggml-base) must be left out of this list,
         # which puts them into jllama-extras.txt instead (merge-native-artifacts.sh derives that from
@@ -743,7 +835,31 @@ if(JLLAMA_CPU_VARIANTS)
         file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-extras.txt
              CONTENT "$<TARGET_FILE_NAME:ggml-base>\n$<TARGET_FILE_NAME:ggml>\n" NEWLINE_STYLE LF)
     endif()
-    message(STATUS "CPU variants: ${JLLAMA_GGML_TARGETS}")
+    message(STATUS "ggml modules: ${JLLAMA_GGML_TARGETS}")
+    # Android: the modules are not next to the library as files -- an app's native libraries stay
+    # inside the APK unless it opts into legacy extraction -- so JNI_OnLoad loads them by soname
+    # through the app's linker namespace instead of scanning a directory (jllama.cpp,
+    # load_backends_by_soname). The names it needs are this build's module targets, generated into a
+    # header: the CPU modules it scores against each other, and the rest (ggml-rpc) it loads as is.
+    # The GPU modules another AAR may add (libggml-opencl.so) are a fixed list in jllama.cpp.
+    if(OS_NAME MATCHES "Android" OR ANDROID OR ANDROID_ABI)
+        set(_jllama_cpu_sonames "")
+        set(_jllama_other_sonames "")
+        foreach(t ${JLLAMA_GGML_TARGETS})
+            if(t STREQUAL "ggml" OR t STREQUAL "ggml-base")
+                continue() # DT_NEEDED of libjllama, resolved by the linker
+            elseif(t MATCHES "^ggml-cpu")
+                string(APPEND _jllama_cpu_sonames "    \"$<TARGET_FILE_NAME:${t}>\", \\\n")
+            else()
+                string(APPEND _jllama_other_sonames "    \"$<TARGET_FILE_NAME:${t}>\", \\\n")
+            endif()
+        endforeach()
+        file(GENERATE OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/generated/jllama_modules.h CONTENT
+             "// Generated by llama/CMakeLists.txt (JLLAMA_BACKEND_DL on Android): the module sonames of this build.\n#pragma once\n#define JLLAMA_CPU_MODULE_SONAMES \\\n{ \\\n${_jllama_cpu_sonames}}\n#define JLLAMA_OTHER_MODULE_SONAMES \\\n{ \\\n${_jllama_other_sonames}}\n"
+             NEWLINE_STYLE LF)
+        target_include_directories(jllama PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+        target_compile_definitions(jllama PRIVATE JLLAMA_MODULES_BY_SONAME)
+    endif()
 endif()
 
 if (LLAMA_METAL AND NOT LLAMA_METAL_EMBED_LIBRARY)

@@ -8,7 +8,7 @@
 # built (build-core, `package`) and Gradle on PATH; the calling job must `need` both Android CPU
 # build jobs.
 name: Publish the CPU AAR to mavenLocal
-description: Download + stage the Android CPU natives (arm64-v8a, x86_64) and publish the llama-android AAR to mavenLocal.
+description: Download + stage the Android CPU natives (arm64-v8a, x86_64; the whole modular directory per ABI) and publish the llama-android AAR to mavenLocal.
 runs:
   using: composite
   steps:
@@ -26,6 +26,6 @@ runs:
       shell: bash
       run: |
         mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64
-        cp stage/cpu/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
-        cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
+        cp stage/cpu/Linux-Android/aarch64/cpu/*.so llama-android/natives/cpu/arm64-v8a/
+        cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/*.so llama-android/natives/cpu/x86_64/
         gradle -p llama-android publishLlamaAndroidPublicationToMavenLocal

@@ -8,7 +8,6 @@
 //DEPS net.ladenthin:llama:5.2.0:cpu-linux-aarch64
 //DEPS net.ladenthin:llama:5.2.0:cpu-linux-s390x
 //DEPS net.ladenthin:llama:5.2.0:cpu-windows-x86-64
-//DEPS net.ladenthin:llama:5.2.0:cpu-windows-x86
 //DEPS net.ladenthin:llama:5.2.0:cpu-windows-aarch64
 //DEPS net.ladenthin:llama:5.2.0:metal-macos-aarch64
 

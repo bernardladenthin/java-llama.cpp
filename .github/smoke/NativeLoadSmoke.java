@@ -7,7 +7,7 @@ import net.ladenthin.llama.value.LlamaCppVersion;
 
 /**
  * Model-free load smoke for the PACKAGED native library, run by {@code .github/smoke-native-macos.sh}
- * via the JDK single-file source launcher ({@code java -cp <fatjar> NativeLoadSmoke.java}) — no
+ * via the JDK single-file source launcher ({@code java -cp '<smoke set>/*' NativeLoadSmoke.java}) — no
  * Maven, no test framework, no GGUF.
  *
  * <p>Touching {@link LlamaModel} runs its static initializer, which is

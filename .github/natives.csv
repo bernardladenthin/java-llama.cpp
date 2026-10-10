@@ -2,41 +2,44 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# The natives jars: the single list every packaging step reads (see CLAUDE.md, "Natives jars").
+# The natives jars: the single list every packaging step reads (see CLAUDE.md, "Modular natives").
 # One row per jar, net.ladenthin:llama:<classifier>, holding exactly one directory,
-# net/ladenthin/llama/<directory>/, whose name ends in the backend LlamaLoader tries.
+# net/ladenthin/llama/<directory>/, whose name ends in the backend LlamaLoader knows.
 #   classifier  <backend>-<os>-<arch>; the build job uploads its tree as artifact natives-<classifier>
 #   directory   <OS>/<ARCH>/<backend>, as llama/CMakeLists.txt writes it and OSInfo resolves it
-#   library     the file that must be in it
+#   library     the file that must be in it: the jllama library of a `library` row, the one ggml
+#               backend module of a `module` row
 #   platform    yes = a dependency of net.ladenthin:llama-platform (the CPU natives of a desktop)
+#   kind        library = holds libjllama (LlamaLoader.LIBRARY_BACKENDS: cpu, metal), with ggml's
+#                         shared libraries and CPU modules next to it in a JLLAMA_BACKEND_DL build;
+#               module  = holds one GPU backend module (LlamaLoader.MODULE_BACKENDS), extracted next
+#                         to the library of the same OS/ARCH -- a GPU jar is additive and needs the
+#                         `library` jar of its platform on the classpath
 # Adding a row: add the natives jar execution to llama/pom.xml (`check-natives.py pom` prints it),
 # a build job uploading natives-<classifier>, and, for a new backend, its name in CMakeLists.txt
-# and LlamaLoader.BACKEND_PRIORITY. .github/check-natives.py fails until all of them agree.
-classifier,directory,library,platform
-cpu-linux-x86-64,Linux/x86_64/cpu,libjllama.so,yes
-cpu-linux-aarch64,Linux/aarch64/cpu,libjllama.so,yes
-cpu-linux-s390x,Linux/s390x/cpu,libjllama.so,yes
-cpu-android-aarch64,Linux-Android/aarch64/cpu,libjllama.so,no
-cpu-android-x86-64,Linux-Android/x86_64/cpu,libjllama.so,no
-cpu-windows-x86-64,Windows/x86_64/cpu,jllama.dll,yes
-cpu-windows-x86,Windows/x86/cpu,jllama.dll,yes
-cpu-windows-aarch64,Windows/aarch64/cpu,jllama.dll,yes
-metal-macos-aarch64,Mac/aarch64/metal,libjllama.dylib,yes
-msvc-windows-x86-64,Windows/x86_64/msvc,jllama.dll,no
-msvc-windows-x86,Windows/x86/msvc,jllama.dll,no
-cuda13-linux-x86-64,Linux/x86_64/cuda13,libjllama.so,no
-cuda13-windows-x86-64,Windows/x86_64/cuda13,jllama.dll,no
-vulkan-linux-x86-64,Linux/x86_64/vulkan,libjllama.so,no
-vulkan-linux-aarch64,Linux/aarch64/vulkan,libjllama.so,no
-vulkan-windows-x86-64,Windows/x86_64/vulkan,jllama.dll,no
-vulkan-windows-aarch64,Windows/aarch64/vulkan,jllama.dll,no
-opencl-android-aarch64,Linux-Android/aarch64/opencl,libjllama.so,no
-opencl-windows-x86-64,Windows/x86_64/opencl,jllama.dll,no
-opencl-windows-aarch64,Windows/aarch64/opencl,jllama.dll,no
-rocm-linux-x86-64,Linux/x86_64/rocm,libjllama.so,no
-rocm-windows-x86-64,Windows/x86_64/rocm,jllama.dll,no
-sycl-fp16-linux-x86-64,Linux/x86_64/sycl-fp16,libjllama.so,no
-sycl-fp32-linux-x86-64,Linux/x86_64/sycl-fp32,libjllama.so,no
-sycl-windows-x86-64,Windows/x86_64/sycl,jllama.dll,no
-openvino-linux-x86-64,Linux/x86_64/openvino,libjllama.so,no
-openvino-windows-x86-64,Windows/x86_64/openvino,jllama.dll,no
+# and in LlamaLoader.LIBRARY_BACKENDS or MODULE_BACKENDS. .github/check-natives.py fails until all
+# of them agree.
+classifier,directory,library,platform,kind
+cpu-linux-x86-64,Linux/x86_64/cpu,libjllama.so,yes,library
+cpu-linux-aarch64,Linux/aarch64/cpu,libjllama.so,yes,library
+cpu-linux-s390x,Linux/s390x/cpu,libjllama.so,yes,library
+cpu-android-aarch64,Linux-Android/aarch64/cpu,libjllama.so,no,library
+cpu-android-x86-64,Linux-Android/x86_64/cpu,libjllama.so,no,library
+cpu-windows-x86-64,Windows/x86_64/cpu,jllama.dll,yes,library
+cpu-windows-aarch64,Windows/aarch64/cpu,jllama.dll,yes,library
+metal-macos-aarch64,Mac/aarch64/metal,libjllama.dylib,yes,library
+cuda13-linux-x86-64,Linux/x86_64/cuda13,libggml-cuda.so,no,module
+cuda13-windows-x86-64,Windows/x86_64/cuda13,ggml-cuda.dll,no,module
+rocm-linux-x86-64,Linux/x86_64/rocm,libggml-hip.so,no,module
+rocm-windows-x86-64,Windows/x86_64/rocm,ggml-hip.dll,no,module
+sycl-linux-x86-64,Linux/x86_64/sycl,libggml-sycl.so,no,module
+sycl-windows-x86-64,Windows/x86_64/sycl,ggml-sycl.dll,no,module
+vulkan-linux-aarch64,Linux/aarch64/vulkan,libggml-vulkan.so,no,module
+vulkan-linux-x86-64,Linux/x86_64/vulkan,libggml-vulkan.so,no,module
+vulkan-windows-aarch64,Windows/aarch64/vulkan,ggml-vulkan.dll,no,module
+vulkan-windows-x86-64,Windows/x86_64/vulkan,ggml-vulkan.dll,no,module
+opencl-android-aarch64,Linux-Android/aarch64/opencl,libggml-opencl.so,no,module
+opencl-windows-aarch64,Windows/aarch64/opencl,ggml-opencl.dll,no,module
+opencl-windows-x86-64,Windows/x86_64/opencl,ggml-opencl.dll,no,module
+openvino-linux-x86-64,Linux/x86_64/openvino,libggml-openvino.so,no,module
+openvino-windows-x86-64,Windows/x86_64/openvino,ggml-openvino.dll,no,module

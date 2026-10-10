@@ -8,8 +8,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Fat-jar entry point that dispatches to one of the two server modes based on a single selector
- * flag. With {@value #OPENAI_COMPAT_FLAG} present it runs {@link OpenAiCompatServer} (the
+ * The classes jar's {@code Main-Class}: dispatches to one of the two server modes based on a single
+ * selector flag (started from Maven Central with
+ * {@code jbang --deps net.ladenthin:llama:<v>:<natives classifier> net.ladenthin:llama:<v> …}, or with
+ * {@code java -cp} over the classes jar, the natives jars and the dependencies). With {@value #OPENAI_COMPAT_FLAG} present it runs {@link OpenAiCompatServer} (the
  * Java-transport, OpenAI-compatible JSON API); without it, {@link NativeServer} (the full native
  * llama.cpp server with embedded WebUI, the default).
  *
@@ -24,7 +26,7 @@ import java.util.List;
  * {@code -fa}) cannot be combined with {@value #OPENAI_COMPAT_FLAG}.</p>
  *
  * <p>Both underlying mains remain directly runnable by class name via {@code java -cp}; this
- * launcher is purely a convenience so a single {@code java -jar} covers both.</p>
+ * launcher is purely a convenience so a single {@code Main-Class} covers both.</p>
  */
 public final class ServerLauncher {
 

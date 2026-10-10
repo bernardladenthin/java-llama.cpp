@@ -4,12 +4,15 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# Smoke test for an all-backends server fat jar on a GPU-less runner, in two rounds.
+# Smoke test for a smoke set (.github/package-smoke-sets.sh: the classes jar, its dependencies, the
+# library jar of this platform and every GPU module jar of it) on a GPU-less runner, in two rounds.
 #
-# Round 1 (plain HTTP): `java -jar` must start the embedded server — with every GPU backend
-# failing its load cleanly and the loader falling back to the CPU backend — then answer GET
-# /health with 200 and a POST /v1/chat/completions with a valid choice. This exercises backend
-# probing, per-backend extraction, and the fallback chain end-to-end through a real fat-jar launch.
+# Round 1 (plain HTTP): `java -cp '<set>/*'` must start the embedded server -- the loader puts
+# every GPU module next to the library (the loader line names each one, checked against
+# natives.csv), ggml fails to open each module cleanly (no vendor runtime) and runs on the CPU --
+# then answer GET /health with 200 and a POST /v1/chat/completions with a valid choice. This
+# exercises the module merge, the extraction and the fallback end-to-end on the published jars,
+# which is what a consumer's classpath (llama-platform + GPU classifiers) looks like.
 #
 # Round 2 (HTTPS, both directions): the library links BoringSSL statically (llama/CMakeLists.txt,
 # "HTTPS"), so out of the release asset two things must work on every platform -- the embedded
@@ -21,29 +24,29 @@
 # directory of this run (LLAMA_CACHE), so round 2 also proves the HTTPS client path with a real
 # certificate chain, which no local check can.
 #
-# Usage: smoke-test-fatjar.sh <jar-dir> <jar-glob> <model-path> [port]
+# Usage: smoke-test-natives.sh <set-dir> <model-path> [port]
 # Server output is written to server-out.log / server-err.log (round 1) and server-tls-out.log /
 # server-tls-err.log (round 2) in the working dir (uploaded by the CI job on failure).
 set -euo pipefail
 
-JAR_DIR="${1:?usage: smoke-test-fatjar.sh <jar-dir> <jar-glob> <model-path> [port]}"
-JAR_GLOB="${2:?usage: smoke-test-fatjar.sh <jar-dir> <jar-glob> <model-path> [port]}"
-MODEL="${3:?usage: smoke-test-fatjar.sh <jar-dir> <jar-glob> <model-path> [port]}"
-PORT="${4:-18080}"
+SET_DIR="${1:?usage: smoke-test-natives.sh <set-dir> <model-path> [port]}"
+MODEL="${2:?usage: smoke-test-natives.sh <set-dir> <model-path> [port]}"
+PORT="${3:-18080}"
 TLS_PORT=$((PORT + 1))
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HTTPS_MODEL_NAME="stories260K.gguf"
+# shellcheck source=smoke-lib.sh
+. "$SCRIPT_DIR/smoke-lib.sh"
 
 fail() {
     echo "::error::$*" >&2
     exit 1
 }
 
-mapfile -t JARS < <(find "$JAR_DIR" -maxdepth 1 -name "$JAR_GLOB" | sort)
-[ "${#JARS[@]}" -eq 1 ] || fail "expected exactly 1 jar matching $JAR_GLOB in $JAR_DIR, got ${#JARS[@]}: ${JARS[*]:-none}"
-JAR="${JARS[0]}"
+CP="$(smoke_classpath "$SET_DIR")" || exit 1
 [ -f "$MODEL" ] || fail "model file missing: $MODEL"
-echo "smoke jar: $JAR"
+echo "smoke set: $SET_DIR ($(find "$SET_DIR" -maxdepth 1 -name 'llama-*.jar' -exec basename {} \; | sort | tr '\n' ' '))"
+echo "GPU module jars in the set: $(smoke_set_modules "$SET_DIR" | tr '\n' ' ')"
 
 HTTPS_MODEL_URL="$(grep -E "^${HTTPS_MODEL_NAME//./\\.}," "$SCRIPT_DIR/models.csv" | cut -d, -f2- || true)"
 [ -n "$HTTPS_MODEL_URL" ] || fail "$HTTPS_MODEL_NAME has no row in $SCRIPT_DIR/models.csv (round 2 downloads it over HTTPS)"
@@ -90,18 +93,17 @@ print("chat completion OK:", json.dumps(message)[:200])
 }
 
 # ---- Round 1: plain HTTP, the cached model -------------------------------------------------------
-java -jar "$JAR" -m "$MODEL" --host 127.0.0.1 --port "$PORT" --chat-template chatml \
+java -cp "$CP" "$SMOKE_MAIN" -m "$MODEL" --host 127.0.0.1 --port "$PORT" --chat-template chatml \
     > server-out.log 2> server-err.log &
 SERVER_PID=$!
 wait_healthy "http://127.0.0.1:$PORT" server-out.log server-err.log
 echo "health OK"
 chat_completion "http://127.0.0.1:$PORT"
 
-# The loader must have reported its backend decision (normally the CPU fallback on a
-# GPU-less runner; a GPU backend whose runtime happens to be installed may load and
-# find no device, which is benign) — this pins that the smoke ran the backend probing.
-grep -hE '\[jllama\] using native backend' server-out.log server-err.log \
-    || fail "no backend-selection log line found — the loader did not report a backend"
+# The loader must have put every GPU module of the set next to the library (ggml then fails to
+# open each one on this GPU-less runner, or finds no device, both benign) -- this pins that the
+# smoke ran the module merge over every module jar of the platform.
+smoke_assert_loader_line "$SET_DIR" server-out.log server-err.log || fail "loader line check failed"
 kill "$SERVER_PID" 2> /dev/null || true
 wait "$SERVER_PID" 2> /dev/null || true
 SERVER_PID=""
@@ -114,7 +116,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -keyout tls-key.pem -out tls-cert.pem 
 # (upstream decides on model.path / hf_repo / docker_repo before the URL is resolved).
 export LLAMA_CACHE="$PWD/llama-cache"
 rm -rf "$LLAMA_CACHE" && mkdir -p "$LLAMA_CACHE"
-java -jar "$JAR" -m "$LLAMA_CACHE/$HTTPS_MODEL_NAME" --model-url "$HTTPS_MODEL_URL" \
+java -cp "$CP" "$SMOKE_MAIN" -m "$LLAMA_CACHE/$HTTPS_MODEL_NAME" --model-url "$HTTPS_MODEL_URL" \
     --host 127.0.0.1 --port "$TLS_PORT" --chat-template chatml \
     --ssl-key-file tls-key.pem --ssl-cert-file tls-cert.pem \
     > server-tls-out.log 2> server-tls-err.log &

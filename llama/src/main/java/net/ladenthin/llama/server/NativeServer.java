@@ -282,7 +282,8 @@ public final class NativeServer implements AutoCloseable {
     }
 
     /**
-     * Fat-jar entry point (the assembly JAR's {@code Main-Class}): starts the full native llama.cpp
+     * Command-line entry point (what {@link ServerLauncher}, the classes jar's {@code Main-Class},
+     * runs by default): starts the full native llama.cpp
      * server — WebUI included — forwarding every argument to it verbatim, and blocks until the
      * server exits or the JVM is asked to shut down (Ctrl-C / SIGTERM), stopping the server cleanly
      * on the way out.

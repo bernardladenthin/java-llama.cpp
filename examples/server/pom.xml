@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+
+SPDX-License-Identifier: MIT
+-->
+<!--
+	The llama.cpp server from Maven Central, started with Maven: no checkout of this repository,
+	no fat jar to download. Copy this file anywhere and run (the arguments after exec.args go to the
+	embedded llama-server verbatim, so every llama-server flag works, the WebUI included):
+
+	  mvn exec:java -Dexec.args="-m model.gguf"                       CPU, every desktop platform
+	  mvn -P cuda13-linux-x86-64 exec:java -Dexec.args="-m model.gguf" plus one GPU backend
+
+	The CPU natives of every desktop platform come with net.ladenthin:llama-platform (a pom). A GPU
+	backend is one more natives jar of net.ladenthin:llama, holding only that backend's ggml module;
+	the profiles below (one per GPU natives jar, named after its classifier) add it, and the loader
+	puts the module next to the CPU library. Several GPU profiles can be combined; ggml uses the
+	devices whose runtime is installed and ignores the rest.
+
+	A local fat jar, for a machine without Maven (combine with a GPU profile as above):
+
+	  mvn -P assembly package
+	  java -jar target/llama-server-<version>-jar-with-dependencies.jar -m model.gguf
+
+	Nothing of that is a release asset: the project ships the natives jars on Maven Central and
+	nothing else (CLAUDE.md "Modular natives"). The version below is bumped with the README's
+	install snippet (check-natives.py holds the two together).
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<groupId>net.ladenthin.examples</groupId>
+	<artifactId>llama-server</artifactId>
+	<version>${llama.version}</version>
+	<packaging>jar</packaging>
+
+	<properties>
+		<llama.version>5.2.0</llama.version>
+		<llama.main>net.ladenthin.llama.server.ServerLauncher</llama.main>
+		<maven.compiler.release>8</maven.compiler.release>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+	</properties>
+
+	<dependencies>
+		<dependency>
+			<groupId>net.ladenthin</groupId>
+			<artifactId>llama-platform</artifactId>
+			<version>${llama.version}</version>
+			<type>pom</type>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>exec-maven-plugin</artifactId>
+				<version>3.6.2</version>
+				<configuration>
+					<mainClass>${llama.main}</mainClass>
+					<!-- a server never returns; let the embedded server own the JVM -->
+					<cleanupDaemonThreads>false</cleanupDaemonThreads>
+				</configuration>
+			</plugin>
+		</plugins>
+	</build>
+
+	<profiles>
+		<profile>
+			<id>assembly</id>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-assembly-plugin</artifactId>
+						<version>3.8.0</version>
+						<configuration>
+							<descriptorRefs>
+								<descriptorRef>jar-with-dependencies</descriptorRef>
+							</descriptorRefs>
+							<archive>
+								<manifest>
+									<mainClass>${llama.main}</mainClass>
+								</manifest>
+							</archive>
+						</configuration>
+						<executions>
+							<execution>
+								<id>fat-jar</id>
+								<phase>package</phase>
+								<goals>
+									<goal>single</goal>
+								</goals>
+							</execution>
+						</executions>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+		<profile>
+			<id>cuda13-linux-x86-64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>cuda13-linux-x86-64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>cuda13-windows-x86-64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>cuda13-windows-x86-64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>vulkan-linux-x86-64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>vulkan-linux-x86-64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>vulkan-linux-aarch64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>vulkan-linux-aarch64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>vulkan-windows-x86-64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>vulkan-windows-x86-64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>vulkan-windows-aarch64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>vulkan-windows-aarch64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>opencl-android-aarch64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>opencl-android-aarch64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>opencl-windows-x86-64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>opencl-windows-x86-64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>opencl-windows-aarch64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>opencl-windows-aarch64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>rocm-linux-x86-64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>rocm-linux-x86-64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>rocm-windows-x86-64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>rocm-windows-x86-64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>sycl-linux-x86-64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>sycl-linux-x86-64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>sycl-windows-x86-64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>sycl-windows-x86-64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>openvino-linux-x86-64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>openvino-linux-x86-64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+		<profile>
+			<id>openvino-windows-x86-64</id>
+			<dependencies>
+				<dependency>
+					<groupId>net.ladenthin</groupId>
+					<artifactId>llama</artifactId>
+					<version>${llama.version}</version>
+					<classifier>openvino-windows-x86-64</classifier>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+		</profile>
+	</profiles>
+</project>

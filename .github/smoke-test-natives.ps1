@@ -2,23 +2,39 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# Smoke test for an all-backends server fat jar on a GPU-less Windows runner —
-# the PowerShell analogue of smoke-test-fatjar.sh (see there for what the two rounds prove:
+# Smoke test for a smoke set (the classes jar, its dependencies, the CPU natives jar and every GPU
+# module jar of this platform, see .github/package-smoke-sets.sh) on a GPU-less Windows runner --
+# the PowerShell analogue of smoke-test-natives.sh (see there for what the two rounds prove:
 # round 1 plain HTTP with the cached model, round 2 an HTTPS server behind a self-signed
 # certificate serving a model it downloaded itself from an https:// URL).
 #
-# Usage: smoke-test-fatjar.ps1 -JarDir <dir> -JarGlob <glob> -Model <gguf> [-Port <p>]
+# Usage: smoke-test-natives.ps1 -SetDir <dir> -Model <gguf> [-Port <p>]
 # Server output is written to server-out.log / server-err.log (round 1) and server-tls-out.log /
 # server-tls-err.log (round 2) in the working dir (uploaded by the CI job on failure).
 param(
-    [Parameter(Mandatory = $true)][string]$JarDir,
-    [Parameter(Mandatory = $true)][string]$JarGlob,
+    [Parameter(Mandatory = $true)][string]$SetDir,
     [Parameter(Mandatory = $true)][string]$Model,
     [int]$Port = 18080
 )
 $ErrorActionPreference = 'Stop'
 $TlsPort = $Port + 1
 $HttpsModelName = 'stories260K.gguf'
+$Main = 'net.ladenthin.llama.server.ServerLauncher'
+
+# The GPU module backends whose jars are in the set, from natives.csv: the loader line must name each.
+function Get-SetModules([string]$Dir) {
+    $list = Join-Path $PSScriptRoot 'natives.csv'
+    $modules = @()
+    foreach ($line in Get-Content $list) {
+        if ($line -match '^#' -or $line -match '^classifier,' -or -not $line.Trim()) { continue }
+        $cols = $line.Split(',')
+        if ($cols[4] -ne 'module') { continue }
+        if (Get-ChildItem -Path $Dir -Filter "llama-*-$($cols[0]).jar" -File) {
+            $modules += ($cols[1] -split '/')[-1]
+        }
+    }
+    return $modules
+}
 
 function Dump-ServerLogs([string[]]$Logs) {
     foreach ($log in $Logs) {
@@ -61,13 +77,14 @@ function Test-ChatCompletion([string]$Base) {
     Write-Host "chat completion OK ($Base): $($response.choices[0].message.content)"
 }
 
-$jars = @(Get-ChildItem -Path $JarDir -Filter $JarGlob -File)
-if ($jars.Count -ne 1) {
-    Write-Error "expected exactly 1 jar matching $JarGlob in $JarDir, got $($jars.Count)"
-}
-$jar = $jars[0].FullName
+if (-not (Test-Path $SetDir)) { Write-Error "smoke set directory missing: $SetDir" }
+$SetDir = (Resolve-Path $SetDir).Path
+$jars = @(Get-ChildItem -Path $SetDir -Filter '*.jar' -File)
+if ($jars.Count -lt 1) { Write-Error "no jars in the smoke set $SetDir" }
+$cp = Join-Path $SetDir '*'
 if (-not (Test-Path $Model)) { Write-Error "model file missing: $Model" }
-Write-Host "smoke jar: $jar"
+$setModules = @(Get-SetModules $SetDir)
+Write-Host "smoke set: $SetDir ($($jars.Count) jars; GPU module jars: $($setModules -join ', '))"
 
 $modelsCsv = Join-Path $PSScriptRoot 'models.csv'
 $httpsModelUrl = (Get-Content $modelsCsv | Where-Object { $_ -like "$HttpsModelName,*" } | Select-Object -First 1)
@@ -77,7 +94,7 @@ $httpsModelUrl = $httpsModelUrl.Substring($HttpsModelName.Length + 1)
 # ---- Round 1: plain HTTP, the cached model -------------------------------------------------------
 $proc = Start-Process java -PassThru -NoNewWindow `
     -RedirectStandardOutput server-out.log -RedirectStandardError server-err.log `
-    -ArgumentList '-jar', $jar, '-m', $Model, '--host', '127.0.0.1', '--port', "$Port", '--chat-template', 'chatml'
+    -ArgumentList '-cp', "`"$cp`"", $Main, '-m', $Model, '--host', '127.0.0.1', '--port', "$Port", '--chat-template', 'chatml'
 try {
     Wait-Healthy $proc "http://127.0.0.1:$Port" @('server-out.log', 'server-err.log')
     Write-Host "health OK"
@@ -87,12 +104,18 @@ try {
     # machine, the CPU fallback on a GPU-less runner) — this pins that the smoke really
     # ran the multi-backend code path.
     $selection = Select-String -Path 'server-out.log', 'server-err.log' `
-        -Pattern '\[jllama\] using native backend'
+        -Pattern "\[jllama\] native backend '[^']*' loaded "
     if (-not $selection) {
         Dump-ServerLogs @('server-out.log', 'server-err.log')
-        Write-Error "no backend-selection log line found - the loader did not report a backend"
+        Write-Error "no loader line found - the loader did not report the backend"
     }
-    Write-Host "backend selection: $($selection[0].Line)"
+    $loaderLine = $selection[0].Line
+    Write-Host "loader: $loaderLine"
+    foreach ($module in $setModules) {
+        if ($loaderLine -notmatch "GPU module\(s\) ([a-z0-9-]+, )*$module(,|;|$)") {
+            Write-Error "the loader did not put the $module module in place: $loaderLine"
+        }
+    }
 } finally {
     if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
 }
@@ -111,7 +134,7 @@ New-Item -ItemType Directory -Path $env:LLAMA_CACHE | Out-Null
 # -m names where the download lands; with --model-url alone the server starts in ROUTER mode.
 $proc = Start-Process java -PassThru -NoNewWindow `
     -RedirectStandardOutput server-tls-out.log -RedirectStandardError server-tls-err.log `
-    -ArgumentList '-jar', $jar, '-m', (Join-Path $env:LLAMA_CACHE $HttpsModelName), '--model-url', $httpsModelUrl, `
+    -ArgumentList '-cp', "`"$cp`"", $Main, '-m', (Join-Path $env:LLAMA_CACHE $HttpsModelName), '--model-url', $httpsModelUrl, `
         '--host', '127.0.0.1', '--port', "$TlsPort", `
         '--chat-template', 'chatml', '--ssl-key-file', 'tls-key.pem', '--ssl-cert-file', 'tls-cert.pem'
 try {

@@ -24,9 +24,13 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.jar.JarFile;
 import java.util.stream.Stream;
@@ -40,8 +44,14 @@ import org.jspecify.annotations.Nullable;
  * {@code *.so} files, according to the current OS (Windows, Linux, macOS).
  *
  * <p>The library files are extracted from the natives jars on the classpath: one directory per
- * backend, {@code net/ladenthin/llama/<os>/<arch>/<backend>/}, tried in {@link #BACKEND_PRIORITY}
- * order unless {@code net.ladenthin.llama.backend} forces one.
+ * backend, {@code net/ladenthin/llama/<os>/<arch>/<backend>/}. The directory of a {@link
+ * #LIBRARY_BACKENDS library backend} ({@code cpu}, or {@code metal} on macOS) holds the {@code jllama}
+ * library, with ggml's shared libraries and CPU modules next to it in a modular build; the directory
+ * of a {@link #MODULE_BACKENDS module backend} (a GPU natives jar) holds one ggml backend module. All
+ * of them are extracted into one directory, the library is loaded, and its {@code JNI_OnLoad} has ggml
+ * load every module found there -- so adding a GPU natives jar to the classpath adds its backend, and
+ * nothing in the jars overlaps. {@code net.ladenthin.llama.backend} narrows the modules (see {@link
+ * #selectModules}).
  *
  * <p>Historically the loader also honoured a {@code net.ladenthin.llama.lib.name}
  * property that overrode the resolved library filename. Upstream removed the
@@ -90,25 +100,24 @@ public class LlamaLoader {
     static final String NATIVE_RESOURCE_BASE = "net/ladenthin/llama";
 
     /**
-     * The backend directories tried, in this order, when no backend is forced: accelerators
-     * first, then the CPU builds. The first one present on the classpath whose library loads
-     * wins; a missing vendor runtime fails its load cleanly and the next one is tried. Every
-     * build carries the CPU backend, so a GPU library that loads still runs a model on the CPU
-     * with {@code -ngl 0}. {@code msvc} precedes {@code cpu} because nobody adds the MSVC
-     * natives jar except to use it.
+     * The backend directories that hold the {@code jllama} library itself: {@code metal} (the macOS
+     * build, with Metal compiled in) and {@code cpu} (every other platform), tried in this order. A
+     * classpath has one of them per platform, and everything -- the library, its sibling files and
+     * every GPU module -- is extracted into that backend's directory.
      */
-    static final List<String> BACKEND_PRIORITY = Collections.unmodifiableList(Arrays.asList(
-            "cuda13",
-            "rocm",
-            "sycl-fp16",
-            "sycl-fp32",
-            "sycl",
-            "vulkan",
-            "opencl",
-            "openvino",
-            "metal",
-            "msvc",
-            "cpu"));
+    static final Set<String> LIBRARY_BACKENDS =
+            Collections.unmodifiableSet(new LinkedHashSet<>(Arrays.asList("metal", "cpu")));
+
+    /**
+     * The backend directories that hold a ggml backend module ({@code libggml-cuda.so}, {@code
+     * ggml-vulkan.dll}, ...) and nothing the JVM loads itself: a GPU natives jar. Every one present on
+     * the classpath is extracted next to the library, where ggml loads it at {@code JNI_OnLoad} in
+     * its own fixed order (CUDA, HIP, SYCL, Vulkan, OpenCL, OpenVINO); a module whose vendor runtime
+     * is missing loads nothing and registers no device, and llama.cpp counts a GPU that two backends
+     * reach only once. The order here is the one of {@code natives.csv} and decides nothing.
+     */
+    static final Set<String> MODULE_BACKENDS = Collections.unmodifiableSet(
+            new LinkedHashSet<>(Arrays.asList("cuda13", "rocm", "sycl", "vulkan", "opencl", "openvino")));
 
     /**
      * Optional file in a backend directory naming sibling files (one per line, {@code #}
@@ -122,11 +131,22 @@ public class LlamaLoader {
      * Optional file in a backend directory naming sibling files (same format as {@link
      * #BACKEND_EXTRAS_FILE}) that are only extracted next to the library, never loaded by Java:
      * the shared ggml libraries the library finds through its {@code $ORIGIN} run path, and the
-     * backend modules it loads itself from its own directory (one CPU module per instruction-set
-     * level in a {@code JLLAMA_CPU_VARIANTS} build, of which ggml picks the best for the running
-     * CPU). Loading them from Java would defeat exactly that choice.
+     * backend modules it loads itself from its own directory: one CPU module per instruction-set
+     * level in a {@code JLLAMA_BACKEND_DL} build, of which ggml picks the best for the running CPU,
+     * and the GPU module of every module backend on the classpath. Loading them from Java would defeat
+     * exactly that choice. A module backend's directory has this file and no library.
      */
     static final String BACKEND_FILES_FILE = "jllama-files.txt";
+
+    /**
+     * File every natives directory carries, written by the build ({@code llama/CMakeLists.txt}):
+     * {@code key=value} lines naming the build it came from. A module is extracted next to a library
+     * of the same {@link #BUILD_KEY_LLAMA_CPP llama.cpp tag} only (see {@link #requireSameBuild}).
+     */
+    static final String BACKEND_BUILD_FILE = "jllama-build.txt";
+
+    /** The key of {@link #BACKEND_BUILD_FILE} naming the llama.cpp tag the directory was built from. */
+    static final String BUILD_KEY_LLAMA_CPP = "llama.cpp";
 
     /**
      * Prefix of the per-backend extraction subdirectory below the temp dir,
@@ -164,9 +184,9 @@ public class LlamaLoader {
      * {@code JNI_OnLoad} calls {@code GetFieldID} on {@code LlamaModel}, which initializes that class,
      * whose static block calls {@code initialize()}. The lock is reentrant, so without this guard the
      * nested call ran a second, complete load while the first was still inside {@code System.load}:
-     * it deleted the extracted files and, with a multi-backend jar, probed every backend again and
-     * extracted over the library being loaded. Any class but {@code LlamaModel} as the first entry
-     * point reached it -- {@code RpcServer} hung its fat-jar start that way. Calls from other threads,
+     * it deleted the extracted files and, with GPU module jars on the classpath, extracted every one
+     * of them again over the library being loaded. Any class but {@code LlamaModel} as the first entry
+     * point reached it -- {@code RpcServer} hung its start in the RPC smoke that way. Calls from other threads,
      * and later calls from this one, still run the body; only the nested one returns at once.
      *
      * @param body what to run
@@ -252,28 +272,111 @@ public class LlamaLoader {
     }
 
     /**
-     * The extraction directory names of every backend on this classpath (the forced one included,
-     * should it lie outside {@link #BACKEND_PRIORITY}), computed before anything is extracted so the
+     * The extraction directory names this classpath uses -- one per library backend present, keyed by
+     * the library and the modules selected with it -- computed before anything is extracted so the
      * cleanup can spare them.
      *
      * @return the directory names below {@link #getTempDir()}
      */
     static Set<String> extractionDirectoriesOfThisClasspath() {
         Set<String> names = new HashSet<>();
-        String nativeLibName = System.mapLibraryName("jllama");
         String nativeResourcePath = getNativeResourcePath();
-        List<String> candidates = new ArrayList<>(BACKEND_PRIORITY);
-        String forced = systemProperties.getBackend();
-        if (forced != null && !candidates.contains(forced)) {
-            candidates.add(forced);
-        }
-        for (String backend : candidates) {
-            URL library = resource(nativeResourcePath + "/" + backend + "/" + nativeLibName);
+        List<String> modules = selectModules(presentModules(nativeResourcePath), systemProperties.getBackend());
+        for (String backend : LIBRARY_BACKENDS) {
+            URL library = resource(nativeResourcePath + "/" + backend + "/" + System.mapLibraryName("jllama"));
             if (library != null) {
-                names.add(extractionDirectoryName(backend, library));
+                names.add(extractionDirectoryName(backend, library, moduleResources(nativeResourcePath, modules)));
             }
         }
         return names;
+    }
+
+    /**
+     * The module backends on this classpath: every {@link #MODULE_BACKENDS} directory below {@code
+     * nativeResourcePath} that has a {@link #BACKEND_FILES_FILE}.
+     *
+     * @param nativeResourcePath the platform's resource directory ({@link #getNativeResourcePath()})
+     * @return the backend names, in {@link #MODULE_BACKENDS} order
+     */
+    static List<String> presentModules(String nativeResourcePath) {
+        List<String> present = new ArrayList<>();
+        for (String backend : MODULE_BACKENDS) {
+            if (resource(nativeResourcePath + "/" + backend + "/" + BACKEND_FILES_FILE) != null) {
+                present.add(backend);
+            }
+        }
+        return present;
+    }
+
+    /**
+     * Which of the module backends present on the classpath are extracted next to the library: every
+     * one, unless the {@code net.ladenthin.llama.backend} property names some. The property is a
+     * comma-separated list of backend names. A module name selects that module, and only the named
+     * ones are extracted; a library name ({@code cpu}, {@code metal}) stands for no module at all, so
+     * {@code cpu} runs a model on the CPU with every GPU jar still on the classpath. Naming a backend
+     * that is not on the classpath, or no backend at all, fails loud -- the property exists to pin a
+     * configuration, and a pin that cannot hold is an error, not a fallback. (On Android, where the
+     * modules are loaded from the APK by name, the property has no effect.)
+     *
+     * @param present  the module backends on the classpath ({@link #presentModules})
+     * @param property the property value, or {@code null} when unset
+     * @return the module backends to extract, in {@link #MODULE_BACKENDS} order
+     * @throws UnsatisfiedLinkError when the property names an unknown or absent backend
+     */
+    static List<String> selectModules(List<String> present, @Nullable String property) {
+        if (property == null || property.trim().isEmpty()) {
+            return present;
+        }
+        List<String> selected = new ArrayList<>();
+        // String.split's "trailing empties dropped" quirk is benign here: empty entries are skipped.
+        @SuppressWarnings("StringSplitter")
+        final String[] names = property.split(",");
+        for (String raw : names) {
+            String name = raw.trim();
+            if (name.isEmpty()) {
+                continue;
+            }
+            if (LIBRARY_BACKENDS.contains(name)) {
+                continue; // the library is always loaded; naming it only says "no module"
+            }
+            if (!MODULE_BACKENDS.contains(name)) {
+                throw new UnsatisfiedLinkError(String.format(
+                        "%s.backend names '%s', which is no backend: the library backends are %s, the GPU module"
+                                + " backends %s",
+                        LlamaSystemProperties.PREFIX, name, LIBRARY_BACKENDS, MODULE_BACKENDS));
+            }
+            if (!present.contains(name)) {
+                throw new UnsatisfiedLinkError(String.format(
+                        "%s.backend names '%s', but no natives jar with that backend is on the classpath for"
+                                + " os.name=%s, os.arch=%s (present: %s) -- add net.ladenthin:llama:<version>:%s-<os>-<arch>",
+                        LlamaSystemProperties.PREFIX, name, OSInfo.getOSName(), OSInfo.getArchName(), present, name));
+            }
+            if (!selected.contains(name)) {
+                selected.add(name);
+            }
+        }
+        List<String> ordered = new ArrayList<>();
+        for (String backend : MODULE_BACKENDS) {
+            if (selected.contains(backend)) {
+                ordered.add(backend);
+            }
+        }
+        return ordered;
+    }
+
+    /**
+     * The list-file resources of the given modules, in order -- what keys the extraction directory
+     * together with the library (see {@link #extractionDirectoryName(String, URL, Collection)}).
+     */
+    private static List<URL> moduleResources(String nativeResourcePath, Iterable<String> modules) {
+        List<URL> resources = new ArrayList<>();
+        for (String module : modules) {
+            URL list = resource(nativeResourcePath + "/" + module + "/" + BACKEND_FILES_FILE);
+            if (list != null) {
+                resources.add(list);
+            }
+        }
+        return resources;
     }
 
     static boolean shouldCleanPath(Path path) {
@@ -349,40 +452,37 @@ public class LlamaLoader {
             }
         }
 
-        // The natives jars: one directory per backend below <os>/<arch>/. A forced backend is
-        // the only candidate and fails loud; otherwise every backend present on the classpath
-        // is tried in priority order.
-        String forced = systemProperties.getBackend();
-        List<String> candidates = forced != null ? Collections.singletonList(forced) : BACKEND_PRIORITY;
+        // The natives jars: one directory per backend below <os>/<arch>/. The library comes from
+        // the one library backend present; every selected module backend is extracted next to it.
         String nativeResourcePath = getNativeResourcePath();
-        Set<String> residentExtraFiles = new HashSet<>();
-        for (String backend : candidates) {
-            String backendResourcePath = nativeResourcePath + "/" + backend;
-            if (resource(backendResourcePath + "/" + nativeLibName) == null) {
-                continue;
+        String library = null;
+        for (String backend : LIBRARY_BACKENDS) {
+            if (resource(nativeResourcePath + "/" + backend + "/" + nativeLibName) != null) {
+                library = backend;
+                break;
             }
-            if (tryLoadBackend(backendResourcePath, backend, residentExtraFiles)) {
-                System.err.println("[jllama] using native backend '" + backend + "'");
-                return;
-            }
-            triedPaths.add(backendResourcePath);
+            triedPaths.add(nativeResourcePath + "/" + backend);
         }
-        if (forced != null) {
+        if (library == null) {
             throw new UnsatisfiedLinkError(String.format(
-                    "Forced native backend '%s' (%s.backend) could not be loaded for os.name=%s, os.arch=%s,"
-                            + " paths=[%s]",
-                    forced,
-                    LlamaSystemProperties.PREFIX,
+                    "No native library found for os.name=%s, os.arch=%s, paths=[%s] -- add the natives jar of"
+                            + " this platform (classifier cpu-<os>-<arch>, or metal-macos-aarch64; the pom"
+                            + " net.ladenthin:llama-platform names them all) to the classpath, or on the module path"
+                            + " together with --add-modules. A GPU natives jar alone is not enough: it holds only its"
+                            + " backend module.",
+                    OSInfo.getOSName(), OSInfo.getArchName(), String.join(File.pathSeparator, triedPaths)));
+        }
+        List<String> modules = selectModules(presentModules(nativeResourcePath), systemProperties.getBackend());
+        if (!loadFromNativesJars(nativeResourcePath, library, modules)) {
+            throw new UnsatisfiedLinkError(String.format(
+                    "The native library of backend '%s' could not be loaded for os.name=%s, os.arch=%s"
+                            + " (GPU modules: %s) -- see the messages above; paths=[%s]",
+                    library,
                     OSInfo.getOSName(),
                     OSInfo.getArchName(),
+                    modules.isEmpty() ? "none" : String.join(", ", modules),
                     String.join(File.pathSeparator, triedPaths)));
         }
-
-        throw new UnsatisfiedLinkError(String.format(
-                "No native library found for os.name=%s, os.arch=%s, paths=[%s] -- add a natives jar for"
-                        + " this platform (e.g. classifier cpu-<os>-<arch>) to the classpath, or on the module path together"
-                        + " with --add-modules",
-                OSInfo.getOSName(), OSInfo.getArchName(), String.join(File.pathSeparator, triedPaths)));
     }
 
     /**
@@ -542,40 +642,73 @@ public class LlamaLoader {
     }
 
     /**
-     * Attempts to extract and load one backend from its resource directory into a per-backend
-     * temp subdirectory (backends share file names, so they must not overwrite each other's
-     * extractions).
-     *
-     * @param backendResourcePath the backend's classpath directory
-     * @param backend             the backend directory name
-     * @param residentExtraFiles  file names of extra modules already loaded by earlier failed
-     *                            attempts; updated with this attempt's loaded extras. A native
-     *                            module cannot be unloaded, and imports bind by module name, so a
-     *                            backend declaring an extra file that is already resident from
-     *                            another backend must be skipped to avoid cross-wiring.
-     * @return whether the backend's main library was successfully loaded
+     * The three list files of one natives directory: what the JVM loads before the library ({@link
+     * #BACKEND_EXTRAS_FILE}), what is only put next to it ({@link #BACKEND_FILES_FILE}) and the build it
+     * came from ({@link #BACKEND_BUILD_FILE}).
      */
-    private static boolean tryLoadBackend(String backendResourcePath, String backend, Set<String> residentExtraFiles) {
-        List<String> extraFiles;
-        List<String> plainFiles;
-        try {
-            extraFiles = readFileList(backendResourcePath, BACKEND_EXTRAS_FILE);
-            plainFiles = readFileList(backendResourcePath, BACKEND_FILES_FILE);
-        } catch (IOException e) {
-            System.err.println("Failed to read a file list of " + backendResourcePath + ": " + e.getMessage());
-            return false;
+    private static final class NativesDirectory {
+        final String backend;
+        final String resourcePath;
+        final List<String> extraFiles;
+        final List<String> plainFiles;
+        final Map<String, String> build;
+
+        NativesDirectory(String backend, String resourcePath) throws IOException {
+            this.backend = backend;
+            this.resourcePath = resourcePath;
+            this.extraFiles = readFileList(resourcePath, BACKEND_EXTRAS_FILE);
+            this.plainFiles = readFileList(resourcePath, BACKEND_FILES_FILE);
+            this.build = readBuild(resourcePath);
         }
-        for (String extraFile : extraFiles) {
-            if (residentExtraFiles.contains(extraFile)) {
-                System.err.println("[jllama] skipping backend '" + backend + "': module '" + extraFile
-                        + "' is already resident from a previously failed backend attempt");
-                return false;
-            }
-        }
+    }
+
+    /**
+     * Extracts the library backend and the selected modules into one directory and loads the library.
+     *
+     * <p>Order: the library's extras are loaded first (on Windows {@code ggml-base.dll} and {@code
+     * ggml.dll}, which must be resident before anything that imports them), then the modules' extras
+     * (a vendor loader a module ships next to itself), then every plain file -- ggml's CPU modules and
+     * the GPU modules -- is put in place without being loaded, and last the library, whose {@code
+     * JNI_OnLoad} has ggml load the modules from that directory. Before a byte is written, every module
+     * must come from the library's build ({@link #requireSameBuild}) and no two directories may ship a
+     * file of the same name.
+     *
+     * @param nativeResourcePath the platform's resource directory
+     * @param library            the library backend ({@link #LIBRARY_BACKENDS})
+     * @param modules            the module backends to extract next to it ({@link #selectModules})
+     * @return whether the library was loaded
+     */
+    private static boolean loadFromNativesJars(String nativeResourcePath, String library, List<String> modules) {
         String libraryFileName = System.mapLibraryName("jllama");
+        NativesDirectory libraryDir;
+        List<NativesDirectory> moduleDirs = new ArrayList<>();
+        try {
+            libraryDir = new NativesDirectory(library, nativeResourcePath + "/" + library);
+            for (String module : modules) {
+                moduleDirs.add(new NativesDirectory(module, nativeResourcePath + "/" + module));
+            }
+        } catch (IOException e) {
+            // A list file that is on the classpath but cannot be read is a broken natives jar, not a
+            // backend to skip: trying the next library backend would hide it.
+            UnsatisfiedLinkError error =
+                    new UnsatisfiedLinkError("Failed to read a file list of a natives directory of backend '" + library
+                            + "': " + e.getMessage());
+            error.initCause(e);
+            throw error;
+        }
+        Map<String, String> claimed = new LinkedHashMap<>();
+        claimed.put(libraryFileName, library);
+        claimDistinct(claimed, libraryDir);
+        for (NativesDirectory moduleDir : moduleDirs) {
+            requireSameBuild(libraryDir.backend, libraryDir.build, moduleDir.backend, moduleDir.build);
+            claimDistinct(claimed, moduleDir);
+        }
         Path targetDirPath = getTempDir()
                 .toPath()
-                .resolve(extractionDirectoryName(backend, resource(backendResourcePath + "/" + libraryFileName)));
+                .resolve(extractionDirectoryName(
+                        library,
+                        resource(libraryDir.resourcePath + "/" + libraryFileName),
+                        moduleResources(nativeResourcePath, modules)));
         try {
             Files.createDirectories(targetDirPath);
             // Mark the directory as in use before the first file is touched: cleanup() of a JVM
@@ -583,38 +716,141 @@ public class LlamaLoader {
             // that reuses an old directory is not swept from under it while it compares and loads.
             Files.setLastModifiedTime(targetDirPath, FileTime.from(Instant.now()));
         } catch (IOException e) {
-            System.err.println("Failed to create backend temp directory " + targetDirPath + ": " + e.getMessage());
-            return false;
+            // The natives jars are the last place the loader looks, so there is nothing to fall back
+            // to: say which directory could not be created (net.ladenthin.llama.tmpdir moves it).
+            UnsatisfiedLinkError error = new UnsatisfiedLinkError(
+                    "Failed to create the natives extraction directory " + targetDirPath + ": " + e.getMessage());
+            error.initCause(e);
+            throw error;
         }
-        // Not registered for deleteOnExit, on purpose: the directory is keyed by the build and is
-        // reused by the next start of the same build (and by other JVMs of it running now); a stale
-        // one is removed by a later start's cleanup() instead.
+        // Not registered for deleteOnExit, on purpose: the directory is keyed by the build (and the
+        // modules chosen with it) and is reused by the next start of the same configuration, and by
+        // other JVMs of it running now; a stale one is removed by a later start's cleanup() instead.
         String targetFolder = targetDirPath.toAbsolutePath().toString();
-        for (String extraFile : extraFiles) {
-            Path extraPath = extractFile(backendResourcePath, extraFile, targetFolder);
-            if (extraPath == null || !loadNativeLibrary(extraPath)) {
-                return false;
+        List<NativesDirectory> all = new ArrayList<>();
+        all.add(libraryDir);
+        all.addAll(moduleDirs);
+        for (NativesDirectory dir : all) {
+            for (String extraFile : dir.extraFiles) {
+                Path extraPath = extractFile(dir.resourcePath, extraFile, targetFolder);
+                if (extraPath == null || !loadNativeLibrary(extraPath)) {
+                    return false;
+                }
             }
-            residentExtraFiles.add(extraFile);
         }
-        for (String plainFile : plainFiles) {
-            if (extractFile(backendResourcePath, plainFile, targetFolder) == null) {
-                return false;
+        int placed = 0;
+        for (NativesDirectory dir : all) {
+            for (String plainFile : dir.plainFiles) {
+                if (extractFile(dir.resourcePath, plainFile, targetFolder) == null) {
+                    return false;
+                }
+                placed++;
             }
-        }
-        if (!plainFiles.isEmpty()) {
-            // The modules are extracted, never loaded from here (ggml picks one at JNI_OnLoad), and a
-            // module ggml cannot load fails silently -- so at least say what is there (extractFile
-            // reports each file it had to write; the others were reused from an earlier start).
-            System.err.println("[jllama] backend '" + backend + "': " + plainFiles.size()
-                    + " file(s) in place next to the library for ggml to load from " + targetFolder);
         }
         // Only a Metal build that does not embed its shader source ships ggml-metal.metal
         // (every CI build embeds it); ggml looks for it next to the library.
-        if (resource(backendResourcePath + "/" + METAL_SOURCE_FILE) != null) {
-            extractFile(backendResourcePath, METAL_SOURCE_FILE, targetFolder);
+        if (resource(libraryDir.resourcePath + "/" + METAL_SOURCE_FILE) != null) {
+            extractFile(libraryDir.resourcePath, METAL_SOURCE_FILE, targetFolder);
         }
-        return extractAndLoadLibraryFile(backendResourcePath, libraryFileName, targetFolder);
+        if (!extractAndLoadLibraryFile(libraryDir.resourcePath, libraryFileName, targetFolder)) {
+            return false;
+        }
+        // The modules are extracted, never loaded from here (ggml loads them at JNI_OnLoad), and a
+        // module ggml cannot load fails silently -- so at least say what is there (extractFile reports
+        // each file it had to write; the others were reused from an earlier start). The native side
+        // logs the backends and devices ggml ended up with.
+        System.err.println("[jllama] native backend '" + library + "' loaded from " + targetFolder + " with "
+                + (modules.isEmpty() ? "no GPU module" : "GPU module(s) " + String.join(", ", modules))
+                + (placed == 0 ? "" : "; " + placed + " file(s) in place for ggml to load"));
+        return true;
+    }
+
+    /**
+     * Records the files {@code dir} ships under their owner, refusing a name another directory claimed:
+     * all of them land in one extraction directory, so two jars shipping {@code libggml-sycl.so} would
+     * overwrite each other.
+     */
+    private static void claimDistinct(Map<String, String> claimed, NativesDirectory dir) {
+        List<String> files = new ArrayList<>(dir.extraFiles);
+        files.addAll(dir.plainFiles);
+        for (String file : files) {
+            String owner = claimed.put(file, dir.backend);
+            if (owner != null && !owner.equals(dir.backend)) {
+                throw new UnsatisfiedLinkError(String.format(
+                        "The natives jars of the backends '%s' and '%s' both ship a file named '%s'; they cannot"
+                                + " share one classpath",
+                        owner, dir.backend, file));
+            }
+        }
+    }
+
+    /**
+     * Refuses to put a module next to a library of another build. The ggml ABI between {@code
+     * libggml-base} and a backend module is that of one llama.cpp commit, so the two must record the
+     * same {@link #BUILD_KEY_LLAMA_CPP} tag in their {@link #BACKEND_BUILD_FILE}; a module without the
+     * file is refused too. Maven makes this hold by itself when every natives jar is taken at one
+     * version of {@code net.ladenthin:llama}; this is the backstop for a classpath assembled by hand.
+     *
+     * @param library      the library backend
+     * @param libraryBuild its build file, parsed
+     * @param module       the module backend
+     * @param moduleBuild  its build file, parsed
+     * @throws UnsatisfiedLinkError when the tags differ or one is missing
+     */
+    static void requireSameBuild(
+            String library, Map<String, String> libraryBuild, String module, Map<String, String> moduleBuild) {
+        String want = libraryBuild.get(BUILD_KEY_LLAMA_CPP);
+        String have = moduleBuild.get(BUILD_KEY_LLAMA_CPP);
+        if (want != null && want.equals(have)) {
+            return;
+        }
+        throw new UnsatisfiedLinkError(String.format(
+                "The natives jar of the GPU backend '%s' was built from llama.cpp %s, the library of backend '%s'"
+                        + " from llama.cpp %s: a backend module runs only next to the library of the same build --"
+                        + " use one version of net.ladenthin:llama for every natives jar on the classpath",
+                module, describeBuild(have), library, describeBuild(want)));
+    }
+
+    private static String describeBuild(@Nullable String tag) {
+        return tag == null ? "an unknown build (no " + BACKEND_BUILD_FILE + ")" : tag;
+    }
+
+    /**
+     * Parses a {@link #BACKEND_BUILD_FILE}: {@code key=value} lines; blank lines, {@code #} comments
+     * and lines without {@code =} are skipped.
+     *
+     * @param reader the file content
+     * @return the keys and values, in file order
+     * @throws IOException when reading fails
+     */
+    static Map<String, String> parseBuild(BufferedReader reader) throws IOException {
+        Map<String, String> build = new LinkedHashMap<>();
+        for (String line : parseExtras(reader)) {
+            int separator = line.indexOf('=');
+            if (separator > 0) {
+                build.put(
+                        line.substring(0, separator).trim(),
+                        line.substring(separator + 1).trim());
+            }
+        }
+        return build;
+    }
+
+    /**
+     * Reads the {@link #BACKEND_BUILD_FILE} of a natives directory, if it has one.
+     *
+     * @param backendResourcePath the backend's classpath directory
+     * @return the parsed file, empty when the directory has none
+     * @throws IOException when the file exists but cannot be read
+     */
+    private static Map<String, String> readBuild(String backendResourcePath) throws IOException {
+        InputStream stream = resourceAsStream(backendResourcePath + "/" + BACKEND_BUILD_FILE);
+        if (stream == null) {
+            return Collections.emptyMap();
+        }
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+            return parseBuild(reader);
+        }
     }
 
     /**
@@ -638,6 +874,33 @@ public class LlamaLoader {
      */
     static String extractionDirectoryName(String backend, @Nullable URL library) {
         return BACKEND_TEMP_DIR_PREFIX + backend + "-" + extractionKey(library);
+    }
+
+    /**
+     * The extraction directory of a library backend together with the modules put next to it:
+     * {@link #extractionDirectoryName(String, URL)} plus {@code -m<hash>} over the modules' own keys.
+     * Keyed by the combination, so a start without a GPU jar that an earlier start had never finds that
+     * start's module still lying there -- ggml loads every module in the directory, and a file a running
+     * JVM has loaded cannot be removed on Windows. Each combination is extracted once and reused.
+     *
+     * @param backend the library backend
+     * @param library the library resource, or {@code null} when absent
+     * @param modules the list-file resources of the modules, in order (empty for none)
+     * @return the directory name below {@link #getTempDir()}
+     */
+    static String extractionDirectoryName(String backend, @Nullable URL library, Collection<URL> modules) {
+        if (modules.isEmpty()) {
+            return extractionDirectoryName(backend, library);
+        }
+        StringBuilder keys = new StringBuilder();
+        for (URL module : modules) {
+            keys.append(module.toExternalForm())
+                    .append('=')
+                    .append(extractionKey(module))
+                    .append(';');
+        }
+        return extractionDirectoryName(backend, library) + "-m"
+                + Integer.toHexString(keys.toString().hashCode());
     }
 
     /**

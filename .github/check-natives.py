@@ -10,7 +10,8 @@ See buildcheck/natives.py for what is checked.
 Usage:
   check-natives.py                  check, exit 1 on any disagreement
   check-natives.py pom              print the natives jar executions for llama/pom.xml
-  check-natives.py fatjar-targets   print the all-backends fat-jar targets, one per line
+  check-natives.py smoke-targets    print the smoke targets (<os>-<arch>), one per line
+  check-natives.py smoke-set <t>    print the natives jar classifiers of smoke target <t>, one per line
 """
 
 import os
@@ -27,8 +28,14 @@ def main(argv):
     if argv[1:] == ["pom"]:
         print("\n".join(natives.pom_execution(r) for r in rows))
         return 0
-    if argv[1:] == ["fatjar-targets"]:
-        print("\n".join(natives.fatjar_targets(rows)))
+    if argv[1:] == ["smoke-targets"]:
+        print("\n".join(natives.smoke_targets(rows)))
+        return 0
+    if len(argv) == 3 and argv[1] == "smoke-set":
+        if argv[2] not in natives.smoke_targets(rows):
+            print(f"{argv[2]} is not a smoke target: {natives.smoke_targets(rows)}", file=sys.stderr)
+            return 2
+        print("\n".join(r["classifier"] for r in natives.smoke_set(rows, argv[2])))
         return 0
     if argv[1:]:
         print(__doc__, file=sys.stderr)
@@ -37,8 +44,8 @@ def main(argv):
                                                   natives.read(ROOT, ".github/workflows/publish.yml"))
     for f in failures:
         print(f"::error::{f}", file=sys.stderr)
-    print(f"{len(rows)} natives jars, {len(natives.fatjar_targets(rows))} all-backends fat jars, "
-          f"{len(failures)} disagreements")
+    print(f"{len(rows)} natives jars ({len(natives.libraries(rows))} library, {len(natives.modules(rows))} module), "
+          f"{len(natives.smoke_targets(rows))} smoke targets, {len(failures)} disagreements")
     return 1 if failures else 0
 
 

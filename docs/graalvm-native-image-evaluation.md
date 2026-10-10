@@ -22,7 +22,7 @@ A single executable per OS/arch that starts in tens of milliseconds, with no JVM
 shapes a JVM start hurts: a command-line tool, a serverless function, a short-lived subprocess, a
 desktop launcher. The `NativeServer` and `OpenAiCompatServer` entry points are long-running and gain
 little; `llama-atmosphere-agent` (Java 21) is the most plausible first target, since it is an
-application and already ships as a fat jar.
+application with one entry point.
 
 ## What jllama needs from Native Image, measured against the source
 
@@ -87,6 +87,6 @@ local agent (`docs/local-test-plan.md`), not for CI.
 Do nothing until either a consumer asks for an executable or the measurement above shows JVM
 start-up dominating a use that matters. When it does: start with (b) (natives as sidecar files
 through `net.ladenthin.llama.lib.path`, no loader change), the `NativeServer` main as the entry
-point (the fat-jar default, the smallest reflective surface), the tracing agent for the metadata,
+point (`ServerLauncher`'s default, the smallest reflective surface), the tracing agent for the metadata,
 and the CI image-build-plus-smoke job from day one. Record the measurement in
 `docs/local-test-results-<cpu>.md` like every other local result.
