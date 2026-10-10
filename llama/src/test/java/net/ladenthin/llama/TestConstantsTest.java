@@ -86,13 +86,18 @@ public class TestConstantsTest {
      * that no constant names is downloaded for nothing, and a constant naming a model the list lacks
      * makes its test self-skip in CI -- green, and silently. Both directions are asserted, which is
      * also why CI passes no {@code -Dnet.ladenthin.llama.*} model property: the defaults are the CI set.
+     *
+     * <p>Only the {@code DEFAULT_*} constants count: every shipped model path has a {@code -D} override
+     * now, so the resolved constants ({@code MODEL_PATH}, ...) may name whatever a developer passed.
      */
     @Test
     public void theModelDefaultsAreExactlyTheCiModelSet() throws Exception {
         java.util.Set<String> defaults = new java.util.TreeSet<>();
         for (java.lang.reflect.Field field : TestConstants.class.getFields()) {
             Object value = field.get(null);
-            if (value instanceof String && ((String) value).endsWith(".gguf")) {
+            if (field.getName().startsWith("DEFAULT_")
+                    && value instanceof String
+                    && ((String) value).endsWith(".gguf")) {
                 defaults.add(Paths.get((String) value).getFileName().toString());
             }
         }
@@ -112,14 +117,34 @@ public class TestConstantsTest {
         // Guards the wiring itself: if a future edit drops the resolveModelPath(...) wrapper from a
         // constant, that constant stops matching its resolved literal and every test gated on it
         // silently self-skips again in CI. Holds in both layouts — with the GGUF present the
-        // resolver returns the same absolute path on both sides, without it the same literal.
-        assertEquals(TestConstants.resolveModelPath("models/codellama-7b.Q2_K.gguf"), TestConstants.MODEL_PATH);
+        // resolver returns the same absolute path on both sides, without it the same literal. The four
+        // shipped paths are property-backed since the -D overrides: the default must be the resolved
+        // literal, and the constant must be the resolved property -- which holds whether or not the
+        // property is set, so a developer's override cannot red this test.
+        assertEquals(TestConstants.resolveModelPath("models/codellama-7b.Q2_K.gguf"), TestConstants.DEFAULT_MODEL_PATH);
         assertEquals(
-                TestConstants.resolveModelPath("models/AMD-Llama-135m-code.Q2_K.gguf"), TestConstants.DRAFT_MODEL_PATH);
+                TestConstants.resolveModelProperty(TestConstants.PROP_MODEL_PATH, "models/codellama-7b.Q2_K.gguf"),
+                TestConstants.MODEL_PATH);
         assertEquals(
-                TestConstants.resolveModelPath("models/Qwen3-0.6B-Q4_K_M.gguf"), TestConstants.REASONING_MODEL_PATH);
+                TestConstants.resolveModelPath("models/AMD-Llama-135m-code.Q2_K.gguf"),
+                TestConstants.DEFAULT_DRAFT_MODEL_PATH);
+        assertEquals(
+                TestConstants.resolveModelProperty(
+                        TestConstants.PROP_DRAFT_MODEL_PATH, "models/AMD-Llama-135m-code.Q2_K.gguf"),
+                TestConstants.DRAFT_MODEL_PATH);
+        assertEquals(
+                TestConstants.resolveModelPath("models/Qwen3-0.6B-Q4_K_M.gguf"),
+                TestConstants.DEFAULT_REASONING_MODEL_PATH);
+        assertEquals(
+                TestConstants.resolveModelProperty(
+                        TestConstants.PROP_REASONING_MODEL_PATH, "models/Qwen3-0.6B-Q4_K_M.gguf"),
+                TestConstants.REASONING_MODEL_PATH);
         assertEquals(
                 TestConstants.resolveModelPath("models/jina-reranker-v1-tiny-en-Q4_0.gguf"),
+                TestConstants.DEFAULT_RERANKING_MODEL_PATH);
+        assertEquals(
+                TestConstants.resolveModelProperty(
+                        TestConstants.PROP_RERANKING_MODEL_PATH, "models/jina-reranker-v1-tiny-en-Q4_0.gguf"),
                 TestConstants.RERANKING_MODEL_PATH);
         assertEquals(
                 TestConstants.resolveModelPath("models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf"),

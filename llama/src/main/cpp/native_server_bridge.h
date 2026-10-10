@@ -27,8 +27,9 @@
 //    single-instance-per-process rule covers both entry points).
 
 struct server_context;
+struct server_routes;
 
 int llama_server(int argc, char **argv);
-int llama_server_attach(int argc, char **argv, server_context &ctx_server);
+int llama_server_attach(int argc, char **argv, server_context &ctx_server, server_routes &routes);
 void llama_server_set_embedded(bool embedded);
 void llama_server_request_shutdown();

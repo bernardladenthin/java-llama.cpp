@@ -10,6 +10,7 @@ import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThan;
 import static org.hamcrest.Matchers.not;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -243,9 +244,11 @@ class LlamaLoggerTest {
      * Messages are delivered on llama.cpp's log worker thread, never on the thread that logged
      * or the one that installed the logger; and removing the logger returns only after every queued
      * message has been delivered. Both are the facts behind the two deadlock rules in the Javadoc
-     * (no {@code setLogger} from a callback; no lock held that the previous callback needs). The
-     * distinct-thread count is recorded, not pinned: today every line attaches the worker afresh
-     * (one {@code java.lang.Thread} per line), a {@code thread_local} guard would make it one.
+     * (no {@code setLogger} from a callback; no lock held that the previous callback needs). And the
+     * worker is attached to the JVM once per thread, not once per line: before 5.2.x every line did
+     * {@code AttachCurrentThread} + {@code DetachCurrentThread}, i.e. 13 lines of a failed load arrived
+     * on 13 distinct {@code java.lang.Thread} objects; now a {@code thread_local} guard keeps the
+     * attach until the worker thread exits, and the thread carries the name {@code jllama-log-worker}.
      */
     @Test
     void deliveryIsAsynchronousOnTheLogWorkerAndRemovingTheLoggerDrains() throws Exception {
@@ -267,9 +270,16 @@ class LlamaLoggerTest {
         assertThat("nothing may arrive after setLogger(format, null) returned", delivered.get(), is(atReturn));
         assertThat("delivery never runs on the caller's thread", deliveringThreads.contains(caller), is(false));
         assertThat(
-                "every delivering thread is a native-attached one, not a Java-created one",
-                deliveringThreads.stream().allMatch(t -> t.getName().startsWith("Thread-")),
+                "every delivering thread is the natively attached log worker, not a Java-created thread: "
+                        + deliveringThreads,
+                deliveringThreads.stream().allMatch(t -> t.getName().equals("jllama-log-worker")),
                 is(true));
+        if (atReturn > 1) {
+            assertThat(
+                    "the worker is attached once per thread, not once per line (" + atReturn + " lines)",
+                    deliveringThreads.size(),
+                    lessThan(atReturn));
+        }
         System.out.println("[LlamaLoggerTest] " + atReturn + " lines delivered on " + deliveringThreads.size()
                 + " distinct Thread object(s)");
     }

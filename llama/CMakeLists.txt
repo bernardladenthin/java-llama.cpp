@@ -318,8 +318,14 @@ if(JLLAMA_CPU_VARIANTS)
     set(BUILD_SHARED_LIBS ON)
     set(GGML_BACKEND_DL       ON CACHE BOOL "" FORCE)
     set(GGML_CPU_ALL_VARIANTS ON CACHE BOOL "" FORCE)
-    # The one ggml default llama.cpp's CMakeLists changes before adding ggml itself.
-    set(GGML_LLAMAFILE_DEFAULT ON)
+    # The ggml defaults llama.cpp's own CMakeLists changes before its add_subdirectory(ggml): every
+    # `set(GGML_*_DEFAULT ...)` there ("change the default for these ggml options") must be
+    # repeated here, because adding ggml first skips that block entirely. Re-check on every bump
+    # with `grep -n _DEFAULT CMakeLists.txt` at the new tag. Missing GGML_CUDA_GRAPHS_DEFAULT cost a
+    # CUDA module built this way two thirds of its token generation (measured, TODO.md "GPU
+    # backends as modules"): ggml's own default is OFF, llama.cpp turns it ON for itself.
+    set(GGML_LLAMAFILE_DEFAULT   ON)
+    set(GGML_CUDA_GRAPHS_DEFAULT ON)
     add_subdirectory(${llama.cpp_SOURCE_DIR}/ggml ${llama.cpp_BINARY_DIR}/ggml)
     set(BUILD_SHARED_LIBS OFF)
     add_subdirectory(${llama.cpp_SOURCE_DIR} ${llama.cpp_BINARY_DIR})
@@ -722,7 +728,21 @@ if(JLLAMA_CPU_VARIANTS)
         endif()
         string(APPEND JLLAMA_FILES_CONTENT "$<TARGET_FILE_NAME:${t}>\n")
     endforeach()
-    file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-files.txt CONTENT "${JLLAMA_FILES_CONTENT}")
+    # NEWLINE_STYLE LF on both lists: on Windows file(GENERATE) otherwise writes CRLF (measured), and
+    # merge-native-artifacts.sh reads them on Linux -- it strips a CR itself now, but the extras
+    # file below is meant to be byte-identical to what that script writes, which is LF.
+    file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-files.txt CONTENT "${JLLAMA_FILES_CONTENT}" NEWLINE_STYLE LF)
+    if(OS_NAME STREQUAL "Windows")
+        # The counterpart of the two names left out above: in CI merge-native-artifacts.sh derives
+        # jllama-extras.txt as "every file next to the library that jllama-files.txt does not name,
+        # sorted", which here is exactly ggml-base.dll then ggml.dll. Writing the same two lines from
+        # the build (same order, no comment line, so the merge step rewrites an identical file) makes
+        # a local variants build loadable without the merge step: without the file LlamaLoader
+        # extracts jllama.dll alone, System.load resolves its ggml.dll import from java.exe's
+        # directory or PATH, and every model-backed test fails on the load.
+        file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-extras.txt
+             CONTENT "$<TARGET_FILE_NAME:ggml-base>\n$<TARGET_FILE_NAME:ggml>\n" NEWLINE_STYLE LF)
+    endif()
     message(STATUS "CPU variants: ${JLLAMA_GGML_TARGETS}")
 endif()
 

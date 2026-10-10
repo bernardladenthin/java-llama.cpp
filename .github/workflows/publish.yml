@@ -1431,24 +1431,32 @@ jobs:
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   # ---------------------------------------------------------------------------
-  # Windows Ninja Multi-Config + sccache — the DEFAULT Windows CPU natives.
-  # The Visual Studio generator ignores CMAKE_{C,CXX}_COMPILER_LAUNCHER, so only the
-  # Ninja Multi-Config generator can front cl.exe with sccache over Depot WebDAV
-  # (build.bat probe-guards it). Both generators use the same MSVC toolchain (cl.exe,
-  # static /MT CRT) on the same runner, so the produced jllama.dll/llama.dll/ggml.dll
-  # are functionally equivalent with identical runtime dependencies — the only delta
-  # is build-system plumbing + caching. The Ninja build therefore ships as the
-  # cpu-windows-* natives jars; the MSVC build above as msvc-windows-*, for anyone who
-  # wants the Visual-Studio-generator natives. Upstream llama.cpp also
-  # builds its Windows artifacts with Ninja Multi-Config + MSVC.
+  # Windows x86-64 CPU natives (cpu-windows-x86-64, the default): the CPU-variants build, as the
+  # two Linux CPU jars ship it -- GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS, one ggml-cpu-<level>.dll
+  # per instruction-set level (14 on x86-64), of which ggml loads the best for the running CPU at
+  # start-up (CLAUDE.md "CPU variants"). The compiler is plain clang (the GNU driver, the LLVM on
+  # the runner image's PATH), not cl.exe and not clang-cl: CMake sets MSVC for clang-cl as for
+  # cl.exe, and ggml's `if (NOT MSVC)` then drops 5 of the 14 variants, so llama/CMakeLists.txt
+  # refuses both. It needs the MSVC headers, libraries and linker from the developer environment
+  # all the same (clang targets the MSVC ABI), and it ships the same hybrid CRT as every Windows
+  # CPU jar -- the CMakeLists spells it for clang (-fms-runtime-lib=static + the UCRT linker
+  # flags), and verify-native-deps.py holds the directory to the OS imports. Two things this job
+  # deliberately lacks:
+  #   * -DBUILD_TESTING: the option refuses it (jllama_test calls the CPU and RPC backends, which
+  #     are modules here, not link-time libraries) -- test-cpp-windows-x86_64 runs the C++ suite in
+  #     a static build with the same compiler, the split the Linux CPU jobs have.
+  #   * sccache: upstream adds `-Xclang -fno-pch-timestamp` to every clang TU (llama.cpp's
+  #     CMakeLists), which sccache 0.18.0 refuses to cache -- measured: every TU a miss, the build
+  #     green and the cache inert -- so the install would only cost time. The cl.exe TUs of the
+  #     other Windows Ninja jobs still cache; this one builds cold on every run.
+  # The 32-bit job below stays the Ninja + cl.exe static build (upstream builds no x86 variants
+  # either), and the two MSVC-classifier jobs above keep the Visual Studio generator.
   # ---------------------------------------------------------------------------
 
   build-windows-x86_64:
-    name: Build and Test Windows 2025 x86_64 (Ninja Multi-Config + sccache, default)
+    name: Build Windows 2025 x86_64 (CPU variants, clang, default)
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
-    env:
-      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
       - name: Download shared WebUI assets
@@ -1460,19 +1468,16 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
-      - name: Install sccache (shared compiler cache)
-        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
-        continue-on-error: true
-        uses: ./.github/actions/install-sccache-windows
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
+      # `clang --version` first: which LLVM the image put on PATH decides whether patches/0017's
+      # compiler half is exercised as a warning (clang 20) or as the error it fixes (clang 22+).
       - name: Build libraries
         shell: cmd
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64 -DBUILD_TESTING=ON
-      - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
+          clang --version
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_CPU_VARIANTS=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2254,6 +2259,38 @@ jobs:
       - name: Run C++ unit tests
         run: ctest --test-dir llama/build --output-on-failure
 
+  test-cpp-windows-x86_64:
+    name: C++ Tests Windows 2025 x86_64 (clang)
+    needs: startgate
+    # The C++ suite with the compiler the shipped Windows x86-64 natives are built with (plain
+    # clang, see build-windows-x86_64), against the default static build: the shipped CPU-variants
+    # configuration cannot host jllama_test (its CPU and RPC backends are modules), the same split
+    # as test-cpp-linux-x86_64 / -aarch64. The two MSVC-classifier jobs run the suite with cl.exe,
+    # so Windows x86-64 has it under both toolchains -- and patches/0017's compiler half (plain
+    # clang on a windows-msvc target rejecting the typed _mm_prefetch pointer) is reachable only
+    # here. No WebUI artifact (the test build uses the empty-asset stub) and no sccache (see the
+    # build job: clang TUs do not cache).
+    runs-on: windows-2025-vs2026
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up MSVC developer environment (x64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
+      - name: Build libraries
+        shell: cmd
+        run: |
+          clang --version
+          .github\build.bat -G "Ninja Multi-Config" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64 -DBUILD_TESTING=ON
+      - name: Verify llama.cpp patches are applied
+        shell: bash
+        run: .github/verify-patches-applied.sh
+      - name: Run C++ unit tests
+        run: ctest --test-dir llama/build --output-on-failure
+
   build-macos-arm64-metal-15:
     name: Build and Test macOS 15 arm64 (Metal)
     needs: [startgate, build-webui]
@@ -2434,8 +2471,12 @@ jobs:
       natives-artifact: natives-metal-macos-aarch64
       error-artifact: error-log-macos-15-metal
 
+  # The model-backed suite against the shipped CPU-variants artifact (jllama.dll + ggml.dll +
+  # ggml-base.dll + the 14 CPU modules): the loader reads the artifact's jllama-extras.txt /
+  # jllama-files.txt from the test classpath, pre-loads the two ggml libraries and lets ggml pick
+  # the CPU module -- a load alone proves little (CLAUDE.md "CPU variants"), this runs inference.
   test-java-windows-x86_64:
-    name: Java Tests Windows 2025 x86_64 (default / Ninja)
+    name: Java Tests Windows 2025 x86_64 (default / CPU variants, clang)
     needs: [build-windows-x86_64, verify-model-cache]
     uses: ./.github/workflows/java-tests.yml
     with:
@@ -2444,8 +2485,8 @@ jobs:
       error-artifact: windows-output
 
   # Java/inference validation of the MSVC-built x86_64 DLL (the analogue of
-  # test-java-windows-x86_64 for the default Ninja build). Loads the MSVC jllama.dll
-  # via JNI and runs the full model-backed suite, so both Windows generators are
+  # test-java-windows-x86_64 for the default CPU-variants build). Loads the MSVC jllama.dll
+  # via JNI and runs the full model-backed suite, so both Windows x86-64 CPU toolchains are
   # validated end-to-end before the `msvc-windows` natives jar ships.
   test-java-windows-x86_64-msvc:
     name: Java Tests Windows 2025 x86_64 (MSVC classifier)
@@ -2490,6 +2531,7 @@ jobs:
       - build-windows-x86_64-openvino
       - test-cpp-linux-x86_64
       - test-cpp-linux-aarch64
+      - test-cpp-windows-x86_64
       - build-macos-arm64-metal-15
       - test-java-linux-x86_64
       - test-java-macos-arm64-metal

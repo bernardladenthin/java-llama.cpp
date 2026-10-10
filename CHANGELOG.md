@@ -10,6 +10,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`ModelParameters.enableMetricsEndpoint()` / `enablePropsEndpoint()` / `enableSlotsEndpoint()` /
+  `disableSlotsEndpoint()`** (`--metrics`, `--props`, `--slots`, `--no-slots`): the HTTP frontend's
+  endpoint toggles, needed since `NativeServer` attach mode serves the model's own routes (see Fixed).
+- **`test-cpp-windows-x86_64`**: the C++ suite on Windows x86-64 with plain clang (a static build with
+  the tests), the compiler the shipped `cpu-windows-x86-64` natives are built with now; the two MSVC
+  jobs keep running it with `cl.exe`. Gates both publish jobs like every other job.
+- **`-D` overrides for the four shipped test models.** `net.ladenthin.llama.text.model`, `.draft.model`,
+  `.reasoning.model` and `.rerank.model` override `TestConstants.MODEL_PATH`, `DRAFT_MODEL_PATH`,
+  `REASONING_MODEL_PATH` and `RERANKING_MODEL_PATH` the way every capability-specific model already had
+  one, so a developer can run the suite against models already on the machine (README "System
+  Properties Reference"). The defaults stay the CI model set, which `TestConstantsTest` pins over the
+  `DEFAULT_*` constants.
 - **`InvalidRequestException`** (`net.ladenthin.llama.exception`, a `LlamaException`): the JNI layer now
   throws it wherever llama.cpp's own HTTP server answers `400` (`invalid_request_error`) -- a body that is
   not valid JSON, a missing `"prompt"` / `"messages"` / `"input_prefix"`, an empty embedding input, an
@@ -71,6 +83,26 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **The log sink attaches llama.cpp's log worker to the JVM once per thread, not once per line.**
+  `LlamaModel.setLogger`'s trampoline used to `AttachCurrentThread` + `DetachCurrentThread` for every
+  log line, i.e. one `java.lang.Thread` object and a pair of JVMTI thread events per line (13 lines of a
+  failed load, 13 `Thread` objects). A `thread_local` guard now keeps the attach (as a daemon thread
+  named `jllama-log-worker`, visible in thread dumps) until the worker thread exits, which
+  `common_log::pause()` makes a normal exit; each delivery runs in its own local-reference frame.
+  `LlamaLoggerTest` pins both.
+- **`cpu-windows-x86-64` is the CPU-variants build, built with clang** (`build-windows-x86_64`,
+  `-DJLLAMA_CPU_VARIANTS=ON`): like the two Linux CPU jars since 5.2.0, the directory holds
+  `jllama.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-rpc.dll` and one `ggml-cpu-<level>.dll` per
+  instruction-set level (14), of which ggml loads the best for the running CPU -- an AVX-512 / AVX-VNNI
+  / AMX machine uses its kernels and a CPU without AVX2 works, where the one static library was built
+  for one level. Plain clang because only the GNU driver yields all 14 variants (`clang-cl` and
+  `cl.exe` lose five, CLAUDE.md "CPU variants"); same hybrid CRT, no new runtime dependency
+  (`verify-native-deps.py` holds the directory to the OS imports). `LlamaLoader` pre-loads
+  `ggml-base.dll` and `ggml.dll` by full path from `jllama-extras.txt` before `jllama.dll`, so the
+  import never resolves against a foreign llama.cpp install on `PATH`. The job no longer installs
+  sccache (upstream's `-Xclang -fno-pch-timestamp` makes every clang TU a cache miss) and no longer
+  runs `ctest` (the option refuses `BUILD_TESTING`; see `test-cpp-windows-x86_64` under Added). The
+  32-bit `cpu-windows-x86` jar and the `msvc-windows-*` jars are unchanged.
 - **The message of a rejected request is the bare reason** (`"prompt" must not be empty`), no longer the
   JSON object `{"code":400,"message":…,"type":"invalid_request_error"}` the old `throw_invalid_request`
   wrapped it in: the type is the exception class now (`InvalidRequestException`), as it is for every
@@ -304,6 +336,28 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
 
 ### Fixed
+- **`NativeServer` attach mode no longer leaves a sleep callback into freed memory behind.**
+  `llama_server_attach` (`patches/0007`) built a `server_routes` on its own stack frame; its
+  constructor registers a sleeping-state callback on the model's task queue, which has no unregister,
+  so after `NativeServer.close()` the model's next idle sleep (`--sleep-idle-seconds`) ran the callback
+  on a destroyed object. The attached server now serves the model's own `server_routes`
+  (`jllama_context::routes`, alive as long as the model); pinned by
+  `NativeServerAttachSleepIntegrationTest`. **Behaviour change:** route-level settings therefore come
+  from the model's `ModelParameters` -- the endpoint toggles `--metrics` / `--props` / `--slots` (new
+  setters, see Added), `--slot-save-path`, the slot count, the sampling defaults -- and an attach
+  argument of that kind is parsed and ignored; the attach argv keeps the HTTP side (`--host`, `--port`,
+  `--api-key`, `--ssl-*`, `--threads-http`, ...).
+- **`GGML_CUDA_GRAPHS_DEFAULT` is repeated in the CPU-variants CMake path.** That path adds ggml before
+  llama.cpp and therefore skips the block in which llama.cpp changes two ggml defaults; it repeated
+  only `GGML_LLAMAFILE_DEFAULT`. Latent for the shipped CPU jars, but a CUDA backend built as a module
+  in this path ran without CUDA graphs and lost two thirds of its token generation (measured at b11538
+  on an RTX 3070, `docs/handover/local-agent-report-b11538-windows.md`). The CMake comment now states
+  the rule: every `*_DEFAULT` llama.cpp sets before its own `add_subdirectory(ggml)` is repeated.
+- **A Windows `JLLAMA_CPU_VARIANTS` build is loadable without the CI merge step.** `CMakeLists.txt`
+  writes `jllama-extras.txt` (`ggml-base.dll`, `ggml.dll`, the two libraries `jllama.dll` links) next to
+  the library, byte-identical to what `merge-native-artifacts.sh` derives in CI; without it
+  `LlamaLoader` extracted `jllama.dll` alone, Windows resolved its `ggml.dll` import from `java.exe`'s
+  directory or `PATH`, and every model-backed test of a local variants build failed on the load.
 - **`OpenAiCompatServer` answers `400`, not `500`, for a request the native layer rejects** -- an empty
   `input` array for `/v1/embeddings`, a `/v1/completions` body without a `prompt`, a malformed body, a
   message the chat template cannot take, a prompt over the context size -- on every surface (OpenAI,

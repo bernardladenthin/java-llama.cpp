@@ -110,7 +110,10 @@ done
 find "$DEST" -mindepth 3 -maxdepth 3 -type d | sort | while IFS= read -r dir; do
   plain=""
   if [ -f "$dir/jllama-files.txt" ]; then
-    plain="$(grep -v -e '^#' -e '^$' "$dir/jllama-files.txt" || true)"
+    # tr -d '\r': a Windows build may write the list with CRLF; a name carrying its CR would fail
+    # the existence check below and, worse, miss the awk skip-list, so the CPU modules would land in
+    # jllama-extras.txt and LlamaLoader would load every one of them.
+    plain="$(tr -d '\r' < "$dir/jllama-files.txt" | grep -v -e '^#' -e '^$' || true)"
     while IFS= read -r f; do
       [ -z "$f" ] || [ -f "$dir/$f" ] \
         || { echo "::error::${dir#"$DEST"}/jllama-files.txt names '$f', which the build did not produce" >&2; exit 1; }

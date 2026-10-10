@@ -38,9 +38,11 @@ servers answer. What it does **not** mean is covered below.
 2. **The CI model set** in `models/` at the repository root, by the exact filenames of
    `.github/models.csv`. Five of the eleven cannot be substituted by another local model because the
    test needs a *capability*, not a model: the reranker, the embedding model, the vision pair, the
-   TTS pair, and `stories260K` (which must be **F32** for the trainer). And `MODEL_PATH`,
-   `DRAFT_MODEL_PATH`, `REASONING_MODEL_PATH` and `RERANKING_MODEL_PATH` are the four paths with
-   **no** `-D` override (every other model has one), so for those the filename is the only way in.
+   TTS pair, and `stories260K` (which must be **F32** for the trainer). Every model path has a `-D`
+   override (README "System Properties Reference"; `MODEL_PATH`, `DRAFT_MODEL_PATH`,
+   `REASONING_MODEL_PATH` and `RERANKING_MODEL_PATH` got theirs -- `net.ladenthin.llama.text.model`,
+   `.draft.model`, `.reasoning.model`, `.rerank.model` -- after the first run of this plan), so a
+   model that is already on the machine can stand in where the test needs no particular capability.
 3. **The toolchain** of the thing being tested: MSVC + Ninja for a Windows CPU build, plain clang for
    a variants build (see `CLAUDE.md` "CPU variants"), the vendor runtime for a GPU build.
 

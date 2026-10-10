@@ -6,7 +6,7 @@ index 4c6052d78..cb03f239a 100644
  // to be used via CLI (argc / argv are used by router mode only)
  int llama_server(common_params & params, int argc, char ** argv);
  int llama_server(common_params & params, int argc, char ** argv, server_child & child);
-+int llama_server_attach(int argc, char ** argv, server_context & ctx_server);
++int llama_server_attach(int argc, char ** argv, server_context & ctx_server, server_routes & routes);
  void llama_server_terminate();
  void llama_server_terminate() {
      if (shutdown_handler) {
@@ -119,7 +119,7 @@ index 4c6052d78..cb03f239a 100644
  
      // resumable streaming: a child binds the local session factories, the router binds
      // proxies that resolve the owning child, see server-stream.h
-@@ -628,3 +640,91 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
+@@ -628,3 +640,98 @@ int llama_server(common_params & params, int argc, char ** argv, server_child &
  
      return 0;
  }
@@ -136,7 +136,15 @@ index 4c6052d78..cb03f239a 100644
 +// server / built-in-tools endpoints are NOT wired in attach mode (they belong to a full
 +// llama-server host, not an embedded model); they answer 403 "disabled" like a stock build with
 +// those features off.
-+int llama_server_attach(int argc, char ** argv, server_context & ctx_server) {
++// `routes` is the caller's own server_routes over that context -- the one its model load built,
++// as llama_server() builds one before load_model(). It must be the caller's: server_routes
++// registers a sleeping-state callback on the context's task queue in its constructor and the
++// queue never unregisters, so a server_routes built on this frame left a callback into a
++// destroyed object behind when the attach returned, and the model's next idle sleep ran it.
++// The caller keeps `routes` alive as long as the context. The route handlers therefore read the
++// MODEL's params (--metrics / --props / --slots, n_parallel, the sampling defaults, ...); the argv
++// configures the HTTP side only (--host, --port, --api-key, --ssl-*, --threads-http, ...).
++int llama_server_attach(int argc, char ** argv, server_context & ctx_server, server_routes & routes) {
 +    std::setlocale(LC_NUMERIC, "C");
 +
 +    common_params params;
@@ -157,7 +165,6 @@ index 4c6052d78..cb03f239a 100644
 +        return 1;
 +    }
 +
-+    server_routes routes(params, ctx_server);
 +    llama_server_register_common_routes(ctx_http, routes);
 +
 +    // single-model (non-router) resumable-streaming handlers (upstream b10154 paths)
@@ -193,8 +200,8 @@ index 4c6052d78..cb03f239a 100644
 +        return 1;
 +    }
 +
-+    // the caller's model is already loaded, so the frontend is ready immediately
-+    routes.update_meta(ctx_server);
++    // the caller's model is already loaded and its routes carry the model's metadata (the caller
++    // ran update_meta() after the load), so the frontend is ready immediately
 +    ctx_http.is_ready.store(true);
 +
 +    llama_server_set_shutdown_handler([&](int) {

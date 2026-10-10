@@ -1144,6 +1144,47 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Enable the Prometheus-compatible {@code GET /metrics} endpoint ({@code --metrics}; off by default).
+     * Relevant for the HTTP frontend only: {@code NativeServer} attach mode serves the model's own routes,
+     * so the endpoint toggles are set here, not in the attach arguments.
+     *
+     * @return this builder
+     */
+    public ModelParameters enableMetricsEndpoint() {
+        return setFlag(ModelFlag.METRICS);
+    }
+
+    /**
+     * Allow changing global properties via {@code POST /props} ({@code --props}; off by default,
+     * {@code GET /props} is always available). HTTP frontend only, see {@link #enableMetricsEndpoint()}.
+     *
+     * @return this builder
+     */
+    public ModelParameters enablePropsEndpoint() {
+        return setFlag(ModelFlag.PROPS);
+    }
+
+    /**
+     * Expose the slots monitoring endpoint {@code GET /slots} ({@code --slots}, upstream's default). HTTP
+     * frontend only, see {@link #enableMetricsEndpoint()}.
+     *
+     * @return this builder
+     */
+    public ModelParameters enableSlotsEndpoint() {
+        return setFlag(ModelFlag.SLOTS);
+    }
+
+    /**
+     * Hide the slots monitoring endpoint {@code GET /slots} ({@code --no-slots}). HTTP frontend only, see
+     * {@link #enableMetricsEndpoint()}.
+     *
+     * @return this builder
+     */
+    public ModelParameters disableSlotsEndpoint() {
+        return setFlag(ModelFlag.NO_SLOTS);
+    }
+
+    /**
      * Set minimum chunk size to attempt reusing from the cache via KV shifting.
      *
      * @param cacheReuse the minimum chunk size to attempt reusing from KV cache

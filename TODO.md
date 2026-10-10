@@ -19,16 +19,22 @@ so everything below is genuinely still open.
 
 ### CPU variants (`JLLAMA_CPU_VARIANTS`) -- Windows, GPU modules, loader follow-ups
 
-Linux x86-64 and aarch64 ship the variant build since 5.2.0 (CLAUDE.md "CPU variants"). The rest,
-with what a measurement on a Windows 11 machine (Ryzen 7 5800H, RTX 3070, JDK 21, upstream b11476
-binaries; 2026-10-08) established. The local agent's follow-up measurements at b11534 on the same
-machine, through this project's own CMake (plain clang 23.1.3 builds all 14 variants, 18 DLLs,
-`verify-native-deps.py` 0 violations) and the four items still `OPEN` for the CI job -- the
-`build.bat` command line, the Java suite against the variant build, which variant ggml picks on
-Zen 3, pp512/tg128 against the static build -- are in `docs/handover/local-agent-pr-a.md`,
-deliverable 6:
+Linux x86-64 and aarch64 ship the variant build since 5.2.0, Windows x86-64 since 5.2.x
+(CLAUDE.md "CPU variants"). The rest, with what a measurement on a Windows 11 machine (Ryzen 7
+5800H, RTX 3070, JDK 21, upstream b11476 binaries; 2026-10-08) established. The local agent's
+follow-up measurements at b11534/b11538 on the same machine, through this project's own CMake
+(plain clang 23.1.3 builds all 14 variants, 18 DLLs, `verify-native-deps.py` 0 violations; the
+`build.bat` command line the CI job now runs, the Java suite green against the variant build once
+`jllama-extras.txt` exists, `haswell` picked on Zen 3, pp512/tg128 against the static build) are in
+`docs/handover/local-agent-report-b11538-windows.md`, deliverable 3 (the GPU measurements and the
+module-beside-the-CPU-set experiment in its addenda 2 and 3):
 
-1. **Windows x86-64 build.** Only plain `clang`/`clang++` with the GNU driver -- upstream's
+1. **Windows x86-64 build -- DONE in 5.2.x**: `build-windows-x86_64` builds it with plain clang
+   (no sccache: the clang TUs do not cache, see CLAUDE.md "Windows natives"),
+   `test-cpp-windows-x86_64` runs the C++ suite in a static clang build, `test-java-windows-x86_64`
+   and the `windows-x86-64` fat-jar smoke run inference through it; CMake writes
+   `jllama-extras.txt` itself. Not yet verified: the first CI run (no Windows machine in the
+   session that wired it). The findings that led there, all still valid: only plain `clang`/`clang++` with the GNU driver -- upstream's
    `cmake/x64-windows-llvm.cmake`, four lines -- produces all 14 x86 variants: CMake sets `MSVC` for
    `clang-cl` as for `cl.exe`, and ggml's `if (NOT MSVC)` then drops `ivybridge`, `piledriver`,
    `cooperlake`, `zen4` and `sapphirerapids` (a Zen 4/5 machine falls back to `icelake` and loses the
@@ -61,9 +67,11 @@ deliverable 6:
    disappears *structurally* rather than being worked around -- the loader race over an old resident
    `msvcp140.dll` cannot happen when there is no import to resolve. So **the licence/REUSE decision
    on Microsoft "Distributable Code" is void**, and `nativedeps.py`'s `Windows/*/cpu` allowlist gets
-   *shorter*, not longer. One wiring consequence: `llama/CMakeLists.txt`'s static-CRT block is
-   `if(MSVC AND ...)`, and CMake's `MSVC` is **false** for plain clang -- widen that guard or pass
-   the flags from the job, or the clang build silently gets the dynamic CRT back.
+   *shorter*, not longer. One wiring consequence, since handled: `llama/CMakeLists.txt`'s
+   static-CRT block was `if(MSVC AND ...)`, and CMake's `MSVC` is **false** for plain clang -- it
+   now has an `elseif(WIN32 AND Clang)` branch spelling the same hybrid CRT, so the clang build
+   cannot silently get the dynamic CRT back (and `verify-native-deps.py` would red `package` if it
+   did).
 
    **(b) `GGML_OPENMP=OFF` -- and it is a throughput *win*, not a trade.** It was known to save the
    `libomp.dll` dependency (confirmed: without it the clang build imports `libomp140.x86_64.dll`,
@@ -152,7 +160,18 @@ deliverable 6:
    dependency. Also: `ggml-cuda.dll` imports only `cublas64_13.dll` (cudart is static) -- the
    requirement is smaller than the README says; and device indices are not stable across the set of
    loaded backends (`Vulkan0` was the NVIDIA GPU with CUDA loaded, the AMD iGPU without), so any
-   device setting must go by name, never by index.
+   device setting must go by name, never by index. **Measured through this project's own CMake at
+   b11538** (`docs/handover/local-agent-report-b11538-windows.md`, addendum 3): `-DJLLAMA_CPU_VARIANTS=ON`
+   together with `-DGGML_CUDA=ON` or `-DGGML_VULKAN=ON` builds (nvcc accepts the plain-clang host
+   compiler), and a directory holding the 14 CPU modules plus the GPU module offloads all layers;
+   `verify-native-deps.py` accepts it. Two things stand between that and a shippable jar: **(A)** the
+   GPU module is built into `build/bin/Release/` and never copied -- the file-list block in
+   `llama/CMakeLists.txt` knows only the CPU modules, `ggml`, `ggml-base` and `ggml-rpc`, so
+   `jllama-files.txt` and the copy would have to learn about GPU backend modules; **(B)** the CUDA
+   module lost two thirds of its token generation because the variants path did not repeat
+   `GGML_CUDA_GRAPHS_DEFAULT ON` -- fixed in the CMakeLists (both llama.cpp defaults are repeated now,
+   CLAUDE.md "CPU variants"), not yet re-measured with CUDA. And such a jar is 18 files plus a 44-50 MB
+   GPU module that `LlamaLoader` extracts on every first use (item 4 below).
 4. **Loader: reuse the extraction across runs.** The directory is keyed per build now
    (`extractionDirectoryName`), but every start still re-extracts: `cleanup()` deletes every
    `jllama*` path first and `deleteOnExit` removes the files at exit. Copying the 18 files costs ~1 s
@@ -232,21 +251,6 @@ deliverable 6:
 
 ### Logging sink (`patches/0014`) — follow-ups
 
-- **Keep the log worker attached instead of attaching per line.** `LlamaModel.setLogger`'s trampoline
-  runs on `common_log`'s worker thread, which llama.cpp creates (and re-creates on every
-  pause/resume) and which is not ours; today `get_jni_env_attaching` does `AttachCurrentThread` +
-  `DetachCurrentThread` **per log line**. Leak-free and simple, but every attach creates a
-  `java.lang.Thread` object and fires JVMTI `ThreadStart`/`ThreadEnd`, which is noticeable at
-  `--verbose` volumes and makes profilers/debuggers crawl. The cheaper shape is a `thread_local`
-  guard object whose destructor detaches once at thread exit (C++ TLS destructors run on normal
-  thread exit on glibc/macOS/MSVC, including for a `dlopen`'d library, and `std::thread::join` in
-  `common_log::pause()` is a normal exit). Caveats to design in: attach as daemon
-  (`AttachCurrentThreadAsDaemon`, so `DestroyJavaVM` never waits for the leaked singleton's worker),
-  skip the detach when `g_vm` is already gone (`JNI_OnUnload` ran), and pin the behaviour with the
-  existing model-free `LlamaLoggerTest` plus a count of `java.lang.Thread` objects seen by the
-  callback — `deliveryIsAsynchronousOnTheLogWorkerAndRemovingTheLoggerDrains` already prints it
-  (measured: 13 lines of a failed load → 13 distinct `Thread` objects, i.e. one per line). Not a
-  correctness issue; measure the time cost before doing it.
 - **File the patch upstream.** `common_log_set_callback` is a small, self-contained addition to
   `common/log.{h,cpp}` with no jllama specifics; upstream acceptance would retire the carry.
 
@@ -277,21 +281,6 @@ answered, read→write→read loop changed the file). Still open:
   (`org.atmosphere:atmosphere-anthropic`) was not tested against it.
 - **Model recommendation table** for the agent (which local GGUFs actually complete an
   edit→build→test loop) — needs a GPU host, not CI.
-
-### NativeServer attach mode leaves a sleep callback behind (found at the b11361 bump, not reproduced)
-
-`llama_server_attach` (`patches/0007`) builds a `server_routes` on its own stack frame over the
-`LlamaModel`'s `server_context`. Its constructor registers a sleeping-state callback on the model's
-queue (`server_queue::on_sleeping_state` only appends, there is no unregister), and that callback
-captures the `server_routes`. When the attached `NativeServer` is closed, the frame returns and the
-object is gone, but the callback stays in the queue of the model, which lives on. The next time that
-model enters idle sleep, the callback runs on a destroyed object. Reachable only with a model loaded
-with `--sleep-idle-seconds` that was served by an attached `NativeServer` and then kept in use after
-the server closed. Since b11361 `LlamaModel` holds a `server_routes` of its own for its whole lifetime
-(`jllama_context::routes`, for `handleSystemOne`); the natural fix is to let attach mode serve
-*that* object instead of building a second one, which changes `llama_server_attach`'s signature in
-`0007` and `native_server.cpp`. Needs a test with sleep enabled (`IdleSleepWakeIntegrationTest` is the
-template) before the fix, to show it red first.
 
 ### LlamaLoader extraction-directory isolation (optional follow-up, low priority)
 

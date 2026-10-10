@@ -240,11 +240,12 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 | `cpu-linux-x86-64` | CPU | Linux x86-64 | A JDK 8+ JVM; glibc ≥ 2.28 (manylinux_2_28: RHEL 8, Ubuntu 20.04, Debian 10 and later). Ships one CPU backend module per instruction-set level (x86-64 baseline, SSE4.2, AVX, AVX2, AVX-512, AVX-VNNI, AMX), of which ggml loads the best for the running CPU at start-up — a CPU without AVX2 works, and an AVX-512/AMX machine uses its kernels. |
 | `cpu-linux-aarch64` | CPU | Linux aarch64 | glibc ≥ 2.28 (RHEL 8, Ubuntu 20.04, Debian 10, Amazon Linux 2023 and later) — built in the manylinux_2_28 image on an arm64 runner. Ships one CPU backend module per ARM feature level (armv8.0 up to armv9.2: dotprod, fp16, SVE, i8mm, SVE2, SME), chosen at start-up like the x86-64 ones. |
 | `cpu-linux-s390x` | CPU | Linux s390x (IBM Z, big-endian) | A JDK 8+ JVM. |
-| `cpu-windows-x86-64` / `cpu-windows-x86` | CPU | Windows x86-64 / x86 | A JDK 8+ JVM; **Windows 10 or newer**. Built with Ninja Multi-Config + MSVC, hybrid CRT: the STL and vcruntime are static (no `msvcp140.dll` / `vcruntime140.dll`, no VC++ redistributable), the Universal CRT is the OS one (`ucrtbase.dll`), so Microsoft's UCRT security updates apply. |
+| `cpu-windows-x86-64` | CPU | Windows x86-64 | A JDK 8+ JVM; **Windows 10 or newer**. Ships one CPU backend module per instruction-set level (as the Linux x86-64 jar: x86-64 baseline, SSE4.2, AVX, AVX2, AVX-512, AVX-VNNI, AMX), of which ggml loads the best for the running CPU at start-up. Built with clang, hybrid CRT: the STL and vcruntime are static (no `msvcp140.dll` / `vcruntime140.dll`, no VC++ redistributable), the Universal CRT is the OS one (`ucrtbase.dll`), so Microsoft's UCRT security updates apply. |
+| `cpu-windows-x86` | CPU | Windows x86 (32-bit JVM) | A JDK 8+ JVM; **Windows 10 or newer**. Built with Ninja Multi-Config + MSVC, same hybrid CRT. |
 | `cpu-windows-aarch64` | CPU | Windows on ARM (Snapdragon X / Surface) | A JDK 8+ JVM; **Windows 10 or newer**. Built natively on `windows-11-arm` with `clang-cl`, same hybrid CRT as the x86 jars. |
 | `metal-macos-aarch64` | Metal + CPU | macOS aarch64 (Apple silicon) | A JDK 8+ JVM. |
 | `cpu-android-aarch64` / `cpu-android-x86-64` | CPU | Android | For Android use the [`llama-android` AAR](#importing-in-android); these jars are the same libraries for other Android JVM setups. |
-| `msvc-windows-x86-64` / `msvc-windows-x86` | CPU (Visual Studio generator) | Windows x86-64 / x86 | Same CPU backend and MSVC toolchain as `cpu-windows-*`, built with the Visual Studio generator instead of Ninja — an alternate-toolchain option; tried before the `cpu` jar when both are present. **Windows 10 or newer**, like every Windows jar. |
+| `msvc-windows-x86-64` / `msvc-windows-x86` | CPU (Visual Studio generator) | Windows x86-64 / x86 | One static library built with the Visual Studio generator and MSVC (`cl.exe`), same hybrid CRT — the second, independent toolchain next to the clang-built `cpu-windows-x86-64`; tried before the `cpu` jar when both are present. **Windows 10 or newer**, like every Windows jar. |
 | `cuda13-linux-x86-64` | CUDA 13 | Linux x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 runtime libraries (`libcudart.so.13`, `libcublas.so.13`). |
 | `cuda13-windows-x86-64` | CUDA 13 | Windows x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 Toolkit (`cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` on `PATH`). |
 | `vulkan-linux-x86-64` | Vulkan | Linux x86-64 with a Vulkan 1.2+ GPU (NVIDIA / AMD / Intel) | A Vulkan runtime (`libvulkan.so.1`), which current GPU drivers install. The most portable Linux GPU option. glibc ≈ 2.39 (built on `ubuntu-latest`). |
@@ -375,6 +376,10 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.osinfo.architecture` | unset (uses `os.arch`) | runtime | `OSInfo` | Override for the architecture string used to locate the bundled library inside the JAR. Useful when `os.arch` reports an unexpected value (e.g. inside dockcross / chrooted environments). |
 | `net.ladenthin.llama.backend` | unset (auto: the first backend on the classpath whose library loads) | runtime | `LlamaLoader` | Names one backend directory (e.g. `cuda13`, `vulkan`, `cpu`) to load exclusively — failure is then fatal instead of trying the next backend. See [Choosing the natives jars](#choosing-the-natives-jars). |
 | `net.ladenthin.llama.test.ngl` | `43` for the general suite; `0` for `ToolCallingIntegrationTest` | test | Model-backed integration tests | Number of GPU layers used during testing. Pin to `0` on CPU-only hosts: `mvn test -Dnet.ladenthin.llama.test.ngl=0`. The tool test also selects device `none` at zero layers so Metal/CUDA is not initialized. |
+| `net.ladenthin.llama.text.model` | `models/codellama-7b.Q2_K.gguf` (tests self-skip if missing) | test | `LlamaModelTest` and most model-backed tests (`TestConstants.MODEL_PATH`) | Path to the main text-generation GGUF. Most tests only need an instruct-capable model; a few assertions are tuned to the CI model. |
+| `net.ladenthin.llama.draft.model` | `models/AMD-Llama-135m-code.Q2_K.gguf` (tests self-skip if missing) | test | Speculative-decoding tests and the tests that need a small, fast model (`TestConstants.DRAFT_MODEL_PATH`) | Path to the draft GGUF. |
+| `net.ladenthin.llama.reasoning.model` | `models/Qwen3-0.6B-Q4_K_M.gguf` (tests self-skip if missing) | test | Reasoning-budget tests (`TestConstants.REASONING_MODEL_PATH`) | Path to a thinking model (one that emits a thinking block). |
+| `net.ladenthin.llama.rerank.model` | `models/jina-reranker-v1-tiny-en-Q4_0.gguf` (tests self-skip if missing) | test | Reranking tests (`TestConstants.RERANKING_MODEL_PATH`) | Path to a reranker GGUF (must load with `enableReranking()`). |
 | `net.ladenthin.llama.tool.model` | `models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (test self-skips if missing) | test | `ToolCallingIntegrationTest` | Path to a tool-capable GGUF used to verify required blocking and streaming tool calls. The default matches the Qwen2.5 model in upstream llama.cpp's tool-call test matrix. |
 | `net.ladenthin.llama.nomic.path` | `models/nomic-embed-text-v1.5.f16.gguf` (test self-skips if missing) | test | `LlamaEmbeddingsTest#testNomicEmbedLoads` | Path to a Nomic embedding model (`nomic-embed-text-v1.5.f16.gguf` or a compatible BERT-family encoder). Regression test for upstream issue #98 (BERT-encoder `result_output` assertion). |
 | `net.ladenthin.llama.vision.model` | `models/SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Path to a vision-capable model GGUF. Any vision-capable GGUF works; CI default is `SmolVLM-500M-Instruct-Q8_0.gguf`. |
@@ -1004,9 +1009,13 @@ try (LlamaModel model = new LlamaModel(new ModelParameters().setModel("models/mo
 }
 ```
 
-In attach mode the arguments carry only the HTTP-side flags (`--host`, `--port`, `--api-key`, …;
-no `-m`), the server reports healthy immediately (the model is already loaded), and the **caller
-keeps ownership of the model** — close the server before the model, never the other way around.
+In attach mode the arguments carry only the HTTP-side flags (`--host`, `--port`, `--api-key`,
+`--ssl-key-file`, …; no `-m`); the routes served are the model's own, so route-level settings — the
+endpoint toggles `--metrics` / `--props` / `--slots`, `--slot-save-path`, the slot count — are set on
+the model's `ModelParameters` (`enableMetricsEndpoint()`, `enablePropsEndpoint()`,
+`enableSlotsEndpoint()` / `disableSlotsEndpoint()`), not in the attach arguments. The server reports
+healthy immediately (the model is already loaded), and the **caller keeps ownership of the model** —
+close the server before the model, never the other way around.
 
 #### Router mode — multi-model management
 
@@ -1563,6 +1572,13 @@ dependency fixes that by construction, where moving files around could not.
 If you still see a crash inside `msvcp140.dll`, it originates in **another** native library loaded
 into the same JVM, not in `jllama.dll` -- check the rest of the `hs_err` frame list. Please open an
 issue with that file rather than editing your JDK installation.
+
+### Contributors: build with Temurin 21, not Oracle JDK 21
+
+`llama/pom.xml` passes `-XDaddTypeAnnotationsToSymbol=true` to `javac` (NullAway's JSpecify mode
+needs it below JDK 22). **Oracle JDK 21 rejects that flag**: `mvn compile` dies in an Error Prone
+`IllegalStateException` naming it (measured on 21.0.9). Eclipse Temurin 21, which CI uses, compiles
+the same tree; `mvn -version` shows which JDK Maven runs on.
 
 ### Contributors: do not upgrade jqwik past 1.9.3
 
