@@ -57,7 +57,7 @@ on a Zen 3 the plain `x64` baseline module is **10.4x slower at prompt processin
 
 | Machine | Expected module | Why | Measured? |
 |---|---|---|---|
-| Ryzen 7 5800H (Zen 3) | `haswell` | AVX2, no AVX-512 | see the results file |
+| Ryzen 7 5800H (Zen 3) | `haswell` | AVX2, no AVX-512 | **yes** -- confirmed from the JVM's mapped modules, see the b11538 report |
 | **Ryzen AI Max+ 395** (Zen 5) | **`zen4`** | AVX-512 + VNNI + BF16; `sapphirerapids` would need AMX, which Zen 5 lacks | **open -- needs the device** |
 | **Core Ultra 7 165U** (Meteor Lake) | **`alderlake`** | AVX2 + AVX-VNNI, no AVX-512 | **open -- needs the device** |
 
@@ -90,8 +90,24 @@ construction.
 Per GPU present on the machine: load a model with `-ngl 99`, confirm from the load log that layers
 went to the device (the `model buffer size` lines name the backend), run one completion, and compare
 its throughput with the CPU backend. Note the backend **by name**, never by device index: indices are
-not stable across the set of loaded backends (`Vulkan0` was the NVIDIA GPU with CUDA loaded and the
-AMD iGPU without it).
+not stable across the set of loaded backends -- measured both ways on the 5800H machine, where
+`Vulkan0` is the AMD iGPU and `Vulkan1` the NVIDIA GPU with only the Vulkan backend loaded, the
+opposite of the assignment `CLAUDE.md` records from a run with CUDA loaded as well.
+
+Two things to expect, both measured at b11538 (see the report):
+
+* `net.ladenthin.llama.backend` has to **force** the backend under test -- the loader takes
+  `cuda13` over `vulkan` over `cpu`, so a machine with several GPU jars only ever exercises the first.
+* **Vulkan's first call after a cold shader cache is pathologically slow** (pp512 25.9 against
+  ~10 100 once warm). Discard round one, and do not report it as the steady state.
+
+**The GPU backend as a module beside the CPU set** (`-DJLLAMA_CPU_VARIANTS=ON` together with
+`-DGGML_CUDA=ON` / `-DGGML_VULKAN=ON`) is the harder question behind "one jar with GPU *and* a full
+CPU fallback". It builds and runs -- but two defects stand in the way today, and both are only
+visible on a machine with that GPU: the GPU module is built and **not copied** into the natives
+directory, and CUDA silently loses two thirds of its token generation because the variants path does
+not repeat llama.cpp's `GGML_CUDA_GRAPHS_DEFAULT ON`. Vulkan loses nothing. The report has the
+numbers and the one-line cause.
 
 ## Part C -- the interactive agent
 
@@ -190,6 +206,7 @@ real file proves the loader, and only the second needs this machine.
 | a llama.cpp bump that touches `ggml-cpu` | Part A, step 2 and 3 |
 | a JLine bump, or a change to the console / front ends | Part C |
 | a new GPU backend, or a vendor runtime bump | Part B |
+| a change to the variants path's CMake, or a llama.cpp bump touching ggml's option defaults | Part B's module question (the `GGML_CUDA_GRAPHS` class of defect) |
 | a patch that adds a model architecture (`0016` today), or a bump that changes one | Part D |
 
 **Not** per commit, and not per release: CI carries the parts that must hold every time.

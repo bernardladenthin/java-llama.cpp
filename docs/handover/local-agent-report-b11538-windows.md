@@ -20,7 +20,8 @@ Windows 11 Pro 10.0.26200.
 |---|---|
 | 1 -- the `mvn compile` blocker | **Solved, and it is not a project defect**: Oracle JDK 21 does not support the flag NullAway requires. Temurin 21.0.12.1 compiles the same tree cleanly |
 | 2 -- the Java suite with models at b11538 | **Green**: ctest 607/607, `mvn test` 1885 run / 0 failures / 0 errors / 13 skipped, the test-count floor passed. The three new 400-case classes all pass |
-| 3 -- Windows CPU variants (4 open items) | **3 answered, 1 unanswerable here.** The build works and the suite passes -- **but only after a file CMake does not write**, which is the finding worth acting on. The module indirection costs nothing |
+| 3 -- Windows CPU variants (4 open items) | **All 4 answered** (sccache in Addendum 1). The build works and the suite passes -- **but only after a file CMake does not write**, which is the finding worth acting on. The module indirection costs nothing |
+| Addendum -- sccache, GPU inference, GPU-as-module | sccache wraps clang but **caches nothing** (719/720); CUDA 28x and Vulkan 20x the CPU on pp512; one directory can carry the CPU set **and** a GPU module -- free for Vulkan, **-66.6 % token generation for CUDA**, caused by a missing `GGML_CUDA_GRAPHS_DEFAULT` line in this repo |
 
 ## Deliverable 1 -- the `mvn compile` blocker
 
@@ -166,13 +167,10 @@ no failures. `validate-models.sh` passed before the suite ran.
 `Check for working CXX compiler: C:/Program Files/LLVM/bin/clang++.exe`. `build.bat` needed no
 change, and `patches/0017` is what lets `quants.c` compile at this clang version.
 
-### sccache -- NOT answerable on this machine
+### sccache -- answered in Addendum 1
 
-**No sccache is installed here**: not on `PATH`, and not under `~/.cargo/bin`, Chocolatey or Scoop.
-The build log contains no sccache line, so the build above was uncached. Whether `build.bat`'s probe
-accepts plain clang -- and whether the unconditional retry-without-launcher fires -- therefore stays
-**open**. Answering it means installing sccache 0.18.0 (the `SCCACHE_DL_VERSION` of `build.sh`)
-first.
+No sccache was installed when this pass ran. It was installed afterwards, and **Addendum 1** has the
+answer: the build is green and the cache is inert.
 
 ### The directory and the dependency check -- verified, both as previously measured
 
@@ -321,7 +319,6 @@ static-versus-variants question needs.
 
 ## What this report does not cover
 
-* **sccache with the variants build** -- nothing is installed here (see above).
 * **Kolibri-1 (`patches/0016`) against the real model.** Both shards are on this machine (41.6 GB +
   18.2 GB = 59.8 GB) but 63 GB of RAM means mmap would page from disk for the whole run, so any
   number would describe the disk. Deferred to a machine that can hold the weights. The GGUF header
@@ -336,6 +333,196 @@ static-versus-variants question needs.
 
 ## Working-tree state
 
-`llama/src/main/natives/` (git-ignored) holds the **clang static** build from the last measurement;
-the variant directory was moved aside during the benchmark, and the 11 GGUFs are in `models/` (also
-git-ignored). Nothing else in the tree was touched -- no source file was edited, per the prompt.
+`llama/src/main/natives/` (git-ignored) now holds three backend directories from the addendum runs
+-- `cpu/` (CPU variants), `cuda13/` and `vulkan/`, the latter two with the GPU module copied in by
+hand -- and the 11 GGUFs are in `models/` (also git-ignored). Newly installed on the machine:
+sccache 0.18.0 (in a temp directory, not on the permanent `PATH`) and the LunarG Vulkan SDK
+1.4.363.0 under `C:\VulkanSDK` (`VULKAN_SDK` was set per build invocation, not persisted).
+Nothing in the repository was touched -- no source file was edited, per the prompt.
+
+## Addendum (same day) -- the three follow-up items
+
+Three things CI structurally cannot show, measured on the same machine after the first pass. Two
+needed installs that were not there before: **sccache 0.18.0** (the `SCCACHE_DL_VERSION` of
+`build.sh`) and the **LunarG Vulkan SDK 1.4.363.0**. The SDK needed an elevated run -- two silent
+attempts failed with `Cannot elevate access rights while running from command line`, with a
+user-writable `--root` and a reduced component set as well -- so it was installed through an
+explicit UAC prompt. No reboot was required; the Vulkan *runtime* (`C:\Windows\System32\vulkan-1.dll`)
+already comes with the NVIDIA driver.
+
+**CUDA here is toolkit 13.3**, while the project pins **13.4**. Both GPU builds are
+**single-architecture** (`-DCMAKE_CUDA_ARCHITECTURES=86`, the RTX 3070's `sm_86`): right for a
+measurement, wrong for a release, and `compute capability 8.6` in the load log confirms the match.
+
+### Addendum 1 -- sccache 0.18.0 with plain clang: the build is green and the cache is inert
+
+```
+set USE_CACHE=true
+.github\build.bat -G "Ninja Multi-Config" -DJLLAMA_CPU_VARIANTS=ON ^
+  -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ ^
+  -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64
+```
+
+| | |
+|---|---|
+| `build.bat` probe | **`sccache probe OK (wrapped cl.exe)`** -- the launcher *is* set |
+| Build | **`BUILD_EXIT=0`**, 745 compile steps, 19 files produced |
+| `sccache clang` in isolation (a trivial TU) | **exit 0**, cacheable, 0 failed |
+| Compile requests | **720** |
+| Compile requests executed | **1** |
+| **Non-cacheable calls** | **719** |
+| Cache hit rate | **0.00 %** |
+
+The reason is printed by sccache itself:
+
+```
+Non-cacheable reasons:
+Can't handle UnknownFlag arguments with -Xclang     719
+```
+
+and the flag comes from **upstream llama.cpp**, not from this project -- `CMakeLists.txt`:
+
+```cmake
+add_compile_options(
+    "$<$<COMPILE_LANG_AND_ID:C,Clang,IntelLLVM>:SHELL:-Xclang -fno-pch-timestamp>"
+    "$<$<COMPILE_LANG_AND_ID:CXX,Clang,IntelLLVM>:SHELL:-Xclang -fno-pch-timestamp>")
+```
+
+set **unconditionally**, with no option in front of it, and only for Clang -- which is why the
+existing Ninja jobs that compile with `cl.exe` are unaffected and their measured hit rates stand.
+
+**So the probe's verdict is right in substance and wrong in scope:** sccache *can* wrap plain clang
+(proved in isolation), but it cannot cache this project's clang command lines. **Consequence for the
+planned Windows CPU-variants CI job: it would build cold every time**, because that job must use
+plain clang -- `clang-cl` drops 5 of the 14 variants. That belongs in the job's cost estimate.
+Two ways out, both outside this repository: upstream gating the flag behind
+`CMAKE_DISABLE_PRECOMPILE_HEADERS`, or sccache passing unknown `-Xclang` arguments through instead
+of discarding the translation unit.
+
+### Addendum 2 -- Part B of the local test plan: GPU inference at b11538
+
+Throughput as in deliverable 3 (through the shipped library, `completeWithStats`, Qwen3-0.6B
+Q4_K_M, 8 threads, `-ngl 99`), 4 rounds per backend on an idle machine, round 1 excluded as warm-up:
+
+| Backend | pp512 | tg128 | vs CPU |
+|---|---:|---:|---|
+| `cuda13` (static) | **14 124** | **265.6** | pp 28x, tg 4.3x |
+| `vulkan` (static) | **10 127** | **243.7** | pp 20x, tg 4.0x |
+| `cpu` (variants) | 503 | 61.3 | -- |
+
+Both offload every layer. The loader's own line is what names the backend
+(`net.ladenthin.llama.backend` forces one, since `cuda13` has priority over `vulkan`):
+
+```
+[jllama] using native backend 'cuda13'
+ggml_cuda_init: found 1 CUDA devices (Total VRAM: 8191 MiB):
+  Device 0: NVIDIA GeForce RTX 3070 Laptop GPU, compute capability 8.6, VMM: yes
+load_tensors: offloading 27 repeating layers to GPU
+load_tensors: offloaded 29/29 layers to GPU
+load_tensors:        CUDA0 model buffer size =   372.65 MiB
+load_tensors:   CPU_Mapped model buffer size =   121.71 MiB
+```
+
+**Two things only real hardware shows.**
+
+**(a) Vulkan sees two devices and picks the right one.**
+
+```
+ggml_vulkan: Found 2 Vulkan devices:
+ggml_vulkan: 0 = AMD Radeon(TM) Graphics (AMD proprietary driver) | uma: 1 | fp16: 1 | warp size: 64
+ggml_vulkan: 1 = NVIDIA GeForce RTX 3070 Laptop GPU (NVIDIA)     | uma: 0 | fp16: 1 | bf16: 1 | warp size: 32
+load_tensors:      Vulkan1 model buffer size =   372.65 MiB
+```
+
+It takes `Vulkan1`, the discrete NVIDIA, not the integrated AMD -- which is the documented default
+(integrated only when there is no discrete GPU). Note that here **`Vulkan0` is the iGPU and
+`Vulkan1` the NVIDIA**, the opposite assignment to the one `CLAUDE.md` records from a run with CUDA
+also loaded. That is the same point its RPC section makes: **name the backend, never the index.**
+
+**(b) Vulkan's first call after a cold pipeline cache costs three orders of magnitude.** In the very
+first run on this machine, with no shader cache, round 1 measured **pp 25.9** against ~10 100 in the
+rounds after it. With the cache warm, round 1 was 6745. A consumer sees this once per machine, not
+once per process, but it is large enough to be mistaken for a hang.
+
+### Addendum 3 -- E1: the GPU backend as a module beside the CPU set
+
+The question: can **one** directory carry the 14-module CPU set *and* a GPU backend as a loadable
+module, i.e. one jar with GPU plus a full CPU fallback? Both combinations build
+(`-DJLLAMA_CPU_VARIANTS=ON` with `-DGGML_CUDA=ON` / `-DGGML_VULKAN=ON`, `BUILD_EXIT=0`) -- and
+**nvcc accepts the plain-clang host compiler**, which the variants path forces and which nvcc on
+Windows officially does not support.
+
+**It works at runtime.** With the module placed in the directory, the process maps the CPU module
+*and* the GPU backend at the same time:
+
+```
+ggml-cpu-haswell.dll    ggml-cuda.dll    cublas64_13.dll    cublasLt64_13.dll
+ggml.dll    ggml-base.dll    ggml-rpc.dll    jllama.dll
+```
+
+`offloaded 29/29 layers to GPU`, and `verify-native-deps.py` accepts the directory
+(`37 native libraries checked, 0 violations`; 56 with the Vulkan directory beside it).
+
+**Finding A -- the GPU module is built but never shipped.** `ggml-cuda.dll` (50.3 MB) and
+`ggml-vulkan.dll` (43.9 MB) are produced in `llama/build/bin/Release/` and **not** copied into
+`src/main/natives/.../<backend>/`. The copy list in `llama/CMakeLists.txt` -- the same block that
+writes `jllama-files.txt` -- knows only the CPU modules plus `ggml`, `ggml-base` and `ggml-rpc`. For
+these measurements the module was copied in by hand and both file lists were extended. Any future
+"one jar for everything" work has to teach that block about GPU backend modules.
+
+**Finding B -- CUDA loses two thirds of its token generation, and the cause is a missing line in
+this repository.** Measured with 8 rounds (round 1 excluded), medians:
+
+| | pp512 | tg128 |
+|---|---:|---:|
+| CUDA static | 14 124 | 265.6 |
+| CUDA as a module | 11 328 (**-19.8 %**) | **88.8 (-66.6 %)** |
+| Vulkan static | 10 127 | 243.7 |
+| Vulkan as a module | 10 115 (-0.1 %) | **256.4 (+5.2 %)** |
+
+The tg sample range for CUDA-as-a-module is 81.9-94.5, nowhere near 265.6, so it is not noise. And
+**Vulkan loses nothing**, which rules out the module boundary and the shared `ggml` as the cause and
+pointed at something CUDA-specific. It is:
+
+| `CMakeCache.txt` of a configure | `GGML_CUDA_GRAPHS` |
+|---|---|
+| CUDA static | **ON** |
+| CPU variants + CUDA | **OFF** |
+
+CUDA Graphs replace many per-token kernel launches with one graph replay, so they act on *generation*
+and barely on prompt processing -- exactly the shape of the measurement -- and Vulkan has no
+equivalent feature to lose.
+
+Why it is off: ggml defaults it to `GGML_CUDA_GRAPHS_DEFAULT`, which is `OFF`
+(`ggml/CMakeLists.txt:117`), and **llama.cpp sets two ggml defaults before adding ggml**:
+
+```cmake
+# llama.cpp/CMakeLists.txt
+166:    set(GGML_LLAMAFILE_DEFAULT ON)
+170:    set(GGML_CUDA_GRAPHS_DEFAULT ON)
+```
+
+The variants path in `llama/CMakeLists.txt` adds ggml itself, ahead of llama.cpp, and repeats only
+the **first** of the two:
+
+```cmake
+318:    set(BUILD_SHARED_LIBS ON)
+322:    set(GGML_LLAMAFILE_DEFAULT ON)
+323:    add_subdirectory(${llama.cpp_SOURCE_DIR}/ggml ${llama.cpp_BINARY_DIR}/ggml)
+```
+
+**Proposal:** add `set(GGML_CUDA_GRAPHS_DEFAULT ON)` beside line 322. It is latent today -- no CI job
+builds the variants path together with CUDA -- and it would cost two thirds of token-generation
+throughput the moment one does, which is precisely what E1 was evaluating. `CLAUDE.md` says "**The
+one** ggml default llama.cpp changes itself (`GGML_LLAMAFILE`) is repeated"; that sentence is now
+wrong, and the general rule behind it is worth writing instead: **every `*_DEFAULT` llama.cpp sets
+before its own `add_subdirectory(ggml)` must be repeated in the variants path**, because that path
+configures ggml first.
+
+### Verdict on E1
+
+One directory carrying the CPU variant set plus a GPU backend module **is feasible and, for Vulkan,
+free**. Before it could ship, two things must happen: the copy list has to place the GPU module
+(Finding A), and the CUDA-graphs default has to be repeated (Finding B). A third is worth a thought:
+such a jar is `jllama.dll` + `ggml`/`ggml-base`/`ggml-rpc` + 14 CPU modules + a 44-50 MB GPU module,
+and `LlamaLoader` extracts every file of the chosen backend on first use.
