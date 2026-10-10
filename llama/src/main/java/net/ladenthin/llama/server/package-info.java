@@ -7,8 +7,9 @@
  *
  * <p>{@link net.ladenthin.llama.server.OpenAiCompatServer} is a dependency-free server built only on
  * the JDK's {@code com.sun.net.httpserver.HttpServer} (the supported, exported {@code jdk.httpserver}
- * module — no web-framework dependency). It is both embeddable and the {@code Main-Class} of the
- * {@code -jar-with-dependencies} assembly, so editors and tools that speak the OpenAI protocol (for
+ * module — no web-framework dependency). It is both embeddable and runnable from the command line
+ * ({@link net.ladenthin.llama.server.ServerLauncher}, the classes jar's {@code Main-Class}, with
+ * {@code --jllama-openai-compat}), so editors and tools that speak the OpenAI protocol (for
  * example a VS&nbsp;Code Copilot "Custom Endpoint") can drive a local GGUF model running in-process
  * through the JNI binding. It is a faithful pass-through that does not implement or execute tools
  * itself.</p>

@@ -35,8 +35,9 @@ import org.slf4j.LoggerFactory;
 
 /**
  * An OpenAI-compatible HTTP endpoint over a loaded {@link LlamaModel}, built only on the JDK's
- * {@code com.sun.net.httpserver.HttpServer} (no new runtime dependency). It is both embeddable and the
- * {@code Main-Class} of the {@code -jar-with-dependencies} assembly.
+ * {@code com.sun.net.httpserver.HttpServer} (no new runtime dependency). It is both embeddable and
+ * runnable from the command line ({@link ServerLauncher} with {@code --jllama-openai-compat}, or its
+ * own {@code main}).
  *
  * <p>Routes:
  * <ul>
@@ -1030,7 +1031,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
 
     /**
      * Command-line launcher: load a GGUF model and serve it over the OpenAI-compatible endpoint. This is
-     * the {@code Main-Class} of the {@code -jar-with-dependencies} assembly.
+     * what {@link ServerLauncher} runs with {@code --jllama-openai-compat}.
      *
      * <p>Parsing, validation and the option list live in {@link OpenAiServerCli}; run with
      * {@code --help} for the full usage text. No {@code System.exit} is used (the {@code noSystemExit}

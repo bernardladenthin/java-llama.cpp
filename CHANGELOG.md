@@ -10,6 +10,55 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **Modular natives: the GPU backends are additive module jars, and every platform a GPU can join is
+  built modular.** A GPU natives jar (`cuda13-linux-x86-64`, `vulkan-windows-aarch64`, ... -- 15 of
+  them) now holds **only** ggml's backend module for that GPU (`libggml-cuda.so`, `ggml-vulkan.dll`,
+  ...; CMake option `JLLAMA_MODULE_ONLY`), and the library jar of the platform (`cpu-<os>-<arch>`,
+  `metal-macos-aarch64` -- 8, what `llama-platform` collects) holds `libjllama` with ggml's shared
+  libraries and the CPU backend modules (`JLLAMA_BACKEND_DL`; Linux x86-64 / aarch64, Windows x86-64
+  / arm64 and Android x86-64 / aarch64 are modular, s390x and macOS stay static). `LlamaLoader` puts
+  every GPU module jar of the platform it finds on the classpath next to the library, and ggml loads
+  each module whose vendor runtime is installed; a module without its runtime is skipped (the loader
+  logs `native backend '<lib>' loaded ... with GPU module(s) a, b`, `JNI_OnLoad` logs the backends and
+  devices ggml registered) and the model runs on the CPU modules. Several GPU jars on one classpath
+  are fine (llama.cpp dedups devices by `device_id`). A module jar alone is not enough: it needs the
+  library jar of its platform **from the same build** -- every natives directory carries
+  `jllama-build.txt` (the llama.cpp tag, written by CMake), and the loader refuses a module whose tag
+  differs from the library's before extracting anything (`UnsatisfiedLinkError` naming both jars).
+  Consumers: `llama-platform` + the GPU module jar(s), or
+  `jbang --deps net.ladenthin:llama:<v>:<classifier> net.ladenthin:llama:<v>` (the classes jar's
+  `Main-Class` is `ServerLauncher`). The GPU jars are built like upstream's GPU release zips
+  (`ggml-cuda` & co. as the only target); the CPU jars like upstream's `win-cpu` / `ubuntu-cpu`.
+- **`examples/server/pom.xml`**: the llama.cpp server from Maven Central with Maven -- `mvn exec:java
+  -Dexec.args="-m model.gguf"` on the CPU of every desktop platform (`llama-platform`), one profile
+  per GPU module jar named after its classifier (`-P cuda13-linux-x86-64`), and `-P assembly package`
+  for a local `jar-with-dependencies` of exactly that combination. `check-natives.py` holds its
+  version and profiles to `natives.csv` and the README.
+- **Windows on ARM is modular too** (`cpu-windows-aarch64`: `jllama.dll`, `ggml.dll`, `ggml-base.dll`,
+  `ggml-rpc.dll` and one `ggml-cpu.dll` -- ggml builds no ARM variant set for Windows), so the
+  `vulkan-windows-aarch64` and `opencl-windows-aarch64` module jars join it; its C++ suite moved to a
+  job of its own, `test-cpp-windows-arm64` (a static `clang-cl` build with the tests), as on every
+  modular platform.
+- **The Android AARs are modular too.** `llama-android` carries `libjllama.so`, `libggml.so`,
+  `libggml-base.so`, `libggml-rpc.so` and one `libggml-cpu-<variant>.so` per ARM feature level
+  (`armv8.0_1` ... `armv9.2_2`: dotprod, fp16, SVE, i8mm, SVE2, SME; x86-64 its own set) under
+  `jni/<abi>/`, of which `JNI_OnLoad` scores and loads the best **by soname** (an app's libraries
+  may stay inside the APK, so there is no directory to scan); `llama-android-opencl` holds
+  `libggml-opencl.so` alone and **depends on `llama-android`** (type `aar`), so declaring the OpenCL
+  AAR is enough and AGP merges the two `jni/` trees -- additive, like the module jars on the desktop.
+  A device without an OpenCL ICD runs on the CPU modules with a log line instead of needing the other
+  flavor.
+- **`net.ladenthin.llama.backend` is a filter over the GPU module jars**: `vulkan`, `cuda13,vulkan`,
+  or `cpu` for none; a named module whose jar is not on the classpath, or an unknown name, fails the
+  load with a message naming the jar to add. Unset, every module jar on the classpath is used.
+- **The smoke sets.** `package` assembles, per desktop platform, the classpath a consumer gets --
+  the classes jar, its runtime dependencies, the library jar and every GPU module jar of the platform
+  (`package-smoke-sets.sh`, the jar list from `check-natives.py smoke-set`) -- and the `smoke-natives`
+  matrix (Linux x86-64 / aarch64, Windows x86-64 / arm64), `smoke-natives-macos` and
+  `smoke-agent-linux` launch the published jars from it: the loader line must name every GPU module
+  of the platform, so each module put in place and skipped by ggml on the GPU-less runner is proven
+  on the jars that go to Central. `check-natives.py` derives the targets from `natives.csv` and fails
+  on one without a smoke job.
 - **The loaded backends and devices are logged at start-up.** `JNI_OnLoad` logs, after loading the CPU
   modules next to the library, how many backends ggml registered and which devices they report (reaches
   `LlamaModel.setLogger`), and `LlamaLoader` prints how many module files it extracted for a backend:
@@ -41,7 +90,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   trained with, which the router now reads offline from the GGUF for `GET /models` (`context_length`,
   `<arch>.context_length`) -- known before the first load, like the modalities; `0` from a server before
   b11538 or for a file without the key.
-- **CI proves HTTPS in both directions on the release assets.** The fat-jar smokes (Linux x86-64 /
+- **CI proves HTTPS in both directions on the published jars.** The natives smokes (Linux x86-64 /
   aarch64, Windows x86-64 / arm64) and the macOS smoke each start the server behind a self-signed
   certificate (`--ssl-key-file` / `--ssl-cert-file`; a plain-HTTP request to the port must be refused)
   serving a model it downloaded itself from an `https://` URL (the 1 MB `stories260K.gguf` of
@@ -71,8 +120,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `getModelMeta()`. Empty against a server before b11429.
 - **`vulkan-windows-aarch64` natives jar** (Windows on ARM with a Vulkan 1.2+ driver), following
   upstream's new Windows arm64 Vulkan release (llama.cpp b11395, #29954). Built natively on
-  `windows-11-arm` with `clang-cl`; also in the `all-windows-aarch64` fat jar, where the loader tries it
-  before OpenCL and the CPU.
+  `windows-11-arm` with `clang-cl`; a module jar, additive to `cpu-windows-aarch64` like
+  `opencl-windows-aarch64`.
 - **`ModelParameters.setDraftSampling(DraftSampling)`** (`--spec-draft-sampling`, llama.cpp b11368):
   `PROBABILISTIC` samples the speculative draft and has the target verify it by rejection sampling,
   which accepts more drafted tokens at a temperature above zero; `GREEDY` is upstream's default. Applies
@@ -91,6 +140,28 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **No fat jars, no release assets beyond the Maven artifacts.** The all-backends
+  `llama-<v>-all-<os>-<arch>-jar-with-dependencies.jar`, the default CPU fat jar and the agent's
+  `llama-atmosphere-agent-<v>-jar-with-dependencies.jar` are gone (see Removed): with modular natives
+  a jar of every backend of every platform is the opposite of the point, and a consumer's classpath is
+  what Maven resolves. The GitHub Release and the rolling `snapshot` pre-release attach the Maven
+  artifacts -- classes jar, natives jars, poms, sources, javadoc, the AARs -- with the `.asc`
+  maven-gpg wrote for Central, and nothing else; `github-release-signed` / `github-snapshot` sign
+  nothing themselves any more. Replacements: `jbang --deps net.ladenthin:llama:<v>:<classifier>
+  net.ladenthin:llama:<v> …` and `examples/server/pom.xml` (above); the agent through
+  `jbang net.ladenthin:llama-atmosphere-agent:<v>`, a GPU as one more `--deps` jar.
+- **The two Linux CPU jars and `cpu-windows-x86-64` keep their modular layout, now built by
+  `-DJLLAMA_BACKEND_DL=ON`** (the option replaced `JLLAMA_CPU_VARIANTS`, whose only difference was
+  that no GPU module could join it); `ggml` / `ggml-base` are built unversioned, and the extraction
+  directory is keyed by the library's jar entry **and** the module set, so a classpath with other GPU
+  jars never shares a directory with one without them.
+- **SYCL is one jar per OS, fp16** (`sycl-linux-x86-64`, `sycl-windows-x86-64`; `GGML_SYCL_F16=ON`
+  on both, as upstream's SYCL release builds): `sycl-fp16-linux-x86-64` is renamed, `sycl-fp32`
+  dropped (see Removed).
+- **The MSVC build no longer ships** (`msvc-windows-x86-64`): `build-windows-x86_64-msvc` still
+  builds with the Visual Studio generator + `cl.exe`, runs `ctest` and the full model-backed Java
+  suite (`test-java-windows-x86_64-msvc`) as the second, independent toolchain, but uploads no
+  natives jar -- a second static CPU library next to the clang one was only a second CPU library.
 - **The extracted natives are reused across JVM starts.** `LlamaLoader` used to delete every extracted
   file at exit and every `jllama*` entry of the temp directory at the next start, so each JVM copied
   the whole backend directory again (18 files for a CPU-variants build, ~1 s with an on-access scanner
@@ -106,19 +177,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   named `jllama-log-worker`, visible in thread dumps) until the worker thread exits, which
   `common_log::pause()` makes a normal exit; each delivery runs in its own local-reference frame.
   `LlamaLoggerTest` pins both.
-- **`cpu-windows-x86-64` is the CPU-variants build, built with clang** (`build-windows-x86_64`,
-  `-DJLLAMA_CPU_VARIANTS=ON`): like the two Linux CPU jars since 5.2.0, the directory holds
+- **`cpu-windows-x86-64` is the modular CPU build, built with clang** (`build-windows-x86_64`,
+  `-DJLLAMA_BACKEND_DL=ON`): like the two Linux CPU jars since 5.2.0, the directory holds
   `jllama.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-rpc.dll` and one `ggml-cpu-<level>.dll` per
   instruction-set level (14), of which ggml loads the best for the running CPU -- an AVX-512 / AVX-VNNI
   / AMX machine uses its kernels and a CPU without AVX2 works, where the one static library was built
   for one level. Plain clang because only the GNU driver yields all 14 variants (`clang-cl` and
-  `cl.exe` lose five, CLAUDE.md "CPU variants"); same hybrid CRT, no new runtime dependency
+  `cl.exe` lose five, CLAUDE.md "Modular natives"); same hybrid CRT, no new runtime dependency
   (`verify-native-deps.py` holds the directory to the OS imports). `LlamaLoader` pre-loads
   `ggml-base.dll` and `ggml.dll` by full path from `jllama-extras.txt` before `jllama.dll`, so the
   import never resolves against a foreign llama.cpp install on `PATH`. The job no longer installs
   sccache (upstream's `-Xclang -fno-pch-timestamp` makes every clang TU a cache miss) and no longer
-  runs `ctest` (the option refuses `BUILD_TESTING`; see `test-cpp-windows-x86_64` under Added). The
-  32-bit `cpu-windows-x86` jar and the `msvc-windows-*` jars are unchanged.
+  runs `ctest` (the option refuses `BUILD_TESTING`; see `test-cpp-windows-x86_64` under Added).
 - **The message of a rejected request is the bare reason** (`"prompt" must not be empty`), no longer the
   JSON object `{"code":400,"message":…,"type":"invalid_request_error"}` the old `throw_invalid_request`
   wrapped it in: the type is the exception class now (`InvalidRequestException`), as it is for every
@@ -164,8 +234,8 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `--split-mode tensor` (#30217); the WebUI gains a models manager (#29583, auto-followed by `build-webui`).
   Per-step record: `docs/history/llama-cpp-breaking-changes.md`.
 - **Windows natives: no Visual C++ redistributable, and `ucrtbase.dll` stays serviceable — but
-  Windows 10 or newer is now required.** The Windows CPU jars (`cpu-windows-*`,
-  `msvc-windows-*`) and the CUDA, Vulkan, OpenCL and ROCm jars use the **hybrid CRT**: the C++
+  Windows 10 or newer is now required.** The Windows CPU jars (`cpu-windows-x86-64`,
+  `cpu-windows-aarch64`) and the GPU module jars use the **hybrid CRT**: the C++
   standard library and vcruntime are linked statically, so `msvcp140.dll` / `vcruntime140.dll` / `vcruntime140_1.dll` are not needed on the
   target machine, while the Universal CRT remains the operating system's. A plain `/MT` would link
   the UCRT in as well and freeze a copy of it inside `jllama.dll`, where Microsoft's UCRT security
@@ -267,9 +337,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   defaults to `models/stories260K.gguf`). `TestConstantsTest` asserts the defaults and the list are the
   same set.
 - **Build checks are a tested Python library** (`.github/buildcheck/`) and check more: that `package`
-  waits for every natives build, that the all-backends fat jars derived from `natives.csv` are each
-  smoke-launched, named in the agent jar's `Class-Path` and the README (`package-fatjars.sh` now asks
-  for them instead of hard-coding four), CMake's backend names, the dependency allowlists, and that
+  waits for every natives build, that the smoke sets derived from `natives.csv` are each
+  launched and every classifier documented in the README (`package-smoke-sets.sh` asks the check
+  for the sets instead of hard-coding them), CMake's backend names, the dependency allowlists, and that
   every job gates both publish jobs unless `.github/release-gate-exemptions.txt` says why (`vmlens`
   gated nothing; it now gates). The Android AAR libraries are held to the same allowlist and 16 KB
   alignment check as every natives jar.
@@ -341,15 +411,35 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 - **Maven versions are compared with the sibling repositories**: `check-versions.py` (in the
   `shared-files` job) warns where a dependency or plugin -- incl. annotation-processor paths and the
   Spotless formatter version -- is used in another version than in a sibling's default branch.
-- **Fewer copies of the same job in the workflow.** The four fat-jar smoke jobs are one `smoke-fatjar`
-  matrix (its rows checked against the targets `natives.csv` derives; the per-jar artifacts are now
-  `llama-fatjar-smoke-<target>`), the macOS and Windows Java test jobs call one reusable workflow
+- **Fewer copies of the same job in the workflow.** The four natives smoke jobs are one `smoke-natives`
+  matrix (its rows checked against the targets `natives.csv` derives; the per-platform artifacts are
+  `llama-smoke-<target>`), the macOS and Windows Java test jobs call one reusable workflow
   (`.github/workflows/java-tests.yml`), and the JDK version is `.java-version`, read by every
-  `setup-java` step. Check names of those jobs changed (`<name> / Java tests`, `Smoke test all-backends
-  fat jar (<target>)`); no required status check referred to them.
+  `setup-java` step. Check names of those jobs changed (`<name> / Java tests`, `Smoke test natives
+  jars (<target>)`); no required status check referred to them.
 - **Dependency updates in the published side artifacts**: `llama-langchain4j` builds against
   `langchain4j-core` 1.21.0; `llama-atmosphere-agent` against Atmosphere 4.0.72, Jetty 12.1.14 and JLine
   4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
+
+### Removed
+- **The fat jars** -- `llama-<v>-jar-with-dependencies.jar`, the four
+  `llama-<v>-all-<os>-<arch>-jar-with-dependencies.jar` and
+  `llama-atmosphere-agent-<v>-jar-with-dependencies.jar` (with its manifest `Class-Path` into the core
+  fat jars and the agent's `assembly` profile / `src/assembly/agent-jar.xml`), their `.sha256` /
+  `.asc`, the `assembly` profile of the core, `package-fatjars.sh`, `sign-fatjars.sh`,
+  `check-natives.py fatjar-targets` and the `smoke-fatjar` jobs (now `smoke-natives`,
+  `smoke-natives-macos`, `smoke-agent-linux` on the smoke sets). See Changed.
+- **32-bit Windows**: the `cpu-windows-x86` and `msvc-windows-x86` natives jars and their build jobs
+  (`build-windows-x86`, `build-windows-x86-msvc`), untested by anyone; `llama-platform` no longer
+  names `cpu-windows-x86`, and the `examples/jbang/Chat.java` `//DEPS` line for it is gone. The
+  32-bit x86 compatibility shim (`compat/ggml_x86_compat.c`) went with it.
+- **`msvc-windows-x86-64`** as a natives jar (the build and its tests stay, see Changed) and
+  **`sycl-fp32-linux-x86-64`** (fp32 accumulation; `sycl-fp16-linux-x86-64` is `sycl-linux-x86-64`
+  now).
+- **The backend priority order** (`LlamaLoader.BACKEND_PRIORITY`): there is nothing to order any more
+  -- the one library jar of the platform is loaded, every GPU module jar on the classpath is put
+  next to it, and ggml, not the loader, decides which backends come up. `net.ladenthin.llama.backend`
+  changed meaning accordingly (see Added).
 
 ### Fixed
 - **`NativeServer` attach mode no longer leaves a sleep callback into freed memory behind.**
@@ -479,17 +569,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (llama.cpp's RPC client reports every operation as supported).
 - **`LlamaLoader` no longer loads the native library twice** when the first class to load it is not
   `LlamaModel` (e.g. `TextToSpeech`, `LlamaQuantizer`, `RpcServer`): `JNI_OnLoad` initializes
-  `LlamaModel`, whose static block re-entered the loader and ran a second full load — with an
-  all-backends fat jar that meant re-extracting every GPU backend over the library being loaded.
+  `LlamaModel`, whose static block re-entered the loader and ran a second full load — with every
+  GPU jar on the classpath that meant re-extracting every backend over the library being loaded.
 - **`.github/verify-native-deps.py`** holds every shipped native library to its known runtime
   dependencies (ELF, PE incl. Windows arm64, Mach-O). It found that the macOS dylib has always
   linked Homebrew's `openssl@3` (see `TODO.md`).
-- **The agent is a release asset: `llama-atmosphere-agent-<version>-jar-with-dependencies.jar`**, with
-  `.sha256` and a GPG `.asc`, on every GitHub release and the rolling `snapshot` pre-release — never on
-  Maven Central. It carries **no core** (~7 MB instead of hundreds, natives not in the release twice):
-  put it next to a core fat jar of the same version and `java -jar` finds the core through its manifest
-  `Class-Path`, or name both with `java -cp`. A new CI job, `smoke-agent-linux`, launches exactly that
-  pair (bytecode ≤ Java 21, the jar alone must fail for the missing core, `--help`, a one-shot answer and
+- **The published agent is smoked on the published core.** The thin jar on Maven Central carries
+  **no core**: its pom resolves `net.ladenthin:llama` and the natives through `llama-platform`. A new
+  CI job, `smoke-agent-linux`, puts the agent's jar with its own dependencies (what JBang resolves for
+  `jbang net.ladenthin:llama-atmosphere-agent:<v>`) on one classpath with the Linux x86-64 smoke set of
+  the core and launches that (bytecode ≤ Java 21, the agent alone must fail for the missing core, `--help`, a one-shot answer and
   a `read_file` round on the cached tool model), and it, the model-free agent job and the model-backed
   agent integration test now gate both publish jobs.
 - **`llama-atmosphere-agent`: `--log-verbosity <n>` (default `2`) and `--verbose`** for the in-process
@@ -550,19 +639,18 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   To keep logback, exclude `org.slf4j:slf4j-simple` and declare your own binding — which is what the
   SLF4J api/binding split is for.
 
-  **The runnable fat jar carries logging defaults; the library jar deliberately does not.**
-  `simplelogger.properties` (INFO, stdout, timestamps, thread + short logger name — what the previous
-  logback default emitted) is added by the assembly, from `src/main/assembly-resources/`. It is *not*
-  under `src/main/resources`, because from there it would be published inside the library jar and land
-  on every consumer's classpath: slf4j-simple reads whichever file the classloader hands it first, so
-  a consumer with their own configuration would get a coin flip. A library must not decide that. The
-  `assembly` profile therefore uses its own descriptor — a verbatim copy of the predefined
-  `jar-with-dependencies` plus that one file.
+  **The library jar deliberately carries no logging defaults.** A `simplelogger.properties` under
+  `src/main/resources` would be published inside the library jar and land on every consumer's
+  classpath: slf4j-simple reads whichever file the classloader hands it first, so a consumer with
+  their own configuration would get a coin flip. A library must not decide that. (The runnable fat
+  jar used to carry one -- INFO, stdout, timestamps -- from `src/main/assembly-resources/`; it went
+  with the fat jars, see Removed. A server started with `jbang` or `examples/server/pom.xml` logs
+  slf4j-simple's defaults, INFO to stderr, unless `-Dorg.slf4j.simpleLogger.*` says otherwise.)
 
 - **`checker-qual` pinned to 3.55.1 and marked optional.** 4.x is major 55 and its annotations are
   `@Retention(RUNTIME)`, so a Java 8 JVM throws `UnsupportedClassVersionError` the moment anything
   reflects over an annotated element. The optional flag keeps it out of consumers' transitive graph;
-  the version pin is what protects the fat jar, since `jar-with-dependencies` filters on scope only.
+  the version pin is what protects a consumer's fat jar, since `jar-with-dependencies` filters on scope only.
   The build-time Checker Framework processor stays on 4.2.2 under its own property.
 
 ### Added
