@@ -19,6 +19,9 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -132,6 +135,15 @@ public class LlamaLoader {
      */
     static final String BACKEND_TEMP_DIR_PREFIX = "jllama-backend-";
 
+    /**
+     * How long an extraction directory of <em>another</em> build is left alone after it was last
+     * touched. A JVM touches its directory when it starts extracting into it, so a directory younger
+     * than this may belong to a JVM that is still starting; an older one is a leftover of a build that
+     * is not on this classpath, and the next start of any build removes it. The directories of the
+     * builds on this classpath are never removed (see {@link #cleanup(Set)}).
+     */
+    static final Duration STALE_EXTRACTION_AGE = Duration.ofMinutes(10);
+
     /** Shader source a non-embedding Metal build ships next to its library. */
     private static final String METAL_SOURCE_FILE = "ggml-metal.metal";
 
@@ -176,21 +188,92 @@ public class LlamaLoader {
     private static void load() {
         // only cleanup before the first extract
         if (!extracted) {
-            cleanup();
+            cleanup(extractionDirectoriesOfThisClasspath());
         }
         loadNativeLibrary("jllama");
         extracted = true;
     }
 
     /**
-     * Deleted old native libraries e.g. on Windows the DLL file is not removed on VM-Exit (bug #80)
+     * Removes what earlier starts left in the temp directory, except what this start is about to
+     * reuse: the per-build extraction directories of the natives on this classpath stay, so a second
+     * start of the same build finds its files in place (every one is still compared with the jar byte
+     * for byte before it is loaded, see {@link #extractFile}) and skips the copy -- 18 files, ~1 s with
+     * an on-access scanner on Windows, on every JVM start before. What goes: the flat files of the
+     * layout before 5.2.0 ({@code jllama*}, {@code llama*}, {@code ggml*} directly in the temp dir; on
+     * Windows a loaded DLL was never removed at VM exit, bug #80) and the extraction directories of
+     * other builds once they are {@link #STALE_EXTRACTION_AGE} old -- a younger one may belong to a
+     * JVM that is still extracting. Every delete is best-effort: a file a running JVM has loaded is
+     * locked on Windows and stays, which is the right outcome.
+     *
+     * @param keep the extraction directory names this classpath's backends use
      */
-    private static void cleanup() {
+    private static void cleanup(Set<String> keep) {
+        Instant now = Instant.now();
         try (Stream<Path> dirList = Files.list(getTempDir().toPath())) {
-            dirList.filter(LlamaLoader::shouldCleanPath).forEach(LlamaLoader::cleanPath);
+            dirList.filter(path -> isStaleExtraction(path, keep, now)).forEach(LlamaLoader::cleanPath);
         } catch (IOException e) {
             System.err.println("Failed to open directory: " + e.getMessage());
         }
+    }
+
+    /**
+     * Whether {@link #cleanup(Set)} removes {@code path}: a {@link #shouldCleanPath named} temp entry
+     * that is not a per-build extraction directory (the pre-5.2.0 flat layout), or an extraction
+     * directory of a build not in {@code keep} whose last modification is more than
+     * {@link #STALE_EXTRACTION_AGE} before {@code now}. A directory whose modification time cannot be
+     * read is left alone.
+     *
+     * @param path an entry of the temp directory
+     * @param keep the extraction directory names this classpath's backends use
+     * @param now  the current time
+     * @return whether to delete the entry
+     */
+    static boolean isStaleExtraction(Path path, Set<String> keep, Instant now) {
+        if (!shouldCleanPath(path)) {
+            return false;
+        }
+        Path fileNamePath = path.getFileName();
+        String name = fileNamePath == null ? "" : fileNamePath.toString();
+        if (!name.startsWith(BACKEND_TEMP_DIR_PREFIX) || !Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+            return true;
+        }
+        if (keep.contains(name)) {
+            return false;
+        }
+        try {
+            return Files.getLastModifiedTime(path)
+                    .toInstant()
+                    .plus(STALE_EXTRACTION_AGE)
+                    .isBefore(now);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /**
+     * The extraction directory names of every backend on this classpath (the forced one included,
+     * should it lie outside {@link #BACKEND_PRIORITY}), computed before anything is extracted so the
+     * cleanup can spare them.
+     *
+     * @return the directory names below {@link #getTempDir()}
+     */
+    static Set<String> extractionDirectoriesOfThisClasspath() {
+        Set<String> names = new HashSet<>();
+        String nativeLibName = System.mapLibraryName("jllama");
+        String nativeResourcePath = getNativeResourcePath();
+        List<String> candidates = new ArrayList<>(BACKEND_PRIORITY);
+        String forced = systemProperties.getBackend();
+        if (forced != null && !candidates.contains(forced)) {
+            candidates.add(forced);
+        }
+        for (String backend : candidates) {
+            URL library = resource(nativeResourcePath + "/" + backend + "/" + nativeLibName);
+            if (library != null) {
+                names.add(extractionDirectoryName(backend, library));
+            }
+        }
+        return names;
     }
 
     static boolean shouldCleanPath(Path path) {
@@ -328,11 +411,14 @@ public class LlamaLoader {
      * Extracts one file from the classpath into {@code targetDirectory}, reusing a byte-identical
      * copy that is already there and replacing one that differs.
      *
+     * <p>The reuse branch is what makes a second start of the same build cheap: {@link #cleanup(Set)}
+     * leaves the build's own extraction directory in place, so every file an earlier start wrote is
+     * found, compared with the jar byte for byte, and loaded without being written again. Nothing is
+     * registered for deletion at exit any more -- the files are the cache of the next start.
+     *
      * <p>Package-private rather than private so its reuse-vs-replace decision can be driven
      * directly (see {@code LlamaLoaderTest}) — the same convention the other testable statics in
-     * this class follow. Going through {@link #initialize()} cannot reach that decision: the
-     * cleanup pass it runs first deletes exactly the {@code jllama*} temp paths a test would have
-     * to seed, so the branch is never taken.
+     * this class follow.
      *
      * @param sourceDirectory the classpath resource folder holding {@code fileName}
      * @param fileName        the file to extract
@@ -353,7 +439,6 @@ public class LlamaLoader {
             // in-place rewrite risks a partial file a concurrent loader could observe.
             if (Files.exists(extractedFilePath) && resourceMatchesFile(nativeLibraryFilePath, extractedFilePath)) {
                 permissionSetter.apply(extractedFile);
-                extractedFile.deleteOnExit();
                 return extractedFilePath;
             }
 
@@ -386,7 +471,6 @@ public class LlamaLoader {
 
             // Set executable (x) flag to enable Java to load the native library.
             permissionSetter.apply(extractedFile);
-            extractedFile.deleteOnExit();
 
             System.err.println("[jllama] extracted '" + fileName + "' to '" + extractedFilePath + "'");
             return extractedFilePath;
@@ -494,13 +578,17 @@ public class LlamaLoader {
                 .resolve(extractionDirectoryName(backend, resource(backendResourcePath + "/" + libraryFileName)));
         try {
             Files.createDirectories(targetDirPath);
+            // Mark the directory as in use before the first file is touched: cleanup() of a JVM
+            // running another build spares a directory younger than STALE_EXTRACTION_AGE, so a start
+            // that reuses an old directory is not swept from under it while it compares and loads.
+            Files.setLastModifiedTime(targetDirPath, FileTime.from(Instant.now()));
         } catch (IOException e) {
             System.err.println("Failed to create backend temp directory " + targetDirPath + ": " + e.getMessage());
             return false;
         }
-        // Registered before the contained files: File.deleteOnExit processing is LIFO, so the
-        // files registered afterwards by extractFile are deleted first, then this directory.
-        targetDirPath.toFile().deleteOnExit();
+        // Not registered for deleteOnExit, on purpose: the directory is keyed by the build and is
+        // reused by the next start of the same build (and by other JVMs of it running now); a stale
+        // one is removed by a later start's cleanup() instead.
         String targetFolder = targetDirPath.toAbsolutePath().toString();
         for (String extraFile : extraFiles) {
             Path extraPath = extractFile(backendResourcePath, extraFile, targetFolder);
@@ -516,9 +604,10 @@ public class LlamaLoader {
         }
         if (!plainFiles.isEmpty()) {
             // The modules are extracted, never loaded from here (ggml picks one at JNI_OnLoad), and a
-            // module ggml cannot load fails silently -- so at least say what was put there.
+            // module ggml cannot load fails silently -- so at least say what is there (extractFile
+            // reports each file it had to write; the others were reused from an earlier start).
             System.err.println("[jllama] backend '" + backend + "': " + plainFiles.size()
-                    + " file(s) extracted next to the library for ggml to load from " + targetFolder);
+                    + " file(s) in place next to the library for ggml to load from " + targetFolder);
         }
         // Only a Metal build that does not embed its shader source ships ggml-metal.metal
         // (every CI build embeds it); ggml looks for it next to the library.

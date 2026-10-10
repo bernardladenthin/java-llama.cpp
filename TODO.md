@@ -44,23 +44,12 @@ Linux x86-64 and aarch64 ship the variant build since 5.2.0, Windows x86-64 sinc
    module lost two thirds of its token generation because the variants path did not repeat
    `GGML_CUDA_GRAPHS_DEFAULT ON` -- fixed in the CMakeLists (both llama.cpp defaults are repeated now,
    CLAUDE.md "CPU variants"), not yet re-measured with CUDA. And such a jar is 18 files plus a 44-50 MB
-   GPU module that `LlamaLoader` extracts on every first use (item 2 below).
-2. **Loader: reuse the extraction across runs, and isolate it per process.** The directory is keyed per build now
-   (`extractionDirectoryName`), but every start still re-extracts: `cleanup()` deletes every
-   `jllama*` path first and `deleteOnExit` removes the files at exit. Copying the 18 files costs ~1 s
-   (measured, Defender on). With the key, a start could reuse a directory of its own build and
-   cleanup could leave directories younger than a few minutes alone (a JVM still extracting). A
-   loaded DLL is locked on Windows, an unloaded variant is not -- which is why the key, not a lock,
-   separates builds. The
-   older half of the same item (2026-06-20 audit, PRs #258/#260): full per-process extraction
-   directory isolation plus a `cleanup()` that removes dead-process directories recursively, so the
-   shared-tmpdir `cleanup()` cannot race a live peer's files. Both need the Windows locked-file
-   co-design (a running JVM holds its DLLs open), so do them together.
-3. **Benchmark on AVX-512/VNNI/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra). The Zen 3
+   GPU module that `LlamaLoader` extracts once per build (reused across starts since 5.2.x).
+2. **Benchmark on AVX-512/VNNI/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra). The Zen 3
    measurement could only show the floor: the plain x86-64 module is 10.4x slower at prompt
    processing (313 -> 30 t/s, Qwen3-0.6B Q4_K_M) and 1.6x at generation than `haswell`, which is what
    the single-level build was. The gain upwards (`zen4` BF16, `sapphirerapids` AMX) is unmeasured.
-4. **Unsigned binaries.** Upstream ships its DLLs unsigned, and so do we; on a WDAC/AppLocker-managed
+3. **Unsigned binaries.** Upstream ships its DLLs unsigned, and so do we; on a WDAC/AppLocker-managed
    client, loading unsigned DLLs from `%TEMP%` is blocked. The README's troubleshooting section now
    says so and names the way out (`net.ladenthin.llama.lib.path` to an allow-listed directory). The
    project's GPG key cannot sign them: Windows checks Authenticode signatures (an X.509 code-signing

@@ -135,6 +135,20 @@ variants (upstream builds none either).
   alone, a JVM running another jllama build wrote into the directory of a running one; on Windows
   that replaces exactly the modules the first JVM scored and unloaded again (which ones depends on
   the CPU) and leaves a mixture of two builds for the next start -- measured with upstream's DLLs.
+  **And it is reused across starts** (since 5.2.x): `cleanup()` spares the directories of the builds
+  on the classpath (`extractionDirectoriesOfThisClasspath`, computed before anything is extracted),
+  nothing is registered for `deleteOnExit` any more, and `extractFile`'s reuse branch -- compare the
+  file with the jar byte for byte, write only what differs, atomically -- does the rest, so a second
+  start copies nothing (18 files, ~1 s with an on-access scanner on Windows, on every JVM start
+  before; the same for every surefire fork). What `cleanup()` removes: the flat files of the pre-5.2.0
+  layout, and the directory of a build that is **not** on this classpath once it is older than
+  `STALE_EXTRACTION_AGE` (10 min) -- a start touches its directory's mtime before extracting, so a JVM
+  that is still starting from a directory is never swept; every delete is best-effort, and a DLL a
+  running JVM holds is locked on Windows and stays (the modules ggml scored and unloaded are not, and
+  may go -- that JVM no longer needs them, and the next start of its build re-extracts exactly the
+  missing ones). Isolating the extraction per process was considered and rejected for the same
+  reason: a per-build directory shared by every JVM of that build, with content-checked reuse, is
+  the cache; a per-process one would copy on every start again.
 - **RPC is a module too**, so `rpc_bridge.cpp`/`rpc_support.hpp` resolve its four entry points through
   `ggml_backend_reg_get_proc_address` (`rpc_proc<>()`, as upstream's `common/arg.cpp` does) in every
   build.

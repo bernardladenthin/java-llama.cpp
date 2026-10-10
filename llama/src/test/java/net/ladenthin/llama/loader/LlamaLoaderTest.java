@@ -5,6 +5,7 @@
 package net.ladenthin.llama.loader;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayInputStream;
@@ -17,6 +18,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.attribute.FileTime;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.jar.JarOutputStream;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
@@ -386,11 +392,9 @@ public class LlamaLoaderTest {
     // extractFile
     // -------------------------------------------------------------------------
     //
-    // These drive extractFile directly rather than through initialize(). They have to: the
-    // cleanup pass initialize() runs first deletes every temp entry whose name starts with
-    // "jllama" — which is exactly the per-backend extraction directory a test would seed — so
-    // the reuse/replace decision is unreachable from there. Measured, not assumed: seeding a
-    // byte-identical file and calling initialize() re-extracts it with a fresh mtime.
+    // These drive extractFile directly rather than through initialize(): reaching the
+    // reuse/replace decision through initialize() needs a loadable library on the classpath, and
+    // the directory it would reuse is named after that library's build key.
 
     @TempDir
     Path extractDir;
@@ -496,5 +500,66 @@ public class LlamaLoaderTest {
         java.util.concurrent.atomic.AtomicInteger runs = new java.util.concurrent.atomic.AtomicInteger();
         LlamaLoader.runOnceOnThisThread(runs::incrementAndGet);
         assertEquals(1, runs.get(), "a failed load must be retryable");
+    }
+
+    // -------------------------------------------------------------------------
+    // isStaleExtraction / extractionDirectoriesOfThisClasspath
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void staleExtractionKeepsThisClasspathsDirectoriesWhateverTheirAge(@TempDir Path dir) throws IOException {
+        Path own = Files.createDirectory(dir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "cpu-1a2b-3c4d"));
+        Files.setLastModifiedTime(own, FileTime.from(Instant.now().minus(Duration.ofDays(30))));
+        Set<String> keep = Collections.singleton(own.getFileName().toString());
+        assertFalse(LlamaLoader.isStaleExtraction(own, keep, Instant.now()));
+    }
+
+    @Test
+    public void staleExtractionRemovesAnotherBuildsDirectoryOnlyOnceItIsOld(@TempDir Path dir) throws IOException {
+        Path other = Files.createDirectory(dir.resolve(LlamaLoader.BACKEND_TEMP_DIR_PREFIX + "cpu-ffff-0001"));
+        Instant now = Instant.now();
+        Files.setLastModifiedTime(other, FileTime.from(now));
+        assertFalse(
+                LlamaLoader.isStaleExtraction(other, Collections.<String>emptySet(), now),
+                "a directory touched just now may belong to a JVM that is still starting");
+        Files.setLastModifiedTime(
+                other, FileTime.from(now.minus(LlamaLoader.STALE_EXTRACTION_AGE).minusSeconds(1)));
+        assertTrue(LlamaLoader.isStaleExtraction(other, Collections.<String>emptySet(), now));
+    }
+
+    @Test
+    public void staleExtractionRemovesTheFlatFilesOfTheOldLayoutAtOnce(@TempDir Path dir) throws IOException {
+        Path flat = Files.write(dir.resolve("jllama-3f2a.so"), new byte[] {1});
+        Path metal = Files.write(dir.resolve("ggml-metal.metal"), new byte[] {1});
+        Path unrelated = Files.write(dir.resolve("somefile.so"), new byte[] {1});
+        Instant now = Instant.now();
+        assertTrue(LlamaLoader.isStaleExtraction(flat, Collections.<String>emptySet(), now));
+        assertTrue(LlamaLoader.isStaleExtraction(metal, Collections.<String>emptySet(), now));
+        assertFalse(LlamaLoader.isStaleExtraction(unrelated, Collections.<String>emptySet(), now));
+    }
+
+    @Test
+    public void extractionDirectoriesOfThisClasspathNameEveryBackendPresent() {
+        String archProp = LlamaSystemProperties.PREFIX + ".osinfo.architecture";
+        String previous = System.getProperty(archProp);
+        System.setProperty(archProp, "backendtest");
+        try {
+            assumeTrue("Linux".equals(OSInfo.getOSName()), "backend fixtures are committed for Linux only");
+            Set<String> names = LlamaLoader.extractionDirectoriesOfThisClasspath();
+            Set<String> expected = new HashSet<>();
+            for (String backend : new String[] {"cuda13", "rocm", "vulkan"}) {
+                expected.add(LlamaLoader.extractionDirectoryName(
+                        backend,
+                        LlamaLoader.resource("net/ladenthin/llama/Linux/backendtest/" + backend + "/libjllama.so")));
+            }
+            assertEquals(expected, names);
+            assertTrue(names.stream().allMatch(n -> n.startsWith(LlamaLoader.BACKEND_TEMP_DIR_PREFIX)));
+        } finally {
+            if (previous == null) {
+                System.clearProperty(archProp);
+            } else {
+                System.setProperty(archProp, previous);
+            }
+        }
     }
 }
