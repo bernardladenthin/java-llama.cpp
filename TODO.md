@@ -320,13 +320,23 @@ The consolidated investigation lives in
 high-value from it has shipped, the jbang one-file example (`examples/jbang/Chat.java`) included.
 Further per-repo findings in the doc can be pulled on demand; none is prioritized.
 
-### Android example app (own session; the remaining Android item)
+### Needs a machine the sessions do not have
 
-The AAR + Kotlin façade + multi-ABI (arm64-v8a/x86_64) + emulator CI shipped, and the emulator job is
-a release gate (see CLAUDE.md "Android AAR + Kotlin façade"). Remaining: a minimal
-sample app under e.g. `examples/android-sample/` (single Activity, model picker, streaming text view)
-consuming `net.ladenthin:llama-android` + `llama-kotlin` — it validates what the emulator cannot:
-real arm64 hardware and the Adreno/OpenCL flavor. Treat LLaMAndroid as prior art.
+Everything here is implemented or decided; what is missing is hardware or a model the cloud sessions
+cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) covers the first three.
+
+- **CUDA as a module, re-measured with the graphs default** (`GGML_CUDA_GRAPHS_DEFAULT` repeated in
+  5.2.x): the 88.8 tg128 against 265.6 static should close; same build command as addendum 3 of
+  `docs/handover/local-agent-report-b11538-windows.md`.
+- **Extraction reuse on Windows**: a second JVM start of the same build must copy nothing (no
+  `[jllama] extracted` lines), a running JVM's locked DLLs must survive another build's cleanup, and
+  the start must not block on them.
+- **On-device Android**: the AAR + Kotlin facade are exercised on the x86_64 emulator in CI
+  (`test-android-emulator`) and the LLM Service app (`android-llmservice/`) is the example app, built
+  and UI-tested there too; what no session has is a real arm64 device, and the Adreno/OpenCL flavor
+  needs one. Nothing to write, only to run.
+- **AVX-512/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra): item 2 of "CPU variants" above.
+- **Kolibri-1 on the real 78B model** (after a full build; the shards need more than 64 GB of RAM).
 
 ### GraalVM Native Image evaluation
 
