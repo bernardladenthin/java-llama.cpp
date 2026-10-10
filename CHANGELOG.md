@@ -10,6 +10,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`ModelParameters.enableMetricsEndpoint()` / `enablePropsEndpoint()` / `enableSlotsEndpoint()` /
+  `disableSlotsEndpoint()`** (`--metrics`, `--props`, `--slots`, `--no-slots`): the HTTP frontend's
+  endpoint toggles, needed since `NativeServer` attach mode serves the model's own routes (see Fixed).
 - **`test-cpp-windows-x86_64`**: the C++ suite on Windows x86-64 with plain clang (a static build with
   the tests), the compiler the shipped `cpu-windows-x86-64` natives are built with now; the two MSVC
   jobs keep running it with `cl.exe`. Gates both publish jobs like every other job.
@@ -326,6 +329,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
 
 ### Fixed
+- **`NativeServer` attach mode no longer leaves a sleep callback into freed memory behind.**
+  `llama_server_attach` (`patches/0007`) built a `server_routes` on its own stack frame; its
+  constructor registers a sleeping-state callback on the model's task queue, which has no unregister,
+  so after `NativeServer.close()` the model's next idle sleep (`--sleep-idle-seconds`) ran the callback
+  on a destroyed object. The attached server now serves the model's own `server_routes`
+  (`jllama_context::routes`, alive as long as the model); pinned by
+  `NativeServerAttachSleepIntegrationTest`. **Behaviour change:** route-level settings therefore come
+  from the model's `ModelParameters` -- the endpoint toggles `--metrics` / `--props` / `--slots` (new
+  setters, see Added), `--slot-save-path`, the slot count, the sampling defaults -- and an attach
+  argument of that kind is parsed and ignored; the attach argv keeps the HTTP side (`--host`, `--port`,
+  `--api-key`, `--ssl-*`, `--threads-http`, ...).
 - **`GGML_CUDA_GRAPHS_DEFAULT` is repeated in the CPU-variants CMake path.** That path adds ggml before
   llama.cpp and therefore skips the block in which llama.cpp changes two ggml defaults; it repeated
   only `GGML_LLAMAFILE_DEFAULT`. Latent for the shipped CPU jars, but a CUDA backend built as a module

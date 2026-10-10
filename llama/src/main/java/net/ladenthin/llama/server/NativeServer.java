@@ -38,10 +38,13 @@ import org.jspecify.annotations.Nullable;
  * <strong>already-loaded</strong> {@code LlamaModel} — no second copy of the weights, no second
  * model load: the model's own worker thread keeps driving inference and the HTTP routes post
  * tasks to its queue. In attach mode the arguments carry only the HTTP-side flags
- * ({@code --host}, {@code --port}, {@code --api-key}, …; no {@code -m}), and the caller keeps
- * full ownership of the model: <strong>do not {@code close()} the model while the server is
- * attached</strong> — stop the server first (server before model, like unwinding
- * try-with-resources).</p>
+ * ({@code --host}, {@code --port}, {@code --api-key}, {@code --ssl-key-file}, …; no {@code -m});
+ * the routes served are the model's own, so route-level settings — the endpoint toggles
+ * {@code --metrics} / {@code --props} / {@code --slots}, {@code --slot-save-path}, the slot count,
+ * the sampling defaults — are the model's {@link net.ladenthin.llama.parameters.ModelParameters}
+ * ({@code enableMetricsEndpoint()}, …), not attach arguments. The caller keeps full ownership of
+ * the model: <strong>do not {@code close()} the model while the server is attached</strong> —
+ * stop the server first (server before model, like unwinding try-with-resources).</p>
  *
  * <p><strong>Router mode.</strong> Starting without any model argument puts the upstream server
  * in router mode ({@code --models-dir}, {@code GET/POST /models}, per-request model selection).
@@ -125,9 +128,17 @@ public final class NativeServer implements AutoCloseable {
      * of loading a second copy of the weights.
      *
      * <p>The arguments carry only the HTTP-side llama-server flags ({@code --host},
-     * {@code --port}, {@code --api-key}, {@code --slots}, …); no model argument is needed or
-     * used. Because the model is already loaded, the server reports ready on {@code GET /health}
-     * as soon as the socket is up.</p>
+     * {@code --port}, {@code --api-key}, {@code --ssl-key-file}, {@code --threads-http}, …); no
+     * model argument is needed or used. The HTTP routes are the model's own
+     * ({@code server_routes}, built with the model, so that the sleeping-state callback they
+     * register on the model's task queue never outlives its object), which is why route-level
+     * settings come from the model's {@link net.ladenthin.llama.parameters.ModelParameters}: the
+     * endpoint toggles {@code --metrics} / {@code --props} / {@code --slots}
+     * ({@link net.ladenthin.llama.parameters.ModelParameters#enableMetricsEndpoint()},
+     * {@code enablePropsEndpoint()}, {@code enableSlotsEndpoint()} / {@code disableSlotsEndpoint()}),
+     * {@code --slot-save-path}, the slot count and the sampling defaults; such a flag in the attach
+     * arguments is parsed and ignored. Because the model is already loaded, the server reports
+     * ready on {@code GET /health} as soon as the socket is up.</p>
      *
      * <p><strong>Lifecycle contract:</strong> the caller keeps full ownership of {@code model}.
      * The model must stay open for as long as the server runs — close the server first, then the

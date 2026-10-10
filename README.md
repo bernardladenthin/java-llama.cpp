@@ -1009,9 +1009,13 @@ try (LlamaModel model = new LlamaModel(new ModelParameters().setModel("models/mo
 }
 ```
 
-In attach mode the arguments carry only the HTTP-side flags (`--host`, `--port`, `--api-key`, …;
-no `-m`), the server reports healthy immediately (the model is already loaded), and the **caller
-keeps ownership of the model** — close the server before the model, never the other way around.
+In attach mode the arguments carry only the HTTP-side flags (`--host`, `--port`, `--api-key`,
+`--ssl-key-file`, …; no `-m`); the routes served are the model's own, so route-level settings — the
+endpoint toggles `--metrics` / `--props` / `--slots`, `--slot-save-path`, the slot count — are set on
+the model's `ModelParameters` (`enableMetricsEndpoint()`, `enablePropsEndpoint()`,
+`enableSlotsEndpoint()` / `disableSlotsEndpoint()`), not in the attach arguments. The server reports
+healthy immediately (the model is already loaded), and the **caller keeps ownership of the model** —
+close the server before the model, never the other way around.
 
 #### Router mode — multi-model management
 

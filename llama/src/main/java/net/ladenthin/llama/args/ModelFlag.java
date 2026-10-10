@@ -145,7 +145,23 @@ public enum ModelFlag {
      * {@link net.ladenthin.llama.exception.ModelUnavailableException} so callers can distinguish an
      * air-gapped miss from a genuine misconfiguration.</p>
      */
-    OFFLINE("--offline");
+    OFFLINE("--offline"),
+
+    /**
+     * Enable the Prometheus-compatible {@code GET /metrics} endpoint of the HTTP frontend (off by default
+     * upstream). Read from the model's parameters in {@code NativeServer} attach mode, since the routes
+     * are the model's own.
+     */
+    METRICS("--metrics"),
+
+    /** Allow changing global properties via {@code POST /props} (off by default upstream; {@code GET} is always on). */
+    PROPS("--props"),
+
+    /** Expose the slots monitoring endpoint {@code GET /slots} (upstream's default). */
+    SLOTS("--slots"),
+
+    /** Hide the slots monitoring endpoint {@code GET /slots}. */
+    NO_SLOTS("--no-slots");
 
     private final String cliFlag;
     private final CliContract contract;

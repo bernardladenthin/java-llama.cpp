@@ -190,6 +190,17 @@ JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_server_NativeServer_startAttach
         // not the attached model's worker, so the LlamaModel remains usable after the server closes
         // (documented order: close server first, then model). If a future upstream change breaks
         // either assumption, this attach path needs revisiting.
+        // The routes are the model's own (jllama_context::routes, built before its load as upstream
+        // does), never a second server_routes: its constructor registers a sleeping-state callback on
+        // the model's task queue, which has no unregister, so a server_routes that died with the attach
+        // left a callback into freed memory that the model's next idle sleep ran. Consequently the
+        // endpoint toggles (--metrics, --props, --slots) and every other route-level setting come from
+        // the model's ModelParameters; the attach argv configures the HTTP side.
+        if (!jctx->routes) {
+            release_jllama_context_impl(jctx);
+            throw_llama_exception(env, "a vocab-only model has no server context to attach to");
+            return 0;
+        }
         auto *srv = new native_server();
         fill_native_server_args(env, jargs, srv);
         bind_native_server_argv(srv);
@@ -199,8 +210,10 @@ JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_server_NativeServer_startAttach
         llama_server_set_embedded(true);
 
         server_context *ctx_server = &jctx->server;
-        srv->worker = std::thread([srv, ctx_server, jctx]() {
-            srv->exit_code = llama_server_attach(static_cast<int>(srv->argv.size()), srv->argv.data(), *ctx_server);
+        server_routes *routes = jctx->routes.get();
+        srv->worker = std::thread([srv, ctx_server, routes, jctx]() {
+            srv->exit_code =
+                llama_server_attach(static_cast<int>(srv->argv.size()), srv->argv.data(), *ctx_server, *routes);
             srv->finished.store(true);
             release_jllama_context_impl(jctx);
         });

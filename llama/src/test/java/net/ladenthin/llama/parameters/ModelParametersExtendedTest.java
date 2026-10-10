@@ -746,6 +746,26 @@ public class ModelParametersExtendedTest {
     }
 
     @Test
+    public void testEnableMetricsEndpoint() {
+        ModelParameters p = new ModelParameters().enableMetricsEndpoint();
+        assertThat(p.parameters, hasKey("--metrics"));
+        assertThat(p.parameters.get("--metrics"), is(nullValue()));
+    }
+
+    @Test
+    public void testEnablePropsEndpoint() {
+        ModelParameters p = new ModelParameters().enablePropsEndpoint();
+        assertThat(p.parameters, hasKey("--props"));
+        assertThat(p.parameters.get("--props"), is(nullValue()));
+    }
+
+    @Test
+    public void testEnableAndDisableSlotsEndpoint() {
+        assertThat(new ModelParameters().enableSlotsEndpoint().parameters, hasKey("--slots"));
+        assertThat(new ModelParameters().disableSlotsEndpoint().parameters, hasKey("--no-slots"));
+    }
+
+    @Test
     public void testSetVocabOnly() {
         ModelParameters p = new ModelParameters().setVocabOnly();
         assertThat(p.parameters, hasKey("--vocab-only"));
