@@ -375,6 +375,10 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 | `net.ladenthin.llama.osinfo.architecture` | unset (uses `os.arch`) | runtime | `OSInfo` | Override for the architecture string used to locate the bundled library inside the JAR. Useful when `os.arch` reports an unexpected value (e.g. inside dockcross / chrooted environments). |
 | `net.ladenthin.llama.backend` | unset (auto: the first backend on the classpath whose library loads) | runtime | `LlamaLoader` | Names one backend directory (e.g. `cuda13`, `vulkan`, `cpu`) to load exclusively — failure is then fatal instead of trying the next backend. See [Choosing the natives jars](#choosing-the-natives-jars). |
 | `net.ladenthin.llama.test.ngl` | `43` for the general suite; `0` for `ToolCallingIntegrationTest` | test | Model-backed integration tests | Number of GPU layers used during testing. Pin to `0` on CPU-only hosts: `mvn test -Dnet.ladenthin.llama.test.ngl=0`. The tool test also selects device `none` at zero layers so Metal/CUDA is not initialized. |
+| `net.ladenthin.llama.text.model` | `models/codellama-7b.Q2_K.gguf` (tests self-skip if missing) | test | `LlamaModelTest` and most model-backed tests (`TestConstants.MODEL_PATH`) | Path to the main text-generation GGUF. Most tests only need an instruct-capable model; a few assertions are tuned to the CI model. |
+| `net.ladenthin.llama.draft.model` | `models/AMD-Llama-135m-code.Q2_K.gguf` (tests self-skip if missing) | test | Speculative-decoding tests and the tests that need a small, fast model (`TestConstants.DRAFT_MODEL_PATH`) | Path to the draft GGUF. |
+| `net.ladenthin.llama.reasoning.model` | `models/Qwen3-0.6B-Q4_K_M.gguf` (tests self-skip if missing) | test | Reasoning-budget tests (`TestConstants.REASONING_MODEL_PATH`) | Path to a thinking model (one that emits a thinking block). |
+| `net.ladenthin.llama.rerank.model` | `models/jina-reranker-v1-tiny-en-Q4_0.gguf` (tests self-skip if missing) | test | Reranking tests (`TestConstants.RERANKING_MODEL_PATH`) | Path to a reranker GGUF (must load with `enableReranking()`). |
 | `net.ladenthin.llama.tool.model` | `models/Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` (test self-skips if missing) | test | `ToolCallingIntegrationTest` | Path to a tool-capable GGUF used to verify required blocking and streaming tool calls. The default matches the Qwen2.5 model in upstream llama.cpp's tool-call test matrix. |
 | `net.ladenthin.llama.nomic.path` | `models/nomic-embed-text-v1.5.f16.gguf` (test self-skips if missing) | test | `LlamaEmbeddingsTest#testNomicEmbedLoads` | Path to a Nomic embedding model (`nomic-embed-text-v1.5.f16.gguf` or a compatible BERT-family encoder). Regression test for upstream issue #98 (BERT-encoder `result_output` assertion). |
 | `net.ladenthin.llama.vision.model` | `models/SmolVLM-500M-Instruct-Q8_0.gguf` (test self-skips if missing) | test | `MultimodalIntegrationTest` | Path to a vision-capable model GGUF. Any vision-capable GGUF works; CI default is `SmolVLM-500M-Instruct-Q8_0.gguf`. |
@@ -1563,6 +1567,13 @@ dependency fixes that by construction, where moving files around could not.
 If you still see a crash inside `msvcp140.dll`, it originates in **another** native library loaded
 into the same JVM, not in `jllama.dll` -- check the rest of the `hs_err` frame list. Please open an
 issue with that file rather than editing your JDK installation.
+
+### Contributors: build with Temurin 21, not Oracle JDK 21
+
+`llama/pom.xml` passes `-XDaddTypeAnnotationsToSymbol=true` to `javac` (NullAway's JSpecify mode
+needs it below JDK 22). **Oracle JDK 21 rejects that flag**: `mvn compile` dies in an Error Prone
+`IllegalStateException` naming it (measured on 21.0.9). Eclipse Temurin 21, which CI uses, compiles
+the same tree; `mvn -version` shows which JDK Maven runs on.
 
 ### Contributors: do not upgrade jqwik past 1.9.3
 

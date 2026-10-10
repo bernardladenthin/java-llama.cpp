@@ -1575,6 +1575,13 @@ Built libraries are placed in `src/main/natives/net/ladenthin/llama/{OS}/{ARCH}/
 
 ### Building the native library for local Java tests
 
+**The JDK must be one whose `javac` accepts `-XDaddTypeAnnotationsToSymbol` -- Temurin 21 (what CI
+uses, `distribution: temurin`), not Oracle JDK 21.** `llama/pom.xml` passes that flag because
+NullAway's JSpecify mode needs it below JDK 22; on Oracle JDK 21.0.9 `mvn compile` dies in an
+Error Prone `IllegalStateException` naming exactly that flag, while Temurin 21.0.12.1 compiles the
+same tree (measured, `docs/handover/local-agent-report-b11538-windows.md`, deliverable 1). Check
+`mvn -version` before blaming anything else.
+
 `mvn test` does **not** build the native library — Maven only compiles Java
 and runs surefire. The shared library must already exist on disk under the
 platform-specific path that `LlamaLoader` resolves at runtime; surefire puts
@@ -1646,6 +1653,10 @@ below covers the model bindings:
 
 | Property | Default test that uses it | Default (`models/…` unless noted) |
 |----------|---------------------------|-------|
+| `net.ladenthin.llama.text.model` | `LlamaModelTest` and most model-backed tests (`MODEL_PATH`) | `codellama-7b.Q2_K.gguf` |
+| `net.ladenthin.llama.draft.model` | speculative decoding + the small-model tests (`DRAFT_MODEL_PATH`) | `AMD-Llama-135m-code.Q2_K.gguf` |
+| `net.ladenthin.llama.reasoning.model` | reasoning-budget tests (`REASONING_MODEL_PATH`) | `Qwen3-0.6B-Q4_K_M.gguf` (must emit a thinking block) |
+| `net.ladenthin.llama.rerank.model` | reranking tests (`RERANKING_MODEL_PATH`) | `jina-reranker-v1-tiny-en-Q4_0.gguf` (must be a reranker) |
 | `net.ladenthin.llama.tool.model` | `ToolCallingIntegrationTest`, `OpenAiServerToolCallingIntegrationTest` | `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` |
 | `net.ladenthin.llama.nomic.path` | `LlamaEmbeddingsTest#testNomicEmbedLoads` | `nomic-embed-text-v1.5.f16.gguf` (issue #98 regression) |
 | `net.ladenthin.llama.vision.model` | `MultimodalIntegrationTest` | `SmolVLM-500M-Instruct-Q8_0.gguf` (any vision-capable GGUF works) |
@@ -2091,7 +2102,7 @@ record `tests="0" errors="0" skipped="0"` — the class contributes **no** test 
 the form "did this run skip anything?" is blind to it. The only thing that catches it directly is a
 floor on the number of tests actually executed -- `.github/verify-test-counts.sh`, run by every
 `test-java-*` job: no class with zero entries, and at least 1800 tests executed (run minus skipped;
-the jobs execute 1856 to 1865, a checkout without models 1589). It is why several stale
+the jobs execute 1856 to 1872, a checkout without models 1589). It is why several stale
 assertions (e.g. `LlamaModelTest#testGetMetrics` against a payload shape upstream had dropped at
 b10408) never failed in CI. The fix is **`TestConstants.resolveModelPath` /
 `resolveModelProperty`**, which accept either layout — module-relative first, then the reactor root

@@ -75,17 +75,57 @@ public class TestConstants {
 
     public static final int DEFAULT_TEST_NGL = 43;
 
+    /**
+     * System property overriding the main text-generation model, the one most model-backed tests load
+     * ({@link #DEFAULT_MODEL_PATH} when unset). Any instruct-capable GGUF works for most of them; a few
+     * assertions are tuned to the CI model and may need reading with another one.
+     */
+    public static final String PROP_MODEL_PATH = LlamaSystemProperties.PREFIX + ".text.model";
+
+    /** Path used when {@link #PROP_MODEL_PATH} is unset: the CI model (.github/models.csv). */
+    public static final String DEFAULT_MODEL_PATH = resolveModelPath("models/codellama-7b.Q2_K.gguf");
+
     /** Path to the main text generation model used in tests. */
-    public static final String MODEL_PATH = resolveModelPath("models/codellama-7b.Q2_K.gguf");
+    public static final String MODEL_PATH = resolveModelProperty(PROP_MODEL_PATH, DEFAULT_MODEL_PATH);
+
+    /**
+     * System property overriding the small draft model used for speculative decoding and by the tests
+     * that only need a fast, small model ({@link #DEFAULT_DRAFT_MODEL_PATH} when unset).
+     */
+    public static final String PROP_DRAFT_MODEL_PATH = LlamaSystemProperties.PREFIX + ".draft.model";
+
+    /** Path used when {@link #PROP_DRAFT_MODEL_PATH} is unset: the CI model (.github/models.csv). */
+    public static final String DEFAULT_DRAFT_MODEL_PATH = resolveModelPath("models/AMD-Llama-135m-code.Q2_K.gguf");
 
     /** Path to the draft model used for speculative decoding tests. */
-    public static final String DRAFT_MODEL_PATH = resolveModelPath("models/AMD-Llama-135m-code.Q2_K.gguf");
+    public static final String DRAFT_MODEL_PATH = resolveModelProperty(PROP_DRAFT_MODEL_PATH, DEFAULT_DRAFT_MODEL_PATH);
+
+    /**
+     * System property overriding the thinking model used for the reasoning-budget tests
+     * ({@link #DEFAULT_REASONING_MODEL_PATH} when unset); it must emit a thinking block.
+     */
+    public static final String PROP_REASONING_MODEL_PATH = LlamaSystemProperties.PREFIX + ".reasoning.model";
+
+    /** Path used when {@link #PROP_REASONING_MODEL_PATH} is unset: the CI model (.github/models.csv). */
+    public static final String DEFAULT_REASONING_MODEL_PATH = resolveModelPath("models/Qwen3-0.6B-Q4_K_M.gguf");
 
     /** Path to the Qwen3 thinking model used for reasoning budget tests. */
-    public static final String REASONING_MODEL_PATH = resolveModelPath("models/Qwen3-0.6B-Q4_K_M.gguf");
+    public static final String REASONING_MODEL_PATH =
+            resolveModelProperty(PROP_REASONING_MODEL_PATH, DEFAULT_REASONING_MODEL_PATH);
+
+    /**
+     * System property overriding the reranking model ({@link #DEFAULT_RERANKING_MODEL_PATH} when
+     * unset); it must be a reranker, i.e. load with {@code enableReranking()}.
+     */
+    public static final String PROP_RERANKING_MODEL_PATH = LlamaSystemProperties.PREFIX + ".rerank.model";
+
+    /** Path used when {@link #PROP_RERANKING_MODEL_PATH} is unset: the CI model (.github/models.csv). */
+    public static final String DEFAULT_RERANKING_MODEL_PATH =
+            resolveModelPath("models/jina-reranker-v1-tiny-en-Q4_0.gguf");
 
     /** Path to the reranking model used in tests (loaded with {@code enableReranking()}). */
-    public static final String RERANKING_MODEL_PATH = resolveModelPath("models/jina-reranker-v1-tiny-en-Q4_0.gguf");
+    public static final String RERANKING_MODEL_PATH =
+            resolveModelProperty(PROP_RERANKING_MODEL_PATH, DEFAULT_RERANKING_MODEL_PATH);
 
     /** System property overriding the GGUF used by the real tool-calling integration tests. */
     public static final String PROP_TOOL_MODEL_PATH = LlamaSystemProperties.PREFIX + ".tool.model";

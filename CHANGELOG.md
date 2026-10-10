@@ -10,6 +10,12 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`-D` overrides for the four shipped test models.** `net.ladenthin.llama.text.model`, `.draft.model`,
+  `.reasoning.model` and `.rerank.model` override `TestConstants.MODEL_PATH`, `DRAFT_MODEL_PATH`,
+  `REASONING_MODEL_PATH` and `RERANKING_MODEL_PATH` the way every capability-specific model already had
+  one, so a developer can run the suite against models already on the machine (README "System
+  Properties Reference"). The defaults stay the CI model set, which `TestConstantsTest` pins over the
+  `DEFAULT_*` constants.
 - **`InvalidRequestException`** (`net.ladenthin.llama.exception`, a `LlamaException`): the JNI layer now
   throws it wherever llama.cpp's own HTTP server answers `400` (`invalid_request_error`) -- a body that is
   not valid JSON, a missing `"prompt"` / `"messages"` / `"input_prefix"`, an empty embedding input, an
