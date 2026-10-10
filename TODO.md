@@ -46,10 +46,6 @@ library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still 
 4. **A Vulkan module for Android** (`vulkan-android-aarch64`, upstream ships none either): `JNI_OnLoad`
    already tries `libggml-vulkan.so` by soname, so it is one more module-only dockcross job plus the
    natives-jar wiring and an AAR flavor -- if anyone asks.
-5. **srcmorph's fat-jar matrix names the old classifiers** (`cpu-windows-x86`, `msvc-windows-*`,
-   `sycl-fp16/fp32`; one CLI fat jar per llama natives jar, `workspace/policies/fat-jar-release-assets.md`):
-   when srcmorph moves to the llama release with modular natives, its classifier loop and that policy
-   row must follow the 15 module classifiers (`check-natives.py smoke-set` style: library jar + modules).
 
 ### CUDA job: nvcc through sccache (`SCCACHE_WRAP_NVCC`, off since the second failure)
 
