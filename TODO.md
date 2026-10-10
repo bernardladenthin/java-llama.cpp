@@ -325,6 +325,12 @@ cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) cov
   and UI-tested there too; what no session has is a real arm64 device, and the Adreno/OpenCL flavor
   needs one. Nothing to write, only to run.
 - **AVX-512/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra): item 2 of "Modular natives" above.
+  And on **Windows** with AMX specifically: `patches/0018` (the AMX weight buffer freed with
+  `free()` after `_aligned_malloc()`, CLAUDE.md patch table) is proven by reading, by a GCC compile
+  of the patched file with the variant's flags, and by the CI lottery -- the Windows test jobs
+  reach the AMX path only when GitHub hands them an Intel AMX runner (seen: Xeon 6973P-C). A
+  Windows machine with AMX would pin it directly: load a Q4_K model with the modular set at `-lv 4`
+  (`AMX model buffer size` in the load log), generate, close -- no exit code -1073740940.
 - **Kolibri-1 on the real 78B model** (after a full build; the shards need more than 64 GB of RAM).
 
 ### GraalVM Native Image -- evaluated, parked until a consumer asks

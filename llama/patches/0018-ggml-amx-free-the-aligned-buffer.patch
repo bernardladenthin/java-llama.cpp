@@ -1,0 +1,42 @@
+ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free()
+
+ggml_backend_amx_buffer_type_alloc_buffer() allocates the buffer that holds the AMX-repacked
+weights with ggml_aligned_malloc(), and ggml_backend_amx_buffer_free_buffer() releases it with
+free(). On Linux that pair is fine (posix_memalign memory is free()-able). On Windows
+ggml_aligned_malloc() is _aligned_malloc(), whose memory only _aligned_free() may release: free()
+on it corrupts the CRT heap, and the process dies with STATUS_HEAP_CORRUPTION (0xC0000374) the
+moment the model is unloaded -- after inference worked. The CPU buffer type next to it already
+does it right (ggml_backend_cpu_buffer_free_buffer -> ggml_aligned_free), and ggml_aligned_free()
+is free() on Linux, so nothing changes there.
+
+Reached by: a Windows build whose chosen CPU module carries AMX (GGML_CPU_ALL_VARIANTS ->
+ggml-cpu-sapphirerapids, which ggml_backend_load_best() picks on Sapphire, Emerald and Granite
+Rapids; ggml_amx_init() returns true unconditionally on _WIN32) and a model with weight types that
+have AMX kernels (Q4_0, Q4_1, Q8_0, Q4_K, Q5_K, Q6_K, IQ4_XS). Found by java-llama.cpp's Publish
+run 38069595101 (2026-10-10): the Windows x86-64 Java test job landed on an "Intel(R) Xeon(R)
+6973P-C" runner (Granite Rapids), loaded ggml-cpu-sapphirerapids.dll, ran two generations on
+Qwen2.5-1.5B-Instruct-Q4_K_M, and the fork died with exit code -1073740940 (0xC0000374) at the
+model's close(); the same job was green an hour earlier (run 38065017595) on an AMD EPYC 7763
+runner, which has no AVX-512 and loads the haswell module. Upstream master still had the free()
+on 2026-10-10. Not yet reported upstream (nothing is filed before this project's release).
+
+Drop this patch when upstream frees the AMX buffer with ggml_aligned_free() or _aligned_free():
+grep "free(buffer->context)" ggml/src/ggml-cpu/amx/amx.cpp at the new tag.
+
+diff --git a/ggml/src/ggml-cpu/amx/amx.cpp b/ggml/src/ggml-cpu/amx/amx.cpp
+index e90c279..a65ab88 100644
+--- a/ggml/src/ggml-cpu/amx/amx.cpp
++++ b/ggml/src/ggml-cpu/amx/amx.cpp
+@@ -43,7 +43,11 @@ static ggml::cpu::tensor_traits * get_tensor_traits(ggml_backend_buffer_t, struc
+ 
+ // AMX buffer interface
+ static void ggml_backend_amx_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+-    free(buffer->context);
++    // The buffer comes from ggml_aligned_malloc() (alloc_buffer below), which is _aligned_malloc()
++    // on Windows: memory that only _aligned_free() may release. free() on it corrupts the CRT heap
++    // (STATUS_HEAP_CORRUPTION, 0xC0000374) when the model is unloaded. ggml_aligned_free() is the
++    // matching call on every platform, as ggml_backend_cpu_buffer_free_buffer() uses it.
++    ggml_aligned_free(buffer->context, buffer->size);
+ }
+ 
+ static void * ggml_backend_amx_buffer_get_base(ggml_backend_buffer_t buffer) {
