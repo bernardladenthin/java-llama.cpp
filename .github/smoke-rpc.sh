@@ -6,8 +6,8 @@
 
 # RPC smoke test over two JVMs, on the real release asset:
 #
-#   JVM A  java -cp <fatjar> net.ladenthin.llama.RpcServer   serves this runner's devices
-#   JVM B  java -jar <fatjar> -m <model> --rpc 127.0.0.1:<A>  the default NativeServer, which
+#   JVM A  java -cp '<set>/*' net.ladenthin.llama.RpcServer   serves this runner's devices
+#   JVM B  java -cp '<set>/*' ServerLauncher -m <model> --rpc 127.0.0.1:<A>  the default NativeServer, which
 #                                                              offloads its layers to A
 #
 # and checks that B answers a chat completion, that its load log shows a model buffer on A's
@@ -15,14 +15,15 @@
 # client. A third launch names a server nobody runs and must fail with a message naming it and a
 # normal exit -- not a SIGABRT, which is what ggml-rpc did before patches/0015.
 #
-# Usage: smoke-rpc-fatjar.sh <jar-dir> <jar-glob> <model-path>
+# Usage: smoke-rpc.sh <set-dir> <model-path>
 # Output lands in rpc-server.log, rpc-client-out.log, rpc-client-err.log, rpc-unreachable.log
 # (uploaded by the CI job on failure).
 set -euo pipefail
 
-JAR_DIR="${1:?usage: smoke-rpc-fatjar.sh <jar-dir> <jar-glob> <model-path>}"
-JAR_GLOB="${2:?usage: smoke-rpc-fatjar.sh <jar-dir> <jar-glob> <model-path>}"
-MODEL="${3:?usage: smoke-rpc-fatjar.sh <jar-dir> <jar-glob> <model-path>}"
+SET_DIR="${1:?usage: smoke-rpc.sh <set-dir> <model-path>}"
+MODEL="${2:?usage: smoke-rpc.sh <set-dir> <model-path>}"
+# shellcheck source=smoke-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/smoke-lib.sh"
 RPC_PORT="${RPC_PORT:-50152}"
 HTTP_PORT="${HTTP_PORT:-18181}"
 UNUSED_PORT="${UNUSED_PORT:-50153}"
@@ -35,9 +36,7 @@ fail() {
     exit 1
 }
 
-mapfile -t JARS < <(find "$JAR_DIR" -maxdepth 1 -name "$JAR_GLOB" | sort)
-[ "${#JARS[@]}" -eq 1 ] || fail "expected exactly 1 jar matching $JAR_GLOB in $JAR_DIR, got ${#JARS[@]}: ${JARS[*]:-none}"
-JAR="${JARS[0]}"
+CP="$(smoke_classpath "$SET_DIR")" || exit 1
 [ -f "$MODEL" ] || fail "model file missing: $MODEL"
 
 PIDS=()
@@ -49,12 +48,12 @@ cleanup() {
 trap cleanup EXIT
 
 # --- JVM A: the RPC server ----------------------------------------------------------------------
-java -cp "$JAR" net.ladenthin.llama.RpcServer --port "$RPC_PORT" --threads 2 --device CPU > rpc-server.log 2>&1 &
+java -cp "$CP" net.ladenthin.llama.RpcServer --port "$RPC_PORT" --threads 2 --device CPU > rpc-server.log 2>&1 &
 PIDS+=($!)
 SERVER_PID=$!
-# Up to 300 s, like the NativeServer smoke: an all-backends jar extracts every GPU backend's
-# library (CUDA, ROCm and SYCL are hundreds of MB) and fails to load each before it reaches one
-# this GPU-less runner can load. 60 s was too short for that on the first CI run.
+# Up to 300 s, like the NativeServer smoke: the set's GPU module jars are all extracted next to the
+# library (CUDA, ROCm and SYCL are hundreds of MB) before ggml tries each and gives up on it for lack
+# of a runtime on this GPU-less runner. 60 s was too short for that on the first CI run.
 for _ in $(seq 1 100); do
     kill -0 "$SERVER_PID" 2> /dev/null || fail "RpcServer exited before listening"
     grep -q "RpcServer listening on 127.0.0.1:$RPC_PORT" rpc-server.log && break
@@ -66,12 +65,12 @@ grep -q "serving \[CPU\]" rpc-server.log || fail "RpcServer --device CPU did not
 # LlamaModel, and JNI_OnLoad initializes LlamaModel, whose static block re-entered the loader and
 # ran a second complete load over the library being loaded (LlamaLoader.runOnceOnThisThread).
 # A manifest-less jar prints the line zero times.
-[ "$(grep -c '\[jllama\] using native backend' rpc-server.log)" -le 1 ] \
-    || fail "the native library was loaded more than once: $(grep -c '\[jllama\] using native backend' rpc-server.log) backend selections"
+[ "$(grep -c '\[jllama\] native backend' rpc-server.log)" -le 1 ] \
+    || fail "the native library was loaded more than once: $(grep -c '\[jllama\] native backend' rpc-server.log) loader lines"
 echo "RPC server up: $(grep 'RpcServer listening' rpc-server.log)"
 
 # --- JVM B: the model, offloaded over RPC --------------------------------------------------------
-java -jar "$JAR" -m "$MODEL" --host 127.0.0.1 --port "$HTTP_PORT" --chat-template chatml \
+java -cp "$CP" "$SMOKE_MAIN" -m "$MODEL" --host 127.0.0.1 --port "$HTTP_PORT" --chat-template chatml \
     --rpc "127.0.0.1:$RPC_PORT" -ngl 99 -lv 4 > rpc-client-out.log 2> rpc-client-err.log &
 PIDS+=($!)
 CLIENT_PID=$!
@@ -105,7 +104,7 @@ wait "$CLIENT_PID" 2> /dev/null || true
 
 # --- an unreachable server fails the start cleanly -----------------------------------------------
 set +e
-timeout 120 java -jar "$JAR" -m "$MODEL" --host 127.0.0.1 --port "$((HTTP_PORT + 1))" \
+timeout 120 java -cp "$CP" "$SMOKE_MAIN" -m "$MODEL" --host 127.0.0.1 --port "$((HTTP_PORT + 1))" \
     --rpc "127.0.0.1:$UNUSED_PORT" > rpc-unreachable.log 2>&1
 status=$?
 set -e

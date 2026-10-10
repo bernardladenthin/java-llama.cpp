@@ -4,20 +4,26 @@
 """Everything that names a natives jar, checked against .github/natives.csv.
 
 The list is the one place a natives jar is declared. Everything else either reads it (the merge,
-the fat-jar assembly) or has to repeat it, and each repetition is checked here:
+the smoke sets) or has to repeat it, and each repetition is checked here:
   * llama/pom.xml       one jar execution per row: classifier, directory, Automatic-Module-Name
   * llama-platform      depends on exactly the rows marked platform=yes
-  * publish.yml         a build job uploads natives-<classifier> for every row and no other, and
-                        `package` waits for each of them (else it packages without that build)
-  * LlamaLoader         BACKEND_PRIORITY tries every backend (else a jar ships and never loads)
+  * publish.yml         a build job uploads natives-<classifier> for every row and no other,
+                        `package` waits for each of them (else it packages without that build) and
+                        uploads a smoke set llama-smoke-<target> per smoke target, and every smoke
+                        target is launched by a job that downloads its set
+  * LlamaLoader         LIBRARY_BACKENDS / MODULE_BACKENDS know every backend of their kind (else a
+                        jar ships and never loads)
   * CMakeLists.txt      names exactly the backend directories of the list
-  * nativedeps.ALLOWED  holds an allowlist for every CPU directory (cpu, metal, msvc), and for no
+  * nativedeps.ALLOWED  holds an allowlist for every library directory (cpu, metal), and for no
                         directory the list lacks
   * README.md           documents every classifier
-and, for the all-backends fat jars derived from the list (fatjar_targets), that each one is
-uploaded as llama-fatjar-smoke-<target>, launched by a smoke job (a script line naming it, or a row
-of the smoke-fatjar matrix), named in the agent jar's Class-Path and in the README.
-package-fatjars.sh does not repeat the targets at all: it asks this module for them.
+  * examples/           the JBang example and the server example pom name the right jars at the
+                        README's version
+A row is a `library` (holds libjllama) or a `module` (holds one GPU backend module, additive to the
+library jar of its platform). The smoke targets are derived from the list (smoke_targets): every
+desktop platform with a library jar, and every module jar's platform must be one of them, so no
+natives jar ships unlaunched. package-smoke-sets.sh does not repeat the targets: it asks this
+module for them (check-natives.py smoke-targets).
 
 Every check is a function of the texts it compares, so the tests drive them with literals.
 """
@@ -32,19 +38,18 @@ from . import nativedeps, workflow
 
 NS = {"m": "http://maven.apache.org/POM/4.0.0"}
 
-# Backends that get no place in an all-backends jar: msvc is the same CPU build from another
-# generator, so it would only be a second CPU library the loader tries before the first.
-FATJAR_EXCLUDED_BACKENDS = ("msvc",)
-# Platforms that get no all-backends jar: `java -jar` does not apply on Android (the AAR does).
-FATJAR_EXCLUDED_OSES = ("Linux-Android",)
+KINDS = ("library", "module")
 
-FATJAR_NAME = re.compile(r"all-([a-z0-9]+(?:-[a-z0-9]+)*?)-jar-with-dependencies")
+# Platforms that get no smoke set: `java -cp` does not apply on Android (the AAR and the emulator
+# job do), and no GitHub runner exists for s390x (its C++ suite runs under qemu instead).
+SMOKE_EXCLUDED_OSES = ("Linux-Android",)
+SMOKE_EXCLUDED_TREES = ("Linux/s390x",)
 
-# package-fatjars uploads each all-backends fat jar alone, as llama-fatjar-smoke-<target>, for the
-# smoke-fatjar matrix; a matrix row is a flow mapping that starts with its target.
-SMOKE_ARTIFACT = "llama-fatjar-smoke-"
+# `package` uploads each smoke set alone, as llama-smoke-<target>, for the smoke jobs; a matrix row
+# is a flow mapping that starts with its target.
+SMOKE_ARTIFACT = "llama-smoke-"
 MATRIX_ROW = re.compile(r"^\s*-\s*\{\s*target:\s*([a-z0-9-]+)\s*[,}]")
-MATRIX_FATJAR = "all-${{ matrix.target }}-jar-with-dependencies"
+MATRIX_DOWNLOAD = SMOKE_ARTIFACT + "${{ matrix.target }}"
 
 
 def rows(text):
@@ -60,6 +65,19 @@ def backend(row):
 def tree(row):
     """<OS>/<ARCH> of the row."""
     return row["directory"].rsplit("/", 1)[0]
+
+
+def target(row):
+    """<os>-<arch> of the row: its classifier without the backend."""
+    return row["classifier"][len(backend(row)) + 1:]
+
+
+def libraries(natives):
+    return [r for r in natives if r["kind"] == "library"]
+
+
+def modules(natives):
+    return [r for r in natives if r["kind"] == "module"]
 
 
 def module_name(classifier):
@@ -91,22 +109,17 @@ def pom_execution(row):
 \t\t\t\t\t\t\t</execution>"""
 
 
-def fatjar_targets(natives):
-    """The all-backends fat jars: one per <os>-<arch> (the classifier suffix) with more than one
-    natives jar, excluded backends and platforms left out. Sorted. package-fatjars.sh builds
-    exactly these (it asks for them: check-natives.py fatjar-targets)."""
-    groups = {}
-    for row in natives:
-        if backend(row) in FATJAR_EXCLUDED_BACKENDS or tree(row).split("/")[0] in FATJAR_EXCLUDED_OSES:
-            continue
-        target = row["classifier"][len(backend(row)) + 1:]
-        groups.setdefault(target, set()).add(backend(row))
-    return sorted(t for t, backends in groups.items() if len(backends) > 1)
+def smoke_targets(natives):
+    """The smoke targets: the <os>-<arch> of every library row, excluded platforms left out. Sorted.
+    A smoke set holds the classes jar, its dependencies and every natives jar of the target, and a
+    smoke job launches it on a runner of that OS/arch. package-smoke-sets.sh builds exactly these."""
+    return sorted({target(r) for r in libraries(natives)
+                   if tree(r).split("/")[0] not in SMOKE_EXCLUDED_OSES and tree(r) not in SMOKE_EXCLUDED_TREES})
 
 
-def fatjar_names(text):
-    """The fat-jar targets a text names (`...-all-<target>-jar-with-dependencies...`)."""
-    return set(FATJAR_NAME.findall(text))
+def smoke_set(natives, smoke_target):
+    """The natives jars of one smoke target: the library row and every module row of its platform."""
+    return [r for r in natives if target(r) == smoke_target]
 
 
 def compare(what, expected, actual):
@@ -119,10 +132,31 @@ def check_rows(natives):
     classifiers = [r["classifier"] for r in natives]
     if len(set(classifiers)) != len(classifiers):
         failures.append("natives.csv lists a classifier twice")
+    trees = {}
     for r in natives:
         if not r["classifier"].startswith(backend(r) + "-") or r["platform"] not in ("yes", "no"):
             failures.append(f"natives.csv: row {r['classifier']} -- classifier must start with its "
                             f"directory's backend '{backend(r)}', platform must be yes or no")
+        if r.get("kind") not in KINDS:
+            failures.append(f"natives.csv: row {r['classifier']} -- kind must be one of {KINDS}")
+        elif r["kind"] == "library" and not re.fullmatch(r"(lib)?jllama\.(so|dll|dylib)", r["library"]):
+            failures.append(f"natives.csv: row {r['classifier']} -- a library row must hold the jllama library, "
+                            f"not {r['library']}")
+        elif r["kind"] == "module":
+            if not re.fullmatch(r"(lib)?ggml-[a-z0-9]+\.(so|dll)", r["library"]):
+                failures.append(f"natives.csv: row {r['classifier']} -- a module row must hold one ggml backend "
+                                f"module (libggml-<x>.so / ggml-<x>.dll), not {r['library']}")
+            if r["platform"] == "yes":
+                failures.append(f"natives.csv: row {r['classifier']} -- a module cannot be a platform jar: it "
+                                f"holds no library")
+        trees.setdefault(tree(r), []).append(r)
+    for t, group in sorted(trees.items()):
+        if not any(r.get("kind") == "library" for r in group):
+            failures.append(f"natives.csv: {t} has module jars but no library jar -- nothing would load them")
+        names = [r["library"] for r in group]
+        if len(set(names)) != len(names):
+            failures.append(f"natives.csv: two jars of {t} ship a file of the same name ({names}); they are "
+                            f"extracted into one directory")
     return failures
 
 
@@ -156,70 +190,62 @@ def check_platform(natives, platform_pom_text):
 
 
 def check_workflow(natives, jobs):
-    """The build jobs upload natives-<classifier> for every row, `package` waits for each of them,
-    and every fat-jar target is uploaded for a smoke job and launched by one."""
+    """The build jobs upload natives-<classifier> for every row, `package` waits for each of them and
+    uploads llama-smoke-<target> per smoke target, and every target is downloaded by a smoke job."""
     uploads = {}
     for job in jobs.values():
         for name in job.uploads():
             if name.startswith("natives-"):
                 uploads[name[len("natives-"):]] = job.name
     failures = compare("publish.yml natives-* uploads", [r["classifier"] for r in natives], uploads)
-    if "package" not in jobs:
+    package = jobs.get("package")
+    if package is None:
         return failures + ["publish.yml has no `package` job"]
     waited_for = workflow.closure(jobs, "package")
     for classifier, job in sorted(uploads.items()):
         if job not in waited_for:
             failures.append(f"publish.yml: package does not wait for {job}, which uploads natives-{classifier} "
                             f"-- add it to package's needs")
-    targets = fatjar_targets(natives)
-    assembler = jobs.get("package-fatjars")
-    if assembler is None:
-        return failures + ["publish.yml has no `package-fatjars` job"]
-    failures += check_smoke_uploads(targets, assembler)
+    targets = smoke_targets(natives)
+    uploaded = {n[len(SMOKE_ARTIFACT):] for n in package.uploads() if n.startswith(SMOKE_ARTIFACT)}
+    failures += compare("publish.yml package smoke-set uploads", targets, uploaded)
     launched = set()
     for job in jobs.values():
-        if job.name != "package-fatjars":
-            launched |= smoke_runs(job, failures)
-    failures += compare("publish.yml fat-jar smoke runs", targets, launched)
+        if job.name != "package":
+            launched |= smoke_downloads(job)
+    failures += compare("publish.yml smoke runs (a job downloading llama-smoke-<target>)", targets, launched)
+    for r in modules(natives):
+        if tree(r).split("/")[0] not in SMOKE_EXCLUDED_OSES and target(r) not in targets:
+            failures.append(f"natives.csv: the module jar {r['classifier']} has no smoke target -- it would ship "
+                            f"unlaunched")
     return failures
 
 
-def check_smoke_uploads(targets, assembler):
-    """package-fatjars uploads llama-fatjar-smoke-<target> for every target, each holding that
-    target's jar (the path names the same target as the artifact)."""
-    failures, uploaded = [], set()
-    for step in assembler.steps():
-        text = "\n".join(step)
-        names = [n for n in re.findall(r"name:\s*(\S+)", text) if n.startswith(SMOKE_ARTIFACT)]
-        if "actions/upload-artifact@" not in text or not names:
-            continue
-        target = names[0][len(SMOKE_ARTIFACT):]
-        uploaded.add(target)
-        if fatjar_names("\n".join(line for line in step if "path:" in line)) != {target}:
-            failures.append(f"publish.yml package-fatjars: {names[0]} does not upload the {target} fat jar")
-    return compare("publish.yml package-fatjars smoke-jar uploads", targets, uploaded) + failures
-
-
-def smoke_runs(job, failures):
-    """The fat-jar targets a job launches: the ones its smoke-script lines name, and, when those run
-    `all-${{ matrix.target }}-...`, every row of its matrix -- which must then download each row's
-    own smoke jar."""
-    smoke = "\n".join(line for line in job.lines if ".github/smoke-" in line)
-    if not smoke:
-        return set()
-    launched = fatjar_names(smoke)
-    if MATRIX_FATJAR in job.text:
+def smoke_downloads(job):
+    """The smoke targets a job downloads: the literal llama-smoke-<target> names in its text, and, when
+    it downloads llama-smoke-${{ matrix.target }}, every row of its matrix."""
+    launched = set(re.findall(re.escape(SMOKE_ARTIFACT) + r"([a-z0-9]+-[a-z0-9-]+)", job.text))
+    launched.discard("${{ matrix.target }}")
+    if MATRIX_DOWNLOAD in job.text:
         launched |= {m.group(1) for m in map(MATRIX_ROW.match, job.lines) if m}
-        if f"name: {SMOKE_ARTIFACT}${{{{ matrix.target }}}}" not in job.text:
-            failures.append(f"publish.yml: {job.name} does not download {SMOKE_ARTIFACT}${{{{ matrix.target }}}}")
     return launched
 
 
 def check_loader(natives, loader_text):
-    block = re.search(r"BACKEND_PRIORITY\s*=(.*?);", loader_text, re.S)
-    priority = set(re.findall(r'"([^"]+)"', block.group(1))) if block else set()
-    return [f"LlamaLoader.BACKEND_PRIORITY does not try '{b}' -- its jars would never load"
-            for b in sorted({backend(r) for r in natives} - priority)]
+    """LIBRARY_BACKENDS names every library backend, MODULE_BACKENDS every module backend, and no
+    backend is in the wrong list."""
+    def constant(name):
+        block = re.search(name + r"\s*=(.*?);", loader_text, re.S)
+        return set(re.findall(r'"([^"]+)"', block.group(1))) if block else set()
+    failures = []
+    for kind, const in (("library", "LIBRARY_BACKENDS"), ("module", "MODULE_BACKENDS")):
+        listed = {backend(r) for r in natives if r["kind"] == kind}
+        known = constant(const)
+        failures += [f"LlamaLoader.{const} does not know '{b}' -- its jars would never load"
+                     for b in sorted(listed - known)]
+        failures += [f"LlamaLoader.{const} names '{b}', which no {kind} jar of natives.csv ships"
+                     for b in sorted(known - listed)]
+    return failures
 
 
 def check_cmake(natives, cmake_text):
@@ -232,8 +258,8 @@ def check_cmake(natives, cmake_text):
 
 
 def check_dependency_allowlist(natives, allowed):
-    """nativedeps.ALLOWED holds a list for every CPU directory (the package job would otherwise fail
-    on a new one only after every build finished), and none for a directory no jar ships."""
+    """nativedeps.ALLOWED holds a list for every library directory (the package job would otherwise
+    fail on a new one only after every build finished), and none for a directory no jar ships."""
     directories = {r["directory"] for r in natives}
     cpu = {r["directory"] for r in natives if backend(r) in nativedeps.CPU_BACKENDS}
     return ([f"buildcheck/nativedeps.py ALLOWED has no allowlist for {d}" for d in sorted(cpu - set(allowed))]
@@ -242,26 +268,31 @@ def check_dependency_allowlist(natives, allowed):
 
 
 def check_readme(natives, readme_text):
-    failures = [f"README.md does not document the natives jar `{r['classifier']}`"
-                for r in natives if f"`{r['classifier']}`" not in readme_text]
-    return failures + compare("README.md all-backends fat jars", fatjar_targets(natives), fatjar_names(readme_text))
+    return [f"README.md does not document the natives jar `{r['classifier']}`"
+            for r in natives if f"`{r['classifier']}`" not in readme_text]
 
 
 JBANG_EXAMPLE = "examples/jbang/Chat.java"
+SERVER_EXAMPLE = "examples/server/pom.xml"
+
+
+def readme_version(readme_text):
+    """The release version of the README's install snippet (llama-platform), which the bump moves by hand."""
+    match = re.search(r"<artifactId>llama-platform</artifactId>\s*<version>([^<]+)</version>", readme_text)
+    return match.group(1) if match else None
 
 
 def check_jbang_example(natives, script_text, readme_text):
     """The one-file JBang example runs without a checkout, so it cannot take `llama-platform`: JBang
     treats a `pom` dependency as a BOM and puts nothing of it on the classpath (measured). It therefore
     names the classes jar and the platform=yes natives jars itself -- exactly those, at the version of
-    the README's install snippet, which the version bump moves by hand."""
+    the README's install snippet."""
     deps = [line.split()[1] for line in script_text.splitlines() if line.startswith("//DEPS ")]
     coords = [d.split(":") for d in deps]
     good = [c for c in coords if c[:2] == ["net.ladenthin", "llama"] and len(c) in (3, 4)]
     failures = [f"{JBANG_EXAMPLE}: `{d}` is not net.ladenthin:llama:<version>[:<classifier>]"
                 for d, c in zip(deps, coords) if c not in good]
-    match = re.search(r"<artifactId>llama-platform</artifactId>\s*<version>([^<]+)</version>", readme_text)
-    expected = match.group(1) if match else None
+    expected = readme_version(readme_text)
     versions = {c[2] for c in good}
     if versions != {expected}:
         failures.append(f"{JBANG_EXAMPLE}: DEPS version(s) {sorted(versions)} must be the README install "
@@ -278,12 +309,31 @@ def check_jbang_example(natives, script_text, readme_text):
     return failures
 
 
-def check_agent_class_path(natives, agent_pom_text):
-    """`java -jar` on the agent jar finds the core through its manifest Class-Path, which names
-    every all-backends fat jar."""
-    match = re.search(r"<Class-Path>(.*?)</Class-Path>", agent_pom_text, re.S)
-    named = fatjar_names(match.group(1)) if match else set()
-    return compare("llama-atmosphere-agent/pom.xml Class-Path", fatjar_targets(natives), named)
+def check_server_example(natives, pom_text, readme_text):
+    """examples/server/pom.xml starts the server from Maven Central: llama-platform at the README's
+    version, plus one profile per GPU module jar (id = the classifier) that adds exactly that jar, so
+    `-P cuda13-linux-x86-64` is the whole opt-in. Checked both ways: a profile per module row, no
+    profile for a jar that does not exist."""
+    root = ET.fromstring(pom_text)
+    version = root.findtext("m:properties/m:llama.version", namespaces=NS)
+    expected = readme_version(readme_text)
+    failures = []
+    if version != expected:
+        failures.append(f"{SERVER_EXAMPLE}: <llama.version> is {version}, the README install snippet's is {expected}")
+    profiles = {}
+    for profile in root.iterfind("m:profiles/m:profile", NS):
+        pid = profile.findtext("m:id", namespaces=NS)
+        deps = profile.findall("m:dependencies/m:dependency", NS)
+        classifiers = [d.findtext("m:classifier", namespaces=NS) for d in deps]
+        if pid in {r["classifier"] for r in modules(natives)} or (classifiers and classifiers[0] in
+                                                                     {r["classifier"] for r in natives}):
+            profiles[pid] = classifiers
+    failures += compare(f"{SERVER_EXAMPLE} GPU profiles", [r["classifier"] for r in modules(natives)], profiles)
+    for pid, classifiers in sorted(profiles.items()):
+        if classifiers != [pid]:
+            failures.append(f"{SERVER_EXAMPLE}: profile {pid} must add exactly the natives jar {pid}, it adds "
+                            f"{classifiers}")
+    return failures
 
 
 def check_agent_version(root_pom_text, agent_pom_text):
@@ -307,6 +357,7 @@ def read(root, path):
 def check(root):
     """Every check, over the files of the repository at `root`."""
     natives = rows(read(root, ".github/natives.csv"))
+    readme = read(root, "README.md")
     return (check_rows(natives)
             + check_pom(natives, read(root, "llama/pom.xml"))
             + check_platform(natives, read(root, "llama-platform/pom.xml"))
@@ -314,7 +365,7 @@ def check(root):
             + check_loader(natives, read(root, "llama/src/main/java/net/ladenthin/llama/loader/LlamaLoader.java"))
             + check_cmake(natives, read(root, "llama/CMakeLists.txt"))
             + check_dependency_allowlist(natives, nativedeps.ALLOWED)
-            + check_readme(natives, read(root, "README.md"))
-            + check_jbang_example(natives, read(root, JBANG_EXAMPLE), read(root, "README.md"))
-            + check_agent_class_path(natives, read(root, "llama-atmosphere-agent/pom.xml"))
+            + check_readme(natives, readme)
+            + check_jbang_example(natives, read(root, JBANG_EXAMPLE), readme)
+            + check_server_example(natives, read(root, SERVER_EXAMPLE), readme)
             + check_agent_version(read(root, "pom.xml"), read(root, "llama-atmosphere-agent/pom.xml")))

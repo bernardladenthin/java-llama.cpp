@@ -4,8 +4,9 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
-# macOS post-`package` smoke: verifies the libjllama.dylib that is actually INSIDE the packaged jar
-# — its code signature, and that a JVM can load it and cross the JNI boundary.
+# macOS post-`package` smoke: verifies the libjllama.dylib that is actually INSIDE the published
+# natives jar (metal-macos-aarch64, taken from the macOS smoke set) -- its code signature, and that
+# a JVM can load it from the jars and cross the JNI boundary.
 #
 # Why this exists (the gap it closes): the three macOS Java test jobs each run against the dylib
 # THEIR OWN build job produced. Nothing in the pipeline ever loaded the one that goes into the
@@ -13,13 +14,13 @@
 # one path and produced a byte-level hybrid, the result — a library whose ad-hoc linker signature no
 # longer matched its own __TEXT pages, which macOS SIGKILLs on load — shipped in 5.0.6 and several
 # 5.0.7 snapshots with an all-green pipeline. Linux and Windows already had the equivalent gate
-# (the `smoke-fatjar` matrix, downstream of `package`); macOS had none.
+# (the `smoke-natives` matrix, downstream of `package`); macOS had none.
 #
-# This is the macOS member of the cross-repo "no release asset is attached that CI has not run"
-# convention (workspace/policies/fat-jar-release-assets.md). It is NOT the shared
-# smoke-fatjar-cli.sh that BitcoinAddressFinder and srcmorph run: this jar's Main-Class is a server
-# that never exits, and the assertion that matters here is native-library loadability, not a CLI
-# exit code. Same job shape, repo-specific assertions.
+# This is the macOS member of the cross-repo "no artifact ships that CI has not run" convention
+# (workspace/policies/fat-jar-release-assets.md; this repository ships no fat jar, its artifacts are
+# the natives jars, and every one of a platform is launched from a smoke set). It is NOT the shared
+# smoke-fatjar-cli.sh that BitcoinAddressFinder and srcmorph run: the assertion that matters here
+# is native-library loadability, not a CLI exit code.
 #
 # No cache restore and no model of the CI set: it runs in ~1 min. A full model-backed macOS server
 # smoke would be strictly more, but the failure class that actually shipped is caught here, so this
@@ -29,42 +30,42 @@
 # dylib used to depend on the runner's Homebrew OpenSSL, which no check here could see because the
 # runner has it. Step 3 proves the HTTPS client against the macOS certificate store and the
 # embedded server behind its own TLS certificate, the same round the Linux and Windows rows of
-# smoke-fatjar run.
+# smoke-natives run.
 #
-# Usage: smoke-native-macos.sh <jar-dir> <jar-glob> [port]
+# Usage: smoke-native-macos.sh <set-dir> [port]
 # Server output of step 3 is written to server-tls-out.log / server-tls-err.log in the working dir.
-#   <jar-dir>   directory to search for the jar (recursively)
-#   <jar-glob>  filename glob; must match EXACTLY ONE jar
+#   <set-dir>   the macOS smoke set (.github/package-smoke-sets.sh): the classes jar, its
+#               dependencies and the metal-macos-aarch64 natives jar
 
 set -euo pipefail
 
-JAR_DIR="${1:?usage: smoke-native-macos.sh <jar-dir> <jar-glob> [port]}"
-JAR_GLOB="${2:?usage: smoke-native-macos.sh <jar-dir> <jar-glob> [port]}"
-TLS_PORT="${3:-18081}"
+SET_DIR="${1:?usage: smoke-native-macos.sh <set-dir> [port]}"
+TLS_PORT="${2:-18081}"
 HTTPS_MODEL_NAME="stories260K.gguf"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=smoke-lib.sh
+. "$SCRIPT_DIR/smoke-lib.sh"
 
 fail() {
     echo "::error::$*" >&2
     exit 1
 }
 
-[ -d "$JAR_DIR" ] || fail "jar directory '$JAR_DIR' does not exist"
-
+CP="$(smoke_classpath "$SET_DIR")" || exit 1
 jars=()
-while IFS= read -r j; do jars+=("$j"); done < <(find "$JAR_DIR" -type f -name "$JAR_GLOB" | sort)
+while IFS= read -r j; do jars+=("$j"); done < <(find "$SET_DIR" -maxdepth 1 -type f -name 'llama-*-metal-macos-aarch64.jar' | sort)
 [ "${#jars[@]}" -eq 1 ] \
-    || fail "expected exactly 1 jar matching '$JAR_GLOB' under '$JAR_DIR', got ${#jars[@]}: ${jars[*]:-none}"
+    || fail "expected exactly 1 metal-macos-aarch64 natives jar in '$SET_DIR', got ${#jars[@]}: ${jars[*]:-none}"
 JAR="$(cd "$(dirname "${jars[0]}")" && pwd)/$(basename "${jars[0]}")"
-echo "smoke jar: $JAR"
+echo "natives jar: $JAR"
 
 DYLIB_ENTRY="net/ladenthin/llama/Mac/aarch64/metal/libjllama.dylib"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 unzip -o -q "$JAR" "$DYLIB_ENTRY" -d "$WORK" \
-    || fail "the jar does not contain $DYLIB_ENTRY — the macOS natives never reached the package job"
+    || fail "the natives jar does not contain $DYLIB_ENTRY — the macOS natives never reached the package job"
 DYLIB="$WORK/$DYLIB_ENTRY"
 echo "extracted: $(cd "$(dirname "$DYLIB")" && pwd)/$(basename "$DYLIB") ($(wc -c < "$DYLIB") bytes)"
 
@@ -97,7 +98,7 @@ codesign --verify --strict --verbose=2 "$DYLIB" \
 #    and it is the only check that covers load-time failures the signature check cannot see
 #    (missing dependent library, wrong architecture, unresolved JNI_OnLoad class lookup).
 echo "== JVM load + JNI round-trip =="
-java -cp "$JAR" "$SCRIPT_DIR/smoke/NativeLoadSmoke.java" \
+java -cp "$CP" "$SCRIPT_DIR/smoke/NativeLoadSmoke.java" \
     || fail "the packaged native library did not load in a JVM"
 
 # 3) HTTPS in both directions out of the packaged jar: the server behind a self-signed certificate
@@ -111,7 +112,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -keyout "$WORK/tls-key.pem" -out "$WOR
 export LLAMA_CACHE="$WORK/llama-cache"
 mkdir -p "$LLAMA_CACHE"
 # -m names where the download lands; with --model-url alone the server starts in ROUTER mode.
-java -jar "$JAR" -m "$LLAMA_CACHE/$HTTPS_MODEL_NAME" --model-url "$HTTPS_MODEL_URL" \
+java -cp "$CP" "$SMOKE_MAIN" -m "$LLAMA_CACHE/$HTTPS_MODEL_NAME" --model-url "$HTTPS_MODEL_URL" \
     --host 127.0.0.1 --port "$TLS_PORT" --chat-template chatml \
     -ngl 0 --ssl-key-file "$WORK/tls-key.pem" --ssl-cert-file "$WORK/tls-cert.pem" \
     > server-tls-out.log 2> server-tls-err.log &

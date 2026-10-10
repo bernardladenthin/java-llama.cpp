@@ -159,18 +159,36 @@ class ViolationsTest(unittest.TestCase):
         self.assertIn("GLIBC_2.29", failures[0])
         self.assertIn("GLIBC_2.28", failures[0])
         # a build on the ubuntu runner promises no floor
-        self.assertEqual(nativedeps.violations("x/Linux/x86_64/vulkan/libjllama.so", ["libc.so.6"], glibc=(2, 39)), [])
+        self.assertEqual(nativedeps.violations("x/Linux/x86_64/vulkan/libggml-vulkan.so",
+                                               ["libggml-base.so", "libc.so.6"], runpath="$ORIGIN", glibc=(2, 39)), [])
 
-    def test_gpu_backends_are_held_to_the_denylist_only(self):
-        rel = "x/Linux/x86_64/cuda13/libjllama.so"
-        self.assertEqual(nativedeps.violations(rel, ["libcudart.so.13"]), [])
-        self.assertIn("no consumer can be expected", nativedeps.violations(rel, ["libibverbs.so.1"])[0])
+    def test_gpu_modules_are_held_to_the_denylist_and_must_be_modules(self):
+        rel = "x/Linux/x86_64/cuda13/libggml-cuda.so"
+        module = ["libggml-base.so", "libcudart.so.13", "libc.so.6"]
+        self.assertEqual(nativedeps.violations(rel, module, runpath="$ORIGIN"), [])
+        self.assertIn("no consumer can be expected",
+                      nativedeps.violations(rel, module + ["libibverbs.so.1"], runpath="$ORIGIN")[0])
+        # a monolithic library in a module directory (the layout before 5.2.0) is refused: it does not
+        # import ggml-base, because it carries its own
+        found = nativedeps.violations("x/Linux/x86_64/cuda13/libjllama.so", ["libcudart.so.13", "libc.so.6"],
+                                      runpath="$ORIGIN")
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("does not import ggml-base", found[0])
+        # the module finds libggml-base next to it only through $ORIGIN
+        found = nativedeps.violations(rel, module, runpath=None)
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("$ORIGIN", found[0])
+        # Windows: ggml-base.dll by name, no run path to check
+        self.assertEqual(nativedeps.violations("x/Windows/x86_64/vulkan/ggml-vulkan.dll",
+                                               ["ggml-base.dll", "vulkan-1.dll", "KERNEL32.dll"]), [])
+        self.assertIn("does not import ggml-base",
+                      nativedeps.violations("x/Windows/x86_64/vulkan/jllama.dll", ["vulkan-1.dll"])[0])
 
 
-    def test_the_android_opencl_build_is_held_to_bionic_plus_the_icd(self):
-        rel = "x/Linux-Android/aarch64/opencl/libjllama.so"
-        self.assertEqual(nativedeps.violations(rel, ["libc.so", "libOpenCL.so", "liblog.so"]), [])
-        self.assertIn("libomp.so", nativedeps.violations(rel, ["libc.so", "libomp.so"])[0])
+    def test_the_android_opencl_module_is_held_to_bionic_plus_the_icd_and_ggml_base(self):
+        rel = "x/Linux-Android/aarch64/opencl/libggml-opencl.so"
+        self.assertEqual(nativedeps.violations(rel, ["libc.so", "libOpenCL.so", "liblog.so", "libggml-base.so"]), [])
+        self.assertIn("libomp.so", nativedeps.violations(rel, ["libc.so", "libomp.so", "libggml-base.so"])[0])
         self.assertIn("libOpenCL.so", nativedeps.violations("x/Linux-Android/aarch64/cpu/libjllama.so",
                                                             ["libOpenCL.so"])[0])
 
@@ -187,7 +205,7 @@ class MainTest(unittest.TestCase):
     def test_checks_a_tree_and_reports_violations(self):
         with tempfile.TemporaryDirectory() as root:
             ok = os.path.join(root, "net/ladenthin/llama/Linux/s390x/cpu")
-            bad = os.path.join(root, "net/ladenthin/llama/Windows/x86/cpu")
+            bad = os.path.join(root, "net/ladenthin/llama/Windows/aarch64/cpu")
             os.makedirs(ok)
             os.makedirs(bad)
             with open(os.path.join(ok, "libjllama.so"), "wb") as f:
@@ -226,8 +244,9 @@ class MainTest(unittest.TestCase):
         self.assertIn("statically linked", found[0])
         # the modules of a variants build are held to it as well, not only the main library
         self.assertEqual(len(nativedeps.violations("x/Windows/x86_64/cpu/ggml-cpu-zen4.dll", static_ucrt)), 1)
-        # a GPU directory is on a denylist and keeps its vendor runtime free
-        self.assertEqual(nativedeps.violations("x/Windows/x86_64/cuda13/jllama.dll", static_ucrt), [])
+        # a GPU module directory is on a denylist and keeps its vendor runtime free
+        self.assertEqual(nativedeps.violations("x/Windows/x86_64/cuda13/ggml-cuda.dll",
+                                               static_ucrt + ["ggml-base.dll"]), [])
         # and a non-Windows directory is unaffected
         self.assertEqual(nativedeps.violations("x/Mac/aarch64/metal/libjllama.dylib",
                                                ["/usr/lib/libSystem.B.dylib"]), [])
@@ -238,10 +257,10 @@ class MainTest(unittest.TestCase):
         for extra in ("api-ms-win-crt-process-l1-1-0.dll",   # outside the set measured on one build
                       "api-ms-win-crt-conio-l1-1-0.dll",
                       "API-MS-WIN-CRT-PRIVATE-L1-1-0.DLL"):
-            self.assertEqual(nativedeps.violations("x/Windows/x86/cpu/jllama.dll",
+            self.assertEqual(nativedeps.violations("x/Windows/aarch64/cpu/jllama.dll",
                                                    ["KERNEL32.dll", extra]), [], extra)
         # it is a prefix rule, not "anything that looks like an api set"
-        found = nativedeps.violations("x/Windows/x86/cpu/jllama.dll",
+        found = nativedeps.violations("x/Windows/aarch64/cpu/jllama.dll",
                                       ["KERNEL32.dll", "api-ms-win-crt-runtime-l1-1-0.dll",
                                        "api-ms-win-core-synch-l1-2-0.dll"])
         self.assertEqual(len(found), 1, found)

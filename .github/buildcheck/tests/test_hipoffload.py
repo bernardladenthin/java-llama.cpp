@@ -12,7 +12,7 @@ from buildcheck import hipoffload
 class HipOffloadTest(unittest.TestCase):
 
     def library(self, folder, content):
-        path = os.path.join(folder, "libjllama.so")
+        path = os.path.join(folder, "libggml-hip.so")
         with open(path, "wb") as f:
             f.write(content)
         return path
