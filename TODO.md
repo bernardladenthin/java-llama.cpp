@@ -19,16 +19,22 @@ so everything below is genuinely still open.
 
 ### CPU variants (`JLLAMA_CPU_VARIANTS`) -- Windows, GPU modules, loader follow-ups
 
-Linux x86-64 and aarch64 ship the variant build since 5.2.0 (CLAUDE.md "CPU variants"). The rest,
-with what a measurement on a Windows 11 machine (Ryzen 7 5800H, RTX 3070, JDK 21, upstream b11476
-binaries; 2026-10-08) established. The local agent's follow-up measurements at b11534 on the same
-machine, through this project's own CMake (plain clang 23.1.3 builds all 14 variants, 18 DLLs,
-`verify-native-deps.py` 0 violations) and the four items still `OPEN` for the CI job -- the
-`build.bat` command line, the Java suite against the variant build, which variant ggml picks on
-Zen 3, pp512/tg128 against the static build -- are in `docs/handover/local-agent-pr-a.md`,
-deliverable 6:
+Linux x86-64 and aarch64 ship the variant build since 5.2.0, Windows x86-64 since 5.2.x
+(CLAUDE.md "CPU variants"). The rest, with what a measurement on a Windows 11 machine (Ryzen 7
+5800H, RTX 3070, JDK 21, upstream b11476 binaries; 2026-10-08) established. The local agent's
+follow-up measurements at b11534/b11538 on the same machine, through this project's own CMake
+(plain clang 23.1.3 builds all 14 variants, 18 DLLs, `verify-native-deps.py` 0 violations; the
+`build.bat` command line the CI job now runs, the Java suite green against the variant build once
+`jllama-extras.txt` exists, `haswell` picked on Zen 3, pp512/tg128 against the static build) are in
+`docs/handover/local-agent-report-b11538-windows.md`, deliverable 3 (the GPU measurements and the
+module-beside-the-CPU-set experiment in its addenda 2 and 3):
 
-1. **Windows x86-64 build.** Only plain `clang`/`clang++` with the GNU driver -- upstream's
+1. **Windows x86-64 build -- DONE in 5.2.x**: `build-windows-x86_64` builds it with plain clang
+   (no sccache: the clang TUs do not cache, see CLAUDE.md "Windows natives"),
+   `test-cpp-windows-x86_64` runs the C++ suite in a static clang build, `test-java-windows-x86_64`
+   and the `windows-x86-64` fat-jar smoke run inference through it; CMake writes
+   `jllama-extras.txt` itself. Not yet verified: the first CI run (no Windows machine in the
+   session that wired it). The findings that led there, all still valid: only plain `clang`/`clang++` with the GNU driver -- upstream's
    `cmake/x64-windows-llvm.cmake`, four lines -- produces all 14 x86 variants: CMake sets `MSVC` for
    `clang-cl` as for `cl.exe`, and ggml's `if (NOT MSVC)` then drops `ivybridge`, `piledriver`,
    `cooperlake`, `zen4` and `sapphirerapids` (a Zen 4/5 machine falls back to `icelake` and loses the
@@ -61,9 +67,11 @@ deliverable 6:
    disappears *structurally* rather than being worked around -- the loader race over an old resident
    `msvcp140.dll` cannot happen when there is no import to resolve. So **the licence/REUSE decision
    on Microsoft "Distributable Code" is void**, and `nativedeps.py`'s `Windows/*/cpu` allowlist gets
-   *shorter*, not longer. One wiring consequence: `llama/CMakeLists.txt`'s static-CRT block is
-   `if(MSVC AND ...)`, and CMake's `MSVC` is **false** for plain clang -- widen that guard or pass
-   the flags from the job, or the clang build silently gets the dynamic CRT back.
+   *shorter*, not longer. One wiring consequence, since handled: `llama/CMakeLists.txt`'s
+   static-CRT block was `if(MSVC AND ...)`, and CMake's `MSVC` is **false** for plain clang -- it
+   now has an `elseif(WIN32 AND Clang)` branch spelling the same hybrid CRT, so the clang build
+   cannot silently get the dynamic CRT back (and `verify-native-deps.py` would red `package` if it
+   did).
 
    **(b) `GGML_OPENMP=OFF` -- and it is a throughput *win*, not a trade.** It was known to save the
    `libomp.dll` dependency (confirmed: without it the clang build imports `libomp140.x86_64.dll`,

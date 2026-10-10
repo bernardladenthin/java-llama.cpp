@@ -86,12 +86,21 @@ was **one** library for one level -- x86-64 the Haswell baseline (x86-64-v3, the
 crash and not an exception, at the first matrix multiplication, and AVX-512/VNNI/AMX stayed unused
 on CPUs that have them), aarch64 plain ARMv8. `-DJLLAMA_CPU_VARIANTS=ON` builds it; the two Linux
 build jobs pass it, every other platform still ships the single static library, and the option
-refuses them. **Windows x86-64 is buildable this way since 5.2.x and not yet wired into CI**
-(`TODO.md`): the option accepts it, refuses `cl.exe`/`clang-cl` loudly -- ggml's `if (NOT MSVC)`
-block drops 5 of the 14 variants and `clang-cl` cannot build `alderlake` at all -- and the CMake
-side is verified locally (18 DLLs in one directory, `verify-native-deps.py` clean). What is
-missing is the CI job, which needs the ctest split the Linux jobs have (see "Where C++ tests run"
-below):
+refuses them. **Windows x86-64 followed in 5.2.x** (`cpu-windows-x86-64`, job `build-windows-x86_64`):
+the same 18 files as DLLs, built with **plain clang** -- the option refuses `cl.exe`/`clang-cl`
+loudly, because ggml's `if (NOT MSVC)` block drops 5 of the 14 variants for both and `clang-cl`
+cannot build `alderlake` at all -- with the ctest split the Linux jobs have
+(`test-cpp-windows-x86_64`, a static clang build; see "Where C++ tests run" below) and the Java
+suite plus the fat-jar smoke running inference through the artifact. Two Windows specifics: there
+is no `$ORIGIN`, so the two libraries `jllama.dll` links (`ggml-base.dll`, `ggml.dll`) are left out
+of `jllama-files.txt` and named in `jllama-extras.txt` instead, which `LlamaLoader` loads by full
+path **before** `jllama.dll` (otherwise Windows resolves the import from `java.exe`'s directory or
+`PATH`, where a foreign llama.cpp install can answer); CMake writes that file itself since 5.2.x,
+byte-identical to what `merge-native-artifacts.sh` derives, so a local build is loadable without
+the merge step (before, 57 Java tests failed on the load). And sccache is off on that job: upstream
+adds `-Xclang -fno-pch-timestamp` to every clang TU, which sccache 0.18.0 does not cache (measured:
+every TU a miss, build green) -- the job builds cold. 32-bit Windows and Windows arm64 ship no
+variants (upstream builds none either).
 
 - **Only ggml becomes shared.** `FetchContent_MakeAvailable` is pointed at a non-existent
   `SOURCE_SUBDIR`, so it only fetches and patches; ggml is then added first with
@@ -131,11 +140,12 @@ below):
   meet at **2.28**: x86-64 rises from 2.17, aarch64 falls from ~2.39. `verify-native-deps.py` reads
   every library's version-needs table and holds both directories (and CUDA) to `GLIBC_2.28`; the
   modules themselves reference `GLIBC_2.27` at most (measured in the image).
-- **No `ctest` in the two build jobs**: `jllama_test` calls the CPU/RPC backends directly, so the
-  option refuses `BUILD_TESTING`; `test-cpp-linux-x86_64` and `test-cpp-linux-aarch64` build the
-  default static library with the tests. The Java suite (`test-java-linux-x86_64`, the langchain4j
-  integration job through `-Dnet.ladenthin.llama.lib.path`, the fat-jar smokes) runs real inference
-  through the variant build -- a load alone proves little: in the Windows measurement every crash
+- **No `ctest` in the three build jobs**: `jllama_test` calls the CPU/RPC backends directly, so the
+  option refuses `BUILD_TESTING`; `test-cpp-linux-x86_64`, `test-cpp-linux-aarch64` and
+  `test-cpp-windows-x86_64` build the default static library with the tests, each with the compiler
+  of the shipped build. The Java suite (`test-java-linux-x86_64`, `test-java-windows-x86_64`, the
+  langchain4j integration job through `-Dnet.ladenthin.llama.lib.path`, the fat-jar smokes) runs real
+  inference through the variant build -- a load alone proves little: in the Windows measurement every crash
   came after a successful load with a correct device count.
 - **The natives-jar checks know directories with many files**: `merge-native-artifacts.sh` requires
   every file `jllama-files.txt` names and keeps them out of `jllama-extras.txt`; `package-fatjars.sh`
@@ -238,7 +248,7 @@ repository name (`?repo` entries, see `sharedfiles.py`), `SUPPORT.md` and `ISSUE
 
 **Composite actions (`.github/actions/`, this repo only).** `restore-models` (restore the shared GGUF
 cache + `validate-models.sh`; the one place a job gets its models — 16 call sites) and
-`install-sccache-windows` (10 call sites; the caller keeps `if:` and `continue-on-error`),
+`install-sccache-windows` (9 call sites; the caller keeps `if:` and `continue-on-error`),
 `build-core` (parent + `llama`, optionally more modules, built without tests/checks/javadoc/signing,
 `install` or `package` -- the one copy of that skip-flag list, 9 call sites) and
 `publish-cpu-aar-local` (download + stage the Android CPU natives, publish the CPU AAR to mavenLocal;
@@ -276,11 +286,12 @@ new job:**
 > specific to a configuration the tests cannot run in are covered by the layers that *can* see
 > them -- the packaging check and the Java suite against the real artifact.**
 
-Today that means 7 jobs build an artifact **and** run `ctest` (`build-linux-s390x`,
+Today that means 6 jobs build an artifact **and** run `ctest` (`build-linux-s390x`,
 `build-macos-arm64-metal-15`, `build-windows-arm64`, `build-windows-x86`, `build-windows-x86-msvc`,
-`build-windows-x86_64`, `build-windows-x86_64-msvc`) and 4 only test
-(`test-cpp-linux-x86_64`, `test-cpp-linux-aarch64` -- forced, see below -- plus
-`build-macos-arm64-metal` and `build-macos-arm64-no-metal`, whose artifacts are not shipped at all).
+`build-windows-x86_64-msvc`) and 5 only test
+(`test-cpp-linux-x86_64`, `test-cpp-linux-aarch64`, `test-cpp-windows-x86_64` -- forced, see below
+-- plus `build-macos-arm64-metal` and `build-macos-arm64-no-metal`, whose artifacts are not shipped
+at all).
 
 **Why riding along is safe, measured rather than assumed:** `-DBUILD_TESTING=ON` does not change
 the shipped library. Compared on a Windows MSVC configure with the flag off and on, the `jllama`
@@ -485,15 +496,21 @@ At runtime the device must provide its own OpenCL ICD (`libOpenCL.so`);
 Qualcomm Adreno drivers do. Devices without an ICD should use the CPU-only
 `llama-android` AAR.
 
-## Windows natives (Ninja CPU + MSVC + CUDA/Vulkan/OpenCL GPU)
+## Windows natives (clang CPU variants + Ninja/MSVC CPU + CUDA/Vulkan/OpenCL GPU)
 
-The Windows x86-64 natives ship in **five** forms (natives jars): the CPU build with the
-**`Ninja Multi-Config`** generator (`cpu-windows-x86-64` / `cpu-windows-x86`, the ones in
-`llama-platform`), the Visual Studio / MSVC build (`msvc-windows-x86-64` / `msvc-windows-x86`), and
-three GPU backends, **`cuda13-windows-x86-64`**, **`vulkan-windows-x86-64`** and
-**`opencl-windows-x86-64`** (all Ninja).
+The Windows x86-64 natives ship in **five** forms (natives jars): the CPU build (`cpu-windows-x86-64`,
+in `llama-platform`: since 5.2.x the **CPU-variants build with plain clang**, Ninja Multi-Config,
+see "CPU variants"; its 32-bit sibling `cpu-windows-x86` stays the Ninja + `cl.exe` static build),
+the Visual Studio / MSVC build (`msvc-windows-x86-64` / `msvc-windows-x86`), and three GPU backends,
+**`cuda13-windows-x86-64`**, **`vulkan-windows-x86-64`** and **`opencl-windows-x86-64`** (all Ninja +
+`cl.exe`).
 
-**Why Ninja is the default (the flip).** The Visual Studio generator ignores
+**Why Ninja became the default (the flip), and why x86-64 then moved on to clang.** The Ninja +
+`cl.exe` build replaced the Visual Studio one as `cpu` first, for the reason below; the x86-64 `cpu`
+jar then became the clang CPU-variants build in 5.2.x, because only plain clang produces all 14
+variants (TODO.md "CPU variants", measured: clang is +5.6% on prompt processing and equal on
+generation against `cl.exe`, static against static). MSVC stays as `msvc-windows-*`, the second,
+independent toolchain. The Visual Studio generator ignores
 `CMAKE_{C,CXX}_COMPILER_LAUNCHER`, so only Ninja Multi-Config can front `cl.exe` with sccache over
 Depot WebDAV. **Both generators use the same MSVC toolchain** (`cl.exe`, hybrid CRT via
 `CMAKE_MSVC_RUNTIME_LIBRARY` + the UCRT linker flags, same Release flags, same runner), so the produced
@@ -501,8 +518,9 @@ Depot WebDAV. **Both generators use the same MSVC toolchain** (`cl.exe`, hybrid 
 dependencies** — the only difference is build-system plumbing + caching. Making Ninja the `cpu`
 build gives the most-pulled natives the sccache cache; MSVC stays available (directory `msvc`,
 which the loader tries before `cpu`) for anyone who wants the Visual-Studio-generator build. (Upstream llama.cpp also builds its Windows artifacts with
-Ninja Multi-Config + MSVC.) Both Windows CPU builds are validated end-to-end with the full
-model-backed Java suite (`test-java-windows-x86_64` = Ninja, `test-java-windows-x86_64-msvc` = MSVC).
+Ninja Multi-Config + MSVC.) Both Windows x86-64 CPU builds are validated end-to-end with the full
+model-backed Java suite (`test-java-windows-x86_64` = clang variants, `test-java-windows-x86_64-msvc`
+= MSVC).
 
 **`GGML_OPENMP=OFF` on every Windows CPU job -- it is faster, not a concession.** All four x86-64/x86
 CPU jobs (both generators) pass it, as the arm64 jobs already did for a dependency reason. Measured
@@ -564,7 +582,10 @@ the Visual Studio generator build `msvc`, the Ninja one `cpu`):
    (the Windows analogue of `build_opencl_android.sh`).
 3. **`.github/workflows/publish.yml`** — build jobs (all `windows-2025-vs2026`, `ilammy/msvc-dev-cmd@v1`,
    sccache v0.18.0 zip + Depot WebDAV), each uploading `natives-<classifier>`:
-   - `build-windows-x86_64` / `build-windows-x86` — **Ninja CPU**.
+   - `build-windows-x86_64` — **CPU variants, plain clang** (`-DJLLAMA_CPU_VARIANTS=ON
+     -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++`; no `-DBUILD_TESTING`, no sccache
+     install -- `test-cpp-windows-x86_64` builds the static library with the tests, same compiler).
+     `build-windows-x86` — **Ninja + `cl.exe` CPU**.
    - `build-windows-x86_64-msvc` / `build-windows-x86-msvc` — **MSVC CPU**.
    - `build-windows-x86_64-cuda` — CUDA `13.4` assembled from NVIDIA's redist archives (upstream's
      `windows-setup-cuda` component list; `Jimver/cuda-toolkit` stops at 13.3.1) + `-DGGML_CUDA=ON`.
@@ -580,11 +601,15 @@ way CMake's `FindVulkan` couldn't read → switched to `jakoch/install-vulkan-sd
 FindVulkan-compatible). Because all five Windows build jobs are in the `package`/publish `needs:` graph, a
 GPU-toolchain failure blocks packaging — the same release-gating policy every build job follows.
 
-**sccache on every Windows Ninja job.** All ten Ninja build jobs install sccache (x86_64 or the
-native `aarch64` release) through the composite action `.github/actions/install-sccache-windows`
-(arch from `RUNNER_ARCH`; its version must equal `SCCACHE_DL_VERSION` in `build.sh`) with the same
-`USE_CACHE` / `SCCACHE_WEBDAV_*` env; only the two MSVC-classifier
-jobs cannot, because the Visual Studio generator ignores compiler launchers. It cannot red a build, by
+**sccache on every Windows Ninja job but one.** Nine of the ten Ninja build jobs install sccache
+(x86_64 or the native `aarch64` release) through the composite action
+`.github/actions/install-sccache-windows` (arch from `RUNNER_ARCH`; its version must equal
+`SCCACHE_DL_VERSION` in `build.sh`) with the same `USE_CACHE` / `SCCACHE_WEBDAV_*` env; the two
+MSVC-classifier jobs cannot, because the Visual Studio generator ignores compiler launchers, and
+`build-windows-x86_64` (plain clang, CPU variants) does not, because its TUs do not cache: upstream
+passes `-Xclang -fno-pch-timestamp` to every clang TU and sccache 0.18.0 refuses that flag
+(measured at b11538: 719 of 720 compile requests non-cacheable, `Can't handle UnknownFlag arguments with -Xclang`, 0.00% hits, build green). Re-test on an sccache bump, and if it
+caches, add the install step back. It cannot red a build, by
 three guards in `build.bat`: the install step is `continue-on-error`; a probe compiles through sccache
 before it is trusted; and — because that probe only proves `cl.exe`, while arm64 builds with `clang-cl`,
 ROCm with its own `clang` and SYCL with `icx` — **a configure or build that fails with sccache as the

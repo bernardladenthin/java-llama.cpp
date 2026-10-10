@@ -10,6 +10,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **`test-cpp-windows-x86_64`**: the C++ suite on Windows x86-64 with plain clang (a static build with
+  the tests), the compiler the shipped `cpu-windows-x86-64` natives are built with now; the two MSVC
+  jobs keep running it with `cl.exe`. Gates both publish jobs like every other job.
 - **`-D` overrides for the four shipped test models.** `net.ladenthin.llama.text.model`, `.draft.model`,
   `.reasoning.model` and `.rerank.model` override `TestConstants.MODEL_PATH`, `DRAFT_MODEL_PATH`,
   `REASONING_MODEL_PATH` and `RERANKING_MODEL_PATH` the way every capability-specific model already had
@@ -77,6 +80,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **`cpu-windows-x86-64` is the CPU-variants build, built with clang** (`build-windows-x86_64`,
+  `-DJLLAMA_CPU_VARIANTS=ON`): like the two Linux CPU jars since 5.2.0, the directory holds
+  `jllama.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-rpc.dll` and one `ggml-cpu-<level>.dll` per
+  instruction-set level (14), of which ggml loads the best for the running CPU -- an AVX-512 / AVX-VNNI
+  / AMX machine uses its kernels and a CPU without AVX2 works, where the one static library was built
+  for one level. Plain clang because only the GNU driver yields all 14 variants (`clang-cl` and
+  `cl.exe` lose five, CLAUDE.md "CPU variants"); same hybrid CRT, no new runtime dependency
+  (`verify-native-deps.py` holds the directory to the OS imports). `LlamaLoader` pre-loads
+  `ggml-base.dll` and `ggml.dll` by full path from `jllama-extras.txt` before `jllama.dll`, so the
+  import never resolves against a foreign llama.cpp install on `PATH`. The job no longer installs
+  sccache (upstream's `-Xclang -fno-pch-timestamp` makes every clang TU a cache miss) and no longer
+  runs `ctest` (the option refuses `BUILD_TESTING`; see `test-cpp-windows-x86_64` under Added). The
+  32-bit `cpu-windows-x86` jar and the `msvc-windows-*` jars are unchanged.
 - **The message of a rejected request is the bare reason** (`"prompt" must not be empty`), no longer the
   JSON object `{"code":400,"message":…,"type":"invalid_request_error"}` the old `throw_invalid_request`
   wrapped it in: the type is the exception class now (`InvalidRequestException`), as it is for every
