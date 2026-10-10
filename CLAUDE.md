@@ -97,7 +97,14 @@ below):
   `SOURCE_SUBDIR`, so it only fetches and patches; ggml is then added first with
   `BUILD_SHARED_LIBS ON` and llama.cpp afterwards with it `OFF` (llama.cpp skips its own
   `add_subdirectory(ggml)` when a `ggml` target exists). llama, mtmd and llama-common stay static in
-  `libjllama.so`. The one ggml default llama.cpp changes itself (`GGML_LLAMAFILE`) is repeated.
+  `libjllama.so`. **Every ggml default llama.cpp's own CMakeLists changes before its
+  `add_subdirectory(ggml)` is repeated** -- `GGML_LLAMAFILE_DEFAULT` and `GGML_CUDA_GRAPHS_DEFAULT` at
+  b11538 -- because adding ggml first skips that block; re-check with `grep -n _DEFAULT CMakeLists.txt`
+  at the new tag on every bump. The second one was missing until 5.2.x: ggml's own default for CUDA
+  graphs is OFF, and a CUDA backend built as a module in this path lost two thirds of its token
+  generation (265.6 -> 88.8 tg128 on an RTX 3070, prompt processing -20%; Vulkan, which has no
+  equivalent, lost nothing) -- latent, since no CI job builds the variants path with CUDA yet
+  (`TODO.md` "GPU backends as modules").
 - **The directory holds 18 files on x86-64**: `libjllama.so`, `libggml.so`, `libggml-base.so`
   (unversioned: the loader extracts plain files, so file name, SONAME and `DT_NEEDED` must agree), 14
   `libggml-cpu-<level>.so` (`x64`, `sse42`, `sandybridge`, `ivybridge`, `piledriver`, `haswell`,

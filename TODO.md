@@ -152,7 +152,18 @@ deliverable 6:
    dependency. Also: `ggml-cuda.dll` imports only `cublas64_13.dll` (cudart is static) -- the
    requirement is smaller than the README says; and device indices are not stable across the set of
    loaded backends (`Vulkan0` was the NVIDIA GPU with CUDA loaded, the AMD iGPU without), so any
-   device setting must go by name, never by index.
+   device setting must go by name, never by index. **Measured through this project's own CMake at
+   b11538** (`docs/handover/local-agent-report-b11538-windows.md`, addendum 3): `-DJLLAMA_CPU_VARIANTS=ON`
+   together with `-DGGML_CUDA=ON` or `-DGGML_VULKAN=ON` builds (nvcc accepts the plain-clang host
+   compiler), and a directory holding the 14 CPU modules plus the GPU module offloads all layers;
+   `verify-native-deps.py` accepts it. Two things stand between that and a shippable jar: **(A)** the
+   GPU module is built into `build/bin/Release/` and never copied -- the file-list block in
+   `llama/CMakeLists.txt` knows only the CPU modules, `ggml`, `ggml-base` and `ggml-rpc`, so
+   `jllama-files.txt` and the copy would have to learn about GPU backend modules; **(B)** the CUDA
+   module lost two thirds of its token generation because the variants path did not repeat
+   `GGML_CUDA_GRAPHS_DEFAULT ON` -- fixed in the CMakeLists (both llama.cpp defaults are repeated now,
+   CLAUDE.md "CPU variants"), not yet re-measured with CUDA. And such a jar is 18 files plus a 44-50 MB
+   GPU module that `LlamaLoader` extracts on every first use (item 4 below).
 4. **Loader: reuse the extraction across runs.** The directory is keyed per build now
    (`extractionDirectoryName`), but every start still re-extracts: `cleanup()` deletes every
    `jllama*` path first and `deleteOnExit` removes the files at exit. Copying the 18 files costs ~1 s

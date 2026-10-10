@@ -304,6 +304,17 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   4.4.7 (none of the files the agent's carried JLine fixes touch changed between 4.4.6 and 4.4.7).
 
 ### Fixed
+- **`GGML_CUDA_GRAPHS_DEFAULT` is repeated in the CPU-variants CMake path.** That path adds ggml before
+  llama.cpp and therefore skips the block in which llama.cpp changes two ggml defaults; it repeated
+  only `GGML_LLAMAFILE_DEFAULT`. Latent for the shipped CPU jars, but a CUDA backend built as a module
+  in this path ran without CUDA graphs and lost two thirds of its token generation (measured at b11538
+  on an RTX 3070, `docs/handover/local-agent-report-b11538-windows.md`). The CMake comment now states
+  the rule: every `*_DEFAULT` llama.cpp sets before its own `add_subdirectory(ggml)` is repeated.
+- **A Windows `JLLAMA_CPU_VARIANTS` build is loadable without the CI merge step.** `CMakeLists.txt`
+  writes `jllama-extras.txt` (`ggml-base.dll`, `ggml.dll`, the two libraries `jllama.dll` links) next to
+  the library, byte-identical to what `merge-native-artifacts.sh` derives in CI; without it
+  `LlamaLoader` extracted `jllama.dll` alone, Windows resolved its `ggml.dll` import from `java.exe`'s
+  directory or `PATH`, and every model-backed test of a local variants build failed on the load.
 - **`OpenAiCompatServer` answers `400`, not `500`, for a request the native layer rejects** -- an empty
   `input` array for `/v1/embeddings`, a `/v1/completions` body without a `prompt`, a malformed body, a
   message the chat template cannot take, a prompt over the context size -- on every surface (OpenAI,
