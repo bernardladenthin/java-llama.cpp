@@ -878,6 +878,20 @@ static void load_backends_next_to_this_library() {
     dir = slash == std::string::npos ? std::string(".") : dir.substr(0, slash);
 #endif
     ggml_backend_load_all_from_path(dir.c_str());
+    // A module whose runtime is missing fails silently (ggml logs it at GGML_LOG_DEBUG only, and on
+    // Windows SEM_FAILCRITICALERRORS suppresses the dialog), so say what the process ended up with:
+    // the backends ggml registered and the devices they report. Reaches LlamaModel.setLogger.
+    std::string devices;
+    for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
+        ggml_backend_dev_t dev = ggml_backend_dev_get(i);
+        devices += (i == 0 ? "" : ", ");
+        devices += ggml_backend_dev_name(dev);
+        devices += " (";
+        devices += ggml_backend_reg_name(ggml_backend_dev_backend_reg(dev));
+        devices += ")";
+    }
+    LOG_INF("%s: %zu backend(s) registered from %s, %zu device(s): %s\n", __func__, ggml_backend_reg_count(),
+            dir.c_str(), ggml_backend_dev_count(), devices.c_str());
 }
 #endif
 

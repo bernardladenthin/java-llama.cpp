@@ -1573,6 +1573,18 @@ If you still see a crash inside `msvcp140.dll`, it originates in **another** nat
 into the same JVM, not in `jllama.dll` -- check the rest of the `hs_err` frame list. Please open an
 issue with that file rather than editing your JDK installation.
 
+### Windows: unsigned DLLs on a WDAC / AppLocker-managed client
+
+The native libraries are **not Authenticode-signed** (upstream llama.cpp ships its DLLs unsigned
+too), and `LlamaLoader` extracts them into the temp directory on first use. A client whose
+application-control policy (WDAC, AppLocker) blocks unsigned DLLs, or any DLL under `%TEMP%`,
+refuses the load with `UnsatisfiedLinkError`. The way out is a directory the policy allows: put the
+contents of the natives jar's `net/ladenthin/llama/Windows/x86_64/cpu/` directory there and start
+the JVM with `-Dnet.ladenthin.llama.lib.path=<that directory>`, which loads from it without
+extracting anything. (The project's release-signing key is an OpenPGP key, which signs the jars and
+fat jars with detached `.asc` files; Windows does not look at those, so the DLLs would need a
+separate code-signing certificate.)
+
 ### Contributors: build with Temurin 21, not Oracle JDK 21
 
 `llama/pom.xml` passes `-XDaddTypeAnnotationsToSymbol=true` to `javac` (NullAway's JSpecify mode

@@ -514,6 +514,12 @@ public class LlamaLoader {
                 return false;
             }
         }
+        if (!plainFiles.isEmpty()) {
+            // The modules are extracted, never loaded from here (ggml picks one at JNI_OnLoad), and a
+            // module ggml cannot load fails silently -- so at least say what was put there.
+            System.err.println("[jllama] backend '" + backend + "': " + plainFiles.size()
+                    + " file(s) extracted next to the library for ggml to load from " + targetFolder);
+        }
         // Only a Metal build that does not embed its shader source ships ggml-metal.metal
         // (every CI build embeds it); ggml looks for it next to the library.
         if (resource(backendResourcePath + "/" + METAL_SOURCE_FILE) != null) {

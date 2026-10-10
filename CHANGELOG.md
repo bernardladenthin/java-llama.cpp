@@ -10,6 +10,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 ## [Unreleased]
 
 ### Added
+- **The loaded backends and devices are logged at start-up.** `JNI_OnLoad` logs, after loading the CPU
+  modules next to the library, how many backends ggml registered and which devices they report (reaches
+  `LlamaModel.setLogger`), and `LlamaLoader` prints how many module files it extracted for a backend:
+  a module ggml cannot load fails silently (`GGML_LOG_DEBUG` only, no dialog on Windows), and without
+  these lines a GPU module with a missing runtime was indistinguishable from one that was never there.
+- **README: Windows clients under WDAC / AppLocker.** The DLLs are not Authenticode-signed and are
+  extracted to `%TEMP%`; the troubleshooting section names the way out (`net.ladenthin.llama.lib.path`
+  pointing at an allow-listed directory) and why the OpenPGP release key cannot sign them.
 - **`ModelParameters.enableMetricsEndpoint()` / `enablePropsEndpoint()` / `enableSlotsEndpoint()` /
   `disableSlotsEndpoint()`** (`--metrics`, `--props`, `--slots`, `--no-slots`): the HTTP frontend's
   endpoint toggles, needed since `NativeServer` attach mode serves the model's own routes (see Fixed).

@@ -97,7 +97,12 @@ of `jllama-files.txt` and named in `jllama-extras.txt` instead, which `LlamaLoad
 path **before** `jllama.dll` (otherwise Windows resolves the import from `java.exe`'s directory or
 `PATH`, where a foreign llama.cpp install can answer); CMake writes that file itself since 5.2.x,
 byte-identical to what `merge-native-artifacts.sh` derives, so a local build is loadable without
-the merge step (before, 57 Java tests failed on the load). And sccache is off on that job: upstream
+the merge step (before, 57 Java tests failed on the load). `JNI_OnLoad` finds its own directory with
+`GetModuleHandleExW` + `GetModuleFileNameW` and hands it to `ggml_backend_load_all_from_path` as
+**UTF-8** (a path with an umlaut loaded nothing as ANSI, and no error was logged); a GPU module whose
+runtime is missing fails silently (`SEM_FAILCRITICALERRORS`, ggml logs it at `GGML_LOG_DEBUG` only),
+which is why `JNI_OnLoad` logs the backend registry and the devices ggml ends up with at INFO, and
+`LlamaLoader` says how many module files it extracted. And sccache is off on that job: upstream
 adds `-Xclang -fno-pch-timestamp` to every clang TU, which sccache 0.18.0 does not cache (measured:
 every TU a miss, build green) -- the job builds cold. 32-bit Windows and Windows arm64 ship no
 variants (upstream builds none either).
