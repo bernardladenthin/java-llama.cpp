@@ -12,7 +12,8 @@ Two CI jobs drive it (`.github/workflows/publish.yml`):
 
 1. **`package-android-aar`** — `assembleRelease` with R8: validates AAR format, manifest
    minSdk merge, `jni/{arm64-v8a,x86_64}` packaging, and the shipped consumer ProGuard
-   rules (asserts the APK still carries the binding and both `.so` files).
+   rules (asserts the APK still carries the binding and, per ABI, `libjllama.so`, ggml's
+   shared libraries and at least one `libggml-cpu-*.so` module).
 2. **`test-android-emulator`** — boots a KVM-accelerated **x86_64** emulator, adb-pushes a
    small GGUF (the already-cached draft model) to
    `/data/local/tmp/jllama-test-model.gguf`, and runs `connectedDebugAndroidTest`:

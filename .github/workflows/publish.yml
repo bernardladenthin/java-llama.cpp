@@ -424,13 +424,13 @@ jobs:
   #   - model-free: unit tests + the wire-contract tests, which drive the REAL
   #     OpenAiCompatServer over a loopback socket with a scripted backend (no native lib,
   #     no GGUF) and pin the streamed tool_calls / role=tool / multi-round shape — seconds,
-  #     on every PR. It also builds the GitHub Release asset (the agent jar WITHOUT the core).
+  #     on every PR. It also collects the agent jar and its dependencies for the smoke below.
   #   - model-backed: the same loop against the cached Qwen2.5-1.5B tool model through the
   #     downloaded Linux native library (chat, streaming, tool call + result, read/write/read
   #     loop). A gate since its assertions stopped pinning wording (content checks are limited
   #     to facts no instruct model gets wrong and to tool results) and it ran green throughout.
-  #   - smoke-agent-linux (further down, after package-fatjars): the release asset itself,
-  #     started next to the real core fat jar.
+  #   - smoke-agent-linux (further down, after package): the published shape itself, the agent
+  #     and its dependencies on one classpath with the core's natives jars.
   # The project is built with -Dllama.version=<reactor version> against the core that was just
   # installed to the local repo, so it always tests the code of this checkout. Only the classes and
   # the llama-platform pom are installed; -Dllama.natives=none keeps Maven from resolving the natives
@@ -458,22 +458,19 @@ jobs:
         run: mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" -Dllama.natives=none spotless:check
       - name: Build and test (unit + model-free wire contract against the real OpenAiCompatServer)
         run: mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" -Dllama.natives=none verify
-      # The GitHub Release asset llama-atmosphere-agent-<core version>-jar-with-dependencies.jar:
-      # the agent plus Atmosphere/JLine, WITHOUT the core (src/assembly/agent-jar.xml), so it is a
-      # few MB and the natives are not in the release twice. Never deployed to Maven Central (the
-      # thin jar is; see the publish jobs).
-      # smoke-agent-linux launches it next to the real core fat jar; the attach jobs sign it.
-      - name: Build the agent release jar (without the core)
-        run: >
-          mvn -B --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" -Dllama.natives=none
-          -P assembly -DskipTests package
-      - name: Collect the agent release jar + sha256
+      # The agent as Maven Central publishes it -- the thin jar and its own dependency jars, without
+      # the core (smoke-agent-linux puts the core's own smoke set next to it). No fat jar: the agent
+      # is started with `jbang net.ladenthin:llama-atmosphere-agent:<version>`, which resolves the
+      # same graph from Central.
+      - name: Collect the agent jar and its dependencies (without the core)
         run: |
           mkdir -p agent-jar
-          cp "llama-atmosphere-agent/target/llama-atmosphere-agent-${VERSION}-jar-with-dependencies.jar" agent-jar/
-          (cd agent-jar && for f in *.jar; do sha256sum "$f" > "$f.sha256"; done)
-          ls -la agent-jar
-      - name: Upload the agent release jar
+          cp "llama-atmosphere-agent/target/llama-atmosphere-agent-${VERSION}.jar" agent-jar/
+          mvn -B -q --no-transfer-progress -f llama-atmosphere-agent/pom.xml "-Dllama.version=${VERSION}" -Dllama.natives=none \
+            dependency:copy-dependencies -DincludeScope=runtime -DexcludeGroupIds=net.ladenthin \
+            -DoutputDirectory="${{ github.workspace }}/agent-jar"
+          ls agent-jar
+      - name: Upload the agent jar and its dependencies
         uses: actions/upload-artifact@v7
         with:
           name: llama-atmosphere-agent-jar
@@ -656,7 +653,7 @@ jobs:
       - name: Build libraries
         shell: bash
         run: |
-          .github/dockcross/dockcross-manylinux_2_28-x64 .github/build_cuda_linux.sh "-DOS_NAME=Linux -DOS_ARCH=x86_64"
+          .github/dockcross/dockcross-manylinux_2_28-x64 .github/build_cuda_linux.sh "-DJLLAMA_MODULE_ONLY=ON -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -669,7 +666,7 @@ jobs:
     runs-on: ubuntu-latest
     # The shipped Linux x86-64 CPU build: ggml as shared libraries with one CPU backend module per
     # instruction-set level (x64 ... zen4, sapphirerapids), of which ggml loads the best for the
-    # running CPU -- JLLAMA_CPU_VARIANTS, see CLAUDE.md "CPU variants". Built in the same
+    # running CPU -- JLLAMA_BACKEND_DL, see CLAUDE.md "Modular natives". Built in the same
     # manylinux_2_28 image as the CUDA job (AlmaLinux 8, GCC 14, glibc 2.28): manylinux2014's GCC 10
     # lacked -mavxvnni and -mamx-tile (the alderlake and sapphirerapids variants), and the artifact's
     # glibc floor is 2.28 now (RHEL 8, Ubuntu 20.04, Debian 10 and later; verify-native-deps.py holds
@@ -694,7 +691,7 @@ jobs:
       - name: Build libraries
         shell: bash
         run: |
-          .github/dockcross/dockcross-manylinux_2_28-x64 .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=x86_64 -DJLLAMA_CPU_VARIANTS=ON"
+          .github/dockcross/dockcross-manylinux_2_28-x64 .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=x86_64 -DJLLAMA_BACKEND_DL=ON"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -732,7 +729,7 @@ jobs:
       - name: Build libraries
         shell: bash
         run: |
-          .github/manylinux/manylinux_2_28-aarch64 .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=aarch64 -DJLLAMA_CPU_VARIANTS=ON"
+          .github/manylinux/manylinux_2_28-aarch64 .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=aarch64 -DJLLAMA_BACKEND_DL=ON"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -826,8 +823,7 @@ jobs:
       - name: Build libraries
         shell: bash
         run: |
-          mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
+          .github/build.sh "-DJLLAMA_MODULE_ONLY=ON -DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -864,8 +860,7 @@ jobs:
       - name: Build libraries
         shell: bash
         run: |
-          mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=aarch64"
+          .github/build.sh "-DJLLAMA_MODULE_ONLY=ON -DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=aarch64"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -877,9 +872,13 @@ jobs:
     name: Cross-Compile Android aarch64
     needs: [startgate, build-webui]
     runs-on: ubuntu-latest
-    # Phase 2 dockcross cache rollout — job 4. Same steady-state env as manylinux2014 (job 1);
-    # the build.sh probe makes it safe to enable without a separate verification run. Inert
-    # without DEPOT_TOKEN (fork PRs) or use_cache=false.
+    # Modular (JLLAMA_BACKEND_DL), as upstream's own Android release is built: libjllama next to
+    # ggml, ggml-base, the ARM CPU variant modules (ggml scores them on the device and loads the
+    # best; JNI_OnLoad opens them by soname, since an app's libraries stay inside the APK) and
+    # ggml-rpc, all into the llama-android AAR's jni/arm64-v8a; the OpenCL module jar/AAR is loaded
+    # next to them. Phase 2 dockcross cache rollout — job 4. Same steady-state env as manylinux2014
+    # (job 1); the build.sh probe makes it safe to enable without a separate verification run.
+    # Inert without DEPOT_TOKEN (fork PRs) or use_cache=false.
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
@@ -896,7 +895,7 @@ jobs:
       - name: Build libraries
         shell: bash
         run: |
-          .github/dockcross/dockcross-android-arm64 .github/build.sh "-DOS_NAME=Linux-Android -DOS_ARCH=aarch64"
+          .github/dockcross/dockcross-android-arm64 .github/build.sh "-DJLLAMA_BACKEND_DL=ON -DOS_NAME=Linux-Android -DOS_ARCH=aarch64"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -924,7 +923,7 @@ jobs:
       - name: Build libraries
         shell: bash
         run: |
-          .github/dockcross/dockcross-android-x86_64 .github/build.sh "-DOS_NAME=Linux-Android -DOS_ARCH=x86_64"
+          .github/dockcross/dockcross-android-x86_64 .github/build.sh "-DJLLAMA_BACKEND_DL=ON -DOS_NAME=Linux-Android -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -936,10 +935,12 @@ jobs:
     name: Cross-Compile Android aarch64 (OpenCL/Adreno)
     needs: [startgate, build-webui]
     runs-on: ubuntu-latest
-    # Phase 2 dockcross cache rollout — job 5. build_opencl_android.sh stages the OpenCL
-    # headers/loader, then delegates the jllama cmake build to build.sh (which owns the
-    # sccache probe + launcher). Same steady-state env as the other dockcross jobs. Inert
-    # without DEPOT_TOKEN (fork PRs) or use_cache=false.
+    # Module-only (JLLAMA_MODULE_ONLY): one libggml-opencl.so, built against the same ggml as the
+    # CPU AAR, shipped as the opencl-android-aarch64 natives jar and as the llama-android-opencl
+    # AAR, which depends on the CPU AAR. Phase 2 dockcross cache rollout — job 5.
+    # build_opencl_android.sh stages the OpenCL headers/loader, then delegates the cmake build to
+    # build.sh (which owns the sccache probe + launcher). Same steady-state env as the other
+    # dockcross jobs. Inert without DEPOT_TOKEN (fork PRs) or use_cache=false.
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
@@ -953,7 +954,7 @@ jobs:
       - name: Build libraries
         shell: bash
         run: |
-          .github/dockcross/dockcross-android-arm64 .github/build_opencl_android.sh "-DOS_NAME=Linux-Android -DOS_ARCH=aarch64 -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON"
+          .github/dockcross/dockcross-android-arm64 .github/build_opencl_android.sh "-DJLLAMA_MODULE_ONLY=ON -DOS_NAME=Linux-Android -DOS_ARCH=aarch64 -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -1007,12 +1008,17 @@ jobs:
         with:
           name: natives-opencl-android-aarch64
           path: stage/opencl/
+      # The CPU AAR carries the whole modular directory per ABI (libjllama, ggml, ggml-base, the CPU
+      # modules, ggml-rpc); the OpenCL AAR carries the one module its directory holds, and its POM
+      # depends on the CPU AAR (llama-android/build.gradle.kts), so Gradle merges the two jni/ trees.
+      # Only the libraries: the jllama-*.txt lists are the desktop loader's, bionic resolves by soname.
       - name: Stage natives for the AAR build
         run: |
           mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64 llama-android/natives/opencl/arm64-v8a
-          cp stage/cpu/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
-          cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
-          cp stage/opencl/Linux-Android/aarch64/opencl/libjllama.so llama-android/natives/opencl/arm64-v8a/
+          cp stage/cpu/Linux-Android/aarch64/cpu/*.so llama-android/natives/cpu/arm64-v8a/
+          cp stage/cpu-x86_64/Linux-Android/x86_64/cpu/*.so llama-android/natives/cpu/x86_64/
+          cp stage/opencl/Linux-Android/aarch64/opencl/*.so llama-android/natives/opencl/arm64-v8a/
+          ls -la llama-android/natives/*/*
       - name: Assemble AARs + publish to mavenLocal
         run: gradle -p llama-android aarCpu aarOpencl publishToMavenLocal
       - name: Validate AAR structure
@@ -1024,15 +1030,29 @@ jobs:
             AAR="llama-android/build/aar/${flavor}-${VERSION}.aar"
             echo "== validating $AAR"
             test -f "$AAR"
-            # The CPU AAR is multi-ABI (arm64 devices + x86_64 emulators/devices);
-            # the OpenCL flavor stays arm64-only (Adreno is Qualcomm ARM hardware).
+            # The CPU AAR is multi-ABI (arm64 devices + x86_64 emulators/devices) and modular: the
+            # library, ggml's two shared libraries, the CPU modules and ggml-rpc per ABI. The OpenCL
+            # flavor stays arm64-only (Adreno is Qualcomm ARM hardware) and holds ONLY its module --
+            # it is additive to the CPU AAR, which its POM depends on.
             ABIS="arm64-v8a"
-            if [ "$flavor" = "llama-android" ]; then ABIS="arm64-v8a x86_64"; fi
+            LIBS="libggml-opencl.so"
+            if [ "$flavor" = "llama-android" ]; then ABIS="arm64-v8a x86_64"; LIBS="libjllama.so libggml.so libggml-base.so libggml-rpc.so"; fi
             ENTRIES="AndroidManifest.xml classes.jar proguard.txt R.txt"
-            for abi in $ABIS; do ENTRIES="$ENTRIES jni/$abi/libjllama.so"; done
+            for abi in $ABIS; do for lib in $LIBS; do ENTRIES="$ENTRIES jni/$abi/$lib"; done; done
             for entry in $ENTRIES; do
               unzip -l "$AAR" | grep -q "${entry}$" || { echo "::error::$AAR is missing $entry"; exit 1; }
             done
+            if [ "$flavor" = "llama-android" ]; then
+              for abi in $ABIS; do
+                n="$(unzip -l "$AAR" | grep -c "jni/$abi/libggml-cpu-.*\.so$" || true)"
+                [ "$n" -ge 1 ] || { echo "::error::$AAR has no CPU backend module under jni/$abi/"; exit 1; }
+                echo "$AAR: $n CPU module(s) for $abi"
+              done
+            else
+              if unzip -l "$AAR" | grep -q "jni/.*/libjllama.so$"; then
+                echo "::error::$AAR carries a second libjllama.so -- the OpenCL AAR must hold its module only"; exit 1
+              fi
+            fi
             unzip -p "$AAR" AndroidManifest.xml | grep -q 'android:minSdkVersion="28"' \
               || { echo "::error::$AAR manifest lost minSdkVersion 28"; exit 1; }
             unzip -p "$AAR" classes.jar > /tmp/aar-classes.jar
@@ -1044,9 +1064,10 @@ jobs:
             # The libraries themselves (bionic-only DT_NEEDED + libOpenCL.so for the OpenCL
             # flavour, every LOAD segment 16 KB aligned for Google Play) are checked on the staged
             # tree below, by the same allowlists the package job applies to every natives jar.
-            cmp -s <(unzip -p "$AAR" jni/arm64-v8a/libjllama.so) \
-              "llama-android/natives/$([ "$flavor" = llama-android ] && echo cpu || echo opencl)/arm64-v8a/libjllama.so" \
-              || { echo "::error::$AAR jni/arm64-v8a/libjllama.so is not the staged library"; exit 1; }
+            LIB="$([ "$flavor" = llama-android ] && echo libjllama.so || echo libggml-opencl.so)"
+            cmp -s <(unzip -p "$AAR" "jni/arm64-v8a/$LIB") \
+              "llama-android/natives/$([ "$flavor" = llama-android ] && echo cpu || echo opencl)/arm64-v8a/$LIB" \
+              || { echo "::error::$AAR jni/arm64-v8a/$LIB is not the staged library"; exit 1; }
           done
       - name: Android libraries -- dependency allowlist + 16 KB page alignment (buildcheck/nativedeps.py)
         run: python3 .github/verify-native-deps.py stage
@@ -1059,8 +1080,12 @@ jobs:
           APK=.github/android-consumer-test/app/build/outputs/apk/release/app-release.apk
           test -f "$APK"
           for abi in arm64-v8a x86_64; do
-            unzip -l "$APK" | grep -q "lib/$abi/libjllama.so" \
-              || { echo "::error::consumer APK is missing lib/$abi/libjllama.so"; exit 1; }
+            for lib in libjllama.so libggml.so libggml-base.so; do
+              unzip -l "$APK" | grep -q "lib/$abi/$lib" \
+                || { echo "::error::consumer APK is missing lib/$abi/$lib"; exit 1; }
+            done
+            unzip -l "$APK" | grep -q "lib/$abi/libggml-cpu-.*\.so" \
+              || { echo "::error::consumer APK has no CPU backend module under lib/$abi/"; exit 1; }
           done
           # The AAR's consumer proguard.txt must have carried the binding through R8.
           unzip -p "$APK" "classes*.dex" | grep -aq "Lnet/ladenthin/llama/LlamaModel;" \
@@ -1379,7 +1404,13 @@ jobs:
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   build-windows-x86_64-msvc:
-    name: Build and Test Windows 2025 x86_64 (MSVC / VS 2026, classifier)
+    name: Build and Test Windows 2025 x86_64 (MSVC / VS 2026, test only)
+    # The second Windows toolchain, built and tested but NOT shipped: the clang modular build is the
+    # one Windows x86-64 CPU jar (MSVC cannot build 5 of the 14 CPU variants, and a second CPU library
+    # would not be additive to it, see CLAUDE.md "Modular natives"). This job proves the code still
+    # compiles and passes with cl.exe and the Visual Studio generator; test-java-windows-x86_64-msvc
+    # runs the model-backed Java suite on its DLL. The artifact is named outside the natives-* glob
+    # on purpose: merge-native-artifacts.sh would otherwise refuse an unlisted one.
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     steps:
@@ -1401,40 +1432,15 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: natives-msvc-windows-x86-64
-          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-
-  build-windows-x86-msvc:
-    name: Build and Test Windows 2025 x86 (MSVC / VS 2026, classifier)
-    needs: [startgate, build-webui]
-    runs-on: windows-2025-vs2026
-    steps:
-      - uses: actions/checkout@v7
-      - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
-        with:
-          name: webui-generated
-          path: ${{ github.workspace }}/llama/webui-generated/
-      - name: Display CPU Info
-        shell: bash
-        run: bash .github/print-host-info.sh
-      - name: Build libraries
-        shell: cmd
-        run: |
-          .github\build.bat -G "Visual Studio 18 2026" -A "Win32" -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86 -DBUILD_TESTING=ON
-      - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: natives-msvc-windows-x86
+          name: msvc-windows-x86_64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
   # ---------------------------------------------------------------------------
-  # Windows x86-64 CPU natives (cpu-windows-x86-64, the default): the CPU-variants build, as the
-  # two Linux CPU jars ship it -- GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS, one ggml-cpu-<level>.dll
-  # per instruction-set level (14 on x86-64), of which ggml loads the best for the running CPU at
-  # start-up (CLAUDE.md "CPU variants"). The compiler is plain clang (the GNU driver, the LLVM on
+  # Windows x86-64 CPU natives (cpu-windows-x86-64, the default): the modular build, as the two
+  # Linux CPU jars ship it -- GGML_BACKEND_DL + GGML_CPU_ALL_VARIANTS, one ggml-cpu-<level>.dll per
+  # instruction-set level (14 on x86-64), of which ggml loads the best for the running CPU at
+  # start-up, and the directory every Windows x86-64 GPU module jar is loaded next to (CLAUDE.md
+  # "Modular natives"). The compiler is plain clang (the GNU driver, the LLVM on
   # the runner image's PATH), not cl.exe and not clang-cl: CMake sets MSVC for clang-cl as for
   # cl.exe, and ggml's `if (NOT MSVC)` then drops 5 of the 14 variants, so llama/CMakeLists.txt
   # refuses both. It needs the MSVC headers, libraries and linker from the developer environment
@@ -1449,12 +1455,13 @@ jobs:
   #     CMakeLists), which sccache 0.18.0 refuses to cache -- measured: every TU a miss, the build
   #     green and the cache inert -- so the install would only cost time. The cl.exe TUs of the
   #     other Windows Ninja jobs still cache; this one builds cold on every run.
-  # The 32-bit job below stays the Ninja + cl.exe static build (upstream builds no x86 variants
-  # either), and the two MSVC-classifier jobs above keep the Visual Studio generator.
+  # The MSVC job above keeps the Visual Studio generator as the test-only second toolchain; 32-bit
+  # Windows is not built any more (upstream builds none either, and a 32-bit process addresses
+  # ~2 GB, less than most models).
   # ---------------------------------------------------------------------------
 
   build-windows-x86_64:
-    name: Build Windows 2025 x86_64 (CPU variants, clang, default)
+    name: Build Windows 2025 x86_64 (modular, CPU variants, clang, default)
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     steps:
@@ -1477,56 +1484,25 @@ jobs:
         shell: cmd
         run: |
           clang --version
-          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_CPU_VARIANTS=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_BACKEND_DL=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
           name: natives-cpu-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
-  build-windows-x86:
-    name: Build and Test Windows 2025 x86 (Ninja Multi-Config + sccache, default)
-    needs: [startgate, build-webui]
-    runs-on: windows-2025-vs2026
-    env:
-      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
-    steps:
-      - uses: actions/checkout@v7
-      - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
-        with:
-          name: webui-generated
-          path: ${{ github.workspace }}/llama/webui-generated/
-      - name: Set up MSVC developer environment (x86)
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x86
-      - name: Install sccache (shared compiler cache)
-        if: env.USE_CACHE == 'true' && env.SCCACHE_WEBDAV_TOKEN != ''
-        continue-on-error: true
-        uses: ./.github/actions/install-sccache-windows
-      - name: Display CPU Info
-        shell: bash
-        run: bash .github/print-host-info.sh
-      - name: Build libraries
-        shell: cmd
-        run: |
-          .github\build.bat -G "Ninja Multi-Config" -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86 -DBUILD_TESTING=ON
-      - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: natives-cpu-windows-x86
-          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-
   build-windows-arm64:
-    name: Build and Test Windows 11 arm64 (Ninja Multi-Config, default)
+    name: Build Windows 11 arm64 (modular, clang-cl, default)
     needs: [startgate, build-webui]
     # Native arm64 build on GitHub's free windows-11-arm runner; ships as the cpu-windows-aarch64
     # natives jar: OSInfo maps a Windows-on-ARM JVM (os.arch=aarch64) to Windows/aarch64, the same
-    # path CMake emits here. sccache: the native aarch64-pc-windows-msvc release, wrapping clang-cl
-    # (guarded by build.bat's probe + uncached retry like every other Windows job).
+    # path CMake emits here. Modular (JLLAMA_BACKEND_DL) like every platform a GPU module can join:
+    # ggml-base.dll, ggml.dll, ONE ggml-cpu.dll (ggml has no ARM variant list for Windows, upstream
+    # ships the same single module there) and ggml-rpc.dll next to jllama.dll, so the Vulkan and
+    # OpenCL arm64 module jars load next to it. No ctest here (the option refuses BUILD_TESTING):
+    # test-cpp-windows-arm64 builds the static library with the tests, same compiler, same runner.
+    # sccache: the native aarch64-pc-windows-msvc release, wrapping clang-cl (guarded by build.bat's
+    # probe + uncached retry like every other Windows job).
     #
     # Compiler: clang-cl, NOT MSVC cl.exe. ggml's ggml-cpu/CMakeLists.txt aborts with "MSVC is not
     # supported for ARM, use clang" via `if (MSVC AND NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")`.
@@ -1566,9 +1542,7 @@ jobs:
         # explicitly (so the OSInfo-class OS-detection path is skipped) — same as the x86_64 job.
         # clang-cl (see the job comment) is required: ggml refuses MSVC cl.exe on ARM.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=aarch64 -DBUILD_TESTING=ON
-      - name: Run C++ unit tests
-        run: ctest --test-dir llama/build --output-on-failure
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_BACKEND_DL=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=aarch64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -1657,7 +1631,7 @@ jobs:
         # GGML_CUDA_CCCL_VERSION: fetch CCCL v3.4.3 like upstream's windows-cuda release job and the
         # Linux CUDA build (see build_cuda_linux.sh) -- DeviceTopK needs it; drop it with CUDA 13.5+.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DGGML_CUDA=ON -DGGML_CUDA_CCCL_VERSION=v3.4.3 -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_CUDA=ON -DGGML_CUDA_CCCL_VERSION=v3.4.3 -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -1696,7 +1670,7 @@ jobs:
         # Build the artifact only (see the CUDA job's note: GPU-less runner can't run a
         # GPU-linked jllama_test; the C++ unit suite is covered by the CPU jobs).
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DGGML_VULKAN=ON -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_VULKAN=ON -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -1730,7 +1704,7 @@ jobs:
         # Build the artifact only (see the CUDA job's note: GPU-less runner can't run a
         # GPU-linked jllama_test; the C++ unit suite is covered by the CPU jobs).
         run: |
-          .github\build_opencl_windows.bat -G "Ninja Multi-Config" -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build_opencl_windows.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -1803,8 +1777,7 @@ jobs:
         # patch or blocks a newer ROCm. Linux alone has the Instinct parts (gfx908/90a/942/950):
         # ROCm does not support them on Windows.
         run: |
-          mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DGGML_HIP=ON -DCMAKE_HIP_COMPILER=$(hipconfig -l)/clang -DGPU_TARGETS=gfx900;gfx906;gfx908;gfx90a;gfx90c;gfx942;gfx950;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201 -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
+          .github/build.sh "-DJLLAMA_MODULE_ONLY=ON -DGGML_HIP=ON -DCMAKE_HIP_COMPILER=$(hipconfig -l)/clang -DGPU_TARGETS=gfx900;gfx906;gfx908;gfx90a;gfx90c;gfx942;gfx950;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201 -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Verify the GPU code is compressed
         # ggml-hip is compiled with --offload-compress (llama/CMakeLists.txt); without it the
         # library carries every target's kernels uncompressed. Fails on an uncompressed bundle.
@@ -1877,7 +1850,7 @@ jobs:
         # support for. Same rule as on Linux for the extras upstream omits -- here only
         # gfx900/gfx906/gfx90c, since upstream's windows-rocm list already has gfx1153.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DGGML_HIP=ON -DGPU_TARGETS=gfx900;gfx906;gfx90c;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201 -DCMAKE_PREFIX_PATH="%HIP_PATH%" -DHIP_PATH="%HIP_PATH%" -DCMAKE_C_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_CXX_COMPILER="%HIP_PATH%\lib\llvm\bin\clang++.exe" -DCMAKE_HIP_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_C_FLAGS="-Wno-error=incompatible-pointer-types" -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_HIP=ON -DGPU_TARGETS=gfx900;gfx906;gfx90c;gfx1010;gfx1011;gfx1012;gfx1030;gfx1031;gfx1032;gfx1033;gfx1034;gfx1035;gfx1036;gfx1100;gfx1101;gfx1102;gfx1103;gfx1150;gfx1151;gfx1152;gfx1153;gfx1200;gfx1201 -DCMAKE_PREFIX_PATH="%HIP_PATH%" -DHIP_PATH="%HIP_PATH%" -DCMAKE_C_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_CXX_COMPILER="%HIP_PATH%\lib\llvm\bin\clang++.exe" -DCMAKE_HIP_COMPILER="%HIP_PATH%\lib\llvm\bin\clang.exe" -DCMAKE_C_FLAGS="-Wno-error=incompatible-pointer-types" -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Verify the GPU code is compressed
         # Same check as the Linux ROCm job: an uncompressed bundle means ~1 GB jllama.dll again.
         shell: pwsh
@@ -1889,8 +1862,8 @@ jobs:
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
-  build-linux-x86_64-sycl-fp16:
-    name: Build Linux x86_64 SYCL fp16 (Intel oneAPI)
+  build-linux-x86_64-sycl:
+    name: Build Linux x86_64 SYCL (Intel oneAPI, fp16)
     needs: [startgate, build-webui]
     runs-on: ubuntu-latest
     env:
@@ -1921,58 +1894,16 @@ jobs:
         shell: bash
         run: |
           source /opt/intel/oneapi/setvars.sh
-          mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DGGML_SYCL=ON -DGGML_SYCL_F16=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
+          .github/build.sh "-DJLLAMA_MODULE_ONLY=ON -DGGML_SYCL=ON -DGGML_SYCL_F16=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: natives-sycl-fp16-linux-x86-64
-          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
-          if-no-files-found: error
-
-  build-linux-x86_64-sycl-fp32:
-    name: Build Linux x86_64 SYCL fp32 (Intel oneAPI)
-    needs: [startgate, build-webui]
-    runs-on: ubuntu-latest
-    env:
-      SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
-    steps:
-      - name: Free up disk space
-        # The GPU toolkit this job installs runs to several GB on top of the llama.cpp build tree;
-        # same guard upstream llama.cpp's CUDA/ROCm jobs use. Linux-only action; the tool cache is
-        # kept (default) so nothing a later setup-* step relies on is removed.
-        uses: ggml-org/free-disk-space@v1.3.1
-      - uses: actions/checkout@v7
-      - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
-        with:
-          name: webui-generated
-          path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v6
-        with:
-          distribution: 'temurin'
-          java-version-file: .java-version
-      - name: Install Intel oneAPI (DPC++ + MKL)
-        run: |
-          wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
-          echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
-          sudo apt-get update
-          sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp intel-oneapi-mkl-devel
-      - name: Build libraries
-        shell: bash
-        run: |
-          source /opt/intel/oneapi/setvars.sh
-          mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DGGML_SYCL=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: natives-sycl-fp32-linux-x86-64
+          name: natives-sycl-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
           if-no-files-found: error
 
   build-windows-x86_64-sycl:
-    name: Build Windows 2025 x86_64 SYCL (Intel oneAPI)
+    name: Build Windows 2025 x86_64 SYCL (Intel oneAPI, fp16)
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     env:
@@ -2004,7 +1935,7 @@ jobs:
         shell: cmd
         run: |
           call "C:\Program Files (x86)\Intel\oneAPI\setvars.bat" intel64 --force
-          .github\build.bat -G "Ninja Multi-Config" -DGGML_SYCL=ON -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=icx -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_SYCL=ON -DGGML_SYCL_F16=ON -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=icx -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2040,7 +1971,7 @@ jobs:
       - name: Build libraries
         shell: cmd
         run: |
-          .github\build_opencl_windows.bat -G "Ninja Multi-Config" -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON -DOS_NAME=Windows -DOS_ARCH=aarch64
+          .github\build_opencl_windows.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON -DOS_NAME=Windows -DOS_ARCH=aarch64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2091,7 +2022,7 @@ jobs:
         # Build the artifact only (see the CUDA job's note: GPU-less runner can't run a
         # GPU-linked jllama_test; the C++ unit suite is covered by the CPU jobs).
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DGGML_VULKAN=ON -DOS_NAME=Windows -DOS_ARCH=aarch64
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DGGML_VULKAN=ON -DOS_NAME=Windows -DOS_ARCH=aarch64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2139,8 +2070,7 @@ jobs:
         shell: bash
         run: |
           source /opt/intel/openvino/setupvars.sh || true
-          mvn --no-transfer-progress -f llama/pom.xml compile
-          .github/build.sh "-DGGML_OPENVINO=ON -DOpenVINO_DIR=$OpenVINO_DIR -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
+          .github/build.sh "-DJLLAMA_MODULE_ONLY=ON -DGGML_OPENVINO=ON -DOpenVINO_DIR=$OpenVINO_DIR -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2188,7 +2118,7 @@ jobs:
         shell: cmd
         # vcpkg toolchain file wires in the OpenCL (incl. cl2.hpp) that ggml-openvino needs.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DGGML_OPENVINO=ON -DOpenVINO_DIR="%OpenVINO_DIR%" -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_OPENVINO=ON -DOpenVINO_DIR="%OpenVINO_DIR%" -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2285,6 +2215,33 @@ jobs:
         run: |
           clang --version
           .github\build.bat -G "Ninja Multi-Config" -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64 -DBUILD_TESTING=ON
+      - name: Verify llama.cpp patches are applied
+        shell: bash
+        run: .github/verify-patches-applied.sh
+      - name: Run C++ unit tests
+        run: ctest --test-dir llama/build --output-on-failure
+
+  # The static arm64 build with the C++ suite: the shipped arm64 artifact is modular (see
+  # build-windows-arm64), where jllama_test cannot link the CPU and RPC backends it calls directly,
+  # so the tests run on the static library built with the same clang-cl on the same runner -- the
+  # split the x86-64 jobs (Linux and Windows) have, on real ARM hardware.
+  test-cpp-windows-arm64:
+    name: C++ Tests Windows 11 arm64 (clang-cl)
+    needs: startgate
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up MSVC developer environment (arm64)
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: arm64
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
+      - name: Build libraries
+        shell: cmd
+        run: |
+          .github\build.bat -G "Ninja Multi-Config" -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=aarch64 -DBUILD_TESTING=ON
       - name: Verify llama.cpp patches are applied
         shell: bash
         run: .github/verify-patches-applied.sh
@@ -2485,16 +2442,16 @@ jobs:
       error-artifact: windows-output
 
   # Java/inference validation of the MSVC-built x86_64 DLL (the analogue of
-  # test-java-windows-x86_64 for the default CPU-variants build). Loads the MSVC jllama.dll
-  # via JNI and runs the full model-backed suite, so both Windows x86-64 CPU toolchains are
-  # validated end-to-end before the `msvc-windows` natives jar ships.
+  # test-java-windows-x86_64 for the shipped clang modular build). Loads the MSVC jllama.dll via
+  # JNI and runs the full model-backed suite, so both Windows x86-64 CPU toolchains are validated
+  # end-to-end -- the MSVC one is not shipped, it is the second compiler's verdict on the code.
   test-java-windows-x86_64-msvc:
-    name: Java Tests Windows 2025 x86_64 (MSVC classifier)
+    name: Java Tests Windows 2025 x86_64 (MSVC, test only)
     needs: [build-windows-x86_64-msvc, verify-model-cache]
     uses: ./.github/workflows/java-tests.yml
     with:
       runs-on: windows-2025-vs2026
-      natives-artifact: natives-msvc-windows-x86-64
+      natives-artifact: msvc-windows-x86_64
       error-artifact: windows-output-msvc
 
   # ---------------------------------------------------------------------------
@@ -2513,17 +2470,13 @@ jobs:
       - crosscompile-android-x86_64
       - crosscompile-android-aarch64-opencl
       - build-windows-x86_64
-      - build-windows-x86
       - build-windows-arm64
-      - build-windows-x86_64-msvc
-      - build-windows-x86-msvc
       - build-windows-x86_64-cuda
       - build-windows-x86_64-vulkan
       - build-windows-x86_64-opencl
       - build-linux-x86_64-rocm
       - build-windows-x86_64-rocm
-      - build-linux-x86_64-sycl-fp16
-      - build-linux-x86_64-sycl-fp32
+      - build-linux-x86_64-sycl
       - build-windows-x86_64-sycl
       - build-windows-arm64-opencl
       - build-windows-arm64-vulkan
@@ -2532,6 +2485,7 @@ jobs:
       - test-cpp-linux-x86_64
       - test-cpp-linux-aarch64
       - test-cpp-windows-x86_64
+      - test-cpp-windows-arm64
       - build-macos-arm64-metal-15
       - test-java-linux-x86_64
       - test-java-macos-arm64-metal
@@ -2573,17 +2527,13 @@ jobs:
           distribution: 'temurin'
           java-version-file: .java-version
       - name: Build JARs
-        # `assembly` additionally produces the fat jar-with-dependencies uber JAR
-        # (llama-<version>-jar-with-dependencies.jar: library classes + Java runtime deps +
-        # default-platform native libs in one drop-on-classpath JAR, runnable via its
-        # ServerLauncher Main-Class). It lands in target/ and is uploaded in the `llama-jars`
-        # artifact below - never a Maven Central asset; the `package-fatjars` job downstream
-        # combines it with the natives jars into the GitHub-Release fat-jar assets.
-        # `natives` builds one jar per <backend>-<os>-<arch> from the tree merged above; its
-        # enforcer rule fails the build when any of them is missing.
-        run: mvn --batch-mode --no-transfer-progress -P release,natives,assembly -Dmaven.test.skip=true -Dgpg.skip=true package
-      # Class-file floor, checked on every jar this job just built (the classes jar, the
-      # natives jars and the default fat jar). Production code targets Java 8, so anything a
+        # `natives` builds one jar per row of natives.csv from the tree merged above (the classes
+        # jar carries no natives). No fat jar: the project ships the natives jars on Maven Central
+        # and nothing else -- a GPU backend is added by classifier (CLAUDE.md "Modular natives");
+        # examples/server/pom.xml builds a local fat jar for whoever wants one.
+        run: mvn --batch-mode --no-transfer-progress -P release,natives -Dmaven.test.skip=true -Dgpg.skip=true package
+      # Class-file floor, checked on every jar this job just built (the classes jar and the
+      # natives jars). Production code targets Java 8, so anything a
       # consumer's JVM can load must be major 52 or lower: a single Java 11 class kills
       # the process with UnsupportedClassVersionError before any of our code runs, which
       # is exactly what shipped when logback's LogbackServiceProvider was the binding.
@@ -2605,86 +2555,73 @@ jobs:
         with:
           name: llama-jars
           path: llama/target/*.jar
-
-  package-fatjars:
-    name: Package all-backends fat jars
-    needs: [package]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
-        with:
-          name: llama-jars
-          path: jars/
-      # One self-contained multi-backend server fat jar per OS/arch
-      # (llama-<version>-all-<os>-<arch>-jar-with-dependencies.jar): the default
-      # jar-with-dependencies reduced to that OS/arch plus every natives jar of it; each
-      # backend keeps its own directory, which LlamaLoader tries in its fixed priority
-      # order (first loadable backend wins, CPU fallback).
-      # These are GitHub-Release download assets ONLY - never deployed to Maven
-      # Central (the deploy jobs run without the `assembly` profile and are untouched).
-      # The script takes the natives jars from .github/natives.csv and fails loud on any
-      # mismatch with the built jars or on a natives jar holding anything but its own
-      # directory, so a new natives jar cannot be silently skipped.
-      - name: Assemble all-backends fat jars
-        run: bash .github/package-fatjars.sh jars fatjars
-      - name: Upload fat jars
+      # One classpath smoke set per smoke target (check-natives.py smoke-targets, derived from
+      # natives.csv): the classes jar, its runtime dependencies, the library jar of the platform and
+      # every GPU module jar of it -- what a consumer's classpath (llama-platform + the GPU
+      # classifiers) looks like, launched by the smoke jobs on a runner of that OS/arch with
+      # `java -cp '<set>/*'`. One artifact per target, so a smoke job downloads only its own
+      # platform's jars (the ROCm module alone is hundreds of MB). check-natives.py holds these
+      # uploads, the smoke jobs' downloads and the targets natives.csv derives to the same list, so a
+      # natives jar cannot ship unlaunched.
+      - name: Assemble the smoke sets
+        run: |
+          mvn -B -q --no-transfer-progress -f llama/pom.xml dependency:copy-dependencies \
+            -DincludeScope=runtime -DoutputDirectory="${{ github.workspace }}/runtime-deps"
+          bash .github/package-smoke-sets.sh llama/target runtime-deps smoke-sets
+      - name: Upload smoke set linux-x86-64
         uses: actions/upload-artifact@v7
         with:
-          name: llama-fatjars
-          path: fatjars/
+          name: llama-smoke-linux-x86-64
+          path: smoke-sets/linux-x86-64/
           compression-level: 0 # jars are already deflated
-          retention-days: 7 # multi-GB artifact; release jobs consume it within the same run
+          retention-days: 7
           if-no-files-found: error
-      # Small single-jar artifacts, llama-fatjar-smoke-<target>, one per all-backends fat jar, so the
-      # smoke-fatjar matrix does not download the multi-GB set. check-natives.py holds these, the
-      # matrix rows and the targets derived from natives.csv to the same list.
-      - name: Upload linux-x86-64 smoke jar
+      - name: Upload smoke set linux-aarch64
         uses: actions/upload-artifact@v7
         with:
-          name: llama-fatjar-smoke-linux-x86-64
-          path: fatjars/llama-*-all-linux-x86-64-jar-with-dependencies.jar
+          name: llama-smoke-linux-aarch64
+          path: smoke-sets/linux-aarch64/
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
-      - name: Upload linux-aarch64 smoke jar
+      - name: Upload smoke set windows-x86-64
         uses: actions/upload-artifact@v7
         with:
-          name: llama-fatjar-smoke-linux-aarch64
-          path: fatjars/llama-*-all-linux-aarch64-jar-with-dependencies.jar
+          name: llama-smoke-windows-x86-64
+          path: smoke-sets/windows-x86-64/
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
-      - name: Upload windows-x86-64 smoke jar
+      - name: Upload smoke set windows-aarch64
         uses: actions/upload-artifact@v7
         with:
-          name: llama-fatjar-smoke-windows-x86-64
-          path: fatjars/llama-*-all-windows-x86-64-jar-with-dependencies.jar
+          name: llama-smoke-windows-aarch64
+          path: smoke-sets/windows-aarch64/
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
-      - name: Upload windows-aarch64 smoke jar
+      - name: Upload smoke set macos-aarch64
         uses: actions/upload-artifact@v7
         with:
-          name: llama-fatjar-smoke-windows-aarch64
-          path: fatjars/llama-*-all-windows-aarch64-jar-with-dependencies.jar
+          name: llama-smoke-macos-aarch64
+          path: smoke-sets/macos-aarch64/
           compression-level: 0
           retention-days: 7
           if-no-files-found: error
 
-  # Every all-backends fat jar, launched on a GPU-less runner of its OS/arch: every GPU backend
-  # must fail its load cleanly (missing vendor runtimes) and the server must come up on the CPU
-  # backend -- backend probing, per-backend extraction and the fallback chain end-to-end through a
-  # real `java -jar`, then /health + /v1/chat/completions. One row per fat-jar target;
-  # check-natives.py fails when the rows differ from the targets natives.csv derives, so a new
-  # all-<os>-<arch> jar cannot ship unlaunched -- which is how the two aarch64 jars once did:
-  # built, signed and attached to every release while nothing ran them. That breaks the rule of
-  # workspace/policies/fat-jar-release-assets.md ("No release asset is attached that CI has not
+  # Every smoke set, launched on a GPU-less runner of its OS/arch: the loader puts every GPU module
+  # jar of the platform next to the CPU library (the loader line names each one, checked against
+  # natives.csv), ggml fails to open each module cleanly (no vendor runtime) and the server comes up
+  # on the CPU -- the module merge, the extraction and the fallback end-to-end through the
+  # published jars on a consumer-shaped classpath (`java -cp '<set>/*'`), then /health,
+  # /v1/chat/completions and the HTTPS round. One row per smoke target; check-natives.py fails when
+  # the rows differ from the targets natives.csv derives, so a natives jar cannot ship unlaunched --
+  # the rule of workspace/policies/fat-jar-release-assets.md ("nothing ships that CI has not
   # run"), which exists because a corrupt macOS dylib shipped in three releases under a green
   # pipeline. fail-fast is off: one platform's failure must not hide another's.
-  smoke-fatjar:
-    name: Smoke test all-backends fat jar (${{ matrix.target }})
-    needs: [package-fatjars, verify-model-cache]
+  smoke-natives:
+    name: Smoke test natives jars (${{ matrix.target }})
+    needs: [package, verify-model-cache]
     strategy:
       fail-fast: false
       matrix:
@@ -2694,47 +2631,44 @@ jobs:
           - { target: windows-x86-64, runner: windows-2025-vs2026 }
           - { target: windows-aarch64, runner: windows-11-arm }
     runs-on: ${{ matrix.runner }}
-    env:
-      JAR_GLOB: llama-*-all-${{ matrix.target }}-jar-with-dependencies.jar
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/download-artifact@v8
         with:
-          name: llama-fatjar-smoke-${{ matrix.target }}
-          path: fatjars/
+          name: llama-smoke-${{ matrix.target }}
+          path: smoke/
       - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
-      # The Java 8 floor, re-checked on the ASSEMBLED release asset rather than the module jars the
-      # `package` job verified: package-fatjars rewrites the zip per OS/arch (drops the other
-      # platforms, adds the backend trees), and this is the artifact users download. The script is
-      # bash-only, so the Linux rows check; the Windows jars are assembled from the same classes.
+      # The Java 8 floor, re-checked on the jars a consumer downloads: the set holds the jars the
+      # `package` job checked plus the runtime dependencies a consumer resolves with them. The
+      # script is bash-only, so the Linux rows check; the Windows sets hold the same jars.
       - name: Verify Java 8 bytecode (no class newer than major 52)
         if: runner.os == 'Linux'
-        run: .github/verify-bytecode-version.sh --max-major 52 fatjars
-      - name: Run fat-jar server smoke test
+        run: .github/verify-bytecode-version.sh --max-major 52 smoke
+      - name: Run the server smoke test
         if: runner.os != 'Windows'
-        run: .github/smoke-test-fatjar.sh fatjars "$JAR_GLOB" "models/${DRAFT_MODEL_NAME}"
-      - name: Run fat-jar server smoke test
+        run: .github/smoke-test-natives.sh smoke "models/${DRAFT_MODEL_NAME}"
+      - name: Run the server smoke test
         if: runner.os == 'Windows'
         shell: pwsh
-        run: .github/smoke-test-fatjar.ps1 -JarDir fatjars -JarGlob $env:JAR_GLOB -Model "models/$env:DRAFT_MODEL_NAME"
-      # RPC over two JVMs from the same release asset: RpcServer in one, the default NativeServer
-      # with --rpc in the other. Requires a chat completion, the model buffer on the RPC endpoint in
-      # the load log (the layers really went over RPC), an accepted client on the server, and a clean
+        run: .github/smoke-test-natives.ps1 -SetDir smoke -Model "models/$env:DRAFT_MODEL_NAME"
+      # RPC over two JVMs from the same jars: RpcServer in one, the default NativeServer with --rpc
+      # in the other. Requires a chat completion, the model buffer on the RPC endpoint in the load
+      # log (the layers really went over RPC), an accepted client on the server, and a clean
       # non-SIGABRT failure naming the endpoint when --rpc names a server nobody runs.
-      - name: Run fat-jar RPC smoke test (two JVMs)
+      - name: Run the RPC smoke test (two JVMs)
         if: matrix.target == 'linux-x86-64'
-        run: .github/smoke-rpc-fatjar.sh fatjars "$JAR_GLOB" "models/${DRAFT_MODEL_NAME}"
+        run: .github/smoke-rpc.sh smoke "models/${DRAFT_MODEL_NAME}"
       - name: Upload server logs
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: fatjar-smoke-${{ matrix.target }}-logs
+          name: smoke-natives-${{ matrix.target }}-logs
           path: |
             server-out.log
             server-err.log
@@ -2746,30 +2680,38 @@ jobs:
             rpc-unreachable.log
           if-no-files-found: warn
 
-  # The agent release asset, launched the way the README tells a user to: `java -jar` on the agent
-  # jar lying next to the real all-backends Linux fat jar, so the core is found only through the
-  # agent manifest's Class-Path. Proves the two assets fit together (matching version in the file
-  # names, nothing missing on either side), that the agent jar carries no core, and that a
-  # one-shot answer and a read_file tool round work through the shipped jars.
+  # The published agent on the published core: the agent's thin jar with its own dependencies (what
+  # Maven Central resolves for `jbang net.ladenthin:llama-atmosphere-agent`) on one classpath with
+  # the Linux x86-64 smoke set of the core. Proves the two publications fit together (the agent
+  # built against this very core, the natives reached through the loader with every GPU module jar
+  # of the platform in place), that the agent carries no core of its own, and that a one-shot
+  # answer, a read_file tool round, --web and --acp work through the shipped jars.
   smoke-agent-linux:
-    name: Smoke test the agent release jar (Linux)
-    needs: [test-java-llama-atmosphere-agent, package-fatjars, verify-model-cache]
+    name: Smoke test the agent on the natives jars (Linux)
+    needs: [test-java-llama-atmosphere-agent, package, verify-model-cache]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: llama-atmosphere-agent-jar
-          path: agent-assets/
+          path: agent/
       - uses: actions/download-artifact@v8
         with:
-          name: llama-fatjar-smoke-linux-x86-64
-          path: agent-assets/
+          name: llama-smoke-linux-x86-64
+          path: smoke/
       - uses: ./.github/actions/restore-models
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
+      # What the core set already holds (Jackson 2, SLF4J and its one provider) is dropped from the
+      # agent's side: one copy of each on the classpath, as Maven resolves it for a consumer.
+      - name: Drop the jars the core set already holds
+        run: |
+          for jar in agent/*.jar; do
+            if [ -e "smoke/$(basename "$jar")" ]; then rm -v "$jar"; fi
+          done
       # The agent is Java 21 (Atmosphere's floor), unlike the Java 8 core: its ceiling is 65.
       # One waiver: JLine ships its FFM terminal provider (org/jline/terminal/impl/ffm, 25 classes)
       # as Java 22 bytecode. It is discovered through META-INF/jline/providers/ffm, not loaded
@@ -2779,10 +2721,10 @@ jobs:
       - name: Verify Java 21 bytecode (no class newer than major 65)
         run: >
           .github/verify-bytecode-version.sh --max-major 65
-          --allow 'llama-atmosphere-agent-*:org/jline/terminal/impl/ffm/*'
-          agent-assets/llama-atmosphere-agent-*-jar-with-dependencies.jar
-      - name: Run the agent release-jar smoke test
-        run: .github/smoke-agent-jar.sh agent-assets "models/${TOOL_MODEL_NAME}"
+          --allow 'jline*:org/jline/terminal/impl/ffm/*'
+          agent
+      - name: Run the agent smoke test
+        run: .github/smoke-agent.sh agent smoke "models/${TOOL_MODEL_NAME}"
       - name: Upload agent logs
         if: failure()
         uses: actions/upload-artifact@v7
@@ -2792,45 +2734,44 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
-  # macOS member of the cross-repo "no release asset is attached that CI has not run" convention
+  # macOS member of the cross-repo "nothing ships that CI has not run" convention
   # (workspace/policies/fat-jar-release-assets.md; BitcoinAddressFinder and srcmorph run the shared
-  # .github/smoke-fatjar-cli.sh in the same job shape). It closes the gap that let a corrupt dylib
-  # ship: the three macOS Java test jobs each test the dylib THEIR OWN build job produced, so until
-  # now nothing ever loaded the one that goes into the published jar — see CLAUDE.md, "macOS arm64:
-  # three build jobs, one shipped dylib".
+  # .github/smoke-fatjar-cli.sh on their fat jars in the same job shape). It closes the gap that
+  # let a corrupt dylib ship: the three macOS Java test jobs each test the dylib THEIR OWN build job
+  # produced, so until this job nothing ever loaded the one that goes into the published jar -- see
+  # CLAUDE.md, "macOS arm64: three build jobs, one shipped dylib".
   #
-  # macOS-specific in two ways. It targets the DEFAULT fat jar from `llama-jars`, because there is
-  # no `all-macos-*` fat jar to target: macOS has no GPU classifier (Metal ships in the default
-  # jar), so package-fatjars builds no macOS variant. And it asserts native loadability rather than
-  # a CLI exit code — this jar's Main-Class is a server that never returns, and `codesign --strict`
-  # is what actually detects a dylib assembled from two builds. No cache restore (~1 min): a full
-  # model-backed macOS server smoke would be strictly more, but this catches the failure class that
-  # shipped and is cheap enough to always run. Its last step downloads the 1 MB stories260K.gguf
-  # over HTTPS and serves it behind a self-signed certificate -- the proof that the dylib's SSL is
-  # the statically linked BoringSSL and not the runner's Homebrew OpenSSL, which it used to be.
+  # macOS-specific in two ways. Its smoke set has one natives jar, metal-macos-aarch64 (macOS has
+  # no GPU module jar: Metal is compiled into the library), and it asserts native loadability
+  # rather than a CLI exit code -- `codesign --strict` is what actually detects a dylib assembled
+  # from two builds. No cache restore (~1 min): a full model-backed macOS server smoke would be
+  # strictly more, but this catches the failure class that shipped and is cheap enough to always
+  # run. Its last step downloads the 1 MB stories260K.gguf over HTTPS and serves it behind a
+  # self-signed certificate -- the proof that the dylib's SSL is the statically linked BoringSSL
+  # and not the runner's Homebrew OpenSSL, which it used to be.
   # ---------------------------------------------------------------------------
 
-  smoke-fatjar-macos:
-    name: Smoke test packaged natives (macOS)
+  smoke-natives-macos:
+    name: Smoke test natives jars (macOS)
     needs: [package]
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
-          name: llama-jars
-          path: jars/
+          name: llama-smoke-macos-aarch64
+          path: smoke/
       - uses: actions/setup-java@v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
-      - name: Run packaged-native smoke test
-        run: .github/smoke-native-macos.sh jars 'llama-*-jar-with-dependencies.jar'
+      - name: Run the packaged-native smoke test
+        run: .github/smoke-native-macos.sh smoke
       - name: Upload server logs
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: fatjar-smoke-macos-logs
+          name: smoke-natives-macos-logs
           path: |
             server-tls-out.log
             server-tls-err.log
@@ -2890,7 +2831,7 @@ jobs:
 
   publish-snapshot:
     name: Publish Snapshot to Central
-    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, package-fatjars, smoke-fatjar, smoke-fatjar-macos, smoke-agent-linux, vmlens, shared-files]
+    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
     if: needs.check-snapshot.result == 'success' && inputs.publish_to_central
     runs-on: ubuntu-latest
     environment: maven-central
@@ -2974,10 +2915,11 @@ jobs:
           gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Publish Android AAR snapshots (llama-android + llama-android-opencl)
         run: |
+          # every .so of the natives tree: the library, ggml, the CPU modules; the one OpenCL module
           mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64 llama-android/natives/opencl/arm64-v8a
-          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
-          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
-          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/opencl/libjllama.so llama-android/natives/opencl/arm64-v8a/
+          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/cpu/*.so llama-android/natives/cpu/arm64-v8a/
+          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/x86_64/cpu/*.so llama-android/natives/cpu/x86_64/
+          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/opencl/*.so llama-android/natives/opencl/arm64-v8a/
           gradle -p llama-android publishAllPublicationsToCentralSnapshotsRepository
         env:
           CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
@@ -3008,17 +2950,16 @@ jobs:
 
   github-snapshot:
     name: Update Snapshot Pre-release on GitHub
-    needs: [publish-snapshot, package-fatjars, test-java-llama-atmosphere-agent]
+    needs: [publish-snapshot]
     # Also runs when publish-snapshot FAILED (not when skipped/cancelled): a Central
     # publish-poll timeout reds that job after the artifacts were already uploaded —
     # the GitHub pre-release assets must not be lost in that case.
-    if: ${{ !cancelled() && (needs.publish-snapshot.result == 'success' || needs.publish-snapshot.result == 'failure') && needs.package-fatjars.result == 'success' && needs.test-java-llama-atmosphere-agent.result == 'success' }}
+    if: ${{ !cancelled() && (needs.publish-snapshot.result == 'success' || needs.publish-snapshot.result == 'failure') }}
     runs-on: ubuntu-latest
-    # maven-central so the GPG_PRIVATE_KEY / GPG_PASSPHRASE secret is delivered (it is
-    # scoped to this environment) for signing the fat jars below. This environment has
-    # no approval gate (the standalone verify-signing-key jobs use it on every run), so
-    # declaring it here does not block the release.
-    environment: maven-central
+    # Nothing is signed here: the assets are the Maven artifacts with the detached .asc that
+    # maven-gpg wrote at deploy (classes jar, natives jars, poms, sources, javadoc, the AARs). No
+    # fat jar: the project ships nothing a consumer could not get from Maven Central (CLAUDE.md,
+    # "Modular natives").
     permissions:
       contents: write
     steps:
@@ -3027,30 +2968,6 @@ jobs:
         with:
           name: signed-snapshot-assets
           path: snapshot-assets/
-      # All-backends server fat jars (+ default CPU fat jar + sha256 files) — GitHub
-      # download assets only, deliberately NOT deployed to Maven Central. Downloaded
-      # into the same directory so the one upload glob below picks everything up
-      # (fat-jar names are disjoint from the signed thin-jar names).
-      - uses: actions/download-artifact@v8
-        with:
-          name: llama-fatjars
-          path: snapshot-assets/
-      # The agent jar (+ sha256) — built without the core, run next to one of the fat jars above.
-      # Same directory, so sign-fatjars.sh signs it and the upload glob attaches it.
-      - uses: actions/download-artifact@v8
-        with:
-          name: llama-atmosphere-agent-jar
-          path: snapshot-assets/
-      # GPG-sign the fat jars so each carries a detached .asc signature alongside its
-      # .sha256 checksum — signature parity with the thin jars (which maven-gpg signs at
-      # deploy) and with the BAF / srcmorph sibling fat jars. The .sha256 files (integrity)
-      # are kept; the .asc adds authenticity. Signed here (not in package-fatjars) because
-      # only this dispatch-gated path has the key. See workspace/policies/fat-jar-release-assets.md.
-      - name: GPG-sign the fat jars (.asc)
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-        run: bash .github/sign-fatjars.sh snapshot-assets
       - name: Report unsigned assets (does not block the upload)
         # Deliberately NON-blocking, and deliberately BEFORE the upload. Both attach jobs run even
         # when their publish job failed, because a Central publish-poll timeout must not cost the
@@ -3102,7 +3019,7 @@ jobs:
   publish-release:
     name: Publish Release to Central
     if: needs.check-tag.result == 'success' && inputs.publish_to_central
-    needs: [check-tag, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, package-fatjars, smoke-fatjar, smoke-fatjar-macos, smoke-agent-linux, vmlens, shared-files]
+    needs: [check-tag, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
     runs-on: ubuntu-latest
     environment: maven-central
     permissions:
@@ -3175,10 +3092,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # every .so of the natives tree: the library, ggml, the CPU modules; the one OpenCL module
           mkdir -p llama-android/natives/cpu/arm64-v8a llama-android/natives/cpu/x86_64 llama-android/natives/opencl/arm64-v8a
-          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/cpu/libjllama.so llama-android/natives/cpu/arm64-v8a/
-          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/x86_64/cpu/libjllama.so llama-android/natives/cpu/x86_64/
-          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/opencl/libjllama.so llama-android/natives/opencl/arm64-v8a/
+          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/cpu/*.so llama-android/natives/cpu/arm64-v8a/
+          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/x86_64/cpu/*.so llama-android/natives/cpu/x86_64/
+          cp llama/src/main/natives/net/ladenthin/llama/Linux-Android/aarch64/opencl/*.so llama-android/natives/opencl/arm64-v8a/
           gradle -p llama-android publishAllPublicationsToStagingRepository
           VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version | tail -n1)
           ( cd llama-android/build/staging-repo && zip -r -q ../central-bundle.zip net -x "*maven-metadata*" )
@@ -3216,17 +3134,16 @@ jobs:
 
   github-release-signed:
     name: Attach Signed Binaries to GitHub Release
-    needs: [publish-release, package-fatjars, test-java-llama-atmosphere-agent]
+    needs: [publish-release]
     # Also runs when publish-release FAILED (not when skipped/cancelled): a Central
     # publish-poll timeout reds that job after the artifacts were already uploaded —
     # the GitHub release assets must not be lost in that case.
-    if: ${{ !cancelled() && (needs.publish-release.result == 'success' || needs.publish-release.result == 'failure') && needs.package-fatjars.result == 'success' && needs.test-java-llama-atmosphere-agent.result == 'success' }}
+    if: ${{ !cancelled() && (needs.publish-release.result == 'success' || needs.publish-release.result == 'failure') }}
     runs-on: ubuntu-latest
-    # maven-central so the GPG_PRIVATE_KEY / GPG_PASSPHRASE secret is delivered (it is
-    # scoped to this environment) for signing the fat jars below. This environment has
-    # no approval gate (the standalone verify-signing-key jobs use it on every run), so
-    # declaring it here does not block the release.
-    environment: maven-central
+    # Nothing is signed here: the assets are the Maven artifacts with the detached .asc that
+    # maven-gpg wrote at deploy (classes jar, natives jars, poms, sources, javadoc, the AARs). No
+    # fat jar: the project ships nothing a consumer could not get from Maven Central (CLAUDE.md,
+    # "Modular natives").
     permissions:
       contents: write
     steps:
@@ -3235,30 +3152,6 @@ jobs:
         with:
           name: signed-release-assets
           path: release-assets/
-      # All-backends server fat jars (+ default CPU fat jar + sha256 files) — GitHub
-      # download assets only, deliberately NOT deployed to Maven Central. Downloaded
-      # into the same directory so the one upload glob below picks everything up
-      # (fat-jar names are disjoint from the signed thin-jar names).
-      - uses: actions/download-artifact@v8
-        with:
-          name: llama-fatjars
-          path: release-assets/
-      # The agent jar (+ sha256) — built without the core, run next to one of the fat jars above.
-      # Same directory, so sign-fatjars.sh signs it and the upload glob attaches it.
-      - uses: actions/download-artifact@v8
-        with:
-          name: llama-atmosphere-agent-jar
-          path: release-assets/
-      # GPG-sign the fat jars so each carries a detached .asc signature alongside its
-      # .sha256 checksum — signature parity with the thin jars (which maven-gpg signs at
-      # deploy) and with the BAF / srcmorph sibling fat jars. The .sha256 files (integrity)
-      # are kept; the .asc adds authenticity. Signed here (not in package-fatjars) because
-      # only this dispatch-gated path has the key. See workspace/policies/fat-jar-release-assets.md.
-      - name: GPG-sign the fat jars (.asc)
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-        run: bash .github/sign-fatjars.sh release-assets
       - name: Report unsigned assets (does not block the upload)
         # Deliberately NON-blocking, and deliberately BEFORE the upload. Both attach jobs run even
         # when their publish job failed, because a Central publish-poll timeout must not cost the
