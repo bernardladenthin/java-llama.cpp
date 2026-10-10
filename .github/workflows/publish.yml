@@ -1495,10 +1495,13 @@ jobs:
   #   * -DBUILD_TESTING: the option refuses it (jllama_test calls the CPU and RPC backends, which
   #     are modules here, not link-time libraries) -- test-cpp-windows-x86_64 runs the C++ suite in
   #     a static build with the same compiler, the split the Linux CPU jobs have.
-  #   * sccache: upstream adds `-Xclang -fno-pch-timestamp` to every clang TU (llama.cpp's
-  #     CMakeLists), which sccache 0.18.0 refuses to cache -- measured: every TU a miss, the build
-  #     green and the cache inert -- so the install would only cost time. The cl.exe TUs of the
-  #     other Windows Ninja jobs still cache; this one builds cold on every run.
+  #   * sccache: sccache 0.18.0 refuses any TU carrying an `-Xclang` argument, and CMake's
+  #     Platform/Windows-Clang.cmake puts one on every plain-clang TU for the runtime-library
+  #     selection (`-Xclang --dependent-lib=libcmt`; llama.cpp adds `-Xclang -fno-pch-timestamp`
+  #     on top for its own TUs) -- measured: every TU a miss, the build green and the cache inert
+  #     -- so the install would only cost time. The cl.exe TUs of the other Windows Ninja jobs
+  #     still cache; this one builds cold on every run, and so does the ROCm job (TheRock's clang
+  #     is a plain clang too; CLAUDE.md "sccache on every Windows Ninja job but one").
   # The MSVC job above keeps the Visual Studio generator as the test-only second toolchain; 32-bit
   # Windows is not built any more (upstream builds none either, and a 32-bit process addresses
   # ~2 GB, less than most models).

@@ -189,8 +189,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`verify-native-deps.py` holds the directory to the OS imports). `LlamaLoader` pre-loads
   `ggml-base.dll` and `ggml.dll` by full path from `jllama-extras.txt` before `jllama.dll`, so the
   import never resolves against a foreign llama.cpp install on `PATH`. The job no longer installs
-  sccache (upstream's `-Xclang -fno-pch-timestamp` makes every clang TU a cache miss) and no longer
-  runs `ctest` (the option refuses `BUILD_TESTING`; see `test-cpp-windows-x86_64` under Added).
+  sccache (sccache 0.18.0 refuses the `-Xclang` CMake puts on every plain-clang Windows TU, so every
+  TU is a cache miss) and no longer runs `ctest` (the option refuses `BUILD_TESTING`; see
+  `test-cpp-windows-x86_64` under Added).
 - **The message of a rejected request is the bare reason** (`"prompt" must not be empty`), no longer the
   JSON object `{"code":400,"message":…,"type":"invalid_request_error"}` the old `throw_invalid_request`
   wrapped it in: the type is the exception class now (`InvalidRequestException`), as it is for every

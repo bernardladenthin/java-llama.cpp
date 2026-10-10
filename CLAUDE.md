@@ -194,8 +194,10 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   loadable without the merge step (before, 57 Java tests failed on the load). A GPU module whose
   runtime is missing fails silently (`SEM_FAILCRITICALERRORS`, ggml logs it at `GGML_LOG_DEBUG` only),
   which is why `JNI_OnLoad` logs the backend registry and the devices ggml ends up with at INFO. And
-  sccache is off on the x86-64 CPU job: upstream adds `-Xclang -fno-pch-timestamp` to every clang TU,
-  which sccache 0.18.0 does not cache (measured: every TU a miss, build green) -- the job builds cold.
+  sccache is off on the x86-64 CPU job: sccache 0.18.0 refuses any TU carrying an `-Xclang` argument,
+  and CMake puts one on every plain-clang Windows TU for the runtime-library selection (see "sccache
+  on every Windows Ninja job but one"; measured: every TU a miss, build green) -- the job builds cold,
+  and so does the Windows ROCm job, whose HIP TUs are plain-clang C++ on Windows (4:15 h, `TODO.md`).
   **And the `windows-2025-vs2026` runners are a CPU lottery** (an AMD EPYC 7763 and an Intel Xeon
   6973P-C in two consecutive runs), so which CPU module `ggml_backend_load_best` picks in a Windows
   test or smoke job -- `haswell` on the AMD box, `sapphirerapids` with AMX on the Intel one --
@@ -721,10 +723,22 @@ GPU-toolchain failure blocks packaging — the same release-gating policy every 
 `.github/actions/install-sccache-windows` (arch from `RUNNER_ARCH`; its version must equal
 `SCCACHE_DL_VERSION` in `build.sh`) with the same `USE_CACHE` / `SCCACHE_WEBDAV_*` env; the MSVC
 build-and-test job cannot, because the Visual Studio generator ignores compiler launchers, and
-`build-windows-x86_64` (plain clang, modular CPU) does not, because its TUs do not cache: upstream
-passes `-Xclang -fno-pch-timestamp` to every clang TU and sccache 0.18.0 refuses that flag
-(measured at b11538: 719 of 720 compile requests non-cacheable, `Can't handle UnknownFlag arguments with -Xclang`, 0.00% hits, build green). Re-test on an sccache bump, and if it
-caches, add the install step back. It cannot red a build, by
+`build-windows-x86_64` (plain clang, modular CPU) does not, because its TUs do not cache: sccache 0.18.0
+refuses any `-Xclang` argument (`Can't handle UnknownFlag arguments with -Xclang`), and every TU a plain
+clang -- the GNU driver -- compiles on Windows carries one, because CMake's `Platform/Windows-Clang.cmake`
+implements `CMAKE_MSVC_RUNTIME_LIBRARY` (the hybrid CRT every Windows job sets) as `-Xclang
+-flto-visibility-public-std -D_MT -Xclang --dependent-lib=libcmt`; llama.cpp's root CMakeLists adds
+`-Xclang -fno-pch-timestamp` to its own TUs on top, which ggml's never see (ggml is added before it, see
+"Modular natives"). Measured at b11538: 719 of 720 compile requests non-cacheable, 0.00% hits, build
+green. Re-test on an sccache bump, and if it caches, add the install step back. **The Windows ROCm job is
+in the same position** and keeps its install step: TheRock's clang is a plain clang too, and upstream
+compiles the HIP sources as C++ on Windows (`CXX_IS_HIPCC` on `WIN32`), so the ~140 HIP TUs -- each
+compiled for the 23 `GPU_TARGETS` -- do go through the launcher and are all refused (run 38069595101: the
+server's table counted 67 requests, fewer than the TUs, every one of them non-cacheable for `-Xclang`,
+0 compilations). That job is the pipeline's critical path -- 4:15 h for its build step in that run,
+3:35 h in the last full run before the modular natives, against 2:00 h for the Linux ROCm job and 1:41 h
+for the Windows CUDA job -- and only a sccache that caches those TUs could shorten it; `TODO.md`
+("Modular natives -- follow-ups") has the open measurement. It cannot red a build, by
 three guards in `build.bat`: the install step is `continue-on-error`; a probe compiles through sccache
 before it is trusted; and — because that probe only proves `cl.exe`, while arm64 builds with `clang-cl`,
 ROCm with its own `clang` and SYCL with `icx` — **a configure or build that fails with sccache as the
