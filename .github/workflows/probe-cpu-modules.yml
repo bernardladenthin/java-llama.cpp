@@ -1,0 +1,119 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# TEMPORARY probe -- delete it once it has answered, the way the MSVC _mm_prefetch probe was.
+#
+# The question: `Java Tests Windows 2025 x86_64 (default / CPU variants, clang)` dies in JNI_OnLoad
+# with 0xC0000374 STATUS_HEAP_CORRUPTION and reports `Tests run: 0` -- but only sometimes. The two
+# runs of the same commit differ in one measured thing, the runner CPU:
+#
+#   run 38069595101  Xeon 6973P-C    Family 6 Model 173  Granite Rapids  AVX-512 + AMX  -> crash
+#   run 38090550713  Xeon Platinum 8370C  Model 106      Ice Lake-SP     AVX-512, no AMX -> 1916 pass
+#
+# ggml keeps one CPU module, the best for the running CPU: `sapphirerapids` (the only one asking for
+# AMX_TILE/AMX_INT8) on Granite Rapids, `icelake` on Ice Lake. So the crash follows AMX, and GitHub
+# mixes runner hardware -- which makes the full Publish run an expensive lottery ticket: ~70 jobs
+# for one data point. This job is that data point alone, in minutes, so the CPU can be sampled
+# repeatedly until a Granite Rapids runner turns up.
+#
+# It answers two things on whatever CPU it lands on:
+#   1. does the full module set load at all (the crashing path), and
+#   2. does each module load ON ITS OWN -- which names the culprit if one is at fault, and rules
+#      every single module out if they all pass while the full set crashes.
+#
+# It takes the natives from an already-green run instead of building them (a modular clang build is
+# ~20 min, the download is seconds), so NATIVES_RUN_ID must point at a run whose
+# `natives-cpu-windows-x86-64` artifact still exists; artifacts expire, and a 404 here fails loudly
+# rather than silently testing nothing.
+name: Probe CPU modules (Windows)
+
+on:
+  workflow_dispatch:
+    inputs:
+      natives-run-id:
+        description: Run id whose natives-cpu-windows-x86-64 artifact to use.
+        type: string
+        required: false
+  push:
+    branches:
+      - local/cpu-module-isolation-test
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  # A run whose `natives-cpu-windows-x86-64` artifact was green and still exists.
+  NATIVES_RUN_ID: "38090550713"
+
+jobs:
+  probe:
+    name: Probe CPU modules (Windows x86-64)
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      # The whole point: which CPU did this run get?
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version-file: .java-version
+          cache: maven
+
+      - name: Download the modular natives
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.natives-run-id || env.NATIVES_RUN_ID }}
+        run: |
+          set -euo pipefail
+          target="llama/src/main/natives/net/ladenthin/llama"
+          mkdir -p "$target"
+          gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" -n natives-cpu-windows-x86-64 -D "$target"
+          dir="$target/Windows/x86_64/cpu"
+          test -f "$dir/jllama.dll" || { echo "::error::no jllama.dll in the artifact of run $RUN_ID"; exit 1; }
+          modules=$(find "$dir" -name 'ggml-cpu-*.dll' | wc -l)
+          echo "modules in the directory: $modules"
+          test "$modules" -gt 0 || { echo "::error::the artifact carries no ggml-cpu modules"; exit 1; }
+          cat "$dir/jllama-build.txt" || true
+
+      - name: Compile
+        shell: bash
+        run: mvn -B --no-transfer-progress -f llama/pom.xml -DskipTests -Denforcer.skip=true test-compile
+
+      # 1. The crashing path: the full set, every module present, one JVM.
+      - name: Load the full module set
+        shell: bash
+        run: mvn -B --no-transfer-progress -f llama/pom.xml surefire:test -Dtest=NativeLibraryLoadSmokeTest -Dsurefire.failIfNoSpecifiedTests=false
+
+      # 2. Each module on its own, in its own JVM and its own temp directory.
+      - name: Load each module on its own
+        shell: bash
+        run: mvn -B --no-transfer-progress -f llama/pom.xml surefire:test -Dtest=CpuModuleIsolationTest -Dsurefire.failIfNoSpecifiedTests=false
+
+      # Surefire redirects test output to files, and a crashed fork leaves its dumpstream there.
+      - name: Show what the children printed
+        if: always()
+        shell: bash
+        run: |
+          for f in llama/target/surefire-reports/*-output.txt llama/target/surefire-reports/*.dumpstream; do
+            [ -f "$f" ] || continue
+            echo "=== $f ==="
+            cat "$f"
+          done
+
+      - name: Upload the reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: probe-cpu-modules-reports
+          path: llama/target/surefire-reports/
+          if-no-files-found: warn
