@@ -57,13 +57,46 @@ an Intel runner.
 explicit `CMAKE_CUDA_ARCHITECTURES`, the OpenVINO opt-in decision, and the shipped diagnostic entry
 point (item 5). These are independent of each other and each is verifiable in the same run.
 
+### Round 0 found one defect, and it was mine
+
+Run 38146809329 (cancelled after the first failures) went red in **four Android jobs**, with one root
+cause: `Package + Validate Android AARs` failed, and the three jobs that need the AAR followed.
+
+```
+Property <jackson.version> not found in ../llama/pom.xml <properties>
+  -- keep the AAR pom dependencies in lockstep with the core
+```
+
+`llama-android/build.gradle.kts` mirrors the core's dependency versions into the AAR pom by **parsing
+`llama/pom.xml`**, and the Jackson advisory fix moved `jackson.version` into the **parent** pom (where
+it belongs: the parent now imports `jackson-bom` so `llama-langchain4j` cannot pull an older
+`jackson-core` transitively). The Gradle build looked only in the core pom.
+
+**That check working is the good news.** It is fail-loud by design, with a message naming exactly the
+invariant it protects, and it caught a cross-build reference that no Maven gate sees -- the same
+"reference not updated after a move" class as the stale `spotbugs-exclude.xml`, the PIT
+`targetClasses` and the `CMakeLists.txt` OSInfo repairs. **Fixed by teaching the parser Maven's own
+inheritance** (core pom, then parent) rather than by restoring a duplicate `jackson.version`, which
+would drift the next time one of them is bumped. **Not verifiable locally** -- no Gradle on this
+machine -- but the XML lookup it performs was reproduced against both poms: the property is absent
+from the core and present in the parent at 2.22.3.
+
+**What this says about round 0 itself:** it reached `Package + Validate Android AARs`, so the stages
+before it ran. The Android jobs sit *beside* `package` rather than behind it, so this failure says
+nothing yet about the smoke sets, `smoke-natives-jars.sh` or the three merged changes -- those still
+need a run.
+
 ## The next batch, in the order it should be done
 
 Assembled 2026-10-11 after the libgomp / CUDA-arch / OpenVINO changes landed. The constraint that
 shapes it: **a Publish run costs hours**, so work is grouped by what one run can answer, and anything
 that needs no run is done before the run starts.
 
-**Round 0 -- one Publish run on the current `main`, nothing added.** It is the first run that can
+**Round 0 -- one Publish run on the current `main`, nothing added.** *(Started 2026-10-11 as run
+38146809329, `workflow_dispatch` on `main` at `df5e1ba` -- which also carries the b11538-to-b11556
+bump that landed just before it, so the run answers three questions rather than two. They stay
+separable in the output: a packaging or smoke failure is not a flag failure, and a bump failure shows
+up as a compile or patch error.)* It is the first run that can
 reach everything behind `package`, *and* the first that exercises the three changes just merged. Those
 two questions are separable in the output (a packaging or smoke failure is not a flag failure), so
 they share a run rather than costing two. What it must show:
@@ -110,6 +143,7 @@ Kept as a list because each entry names the machine it needs -- the harness is
 | what | needs | why it cannot wait for CI |
 |---|---|---|
 | ~~the cost of `GGML_OPENMP=OFF`~~ | ~~16-vCPU Linux~~ | **done 2026-10-11: no measurable cost** |
+| **re-baseline the module tables at the current pin** | the same instances | the tables are b11538, and **#30270 in the b11556 range fixes F16C on AVX2**, i.e. the `haswell` class every "against haswell" column is computed against -- so nothing measured from b11556 on may be compared with that page (noted there too) |
 | Does a self-contained jar load on a **slim/distroless** image? | any Linux instance, a container | CI runs on full runners, so it cannot see this class at all |
 | Does **`75-real 80-real 90-real`** make a T4 work? | a rebuilt CUDA module + a `g4dn` instance | the module has to be built first, so this follows a CI run |
 | **Windows extraction reuse**: second start copies nothing, a running JVM's locked DLLs survive another build's cleanup | a rented Windows instance, two JVMs | file locking is Windows-only and needs two processes |
