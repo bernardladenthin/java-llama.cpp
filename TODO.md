@@ -415,7 +415,14 @@ library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still 
 5. **A Vulkan module for Android** (`vulkan-android-aarch64`, upstream ships none either): `JNI_OnLoad`
    already tries `libggml-vulkan.so` by soname, so it is one more module-only dockcross job plus the
    natives-jar wiring and an AAR flavor -- if anyone asks.
-6. **The Windows ROCm job is the pipeline's critical path, and it builds uncached.** Run 38069595101
+6. **The Windows ROCm job is the pipeline's critical path, and it builds uncached.** **Measured in run
+   38149667195: both ROCm jobs were still compiling after 2 h 23 min**, with every other build job
+   finished (50 of 56 green) and `Package JARs` not started -- so everything behind `package`, which
+   is the whole point of a round-0 run, waits on them. The dllimport flood above sits in the same job
+   but is not the cause: 23 GPU targets' kernels are. Suppressing the warnings makes the log readable,
+   not the build faster.
+   The original entry follows:
+   **The Windows ROCm job is the pipeline's critical path, and it builds uncached.** Run 38069595101
    (the second full run of the modular natives): 4:15 h for its build step, against 2:00 h for the
    Linux ROCm job and 1:41 h for the Windows CUDA job; every other Windows build is under 20 min. Of
    its 158 ninja steps ~140 are HIP TUs, each compiled for the 23 `GPU_TARGETS`; on Windows upstream
@@ -645,8 +652,12 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   ggml on `_WIN32`, and HIP compiles every translation unit once per GPU architecture for the amdgcn
   **device** target, which has no DLL storage class -- so clang reports
   `__declspec attribute 'dllimport' is not supported` for each `GGML_API` declaration, times the 23
-  Windows GPU targets. Counted in run 38149667195: **571,559 log lines** in the Windows ROCm job,
-  against 0 in the CUDA job and 8 in the SYCL one. Nothing is broken (the attribute applies on the
+  Windows GPU targets. Counted in run 38149667195: **at least 1,374,762 warning lines** in the Windows
+  ROCm job, against 0 in the CUDA job and 8 in the SYCL one. That is a **floor rather than a total**,
+  and how it was found is worth keeping: two counts of the same log disagreed, with the *narrower*
+  pattern returning more matches than the broader one read later -- impossible unless the log was
+  still growing, which it was, because the job had not finished. A count off a running job is a
+  snapshot; say so or re-count at the end. Nothing is broken (the attribute applies on the
   host pass and is meaningless on the device one), but it makes the log of the pipeline's
   **critical-path, uncached** job unreadable for a real error and large enough that GitHub truncates
   it. Suppressed downstream on the `ggml-hip` target only (`-Wno-ignored-attributes`, Windows only --

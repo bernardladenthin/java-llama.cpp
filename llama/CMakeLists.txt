@@ -431,8 +431,11 @@ endif()
 if(TARGET ggml-hip)
     target_compile_options(ggml-hip PRIVATE $<$<COMPILE_LANGUAGE:HIP,CXX>:--offload-compress>)
     # And silence one warning class on this target only, because on Windows it is not a warning but a
-    # flood: 571,559 log lines in one ROCm job (measured in run 38149667195; the CUDA job has 0 and
-    # the SYCL job 8). `ggml.h` defines GGML_API as `__declspec(dllimport) extern` for a consumer of
+    # flood: **at least 1,374,762** warning lines in one ROCm job, against 0 in the CUDA job and 8 in
+    # the SYCL one (run 38149667195). The figure is a floor, not a total -- both counts were taken
+    # while that job was still running, and the earlier one of 571,559 was simply read sooner; a
+    # broader pattern returning *fewer* matches than a narrower one later is how the growth showed
+    # itself. `ggml.h` defines GGML_API as `__declspec(dllimport) extern` for a consumer of
     # a shared ggml on _WIN32, and HIP compiles each translation unit once per GPU architecture for
     # the **device** target amdgcn, which has no DLL storage class -- so clang reports
     # "__declspec attribute 'dllimport' is not supported" for every GGML_API declaration, times 23
