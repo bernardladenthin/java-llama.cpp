@@ -313,6 +313,21 @@ library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still 
    or fewer `GPU_TARGETS`, against the policy of building every target TheRock builds (CLAUDE.md
    "Additional GPU-backend natives").
 
+### The FetchContent nlohmann/json is shadowed by upstream's vendored copy
+
+Measured at the b11556 bump (`llama/build/CMakeFiles/jllama.dir/flags.make`): `llama.cpp-src/vendor/nlohmann/..`
+is include dir number 7 on every `jllama` compile line and the FetchContent `json-src/include` number 12, so
+`log_helpers.hpp` and `train_engine.cpp` -- the two project TUs that `#include <nlohmann/json.hpp>` directly --
+compile against upstream's **vendored** copy, as every upstream TU does. That is the good case (one copy per
+TU, no ODR mix), and it became visible because b11556 (#30253) applies `vendor/nlohmann/json-deep-nesting.patch`
+to that copy, so it is no longer byte-identical to the `v3.12.0` our `FetchContent_Declare(json ...)` fetches.
+The FetchContent copy is therefore dead weight: a clone per fresh build directory, a `nlohmann_json` link on
+`jllama` and `jllama_test`, and a tag (`v3.12.0`) that looks like something to keep in sync. **To do:** drop
+the FetchContent block and the two `nlohmann_json` links, include the vendored copy through `llama-common`'s
+interface (what already happens), and keep one guard: a configure-time check that exactly one `nlohmann/json.hpp`
+is on `jllama`'s include path, so a future upstream move of the vendor directory cannot silently flip the order
+back. Not done in the bump PR on purpose -- a bump changes the pin, nothing else.
+
 ### CUDA job: nvcc through sccache (`SCCACHE_WRAP_NVCC`, off since the second failure)
 
 - Run 37680715063 (b11476 bump) and run 37925157175 (#492, 2026-10-09): the Linux CUDA build logged

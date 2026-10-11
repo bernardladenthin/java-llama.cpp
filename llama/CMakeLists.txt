@@ -323,7 +323,7 @@ endif()
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b11538
+	GIT_TAG        b11556
 	PATCH_COMMAND  ${CMAKE_COMMAND}
 		-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patches
 		-DLLAMA_SRC=<SOURCE_DIR>
@@ -727,8 +727,14 @@ endif()
 # (b10488) replaced its `PUBLIC . ../vendor` include dir with PUBLIC links to the
 # vendor::nlohmann / vendor::sheredom INTERFACE targets, and each of those exports
 # the vendor/ root (`target_include_directories(<t> INTERFACE ..)`), so the same
-# directory still reaches jllama transitively.  Its bundled nlohmann/json is the
-# same 3.12.0 as our FetchContent copy, so nothing added here shadows it.
+# directory still reaches jllama transitively.  That vendor/ directory comes BEFORE the
+# FetchContent json-src include dir on every jllama compile line (measured in
+# CMakeFiles/jllama.dir/flags.make: `vendor/nlohmann/..` is -I number 7, `json-src/include`
+# number 12), so our own `#include <nlohmann/json.hpp>` (log_helpers.hpp, train_engine.cpp)
+# resolves to upstream's bundled copy -- one copy in every TU of the library, which is what
+# matters.  Since b11556 that copy is 3.12.0 PLUS upstream's `json-deep-nesting.patch`
+# (nlohmann/json#5387: deep values crashed copy, dump() and operator==), so the two are no
+# longer byte-identical; the FetchContent one is effectively unused (TODO.md).
 target_sources(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server/server-http.cpp
 )
