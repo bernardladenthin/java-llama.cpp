@@ -157,7 +157,7 @@ public class LlamaLoader {
      * everyone else for having it on the classpath. The loader says so on stderr rather than skipping
      * in silence.
      */
-    static final List<String> OPT_IN_BACKENDS = Collections.unmodifiableList(Arrays.asList("openvino"));
+    static final Set<String> OPT_IN_BACKENDS = Collections.singleton("openvino");
 
     /**
      * Optional file in a backend directory naming sibling files (one per line, {@code #}
@@ -365,7 +365,7 @@ public class LlamaLoader {
      */
     static List<String> selectModules(List<String> present, @Nullable String property) {
         if (property == null || property.trim().isEmpty()) {
-            List<String> additive = new ArrayList<>();
+            List<String> additive = new ArrayList<>(present.size());
             for (String backend : present) {
                 if (OPT_IN_BACKENDS.contains(backend)) {
                     System.err.println("[jllama] GPU module '" + backend + "' is on the classpath but not"
