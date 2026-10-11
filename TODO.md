@@ -428,6 +428,14 @@ check can do: the same matrix re-run on a Granite Rapids instance with `0018` ap
 `INFER done` line that was missing from every crash. CI green does *not* prove this -- a runner
 without AMX passes either way, and which CPU a run draws is chance.
 
+**CI confirmed the asymmetry rather than the fix, and the host-CPU line is what showed it.** Run
+38112603436 (`254a2f0`) has `Java Tests Windows 2025 x86_64 (default / CPU variants, clang)`
+**green** -- the very job that was red on the AMX runner -- but its log says
+`AMD EPYC 7763 64-Core Processor`, i.e. **no AMX**, so that green proves nothing about the patch.
+Without the `print-host-info.sh` line added in this branch, that distinction would not be visible at
+all, and the run would read as a successful verification. Treat a green Windows job as evidence only
+when its log names an AMX CPU (`Family 6 Model 143/173`, Sapphire Rapids or Granite Rapids).
+
 Guard: **`llama/cmake/check-aligned-free-pairing.cmake`** fails the configure on every platform when
 a ggml source calls `ggml_aligned_malloc` and never `ggml_aligned_free` -- the shape that occurred,
 and the only way a machine without AMX can notice it. Verified red against the unpatched source
@@ -531,3 +539,20 @@ flags, the `acquire`/`release` context-guard unit tests, the `OSInfo` alias test
 - **Additional ArchUnit rules to consider** — the full **`layeredArchitecture()`** rule and a **per-module banned-import** rule (`jacksonBannedFromContractsAndLoader` — Jackson kept out of `args`/`callback`/`exception`/`loader`) are now DONE. Still open: more per-module banned-imports if useful, public-API-surface constraints (no public mutable static state, etc.). Partial progress: `7b6667d` covers the "no public field that is not final" sub-rule.
 
 - **Cross-repo code-quality TODOs** — see [`../workspace/policies/code-quality-todos.md`](../workspace/policies/code-quality-todos.md) for the canonical `@VisibleForTesting` design-fit review, package hierarchy review, and class/method naming review. This repo has no `@VisibleForTesting` usages today; package and naming reviews remain open.
+
+## GPU backends on rented hardware
+
+**AWS blocks this outright on a new account: the G-instance vCPU quota is 0.** A `g4dn.xlarge`
+launch (Tesla T4, ~0.21 USD/h, so cents for a probe) is refused with
+`VcpuLimitExceeded ... your current vCPU limit of 0`, and raising it is a support request the
+account owner has to file -- the probe package (CPU + `cuda13` + `vulkan` module jars, 169 MB) and
+the driver-equipped AMI (`Deep Learning Base OSS Nvidia Driver GPU AMI (Amazon Linux 2023)`) are
+otherwise ready, so this is a one-line unblock once the quota exists. Cost was never the obstacle.
+
+**`SME` is not rentable anywhere, and an Apple instance does not help.** AWS does offer
+`mac-m4.metal` / `mac-m4pro.metal` / `mac-m4max.metal`, and Apple M4 does have SME -- but macOS
+ships **one static library** (`metal-macos-aarch64`, Metal compiled in), not the aarch64 CPU module
+set, so `armv9.2_1`/`armv9.2_2` cannot even be loaded there. They would need **Linux aarch64 with
+SME**, which Graviton 4 lacks and no current instance provides. EC2 Mac also bills a **24-hour
+minimum** (dedicated host), so it is the expensive way to answer nothing.
+
