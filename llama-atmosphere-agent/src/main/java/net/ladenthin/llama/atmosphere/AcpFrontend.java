@@ -146,19 +146,18 @@ final class AcpFrontend implements SessionFrontend {
         String id = "call_" + toolCounter.incrementAndGet();
         openTools.addLast(new String[] {id, tool});
         output.clear();
-        context.sendUpdate(
-                sessionId,
-                new AcpSchema.ToolCall(
-                        "tool_call",
-                        id,
-                        title(tool, arguments),
-                        kind(tool),
-                        AcpSchema.ToolCallStatus.IN_PROGRESS,
-                        null,
-                        locations(arguments),
-                        arguments,
-                        null,
-                        null));
+        context.sendSessionUpdate(new AcpSchema.ToolCall(
+                "tool_call",
+                id,
+                title(tool, arguments),
+                tool,
+                kind(tool),
+                AcpSchema.ToolCallStatus.IN_PROGRESS,
+                null,
+                locations(arguments),
+                arguments,
+                null,
+                null));
     }
 
     private synchronized void toolEnded(String tool, String result, AcpSchema.ToolCallStatus status) {
@@ -166,10 +165,8 @@ final class AcpFrontend implements SessionFrontend {
         if (id == null) {
             return;
         }
-        context.sendUpdate(
-                sessionId,
-                new AcpSchema.ToolCallUpdateNotification(
-                        "tool_call_update", id, null, null, status, text(cut(result)), null, null, result, null));
+        context.sendSessionUpdate(new AcpSchema.ToolCallUpdateNotification(
+                "tool_call_update", id, null, null, null, status, text(cut(result)), null, null, result, null));
     }
 
     private @Nullable String takeOpen(String tool) {
@@ -217,25 +214,29 @@ final class AcpFrontend implements SessionFrontend {
         AcpSchema.ToolCallUpdate call = new AcpSchema.ToolCallUpdate(
                 id != null ? id : "call_" + toolCounter.incrementAndGet(),
                 title(approval.toolName(), approval.arguments()),
+                approval.toolName(),
                 kind(approval.toolName()),
                 AcpSchema.ToolCallStatus.PENDING,
                 null,
                 locations(approval.arguments()),
                 approval.arguments(),
+                null,
                 null);
         AcpSchema.RequestPermissionResponse answer;
         try {
-            answer = context.requestPermission(new AcpSchema.RequestPermissionRequest(
-                    sessionId,
-                    call,
-                    List.of(
-                            new AcpSchema.PermissionOption("allow", "Allow", AcpSchema.PermissionOptionKind.ALLOW_ONCE),
-                            new AcpSchema.PermissionOption(
-                                    "always",
-                                    "Allow all (switch to auto mode)",
-                                    AcpSchema.PermissionOptionKind.ALLOW_ALWAYS),
-                            new AcpSchema.PermissionOption(
-                                    "reject", "Reject", AcpSchema.PermissionOptionKind.REJECT_ONCE))));
+            answer = context.client()
+                    .requestPermission(new AcpSchema.RequestPermissionRequest(
+                            sessionId,
+                            call,
+                            List.of(
+                                    new AcpSchema.PermissionOption(
+                                            "allow", "Allow", AcpSchema.PermissionOptionKind.ALLOW_ONCE),
+                                    new AcpSchema.PermissionOption(
+                                            "always",
+                                            "Allow all (switch to auto mode)",
+                                            AcpSchema.PermissionOptionKind.ALLOW_ALWAYS),
+                                    new AcpSchema.PermissionOption(
+                                            "reject", "Reject", AcpSchema.PermissionOptionKind.REJECT_ONCE))));
         } catch (RuntimeException e) {
             // no answer (the editor went away, or the request timed out): the same as nobody to ask
             return ApprovalResolution.deny();
@@ -247,9 +248,7 @@ final class AcpFrontend implements SessionFrontend {
             case "allow" -> ApprovalResolution.approve();
             case "always" -> {
                 agent.mode(ApprovalMode.AUTO);
-                context.sendUpdate(
-                        sessionId,
-                        new AcpSchema.CurrentModeUpdate("current_mode_update", AcpServer.modeId(ApprovalMode.AUTO)));
+                context.sendSessionUpdate(new AcpSchema.CurrentModeUpdate(AcpServer.modeId(ApprovalMode.AUTO)));
                 yield ApprovalResolution.approve();
             }
             default -> ApprovalResolution.deny();
@@ -274,19 +273,18 @@ final class AcpFrontend implements SessionFrontend {
             return;
         }
         lastOutputPush = now;
-        context.sendUpdate(
-                sessionId,
-                new AcpSchema.ToolCallUpdateNotification(
-                        "tool_call_update",
-                        id,
-                        null,
-                        null,
-                        AcpSchema.ToolCallStatus.IN_PROGRESS,
-                        text(String.join("\n", output)),
-                        null,
-                        null,
-                        null,
-                        null));
+        context.sendSessionUpdate(new AcpSchema.ToolCallUpdateNotification(
+                "tool_call_update",
+                id,
+                null,
+                null,
+                null,
+                AcpSchema.ToolCallStatus.IN_PROGRESS,
+                text(String.join("\n", output)),
+                null,
+                null,
+                null,
+                null));
     }
 
     private static List<AcpSchema.ToolCallContent> text(String value) {
