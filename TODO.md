@@ -390,28 +390,42 @@ attempt is a matter of cents -- **provided every instance is terminated**, on su
 alike. The large accelerator families (8-GPU training instances) prove nothing here that a single
 small GPU does not, and cost two orders of magnitude more.
 
-**The first item is not a benchmark but a suspected defect.** `Java Tests Windows 2025 x86_64
-(default / CPU variants, clang)` dies with `0xC0000374 STATUS_HEAP_CORRUPTION` at `Tests run: 0` on a
-**Granite Rapids** runner (Xeon 6973P-C, Family 6 Model 173 -- the only AMX machine CI has shown),
-while the same commit passes 1916 tests on **Ice Lake-SP** (Xeon Platinum 8370C, Model 106) and on a
-Zen 3 workstation, where CI's own uploaded DLLs also load cleanly. GitHub mixes runner hardware, so
-the job is intermittently red.
+**The first item was a suspected defect and is now a found one, with a fix: `patches/0018`.**
 
-**It is not in `JNI_OnLoad`, and the earlier claim here that it was is retracted.** A rented
-Granite Rapids instance (Xeon 6975P-C, same Family 6 Model 173) running CI's own DLLs loads the full
-module set cleanly: ggml picks `ggml-cpu-sapphirerapids.dll` -- the AMX module -- registers RPC + CPU
-and returns `exit 0`, and all 14 modules also load one by one there, each registering its backend.
-That is 14/14 x86 levels confirmed as a *chosen* backend. The reading that pointed at `JNI_OnLoad`
-came from the CI log ending after `[jllama] native backend 'cpu' loaded ...` with no
-`... backend(s) registered ...` line, but **that Java line is printed after `System.load` returns**,
-so `JNI_OnLoad` had completed; the missing native lines are a capture artefact (Surefire does not
-redirect native stdout into its `-output.txt`), not a crash point.
+`ggml_backend_amx_buffer_type_alloc_buffer()` allocates with `ggml_aligned_malloc()` and
+`ggml_backend_amx_buffer_free_buffer()` released it with plain `free()`. On Windows
+`ggml_aligned_malloc` is `_aligned_malloc` and `ggml_aligned_free` is `_aligned_free`
+(`ggml/src/ggml.c`), and `free()` on an `_aligned_malloc` pointer is undefined behaviour that
+corrupts the process heap. Every other caller in the tree pairs it correctly -- `ggml-backend.cpp`,
+`ggml-cpu.c` twice, `ggml-openvino.cpp`, `ggml-zdnn.cpp` and `ggml.c` itself -- so this was the one
+mismatched pair out of six.
 
-So the crash happens **after the library loads, in the first test's real work** -- `examples.ExamplesTest`
-loads a model and computes, and the probe above only loaded. The suspect is therefore the **AMX
-compute kernels**, not module loading. Deciding it needs real inference on an AMX machine with one
-module staged at a time: `sapphirerapids` (AMX) against `cooperlake` and `icelake` (AVX-512, no AMX)
-on the *same* instance and model, which isolates AMX from everything else.
+Reproduced on a rented Granite Rapids machine, one module staged at a time, same model and the same
+DLLs CI uploaded:
+
+| module | runs | exit |
+|---|---:|---|
+| **`sapphirerapids`** (the only AMX path) | **6** | **`-1073740940` = `0xC0000374`** |
+| `cooperlake` | 2 | 0 |
+| `icelake` | 2 | 0 |
+| `haswell` | 2 | 0 |
+
+It crashes **after** the inference prints its timings, in cleanup -- the signature of a heap
+corrupted earlier and detected at `free` -- and it crashes at **one** thread too, which rules out a
+data race. **Linux is unaffected**, measured on the same CPU with `amx_tile`/`amx_int8` present: all
+six runs exit 0 and the generated text is identical to the non-AMX modules', because
+`ggml_aligned_malloc` maps to `posix_memalign` there and that memory may legitimately be released
+with `free()`. One line, harmless on Linux, fatal on Windows -- which is why nothing saw it until a
+Windows runner with AMX turned up.
+
+Guard: **`llama/cmake/check-aligned-free-pairing.cmake`** fails the configure on every platform when
+a ggml source calls `ggml_aligned_malloc` and never `ggml_aligned_free` -- the shape that occurred,
+and the only way a machine without AMX can notice it. Verified red against the unpatched source
+(naming `amx.cpp`) and green with `0018` applied.
+
+Still open here: submit `0018` upstream, and keep the AMX *benchmark* question -- on Linux
+`sapphirerapids` is worth +65 % on prompt processing over `cooperlake` (554 against 328 t/s,
+Qwen3-0.6B Q4_K_M, 4 threads) and nothing on generation (37.5 against 43.7, i.e. slightly worse).
 
 ### AIX on POWER -- an open porting question, not a test
 
