@@ -46,6 +46,19 @@ library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still 
 4. **A Vulkan module for Android** (`vulkan-android-aarch64`, upstream ships none either): `JNI_OnLoad`
    already tries `libggml-vulkan.so` by soname, so it is one more module-only dockcross job plus the
    natives-jar wiring and an AAR flavor -- if anyone asks.
+5. **The Windows ROCm job is the pipeline's critical path, and it builds uncached.** Run 38069595101
+   (the second full run of the modular natives): 4:15 h for its build step, against 2:00 h for the
+   Linux ROCm job and 1:41 h for the Windows CUDA job; every other Windows build is under 20 min. Of
+   its 158 ninja steps ~140 are HIP TUs, each compiled for the 23 `GPU_TARGETS`; on Windows upstream
+   compiles them as C++ with TheRock's clang, a plain clang, so they go through sccache -- and sccache
+   0.18.0 refuses every one of them for the `-Xclang` that CMake puts on any plain-clang Windows TU
+   (CLAUDE.md "sccache on every Windows Ninja job but one"; the job's stats table: 67 requests, all
+   non-cacheable, 0 compilations). What would shorten it: a sccache that accepts `-Xclang` -- re-test
+   on every `SCCACHE_DL_VERSION` bump, the stats table in the job summary answers at once, and do it
+   on a branch with one dispatched run, because `build.bat`'s unconditional retry turns a sccache that
+   accepts the flag but mishandles the 23-target `--offload-arch` compile into a second 4 h build --
+   or fewer `GPU_TARGETS`, against the policy of building every target TheRock builds (CLAUDE.md
+   "Additional GPU-backend natives").
 
 ### CUDA job: nvcc through sccache (`SCCACHE_WRAP_NVCC`, off since the second failure)
 
@@ -195,8 +208,10 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
 - **Two upstream-only defects worth an issue on that day, no patch here:** a lost RPC server
   mid-inference still aborts the process (the ggml backend interface has no error return for a lost
   device), and ggml-rpc's client answers every `supports_op` with `true`, so a served device without
-  an op aborts the server (both under "RPC backend" above). And sccache 0.18.0 cannot cache a TU that
-  carries llama.cpp's unconditional `-Xclang -fno-pch-timestamp` (CLAUDE.md "Windows natives").
+  an op aborts the server (both under "RPC backend" above). And sccache 0.18.0 refuses any TU that
+  carries an `-Xclang` argument, which on Windows every plain-clang TU does -- CMake's runtime-library
+  selection puts it there -- so no plain-clang Windows build caches at all (CLAUDE.md "Windows
+  natives"); that one is an sccache issue, if none is open.
 
 (`0009`, `0010`, `0011` and `0013` are gone -- upstream fixed each defect itself -- and recorded in
 `docs/history/dropped-llama-patches.md`.)
@@ -325,6 +340,12 @@ cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) cov
   and UI-tested there too; what no session has is a real arm64 device, and the Adreno/OpenCL flavor
   needs one. Nothing to write, only to run.
 - **AVX-512/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra): item 2 of "Modular natives" above.
+  And on **Windows** with AMX specifically: `patches/0018` (the AMX weight buffer freed with
+  `free()` after `_aligned_malloc()`, CLAUDE.md patch table) is proven by reading, by a GCC compile
+  of the patched file with the variant's flags, and by the CI lottery -- the Windows test jobs
+  reach the AMX path only when GitHub hands them an Intel AMX runner (seen: Xeon 6973P-C). A
+  Windows machine with AMX would pin it directly: load a Q4_K model with the modular set at `-lv 4`
+  (`AMX model buffer size` in the load log), generate, close -- no exit code -1073740940.
 - **Kolibri-1 on the real 78B model** (after a full build; the shards need more than 64 GB of RAM).
 
 ### GraalVM Native Image -- evaluated, parked until a consumer asks
