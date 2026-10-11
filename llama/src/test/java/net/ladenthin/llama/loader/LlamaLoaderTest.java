@@ -478,6 +478,28 @@ public class LlamaLoaderTest {
     }
 
     // -------------------------------------------------------------------------
+    @Test
+    public void aFailedLoadRecordsTheReasonSoTheFinalErrorCanNameIt() throws IOException {
+        // The error initialize() throws used to end in "see the messages above", which is useless to
+        // a consumer who has only the stack trace -- and the case that actually happens is the one it
+        // could not distinguish: the library is present but one of its DT_NEEDED dependencies is not
+        // (a plain Ubuntu server image has no libgomp.so.1, which libggml-base.so declares). So a
+        // failed load records the dlopen reason; this pins that it does, on any platform, by handing
+        // System.load a file that is certainly not a shared library.
+        Path notALibrary = extractDir.resolve("definitely-not-a-library" + System.mapLibraryName("x"));
+        Files.write(notALibrary, "this is not an ELF, PE or Mach-O file".getBytes(StandardCharsets.UTF_8));
+
+        LlamaLoader.lastLoadFailure = null;
+        assertFalse(LlamaLoader.loadNativeLibrary(notALibrary), "a text file must not load as a library");
+        assertNotNull(LlamaLoader.lastLoadFailure, "a failed load must record why, not only print it");
+
+        // and the counterpart: a path that does not exist at all is not a load failure with a reason,
+        // it is simply absent -- so the field must stay untouched rather than carry a stale message.
+        LlamaLoader.lastLoadFailure = null;
+        assertFalse(LlamaLoader.loadNativeLibrary(extractDir.resolve("no-such-file.so")));
+        assertNull(LlamaLoader.lastLoadFailure, "an absent file is not a load failure");
+    }
+
     // extractFile
     // -------------------------------------------------------------------------
     //

@@ -90,6 +90,25 @@ public class LlamaLoader {
     private static final NativeLibraryPermissionSetter permissionSetter = new NativeLibraryPermissionSetter(System.err);
 
     /**
+     * The {@code dlopen} / {@code LoadLibrary} reason of the most recent {@link
+     * #loadNativeLibrary(Path)} failure, so the error thrown at the end of {@link #initialize()} can
+     * name the missing dependency rather than pointing at stderr.
+     *
+     * <p>Why this is worth a field: "the library is not in the jar" and "the library is there but one
+     * of its {@code DT_NEEDED} dependencies is not" are indistinguishable without it, and the second
+     * one is what a consumer actually hits -- a plain Ubuntu server image has no {@code libgomp.so.1},
+     * which {@code libggml-base.so} declares, so the whole jar fails with a message that reads like a
+     * packaging defect (measured; see {@code docs/benchmarks/gpu-module-jars.md}). The Android branch
+     * of {@link #initialize()} already carries the reason into its tried-path entry for exactly this
+     * argument; the natives-jar branch did not. Written only from {@link #loadNativeLibrary(Path)},
+     * which runs under {@code initialize()}'s lock, and {@code volatile} so a later reader on another
+     * thread sees it. Package-private so {@code LlamaLoaderTest} can assert that a failed load records
+     * a reason at all -- the thrown message is otherwise only observable with a broken natives jar on
+     * the classpath.
+     */
+    static volatile @Nullable String lastLoadFailure;
+
+    /**
      * Classpath root of the bundled native libraries, without a leading slash because it is
      * resolved through the {@link ClassLoader} (see {@link #resource(String)}). Below it every
      * backend has its own directory, {@code <os>/<arch>/<backend>/}, and each natives jar
@@ -474,13 +493,15 @@ public class LlamaLoader {
         }
         List<String> modules = selectModules(presentModules(nativeResourcePath), systemProperties.getBackend());
         if (!loadFromNativesJars(nativeResourcePath, library, modules)) {
+            String reason = lastLoadFailure;
             throw new UnsatisfiedLinkError(String.format(
                     "The native library of backend '%s' could not be loaded for os.name=%s, os.arch=%s"
-                            + " (GPU modules: %s) -- see the messages above; paths=[%s]",
+                            + " (GPU modules: %s); reason: %s; paths=[%s]",
                     library,
                     OSInfo.getOSName(),
                     OSInfo.getArchName(),
                     modules.isEmpty() ? "none" : String.join(", ", modules),
+                    reason != null ? reason : "none reported -- see the messages above",
                     String.join(File.pathSeparator, triedPaths)));
         }
     }
@@ -500,6 +521,7 @@ public class LlamaLoader {
             System.load(absolutePath);
             return true;
         } catch (UnsatisfiedLinkError e) {
+            lastLoadFailure = e.getMessage();
             System.err.println(e.getMessage());
             System.err.println("Failed to load native library: " + absolutePath + ". osinfo: "
                     + OSInfo.getNativeLibFolderPathForCurrentOS());

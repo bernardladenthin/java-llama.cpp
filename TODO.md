@@ -74,11 +74,13 @@ loading the Linux jar on an image that is not Amazon Linux. Numbers and method:
    of additive, or document in the README that the jar needs an Intel GPU/NPU plus an ICD loader and
    must otherwise stay off the classpath.
 
-4. **The loader's exception does not name the missing library.** It ends in "see the messages above"
-   and prints the `dlopen` reason to `System.err` separately, so a consumer who only has the stack
-   trace cannot tell "library missing from the jar" from "library present, one `DT_NEEDED` dependency
-   absent". The Android path in the same file already carries the reason and says why in a comment;
-   the jar path never got the same treatment. Small, self-contained fix.
+4. ~~**The loader's exception does not name the missing library.**~~ **Fixed.** It used to end in
+   "see the messages above" and print the `dlopen` reason to `System.err` separately, so a consumer
+   with only the stack trace could not tell "library missing from the jar" from "library present, one
+   `DT_NEEDED` dependency absent" -- and the second is the case that happens. The reason is now
+   carried into the thrown message, the way the Android branch of the same method already did it,
+   and `LlamaLoaderTest` pins both halves: a failed load records a reason, and a file that is simply
+   absent does not (so no stale message is reported as a load failure).
 
 ### Modular natives -- follow-ups
 
