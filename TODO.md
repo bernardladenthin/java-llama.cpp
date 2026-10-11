@@ -345,7 +345,7 @@ Further per-repo findings in the doc can be pulled on demand; none is prioritize
 
 **Recovered from the session transcript on 2026-10-11; it had been stated repeatedly and recorded
 nowhere.** The hybrid-CRT change reaches the ROCm Windows build through its plain-clang branch, and
-that branch applies because the job compiles with `%HIP_PATH%\lib\llvmin\clang.exe` -- a GNU
+that branch applies because the job compiles with HIP's own clang (`lib/llvm/bin/clang.exe` under
 driver, so CMake's `MSVC` is false there. Before the change that job had **no** branch and therefore
 the dynamic CRT; it now gets the hybrid one (`-fms-runtime-lib=static` plus
 `/nodefaultlib:libucrt.lib`). That may be an improvement (fewer dependencies) or it may break the
