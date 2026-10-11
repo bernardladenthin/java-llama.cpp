@@ -17,6 +17,25 @@ so everything below is genuinely still open.
 
 ## Open — jllama-specific
 
+### `package` is red: the Windows OpenVINO module jar fails the merge check
+
+**This blocks every release and was untracked until 2026-10-11.** `Package JARs` fails with
+
+    artifact 'natives-openvino-windows-x86-64' is a module jar:
+    Windows/x86_64/openvino/ must hold ggml-openvino.dll (named in jllama-files.txt)
+
+so `merge-native-artifacts.sh` rejects the artifact before anything is packaged. Because the smoke
+jobs `need: package`, all of them **skip** rather than fail -- which is why the run reads as "3
+failures" and the Java test jobs look green: nothing downstream of `package` ran at all. Seen on run
+38112603436; the check itself came with `4f811a23` on `main`, so this is **pre-existing**, not a
+consequence of the AMX work on the branch.
+
+What to find out first: whether the Windows OpenVINO build produces a differently named module (the
+other GPU jobs write `ggml-<backend>.dll`, and `JLLAMA_MODULE_ONLY` writes `$<TARGET_FILE_NAME>` into
+`jllama-files.txt`, so a target name mismatch would show exactly like this) or produces nothing and
+the upload's `if-no-files-found: error` did not catch it. The two GPG jobs red in the same run are
+**unrelated and expected** on a branch: they need the `maven-central` environment secret.
+
 ### Modular natives -- follow-ups
 
 Every platform a GPU can join ships modular since 5.2.0 (CLAUDE.md "Modular natives": `JLLAMA_BACKEND_DL`
@@ -172,7 +191,7 @@ nothing here blocks on it.
 **Nothing is filed upstream before the release is out**, neither issues nor PRs; the drafts are not
 written before that either. Everything below is the inventory for that day, so it is not rediscovered.
 
-There are **eleven** patches today (`0001`-`0003`, `0006`-`0008`, `0012`, `0014`-`0017`). Each
+There are **twelve** patches today (`0001`-`0003`, `0006`-`0008`, `0012`, `0014`-`0018`). Each
 accepted upstream change deletes a patch from the bump checklist once the pin is bumped past it.
 
 - **Submittable as they are** (self-contained, no jllama specifics): `0001` (Windows arg-parse embed
@@ -181,7 +200,11 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   direction), `0002` (preserve the caller's load-progress callback), `0006` (embeddable
   `llama_server`), `0007` (`llama_server_attach`), `0008` (`LLAMA_SERVER_WORKER_CMD`), `0012` (zero
   split-sum guard, ships `tests/test-model-split.cpp`), `0014` (`common_log_set_callback`), `0015`
-  (non-aborting RPC registration, stoppable server, transport fixes), `0017` (x86 prefetch helper).
+  (non-aborting RPC registration, stoppable server, transport fixes), `0017` (x86 prefetch helper),
+  **`0018`** (the AMX buffer released with `free()` instead of `ggml_aligned_free` -- one line, with
+  the 6/6-against-0/6 measurement in its header and a configure-time guard that is red without it;
+  the clearest submission of the set, since the defect reproduces on any AMX machine and the fix
+  copies the line `ggml-backend.cpp` already has).
 - **Permanent:** `0003` carries upstream PR #22393, which upstream closed without merging.
 - **Temporary carry, not a submission:** `0016` (Kolibri-1). Upstream will add the architecture itself
   ([ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)). Drop it on the
@@ -197,6 +220,14 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   device), and ggml-rpc's client answers every `supports_op` with `true`, so a served device without
   an op aborts the server (both under "RPC backend" above). And sccache 0.18.0 cannot cache a TU that
   carries llama.cpp's unconditional `-Xclang -fno-pch-timestamp` (CLAUDE.md "Windows natives").
+- **A third, measured 2026-10-11: `ggml_backend_load_best` picks a slower CPU module than one it
+  rejects.** On a Graviton 4 it selects `armv8.6_2` (198.0 t/s pp512) while `armv8.2_2` reaches
+  **271.4** on the same machine and model -- the SVE/SVE2/i8mm paths losing to plain DOTPROD+FP16 --
+  with generation inside the noise. The scoring function ranks by feature *level*, not by measured
+  throughput, so it is by construction rather than a bug, but it costs 37 % of prompt processing on
+  the hardware AWS rents most cheaply, and it is invisible to anyone who only runs the module their
+  own CPU picks. Worth an issue with the table from `docs/local-test-plan.md`; **no patch here** --
+  overriding upstream's scoring downstream would be a maintenance burden with no end.
 
 (`0009`, `0010`, `0011` and `0013` are gone -- upstream fixed each defect itself -- and recorded in
 `docs/history/dropped-llama-patches.md`.)
@@ -327,8 +358,10 @@ cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) cov
 - **AVX-512/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra): item 2 of "Modular natives" above.
   Partly answered since: a Cascade Lake machine (`avx512f` + `avx512_vnni`, no AMX) picks
   `cascadelake` and loads cleanly, which lifted the modules ever *chosen* anywhere from six to eight.
-  AMX itself is still open, and is now a **suspected defect** rather than a missing benchmark -- see
-  the rented-hardware section below.
+  AMX itself was that **suspected defect** and is now a found and fixed one (`patches/0018`, proven on
+  a rented Granite Rapids machine and verified there with the patch -- see the rented-hardware section
+  below). What stays open is the original question, the *throughput* gain of `sapphirerapids` and
+  `zen4` over `haswell`, which needs the same hardware but no longer blocks anything.
 - **Kolibri-1 on the real 78B model.** `patches/0016` is verified only against tiny synthesized GGUFs
   (`test_kolibri1.cpp`); CLAUDE.md's own row says "Not verified here: the real 78B model ... and GPU
   backends". **The RAM objection is measured and wrong for the small quants:** the smallest published
@@ -339,6 +372,16 @@ cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) cov
   `sigmoid(logits)`, and a DeepSeek-V3-style router produces fluent-looking nonsense instead), a
   thinking block, a tool call through the chat endpoint with `--jinja`, tokens/s and peak RAM. A load
   error or gibberish is a finding **against** `0016`, not something to work around.
+  **In flight since 2026-10-11:** a single rented run on an `r7i.4xlarge` (16 vCPU, 128 GB RAM,
+  ~1.06 USD/h, dead-man switch at 150 min) loads **both** dialects in one boot, downloading each GGUF
+  straight from HuggingFace on the instance -- `Hob-forge/Kolibri-1-GGUF` **Q4_K_M (44.2 GB)** rather
+  than its Q2_K, because the question is whether the German answer is *coherent* and a 78B MoE at
+  Q2_K would make that ambiguous, and `Eliasfpv28/Kolibri-1-Q3_K_S-GGUF` **Q3_K_S (31.5 GB)** for the
+  gating-2 dialect. Hob-forge publishes Q2_K through Q8_0, so quant choice is free; 128 GB fits even
+  Q6_K (59.8 GB), which no local machine does. The probe prints the architecture, expert and gating
+  lines from the load at verbosity 4, then the generated **text** of two raw completions and one chat
+  turn through the model's own template, each guarded separately so one failure still leaves the rest
+  measured.
 
 ### Compatibility matrix on rented hardware (one measurement per generation)
 
@@ -362,7 +405,7 @@ measurement* -- not something CI should repeat. Each family maps to exactly one 
 | `m5` / `c5` | Skylake-SP | `skylakex` |
 | `m6a` / `c6a` | EPYC Milan (Zen 3) | `haswell` |
 | `m4` and older | Broadwell / Ivy Bridge | `haswell`, `ivybridge` |
-| **`m7g` / `c8g` (Graviton)** | **aarch64** | **the whole 8-module aarch64 list, none of it ever run** |
+| **`m7g` / `c8g` (Graviton)** | **aarch64** | **done: 6 of the 8 run on a Graviton 4** (`armv9.2_*` need SME, which no instance has) |
 
 **Four levels stay unreachable there** and are only ever *load*-tested: `piledriver` (no
 Bulldozer-era instance exists), `cannonlake` (barely shipped), `alderlake` (consumer Intel) and
