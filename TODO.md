@@ -637,3 +637,98 @@ set, so `armv9.2_1`/`armv9.2_2` cannot even be loaded there. They would need **L
 SME**, which Graviton 4 lacks and no current instance provides. EC2 Mac also bills a **24-hour
 minimum** (dedicated host), so it is the expensive way to answer nothing.
 
+
+## Handed over from the modular-natives session (2026-10-11) -- read the first item before merging #507
+
+Appended on `local/cpu-module-isolation-test` by the session that shipped the modular natives
+(#504 to #506) and watched their two full runs (38065017595, 38069595101). Nothing above was moved.
+Items `main` already carries through #506 are named, not repeated.
+
+### Before #507 merges: two `0018` patches for the same hunk
+
+`main` (cfc10fd2, #506) carries `llama/patches/0018-ggml-amx-free-the-aligned-buffer.patch`; this
+branch carries `llama/patches/0018-ggml-amx-aligned-free.patch`. Both replace the same line of
+`ggml/src/ggml-cpu/amx/amx.cpp` (main's adds a four-line comment above the call, this one is bare).
+After a merge both files exist, the applier takes them in filename order, the first applies, the
+second no longer finds its `-` line and aborts the configure with "does not apply cleanly" -- every
+native build job red, on every platform. `git merge-tree main HEAD` (2026-10-11) reports a textual
+conflict in `TODO.md` **only**; the two patch files, CLAUDE.md (two `0018` rows in the patch table)
+and CHANGELOG.md (two "Fixed" bullets for the same defect) merge *silently*. Resolve in the merge
+commit: keep exactly one patch file (the comment is the only difference), one patch-table row and
+one CHANGELOG bullet, and keep this branch's `llama/cmake/check-aligned-free-pairing.cmake` guard
+either way (main has none). For the `TODO.md` conflict: take main's wording for the three places
+#506 touched -- a fifth "Modular natives -- follow-ups" item (the Windows ROCm job is the pipeline's
+critical path at 4:15 h and builds uncached), the corrected sccache sentence under "Upstream
+submissions" (the `-Xclang` that sccache 0.18.0 refuses comes from CMake's
+`Platform/Windows-Clang.cmake` runtime-library selection on every plain-clang Windows TU, not only
+from llama.cpp's `-fno-pch-timestamp`; CLAUDE.md "sccache on every Windows Ninja job but one" on
+main has the measurement) and the AMX bullet under "Needs a machine" -- and this branch's structure
+for everything else.
+
+### Open from that session, recorded nowhere else
+
+- **WER minidumps are switched on but unproven.** #506 makes the Windows test step set
+  `Disabled=0` / `DontShowUI=1` under both WER keys next to the `LocalDumps\java.exe` entry
+  (`DumpType` 2), because the AMX heap corruption left no dump behind. No Windows crash has happened
+  since, so nothing shows that a `.dmp` now lands in the failure artifact. Prove it once rather
+  than wait: a throwaway step that crashes a `java.exe` on purpose (an access violation through
+  `sun.misc.Unsafe`, or `jshell` writing to address 0) on a branch run, then look for the dump in
+  the artifact -- and if none appears, replace the WER route with `procdump -ma -e` around the
+  surefire run.
+- **The emulator package pre-install is unproven.** Both emulator jobs died in one minute inside the
+  action's own `sdkmanager --install emulator --channel=0` ("Error on ZipFile unknown archive", run
+  38069595101) an hour after being green; #506 installs the package in a step before the action,
+  four attempts, so the action's install is a no-op. Neither job has run since. If the download
+  keeps flaking, the sturdier form is `actions/cache` over `$ANDROID_HOME/emulator` keyed on the
+  emulator package version `sdkmanager --list` reports, so dl.google.com is reached once per
+  version instead of once per job.
+- **Everything behind `package` has never run on the modular natives.** Run 38069595101 skipped
+  `package` (it `needs` the Windows clang test job, red with the AMX crash); this branch's run
+  38112603436 reaches it and fails on the Windows OpenVINO module jar (the blocker at the top of
+  this file). Still unexercised after that: the smoke-set assembly (`package-smoke-sets.sh`),
+  `smoke-natives-jars.sh` (classes + all 23 natives jars on the classpath **and** the module path),
+  the bytecode gate and `verify-native-deps.py` over all 23 jars, the four `smoke-natives` rows
+  (loader line naming every module jar of the platform, the HTTPS round, the RPC smoke, the
+  bytecode gate over the set), `smoke-natives-macos`, `smoke-agent-linux`, and the publish jobs
+  attaching the Maven artifacts. Expect further rounds there; the `windows-x86-64` smoke row runs
+  on the same CPU lottery as the Windows test job, so it exercises AMX only when GitHub hands it an
+  Intel runner.
+- **The two server defaults disagree, by design or not -- owner's call.** Upstream #30159 (b11529)
+  moved llama-server's default port from 8080 to 9931, which `NativeServer.DEFAULT_PORT` follows
+  because it inherits the forwarded argv; `OpenAiServerConfig.DEFAULT_PORT` stayed 8080 as the
+  project's own constant. Raised 2026-10-09, never answered: align `OpenAiCompatServer` to 9931
+  (one constant, its tests, README) or keep the split and say so in the README.
+- **Maven plugins without a pinned version, and no `requirePluginVersions` enforcer rule** (all
+  four repos; raised 2026-10-01, never answered). `clean`, `resources`, `install`, `deploy`, `site`
+  and in places `compiler`/`jar` run at whatever version the Maven on the runner defaults to, which
+  differs between CI and a local build (the parent's `<pluginManagement>` here covers the plugins
+  more than one module uses, not these). `check-versions.py` would then also compare them across
+  the siblings. One pull request per repo, warnings-only until all four have landed.
+- **`SECURITY.md` and `CONTRIBUTING.md` are the two per-repo files never compared.** Every other
+  file that was "probably the same" across the four repos is either in `shared-files.sha256`
+  byte-for-byte or as a `?repo` entry; these two were left out on 2026-10-01 as "differs per repo,
+  probably wanted, not checked". Diff them once and either add `?repo` entries or write down why
+  they differ.
+- **SonarCloud reported "1 new issue" on #486 and nobody looked.** The sandbox's proxy answers 403
+  for sonarcloud.io, so the finding was never read; the quality gate has passed since, so it is
+  low, but it is unread.
+- **The local-agent assignment of 2026-10-10 exists only in the session, not in `docs/handover/`.**
+  Its deliverables map onto "Modular natives -- follow-ups" item 1 (the module jars on the RTX 3070
+  + iGPU, throughput against 265.6 / 88.8 / 243.7, `--device` names across module sets, the
+  filter's negative paths), the first two "Needs a machine" bullets (extraction reuse, stale
+  cleanup against a running JVM) and the Kolibri bullet; the agent was asked to write
+  `docs/handover/local-agent-report-5.2.0-modular-windows.md` on a branch
+  `local/modular-natives-windows-report`. One question in it is not in item 1 yet: NVIDIA's and
+  AMD's drivers ship OpenCL ICDs, so CUDA, Vulkan **and** OpenCL may each see the same RTX 3070 --
+  whether llama.cpp folds the three into one device by `device_id` and which backend wins is
+  unmeasured. The input it waits for is the first green `llama-smoke-windows-x86-64` artifact.
+- **REUSE attribution is probably wrong in two places, and changing it needs the owner's word.**
+  `REUSE.toml` credits the generated dockcross wrappers (`.github/dockcross/dockcross-*`) to the
+  original fork author and the owner, while they are output of the dockcross project; and about 35
+  Java files plus the documentation block still name the fork author, which a `git blame` pass
+  would have to confirm or refute file by file. Raised 2026-10-01; no attribution is removed
+  without an explicit decision.
+- **srcmorph's smoke tests a fat jar it never ships** (its thin Central jars are launched by no job,
+  its 15 classifier fat jars are checked structurally only). Whether srcmorph follows jllama -- thin
+  jar plus `jbang --deps`, smoke on the consumer's classpath -- is the owner's decision and is
+  recorded in srcmorph's `TODO.md` and the workspace fat-jar policy, not here.
