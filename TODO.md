@@ -325,7 +325,94 @@ cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) cov
   and UI-tested there too; what no session has is a real arm64 device, and the Adreno/OpenCL flavor
   needs one. Nothing to write, only to run.
 - **AVX-512/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra): item 2 of "Modular natives" above.
-- **Kolibri-1 on the real 78B model** (after a full build; the shards need more than 64 GB of RAM).
+  Partly answered since: a Cascade Lake machine (`avx512f` + `avx512_vnni`, no AMX) picks
+  `cascadelake` and loads cleanly, which lifted the modules ever *chosen* anywhere from six to eight.
+  AMX itself is still open, and is now a **suspected defect** rather than a missing benchmark -- see
+  the rented-hardware section below.
+- **Kolibri-1 on the real 78B model.** `patches/0016` is verified only against tiny synthesized GGUFs
+  (`test_kolibri1.cpp`); CLAUDE.md's own row says "Not verified here: the real 78B model ... and GPU
+  backends". **The RAM objection is measured and wrong for the small quants:** the smallest published
+  GGUF of each dialect is **Q2_K at 26.7 GB** (gating 5, pre-tokenizer `kolibri1`) and **Q3_K_S at
+  31.5 GB** (gating 2, `qwen2`), both of which fit in 63 GB without paging -- only Q6_K (59.8 GB) does
+  not. What is open is the run, on the published set: both dialects must load, a German prompt must
+  come back coherent (the router selects on `logits + expert_bias` but weights by the *unbiased*
+  `sigmoid(logits)`, and a DeepSeek-V3-style router produces fluent-looking nonsense instead), a
+  thinking block, a tool call through the chat endpoint with `--jinja`, tokens/s and peak RAM. A load
+  error or gibberish is a finding **against** `0016`, not something to work around.
+
+### Compatibility matrix on rented hardware (one measurement per generation)
+
+The project ships **14 x86-64 CPU modules and 8 aarch64 ones**, of which `ggml_backend_load_best`
+keeps exactly one -- the best for the running CPU. So a module is only ever exercised *as the chosen
+backend* on a machine whose CPU prefers it, and no amount of running the suite on one machine or one
+CI runner changes that. Measured coverage today is **8 of 14 x86 levels** (six on a Zen 3
+workstation, `skylakex` and `cascadelake` added by a Cascade Lake machine) and **0 of 8 aarch64
+levels**.
+
+Rented cloud instances can close most of that, one short run each, and it is a *per-generation
+measurement* -- not something CI should repeat. Each family maps to exactly one module:
+
+| instance family | CPU | module it exercises |
+|---|---|---|
+| `m8i` | Granite Rapids | **`sapphirerapids`** (AMX) |
+| `m7i` / `c7i` | Sapphire Rapids | `sapphirerapids` (AMX) |
+| `m6i` / `c6i` | Ice Lake-SP | `icelake` |
+| `m7a` / `c7a` | EPYC Genoa (Zen 4) | **`zen4`** |
+| `m5n` / `c5n` | Cascade Lake | `cascadelake` |
+| `m5` / `c5` | Skylake-SP | `skylakex` |
+| `m6a` / `c6a` | EPYC Milan (Zen 3) | `haswell` |
+| `m4` and older | Broadwell / Ivy Bridge | `haswell`, `ivybridge` |
+| **`m7g` / `c8g` (Graviton)** | **aarch64** | **the whole 8-module aarch64 list, none of it ever run** |
+
+**Four levels stay unreachable there** and are only ever *load*-tested: `piledriver` (no
+Bulldozer-era instance exists), `cannonlake` (barely shipped), `alderlake` (consumer Intel) and
+`cooperlake`.
+
+**Graviton is the biggest gain per euro**: the aarch64 module list (`armv8.0_1` to `armv9.2_2`, with
+dotprod, fp16, SVE, i8mm, SVE2, SME) is built by CI and has never had a single module selected on
+real hardware.
+
+GPU backends, same idea, with two that do not work out:
+
+| backend | rentable |
+|---|---|
+| CUDA, Vulkan, OpenCL | yes -- T4 / A10G / L4 class instances are enough |
+| OpenVINO | yes (CPU) |
+| **ROCm** | **no** -- the one AMD-GPU instance family is not an officially supported ROCm target |
+| **SYCL** | **no** -- needs an Intel GPU, which is not offered |
+
+**Practical notes for whoever does this.** GPU instance families usually start at a **zero vCPU
+quota** on a fresh account, and raising it is a support request measured in hours to days -- ask
+first, not when the run is due. Nothing needs to be built on the instance: the natives and classes
+are handed over as one archive and the probe runs unattended from instance start-up data, so the
+result is read back from the console log without any interactive login. Billing is per second, so an
+attempt is a matter of cents -- **provided every instance is terminated**, on success and on timeout
+alike. The large accelerator families (8-GPU training instances) prove nothing here that a single
+small GPU does not, and cost two orders of magnitude more.
+
+**The first item is not a benchmark but a suspected defect.** `Java Tests Windows 2025 x86_64
+(default / CPU variants, clang)` dies in `JNI_OnLoad` with `0xC0000374 STATUS_HEAP_CORRUPTION` at
+`Tests run: 0` on a **Granite Rapids** runner (Xeon 6973P-C, Family 6 Model 173 -- the only AMX
+machine observed), and the same commit passes 1916 tests on **Ice Lake-SP** (Xeon Platinum 8370C,
+Model 106) and on a Zen 3 workstation, where CI's own uploaded DLLs also load cleanly. GitHub mixes
+runner hardware, so the job is intermittently red. All 14 modules load **in isolation** on Zen 3 and
+on Cascade Lake, so no single module is broken at load time on a CPU that declines AMX;
+`CpuModuleIsolationTest` reports the per-module table on every run so a Granite Rapids run names the
+module instead of the symptom. An AMX instance makes that reproducible on demand instead of by luck.
+
+### AIX on POWER -- an open porting question, not a test
+
+Not supported and never built. Worth a line because the access exists (an AIX 7.3 POWER8 machine on
+the GCC Compile Farm) and because it would be the **second big-endian platform** after s390x --
+which is exactly the coverage s390x was added for, so the endian-sensitive surface of *our* layer is
+already guarded by `ctest` under qemu there.
+
+What makes it a port rather than a run: AIX is big-endian POWER with **XCOFF**, not ELF, so the
+loader's assumptions (`$ORIGIN`-style run paths, `dlopen` semantics, `verify-native-deps.py`'s ELF
+reader) do not carry over; upstream llama.cpp does not target AIX; and a JVM there means IBM Semeru,
+not Temurin. **Nothing is scheduled**: the useful first step is a plain `cmake` build of the static
+library on that machine to see how far it gets and what breaks, with the result written down --
+before anything is promised about a natives jar.
 
 ### GraalVM Native Image -- evaluated, parked until a consumer asks
 
