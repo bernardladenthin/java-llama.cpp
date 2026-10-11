@@ -451,65 +451,22 @@ GPU backends, same idea, with two that do not work out:
 | **ROCm** | **no** -- the one AMD-GPU instance family is not an officially supported ROCm target |
 | **SYCL** | **no** -- needs an Intel GPU, which is not offered |
 
-**Practical notes for whoever does this.** GPU instance families usually start at a **zero vCPU
-quota** on a fresh account, and raising it is a support request measured in hours to days -- ask
-first, not when the run is due. Nothing needs to be built on the instance: the natives and classes
-are handed over as one archive and the probe runs unattended from instance start-up data, so the
-result is read back from the console log without any interactive login. Billing is per second, so an
-attempt is a matter of cents -- **provided every instance is terminated**, on success and on timeout
-alike. The large accelerator families (8-GPU training instances) prove nothing here that a single
-small GPU does not, and cost two orders of magnitude more.
+**How to run these, and the invariants that came out of doing it, are in
+[`docs/rented-hardware-test-plan.md`](docs/rented-hardware-test-plan.md)** -- including the one that
+costs days when missed: a GPU instance family starts at a **zero vCPU quota** on a fresh account, and
+raising it is a support request measured in hours to days, so ask before the run is due. The large
+accelerator families (8-GPU training instances) prove nothing here that a single small GPU does not,
+and cost two orders of magnitude more.
 
-**The first item was a suspected defect and is now a found one, with a fix: `patches/0018`.**
-
-`ggml_backend_amx_buffer_type_alloc_buffer()` allocates with `ggml_aligned_malloc()` and
-`ggml_backend_amx_buffer_free_buffer()` released it with plain `free()`. On Windows
-`ggml_aligned_malloc` is `_aligned_malloc` and `ggml_aligned_free` is `_aligned_free`
-(`ggml/src/ggml.c`), and `free()` on an `_aligned_malloc` pointer is undefined behaviour that
-corrupts the process heap. Every other caller in the tree pairs it correctly -- `ggml-backend.cpp`,
-`ggml-cpu.c` twice, `ggml-openvino.cpp`, `ggml-zdnn.cpp` and `ggml.c` itself -- so this was the one
-mismatched pair out of six.
-
-Reproduced on a rented Granite Rapids machine, one module staged at a time, same model and the same
-DLLs CI uploaded:
-
-| module | runs | exit |
-|---|---:|---|
-| **`sapphirerapids`** (the only AMX path) | **6** | **`-1073740940` = `0xC0000374`** |
-| `cooperlake` | 2 | 0 |
-| `icelake` | 2 | 0 |
-| `haswell` | 2 | 0 |
-
-It crashes **after** the inference prints its timings, in cleanup -- the signature of a heap
-corrupted earlier and detected at `free` -- and it crashes at **one** thread too, which rules out a
-data race. **Linux is unaffected**, measured on the same CPU with `amx_tile`/`amx_int8` present: all
-six runs exit 0 and the generated text is identical to the non-AMX modules', because
-`ggml_aligned_malloc` maps to `posix_memalign` there and that memory may legitimately be released
-with `free()`. One line, harmless on Linux, fatal on Windows -- which is why nothing saw it until a
-Windows runner with AMX turned up.
-
-**The fix is verified on the hardware that showed the defect**, which neither CI nor a configure
-check can do: the same matrix re-run on a Granite Rapids instance with `0018` applied gives
-**`exit 0` in all 12 runs**, including all six `sapphirerapids` ones, each now printing the
-`INFER done` line that was missing from every crash. CI green does *not* prove this -- a runner
-without AMX passes either way, and which CPU a run draws is chance.
-
-**CI confirmed the asymmetry rather than the fix, and the host-CPU line is what showed it.** Run
-38112603436 (`254a2f0`) has `Java Tests Windows 2025 x86_64 (default / CPU variants, clang)`
-**green** -- the very job that was red on the AMX runner -- but its log says
-`AMD EPYC 7763 64-Core Processor`, i.e. **no AMX**, so that green proves nothing about the patch.
-Without the `print-host-info.sh` line added in this branch, that distinction would not be visible at
-all, and the run would read as a successful verification. Treat a green Windows job as evidence only
-when its log names an AMX CPU (`Family 6 Model 143/173`, Sapphire Rapids or Granite Rapids).
-
-Guard: **`llama/cmake/check-aligned-free-pairing.cmake`** fails the configure on every platform when
-a ggml source calls `ggml_aligned_malloc` and never `ggml_aligned_free` -- the shape that occurred,
-and the only way a machine without AMX can notice it. Verified red against the unpatched source
-(naming `amx.cpp`) and green with `0018` applied.
-
-Still open here: submit `0018` upstream, and keep the AMX *benchmark* question -- on Linux
-`sapphirerapids` is worth +65 % on prompt processing over `cooperlake` (554 against 328 t/s,
-Qwen3-0.6B Q4_K_M, 4 threads) and nothing on generation (37.5 against 43.7, i.e. slightly worse).
+**The AMX row is closed.** It was a suspected defect, turned out to be one line of upstream ggml
+(the AMX buffer released with `free()` instead of `ggml_aligned_free`), and is fixed as
+`patches/0018` -- proven on a rented Granite Rapids machine (`sapphirerapids` 6/6 crash against 0/6
+for the other modules, Linux unaffected) and verified there again with the patch (12/12 clean). The
+full record is in the patch header, `CLAUDE.md`'s patch table, `CHANGELOG.md` and the module table in
+`docs/local-test-plan.md`; `llama/cmake/check-aligned-free-pairing.cmake` is the guard. **What stays
+open is only the original question** -- the *throughput* gain of `sapphirerapids` and `zen4` over
+`haswell` -- plus one rule worth keeping: a green Windows job proves nothing unless its log names an
+AMX CPU, which is why `print-host-info.sh` now runs in every job that touches native code.
 
 ### AIX on POWER -- an open porting question, not a test
 
