@@ -1724,7 +1724,7 @@ jobs:
         with:
           arch: x64
       - name: Install Vulkan SDK
-        uses: jakoch/install-vulkan-sdk-action@v1.6.0
+        uses: jakoch/install-vulkan-sdk-action@v1.7.0
         with:
           vulkan_version: 1.4.350.0
           cache: true
