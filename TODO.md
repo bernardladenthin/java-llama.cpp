@@ -549,6 +549,24 @@ account owner has to file -- the probe package (CPU + `cuda13` + `vulkan` module
 the driver-equipped AMI (`Deep Learning Base OSS Nvidia Driver GPU AMI (Amazon Linux 2023)`) are
 otherwise ready, so this is a one-line unblock once the quota exists. Cost was never the obstacle.
 
+**Which GPU backends are reachable on rented hardware at all, measured 2026-10-11:**
+
+| backend | rentable | how |
+|---|---|---|
+| `cuda13` | yes | G instances (T4 / A10G / L4 / L40S). A T4 proves as much as an H100 for "the module loads and computes", so the **P** buckets (V100/A100/H100) are deliberately not requested |
+| `vulkan` | yes | the same NVIDIA cards -- the driver supplies `vulkan-1` / `libvulkan.so.1` |
+| `opencl` | yes | the same cards -- NVIDIA ships an ICD |
+| `openvino` | **yes, with no GPU at all** | OpenVINO has a CPU plugin, so an `m7i`/`m8i` can load `libggml-openvino.so`. Currently build-only; this is the cheapest open coverage gap |
+| `rocm` | **no** | `g4ad` (Radeon Pro V520) is **gone from every region checked** (us-east-1, us-east-2, us-west-2, eu-central-1) and was AWS's only AMD GPU; ROCm never officially supported Navi 12 either. Stays build-only |
+| `sycl` (GPU) | **no** | AWS has no discrete Intel GPU. Intel's CPU OpenCL runtime covers part of it |
+| `metal` | **no** | EC2 Mac exists but bills a 24-hour minimum, and macOS ships the backend inside the library anyway |
+
+**Spot cannot be stopped**, only terminated, so a persistent switch-off-in-between machine needs the
+**On-Demand** G quota (`L-DB2E81BA`), not the Spot one. Measured spot price for `g4dn.xlarge` on
+2026-10-11: **0.2925 USD/h**; On-Demand is roughly 0.53. A stopped instance costs only its EBS
+volume (40 GB gp3 ~ 3 EUR/month), and starts in ~40 s with the toolchain and models still on it --
+against 10 to 15 minutes for the boot-from-scratch probes used so far.
+
 **`SME` is not rentable anywhere, and an Apple instance does not help.** AWS does offer
 `mac-m4.metal` / `mac-m4pro.metal` / `mac-m4max.metal`, and Apple M4 does have SME -- but macOS
 ships **one static library** (`metal-macos-aarch64`, Metal compiled in), not the aarch64 CPU module
