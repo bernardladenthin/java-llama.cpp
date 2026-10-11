@@ -28,7 +28,13 @@ artifact, classifier `<backend>-<os>-<arch>`, each holding exactly one directory
   load whatever lies there (`ggml_backend_load_all_from_path`). A module whose vendor runtime is
   missing fails to open -- silently inside ggml, which is why `JNI_OnLoad` logs the backend registry
   and the devices at INFO and `LlamaLoader` logs `native backend '<lib>' loaded from <dir> with GPU
-  module(s) a, b` -- and the model runs on the CPU modules. Several together are fine: llama.cpp
+  module(s) a, b` -- and the model runs on the CPU modules. **Two measured exceptions, both in
+  [`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md), and both reached by a
+  consumer doing nothing wrong:** OpenVINO's CPU plugin opens fine and contributes a *device*, so on
+  a host without an Intel accelerator it is preferred and runs **17x/172x slower** than the CPU
+  modules; and a CUDA driver that is present but too old to JIT the module's PTX lets ggml offload
+  every layer and then call `abort()`, killing the JVM instead of falling back (a Tesla T4 on driver
+  595.91.07 -- Turing, A100 and Hopper ship as PTX only, so they depend on the driver's JIT). Several together are fine: llama.cpp
   dedups the devices by `device_id`, so the same GPU seen through CUDA and Vulkan is one device.
   `net.ladenthin.llama.backend=<a>,<b>` is a **filter** over the module jars (`cpu` = none); a name
   that is no module backend, or whose jar is not on the classpath, fails the load with a message
@@ -670,8 +676,16 @@ threads, interleaved): tg128 72.8 with OpenMP against 77.3 without, pp512 357.0 
 roughly 6% on generation with one ON sample at 76.1 +- 0.9, i.e. inside the spread rather than a
 result, and nothing like the 1.9x/2.7x the Windows runtimes cost. libgomp evidently keeps its
 thread team alive across regions where LLVM's `libomp` and MSVC's `vcomp` do not. So the Windows
-numbers must **not** be generalised into a one-line change on Linux, where there is no dependency
-argument either (libgomp is present everywhere). The remaining unknown is a machine with many more
+numbers must **not** be generalised into a one-line change on Linux on *throughput* grounds.
+**The dependency half of that sentence used to read "libgomp is present everywhere", and that is
+measured and wrong:** `libggml-base.so` -- the first file `LlamaLoader` loads -- declares
+`libgomp.so.1`, and a plain Ubuntu 24.04 server image does not have it; the jar then fails with
+`UnsatisfiedLinkError: The native library of backend 'cpu' could not be loaded`, which reads like a
+packaging defect and is a missing distro package (measured 2026-10-11 on an EC2 Ubuntu AMI, fixed by
+installing `libgomp1`). Every shipped Linux file also needs `libstdc++.so.6` and `libgcc_s.so.1`, so
+a distroless or musl image cannot run the jar at all. Whether to make the Linux jar self-contained
+the way the Android build already is (`GGML_OPENMP=OFF` plus `-static-libstdc++`) is an open decision
+in `TODO.md`: the cost is the ~6% above, the gain is a jar that stops depending on the base image. The remaining unknown is a machine with many more
 cores than the 8 measured here (`TODO.md`).
 
 **GPU runtime libraries are NOT bundled.** A GPU natives jar ships only its backend module
