@@ -1,0 +1,48 @@
+ggml: release the AMX buffer with ggml_aligned_free, not free()
+
+ggml_backend_amx_buffer_type_alloc_buffer() allocates with ggml_aligned_malloc(), and
+ggml_backend_amx_buffer_free_buffer() released that pointer with plain free(). On Windows
+ggml_aligned_malloc is _aligned_malloc and ggml_aligned_free is _aligned_free (ggml/src/ggml.c),
+and passing an _aligned_malloc pointer to free() is undefined behaviour: it corrupts the process
+heap. Every other caller of ggml_aligned_malloc in the tree pairs it correctly -- ggml-backend.cpp,
+ggml-cpu.c (twice), ggml-openvino.cpp, ggml-zdnn.cpp and ggml.c itself -- so this was the one
+mismatched pair, and ggml-backend.cpp:2464 is the line this fix copies.
+
+What it cost downstream, measured rather than reasoned: the Windows x86-64 Java test job of
+java-llama.cpp died with 0xC0000374 STATUS_HEAP_CORRUPTION and reported "Tests run: 0", but only on
+the CI runs that happened to land on AMX hardware (Granite Rapids, Xeon 6973P-C), while the same
+commit passed 1916 tests on Ice Lake-SP and on a Zen 3 workstation. Reproduced deliberately on a
+rented Granite Rapids machine with one CPU backend module staged at a time, same model, same
+binaries:
+
+    module            runs  exit
+    sapphirerapids       6   -1073740940 (0xC0000374)   <- the only module with the AMX path
+    cooperlake           2   0
+    icelake              2   0
+    haswell              2   0
+
+The crash lands after the work succeeds -- the inference prints its timings and the process dies in
+cleanup, which is the signature of a heap corrupted earlier and detected at free. It reproduces at
+one thread, so it is not a data race. Linux is unaffected because ggml_aligned_malloc maps to
+posix_memalign there, whose memory may legitimately be released with free().
+
+Guard on the downstream side: llama/cmake/check-aligned-free-pairing.cmake fails the configure on
+any platform when a ggml source calls ggml_aligned_malloc and never ggml_aligned_free, which is
+exactly the shape that occurred and which no non-AMX machine can otherwise notice.
+
+Upstream-submittable as it stands; drop this patch once upstream carries the same change (grep
+`free(buffer->context)` in ggml/src/ggml-cpu/amx/amx.cpp at the new tag).
+
+diff --git a/ggml/src/ggml-cpu/amx/amx.cpp b/ggml/src/ggml-cpu/amx/amx.cpp
+index e90c279..c80e23d 100644
+--- a/ggml/src/ggml-cpu/amx/amx.cpp
++++ b/ggml/src/ggml-cpu/amx/amx.cpp
+@@ -43,7 +43,7 @@ static ggml::cpu::tensor_traits * get_tensor_traits(ggml_backend_buffer_t, struc
+ 
+ // AMX buffer interface
+ static void ggml_backend_amx_buffer_free_buffer(ggml_backend_buffer_t buffer) {
+-    free(buffer->context);
++    ggml_aligned_free(buffer->context, buffer->size);
+ }
+ 
+ static void * ggml_backend_amx_buffer_get_base(ggml_backend_buffer_t buffer) {

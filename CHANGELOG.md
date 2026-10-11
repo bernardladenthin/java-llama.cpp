@@ -9,6 +9,20 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Fixed
+- **Windows crashed with `STATUS_HEAP_CORRUPTION` on CPUs with AMX (Sapphire Rapids and newer).**
+  Every model load that ran on an AMX-capable CPU killed the process at cleanup -- after the
+  inference itself had succeeded -- because ggml's AMX buffer type allocated with
+  `ggml_aligned_malloc()` and released with plain `free()`. On Windows that is `_aligned_malloc`
+  against `free()`, which is undefined behaviour and corrupts the heap (`patches/0018`; of the six
+  callers of `ggml_aligned_malloc` upstream this was the only mismatched pair). Linux was never
+  affected, because `ggml_aligned_malloc` maps to `posix_memalign` there. Measured on a Granite
+  Rapids machine with one CPU backend module staged at a time: the `sapphirerapids` module crashed
+  6 of 6 runs, `cooperlake`, `icelake` and `haswell` none, and the crash reproduces at a single
+  thread. A configure-time check (`llama/cmake/check-aligned-free-pairing.cmake`) now fails the build
+  on every platform if a ggml source allocates aligned and frees plain, because a machine without
+  AMX cannot observe the defect at run time.
+
 ### Added
 - **Modular natives: the GPU backends are additive module jars, and every platform a GPU can join is
   built modular.** A GPU natives jar (`cuda13-linux-x86-64`, `vulkan-windows-aarch64`, ... -- 15 of

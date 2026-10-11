@@ -59,9 +59,53 @@ on a Zen 3 the plain `x64` baseline module is **10.4x slower at prompt processin
 
 | Machine | Expected module | Why | Measured? |
 |---|---|---|---|
-| Ryzen 7 5800H (Zen 3) | `haswell` | AVX2, no AVX-512 | **yes** -- confirmed from the JVM's mapped modules, see the b11538 report |
+| Ryzen 7 5800H (Zen 3) | `haswell` | AVX2, no AVX-512 | **yes** -- from the JVM's mapped modules, b11538 report |
+| Xeon Cascade Lake | `cascadelake` | AVX-512 + VNNI, no VBMI/BF16 | **yes** |
+| Xeon Platinum 8370C (Ice Lake-SP) | `icelake` | AVX-512 + VBMI + VNNI | **yes**, on a CI runner |
+| **Xeon 697xP-C (Granite Rapids)** | **`sapphirerapids`** | the only level asking for `AMX_TILE`/`AMX_INT8` | **yes** -- and it found the bug `patches/0018` fixes |
 | **Ryzen AI Max+ 395** (Zen 5) | **`zen4`** | AVX-512 + VNNI + BF16; `sapphirerapids` would need AMX, which Zen 5 lacks | **open -- needs the device** |
 | **Core Ultra 7 165U** (Meteor Lake) | **`alderlake`** | AVX2 + AVX-VNNI, no AVX-512 | **open -- needs the device** |
+
+**x86-64 module coverage is complete for *selection*.** On a Granite Rapids machine every one of the
+14 modules registers its backend when staged alone, because that CPU carries every feature set below
+AMX as well -- so "can this module be selected and used at all" is answered for all 14 in one run,
+and the remaining per-family runs would only add *throughput* numbers. Four levels were additionally
+measured with real inference there (`sapphirerapids`, `cooperlake`, `icelake`, `haswell`), on Windows
+and on Linux.
+
+### aarch64: 6 of the 8 modules measured, and ggml does not pick the fastest
+
+Measured on an AWS Graviton 4 (Neoverse V2, `sve sve2 i8mm bf16`, no SME), the shipped
+`cpu-linux-aarch64` library, Qwen3-0.6B Q4_K_M, 4 threads, each module staged alone:
+
+| module | needs (ggml's list) | exit | pp512 | tg128 |
+|---|---|---:|---:|---:|
+| `armv9.2_2` | DOTPROD FP16 SVE MATMUL_INT8 SVE2 **SME** | 1 | -- | -- |
+| `armv9.2_1` | DOTPROD FP16 SVE MATMUL_INT8 **SME** | 1 | -- | -- |
+| **`armv8.6_2`** *(ggml's choice)* | DOTPROD FP16 SVE MATMUL_INT8 SVE2 | 0 | 198.0 | 63.6 |
+| `armv8.6_1` | DOTPROD FP16 SVE MATMUL_INT8 | 0 | 197.7 | 60.8 |
+| `armv8.2_3` | DOTPROD FP16 SVE | 0 | 176.7 | 58.2 |
+| **`armv8.2_2`** | DOTPROD FP16 | 0 | **271.4** | 61.6 |
+| `armv8.2_1` | DOTPROD | 0 | 270.7 | 54.0 |
+| `armv8.0_1` | -- | 0 | 116.6 | 43.3 |
+
+The two `exit 1` rows are **correct behaviour, not a crash**: the CPU has no SME, the module
+registers no CPU backend, and the load fails cleanly with
+`make_cpu_buft_list: no CPU backend found` and a `LlamaException`. Verify that wording before
+reading a 1 as a defect.
+
+**The finding worth following up: ggml's choice is 37 % slower at prompt processing than a lower
+level.** It selects `armv8.6_2` (198 t/s) while `armv8.2_2` reaches 271 t/s on the same machine and
+model -- i.e. the SVE/SVE2/i8mm paths lose to plain DOTPROD+FP16 here. Generation is within noise
+(63.6 against 61.6). That is a scoring question for upstream, not a correctness one, and it is
+invisible to anyone who only runs the module the CPU picks.
+
+**`SME` has no AWS instance**, so `armv9.2_1` and `armv9.2_2` stay unmeasured; Apple M4 and some
+newer phone SoCs have it.
+
+**What the Granite Rapids run is worth remembering for**, beyond the coverage: staging one module at
+a time on a *single* instance, same model each run, is what turned an intermittent CI crash into a
+one-line defect. The module was the only variable left.
 
 Steps:
 
