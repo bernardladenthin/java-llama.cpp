@@ -441,137 +441,19 @@ machine are the **interactive agent** (console behaviour needs a human at a real
   below; it is additionally backed by a GCC compile of the patched file with the variant's own
   flags, `-mamx-tile -mamx-int8 -mavx512vnni`). What stays open is the original question, the *throughput* gain of `sapphirerapids` and
   `zen4` over `haswell`, which needs the same hardware but no longer blocks anything.
-- **Kolibri-1 on the real 78B model.** `patches/0016` is verified only against tiny synthesized GGUFs
-  (`test_kolibri1.cpp`); CLAUDE.md's own row says "Not verified here: the real 78B model ... and GPU
-  backends". **The RAM objection is measured and wrong for the small quants:** the smallest published
-  GGUF of each dialect is **Q2_K at 26.7 GB** (gating 5, pre-tokenizer `kolibri1`) and **Q3_K_S at
-  31.5 GB** (gating 2, `qwen2`), both of which fit in 63 GB without paging -- only Q6_K (59.8 GB) does
-  not. What is open is the run, on the published set: both dialects must load, a German prompt must
-  come back coherent (the router selects on `logits + expert_bias` but weights by the *unbiased*
-  `sigmoid(logits)`, and a DeepSeek-V3-style router produces fluent-looking nonsense instead), a
-  thinking block, a tool call through the chat endpoint with `--jinja`, tokens/s and peak RAM. A load
-  error or gibberish is a finding **against** `0016`, not something to work around.
-  **In flight since 2026-10-11:** a single rented run on an `r7i.4xlarge` (16 vCPU, 128 GB RAM,
-  ~1.06 USD/h, dead-man switch at 150 min) loads **both** dialects in one boot, downloading each GGUF
-  straight from HuggingFace on the instance -- `Hob-forge/Kolibri-1-GGUF` **Q4_K_M (44.2 GB)** rather
-  than its Q2_K, because the question is whether the German answer is *coherent* and a 78B MoE at
-  Q2_K would make that ambiguous, and `Eliasfpv28/Kolibri-1-Q3_K_S-GGUF` **Q3_K_S (31.5 GB)** for the
-  gating-2 dialect. Hob-forge publishes Q2_K through Q8_0, so quant choice is free; 128 GB fits even
-  Q6_K (59.8 GB), which no local machine does. The probe prints the architecture, expert and gating
-  lines from the load at verbosity 4, then the generated **text** of two raw completions and one chat
-  turn through the model's own template, each guarded separately so one failure still leaves the rest
-  measured.
-
-### Compatibility matrix on rented hardware (one measurement per generation)
-
-The project ships **14 x86-64 CPU modules and 8 aarch64 ones**, of which `ggml_backend_load_best`
-keeps exactly one -- the best for the running CPU. So a module is only ever exercised *as the chosen
-backend* on a machine whose CPU prefers it, and no amount of running the suite on one machine or one
-CI runner changes that. Measured coverage today is **8 of 14 x86 levels** (six on a Zen 3
-workstation, `skylakex` and `cascadelake` added by a Cascade Lake machine) and **0 of 8 aarch64
-levels**.
-
-Rented cloud instances can close most of that, one short run each, and it is a *per-generation
-measurement* -- not something CI should repeat. Each family maps to exactly one module:
-
-| instance family | CPU | module it exercises |
-|---|---|---|
-| `m8i` | Granite Rapids | **`sapphirerapids`** (AMX) |
-| `m7i` / `c7i` | Sapphire Rapids | `sapphirerapids` (AMX) |
-| `m6i` / `c6i` | Ice Lake-SP | `icelake` |
-| `m7a` / `c7a` | EPYC Genoa (Zen 4) | **`zen4`** |
-| `m5n` / `c5n` | Cascade Lake | `cascadelake` |
-| `m5` / `c5` | Skylake-SP | `skylakex` |
-| `m6a` / `c6a` | EPYC Milan (Zen 3) | `haswell` |
-| `m4` and older | Broadwell / Ivy Bridge | `haswell`, `ivybridge` |
-| **`m7g` / `c8g` (Graviton)** | **aarch64** | **done: 6 of the 8 run on a Graviton 4** (`armv9.2_*` need SME, which no instance has) |
-
-**Four levels stay unreachable there** and are only ever *load*-tested: `piledriver` (no
-Bulldozer-era instance exists), `cannonlake` (barely shipped), `alderlake` (consumer Intel) and
-`cooperlake`.
-
-**Graviton was the biggest gain per euro, and it has been taken**: 6 of the 8 aarch64 modules are now
-measured with real inference on a Graviton 4 (`docs/local-test-plan.md` has the table).
-`armv9.2_1`/`armv9.2_2` need **SME**, which no AWS instance has, so they stay unmeasured. Two things
-came out of it: the two SME modules decline *cleanly* (no CPU backend, `LlamaException`, not a
-crash), and **ggml picks a module that is 37 % slower at prompt processing than a lower one** --
-`armv8.6_2` at 198 t/s against `armv8.2_2` at 271 t/s on the same machine and model. That is a
-scoring question for upstream and invisible to anyone who only runs what the CPU picks.
-
-GPU backends, same idea, with two that do not work out:
-
-| backend | rentable |
-|---|---|
-| CUDA, Vulkan, OpenCL | yes -- T4 / A10G / L4 class instances are enough |
-| OpenVINO | yes (CPU) |
-| **ROCm** | **no** -- the one AMD-GPU instance family is not an officially supported ROCm target |
-| **SYCL** | **no** -- needs an Intel GPU, which is not offered |
-
-**How to run these, and the invariants that came out of doing it, are in
-[`docs/rented-hardware-test-plan.md`](docs/rented-hardware-test-plan.md)** -- including the one that
-costs days when missed: a GPU instance family starts at a **zero vCPU quota** on a fresh account, and
-raising it is a support request measured in hours to days, so ask before the run is due. The large
-accelerator families (8-GPU training instances) prove nothing here that a single small GPU does not,
-and cost two orders of magnitude more.
-
-**The AMX row is closed.** It was a suspected defect, turned out to be one line of upstream ggml
-(the AMX buffer released with `free()` instead of `ggml_aligned_free`), and is fixed as
-`patches/0018` -- proven on a rented Granite Rapids machine (`sapphirerapids` 6/6 crash against 0/6
-for the other modules, Linux unaffected) and verified there again with the patch (12/12 clean). The
-full record is in the patch header, `CLAUDE.md`'s patch table, `CHANGELOG.md` and the module table in
-`docs/local-test-plan.md`; `llama/cmake/check-aligned-free-pairing.cmake` is the guard. **What stays
-open is only the original question** -- the *throughput* gain of `sapphirerapids` and `zen4` over
-`haswell` -- plus one rule worth keeping: a green Windows job proves nothing unless its log names an
-AMX CPU, which is why `print-host-info.sh` now runs in every job that touches native code.
-
-### AIX on POWER -- an open porting question, not a test
-
-Not supported and never built. Worth a line because the access exists (an AIX 7.3 POWER8 machine on
-the GCC Compile Farm) and because it would be the **second big-endian platform** after s390x --
-which is exactly the coverage s390x was added for, so the endian-sensitive surface of *our* layer is
-already guarded by `ctest` under qemu there.
-
-What makes it a port rather than a run: AIX is big-endian POWER with **XCOFF**, not ELF, so the
-loader's assumptions (`$ORIGIN`-style run paths, `dlopen` semantics, `verify-native-deps.py`'s ELF
-reader) do not carry over; upstream llama.cpp does not target AIX; and a JVM there means IBM Semeru,
-not Temurin. **Nothing is scheduled**: the useful first step is a plain `cmake` build of the static
-library on that machine to see how far it gets and what breaks, with the result written down --
-before anything is promised about a natives jar.
-
-### GraalVM Native Image -- evaluated, parked until a consumer asks
-
-The evaluation is written down in
-[`docs/graalvm-native-image-evaluation.md`](docs/graalvm-native-image-evaluation.md): what the
-library needs from Native Image (a closed JNI surface, resource or sidecar natives, no reflection of
-its own), the two decisions a real attempt has to take, the cost (a second build matrix and metadata
-that rots silently without an image-build-plus-smoke job), and the one measurement that decides it:
-the share of JVM start-up in a cold one-token run, which needs a model and therefore the local agent
-("Needs a machine" above). Nothing to do here until that number or a consumer request exists.
-
-### macOS model-backed server smoke (optional depth, not scheduled)
-
-`smoke-natives-macos` verifies the dylib inside the published `metal-macos-aarch64` jar (code
-signature + a real JVM load and JNI round-trip, plus the HTTPS round over the 1 MB model it downloads;
-green as `smoke-fatjar-macos` in CI since run 37985786772). A full model-backed macOS server smoke as
-Linux and Windows run would need `verify-model-cache` plus a cache restore and
-`smoke-test-natives.sh` against the `macos-aarch64` smoke set. Worth doing only if a macOS-specific
-*inference* regression ever appears; the load-time failure class is covered.
-
-### Test-coverage gaps found by the b10679 mutation audit (PR #403)
-
-> **Update.** The `IdleSleepWakeIntegrationTest` added to close the `wake_and_post` gap immediately
-> found a real JVM crash (SIGSEGV on all six CI platforms) — see the CHANGELOG "Fixed" entry. Both
-> facets are fixed in that PR via the `wake_server()` choke point. This is the clearest evidence for
-> the floor on executed tests that `.github/verify-test-counts.sh` enforces since: the defect had been
-> reachable from public API for as long as `--sleep-idle-seconds` has existed, and nothing ran that path.
-
-A mutation pass over the branch applied 27 mutations and 26 went red on the test that claims them,
-so no test here passes with its subject deleted. What it did find is code with **no runnable guard**.
-Two of the three were closed in that PR (a model-free `jsonSchemaToGrammar` test in
-`NativeLibraryLoadSmokeTest`, and `IdleSleepWakeIntegrationTest` for the `wake_and_post` path); the
-third was `patches/0010`'s `(int)` cast, reachable only from a model-gated Java test, and it went
-away with the patch itself at the b11080 bump. This is what remains.
-
+- **Kolibri-1 on the real 78B model: done, `patches/0016` holds.** Measured 2026-10-11 on a rented
+  16-vCPU / 123 GB instance, both published dialects fetched from Hugging Face on the machine at
+  80-94 MB/s. **Both load and both answer correctly** through a chat turn on the model's own template:
+  `content` `"Berlin."` for a German question and `"51"` for 17x3, the chain of thought in
+  `reasoning_content`, `finish_reason` `stop`. Generation 13.4 t/s for Q4_K_M (44 GB) and 14.6 for
+  Q3_K_S (31 GB). **The strongest single piece of evidence is the tokenizer**: both dialects produce
+  the *same* token ids (`[452 22090 493 1678 2459 5513 46]`) and round-trip to the input sentence, so
+  mapping `kolibri1` to the Qwen2 pre-tokenizer is demonstrated rather than assumed -- and a broken
+  router would not have produced two correct answers in two quantizations. What is still unverified is
+  **GPU backends** (the patch's own caveat) -- the first run of this measurement was wrong in a way
+  worth keeping on file: it used a raw completion at temperature 0.0, which loops on an instruct model
+  regardless, and read `chatCompleteText`, which returns only `content` and is therefore *empty* when a
+  reasoning model spends its budget inside the thinking block. Both failures looked like the patch.
 - **`TestConstantsTest.theShippedModelConstantsGoThroughTheResolver` is vacuous when the fixture is
   absent.** Mutating `MODEL_PATH = resolveModelPath("models/…")` to the bare literal leaves the test
   green with `models/` empty, and only goes red once the GGUF actually exists. In CI that is the
