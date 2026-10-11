@@ -11,15 +11,15 @@ from buildcheck import natives, workflow
 from buildcheck.tests.helpers import REPO, upload, workflow_text
 
 CSV = """# a comment
-classifier,directory,library,platform,kind
-cpu-linux-x86-64,Linux/x86_64/cpu,libjllama.so,yes,library
-cuda13-linux-x86-64,Linux/x86_64/cuda13,libggml-cuda.so,no,module
-cpu-linux-s390x,Linux/s390x/cpu,libjllama.so,yes,library
-cpu-windows-aarch64,Windows/aarch64/cpu,jllama.dll,yes,library
-vulkan-windows-aarch64,Windows/aarch64/vulkan,ggml-vulkan.dll,no,module
-cpu-android-aarch64,Linux-Android/aarch64/cpu,libjllama.so,no,library
-opencl-android-aarch64,Linux-Android/aarch64/opencl,libggml-opencl.so,no,module
-metal-macos-aarch64,Mac/aarch64/metal,libjllama.dylib,yes,library
+classifier,directory,library,platform,kind,optin
+cpu-linux-x86-64,Linux/x86_64/cpu,libjllama.so,yes,library,no
+cuda13-linux-x86-64,Linux/x86_64/cuda13,libggml-cuda.so,no,module,no
+cpu-linux-s390x,Linux/s390x/cpu,libjllama.so,yes,library,no
+cpu-windows-aarch64,Windows/aarch64/cpu,jllama.dll,yes,library,no
+vulkan-windows-aarch64,Windows/aarch64/vulkan,ggml-vulkan.dll,no,module,no
+cpu-android-aarch64,Linux-Android/aarch64/cpu,libjllama.so,no,library,no
+opencl-android-aarch64,Linux-Android/aarch64/opencl,libggml-opencl.so,no,module,yes
+metal-macos-aarch64,Mac/aarch64/metal,libjllama.dylib,yes,library,no
 """
 
 ROWS = natives.rows(CSV)
@@ -67,7 +67,8 @@ class ListTest(unittest.TestCase):
 
     def test_rows_skip_comments(self):
         self.assertEqual(ROWS[0], {"classifier": "cpu-linux-x86-64", "directory": "Linux/x86_64/cpu",
-                                   "library": "libjllama.so", "platform": "yes", "kind": "library"})
+                                   "library": "libjllama.so", "platform": "yes", "kind": "library",
+                                   "optin": "no"})
         self.assertEqual(len(ROWS), 8)
         self.assertEqual([r["classifier"] for r in natives.modules(ROWS)],
                          ["cuda13-linux-x86-64", "vulkan-windows-aarch64", "opencl-android-aarch64"])
@@ -86,10 +87,10 @@ class ListTest(unittest.TestCase):
 
     def test_check_rows(self):
         self.assertEqual(natives.check_rows(ROWS), [])
-        bad = natives.rows("classifier,directory,library,platform,kind\n"
-                           "cuda-linux-x86-64,Linux/x86_64/cuda13,x,no,module\n"
-                           "cpu-a,A/b/cpu,libjllama.so,maybe,library\n"
-                           "cpu-a,A/b/cpu,libjllama.so,no,thing\n")
+        bad = natives.rows("classifier,directory,library,platform,kind,optin\n"
+                           "cuda-linux-x86-64,Linux/x86_64/cuda13,x,no,module,no\n"
+                           "cpu-a,A/b/cpu,libjllama.so,maybe,library,no\n"
+                           "cpu-a,A/b/cpu,libjllama.so,no,thing,no\n")
         failures = natives.check_rows(bad)
         self.assertEqual(len(failures), 7, failures)
         self.assertIn("twice", failures[0])
@@ -102,20 +103,20 @@ class ListTest(unittest.TestCase):
             self.assertTrue(any(expected in f for f in failures), expected)
 
     def test_check_rows_refuses_a_module_without_a_library_and_colliding_file_names(self):
-        orphan = natives.rows("classifier,directory,library,platform,kind\n"
-                              "vulkan-linux-aarch64,Linux/aarch64/vulkan,libggml-vulkan.so,no,module\n")
+        orphan = natives.rows("classifier,directory,library,platform,kind,optin\n"
+                              "vulkan-linux-aarch64,Linux/aarch64/vulkan,libggml-vulkan.so,no,module,no\n")
         self.assertEqual(natives.check_rows(orphan),
                          ["natives.csv: Linux/aarch64 has module jars but no library jar -- nothing would load them"])
-        twice = natives.rows("classifier,directory,library,platform,kind\n"
-                             "cpu-linux-x86-64,Linux/x86_64/cpu,libjllama.so,yes,library\n"
-                             "sycl-linux-x86-64,Linux/x86_64/sycl,libggml-sycl.so,no,module\n"
-                             "sycl-fp32-linux-x86-64,Linux/x86_64/sycl-fp32,libggml-sycl.so,no,module\n")
+        twice = natives.rows("classifier,directory,library,platform,kind,optin\n"
+                             "cpu-linux-x86-64,Linux/x86_64/cpu,libjllama.so,yes,library,no\n"
+                             "sycl-linux-x86-64,Linux/x86_64/sycl,libggml-sycl.so,no,module,no\n"
+                             "sycl-fp32-linux-x86-64,Linux/x86_64/sycl-fp32,libggml-sycl.so,no,module,no\n")
         failures = natives.check_rows(twice)
         self.assertEqual(len(failures), 1, failures)
         self.assertIn("same name", failures[0])
-        platform_module = natives.rows("classifier,directory,library,platform,kind\n"
-                                       "cpu-linux-x86-64,Linux/x86_64/cpu,libjllama.so,yes,library\n"
-                                       "cuda13-linux-x86-64,Linux/x86_64/cuda13,libggml-cuda.so,yes,module\n")
+        platform_module = natives.rows("classifier,directory,library,platform,kind,optin\n"
+                                       "cpu-linux-x86-64,Linux/x86_64/cpu,libjllama.so,yes,library,no\n"
+                                       "cuda13-linux-x86-64,Linux/x86_64/cuda13,libggml-cuda.so,yes,module,no\n")
         self.assertIn("cannot be a platform jar", natives.check_rows(platform_module)[0])
 
 
@@ -170,21 +171,53 @@ class ConsumerTest(unittest.TestCase):
                          ["publish.yml smoke runs (a job downloading llama-smoke-<target>): missing windows-aarch64"])
 
     def test_a_module_jar_without_a_smoke_target_is_refused(self):
-        rows = natives.rows(CSV + "vulkan-linux-s390x,Linux/s390x/vulkan,libggml-vulkan.so,no,module\n")
+        rows = natives.rows(CSV + "vulkan-linux-s390x,Linux/s390x/vulkan,libggml-vulkan.so,no,module,no\n")
         failures = natives.check_workflow(rows, jobs(rows=rows))
         self.assertEqual(failures, ["natives.csv: the module jar vulkan-linux-s390x has no smoke target -- it would "
                                     "ship unlaunched"])
 
     def test_loader(self):
+        # The fixture declares opencl opt-in (see CSV), so the loader text has to name it.
         text = ('List<String> LIBRARY_BACKENDS = Arrays.asList("metal", "cpu");\n'
-                'List<String> MODULE_BACKENDS = Arrays.asList(\n "cuda13", "vulkan",\n "opencl");')
+                'List<String> MODULE_BACKENDS = Arrays.asList(\n "cuda13", "vulkan",\n "opencl");\n'
+                'Set<String> OPT_IN_BACKENDS = Collections.singleton("opencl");')
         self.assertEqual(natives.check_loader(ROWS, text), [])
         self.assertEqual(natives.check_loader(ROWS, text.replace('"cuda13", ', "")),
                          ["LlamaLoader.MODULE_BACKENDS does not know 'cuda13' -- its jars would never load"])
-        self.assertEqual(natives.check_loader(ROWS, text.replace('"opencl"', '"opencl", "msvc"')),
-                         ["LlamaLoader.MODULE_BACKENDS names 'msvc', which no module jar of natives.csv ships"])
+        self.assertEqual(
+                natives.check_loader(ROWS, text.replace('"opencl");' + chr(10), '"opencl", "msvc");' + chr(10))),
+                ["LlamaLoader.MODULE_BACKENDS names 'msvc', which no module jar of natives.csv ships"])
         self.assertEqual(natives.check_loader(ROWS, text.replace('"metal", ', "")),
                          ["LlamaLoader.LIBRARY_BACKENDS does not know 'metal' -- its jars would never load"])
+
+        # The opt-in column and the loader constant have to agree in both directions. A backend the
+        # list calls opt-in while the loader does not would ship a jar that takes over silently --
+        # the measured OpenVINO regression the column exists for -- and the other way round a jar
+        # would be inert with no row saying why.
+        self.assertEqual(natives.check_loader(ROWS, text.replace('Collections.singleton("opencl")', "emptySet()")),
+                         ["LlamaLoader.OPT_IN_BACKENDS does not know 'opencl', which natives.csv declares opt-in"])
+        self.assertEqual(
+                natives.check_loader(ROWS, text.replace('singleton("opencl")', 'asList("opencl", "vulkan")')),
+                ["LlamaLoader.OPT_IN_BACKENDS names 'vulkan', which no row of natives.csv declares opt-in"])
+
+    def test_check_rows_holds_the_optin_column(self):
+        missing = natives.rows("classifier,directory,library,platform,kind,optin\n"
+                               "cpu-linux-x86-64,Linux/x86_64/cpu,libjllama.so,yes,library\n")
+        self.assertTrue(any("optin must be yes or no" in f for f in natives.check_rows(missing)))
+
+        # Only a module can be opt-in: a library jar is the one jar that has to load.
+        library = natives.rows("classifier,directory,library,platform,kind,optin\n"
+                               "cpu-linux-x86-64,Linux/x86_64/cpu,libjllama.so,yes,library,yes\n")
+        self.assertTrue(any("only a module can be opt-in" in f for f in natives.check_rows(library)))
+
+        # Opt-in is decided per backend, so two jars of one backend cannot disagree -- one of them
+        # would be inert and the other not, which no reader would expect.
+        split = natives.rows("classifier,directory,library,platform,kind,optin\n"
+                             "cpu-linux-x86-64,Linux/x86_64/cpu,libjllama.so,yes,library,no\n"
+                             "cpu-windows-x86-64,Windows/x86_64/cpu,jllama.dll,yes,library,no\n"
+                             "openvino-linux-x86-64,Linux/x86_64/openvino,libggml-openvino.so,no,module,yes\n"
+                             "openvino-windows-x86-64,Windows/x86_64/openvino,ggml-openvino.dll,no,module,no\n")
+        self.assertTrue(any("is opt-in in one row and not in another" in f for f in natives.check_rows(split)))
 
     def test_cmake_both_directions(self):
         text = "\n".join(f"    set(JLLAMA_BACKEND {b})" for b in ("cuda13", "cpu", "vulkan", "opencl", "metal"))

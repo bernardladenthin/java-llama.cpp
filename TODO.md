@@ -100,6 +100,34 @@ no network and no Android SDK, and it catches everything the AAR job can fail on
 the three Android ones red, so the questions behind `package` were still open; the dispatch after
 this fix is the one to read for them.
 
+### Round 0, run 38164077038: `package` reached, and the opt-in decision had a loose end
+
+**What it answered, and it is the first time any of it has been answered:** all **54** build jobs
+green, both ROCm among them (Windows 3:08 h, Linux 2:57 h -- they *are* the three-hour pipeline; every
+other job was done inside an hour), and **`verify-native-deps.py`: 99 native libraries checked, 0
+violations.** So the SYCL run path is clean, and the Linux jars no longer declare `libgomp.so.1`
+without anything noticing.
+
+**What it found:** `smoke-natives-jars.sh` failed with
+`classpath: the loader did not put the openvino module jar of Linux/x86_64 in place` -- a consequence
+of making `openvino` opt-in, which I should have foreseen when I added `OPT_IN_BACKENDS`: that script
+asserts the loader line names **every** GPU module of the platform, read from `natives.csv`, and the
+list had no way to say that one of them is deliberately left out. The loader even printed the reason
+("is on the classpath but not used: it is opt-in"); nothing read it.
+
+Fixed by declaring it where every consumer already looks: an **`optin` column in `natives.csv`**.
+`check-natives.py` now holds `LlamaLoader.OPT_IN_BACKENDS` to that column in both directions, the
+model-backed smoke rows stop expecting an opt-in module (bash and PowerShell), and
+`smoke-natives-jars.sh` names every module through the property instead -- which makes it **the only
+place in CI that loads an opt-in module at all**, so the mechanism is exercised rather than merely
+respected. 122 buildcheck tests, four of them new; both module lists and the property construction
+were simulated against the real CSV locally.
+
+**Still unanswered, and only a run can answer it:** everything behind `smoke-natives-jars.sh` --
+the five smoke sets, the four `smoke-natives` rows with the RPC smoke on aarch64, the macOS smoke and
+the agent smoke were all **skipped**, as they were in every run before. Two emulator jobs stayed red
+in this run by construction (their fix landed afterwards, #526).
+
 ### Hand-over from the bump session, 2026-10-11
 
 What that session did: the b11538-to-b11556 bump (#513 -- every patch re-verified, two history rows,

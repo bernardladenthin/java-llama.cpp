@@ -12,7 +12,9 @@ the smoke sets) or has to repeat it, and each repetition is checked here:
                         uploads a smoke set llama-smoke-<target> per smoke target, and every smoke
                         target is launched by a job that downloads its set
   * LlamaLoader         LIBRARY_BACKENDS / MODULE_BACKENDS know every backend of their kind (else a
-                        jar ships and never loads)
+                        jar ships and never loads), and OPT_IN_BACKENDS names exactly the backends
+                        the optin column declares (else an opt-in jar takes over silently, or an
+                        inert one has no row saying why)
   * CMakeLists.txt      names exactly the backend directories of the list
   * nativedeps.ALLOWED  holds an allowlist for every library directory (cpu, metal), and for no
                         directory the list lacks
@@ -137,6 +139,11 @@ def check_rows(natives):
         if not r["classifier"].startswith(backend(r) + "-") or r["platform"] not in ("yes", "no"):
             failures.append(f"natives.csv: row {r['classifier']} -- classifier must start with its "
                             f"directory's backend '{backend(r)}', platform must be yes or no")
+        if r.get("optin") not in ("yes", "no"):
+            failures.append(f"natives.csv: row {r['classifier']} -- optin must be yes or no")
+        elif r["optin"] == "yes" and r.get("kind") != "module":
+            failures.append(f"natives.csv: row {r['classifier']} -- only a module can be opt-in: a library jar "
+                            f"is the one jar that must load")
         if r.get("kind") not in KINDS:
             failures.append(f"natives.csv: row {r['classifier']} -- kind must be one of {KINDS}")
         elif r["kind"] == "library" and not re.fullmatch(r"(lib)?jllama\.(so|dll|dylib)", r["library"]):
@@ -150,6 +157,11 @@ def check_rows(natives):
                 failures.append(f"natives.csv: row {r['classifier']} -- a module cannot be a platform jar: it "
                                 f"holds no library")
         trees.setdefault(tree(r), []).append(r)
+    for b in sorted({backend(r) for r in natives}):
+        answers = {r.get("optin") for r in natives if backend(r) == b}
+        if len(answers) > 1:
+            failures.append(f"natives.csv: backend '{b}' is opt-in in one row and not in another "
+                            f"({sorted(answers)}) -- the loader decides per backend, so the rows cannot differ")
     for t, group in sorted(trees.items()):
         if not any(r.get("kind") == "library" for r in group):
             failures.append(f"natives.csv: {t} has module jars but no library jar -- nothing would load them")
@@ -238,6 +250,16 @@ def check_loader(natives, loader_text):
         block = re.search(name + r"\s*=(.*?);", loader_text, re.S)
         return set(re.findall(r'"([^"]+)"', block.group(1))) if block else set()
     failures = []
+    # OPT_IN_BACKENDS is what makes a module jar inert until the property names it, so a backend the
+    # list declares opt-in while the loader does not would ship a jar that takes over silently --
+    # which is the measured OpenVINO regression this column exists for -- and the other way round a
+    # jar would never load with no row saying why.
+    listed_optin = {backend(r) for r in natives if r.get("optin") == "yes"}
+    known_optin = constant("OPT_IN_BACKENDS")
+    failures += [f"LlamaLoader.OPT_IN_BACKENDS does not know '{b}', which natives.csv declares opt-in"
+                 for b in sorted(listed_optin - known_optin)]
+    failures += [f"LlamaLoader.OPT_IN_BACKENDS names '{b}', which no row of natives.csv declares opt-in"
+                 for b in sorted(known_optin - listed_optin)]
     for kind, const in (("library", "LIBRARY_BACKENDS"), ("module", "MODULE_BACKENDS")):
         listed = {backend(r) for r in natives if r["kind"] == kind}
         known = constant(const)
