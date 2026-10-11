@@ -57,6 +57,35 @@ an Intel runner.
 explicit `CMAKE_CUDA_ARCHITECTURES`, the OpenVINO opt-in decision, and the shipped diagnostic entry
 point (item 5). These are independent of each other and each is verifiable in the same run.
 
+### Round 0 found one defect, and it was mine
+
+Run 38146809329 (cancelled after the first failures) went red in **four Android jobs**, with one root
+cause: `Package + Validate Android AARs` failed, and the three jobs that need the AAR followed.
+
+```
+Property <jackson.version> not found in ../llama/pom.xml <properties>
+  -- keep the AAR pom dependencies in lockstep with the core
+```
+
+`llama-android/build.gradle.kts` mirrors the core's dependency versions into the AAR pom by **parsing
+`llama/pom.xml`**, and the Jackson advisory fix moved `jackson.version` into the **parent** pom (where
+it belongs: the parent now imports `jackson-bom` so `llama-langchain4j` cannot pull an older
+`jackson-core` transitively). The Gradle build looked only in the core pom.
+
+**That check working is the good news.** It is fail-loud by design, with a message naming exactly the
+invariant it protects, and it caught a cross-build reference that no Maven gate sees -- the same
+"reference not updated after a move" class as the stale `spotbugs-exclude.xml`, the PIT
+`targetClasses` and the `CMakeLists.txt` OSInfo repairs. **Fixed by teaching the parser Maven's own
+inheritance** (core pom, then parent) rather than by restoring a duplicate `jackson.version`, which
+would drift the next time one of them is bumped. **Not verifiable locally** -- no Gradle on this
+machine -- but the XML lookup it performs was reproduced against both poms: the property is absent
+from the core and present in the parent at 2.22.3.
+
+**What this says about round 0 itself:** it reached `Package + Validate Android AARs`, so the stages
+before it ran. The Android jobs sit *beside* `package` rather than behind it, so this failure says
+nothing yet about the smoke sets, `smoke-natives-jars.sh` or the three merged changes -- those still
+need a run.
+
 ## The next batch, in the order it should be done
 
 Assembled 2026-10-11 after the libgomp / CUDA-arch / OpenVINO changes landed. The constraint that

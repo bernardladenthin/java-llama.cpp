@@ -89,10 +89,32 @@ val corePom = parsePom("../llama/pom.xml")
 val reactorVersion = directChildText(rootPom.documentElement, "version")
     ?: error("No <version> found in ../pom.xml — the root reactor pom must declare the version")
 
+// Reads a dependency version the AAR pom has to mirror. It follows Maven's own inheritance: the
+// property may sit in llama/pom.xml or in the parent it inherits from, and a version shared by more
+// than one module belongs in the parent -- jackson.version moved there when the parent gained a
+// dependencyManagement importing jackson-bom (to pin the whole family for llama-langchain4j, which
+// pulled an older jackson-core transitively past an advisory). Looking only in the core pom made
+// this build fail loud with "Property <jackson.version> not found", which is the check working: the
+// AAR's pom must stay in lockstep with the core, and a property that moved is exactly the silent
+// drift it guards against. Resolving it through the parent keeps one source of truth instead of
+// restoring a duplicate that would drift the next time.
 fun coreProperty(name: String): String {
-    val properties = directChildElement(corePom.documentElement, "properties")
-        ?: error("No <properties> in ../llama/pom.xml")
-    return directChildText(properties, name)
+    val coreProperties = directChildElement(corePom.documentElement, "properties")
+    val fromCore = coreProperties?.let { directChildText(it, name) }
+    if (fromCore != null) {
+        return fromCore
+    }
+    val rootProperties = directChildElement(rootPom.documentElement, "properties")
+    val fromRoot = rootProperties?.let { directChildText(it, name) }
+    if (fromRoot != null) {
+        return fromRoot
+    }
+    error(
+        "Property <" + name + "> not found in ../llama/pom.xml or ../pom.xml <properties> — keep the"
+            + " AAR pom dependencies in lockstep with the core"
+    )
+}
+
         ?: error("Property <$name> not found in ../llama/pom.xml <properties> — keep the AAR pom dependencies in lockstep with the core")
 }
 
