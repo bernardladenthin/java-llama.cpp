@@ -57,6 +57,51 @@ an Intel runner.
 explicit `CMAKE_CUDA_ARCHITECTURES`, the OpenVINO opt-in decision, and the shipped diagnostic entry
 point (item 5). These are independent of each other and each is verifiable in the same run.
 
+## The next batch, in the order it should be done
+
+Assembled 2026-10-11 after the libgomp / CUDA-arch / OpenVINO changes landed. The constraint that
+shapes it: **a Publish run costs hours**, so work is grouped by what one run can answer, and anything
+that needs no run is done before the run starts.
+
+**Round 0 -- one Publish run on the current `main`, nothing added.** It is the first run that can
+reach everything behind `package`, *and* the first that exercises the three changes just merged. Those
+two questions are separable in the output (a packaging or smoke failure is not a flag failure), so
+they share a run rather than costing two. What it must show:
+`package` green; `verify-native-deps.py` happy over all 23 jars **with `libgomp` gone from the Linux
+ones** (the allowlist now fails if it is back); the smoke sets assembled; `smoke-natives-jars.sh`
+loading all 23 jars on classpath **and** module path; the four `smoke-natives` rows with their loader
+line, HTTPS round and -- new -- the RPC smoke on **aarch64**; `smoke-natives-macos`;
+`smoke-agent-linux`. Plus two numbers to read off rather than assume: **what the explicit CUDA arch
+list costs** in job time and module size, and whether the Windows x86-64 rows drew an AMX runner (the
+host-CPU line says so).
+
+**Round 1 -- things that need no run, done while round 0 is in flight.** None of these touch the same
+files as each other, so they can go in one branch:
+1. **The shipped diagnostic entry point** (item 5 of the modular-natives follow-ups). The only item on
+   any list here that pays off *per user* rather than per release: it turns "it does not work" into a
+   paste. Testable without natives.
+2. **README: the GPU jars' real requirements.** `cuda13` needs a driver new enough for the toolkit
+   (and what happens when it is not: the JVM aborts); `openvino` is opt-in now and needs an Intel
+   GPU/NPU *plus* an OpenCL ICD loader; `vulkan` needs only a driver. None of that is documented, and
+   all three are measured.
+3. **`TestConstantsTest` / `TestModelPaths` parity.** `llama-langchain4j` carries its own copy of the
+   resolver; the vacuity guard added to the core's test has no counterpart there.
+
+**Round 2 -- needs round 0 to have produced artifacts.**
+4. **A `g4dn` run proving a T4 works** with the new arch list (round 0 builds the module; the probe
+   package and harness already exist).
+5. **The Windows extraction-reuse measurement** -- two JVMs, file locks, the one item on the
+   measurement list that is both cheap and still completely unmeasured.
+6. **A slim-image load test**: build a container from `eclipse-temurin:21-jre-noble` and from
+   distroless Java, drop the classes jar plus the Linux library jar in, and load. This is the check
+   that CI *structurally cannot* do, because it runs on full runners -- and it is the direct
+   verification of what round 0's dependency check only implies.
+
+**Deliberately not in the next batch**, with the reason: `cuda13-windows-aarch64` (a new build job --
+worth doing, but it belongs in a run of its own so a toolchain failure is unambiguous); the Android
+Vulkan module (same); code signing (needs the owner's identity validation first); and the upstream
+submissions (policy: not before the release).
+
 ## What still has to be measured
 
 Kept as a list because each entry names the machine it needs -- the harness is
@@ -185,6 +230,15 @@ loading the Linux jar on an image that is not Amazon Linux. Numbers and method:
    of additive, or document in the README that the jar needs an Intel GPU/NPU plus an ICD loader and
    must otherwise stay off the classpath.
 
+
+4. ~~**The loader's exception does not name the missing library.**~~ **Fixed.** It used to end in
+   "see the messages above" and print the `dlopen` reason to `System.err` separately, so a consumer
+   with only the stack trace could not tell "library missing from the jar" from "library present, one
+   `DT_NEEDED` dependency absent" -- and the second is the case that happens. The reason is now
+   carried into the thrown message, the way the Android branch of the same method already did it,
+   and `LlamaLoaderTest` pins both halves: a failed load records a reason, and a file that is simply
+   absent does not (so no stale message is reported as a load failure).
+
 5. **A shipped diagnostic entry point, for the support cost rather than for a feature.** Today a
    consumer whose load fails opens an issue; the answer is almost always one of a handful of things
    this project can already determine -- which platform the JVM reports, which natives jars are on the
@@ -195,14 +249,6 @@ loading the Linux jar on an image that is not Amazon Linux. Numbers and method:
    registry and devices at INFO, `buildcheck/nativedeps.py` parses ELF/PE/Mach-O (the Java side would
    need only the `DT_NEEDED` list, or can simply report the `dlopen` reason that item 4 now carries).
    Cheap, and it is the one item on this list that pays off per *user* rather than per release.
-
-4. ~~**The loader's exception does not name the missing library.**~~ **Fixed.** It used to end in
-   "see the messages above" and print the `dlopen` reason to `System.err` separately, so a consumer
-   with only the stack trace could not tell "library missing from the jar" from "library present, one
-   `DT_NEEDED` dependency absent" -- and the second is the case that happens. The reason is now
-   carried into the thrown message, the way the Android branch of the same method already did it,
-   and `LlamaLoaderTest` pins both halves: a failed load records a reason, and a file that is simply
-   absent does not (so no stale message is reported as a load failure).
 
 ### Modular natives -- follow-ups
 
@@ -253,7 +299,7 @@ library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still 
 5. **A Vulkan module for Android** (`vulkan-android-aarch64`, upstream ships none either): `JNI_OnLoad`
    already tries `libggml-vulkan.so` by soname, so it is one more module-only dockcross job plus the
    natives-jar wiring and an AAR flavor -- if anyone asks.
-5. **The Windows ROCm job is the pipeline's critical path, and it builds uncached.** Run 38069595101
+6. **The Windows ROCm job is the pipeline's critical path, and it builds uncached.** Run 38069595101
    (the second full run of the modular natives): 4:15 h for its build step, against 2:00 h for the
    Linux ROCm job and 1:41 h for the Windows CUDA job; every other Windows build is under 20 min. Of
    its 158 ninja steps ~140 are HIP TUs, each compiled for the 23 `GPU_TARGETS`; on Windows upstream
