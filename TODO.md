@@ -86,6 +86,37 @@ before it ran. The Android jobs sit *beside* `package` rather than behind it, so
 nothing yet about the smoke sets, `smoke-natives-jars.sh` or the three merged changes -- those still
 need a run.
 
+**The fix itself left a fragment, and the re-dispatch found it.** Run 38148401395 (`workflow_dispatch`
+on `main` at `989534d5`, the first commit carrying the fix) went red in the same three Android jobs,
+this time in `Assemble AARs + publish to mavenLocal`, i.e. before Gradle reached the pom parser at
+all: the rewrite of `coreProperty()` kept the old function's tail -- a `?: error(...)` and a `}` --
+at file level two lines below the new closing brace, which is a Kotlin script compilation error
+(`build.gradle.kts:118:9: Expecting an element`). Fixed by deleting the two lines (bump session,
+2026-10-11) and verified both ways, because the sandbox *does* have Gradle (`/opt/gradle`, 8.14.3):
+the unfixed script fails with exactly that message, the fixed one configures. **`gradle --offline -q
+help` in `llama-android/` is the minimum check for any change to that script** -- it needs no natives,
+no network and no Android SDK, and it catches everything the AAR job can fail on before
+`Assemble AARs`. When run 38148401395 was last read, 32 jobs were green, 16 still running and only
+the three Android ones red, so the questions behind `package` were still open; the dispatch after
+this fix is the one to read for them.
+
+### Hand-over from the bump session, 2026-10-11
+
+What that session did: the b11538-to-b11556 bump (#513 -- every patch re-verified, two history rows,
+the nlohmann finding recorded below under "The FetchContent nlohmann/json is shadowed"), the two-line
+Gradle fix above, and a read-only check of the 2026-10 plan (the 12-point table that followed the
+Windows measurement report) against `main`. Result of that check, so it is not redone: **9 of the 12
+points are on `main`** -- the publish dispatch, b11535 and beyond, the macOS OpenSSL defect, the
+Windows CPU variants, the attach-mode sleep callback, the test-count floor, the agent's approval gate,
+400 for invalid requests, and all of point 11 (the router worker's stdout line went to stderr on
+2026-10-09, `e9758054`). Open from that table: **the release with its migration section** (new entry
+under "Open" below), **the upstream submissions** (policy: after the release; inventory below) and the
+two owner-only items of point 12 (license compliance, the RPC upstream issues). Every finding of the
+Windows report -- D1 preload order, D1b hybrid CRT, D3 UTF-8 path, D4 registry logging, D5 keyed
+extraction directory, D6 reuse across starts, E1/E3 manylinux_2_28 -- is implemented; the Windows
+two-process measurement of D5 is round 2, item 5. Nothing else from that plan is missing from this
+file.
+
 ## The next batch, in the order it should be done
 
 Assembled 2026-10-11 after the libgomp / CUDA-arch / OpenVINO changes landed. The constraint that
@@ -96,7 +127,9 @@ that needs no run is done before the run starts.
 38146809329, `workflow_dispatch` on `main` at `df5e1ba` -- which also carries the b11538-to-b11556
 bump that landed just before it, so the run answers three questions rather than two. They stay
 separable in the output: a packaging or smoke failure is not a flag failure, and a bump failure shows
-up as a compile or patch error.)* It is the first run that can
+up as a compile or patch error. Cancelled on the Android AAR defect above; re-dispatched as run
+38148401395 at `989534d5`, which failed the same three jobs on the fragment that fix left behind.
+**The run to read is the first dispatch after that fragment is gone.**)* It is the first run that can
 reach everything behind `package`, *and* the first that exercises the three changes just merged. Those
 two questions are separable in the output (a packaging or smoke failure is not a flag failure), so
 they share a run rather than costing two. What it must show:
@@ -153,7 +186,56 @@ Kept as a list because each entry names the machine it needs -- the harness is
 
 ## Open — jllama-specific
 
-### `package` is red: the Windows OpenVINO module jar fails the merge check
+### The release: 5.2.0 or 6.0.0, with an "Upgrading from 5.1" section (owner's decision)
+
+**Nothing has been published since 5.1.0 on 2026-08-29.** `pom.xml` is `5.2.0-SNAPSHOT`, and
+`CHANGELOG.md`'s `[Unreleased]` holds six weeks of work no consumer can get from Central: the modular
+natives, the Windows generation speed-up, the Linux and Windows CPU variants, RPC, the agent,
+Kolibri-1, the bump to b11556. It also holds changes that break every existing consumer at upgrade,
+and the changelog states each one where it happened rather than in the one place a reader upgrading
+from 5.1 would look:
+
+- the **natives split** -- `net.ladenthin:llama` is the classes jar only, the natives are classifier
+  jars collected by `llama-platform` (`<type>pom</type>`), the fat jars are gone -- so a 5.1
+  `<dependency>` on `net.ladenthin:llama` resolves to a jar without natives and fails at the first
+  load with `UnsatisfiedLinkError`;
+- `slf4j-simple` instead of `logback-classic` as the shipped binding; the ROCm jars on ROCm 10; the
+  `LazyMode` rename and the `enableFlashAttn()` rework; twelve dead builder methods removed;
+  `NativeServer` on port 9931 (llama.cpp's new default) while `OpenAiServerConfig` stays on 8080
+  (open item below); the floors Windows 10, macOS 15 and glibc 2.28.
+
+Semantic versioning says that is **6.0.0**, not 5.2.0; the decision is the owner's, and so is the
+timing. What the release needs either way, in order:
+
+1. **Round 0 green through `package` and the smokes** -- the modular natives have never passed the
+   stages that assemble and launch the published jars (top of this file); a release before that
+   ships jars CI has not loaded, which the smoke jobs exist to prevent.
+2. **An "Upgrading from 5.1" section at the top of the release's changelog entry**: the dependency
+   change (`llama-platform` as `pom`, or the classifier jars by name, plus a GPU module jar where
+   wanted), the logging binding, the port, the floors, the renamed and removed builder methods -- one
+   place, written for someone who reads nothing else. The `[Unreleased]` bullets stay as the record.
+3. **The version in every place the bump touches**: `mvn versions:set` for the five reactor poms,
+   then by hand the two READMEs' snippets, `examples/jbang/Chat.java`, `examples/server/pom.xml`,
+   `llama-atmosphere-agent/pom.xml` and its READMEs, the Android and Kotlin READMEs (CLAUDE.md
+   "Version bump" lists them; `check-natives.py` fails on the ones it can see), then the CHANGELOG
+   heading and footer links, which `../workspace/workflows/release-process.md` names as the
+   most-missed step.
+4. After the release: the upstream submissions (policy, below) and the `main` bump back to a
+   `-SNAPSHOT` of the next version.
+
+The longer this waits, the longer the migration section gets and the more snapshot-only behaviour
+consumers discover on their own.
+
+### ~~`package` is red: the Windows OpenVINO module jar fails the merge check~~ -- done
+
+**Done 2026-10-11 (`7870923f`, "Unblock package").** The cause was vcpkg, not the build and not the
+check: with its toolchain file in use, vcpkg's app-local deployment put `OpenCL.dll` next to the
+linked module in the link step itself, and `merge-native-artifacts.sh` requires a module jar to hold
+exactly its module and the two `jllama-*.txt` lists. The job now passes `VCPKG_APPLOCAL_DEPS=OFF`; the
+check was deliberately not relaxed (a GPU module whose runtime is absent does not load and the model
+runs on the CPU modules -- the documented, smoke-tested behaviour of every other backend). Whether
+`package` then goes green end to end is what round 0 shows; it had not been reached when this was
+written. The original entry follows.
 
 **This blocks every release and was untracked until 2026-10-11.** `Package JARs` fails with
 
