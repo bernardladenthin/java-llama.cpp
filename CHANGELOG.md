@@ -142,6 +142,21 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **Upgraded the pinned llama.cpp from b11538 to b11556**, one reviewed step (18 commits, 96 files, no
+  `tools/ui` change, so the WebUI is unchanged). All twelve patches apply unchanged and every drop-check
+  still finds its defect. In the range: a request pinned to a **busy** slot (`id_slot`,
+  `InferenceParameters.withSlotId`) no longer runs the prompt-cache update on that slot while another
+  generation uses it -- a RAM-cache match used to be loaded under the running generation, which then
+  continued on the wrong context (#30295); AVX2 CPUs with F16C convert fp16 in hardware (#30270 -- the
+  `haswell` CPU module and every x86 module below AVX-512); a race in the CUDA/HIP flash-attention tile is
+  fixed (#30103); upstream's **vendored nlohmann/json carries a backport of the deep-nesting fix**
+  (#30253, nlohmann/json#5387: copying, `dump()` and comparing a value nested deep enough crashed) -- and
+  every TU of `libjllama` compiles against that vendored copy, measured from the include order, so the
+  FetchContent `v3.12.0` is shadowed (CLAUDE.md, `TODO.md`); `common_batch` gained a per-token `state`
+  embedding for MTP drafting (#30257, no project code builds those tokens); `--slot-save-path` reads
+  `LLAMA_ARG_SLOT_SAVE_PATH` (#30272); new model support (Prism Bonsai 2 27B #29600, MiniCPM-V 4.7 #29416)
+  and backend work (Vulkan `mul_mat_id`, SYCL MXFP4 MoE, OpenCL MoE kernels, MMVQ on sm_60) need nothing on
+  the Java side. Per-step record: `docs/history/llama-cpp-breaking-changes.md`.
 - **No fat jars, no release assets beyond the Maven artifacts.** The all-backends
   `llama-<v>-all-<os>-<arch>-jar-with-dependencies.jar`, the default CPU fat jar and the agent's
   `llama-atmosphere-agent-<v>-jar-with-dependencies.jar` are gone (see Removed): with modular natives
