@@ -15,6 +15,63 @@ cross-cutting initiative.
 `crossrepostatus.md`; a finished item is deleted from this file rather than annotated,
 so everything below is genuinely still open.
 
+## Where the modular natives stand, and what the next CI run is for
+
+**The goal was exchangeable native libraries built with LLVM, replacing the fat jars. That is
+implemented and, as of 2026-10-11, partly proven on real hardware.** This section is the state of it
+in one place, because a Publish run costs hours and the question "what is this run supposed to show"
+has to be answerable before starting one.
+
+**Done and proven.** 8 library jars plus 15 additive GPU module jars, each holding one ggml backend
+module; `jllama-build.txt` pinning a module to its library's llama.cpp tag before anything is
+extracted; the extraction directory keyed by build *and* module set, reused across starts. Windows
+x86-64 is built with **plain clang**, which is what yields all 14 CPU variants (`clang-cl` loses 5 of
+them to ggml's `if (NOT MSVC)` block). All 14 x86 modules were measured on one Granite Rapids machine
+and 6 of 8 aarch64 ones on a Graviton 4 -- before that, no module had ever been *chosen* on hardware
+the project could inspect.
+
+**Where it sticks, in the order that matters for a consumer:**
+
+1. **The library jar is not self-contained** (item 1 below). Java runs in containers, and the usual
+   slim base images have no `libgomp`; the jar then fails to load at all. Measured, decided, not yet
+   changed.
+2. **"A module that cannot help is skipped" holds for Vulkan and breaks for the other two**
+   (items 2 and 3): CUDA on an incompatible driver `abort()`s the JVM in *every* configuration,
+   OpenVINO on a CPU-only host takes over and runs 172x slower. The premise the whole additive design
+   rests on is therefore conditional, and that was unknown until a module was actually used.
+3. **Nothing behind `package` has ever run on the modular natives.** `package` was red until the
+   Windows OpenVINO module jar was unblocked, so the smoke-set assembly, `smoke-natives-jars.sh` with
+   all 23 jars on classpath *and* module path, the four `smoke-natives` rows, the macOS smoke, the
+   agent smoke, the bytecode gate and `verify-native-deps.py` over all 23 jars have never executed
+   together. **This is what the next Publish run is for.**
+
+**So the next CI run should be the current `main`, unchanged.** It is the first opportunity to see
+everything behind `package`, and bundling the decided changes into it would confound the result: a red
+run would not say whether the pipeline or the change is at fault. Expect several rounds there -- a
+stage that has never run is unlikely to pass first time -- and note that the `windows-x86-64` smoke
+row draws the same CPU lottery as the Windows test job, so it exercises AMX only when GitHub hands it
+an Intel runner.
+
+**The batch for the run after that**, assembled while the first one runs: `GGML_OPENMP=OFF` plus
+`-static-libstdc++ -static-libgcc` on Linux and s390x with the dependency allowlist inverted, the
+explicit `CMAKE_CUDA_ARCHITECTURES`, the OpenVINO opt-in decision, and the shipped diagnostic entry
+point (item 5). These are independent of each other and each is verifiable in the same run.
+
+## What still has to be measured
+
+Kept as a list because each entry names the machine it needs -- the harness is
+[`docs/benchmarks/ec2-harness.md`](docs/benchmarks/ec2-harness.md) and a run is cents:
+
+| what | needs | why it cannot wait for CI |
+|---|---|---|
+| ~~the cost of `GGML_OPENMP=OFF`~~ | ~~16-vCPU Linux~~ | **done 2026-10-11: no measurable cost** |
+| Does a self-contained jar load on a **slim/distroless** image? | any Linux instance, a container | CI runs on full runners, so it cannot see this class at all |
+| Does **`75-real 80-real 90-real`** make a T4 work? | a rebuilt CUDA module + a `g4dn` instance | the module has to be built first, so this follows a CI run |
+| **Windows extraction reuse**: second start copies nothing, a running JVM's locked DLLs survive another build's cleanup | a rented Windows instance, two JVMs | file locking is Windows-only and needs two processes |
+| the **`sapphirerapids` vs `haswell`** gap at high core counts | a large Intel instance | one 4-vCPU table exists; generation ranking can reverse with threads |
+| **OpenVINO on an Intel GPU/NPU** | hardware nobody rents | the 172x figure is the CPU-plugin fallback only, so nothing is known about the hardware it is for |
+| the two **SME** aarch64 modules | not rentable anywhere | — |
+
 ## Open — jllama-specific
 
 ### `package` is red: the Windows OpenVINO module jar fails the merge check
@@ -43,6 +100,18 @@ loading the Linux jar on an image that is not Amazon Linux. Numbers and method:
 [`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md).
 
 1. **The Linux CPU jar needs `libgomp.so.1`, and a plain Ubuntu server image does not have it.**
+   **Measured 2026-10-11, and the decision is no longer a trade-off: turning OpenMP off costs
+   nothing.** Upstream b11538 built twice on one 16-vCPU machine with identical flags except
+   `GGML_OPENMP`, benchmarked with `llama-bench` (3 repetitions): token generation is *slightly
+   faster* without it at 4, 8 and 16 threads (+0.9 %, +0.8 %, +0.7 %) and prompt processing is lower
+   by 0.4-2.1 %, all inside the error bars -- and `libggml-base.so` loses its `NEEDED libgomp`. The
+   ~6 % figure quoted below does not reproduce; it was one sample already flagged as inside its own
+   spread. Table in [`docs/benchmarks/cpu-backend-modules.md`](docs/benchmarks/cpu-backend-modules.md).
+   **Remaining work is the change itself**, not the decision: add `GGML_OPENMP=OFF` and
+   `-static-libstdc++ -static-libgcc` to the Linux (and s390x) builds, extend
+   `verify-native-deps.py`'s allowlist so the *absence* of `libgomp`/`libstdc++`/`libgcc_s` is what
+   the check enforces, and re-measure once in CI's own gcc-toolset-14 image. The original wording
+   follows for the record:
    `libggml-base.so` -- the first file the loader loads -- declares it, so the *whole* jar dies with
    `UnsatisfiedLinkError: The native library of backend 'cpu' could not be loaded`, which reads like
    a packaging defect. Every shipped Linux file also needs `libstdc++.so.6` and `libgcc_s.so.1`, so
@@ -79,6 +148,17 @@ loading the Linux jar on an image that is not Amazon Linux. Numbers and method:
    where the OS supplies the loader. **Decision needed:** make the OpenVINO module **opt-in** instead
    of additive, or document in the README that the jar needs an Intel GPU/NPU plus an ICD loader and
    must otherwise stay off the classpath.
+
+5. **A shipped diagnostic entry point, for the support cost rather than for a feature.** Today a
+   consumer whose load fails opens an issue; the answer is almost always one of a handful of things
+   this project can already determine -- which platform the JVM reports, which natives jars are on the
+   classpath, which library backend and modules the loader selected, which `DT_NEEDED` dependency is
+   absent, which CPU module ggml picked and what the backend registry ended up holding. A
+   `net.ladenthin.llama.Diagnose` main printing exactly that turns a support thread into a paste.
+   The pieces exist: `NativeLoadSmoke` does the load half in CI, `JNI_OnLoad` already logs the
+   registry and devices at INFO, `buildcheck/nativedeps.py` parses ELF/PE/Mach-O (the Java side would
+   need only the `DT_NEEDED` list, or can simply report the `dlopen` reason that item 4 now carries).
+   Cheap, and it is the one item on this list that pays off per *user* rather than per release.
 
 4. ~~**The loader's exception does not name the missing library.**~~ **Fixed.** It used to end in
    "see the messages above" and print the `dlopen` reason to `System.err` separately, so a consumer

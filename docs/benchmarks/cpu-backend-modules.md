@@ -95,6 +95,41 @@ has `avx512_vnni` but not the 256-bit `AVX-VNNI` that `alderlake` is built for, 
 it but macOS ships one static library rather than the aarch64 module set, so those two modules cannot
 even be loaded there.
 
+## `GGML_OPENMP=OFF` on Linux costs nothing measurable
+
+The question this answers is a shipping one, not a tuning one: `libggml-base.so` -- the first file the
+loader loads -- declares `libgomp.so.1`, and a plain Ubuntu 24.04 server image does not have it, so
+the whole Linux jar fails to load there. Turning OpenMP off removes the dependency (ggml then uses
+its own `std::thread` pool, which is what the Android build already does). The open question was the
+price.
+
+Measured on **one machine, both builds, same source** -- upstream llama.cpp b11538 compiled twice on
+an `m7i.4xlarge` (Xeon Platinum 8488C, 16 vCPU, gcc 11.5) with identical flags
+(`GGML_BACKEND_DL=ON GGML_CPU_ALL_VARIANTS=ON GGML_NATIVE=OFF`) except `GGML_OPENMP`, both picking
+`ggml-cpu-sapphirerapids`, and benchmarked with upstream's own `llama-bench` (warmup plus 3
+repetitions, so the figures carry a spread):
+
+| threads | pp512 **with** OpenMP | pp512 **without** | tg128 **with** | tg128 **without** |
+|---:|---:|---:|---:|---:|
+| 4 | 787.59 ± 7.67 | 784.79 ± 15.12 | 73.76 ± 0.68 | **74.41 ± 0.20** |
+| 8 | 1456.02 ± 3.76 | 1425.74 ± 43.73 | 128.57 ± 1.02 | **129.55 ± 1.09** |
+| 16 | 1697.60 ± 61.69 | 1669.73 ± 42.49 | 153.49 ± 0.94 | **154.62 ± 0.65** |
+
+**Token generation is slightly faster without OpenMP at every thread count** (+0.9 %, +0.8 %, +0.7 %)
+and prompt processing is marginally lower (−0.4 %, −2.1 %, −1.6 %) -- every difference inside or at
+the error bars. The `libgomp` dependency is gone in the off build, verified from the binary
+(`NEEDED libgomp` count 1 against 0 in `libggml-base.so`).
+
+**So the ~6 % cost this project previously recorded does not reproduce.** That figure was one sample
+with its own ON value at 76.1 ± 0.9 on a different machine, and it was already flagged as "inside the
+spread rather than a result"; with three thread counts and repetitions there is no cost to weigh
+against the dependency at all.
+
+**Limits, so the number is not over-read:** gcc 11.5 (what Amazon Linux 2023 ships), not the
+gcc-toolset-14 CI builds with; one CPU; one model; upstream's build rather than this project's jar
+(the flag is a ggml-level one, so it transfers, but the jar also carries llama.cpp, mtmd and the
+server). The direction is unambiguous across three thread counts, which is what the decision needed.
+
 ## The finding across all three machines: the pick costs token generation
 
 This is the result worth carrying upstream, and it is not a one-off — it holds on three different
