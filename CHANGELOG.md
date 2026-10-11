@@ -174,6 +174,16 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `LLAMA_ARG_SLOT_SAVE_PATH` (#30272); new model support (Prism Bonsai 2 27B #29600, MiniCPM-V 4.7 #29416)
   and backend work (Vulkan `mul_mat_id`, SYCL MXFP4 MoE, OpenCL MoE kernels, MMVQ on sm_60) need nothing on
   the Java side. Per-step record: `docs/history/llama-cpp-breaking-changes.md`.
+- **Upgraded the pinned llama.cpp from b11556 to b11558**, one reviewed step (2 commits, 7 files, no
+  `tools/ui` change, so the WebUI is unchanged). In the range: the RPC backend's logging is one header
+  with **`GGML_RPC_DEBUG` as a verbosity level 0-3** instead of an on/off flag (#29544), and its server
+  lines (`Starting RPC server`, `Accepted client connection`, `Client connection closed`) go through
+  ggml's log callback instead of `printf` -- stderr by default, and a `LlamaModel.setLogger` sink sees
+  them at verbosity 4 like every ggml INFO line; the OpenCL module's Adreno kernel selection respects the
+  image size limit and the weights' batch dimensions (#30310). Patch `0015` (embeddable RPC) is
+  refreshed onto the rewritten logging context with the same changes; the other eleven apply unchanged
+  and every drop-check still finds its defect. Per-step record:
+  `docs/history/llama-cpp-breaking-changes.md`.
 - **No fat jars, no release assets beyond the Maven artifacts.** The all-backends
   `llama-<v>-all-<os>-<arch>-jar-with-dependencies.jar`, the default CPU fat jar and the agent's
   `llama-atmosphere-agent-<v>-jar-with-dependencies.jar` are gone (see Removed): with modular natives
