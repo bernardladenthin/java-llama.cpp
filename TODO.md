@@ -143,15 +143,44 @@ host-CPU line says so).
 
 **Round 1 -- things that need no run, done while round 0 is in flight.** None of these touch the same
 files as each other, so they can go in one branch:
-1. **The shipped diagnostic entry point** (item 5 of the modular-natives follow-ups). The only item on
-   any list here that pays off *per user* rather than per release: it turns "it does not work" into a
-   paste. Testable without natives.
-2. **README: the GPU jars' real requirements.** `cuda13` needs a driver new enough for the toolkit
-   (and what happens when it is not: the JVM aborts); `openvino` is opt-in now and needs an Intel
-   GPU/NPU *plus* an OpenCL ICD loader; `vulkan` needs only a driver. None of that is documented, and
-   all three are measured.
-3. **`TestConstantsTest` / `TestModelPaths` parity.** `llama-langchain4j` carries its own copy of the
-   resolver; the vacuity guard added to the core's test has no counterpart there.
+1. ~~**The shipped diagnostic entry point**~~ **done 2026-10-11**: `net.ladenthin.llama.Diagnose`
+   (the main class) plus `loader.DiagnosticReport` (the half only the loader can answer). The split
+   is not tidiness: every platform and classpath fact is a package-private member of `LlamaLoader`,
+   and **Java access is per package, not per module** -- so that half has to live in the loader's
+   package, while the main class cannot, because that package is deliberately not exported and a
+   consumer on the module path could not run a main there. The architecture rule allows exactly this
+   direction (`Api -> Loader`, never back), which is also why the pinned-version constant (`value`)
+   and the load itself (`LlamaModel`) are read on the `Diagnose` side.
+   It prints the pinned tag, the JVM, `os.name`/`os.arch` and what `OSInfo` derives from them, every
+   set `net.ladenthin.llama.*` property, each natives directory of the platform **with the llama.cpp
+   tag of its `jllama-build.txt`** (which is how a mismatched set becomes visible at all) and, on a
+   failed load, the operating system's own reason. 9 tests, no natives and no model needed.
+   **Two defects of its own, both found by running it rather than by reading it, and both the same
+   mistake:** it composed the property name from `LlamaSystemProperties.PREFIX`, which carries **no**
+   trailing dot, and so read `net.ladenthin.llamabackend` -- a name nothing sets, so a filter that
+   was in effect was reported as unset; and `namedBy` compared case-insensitively while
+   `LlamaLoader.selectModules` compares with `equals` and **fails loud** on an unknown name, so
+   `OpenVino` would have been reported as an enabled module while the load throws on it. Both are now
+   read through the loader's own accessor and matched by the loader's own comparison, each with a
+   red/green test. The rule they both broke: **a diagnostic may not be kinder, or differently spelled,
+   than the code it describes.**
+2. ~~**README: the GPU jars' real requirements**~~ **done 2026-10-11**: the two `cuda13` rows name the
+   driver requirement, the two `openvino` rows say they are opt-in and name the OpenCL ICD loader the
+   OpenVINO archive does not ship, and an `[!IMPORTANT]` block carries the measured detail -- the
+   CUDA abort (`ggml_abort`, not catchable, and reached even with `-ngl 0`), the 17x/172x OpenVINO
+   regression that is the reason for the opt-in, and Vulkan as the one backend that behaves as
+   designed. The existing note's sentence "simply registers none" now names its two exceptions
+   instead of stating the rule as if it held. **The README did not mention the OpenVINO opt-in at
+   all**, so a consumer adding that jar would have seen nothing happen and no reason why.
+3. ~~**`TestConstantsTest` / `TestModelPaths` parity**~~ **done 2026-10-11, and the premise was
+   mostly outdated**: `llama-langchain4j`'s test file had grown since that line was written and
+   already covered nine of the core's ten cases, including the reactor-root branch non-vacuously
+   (it resolves `llama-langchain4j/pom.xml`, which exists only when looked up from the parent, so a
+   pass proves the second branch ran) and the "no test may read a model property without the
+   resolver" source rule. The one genuine gap was `fromProperty`: only the **unset** case was
+   tested, so a set property that bypassed the resolver would have been invisible -- which is
+   exactly the failure the resolver exists for, and the one that stayed hidden in the core for
+   hundreds of builds because a class-level assumption records no test entries. One test added.
 
 **Round 2 -- needs round 0 to have produced artifacts.**
 4. **A `g4dn` run proving a T4 works** with the new arch list (round 0 builds the module; the probe

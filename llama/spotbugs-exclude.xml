@@ -46,6 +46,21 @@ SPDX-License-Identifier: MIT
         leaves no compile-time hint that an I/O failure happened; we accept that
         tradeoff at these three boundary points.
     -->
+    <!--
+        Diagnose.load catches the load failure and returns false, which SpotBugs reports as
+        EXS_EXCEPTION_SOFTENING_RETURN_FALSE. That is the class's entire contract: it is the
+        diagnostic a consumer runs BECAUSE the library does not load, so the failure is content to
+        print rather than a condition to propagate. A report that throws at the first problem would
+        withhold exactly the lines that explain it. Nothing is lost: the exception's own
+        toString() and the operating system's reason are both written to the report, and main()
+        rethrows afterwards so the process still exits non-zero.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.Diagnose"/>
+        <Bug pattern="EXS_EXCEPTION_SOFTENING_RETURN_FALSE"/>
+        <Method name="load"/>
+    </Match>
+
     <Match>
         <Class name="net.ladenthin.llama.LlamaModel"/>
         <Bug pattern="EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS"/>
