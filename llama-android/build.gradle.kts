@@ -115,9 +115,6 @@ fun coreProperty(name: String): String {
     )
 }
 
-        ?: error("Property <$name> not found in ../llama/pom.xml <properties> — keep the AAR pom dependencies in lockstep with the core")
-}
-
 group = "net.ladenthin"
 version = reactorVersion
 
