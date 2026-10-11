@@ -35,6 +35,17 @@ case "$(uname -s)-$(uname -m)" in
 esac
 expected_modules="$(grep -v -e '^#' -e '^classifier,' -e '^$' "$LIST" | tr -d '\r' \
     | awk -F, -v t="$tree/" 'index($2, t) == 1 && $5 == "module" { sub(t, "", $2); print $2 }')"
+# Every module of the platform, opt-in ones included, named through the property. This is the only
+# place in CI that loads an opt-in module at all: the loader leaves it out by default (that is the
+# point of the column), and the model-backed smoke rows must not have it, since OpenVINO's CPU
+# plugin would take over and run 172x slower. Here nothing is inferred -- the library is loaded and
+# the process exits -- so naming them proves both that the jars coexist and that the property
+# enables what it names.
+backend_property=""
+if [ -n "$expected_modules" ]; then
+    backend_property="-Dnet.ladenthin.llama.backend=$(tr '\n' ',' <<< "$expected_modules" | sed 's/,$//')"
+    echo "enabling every module of $tree: $backend_property"
+fi
 
 # The classes jar is the one without a classifier; every other jar but sources/javadoc/the fat jar
 # is a natives jar.
@@ -64,5 +75,5 @@ run() {
     echo "OK ($label): $backend; $(grep 'native load smoke OK' <<< "$out")"
 }
 
-run "classpath" -cp "$path"
-run "module path" --module-path "$path" --add-modules ALL-MODULE-PATH
+run "classpath" ${backend_property:+"$backend_property"} -cp "$path"
+run "module path" ${backend_property:+"$backend_property"} --module-path "$path" --add-modules ALL-MODULE-PATH

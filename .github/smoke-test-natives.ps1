@@ -29,6 +29,9 @@ function Get-SetModules([string]$Dir) {
         if ($line -match '^#' -or $line -match '^classifier,' -or -not $line.Trim()) { continue }
         $cols = $line.Split(',')
         if ($cols[4] -ne 'module') { continue }
+        # An opt-in module (natives.csv column 6) is deliberately left out by the loader until
+        # net.ladenthin.llama.backend names it, so it is not expected in the loader line.
+        if ($cols.Length -gt 5 -and $cols[5] -eq 'yes') { continue }
         if (Get-ChildItem -Path $Dir -Filter "llama-*-$($cols[0]).jar" -File) {
             $modules += ($cols[1] -split '/')[-1]
         }

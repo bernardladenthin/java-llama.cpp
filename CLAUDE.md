@@ -43,6 +43,12 @@ artifact, classifier `<backend>-<os>-<arch>`, each holding exactly one directory
   and contributes a *device*, so llama.cpp prefers it and a host without an Intel accelerator drops
   from 490.4/34.5 to 29.4/**0.2** tokens per second, while without an OpenCL ICD loader
   (`libOpenCL.so.1`, which the OpenVINO archive does not ship) it does not open at all.
+  **The `optin` column of `natives.csv` is where that is declared**, and `check-natives.py` holds
+  `LlamaLoader.OPT_IN_BACKENDS` to it in both directions: a backend the list calls opt-in while the
+  loader does not would ship a jar that takes over silently, and the reverse would leave a jar inert
+  with no row saying why. The two smoke layers read the same column -- the model-backed rows do not
+  expect an opt-in module in the loader line, while `smoke-natives-jars.sh` names every module
+  through the property, which is the only place in CI that loads one.
   `net.ladenthin.llama.backend=<a>,<b>` is a **filter** over the module jars (`cpu` = none); a name
   that is no module backend, or whose jar is not on the classpath, fails the load with a message
   naming the jar to add. **A module jar needs the library jar of the same build**: every natives
@@ -75,7 +81,7 @@ and 32-bit Windows (`cpu-windows-x86`, `msvc-windows-x86`), the MSVC jar (`msvc-
 still **built and tested**, see "Windows natives") and the second SYCL precision (`sycl-fp32`) went
 with the fat jars (5.2.0, before the release).
 
-**The list is `.github/natives.csv`** (classifier, directory, library, platform yes/no, kind) — the
+**The list is `.github/natives.csv`** (classifier, directory, library, platform yes/no, kind, optin yes/no) — the
 one place a natives jar is declared, in the same spirit as `models.csv`. Everything else either reads
 it or is checked against it:
 
@@ -92,7 +98,8 @@ it or is checked against it:
 | `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library (or module) and nothing outside its directory, each with a `jllama-build.txt` naming a tag, a module directory holding nothing but its module and the `jllama-*.txt` lists, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows -- never the files a build's own `jllama-files.txt` names, which are only extracted; each of those must exist) |
 | `.github/package-smoke-sets.sh` | reads the list through `check-natives.py smoke-targets` / `smoke-set`: fails when a natives jar of a set was not built |
 | `.github/verify-native-deps.py` | every library of a directory: exact dependency allowlist per library directory (`cpu`/`metal`) plus the files next to it, and for the Android OpenCL module (bionic + `libOpenCL.so` + `libggml-base.so`); denylist for the other GPU modules, each of which must import `ggml-base` and, as ELF, reach it only through run path `$ORIGIN` (an Android library carries no run path -- bionic's search path is the app's native-library directory -- and only a build-tree one fails there); the manylinux_2_28 builds (both Linux CPU jars, CUDA) held to `GLIBC_2.28`; every Android library 16 KB page-aligned (Google Play). Runs in `package` and on the staged AAR libraries |
-| `.github/smoke-natives-jars.sh` (`package` job) | loads the real jars: classes + all 23 natives jars at once, on the classpath **and** the module path; the loader line must name every GPU module of the runner's platform (from the list), so a module jar the loader skipped fails here |
+| `.github/smoke-natives-jars.sh` (`package` job) | loads the real jars: classes + all 23 natives jars at once, on the classpath **and** the module path; it passes `net.ladenthin.llama.backend` naming **every** module of the runner's platform, opt-in ones included, and the loader line must then name each -- so a module jar the loader skipped fails here, and this is also the only place in CI that loads an opt-in module at all |
+| `.github/smoke-lib.sh` / `smoke-test-natives.ps1` | the model-backed smoke rows expect every module of the set **except** the opt-in ones (`optin` column), because the loader deliberately leaves those out -- it is the same list, read with one more condition |
 
 **Adding a natives jar:** a row in `natives.csv`, the execution `check-natives.py pom` prints, a build
 job uploading `natives-<classifier>` (`-DJLLAMA_MODULE_ONLY=ON -DGGML_<X>=ON` for a GPU module), the

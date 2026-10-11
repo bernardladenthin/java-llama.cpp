@@ -23,7 +23,12 @@ smoke_classpath() {
 # The GPU module backends whose jars are in the smoke set (from .github/natives.csv), one per line.
 smoke_set_modules() {
     local set_dir="$1"
-    grep -v -e '^#' -e '^classifier,' -e '^$' "$SMOKE_LIST" | tr -d '\r' | awk -F, '$5 == "module" { print $1 "," $2 }' \
+    # $6 == "yes" is an opt-in module (natives.csv): its jar on the classpath does nothing until
+    # net.ladenthin.llama.backend names it, so the loader deliberately leaves it out and the line
+    # below must not expect it. smoke-natives-jars.sh names them instead, which is where the opt-in
+    # path itself is exercised.
+    grep -v -e '^#' -e '^classifier,' -e '^$' "$SMOKE_LIST" | tr -d '\r' \
+        | awk -F, '$5 == "module" && $6 != "yes" { print $1 "," $2 }' \
         | while IFS=, read -r classifier dir; do
             if find "$set_dir" -maxdepth 1 -name "llama-*-$classifier.jar" | grep -q .; then
                 basename "$dir"
