@@ -326,3 +326,40 @@ class MainTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RunPathDiagnosticTest(unittest.TestCase):
+    """The two ways a module's run path can be wrong say different things.
+
+    Both still fail -- the rule is unchanged. What is new is that the message names the actual
+    defect: the Linux SYCL module (run 38149667195) carried `$ORIGIN` *plus* oneAPI's install paths
+    and was reported as if `$ORIGIN` were missing, which is a wrong cause rather than a vague one.
+    """
+
+    def _fail(self, runpath):
+        return nativedeps.violations(
+            "net/ladenthin/llama/Linux/x86_64/sycl/libggml-sycl.so",
+            ["libggml-base.so"],
+            siblings=("libggml-base.so",),
+            runpath=runpath,
+        )
+
+    def test_origin_alone_is_the_only_accepted_run_path(self):
+        self.assertEqual([], self._fail("$ORIGIN"))
+
+    def test_origin_plus_build_host_paths_names_the_extra_entries(self):
+        failures = self._fail("$ORIGIN:/opt/intel/oneapi/mkl/2026.1/lib")
+        self.assertEqual(1, len(failures))
+        self.assertIn("/opt/intel/oneapi/mkl/2026.1/lib", failures[0])
+        self.assertIn("build host", failures[0])
+        # and it must NOT claim the sibling is unreachable, which is the other defect
+        self.assertNotIn("looked up on the system", failures[0])
+
+    def test_a_run_path_without_origin_says_the_sibling_is_unreachable(self):
+        failures = self._fail("/usr/lib/x86_64-linux-gnu")
+        self.assertEqual(1, len(failures))
+        self.assertIn("looked up on the system", failures[0])
+        self.assertIn("mismatched ggml ABI", failures[0])
+
+    def test_a_missing_run_path_is_still_a_failure(self):
+        self.assertEqual(1, len(self._fail(None)))

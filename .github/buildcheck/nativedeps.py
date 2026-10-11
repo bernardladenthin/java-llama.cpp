@@ -339,9 +339,25 @@ def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
                             f"its siblings through the app's native-library directory), and a build-tree path "
                             f"points at the CI runner")
     elif rel.endswith(".so") and (is_module or any(d in siblings for d in deps)) and runpath != ORIGIN:
-        failures.append(f"{rel} needs {sorted(d for d in deps if d in siblings) or list(GGML_BASE[:1])} next to it "
-                        f"but its run path is {runpath!r}, not {ORIGIN!r} -- it would be looked up on the system "
-                        f"instead")
+        # Two different defects reach this branch, and saying which one it is matters: the first run
+        # that hit the second case (the Linux SYCL module, run 38149667195) printed the first case's
+        # reason, which sent a reader looking for a missing $ORIGIN that was there all along. A wrong
+        # cause costs more than a bare failure.
+        entries = (runpath or "").split(":")
+        needs = sorted(d for d in deps if d in siblings) or list(GGML_BASE[:1])
+        if ORIGIN in entries:
+            extra = [e for e in entries if e != ORIGIN]
+            failures.append(f"{rel} carries the run path {runpath!r}: {ORIGIN!r} is there, but so are "
+                            f"{extra} -- absolute paths of the build host, which is what ships to a consumer "
+                            f"who has no such directory (or a different version of it). Every other Linux "
+                            f"library carries {ORIGIN!r} and nothing else, and finds its vendor runtime through "
+                            f"the consumer's own environment. Strip them in the build job rather than widening "
+                            f"this rule")
+        else:
+            failures.append(f"{rel} needs {needs} next to it "
+                            f"but its run path is {runpath!r}, which does not contain {ORIGIN!r} -- the sibling "
+                            f"would be looked up on the system instead, where a foreign llama.cpp install can "
+                            f"answer with a mismatched ggml ABI")
     # The allowlist below only reports dependencies that should NOT be there. For the Windows CPU
     # directories one dependency must be there, and its disappearance is just as much a regression:
     # an api-ms-win-crt-* forwarder means the UCRT is the OS one (hybrid CRT). Without this, a build

@@ -226,6 +226,38 @@ timing. What the release needs either way, in order:
 The longer this waits, the longer the migration section gets and the more snapshot-only behaviour
 consumers discover on their own.
 
+### ~~`package` is red: the Linux SYCL module ships the build host's oneAPI paths~~ -- fixed 2026-10-11
+
+The next violation behind the OpenVINO one, and only visible once that was out of the way -- the
+merge check runs before `verify-native-deps.py`, so `package` had never got this far. Run
+38149667195, `Package JARs`: **99 native libraries checked, 1 violation**.
+
+```
+Linux/x86_64/sycl/libggml-sycl.so needs ['libggml-base.so'] next to it
+but its run path is '$ORIGIN:/opt/intel/oneapi/mkl/2026.1/lib:/opt/intel/oneapi/tbb/2023.1/lib/intel64/gcc4.8'
+```
+
+**What made the decision easy was counting the siblings**: of the 36 Linux libraries, **35 carry
+exactly `$ORIGIN`** -- including CUDA, ROCm, OpenVINO and Vulkan, every one of which needs a vendor
+runtime just as much and finds it through the consumer's own environment. SYCL is the **one
+outlier**, so the thing to repair was the artifact, not the rule.
+
+**Why the obvious CMake fix is not one:** `llama/CMakeLists.txt` already sets
+`INSTALL_RPATH "$ORIGIN"` with `BUILD_WITH_INSTALL_RPATH` on the module target. oneAPI's MKL and TBB
+targets hand the **linker** their install paths as `-Wl,-rpath`, and a target property cannot remove a
+flag the linker was given. So the Linux SYCL job now normalises the shipped file with `patchelf
+--set-rpath '$ORIGIN'` and **fails if the result is not exactly that** -- a job failure at the source
+instead of a surprise two jobs later.
+
+Shipping `/opt/intel/oneapi/mkl/2026.1/lib` to a consumer is build-host leakage of exactly the class
+`verify-native-deps.py` was written to catch (the Homebrew `openssl@3` dylib that shipped in 5.0.6).
+
+**And the check's message was wrong, not merely vague.** It reported this as *"it would be looked up
+on the system instead"* -- the reason for a run path with **no** `$ORIGIN`, while here `$ORIGIN` was
+present and first. It sent a reader looking for something that was not the problem, which is the same
+defect as the `sdkmanager` step's "dl.google.com broken". The two cases are now separate messages,
+with four unit tests (red against the old wording, green against the new).
+
 ### ~~`package` is red: the Windows OpenVINO module jar fails the merge check~~ -- done
 
 **Done 2026-10-11 (`7870923f`, "Unblock package").** The cause was vcpkg, not the build and not the
