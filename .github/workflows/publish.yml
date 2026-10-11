@@ -2733,8 +2733,12 @@ jobs:
       # in the other. Requires a chat completion, the model buffer on the RPC endpoint in the load
       # log (the layers really went over RPC), an accepted client on the server, and a clean
       # non-SIGABRT failure naming the endpoint when --rpc names a server nobody runs.
+      # Both Linux rows: the script has no platform-specific line in it (no uname, no library name,
+      # no /proc), so aarch64 runs it unchanged and adds its own ggml-rpc module and socket code for
+      # free. Windows would need a PowerShell port -- on file in TODO.md; its transport is already
+      # covered there by test_rpc.cpp over loopback in `C++ Tests`.
       - name: Run the RPC smoke test (two JVMs)
-        if: matrix.target == 'linux-x86-64'
+        if: runner.os == 'Linux'
         run: .github/smoke-rpc.sh smoke "models/${DRAFT_MODEL_NAME}"
       - name: Upload server logs
         if: failure()

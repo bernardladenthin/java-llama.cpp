@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -113,7 +114,60 @@ public class TestConstantsTest {
     }
 
     @Test
+    public void theResolverFindsAFixtureAtTheReactorRootAndLeavesTheLiteralOtherwise() throws Exception {
+        // The resolver's whole reason to exist is its second branch -- surefire's working directory is
+        // the MODULE basedir while CI restores the GGUF cache to the REACTOR ROOT, so a `models/x`
+        // literal has to be retried one level up. That branch is the only one that returns something
+        // other than its input, and it is therefore the only one a test can observe. This test plants
+        // its own file instead of waiting for a real model, so it says the same thing in every layout.
+        final Path rootModels = Paths.get("..", "models");
+        final boolean createdDir = !rootModels.toFile().isDirectory();
+        final Path planted = rootModels.resolve("jllama-resolver-probe.gguf");
+        try {
+            Files.createDirectories(rootModels);
+            Files.write(planted, "probe".getBytes(StandardCharsets.UTF_8));
+
+            final String resolved = TestConstants.resolveModelPath("models/jllama-resolver-probe.gguf");
+            assertTrue(
+                    Paths.get(resolved).isAbsolute(),
+                    "a fixture at the reactor root must resolve to an absolute path, got: " + resolved);
+            assertTrue(
+                    resolved.endsWith("jllama-resolver-probe.gguf"),
+                    "the resolved path must still name the file, got: " + resolved);
+            assertTrue(new File(resolved).exists(), "the resolved path must exist: " + resolved);
+
+            // and the other direction: a name that exists nowhere comes back untouched, which is what
+            // lets a model-gated test self-skip instead of blowing up on a mangled path.
+            assertEquals(
+                    "models/jllama-resolver-absent.gguf",
+                    TestConstants.resolveModelPath("models/jllama-resolver-absent.gguf"));
+        } finally {
+            Files.deleteIfExists(planted);
+            if (createdDir) {
+                rootModels.toFile().delete();
+            }
+        }
+    }
+
+    @Test
     public void theShippedModelConstantsGoThroughTheResolver() {
+        // Only meaningful where the resolver actually changes something, and that is worth stating
+        // rather than hiding: the constants are `static final`, so their values are frozen at class
+        // load, and `resolveModelPath` returns its input unchanged both when nothing is found AND
+        // when the file sits module-relative. In those layouts a dropped wrapper is indistinguishable
+        // from a present one -- no assertion can tell them apart, so the honest outcome is a skip with
+        // a reason instead of a green test that proves nothing. CI restores the models to the reactor
+        // root, which is exactly the layout where this bites, so it runs there.
+        // (The two `src/test/resources/...` constants resolve from the module basedir either way, so
+        // their wrapper stays undetectable even in CI; the resolver itself is pinned unconditionally
+        // by theResolverFindsAFixtureAtTheReactorRootAndLeavesTheLiteralOtherwise above.)
+        final String probe = TestConstants.resolveModelPath("models/codellama-7b.Q2_K.gguf");
+        Assumptions.assumeTrue(
+                !"models/codellama-7b.Q2_K.gguf".equals(probe),
+                "no fixture at the reactor root, so a dropped resolveModelPath(...) wrapper would be "
+                        + "invisible here -- the value assertions below cannot distinguish the two. "
+                        + "Run with the CI model layout (models/ at the reactor root) to exercise this.");
+
         // Guards the wiring itself: if a future edit drops the resolveModelPath(...) wrapper from a
         // constant, that constant stops matching its resolved literal and every test gated on it
         // silently self-skips again in CI. Holds in both layouts — with the GGUF present the
