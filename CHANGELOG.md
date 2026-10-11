@@ -453,7 +453,14 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   5.1.0 Windows jar was a static Haswell-level build that carried no AMX code. Found by the second
   full CI run of the modular natives, whose Windows Java test job landed on an Intel Xeon 6973P-C
   runner; the first run's AMD EPYC 7763 never reached the code (the Windows runners are a CPU
-  lottery, CLAUDE.md "Modular natives").
+  lottery, CLAUDE.md "Modular natives"). Of the six callers of `ggml_aligned_malloc` upstream this
+  was the only mismatched pair. Reproduced deliberately afterwards on a rented Granite Rapids
+  machine with one CPU module staged at a time: `sapphirerapids` crashed 6 of 6 runs and
+  `cooperlake`, `icelake` and `haswell` none, it reproduces at a **single thread** (so it is no data
+  race), and the same matrix with the patch applied is clean in all twelve runs. A configure-time
+  check (`llama/cmake/check-aligned-free-pairing.cmake`) now fails the build on **every** platform
+  when a ggml source allocates aligned and frees plain, because a machine without AMX cannot observe
+  the defect at run time -- which is exactly how it survived.
 - **`NativeServer` attach mode no longer leaves a sleep callback into freed memory behind.**
   `llama_server_attach` (`patches/0007`) built a `server_routes` on its own stack frame; its
   constructor registers a sleeping-state callback on the model's task queue, which has no unregister,

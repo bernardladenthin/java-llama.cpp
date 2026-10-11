@@ -369,6 +369,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
       - name: Download Linux x86_64 native library (reused, not rebuilt)
         uses: actions/download-artifact@v8
         with:
@@ -485,6 +488,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
       - name: Download Linux x86_64 native library (reused, not rebuilt)
         uses: actions/download-artifact@v8
         with:
@@ -755,6 +761,9 @@ jobs:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
       - name: Download shared WebUI assets
         uses: actions/download-artifact@v8
         with:
@@ -1127,6 +1136,9 @@ jobs:
           tool-cache: false
           swap-storage: false
       - uses: actions/checkout@v7
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
       - uses: actions/setup-java@v6
         with:
           java-version-file: .java-version
@@ -1569,6 +1581,9 @@ jobs:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@v7
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
       - name: Download shared WebUI assets
         uses: actions/download-artifact@v8
         with:
@@ -2164,8 +2179,12 @@ jobs:
       - name: Build libraries
         shell: cmd
         # vcpkg toolchain file wires in the OpenCL (incl. cl2.hpp) that ggml-openvino needs.
+        # VCPKG_APPLOCAL_DEPS=OFF: vcpkg otherwise copies its OpenCL.dll next to the linked
+        # module (app-local deployment), and a module jar must hold its module and the
+        # jllama-*.txt lists only -- merge-native-artifacts.sh rejects the artifact otherwise, and
+        # bundling a vendor runtime is against the policy every other GPU jar follows.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_OPENVINO=ON -DOpenVINO_DIR="%OpenVINO_DIR%" -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_OPENVINO=ON -DOpenVINO_DIR="%OpenVINO_DIR%" -DVCPKG_APPLOCAL_DEPS=OFF -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -2550,6 +2569,9 @@ jobs:
       # byte-level interleave -- two artifacts with the same path, which is how a corrupt macOS
       # dylib shipped; the test-only macOS builds (macos-26-metal, macos-15-no-metal) are named
       # outside the glob for that reason.
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
       - uses: actions/download-artifact@v8
         with:
           pattern: "natives-*"
@@ -2682,6 +2704,9 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
       - uses: actions/download-artifact@v8
         with:
           name: llama-smoke-${{ matrix.target }}
@@ -2739,6 +2764,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
       - uses: actions/download-artifact@v8
         with:
           name: llama-atmosphere-agent-jar
@@ -2804,6 +2832,9 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
       - uses: actions/download-artifact@v8
         with:
           name: llama-smoke-macos-aarch64

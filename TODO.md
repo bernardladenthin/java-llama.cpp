@@ -17,6 +17,25 @@ so everything below is genuinely still open.
 
 ## Open — jllama-specific
 
+### `package` is red: the Windows OpenVINO module jar fails the merge check
+
+**This blocks every release and was untracked until 2026-10-11.** `Package JARs` fails with
+
+    artifact 'natives-openvino-windows-x86-64' is a module jar:
+    Windows/x86_64/openvino/ must hold ggml-openvino.dll (named in jllama-files.txt)
+
+so `merge-native-artifacts.sh` rejects the artifact before anything is packaged. Because the smoke
+jobs `need: package`, all of them **skip** rather than fail -- which is why the run reads as "3
+failures" and the Java test jobs look green: nothing downstream of `package` ran at all. Seen on run
+38112603436; the check itself came with `4f811a23` on `main`, so this is **pre-existing**, not a
+consequence of the AMX work on the branch.
+
+What to find out first: whether the Windows OpenVINO build produces a differently named module (the
+other GPU jobs write `ggml-<backend>.dll`, and `JLLAMA_MODULE_ONLY` writes `$<TARGET_FILE_NAME>` into
+`jllama-files.txt`, so a target name mismatch would show exactly like this) or produces nothing and
+the upload's `if-no-files-found: error` did not catch it. The two GPG jobs red in the same run are
+**unrelated and expected** on a branch: they need the `maven-central` environment secret.
+
 ### Modular natives -- follow-ups
 
 Every platform a GPU can join ships modular since 5.2.0 (CLAUDE.md "Modular natives": `JLLAMA_BACKEND_DL`
@@ -173,6 +192,46 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
   Responses client) at a running server, since round-trips confirm wire shapes but not each client's
   parser.
 
+### Code-sign the Windows DLLs (Azure Trusted Signing, owner's decision -- it costs money)
+
+**What.** Microsoft's **Azure Trusted Signing** (formerly Azure Code Signing) signs Windows PE files
+from CI without a hardware token, on a monthly subscription -- the **Basic** tier is in the ~10
+USD/month range and includes a signature quota; **verify the current price and quota before
+committing**, and whether the quota covers signing *18 files per Windows natives jar* on every run
+(`jllama.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-rpc.dll` and the 14 `ggml-cpu-<level>.dll`, plus
+one module per Windows GPU jar). The traditional alternative -- an OV/EV certificate -- is several
+hundred euros a year **and** has required a hardware token since 2023, which a GitHub runner cannot
+use, so it is not a real option for this pipeline.
+
+**Why it is worth considering here specifically.** This project's DLLs are **extracted from a jar
+into a temp directory at run time and loaded with `System.load`**, which is exactly the shape
+antivirus and EDR products treat as suspicious: an unsigned native library appearing in `%TEMP%` and
+being loaded by `java.exe`. A signature does not silence a SmartScreen installer prompt (there is no
+installer), but it is what lets an enterprise allowlist the files by publisher instead of by hash,
+and it removes the "unknown publisher" class of false positive that a consumer cannot debug. There
+is no evidence of a user hitting this yet -- so this is prevention, not a fix, which is why it is a
+decision rather than a task.
+
+**The gatekeeper, and the reason to check it first:** Trusted Signing requires **identity
+validation**. An organisation needs a verifiable legal entity; an **individual** must have a
+verifiable public history (Microsoft has required ~3 years), and the account must be in a supported
+region. **Find out whether the account qualifies before paying for anything** -- the subscription is
+useless without a validated identity, and that is the step that fails, not the plumbing.
+
+**How it would hook into GitHub.** `azure/trusted-signing-action` with federated OIDC credentials
+(no long-lived secret), run in the Windows build jobs *after* the build and *before* the artifact
+upload, so what gets packaged is already signed. Note what that touches on our side: signing
+**modifies the files**, so it must happen before `merge-native-artifacts.sh` and
+`package-smoke-sets.sh` -- both compare files byte for byte -- and the signature must survive the
+jar round trip (it does; a PE signature is part of the file). Signing *after* packaging would mean
+re-writing jars and re-checking them, which is strictly worse.
+
+**What it does not cover.** Linux has no equivalent and needs none. **macOS is a separate purchase
+and a separate problem**: a Developer ID certificate (Apple Developer Program, ~99 USD/year) plus
+notarisation, and the dylib is already ad-hoc signed by the linker -- which is what
+`smoke-natives-macos` verifies with `codesign --verify --strict` after a corrupt dylib shipped in
+three releases. Do not bundle the two decisions; the Windows one is cheap and self-contained.
+
 ### License compliance gate (owner's decision)
 
 The FSFE REUSE check is green on every run. A FOSSA-style *dependency-license* gate (the scanner
@@ -185,7 +244,7 @@ nothing here blocks on it.
 **Nothing is filed upstream before the release is out**, neither issues nor PRs; the drafts are not
 written before that either. Everything below is the inventory for that day, so it is not rediscovered.
 
-There are **eleven** patches today (`0001`-`0003`, `0006`-`0008`, `0012`, `0014`-`0017`). Each
+There are **twelve** patches today (`0001`-`0003`, `0006`-`0008`, `0012`, `0014`-`0018`). Each
 accepted upstream change deletes a patch from the bump checklist once the pin is bumped past it.
 
 - **Submittable as they are** (self-contained, no jllama specifics): `0001` (Windows arg-parse embed
@@ -194,7 +253,11 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   direction), `0002` (preserve the caller's load-progress callback), `0006` (embeddable
   `llama_server`), `0007` (`llama_server_attach`), `0008` (`LLAMA_SERVER_WORKER_CMD`), `0012` (zero
   split-sum guard, ships `tests/test-model-split.cpp`), `0014` (`common_log_set_callback`), `0015`
-  (non-aborting RPC registration, stoppable server, transport fixes), `0017` (x86 prefetch helper).
+  (non-aborting RPC registration, stoppable server, transport fixes), `0017` (x86 prefetch helper),
+  **`0018`** (the AMX buffer released with `free()` instead of `ggml_aligned_free` -- one line, with
+  the 6/6-against-0/6 measurement in its header and a configure-time guard that is red without it;
+  the clearest submission of the set, since the defect reproduces on any AMX machine and the fix
+  copies the line `ggml-backend.cpp` already has).
 - **Permanent:** `0003` carries upstream PR #22393, which upstream closed without merging.
 - **Temporary carry, not a submission:** `0016` (Kolibri-1). Upstream will add the architecture itself
   ([ggml-org/llama.cpp#29922](https://github.com/ggml-org/llama.cpp/issues/29922)). Drop it on the
@@ -212,6 +275,14 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   carries an `-Xclang` argument, which on Windows every plain-clang TU does -- CMake's runtime-library
   selection puts it there -- so no plain-clang Windows build caches at all (CLAUDE.md "Windows
   natives"); that one is an sccache issue, if none is open.
+- **A third, measured 2026-10-11: `ggml_backend_load_best` picks a slower CPU module than one it
+  rejects.** On a Graviton 4 it selects `armv8.6_2` (198.0 t/s pp512) while `armv8.2_2` reaches
+  **271.4** on the same machine and model -- the SVE/SVE2/i8mm paths losing to plain DOTPROD+FP16 --
+  with generation inside the noise. The scoring function ranks by feature *level*, not by measured
+  throughput, so it is by construction rather than a bug, but it costs 37 % of prompt processing on
+  the hardware AWS rents most cheaply, and it is invisible to anyone who only runs the module their
+  own CPU picks. Worth an issue with the table from `docs/local-test-plan.md`; **no patch here** --
+  overriding upstream's scoring downstream would be a maintenance burden with no end.
 
 (`0009`, `0010`, `0011` and `0013` are gone -- upstream fixed each defect itself -- and recorded in
 `docs/history/dropped-llama-patches.md`.)
@@ -325,10 +396,33 @@ The consolidated investigation lives in
 high-value from it has shipped, the jbang one-file example (`examples/jbang/Chat.java`) included.
 Further per-repo findings in the doc can be pulled on demand; none is prioritized.
 
+### The ROCm Windows job runs with a CRT strategy that was never measured
+
+**Recovered from the session transcript on 2026-10-11; it had been stated repeatedly and recorded
+nowhere.** The hybrid-CRT change reaches the ROCm Windows build through its plain-clang branch, and
+that branch applies because the job compiles with HIP's own clang (`lib/llvm/bin/clang.exe` under
+driver, so CMake's `MSVC` is false there. Before the change that job had **no** branch and therefore
+the dynamic CRT; it now gets the hybrid one (`-fms-runtime-lib=static` plus
+`/nodefaultlib:libucrt.lib`). That may be an improvement (fewer dependencies) or it may break the
+link, and it is exactly the `/MT`-against-`/MD` mixture across library boundaries that the comment in
+`CMakeLists.txt` warns about for SYCL and OpenVINO: **ROCm's device libraries may be built against
+the dynamic CRT.**
+
+The job has been **green** since, so the link holds. What is unmeasured is the **runtime** behaviour
+of the resulting module on an actual Radeon GPU -- and that cannot be rented (see the rented-hardware
+plan), because the only AMD-GPU instance class has been withdrawn and never officially supported
+ROCm anyway. So this needs a real Radeon machine, or a deliberate decision to ship it on the strength
+of a green link plus `verify-native-deps.py`'s dependency allowlist. Do not quietly treat "the job is
+green" as the measurement.
+
 ### Needs a machine the sessions do not have
 
 Everything here is implemented or decided; what is missing is hardware or a model the cloud sessions
-cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) covers the first three.
+cannot reach. **Most of it is rentable** -- see
+[`docs/rented-hardware-test-plan.md`](docs/rented-hardware-test-plan.md) for the queue, the
+invariants and what rented hardware explicitly cannot answer. The items that stay with a developer
+machine are the **interactive agent** (console behaviour needs a human at a real terminal) and a real
+**arm64 Android device**.
 
 - **The GPU module jars on a GPU**: item 1 of "Modular natives -- follow-ups" above (CUDA + Vulkan
   modules next to the Windows CPU jar, devices, offload, the CUDA graphs re-measurement).
@@ -340,13 +434,109 @@ cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) cov
   and UI-tested there too; what no session has is a real arm64 device, and the Adreno/OpenCL flavor
   needs one. Nothing to write, only to run.
 - **AVX-512/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra): item 2 of "Modular natives" above.
-  And on **Windows** with AMX specifically: `patches/0018` (the AMX weight buffer freed with
-  `free()` after `_aligned_malloc()`, CLAUDE.md patch table) is proven by reading, by a GCC compile
-  of the patched file with the variant's flags, and by the CI lottery -- the Windows test jobs
-  reach the AMX path only when GitHub hands them an Intel AMX runner (seen: Xeon 6973P-C). A
-  Windows machine with AMX would pin it directly: load a Q4_K model with the modular set at `-lv 4`
-  (`AMX model buffer size` in the load log), generate, close -- no exit code -1073740940.
-- **Kolibri-1 on the real 78B model** (after a full build; the shards need more than 64 GB of RAM).
+  Partly answered since: a Cascade Lake machine (`avx512f` + `avx512_vnni`, no AMX) picks
+  `cascadelake` and loads cleanly, which lifted the modules ever *chosen* anywhere from six to eight.
+  AMX itself was that **suspected defect** and is now a found and fixed one (`patches/0018`, proven on
+  a rented Granite Rapids machine and verified there with the patch -- see the rented-hardware section
+  below; it is additionally backed by a GCC compile of the patched file with the variant's own
+  flags, `-mamx-tile -mamx-int8 -mavx512vnni`). What stays open is the original question, the *throughput* gain of `sapphirerapids` and
+  `zen4` over `haswell`, which needs the same hardware but no longer blocks anything.
+- **Kolibri-1 on the real 78B model.** `patches/0016` is verified only against tiny synthesized GGUFs
+  (`test_kolibri1.cpp`); CLAUDE.md's own row says "Not verified here: the real 78B model ... and GPU
+  backends". **The RAM objection is measured and wrong for the small quants:** the smallest published
+  GGUF of each dialect is **Q2_K at 26.7 GB** (gating 5, pre-tokenizer `kolibri1`) and **Q3_K_S at
+  31.5 GB** (gating 2, `qwen2`), both of which fit in 63 GB without paging -- only Q6_K (59.8 GB) does
+  not. What is open is the run, on the published set: both dialects must load, a German prompt must
+  come back coherent (the router selects on `logits + expert_bias` but weights by the *unbiased*
+  `sigmoid(logits)`, and a DeepSeek-V3-style router produces fluent-looking nonsense instead), a
+  thinking block, a tool call through the chat endpoint with `--jinja`, tokens/s and peak RAM. A load
+  error or gibberish is a finding **against** `0016`, not something to work around.
+  **In flight since 2026-10-11:** a single rented run on an `r7i.4xlarge` (16 vCPU, 128 GB RAM,
+  ~1.06 USD/h, dead-man switch at 150 min) loads **both** dialects in one boot, downloading each GGUF
+  straight from HuggingFace on the instance -- `Hob-forge/Kolibri-1-GGUF` **Q4_K_M (44.2 GB)** rather
+  than its Q2_K, because the question is whether the German answer is *coherent* and a 78B MoE at
+  Q2_K would make that ambiguous, and `Eliasfpv28/Kolibri-1-Q3_K_S-GGUF` **Q3_K_S (31.5 GB)** for the
+  gating-2 dialect. Hob-forge publishes Q2_K through Q8_0, so quant choice is free; 128 GB fits even
+  Q6_K (59.8 GB), which no local machine does. The probe prints the architecture, expert and gating
+  lines from the load at verbosity 4, then the generated **text** of two raw completions and one chat
+  turn through the model's own template, each guarded separately so one failure still leaves the rest
+  measured.
+
+### Compatibility matrix on rented hardware (one measurement per generation)
+
+The project ships **14 x86-64 CPU modules and 8 aarch64 ones**, of which `ggml_backend_load_best`
+keeps exactly one -- the best for the running CPU. So a module is only ever exercised *as the chosen
+backend* on a machine whose CPU prefers it, and no amount of running the suite on one machine or one
+CI runner changes that. Measured coverage today is **8 of 14 x86 levels** (six on a Zen 3
+workstation, `skylakex` and `cascadelake` added by a Cascade Lake machine) and **0 of 8 aarch64
+levels**.
+
+Rented cloud instances can close most of that, one short run each, and it is a *per-generation
+measurement* -- not something CI should repeat. Each family maps to exactly one module:
+
+| instance family | CPU | module it exercises |
+|---|---|---|
+| `m8i` | Granite Rapids | **`sapphirerapids`** (AMX) |
+| `m7i` / `c7i` | Sapphire Rapids | `sapphirerapids` (AMX) |
+| `m6i` / `c6i` | Ice Lake-SP | `icelake` |
+| `m7a` / `c7a` | EPYC Genoa (Zen 4) | **`zen4`** |
+| `m5n` / `c5n` | Cascade Lake | `cascadelake` |
+| `m5` / `c5` | Skylake-SP | `skylakex` |
+| `m6a` / `c6a` | EPYC Milan (Zen 3) | `haswell` |
+| `m4` and older | Broadwell / Ivy Bridge | `haswell`, `ivybridge` |
+| **`m7g` / `c8g` (Graviton)** | **aarch64** | **done: 6 of the 8 run on a Graviton 4** (`armv9.2_*` need SME, which no instance has) |
+
+**Four levels stay unreachable there** and are only ever *load*-tested: `piledriver` (no
+Bulldozer-era instance exists), `cannonlake` (barely shipped), `alderlake` (consumer Intel) and
+`cooperlake`.
+
+**Graviton was the biggest gain per euro, and it has been taken**: 6 of the 8 aarch64 modules are now
+measured with real inference on a Graviton 4 (`docs/local-test-plan.md` has the table).
+`armv9.2_1`/`armv9.2_2` need **SME**, which no AWS instance has, so they stay unmeasured. Two things
+came out of it: the two SME modules decline *cleanly* (no CPU backend, `LlamaException`, not a
+crash), and **ggml picks a module that is 37 % slower at prompt processing than a lower one** --
+`armv8.6_2` at 198 t/s against `armv8.2_2` at 271 t/s on the same machine and model. That is a
+scoring question for upstream and invisible to anyone who only runs what the CPU picks.
+
+GPU backends, same idea, with two that do not work out:
+
+| backend | rentable |
+|---|---|
+| CUDA, Vulkan, OpenCL | yes -- T4 / A10G / L4 class instances are enough |
+| OpenVINO | yes (CPU) |
+| **ROCm** | **no** -- the one AMD-GPU instance family is not an officially supported ROCm target |
+| **SYCL** | **no** -- needs an Intel GPU, which is not offered |
+
+**How to run these, and the invariants that came out of doing it, are in
+[`docs/rented-hardware-test-plan.md`](docs/rented-hardware-test-plan.md)** -- including the one that
+costs days when missed: a GPU instance family starts at a **zero vCPU quota** on a fresh account, and
+raising it is a support request measured in hours to days, so ask before the run is due. The large
+accelerator families (8-GPU training instances) prove nothing here that a single small GPU does not,
+and cost two orders of magnitude more.
+
+**The AMX row is closed.** It was a suspected defect, turned out to be one line of upstream ggml
+(the AMX buffer released with `free()` instead of `ggml_aligned_free`), and is fixed as
+`patches/0018` -- proven on a rented Granite Rapids machine (`sapphirerapids` 6/6 crash against 0/6
+for the other modules, Linux unaffected) and verified there again with the patch (12/12 clean). The
+full record is in the patch header, `CLAUDE.md`'s patch table, `CHANGELOG.md` and the module table in
+`docs/local-test-plan.md`; `llama/cmake/check-aligned-free-pairing.cmake` is the guard. **What stays
+open is only the original question** -- the *throughput* gain of `sapphirerapids` and `zen4` over
+`haswell` -- plus one rule worth keeping: a green Windows job proves nothing unless its log names an
+AMX CPU, which is why `print-host-info.sh` now runs in every job that touches native code.
+
+### AIX on POWER -- an open porting question, not a test
+
+Not supported and never built. Worth a line because the access exists (an AIX 7.3 POWER8 machine on
+the GCC Compile Farm) and because it would be the **second big-endian platform** after s390x --
+which is exactly the coverage s390x was added for, so the endian-sensitive surface of *our* layer is
+already guarded by `ctest` under qemu there.
+
+What makes it a port rather than a run: AIX is big-endian POWER with **XCOFF**, not ELF, so the
+loader's assumptions (`$ORIGIN`-style run paths, `dlopen` semantics, `verify-native-deps.py`'s ELF
+reader) do not carry over; upstream llama.cpp does not target AIX; and a JVM there means IBM Semeru,
+not Temurin. **Nothing is scheduled**: the useful first step is a plain `cmake` build of the static
+library on that machine to see how far it gets and what breaks, with the result written down --
+before anything is promised about a natives jar.
 
 ### GraalVM Native Image -- evaluated, parked until a consumer asks
 
@@ -428,3 +618,133 @@ flags, the `acquire`/`release` context-guard unit tests, the `OSInfo` alias test
 - **Additional ArchUnit rules to consider** — the full **`layeredArchitecture()`** rule and a **per-module banned-import** rule (`jacksonBannedFromContractsAndLoader` — Jackson kept out of `args`/`callback`/`exception`/`loader`) are now DONE. Still open: more per-module banned-imports if useful, public-API-surface constraints (no public mutable static state, etc.). Partial progress: `7b6667d` covers the "no public field that is not final" sub-rule.
 
 - **Cross-repo code-quality TODOs** — see [`../workspace/policies/code-quality-todos.md`](../workspace/policies/code-quality-todos.md) for the canonical `@VisibleForTesting` design-fit review, package hierarchy review, and class/method naming review. This repo has no `@VisibleForTesting` usages today; package and naming reviews remain open.
+
+## GPU backends on rented hardware
+
+**AWS blocks this outright on a new account: the G-instance vCPU quota is 0.** A `g4dn.xlarge`
+launch (Tesla T4, ~0.21 USD/h, so cents for a probe) is refused with
+`VcpuLimitExceeded ... your current vCPU limit of 0`, and raising it is a support request the
+account owner has to file -- the probe package (CPU + `cuda13` + `vulkan` module jars, 169 MB) and
+the driver-equipped AMI (`Deep Learning Base OSS Nvidia Driver GPU AMI (Amazon Linux 2023)`) are
+otherwise ready, so this is a one-line unblock once the quota exists. Cost was never the obstacle.
+
+**Which GPU backends are reachable on rented hardware at all, measured 2026-10-11:**
+
+| backend | rentable | how |
+|---|---|---|
+| `cuda13` | yes | G instances (T4 / A10G / L4 / L40S). A T4 proves as much as an H100 for "the module loads and computes", so the **P** buckets (V100/A100/H100) are deliberately not requested |
+| `vulkan` | yes | the same NVIDIA cards -- the driver supplies `vulkan-1` / `libvulkan.so.1` |
+| `opencl` | yes | the same cards -- NVIDIA ships an ICD |
+| `openvino` | **yes, with no GPU at all** | OpenVINO has a CPU plugin, so an `m7i`/`m8i` can load `libggml-openvino.so`. Currently build-only; this is the cheapest open coverage gap |
+| `rocm` | **no** | `g4ad` (Radeon Pro V520) is **gone from every region checked** (us-east-1, us-east-2, us-west-2, eu-central-1) and was AWS's only AMD GPU; ROCm never officially supported Navi 12 either. Stays build-only |
+| `sycl` (GPU) | **no** | AWS has no discrete Intel GPU. Intel's CPU OpenCL runtime covers part of it |
+| `metal` | **no** | EC2 Mac exists but bills a 24-hour minimum, and macOS ships the backend inside the library anyway |
+
+**Spot cannot be stopped**, only terminated, so a persistent switch-off-in-between machine needs the
+**On-Demand** G quota (`L-DB2E81BA`), not the Spot one. Measured spot price for `g4dn.xlarge` on
+2026-10-11: **0.2925 USD/h**; On-Demand is roughly 0.53. A stopped instance costs only its EBS
+volume (40 GB gp3 ~ 3 EUR/month), and starts in ~40 s with the toolchain and models still on it --
+against 10 to 15 minutes for the boot-from-scratch probes used so far.
+
+**`SME` is not rentable anywhere, and an Apple instance does not help.** AWS does offer
+`mac-m4.metal` / `mac-m4pro.metal` / `mac-m4max.metal`, and Apple M4 does have SME -- but macOS
+ships **one static library** (`metal-macos-aarch64`, Metal compiled in), not the aarch64 CPU module
+set, so `armv9.2_1`/`armv9.2_2` cannot even be loaded there. They would need **Linux aarch64 with
+SME**, which Graviton 4 lacks and no current instance provides. EC2 Mac also bills a **24-hour
+minimum** (dedicated host), so it is the expensive way to answer nothing.
+
+
+## Handed over from the modular-natives session (2026-10-11) -- read the first item before merging #507
+
+Appended on `local/cpu-module-isolation-test` by the session that shipped the modular natives
+(#504 to #506) and watched their two full runs (38065017595, 38069595101). Nothing above was moved.
+Items `main` already carries through #506 are named, not repeated.
+
+### Before #507 merges: two `0018` patches for the same hunk
+
+`main` (cfc10fd2, #506) carries `llama/patches/0018-ggml-amx-free-the-aligned-buffer.patch`; this
+branch carries `llama/patches/0018-ggml-amx-aligned-free.patch`. Both replace the same line of
+`ggml/src/ggml-cpu/amx/amx.cpp` (main's adds a four-line comment above the call, this one is bare).
+After a merge both files exist, the applier takes them in filename order, the first applies, the
+second no longer finds its `-` line and aborts the configure with "does not apply cleanly" -- every
+native build job red, on every platform. `git merge-tree main HEAD` (2026-10-11) reports a textual
+conflict in `TODO.md` **only**; the two patch files, CLAUDE.md (two `0018` rows in the patch table)
+and CHANGELOG.md (two "Fixed" bullets for the same defect) merge *silently*. Resolve in the merge
+commit: keep exactly one patch file (the comment is the only difference), one patch-table row and
+one CHANGELOG bullet, and keep this branch's `llama/cmake/check-aligned-free-pairing.cmake` guard
+either way (main has none). For the `TODO.md` conflict: take main's wording for the three places
+#506 touched -- a fifth "Modular natives -- follow-ups" item (the Windows ROCm job is the pipeline's
+critical path at 4:15 h and builds uncached), the corrected sccache sentence under "Upstream
+submissions" (the `-Xclang` that sccache 0.18.0 refuses comes from CMake's
+`Platform/Windows-Clang.cmake` runtime-library selection on every plain-clang Windows TU, not only
+from llama.cpp's `-fno-pch-timestamp`; CLAUDE.md "sccache on every Windows Ninja job but one" on
+main has the measurement) and the AMX bullet under "Needs a machine" -- and this branch's structure
+for everything else.
+
+### Open from that session, recorded nowhere else
+
+- **WER minidumps are switched on but unproven.** #506 makes the Windows test step set
+  `Disabled=0` / `DontShowUI=1` under both WER keys next to the `LocalDumps\java.exe` entry
+  (`DumpType` 2), because the AMX heap corruption left no dump behind. No Windows crash has happened
+  since, so nothing shows that a `.dmp` now lands in the failure artifact. Prove it once rather
+  than wait: a throwaway step that crashes a `java.exe` on purpose (an access violation through
+  `sun.misc.Unsafe`, or `jshell` writing to address 0) on a branch run, then look for the dump in
+  the artifact -- and if none appears, replace the WER route with `procdump -ma -e` around the
+  surefire run.
+- **The emulator package pre-install is unproven.** Both emulator jobs died in one minute inside the
+  action's own `sdkmanager --install emulator --channel=0` ("Error on ZipFile unknown archive", run
+  38069595101) an hour after being green; #506 installs the package in a step before the action,
+  four attempts, so the action's install is a no-op. Neither job has run since. If the download
+  keeps flaking, the sturdier form is `actions/cache` over `$ANDROID_HOME/emulator` keyed on the
+  emulator package version `sdkmanager --list` reports, so dl.google.com is reached once per
+  version instead of once per job.
+- **Everything behind `package` has never run on the modular natives.** Run 38069595101 skipped
+  `package` (it `needs` the Windows clang test job, red with the AMX crash); this branch's run
+  38112603436 reaches it and fails on the Windows OpenVINO module jar (the blocker at the top of
+  this file). Still unexercised after that: the smoke-set assembly (`package-smoke-sets.sh`),
+  `smoke-natives-jars.sh` (classes + all 23 natives jars on the classpath **and** the module path),
+  the bytecode gate and `verify-native-deps.py` over all 23 jars, the four `smoke-natives` rows
+  (loader line naming every module jar of the platform, the HTTPS round, the RPC smoke, the
+  bytecode gate over the set), `smoke-natives-macos`, `smoke-agent-linux`, and the publish jobs
+  attaching the Maven artifacts. Expect further rounds there; the `windows-x86-64` smoke row runs
+  on the same CPU lottery as the Windows test job, so it exercises AMX only when GitHub hands it an
+  Intel runner.
+- **The two server defaults disagree, by design or not -- owner's call.** Upstream #30159 (b11529)
+  moved llama-server's default port from 8080 to 9931, which `NativeServer.DEFAULT_PORT` follows
+  because it inherits the forwarded argv; `OpenAiServerConfig.DEFAULT_PORT` stayed 8080 as the
+  project's own constant. Raised 2026-10-09, never answered: align `OpenAiCompatServer` to 9931
+  (one constant, its tests, README) or keep the split and say so in the README.
+- **Maven plugins without a pinned version, and no `requirePluginVersions` enforcer rule** (all
+  four repos; raised 2026-10-01, never answered). `clean`, `resources`, `install`, `deploy`, `site`
+  and in places `compiler`/`jar` run at whatever version the Maven on the runner defaults to, which
+  differs between CI and a local build (the parent's `<pluginManagement>` here covers the plugins
+  more than one module uses, not these). `check-versions.py` would then also compare them across
+  the siblings. One pull request per repo, warnings-only until all four have landed.
+- **`SECURITY.md` and `CONTRIBUTING.md` are the two per-repo files never compared.** Every other
+  file that was "probably the same" across the four repos is either in `shared-files.sha256`
+  byte-for-byte or as a `?repo` entry; these two were left out on 2026-10-01 as "differs per repo,
+  probably wanted, not checked". Diff them once and either add `?repo` entries or write down why
+  they differ.
+- **SonarCloud reported "1 new issue" on #486 and nobody looked.** The sandbox's proxy answers 403
+  for sonarcloud.io, so the finding was never read; the quality gate has passed since, so it is
+  low, but it is unread.
+- **The local-agent assignment of 2026-10-10 exists only in the session, not in `docs/handover/`.**
+  Its deliverables map onto "Modular natives -- follow-ups" item 1 (the module jars on the RTX 3070
+  + iGPU, throughput against 265.6 / 88.8 / 243.7, `--device` names across module sets, the
+  filter's negative paths), the first two "Needs a machine" bullets (extraction reuse, stale
+  cleanup against a running JVM) and the Kolibri bullet; the agent was asked to write
+  `docs/handover/local-agent-report-5.2.0-modular-windows.md` on a branch
+  `local/modular-natives-windows-report`. One question in it is not in item 1 yet: NVIDIA's and
+  AMD's drivers ship OpenCL ICDs, so CUDA, Vulkan **and** OpenCL may each see the same RTX 3070 --
+  whether llama.cpp folds the three into one device by `device_id` and which backend wins is
+  unmeasured. The input it waits for is the first green `llama-smoke-windows-x86-64` artifact.
+- **REUSE attribution is probably wrong in two places, and changing it needs the owner's word.**
+  `REUSE.toml` credits the generated dockcross wrappers (`.github/dockcross/dockcross-*`) to the
+  original fork author and the owner, while they are output of the dockcross project; and about 35
+  Java files plus the documentation block still name the fork author, which a `git blame` pass
+  would have to confirm or refute file by file. Raised 2026-10-01; no attribution is removed
+  without an explicit decision.
+- **srcmorph's smoke tests a fat jar it never ships** (its thin Central jars are launched by no job,
+  its 15 classifier fat jars are checked structurally only). Whether srcmorph follows jllama -- thin
+  jar plus `jbang --deps`, smoke on the consumer's classpath -- is the owner's decision and is
+  recorded in srcmorph's `TODO.md` and the workspace fat-jar policy, not here.

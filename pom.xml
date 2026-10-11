@@ -54,6 +54,29 @@ SPDX-License-Identifier: MIT
 		</snapshotRepository>
 	</distributionManagement>
 
+	<properties>
+		<!--
+			The Jackson line, stated once for every module. `llama` uses jackson-databind directly;
+			`llama-langchain4j` gets jackson transitively through langchain4j-core, which pulled an
+			older jackson-core past a published advisory (two HIGH Dependabot alerts, 2026-10-11)
+			because nothing managed it there. The BOM import below pins the whole family for every
+			module, so a transitive jackson can no longer be older than this.
+		-->
+		<jackson.version>2.22.3</jackson.version>
+	</properties>
+
+	<dependencyManagement>
+		<dependencies>
+			<dependency>
+				<groupId>com.fasterxml.jackson</groupId>
+				<artifactId>jackson-bom</artifactId>
+				<version>${jackson.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+		</dependencies>
+	</dependencyManagement>
+
 	<modules>
 		<module>llama</module>
 		<module>llama-langchain4j</module>

@@ -298,6 +298,13 @@ FetchContent_Declare(
 	${JLLAMA_LLAMA_SOURCE_SUBDIR}
 )
 FetchContent_MakeAvailable(llama.cpp)
+
+# Every ggml source allocating with ggml_aligned_malloc must also release with ggml_aligned_free.
+# The AMX buffer type did not, which corrupted the Windows heap on AMX-capable CPUs and killed the
+# process at cleanup; patches/0018 fixes it. Checked here on every platform in every build,
+# because no machine without AMX can notice the defect at run time.
+include(cmake/check-aligned-free-pairing.cmake)
+jllama_check_aligned_free_pairing(${llama.cpp_SOURCE_DIR})
 if(JLLAMA_BACKEND_DL)
     # Where ggml can be loaded as modules here (CLAUDE.md "Modular natives"): Linux x86-64 / aarch64
     # (the dockcross Android toolchain reports Linux too, see the Android block above) and Windows
