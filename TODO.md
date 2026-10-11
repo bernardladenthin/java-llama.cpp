@@ -36,6 +36,50 @@ other GPU jobs write `ggml-<backend>.dll`, and `JLLAMA_MODULE_ONLY` writes `$<TA
 the upload's `if-no-files-found: error` did not catch it. The two GPG jobs red in the same run are
 **unrelated and expected** on a branch: they need the `maven-central` environment secret.
 
+### Three measured gaps between "the jar is on the classpath" and "it works" (2026-10-11)
+
+All from the first runs in which a GPU module jar was ever *used* rather than placed, and from
+loading the Linux jar on an image that is not Amazon Linux. Numbers and method:
+[`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md).
+
+1. **The Linux CPU jar needs `libgomp.so.1`, and a plain Ubuntu server image does not have it.**
+   `libggml-base.so` -- the first file the loader loads -- declares it, so the *whole* jar dies with
+   `UnsatisfiedLinkError: The native library of backend 'cpu' could not be loaded`, which reads like
+   a packaging defect. Every shipped Linux file also needs `libstdc++.so.6` and `libgcc_s.so.1`, so
+   distroless and musl images cannot run it at all. **Decision needed:** make the Linux jar
+   self-contained the way the Android build already is (`GGML_OPENMP=OFF` plus `-static-libstdc++`),
+   at a measured cost of ~6% on token generation on 8 threads -- or keep the dependency and document
+   it in the README. That 6% is one sample inside its own spread; re-measure it on the rented
+   machines before deciding, which is cheap now that the harness exists.
+
+2. **`cuda13` does not fall back when the driver is too old -- it aborts the JVM.** On a Tesla T4
+   with driver 595.91.07 the module opened, ggml enumerated the GPU and offloaded 29/29 layers, and
+   then `ggml_abort` killed the process: `the provided PTX was compiled with an unsupported
+   toolchain`. Turing, A100 and Hopper ship as **PTX only** (`75-virtual 80-virtual 90-virtual` in
+   ggml's default set; native cubins exist for `86`, `89` and Blackwell), so they depend entirely on
+   the driver JIT-compiling CUDA 13.4 PTX. `abort()` cannot be caught from Java. **Two candidate
+   fixes:** document a minimum driver version for the `cuda13` jars, and/or pass an explicit
+   `CMAKE_CUDA_ARCHITECTURES` adding `75-real 80-real 90-real` so the common datacenter GPUs need no
+   JIT -- at the price of binary size, the module already being 154 MB.
+
+3. **`openvino` on a host without an Intel accelerator is 172x slower, and takes over silently.**
+   Same CPU library, same machine: `cpu` only 490.4 pp / 34.5 tg, with the OpenVINO module present
+   29.4 / **0.2** -- five seconds per token, over 27000 log lines mentioning OpenVINO. Its CPU plugin
+   contributes a *device*, so llama.cpp prefers it; this is the case the "a module whose vendor
+   runtime is missing is skipped" rule does not cover. It additionally needs **`libOpenCL.so.1`**,
+   which the OpenVINO archive does **not** contain and Ubuntu does not install by default
+   (`ocl-icd-libopencl1`) -- without it the module silently never opens, so a user can follow
+   OpenVINO's own instructions and still get nothing. That dependency is documented for Windows only,
+   where the OS supplies the loader. **Decision needed:** make the OpenVINO module **opt-in** instead
+   of additive, or document in the README that the jar needs an Intel GPU/NPU plus an ICD loader and
+   must otherwise stay off the classpath.
+
+4. **The loader's exception does not name the missing library.** It ends in "see the messages above"
+   and prints the `dlopen` reason to `System.err` separately, so a consumer who only has the stack
+   trace cannot tell "library missing from the jar" from "library present, one `DT_NEEDED` dependency
+   absent". The Android path in the same file already carries the reason and says why in a comment;
+   the jar path never got the same treatment. Small, self-contained fix.
+
 ### Modular natives -- follow-ups
 
 Every platform a GPU can join ships modular since 5.2.0 (CLAUDE.md "Modular natives": `JLLAMA_BACKEND_DL`
