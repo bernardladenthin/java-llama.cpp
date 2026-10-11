@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
+import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -17,6 +18,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
+import java.util.jar.Attributes.Name;
+import java.util.jar.JarFile;
+import java.util.jar.Manifest;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import net.ladenthin.llama.ClaudeGenerated;
@@ -59,6 +63,9 @@ public class CpuModuleIsolationTest {
 
     private static final String MODULE_PREFIX = "ggml-cpu-";
 
+    /** Separator of the manifest {@code Class-Path} entries. */
+    private static final java.util.regex.Pattern WHITESPACE = java.util.regex.Pattern.compile("[ \\t\\r\\n]+");
+
     /** Files a module directory needs besides the module itself; absent ones are skipped. */
     private static final List<String> SUPPORT = List.of(
             System.mapLibraryName("jllama"),
@@ -92,10 +99,62 @@ public class CpuModuleIsolationTest {
             }
         }
 
+        // Printed on success too: which modules this CPU accepts is the diagnosis a green run on an
+        // unfamiliar runner should still leave behind. GitHub mixes runner hardware -- an Ice Lake
+        // runner (Xeon Platinum 8370C) picks icelake and passes, a Granite Rapids one (Xeon 6973P-C,
+        // the only AMX machine seen so far) picks sapphirerapids, so without this table a green log
+        // does not say which path was actually exercised.
+        System.out.println("CpuModuleIsolationTest: " + modules.size() + " module(s) in " + backendDir);
+        report.forEach(line -> System.out.println("  " + line));
+
         assertTrue(
                 crashed.isEmpty(),
                 () -> "these CPU modules did not load cleanly on their own:\n" + String.join("\n", crashed)
                         + "\n\nall modules:\n" + String.join("\n", report));
+    }
+
+    /**
+     * This JVM's real classpath entries.
+     *
+     * <p>Surefire starts the fork with a <em>manifest-only</em> booter jar, so {@code java.class.path}
+     * is that single jar and the real entries sit in its manifest {@code Class-Path} as {@code file:}
+     * URLs. Splitting the property alone therefore hands the child a classpath that still carries the
+     * real natives directory: the staged per-module directory is merely prepended to the full module
+     * set, every row reports the module the CPU would have picked anyway, and the test proves nothing.
+     * It did exactly that until this was found -- 14 rows, all "chose haswell".
+     *
+     * @param separator the platform path separator
+     * @return the entries, expanded out of the booter jar when there is one
+     */
+    private static List<String> effectiveClasspath(String separator) {
+        String property = System.getProperty("java.class.path", "");
+        List<String> entries = new ArrayList<>(List.of(property.split(java.util.regex.Pattern.quote(separator))));
+        if (entries.size() != 1 || !entries.get(0).endsWith(".jar")) {
+            return entries;
+        }
+        Path booter = Paths.get(entries.get(0));
+        try (JarFile jar = new JarFile(booter.toFile())) {
+            Manifest manifest = jar.getManifest();
+            String classPath =
+                    manifest == null ? null : manifest.getMainAttributes().getValue(Name.CLASS_PATH);
+            if (classPath == null || classPath.isBlank()) {
+                return entries;
+            }
+            List<String> expanded = new ArrayList<>();
+            for (String token : WHITESPACE.split(classPath.trim())) {
+                try {
+                    expanded.add(Paths.get(new URI(token)).toString());
+                } catch (Exception e) {
+                    expanded.add(
+                            booter.getParent() == null
+                                    ? token
+                                    : booter.getParent().resolve(token).toString());
+                }
+            }
+            return expanded;
+        } catch (IOException e) {
+            return entries;
+        }
     }
 
     /** The extracted/available backend directory holding the library for this platform, or null. */
@@ -169,14 +228,23 @@ public class CpuModuleIsolationTest {
                 : backendDir.toAbsolutePath().toString().toLowerCase(Locale.ROOT);
         List<String> entries = new ArrayList<>();
         entries.add(root.toAbsolutePath().toString());
-        for (String entry : System.getProperty("java.class.path").split(java.util.regex.Pattern.quote(separator))) {
+        for (String entry : effectiveClasspath(separator)) {
             String candidate = Paths.get(entry).toAbsolutePath().toString().toLowerCase(Locale.ROOT);
             if (real == null || !real.startsWith(candidate)) {
                 entries.add(entry);
             }
         }
+        // Each child needs a temp directory of its own. The extraction directory is keyed by the
+        // LIBRARY (plus any GPU module jars), never by the CPU modules lying beside it, so every
+        // staged set shares one name -- the first child extracts its single module, and every later
+        // one finds the directory "in place" and loads whatever is already there. That silently
+        // defeated the isolation this test exists for: all 14 rows reported the module the CPU would
+        // have picked anyway (measured: 14x "chose haswell" from one directory holding 14 modules).
+        Path childTemp = root.resolveSibling(root.getFileName() + "-tmp");
+        Files.createDirectories(childTemp);
         List<String> command = List.of(
                 Paths.get(System.getProperty("java.home"), "bin", "java").toString(),
+                "-D" + LlamaSystemProperties.PREFIX + ".tmpdir=" + childTemp.toAbsolutePath(),
                 "-cp",
                 String.join(separator, entries),
                 Probe.class.getName());
@@ -191,9 +259,11 @@ public class CpuModuleIsolationTest {
         }
         String chosen = null;
         for (String line : output.split("\\R")) {
-            int index = line.indexOf(MODULE_PREFIX);
+            // The line names the module by its full path, and the per-child temp directory itself
+            // starts with the module prefix -- take the LAST occurrence, i.e. the file name.
+            int index = line.lastIndexOf(MODULE_PREFIX);
             if (line.contains("loaded CPU backend") && index >= 0) {
-                chosen = line.substring(index);
+                chosen = line.substring(index).trim();
             }
         }
         return new Result(process.exitValue(), output, chosen);
