@@ -1046,12 +1046,27 @@ for everything else.
   that was only occasionally flaky into one that is always red** (runs 38146809329, 38148401395,
   38149667195), and the misleading message is what kept that invisible: a reader sees a download
   problem at Google and waits for it to pass.
-  Fixed by resolving the command (PATH, then `$ANDROID_HOME`, `$ANDROID_SDK_ROOT` and the image's
-  `/usr/local/lib/android/sdk`, newest `cmdline-tools` version last) and by **keeping the two failure
-  modes apart**: "not found" now says it is a runner-image change and not a download problem. Both
-  copies of the step are fixed identically. **Still to verify in CI** -- the emulator jobs have not
-  been green since the step was added, so the thing the step was built to guard against (the corrupt
-  archive of run 38069595101) also remains unproven.
+  Fixed in two steps, and the first one was wrong in a way the second could only find *because* it
+  was wrong. The first (#519) kept the two failure modes apart -- "not found" says it is a
+  runner-image change and not a download problem -- and resolved the command with
+  `find "$root/cmdline-tools" -maxdepth 2`. Run 38164077038 then reported, in one line,
+  `sdkmanager not found -- looked ... ANDROID_HOME='/usr/local/lib/android/sdk'`: the directory is
+  there, and the file sits at `cmdline-tools/latest/bin/sdkmanager`, which is **three** levels below
+  `cmdline-tools` -- the search stopped at the `bin` directory. An off-by-one, mine; what the
+  message rewrite bought was seeing it at a glance instead of suspecting Google again.
+  The second (#526) drops the find for the three known layouts in order (`cmdline-tools/latest/bin`,
+  `cmdline-tools/<version>/bin`, the old `tools/bin`), guards the outer loop so a later root cannot
+  overwrite the found path, and -- the part the first version lacked -- **lists what is actually
+  under each root** when nothing is found, because naming only the places searched leaves three
+  causes (missing directory, missing version subdirectory, missing file) behind one message.
+  Validated against five faked layouts locally, including the failure case. **Still to verify in CI**
+  -- the emulator jobs have not been green since the step was added, so the thing it was built to
+  guard against (the corrupt archive of run 38069595101) also remains unproven.
+  One trap worth keeping for whoever tests such a step locally: on this Windows checkout `chmod +x`
+  does not stick on a plain file (`ls -l` still shows `rw-r--r--`), so `[ -x ]` answers *false* and
+  every probe "failed" until the fixtures were given a `#!/bin/sh` line. The first run of that probe
+  reported all five layouts broken, including the one that demonstrably works in CI -- the harness,
+  not the logic.
 - **Everything behind `package` has never run on the modular natives.** Run 38069595101 skipped
   `package` (it `needs` the Windows clang test job, red with the AMX crash); this branch's run
   38112603436 reaches it and fails on the Windows OpenVINO module jar (the blocker at the top of

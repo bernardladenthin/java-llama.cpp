@@ -1188,12 +1188,31 @@ jobs:
           if [ -z "$SDKMANAGER" ]; then
             for root in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" /usr/local/lib/android/sdk; do
               [ -n "$root" ] || continue
-              candidate="$(find "$root/cmdline-tools" -maxdepth 2 -name sdkmanager -type f 2>/dev/null | sort | tail -1)"
-              if [ -n "$candidate" ]; then SDKMANAGER="$candidate"; break; fi
+              # Keep the first root that answers: the inner break leaves only the inner
+              # loop, so without this a later root would overwrite the found path. Written
+              # as an if rather than "test && break", which under set -e would end the
+              # step the moment the test is false.
+              if [ -n "$SDKMANAGER" ]; then break; fi
+              # The known layouts, newest first, rather than one find: cmdline-tools/<version>/bin
+              # sits three levels below cmdline-tools, which an earlier -maxdepth 2 never reached --
+              # it stopped at the bin directory and reported 'not found' for a file that was there.
+              for candidate in "$root/cmdline-tools/latest/bin/sdkmanager" "$root/cmdline-tools"/*/bin/sdkmanager "$root/tools/bin/sdkmanager"; do
+                if [ -x "$candidate" ]; then SDKMANAGER="$candidate"; break; fi
+              done
             done
           fi
           if [ -z "$SDKMANAGER" ]; then
             echo "::error::sdkmanager not found -- looked on PATH and under ANDROID_HOME='${ANDROID_HOME:-}', ANDROID_SDK_ROOT='${ANDROID_SDK_ROOT:-}' and /usr/local/lib/android/sdk. This is a runner-image change, not a download problem."
+            # Name what IS there. The first version said only where it had looked, which left
+            # the reader to guess whether the directory, the version subdirectory or the file
+            # was missing -- three causes behind one message.
+            for root in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" /usr/local/lib/android/sdk; do
+              [ -n "$root" ] || continue
+              echo "contents of ${root}:"
+              ls -la "$root" 2>&1 | sed "s/^/  /" || true
+              echo "contents of ${root}/cmdline-tools:"
+              ls -la "$root/cmdline-tools" 2>&1 | sed "s/^/  /" || true
+            done
             exit 1
           fi
           echo "using sdkmanager: $SDKMANAGER"
@@ -1378,12 +1397,31 @@ jobs:
           if [ -z "$SDKMANAGER" ]; then
             for root in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" /usr/local/lib/android/sdk; do
               [ -n "$root" ] || continue
-              candidate="$(find "$root/cmdline-tools" -maxdepth 2 -name sdkmanager -type f 2>/dev/null | sort | tail -1)"
-              if [ -n "$candidate" ]; then SDKMANAGER="$candidate"; break; fi
+              # Keep the first root that answers: the inner break leaves only the inner
+              # loop, so without this a later root would overwrite the found path. Written
+              # as an if rather than "test && break", which under set -e would end the
+              # step the moment the test is false.
+              if [ -n "$SDKMANAGER" ]; then break; fi
+              # The known layouts, newest first, rather than one find: cmdline-tools/<version>/bin
+              # sits three levels below cmdline-tools, which an earlier -maxdepth 2 never reached --
+              # it stopped at the bin directory and reported 'not found' for a file that was there.
+              for candidate in "$root/cmdline-tools/latest/bin/sdkmanager" "$root/cmdline-tools"/*/bin/sdkmanager "$root/tools/bin/sdkmanager"; do
+                if [ -x "$candidate" ]; then SDKMANAGER="$candidate"; break; fi
+              done
             done
           fi
           if [ -z "$SDKMANAGER" ]; then
             echo "::error::sdkmanager not found -- looked on PATH and under ANDROID_HOME='${ANDROID_HOME:-}', ANDROID_SDK_ROOT='${ANDROID_SDK_ROOT:-}' and /usr/local/lib/android/sdk. This is a runner-image change, not a download problem."
+            # Name what IS there. The first version said only where it had looked, which left
+            # the reader to guess whether the directory, the version subdirectory or the file
+            # was missing -- three causes behind one message.
+            for root in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" /usr/local/lib/android/sdk; do
+              [ -n "$root" ] || continue
+              echo "contents of ${root}:"
+              ls -la "$root" 2>&1 | sed "s/^/  /" || true
+              echo "contents of ${root}/cmdline-tools:"
+              ls -la "$root/cmdline-tools" 2>&1 | sed "s/^/  /" || true
+            done
             exit 1
           fi
           echo "using sdkmanager: $SDKMANAGER"
