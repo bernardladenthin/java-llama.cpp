@@ -2132,8 +2132,12 @@ jobs:
       - name: Build libraries
         shell: cmd
         # vcpkg toolchain file wires in the OpenCL (incl. cl2.hpp) that ggml-openvino needs.
+        # VCPKG_APPLOCAL_DEPS=OFF: vcpkg otherwise copies its OpenCL.dll next to the linked
+        # module (app-local deployment), and a module jar must hold its module and the
+        # jllama-*.txt lists only -- merge-native-artifacts.sh rejects the artifact otherwise, and
+        # bundling a vendor runtime is against the policy every other GPU jar follows.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_OPENVINO=ON -DOpenVINO_DIR="%OpenVINO_DIR%" -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_OPENVINO=ON -DOpenVINO_DIR="%OpenVINO_DIR%" -DVCPKG_APPLOCAL_DEPS=OFF -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
