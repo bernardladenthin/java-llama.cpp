@@ -368,9 +368,13 @@ measurement* -- not something CI should repeat. Each family maps to exactly one 
 Bulldozer-era instance exists), `cannonlake` (barely shipped), `alderlake` (consumer Intel) and
 `cooperlake`.
 
-**Graviton is the biggest gain per euro**: the aarch64 module list (`armv8.0_1` to `armv9.2_2`, with
-dotprod, fp16, SVE, i8mm, SVE2, SME) is built by CI and has never had a single module selected on
-real hardware.
+**Graviton was the biggest gain per euro, and it has been taken**: 6 of the 8 aarch64 modules are now
+measured with real inference on a Graviton 4 (`docs/local-test-plan.md` has the table).
+`armv9.2_1`/`armv9.2_2` need **SME**, which no AWS instance has, so they stay unmeasured. Two things
+came out of it: the two SME modules decline *cleanly* (no CPU backend, `LlamaException`, not a
+crash), and **ggml picks a module that is 37 % slower at prompt processing than a lower one** --
+`armv8.6_2` at 198 t/s against `armv8.2_2` at 271 t/s on the same machine and model. That is a
+scoring question for upstream and invisible to anyone who only runs what the CPU picks.
 
 GPU backends, same idea, with two that do not work out:
 
