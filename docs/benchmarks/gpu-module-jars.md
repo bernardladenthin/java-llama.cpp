@@ -45,6 +45,27 @@ exit=134            # SIGABRT
 **The JVM is killed.** Not an exception, not a fallback to the CPU modules — `ggml_abort` calls
 `abort()`, which no Java-side guard can intercept.
 
+**And there is no safe configuration.** The same machine, the same module, five runs:
+
+| run | layers offloaded | result |
+|---|---|---|
+| loader decides, `-ngl 99` | 29/29 | **exit 134** (`SIGABRT`) |
+| `cuda13` forced, `-ngl 99` | 29/29 | **exit 134** |
+| **`cuda13` forced, `-ngl 0`** | **0/29** | **exit 134** |
+| `vulkan` forced | 29/29 *(log line only)* | exit 0, pp 201.8 / tg 24.1 |
+| `cpu` only | 0/29 | exit 0, pp 202.2 / tg 24.1 |
+
+`-ngl 0` aborts too, so this is not about offloading: **having the module on the classpath is
+enough**, because the backend registers and llama.cpp queries and uses the device during setup
+whatever the layer count says. The only escape is keeping the jar off the classpath or
+`-Dnet.ladenthin.llama.backend=cpu`.
+
+The Vulkan row is the control, and it is the one backend of the three that behaved exactly as
+designed: skipped for want of an ICD, with throughput **identical to the CPU baseline**
+(201.8/24.1 against 202.2/24.1). Note that the `offloaded 29/29 layers to GPU` line appears for it
+anyway -- llama.cpp logs the intent, not the outcome, as it also does for a registered RPC device
+that holds no layers.
+
 ### Why the T4 depends on JIT at all
 
 ggml chooses the architecture set itself (`ggml/src/ggml-cuda/CMakeLists.txt`), and this project

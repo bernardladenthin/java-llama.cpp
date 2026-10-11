@@ -57,7 +57,13 @@ loading the Linux jar on an image that is not Amazon Linux. Numbers and method:
    then `ggml_abort` killed the process: `the provided PTX was compiled with an unsupported
    toolchain`. Turing, A100 and Hopper ship as **PTX only** (`75-virtual 80-virtual 90-virtual` in
    ggml's default set; native cubins exist for `86`, `89` and Blackwell), so they depend entirely on
-   the driver JIT-compiling CUDA 13.4 PTX. `abort()` cannot be caught from Java. **Two candidate
+   the driver JIT-compiling CUDA 13.4 PTX. `abort()` cannot be caught from Java. **And there is no
+   safe configuration: `-ngl 0` aborts as well** (0/29 layers offloaded, same exit 134) -- having the
+   module on the classpath is enough, because the backend registers and llama.cpp uses the device
+   during setup whatever the layer count says; the only escape is leaving the jar off the classpath or
+   `-Dnet.ladenthin.llama.backend=cpu`. By contrast the Vulkan module on the same machine behaved
+   exactly as designed: skipped for want of an ICD, throughput identical to the CPU baseline.
+   **Two candidate
    fixes:** document a minimum driver version for the `cuda13` jars, and/or pass an explicit
    `CMAKE_CUDA_ARCHITECTURES` adding `75-real 80-real 90-real` so the common datacenter GPUs need no
    JIT -- at the price of binary size, the module already being 154 MB.
