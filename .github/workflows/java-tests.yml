@@ -70,9 +70,22 @@ jobs:
         # dumps, so that a JVM crash inside the JNI layer leaves a real native callstack instead of
         # just surefire's "VM terminated without saying goodbye" line. DumpType=2 ==
         # MiniDumpWithFullMemory; the workspace dumps/ folder is globbed by the failure upload.
+        # LocalDumps are written by WerFault.exe, which never runs while WER itself is disabled
+        # (`Disabled=1` under the WER root key) -- and the one crash that needed a dump so far, the
+        # STATUS_HEAP_CORRUPTION at the first model unload in run 38069595101 (patches/0018), left
+        # none. So the switch is set explicitly instead of inherited from the runner image, the UI
+        # is kept off, and the root key is printed next to the LocalDumps one.
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          # Both places Windows reads the switch from: the policy key wins over the normal one.
+          foreach ($wer in @('HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting',
+                             'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting')) {
+            New-Item -Path $wer -Force | Out-Null
+            New-ItemProperty -Path $wer -Name 'Disabled'   -Value 0 -PropertyType DWord -Force | Out-Null
+            New-ItemProperty -Path $wer -Name 'DontShowUI' -Value 1 -PropertyType DWord -Force | Out-Null
+            Get-ItemProperty -Path $wer | Format-List
+          }
           $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\java.exe'
           New-Item -Path $key -Force | Out-Null
           New-Item -Path "${{ github.workspace }}\dumps" -ItemType Directory -Force | Out-Null

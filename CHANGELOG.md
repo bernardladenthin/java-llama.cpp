@@ -9,20 +9,6 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
-### Fixed
-- **Windows crashed with `STATUS_HEAP_CORRUPTION` on CPUs with AMX (Sapphire Rapids and newer).**
-  Every model load that ran on an AMX-capable CPU killed the process at cleanup -- after the
-  inference itself had succeeded -- because ggml's AMX buffer type allocated with
-  `ggml_aligned_malloc()` and released with plain `free()`. On Windows that is `_aligned_malloc`
-  against `free()`, which is undefined behaviour and corrupts the heap (`patches/0018`; of the six
-  callers of `ggml_aligned_malloc` upstream this was the only mismatched pair). Linux was never
-  affected, because `ggml_aligned_malloc` maps to `posix_memalign` there. Measured on a Granite
-  Rapids machine with one CPU backend module staged at a time: the `sapphirerapids` module crashed
-  6 of 6 runs, `cooperlake`, `icelake` and `haswell` none, and the crash reproduces at a single
-  thread. A configure-time check (`llama/cmake/check-aligned-free-pairing.cmake`) now fails the build
-  on every platform if a ggml source allocates aligned and frees plain, because a machine without
-  AMX cannot observe the defect at run time.
-
 ### Added
 - **Modular natives: the GPU backends are additive module jars, and every platform a GPU can join is
   built modular.** A GPU natives jar (`cuda13-linux-x86-64`, `vulkan-windows-aarch64`, ... -- 15 of
@@ -203,8 +189,9 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   (`verify-native-deps.py` holds the directory to the OS imports). `LlamaLoader` pre-loads
   `ggml-base.dll` and `ggml.dll` by full path from `jllama-extras.txt` before `jllama.dll`, so the
   import never resolves against a foreign llama.cpp install on `PATH`. The job no longer installs
-  sccache (upstream's `-Xclang -fno-pch-timestamp` makes every clang TU a cache miss) and no longer
-  runs `ctest` (the option refuses `BUILD_TESTING`; see `test-cpp-windows-x86_64` under Added).
+  sccache (sccache 0.18.0 refuses the `-Xclang` CMake puts on every plain-clang Windows TU, so every
+  TU is a cache miss) and no longer runs `ctest` (the option refuses `BUILD_TESTING`; see
+  `test-cpp-windows-x86_64` under Added).
 - **The message of a rejected request is the bare reason** (`"prompt" must not be empty`), no longer the
   JSON object `{"code":400,"message":…,"type":"invalid_request_error"}` the old `throw_invalid_request`
   wrapped it in: the type is the exception class now (`InvalidRequestException`), as it is for every
@@ -458,6 +445,22 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **A Windows build on an AMX CPU (Sapphire, Emerald or Granite Rapids) crashed the JVM with
+  `STATUS_HEAP_CORRUPTION` when a model was unloaded.** ggml's AMX weight buffer -- used by the
+  `sapphirerapids` CPU module for Q4_0/Q4_1/Q8_0/Q4_K/Q5_K/Q6_K/IQ4_XS weights -- is allocated with
+  `_aligned_malloc()` on Windows and was freed with `free()`; `patches/0018` frees it with
+  `ggml_aligned_free()`, as the plain CPU buffer does (no change on Linux). Never shipped: the
+  5.1.0 Windows jar was a static Haswell-level build that carried no AMX code. Found by the second
+  full CI run of the modular natives, whose Windows Java test job landed on an Intel Xeon 6973P-C
+  runner; the first run's AMD EPYC 7763 never reached the code (the Windows runners are a CPU
+  lottery, CLAUDE.md "Modular natives"). Of the six callers of `ggml_aligned_malloc` upstream this
+  was the only mismatched pair. Reproduced deliberately afterwards on a rented Granite Rapids
+  machine with one CPU module staged at a time: `sapphirerapids` crashed 6 of 6 runs and
+  `cooperlake`, `icelake` and `haswell` none, it reproduces at a **single thread** (so it is no data
+  race), and the same matrix with the patch applied is clean in all twelve runs. A configure-time
+  check (`llama/cmake/check-aligned-free-pairing.cmake`) now fails the build on **every** platform
+  when a ggml source allocates aligned and frees plain, because a machine without AMX cannot observe
+  the defect at run time -- which is exactly how it survived.
 - **`NativeServer` attach mode no longer leaves a sleep callback into freed memory behind.**
   `llama_server_attach` (`patches/0007`) built a `server_routes` on its own stack frame; its
   constructor registers a sleeping-state callback on the model's task queue, which has no unregister,
