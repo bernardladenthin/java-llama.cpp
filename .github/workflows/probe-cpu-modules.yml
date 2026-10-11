@@ -85,19 +85,20 @@ jobs:
           test "$modules" -gt 0 || { echo "::error::the artifact carries no ggml-cpu modules"; exit 1; }
           cat "$dir/jllama-build.txt" || true
 
-      - name: Compile
-        shell: bash
-        run: mvn -B --no-transfer-progress -f llama/pom.xml -DskipTests -Denforcer.skip=true test-compile
 
       # 1. The crashing path: the full set, every module present, one JVM.
       - name: Load the full module set
         shell: bash
-        run: mvn -B --no-transfer-progress -f llama/pom.xml surefire:test -Dtest=NativeLibraryLoadSmokeTest -Dsurefire.failIfNoSpecifiedTests=false
+        # The full `test` lifecycle, not `surefire:test`: standalone, jacoco's prepare-agent never
+        # runs, ${argLine} stays unexpanded and the fork dies with `could not open '{argLine}'`
+        # -- which reads exactly like the crash under investigation (Tests run: 0, "forked VM
+        # terminated") but is only a broken command line. Measured in run 38098637937.
+        run: mvn -B --no-transfer-progress -f llama/pom.xml test -Denforcer.skip=true -Dtest=NativeLibraryLoadSmokeTest -Dsurefire.failIfNoSpecifiedTests=false
 
       # 2. Each module on its own, in its own JVM and its own temp directory.
       - name: Load each module on its own
         shell: bash
-        run: mvn -B --no-transfer-progress -f llama/pom.xml surefire:test -Dtest=CpuModuleIsolationTest -Dsurefire.failIfNoSpecifiedTests=false
+        run: mvn -B --no-transfer-progress -f llama/pom.xml test -Denforcer.skip=true -Dtest=CpuModuleIsolationTest -Dsurefire.failIfNoSpecifiedTests=false
 
       # Surefire redirects test output to files, and a crashed fork leaves its dumpstream there.
       - name: Show what the children printed
