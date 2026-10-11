@@ -179,6 +179,46 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
   Responses client) at a running server, since round-trips confirm wire shapes but not each client's
   parser.
 
+### Code-sign the Windows DLLs (Azure Trusted Signing, owner's decision -- it costs money)
+
+**What.** Microsoft's **Azure Trusted Signing** (formerly Azure Code Signing) signs Windows PE files
+from CI without a hardware token, on a monthly subscription -- the **Basic** tier is in the ~10
+USD/month range and includes a signature quota; **verify the current price and quota before
+committing**, and whether the quota covers signing *18 files per Windows natives jar* on every run
+(`jllama.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-rpc.dll` and the 14 `ggml-cpu-<level>.dll`, plus
+one module per Windows GPU jar). The traditional alternative -- an OV/EV certificate -- is several
+hundred euros a year **and** has required a hardware token since 2023, which a GitHub runner cannot
+use, so it is not a real option for this pipeline.
+
+**Why it is worth considering here specifically.** This project's DLLs are **extracted from a jar
+into a temp directory at run time and loaded with `System.load`**, which is exactly the shape
+antivirus and EDR products treat as suspicious: an unsigned native library appearing in `%TEMP%` and
+being loaded by `java.exe`. A signature does not silence a SmartScreen installer prompt (there is no
+installer), but it is what lets an enterprise allowlist the files by publisher instead of by hash,
+and it removes the "unknown publisher" class of false positive that a consumer cannot debug. There
+is no evidence of a user hitting this yet -- so this is prevention, not a fix, which is why it is a
+decision rather than a task.
+
+**The gatekeeper, and the reason to check it first:** Trusted Signing requires **identity
+validation**. An organisation needs a verifiable legal entity; an **individual** must have a
+verifiable public history (Microsoft has required ~3 years), and the account must be in a supported
+region. **Find out whether the account qualifies before paying for anything** -- the subscription is
+useless without a validated identity, and that is the step that fails, not the plumbing.
+
+**How it would hook into GitHub.** `azure/trusted-signing-action` with federated OIDC credentials
+(no long-lived secret), run in the Windows build jobs *after* the build and *before* the artifact
+upload, so what gets packaged is already signed. Note what that touches on our side: signing
+**modifies the files**, so it must happen before `merge-native-artifacts.sh` and
+`package-smoke-sets.sh` -- both compare files byte for byte -- and the signature must survive the
+jar round trip (it does; a PE signature is part of the file). Signing *after* packaging would mean
+re-writing jars and re-checking them, which is strictly worse.
+
+**What it does not cover.** Linux has no equivalent and needs none. **macOS is a separate purchase
+and a separate problem**: a Developer ID certificate (Apple Developer Program, ~99 USD/year) plus
+notarisation, and the dylib is already ad-hoc signed by the linker -- which is what
+`smoke-natives-macos` verifies with `codesign --verify --strict` after a corrupt dylib shipped in
+three releases. Do not bundle the two decisions; the Windows one is cheap and self-contained.
+
 ### License compliance gate (owner's decision)
 
 The FSFE REUSE check is green on every run. A FOSSA-style *dependency-license* gate (the scanner
