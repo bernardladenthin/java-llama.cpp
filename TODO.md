@@ -471,10 +471,21 @@ introduced by the version bump — they were deferred to keep that PR landable. 
 flags, the `acquire`/`release` context-guard unit tests, the `OSInfo` alias test and the dead
 `Java8CompatibilityHelper` from the original list are done.)
 
-- **`LlamaLoader`'s jar-extraction internals are tested only through directory fixtures.**
-  `BackendLoadTest` drives backend probing, extras, fallthrough and forcing over the committed
-  `Linux/backendtest*/` trees on the test classpath (directories, not jars); extraction out of a real
-  jar is exercised in CI by `smoke-natives-jars.sh` and the smoke sets, not by a unit test.
+- ~~**`LlamaLoader`'s jar-extraction internals are tested only through directory fixtures.**~~
+  **Closed 2026-10-11 as not worth a test, after looking for the branch it would cover.** The premise
+  was that a jar behaves differently from a directory somewhere in the loader. It does, in exactly
+  **one** place -- `extractionKey`, which takes a `jar:<url>!/<entry>` URL apart by hand to read the
+  entry's CRC-32 and size out of the central directory (deliberately not through a
+  `JarURLConnection`, which would hold the jar open in the JVM's jar cache) -- and that place **is**
+  already tested in `LlamaLoaderTest`, against a real jar built by the test and against a jar that
+  does not exist. Everywhere else there is no branch of ours to cover: `extractFile` and
+  `resourceMatchesFile` read a resource only as a stream (`getResourceAsStream`), so the
+  jar-versus-directory difference lives inside the JDK's class loader. A unit test for it would have
+  to add a settable class loader to `LlamaLoader` -- `classLoader()` is hardcoded to the loader's own,
+  by design -- i.e. new mutable static API in production code to exercise a path where the only thing
+  under test would be the JDK. CI loads all 23 natives jars for real anyway
+  (`smoke-natives-jars.sh`, on the classpath **and** the module path), which is the coverage that
+  matters. Recorded with the reasoning so this is not reopened as an oversight.
 
 - **`ContentPart.videoFile(...)` — see the video-input entry above** for the wire shape upstream
   expects (`input_video`, raw base64, not a `data:` URI).
