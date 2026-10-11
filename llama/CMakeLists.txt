@@ -430,6 +430,29 @@ endif()
 # ever reappears.
 if(TARGET ggml-hip)
     target_compile_options(ggml-hip PRIVATE $<$<COMPILE_LANGUAGE:HIP,CXX>:--offload-compress>)
+    # And silence one warning class on this target only, because on Windows it is not a warning but a
+    # flood: 571,559 log lines in one ROCm job (measured in run 38149667195; the CUDA job has 0 and
+    # the SYCL job 8). `ggml.h` defines GGML_API as `__declspec(dllimport) extern` for a consumer of
+    # a shared ggml on _WIN32, and HIP compiles each translation unit once per GPU architecture for
+    # the **device** target amdgcn, which has no DLL storage class -- so clang reports
+    # "__declspec attribute 'dllimport' is not supported" for every GGML_API declaration, times 23
+    # Windows GPU targets. Nothing is wrong: the attribute applies on the host pass and is
+    # meaningless on the device one.
+    #
+    # Why suppress rather than live with it: this is the pipeline's critical path and it builds
+    # uncached, the log becomes unreadable for a real error, and a log that large is its own risk
+    # (GitHub truncates). Scoped to `ggml-hip` because that is the only target with device code, and
+    # it holds upstream's kernels rather than any code of ours, so hiding an ignored attribute there
+    # costs nothing we would otherwise learn. Guarded by WIN32 because the macro expands to
+    # `visibility("default")` elsewhere and there is nothing to ignore.
+    #
+    # Upstream has the same flood in its own windows-rocm job -- worth an issue with these counts
+    # (TODO.md, "Upstream submissions"), since the real fix belongs in ggml.h: a device pass should
+    # not see the dllimport form at all.
+    if(WIN32)
+        target_compile_options(ggml-hip PRIVATE
+                               $<$<COMPILE_LANGUAGE:HIP,CXX>:-Wno-ignored-attributes>)
+    endif()
 endif()
 
 # mtmd lives in tools/mtmd, which is only built when LLAMA_BUILD_TOOLS=ON.

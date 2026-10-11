@@ -640,6 +640,21 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   carries an `-Xclang` argument, which on Windows every plain-clang TU does -- CMake's runtime-library
   selection puts it there -- so no plain-clang Windows build caches at all (CLAUDE.md "Windows
   natives"); that one is an sccache issue, if none is open.
+- **A fourth, measured 2026-10-11: `ggml.h`'s `dllimport` form reaches the HIP *device* pass and
+  floods the log.** `GGML_API` expands to `__declspec(dllimport) extern` for a consumer of a shared
+  ggml on `_WIN32`, and HIP compiles every translation unit once per GPU architecture for the amdgcn
+  **device** target, which has no DLL storage class -- so clang reports
+  `__declspec attribute 'dllimport' is not supported` for each `GGML_API` declaration, times the 23
+  Windows GPU targets. Counted in run 38149667195: **571,559 log lines** in the Windows ROCm job,
+  against 0 in the CUDA job and 8 in the SYCL one. Nothing is broken (the attribute applies on the
+  host pass and is meaningless on the device one), but it makes the log of the pipeline's
+  **critical-path, uncached** job unreadable for a real error and large enough that GitHub truncates
+  it. Suppressed downstream on the `ggml-hip` target only (`-Wno-ignored-attributes`, Windows only --
+  see `llama/CMakeLists.txt`), which is a mitigation rather than the fix: **the fix belongs in
+  `ggml.h`**, where a device pass should not see the dllimport form at all. Upstream's own
+  `windows-rocm` job has the identical flood, so this is an issue to file with the counts, not a
+  patch -- a change to the `GGML_API` macro touches every consumer of ggml and is theirs to make.
+
 - **A third, measured 2026-10-11: `ggml_backend_load_best` picks a slower CPU module than one it
   rejects.** On a Graviton 4 it selects `armv8.6_2` (198.0 t/s pp512) while `armv8.2_2` reaches
   **271.4** on the same machine and model -- the SVE/SVE2/i8mm paths losing to plain DOTPROD+FP16 --
