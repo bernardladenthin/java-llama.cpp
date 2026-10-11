@@ -422,6 +422,12 @@ six runs exit 0 and the generated text is identical to the non-AMX modules', bec
 with `free()`. One line, harmless on Linux, fatal on Windows -- which is why nothing saw it until a
 Windows runner with AMX turned up.
 
+**The fix is verified on the hardware that showed the defect**, which neither CI nor a configure
+check can do: the same matrix re-run on a Granite Rapids instance with `0018` applied gives
+**`exit 0` in all 12 runs**, including all six `sapphirerapids` ones, each now printing the
+`INFER done` line that was missing from every crash. CI green does *not* prove this -- a runner
+without AMX passes either way, and which CPU a run draws is chance.
+
 Guard: **`llama/cmake/check-aligned-free-pairing.cmake`** fails the configure on every platform when
 a ggml source calls `ggml_aligned_malloc` and never `ggml_aligned_free` -- the shape that occurred,
 and the only way a machine without AMX can notice it. Verified red against the unpatched source
