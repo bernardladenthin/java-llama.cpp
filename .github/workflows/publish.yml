@@ -1692,8 +1692,13 @@ jobs:
         # GitHub runner (it errors probing for a CUDA device -> ctest *_NOT_BUILT).
         # GGML_CUDA_CCCL_VERSION: fetch CCCL v3.4.3 like upstream's windows-cuda release job and the
         # Linux CUDA build (see build_cuda_linux.sh) -- DeviceTopK needs it; drop it with CUDA 13.5+.
+        # Explicit architectures, same list as .github/build_cuda_linux.sh and for the same reason:
+        # ggml's default leaves 75 (T4), 80 (A100) and 90 (H100) as PTX, and a driver too old to JIT
+        # CUDA 13.4 PTX makes ggml abort() the JVM rather than fall back -- measured on a T4, see
+        # docs/benchmarks/gpu-module-jars.md. Server applications run on exactly those GPUs. Keep the
+        # two lists equal; a divergence would ship two jars with different hardware support.
         run: |
-          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_CUDA=ON -DGGML_CUDA_CCCL_VERSION=v3.4.3 -DOS_NAME=Windows -DOS_ARCH=x86_64
+          .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="75-real;80-real;86-real;89-real;90-real;100-real;120-real;121-real;121-virtual" -DGGML_CUDA_CCCL_VERSION=v3.4.3 -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:

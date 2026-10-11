@@ -201,6 +201,39 @@ set(LLAMA_BUILD_COMMON ON)
 # supported set) and the Linux SYCL builds (icx/icpx, compiler id IntelLLVM, which BoringSSL's CMake
 # treats as neither GCC nor Clang; upstream's ubuntu-24-sycl release job passes LLAMA_OPENSSL=OFF too,
 # while its windows-sycl job builds BoringSSL -- as this file did before). LLAMA_OPENSSL=OFF there
+# Linux: no libgomp dependency, because the jar has to load in the images Java is actually deployed
+# in. `libggml-base.so` -- the first file LlamaLoader loads -- declares `libgomp.so.1` whenever ggml
+# builds with OpenMP, and GCC's -fopenmp links it DYNAMICALLY, so it is a runtime requirement of the
+# shipped jar. A plain Ubuntu 24.04 server image does not have it, nor does a distroless Java image:
+# measured on EC2, the whole jar then fails with "The native library of backend 'cpu' could not be
+# loaded", which reads like a packaging defect and is a missing distro package. It never surfaced
+# before because every probe ran on Amazon Linux, which ships libgomp with its gcc runtime.
+#
+# What it costs: nothing measurable. Upstream b11538 built twice on one 16-vCPU machine with
+# identical flags except this one and benchmarked with llama-bench (3 repetitions) gives token
+# generation slightly FASTER without OpenMP at 4, 8 and 16 threads (+0.9%, +0.8%, +0.7%) and prompt
+# processing lower by 0.4-2.1%, every difference inside the error bars -- see
+# docs/benchmarks/cpu-backend-modules.md. The ~6% this project previously recorded was a single
+# sample already flagged as inside its own spread and does not reproduce.
+#
+# Scope, deliberately: ONLY OpenMP. libstdc++.so.6 and libgcc_s.so.1 stay dynamic, because every
+# image that can run this library has them -- HotSpot's own libjvm.so links both -- so
+# -static-libstdc++ would buy nothing here while giving each of our shared objects its own unwinder,
+# which is a real hazard for an exception crossing from ggml into libjllama. Android is the different
+# case and keeps its own block above: there libc++_shared genuinely is absent.
+#
+# Upstream is not one answer but three, and this is the same kind of per-deployment decision: their
+# Android build passes GGML_OPENMP=OFF, their Windows build passes GGML_OPENMP=ON with
+# GGML_OPENMP_FETCH=ON (bundling LLVM's libomp), and their Linux build leaves it ON against the
+# distro's libgomp -- right for a zip onto a developer's distro, wrong for a Maven dependency landing
+# in someone else's container. s390x already passed -DGGML_OPENMP=OFF from its job for a different
+# reason (cross-libgomp), and the Windows jobs pass it because it measured 1.9x/2.7x FASTER there.
+if(OS_NAME MATCHES "^Linux" AND NOT OS_NAME MATCHES "Android" AND NOT ANDROID_ABI)
+    set(GGML_OPENMP OFF CACHE BOOL
+        "Linux: no libgomp.so.1 dependency -- slim and distroless images do not have it, and it costs nothing measurable"
+        FORCE)
+endif()
+
 # keeps find_package from linking a system OpenSSL by accident, which verify-native-deps.py would
 # reject.
 if(ANDROID_ABI OR OS_NAME MATCHES "Android" OR OS_ARCH STREQUAL "s390x" OR CMAKE_SYSTEM_PROCESSOR MATCHES "s390x"

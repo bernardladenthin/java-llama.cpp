@@ -139,6 +139,27 @@ public class LlamaLoader {
             new LinkedHashSet<>(Arrays.asList("cuda13", "rocm", "sycl", "vulkan", "opencl", "openvino")));
 
     /**
+     * The module backends that are <em>not</em> extracted unless {@code net.ladenthin.llama.backend}
+     * names them, even with their jar on the classpath.
+     *
+     * <p>Every other module jar is additive because the rule holds for it: a module whose vendor
+     * runtime is missing does not open, and the model runs on the CPU modules. <b>OpenVINO breaks that
+     * rule in both directions</b>, measured 2026-10-11 (see {@code docs/benchmarks/gpu-module-jars.md}).
+     * Its CPU plugin opens fine and contributes a <em>device</em>, so llama.cpp's device selection
+     * prefers it: on a host without an Intel accelerator the same model on the same machine fell from
+     * 490.4 to 29.4 tokens/s of prompt processing and from 34.5 to <b>0.2</b> of generation -- five
+     * seconds per token, with inference still reporting success, so a consumer who merely has the jar
+     * on the classpath gets a silent 172x regression. And it needs {@code libOpenCL.so.1}, which the
+     * OpenVINO runtime archive does not contain, so on a machine without an ICD loader it fails to open
+     * and contributes nothing -- the additive premise fails at both ends.
+     *
+     * <p>Opt-in keeps the jar useful for the hardware it is for (an Intel GPU or NPU) without charging
+     * everyone else for having it on the classpath. The loader says so on stderr rather than skipping
+     * in silence.
+     */
+    static final Set<String> OPT_IN_BACKENDS = Collections.singleton("openvino");
+
+    /**
      * Optional file in a backend directory naming sibling files (one per line, {@code #}
      * comments allowed) to extract and load, in order, before that backend's library &mdash;
      * e.g. the OpenCL ICD loader bundled with OpenVINO on Windows, which Windows would not find
@@ -344,7 +365,18 @@ public class LlamaLoader {
      */
     static List<String> selectModules(List<String> present, @Nullable String property) {
         if (property == null || property.trim().isEmpty()) {
-            return present;
+            List<String> additive = new ArrayList<>(present.size());
+            for (String backend : present) {
+                if (OPT_IN_BACKENDS.contains(backend)) {
+                    System.err.println("[jllama] GPU module '" + backend + "' is on the classpath but not"
+                            + " used: it is opt-in, because on a host without its accelerator llama.cpp's"
+                            + " device selection prefers it and it is far slower than the CPU modules."
+                            + " Enable it with -D" + LlamaSystemProperties.PREFIX + ".backend=" + backend);
+                    continue;
+                }
+                additive.add(backend);
+            }
+            return additive;
         }
         List<String> selected = new ArrayList<>();
         // String.split's "trailing empties dropped" quirk is benign here: empty entries are skipped.

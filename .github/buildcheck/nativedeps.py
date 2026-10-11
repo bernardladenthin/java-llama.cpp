@@ -78,10 +78,15 @@ WINDOWS_UCRT_REQUIRED = {"Windows/x86_64/cpu", "Windows/aarch64/cpu"}
 # What each CPU library needed when this check was introduced (5.1.0 plus the RPC backend,
 # which adds nothing: its sockets are libc/libSystem/WS2_32, all already present). The manylinux_2_28
 # builds (glibc 2.28, before the libpthread/libdl/librt merge of 2.34) name those three separately.
+# libgomp.so.1 is deliberately absent from the three Linux cpu entries: llama/CMakeLists.txt forces
+# GGML_OPENMP=OFF there so the jar loads in slim and distroless images, which do not ship it, and
+# this list is what keeps it that way -- a build that regains the dependency fails `package` instead
+# of shipping a jar that cannot load. libstdc++/libgcc_s stay listed on purpose: every image that
+# can run this library has them, because HotSpot's libjvm.so links them too.
 ALLOWED = {
-    "Linux/x86_64/cpu": {"libdl.so.2", "libgomp.so.1", "libpthread.so.0", "librt.so.1", "libstdc++.so.6",
+    "Linux/x86_64/cpu": {"libdl.so.2", "libpthread.so.0", "librt.so.1", "libstdc++.so.6",
                      "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld-linux-x86-64.so.2"},
-    "Linux/aarch64/cpu": {"libdl.so.2", "libgomp.so.1", "libpthread.so.0", "librt.so.1", "libstdc++.so.6",
+    "Linux/aarch64/cpu": {"libdl.so.2", "libpthread.so.0", "librt.so.1", "libstdc++.so.6",
                       "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld-linux-aarch64.so.1"},
     "Linux/s390x/cpu": {"libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libc.so.6", "ld64.so.1"},
     "Linux-Android/aarch64/cpu": {"liblog.so", "libm.so", "libdl.so", "libc.so", "libandroid.so"},
