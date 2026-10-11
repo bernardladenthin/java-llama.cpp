@@ -949,13 +949,22 @@ for everything else.
   `sun.misc.Unsafe`, or `jshell` writing to address 0) on a branch run, then look for the dump in
   the artifact -- and if none appears, replace the WER route with `procdump -ma -e` around the
   surefire run.
-- **The emulator package pre-install is unproven.** Both emulator jobs died in one minute inside the
-  action's own `sdkmanager --install emulator --channel=0` ("Error on ZipFile unknown archive", run
-  38069595101) an hour after being green; #506 installs the package in a step before the action,
-  four attempts, so the action's install is a no-op. Neither job has run since. If the download
-  keeps flaking, the sturdier form is `actions/cache` over `$ANDROID_HOME/emulator` keyed on the
-  emulator package version `sdkmanager --list` reports, so dl.google.com is reached once per
-  version instead of once per job.
+- ~~**The emulator package pre-install is unproven.**~~ **Diagnosed and fixed 2026-10-11: it never
+  worked, and it reported the wrong cause.** The step calls `sdkmanager` bare, but it is **not on
+  `PATH`** on the hosted runner -- the SDK sits at `$ANDROID_HOME` with the command under
+  `cmdline-tools/<version>/bin`. So every run failed four times with `sdkmanager: command not found`,
+  slept 20+40+60 seconds between attempts, and then printed
+  `the Android emulator package could not be installed in 4 attempts (dl.google.com download or
+  archive broken)` -- a cause that had nothing to do with it. **The step therefore converted a job
+  that was only occasionally flaky into one that is always red** (runs 38146809329, 38148401395,
+  38149667195), and the misleading message is what kept that invisible: a reader sees a download
+  problem at Google and waits for it to pass.
+  Fixed by resolving the command (PATH, then `$ANDROID_HOME`, `$ANDROID_SDK_ROOT` and the image's
+  `/usr/local/lib/android/sdk`, newest `cmdline-tools` version last) and by **keeping the two failure
+  modes apart**: "not found" now says it is a runner-image change and not a download problem. Both
+  copies of the step are fixed identically. **Still to verify in CI** -- the emulator jobs have not
+  been green since the step was added, so the thing the step was built to guard against (the corrupt
+  archive of run 38069595101) also remains unproven.
 - **Everything behind `package` has never run on the modular natives.** Run 38069595101 skipped
   `package` (it `needs` the Windows clang test job, red with the AMX crash); this branch's run
   38112603436 reaches it and fails on the Windows OpenVINO module jar (the blocker at the top of

@@ -1178,17 +1178,36 @@ jobs:
         # action's "adb emu kill" exit code 1.
         shell: bash
         run: |
+          # sdkmanager is NOT on PATH on the hosted runner: the SDK lives at $ANDROID_HOME and the
+          # command sits in cmdline-tools/<version>/bin. Calling it bare made this step fail four
+          # times with "sdkmanager: command not found" and then report "dl.google.com download or
+          # archive broken" -- the wrong cause, which is worse than no message, and it turned the
+          # emulator jobs from occasionally flaky into always red (runs 38146809329, 38148401395,
+          # 38149667195). Resolve it, and keep the two failure modes apart.
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            for root in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" /usr/local/lib/android/sdk; do
+              [ -n "$root" ] || continue
+              candidate="$(find "$root/cmdline-tools" -maxdepth 2 -name sdkmanager -type f 2>/dev/null | sort | tail -1)"
+              if [ -n "$candidate" ]; then SDKMANAGER="$candidate"; break; fi
+            done
+          fi
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager not found -- looked on PATH and under ANDROID_HOME='${ANDROID_HOME:-}', ANDROID_SDK_ROOT='${ANDROID_SDK_ROOT:-}' and /usr/local/lib/android/sdk. This is a runner-image change, not a download problem."
+            exit 1
+          fi
+          echo "using sdkmanager: $SDKMANAGER"
           set +o pipefail  # `yes` dies of SIGPIPE once sdkmanager stops reading; that is not a failure
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
           for attempt in 1 2 3 4; do
-            if sdkmanager --install emulator --channel=0 >/dev/null; then
+            if "$SDKMANAGER" --install emulator --channel=0 >/dev/null; then
               echo "emulator package installed (attempt ${attempt})"
               exit 0
             fi
             echo "sdkmanager --install emulator failed (attempt ${attempt} of 4)"
             sleep $((attempt * 20))
           done
-          echo "::error::the Android emulator package could not be installed in 4 attempts (dl.google.com download or archive broken)"
+          echo "::error::the Android emulator package could not be installed in 4 attempts with '$SDKMANAGER' (dl.google.com download or archive broken)"
           exit 1
       - name: Run on-emulator instrumentation (connectedDebugAndroidTest)
         uses: reactivecircus/android-emulator-runner@v2
@@ -1349,17 +1368,36 @@ jobs:
         # action's "adb emu kill" exit code 1.
         shell: bash
         run: |
+          # sdkmanager is NOT on PATH on the hosted runner: the SDK lives at $ANDROID_HOME and the
+          # command sits in cmdline-tools/<version>/bin. Calling it bare made this step fail four
+          # times with "sdkmanager: command not found" and then report "dl.google.com download or
+          # archive broken" -- the wrong cause, which is worse than no message, and it turned the
+          # emulator jobs from occasionally flaky into always red (runs 38146809329, 38148401395,
+          # 38149667195). Resolve it, and keep the two failure modes apart.
+          SDKMANAGER="$(command -v sdkmanager || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            for root in "${ANDROID_HOME:-}" "${ANDROID_SDK_ROOT:-}" /usr/local/lib/android/sdk; do
+              [ -n "$root" ] || continue
+              candidate="$(find "$root/cmdline-tools" -maxdepth 2 -name sdkmanager -type f 2>/dev/null | sort | tail -1)"
+              if [ -n "$candidate" ]; then SDKMANAGER="$candidate"; break; fi
+            done
+          fi
+          if [ -z "$SDKMANAGER" ]; then
+            echo "::error::sdkmanager not found -- looked on PATH and under ANDROID_HOME='${ANDROID_HOME:-}', ANDROID_SDK_ROOT='${ANDROID_SDK_ROOT:-}' and /usr/local/lib/android/sdk. This is a runner-image change, not a download problem."
+            exit 1
+          fi
+          echo "using sdkmanager: $SDKMANAGER"
           set +o pipefail  # `yes` dies of SIGPIPE once sdkmanager stops reading; that is not a failure
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
           for attempt in 1 2 3 4; do
-            if sdkmanager --install emulator --channel=0 >/dev/null; then
+            if "$SDKMANAGER" --install emulator --channel=0 >/dev/null; then
               echo "emulator package installed (attempt ${attempt})"
               exit 0
             fi
             echo "sdkmanager --install emulator failed (attempt ${attempt} of 4)"
             sleep $((attempt * 20))
           done
-          echo "::error::the Android emulator package could not be installed in 4 attempts (dl.google.com download or archive broken)"
+          echo "::error::the Android emulator package could not be installed in 4 attempts with '$SDKMANAGER' (dl.google.com download or archive broken)"
           exit 1
       - name: Run LLM Service UI test on emulator (connectedDebugAndroidTest)
         uses: reactivecircus/android-emulator-runner@v2
