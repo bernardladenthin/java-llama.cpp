@@ -153,6 +153,20 @@ issue with these tables (`TODO.md`, "Upstream submissions"), and worth knowing f
 about generation latency — `net.ladenthin.llama.backend` cannot select a *CPU* module, so the only
 lever today is shipping a directory with one module in it.
 
+## These numbers are bound to llama.cpp b11538, and b11556 already moved one of them
+
+Every table above was measured against the natives jars built at **b11538**. That is not boilerplate:
+**upstream #30270, in the b11538-to-b11556 range, fixes F16C use on AVX2 CPUs** -- i.e. exactly the
+`haswell` module class, which is the baseline every "against `haswell`" column here is computed
+against, and the module a Zen 3 workstation and an EPYC Milan instance both select. fp16 conversion
+throughput there is therefore not the same before and after the bump.
+
+So: **do not compare a figure measured at b11556 or later with one from this page.** Re-measure the
+baseline in the same run, which the harness makes cheap -- every table here was produced by staging
+the modules on one machine in one boot, and that is what keeps a comparison honest. When you do,
+record the tag next to the numbers as these tables do, and add a row rather than editing one: a table
+that silently mixes two llama.cpp versions is worse than two tables that disagree.
+
 ## What these tables cannot show
 
 * **One model, one size.** Qwen3-0.6B Q4_K_M only. The quant type decides which kernels run at all —
