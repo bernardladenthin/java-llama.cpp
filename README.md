@@ -257,8 +257,8 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 | `cpu-windows-aarch64` | CPU | Windows on ARM (Snapdragon X / Surface) | A JDK 8+ JVM; **Windows 10 or newer**. Built natively on `windows-11-arm` with `clang-cl`, same hybrid CRT as the x86-64 jar; one CPU backend module (ggml builds no ARM variant set for Windows), so the Vulkan and OpenCL module jars can join it. |
 | `metal-macos-aarch64` | Metal + CPU | macOS aarch64 (Apple silicon) | A JDK 8+ JVM. |
 | `cpu-android-aarch64` / `cpu-android-x86-64` | CPU | Android | For Android use the [`llama-android` AAR](#importing-in-android); these jars are the same libraries (with the CPU modules, aarch64 one per ARM feature level) for other Android JVM setups. |
-| `cuda13-linux-x86-64` | CUDA 13 | Linux x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 runtime libraries (`libcudart.so.13`, `libcublas.so.13`). |
-| `cuda13-windows-x86-64` | CUDA 13 | Windows x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 Toolkit (`cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` on `PATH`). |
+| `cuda13-linux-x86-64` | CUDA 13 | Linux x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 runtime libraries (`libcudart.so.13`, `libcublas.so.13`). **The driver must be new enough for CUDA 13.4** -- see the note below. |
+| `cuda13-windows-x86-64` | CUDA 13 | Windows x86-64 with NVIDIA GPU | NVIDIA driver + CUDA 13 Toolkit (`cudart64_13.dll`, `cublas64_13.dll`, `cublasLt64_13.dll` on `PATH`). **The driver must be new enough for CUDA 13.4** -- see the note below. |
 | `vulkan-linux-x86-64` | Vulkan | Linux x86-64 with a Vulkan 1.2+ GPU (NVIDIA / AMD / Intel) | A Vulkan runtime (`libvulkan.so.1`), which current GPU drivers install. The most portable Linux GPU option. glibc ≈ 2.39 (built on `ubuntu-latest`). |
 | `vulkan-linux-aarch64` | Vulkan | Linux aarch64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`libvulkan.so.1`). glibc ≥ 2.39. |
 | `vulkan-windows-x86-64` | Vulkan | Windows x86-64 with a Vulkan 1.2+ GPU | A Vulkan runtime (`vulkan-1.dll`), which current GPU drivers install. The most portable Windows GPU option. |
@@ -270,8 +270,8 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 | `rocm-windows-x86-64` | ROCm / HIP | Windows x86-64 with AMD GPU | The AMD ROCm **10** runtime DLLs (`amdhip64.dll`, `rocblas.dll`, `hipblas.dll`) on `PATH`; every Radeon target TheRock builds for Windows, gfx900 through RDNA4 (gfx900/gfx906/gfx90c/gfx1153 best effort). |
 | `sycl-linux-x86-64` | SYCL (Intel oneAPI, fp16) | Linux x86-64 with Intel GPU (Arc / iGPU) | An Intel oneAPI / Level-Zero runtime. fp16 accumulation, as upstream's SYCL release builds. |
 | `sycl-windows-x86-64` | SYCL (Intel oneAPI, fp16) | Windows x86-64 with Intel GPU (Arc / iGPU) | The Intel oneAPI / Level-Zero runtime DLLs on `PATH`. |
-| `openvino-linux-x86-64` | OpenVINO | Linux x86-64 (Intel GPU / NPU / CPU) | An Intel OpenVINO runtime. |
-| `openvino-windows-x86-64` | OpenVINO | Windows x86-64 (Intel GPU / NPU / CPU) | The Intel OpenVINO runtime DLLs on `PATH`. |
+| `openvino-linux-x86-64` | OpenVINO | Linux x86-64 with an Intel GPU or NPU | **Opt-in** (see the note below): the jar does nothing until `-Dnet.ladenthin.llama.backend=openvino` names it. An Intel OpenVINO runtime **and an OpenCL ICD loader** (`libOpenCL.so.1`, package `ocl-icd-libopencl1` -- the OpenVINO archive does not ship it; without it the module silently does not open). |
+| `openvino-windows-x86-64` | OpenVINO | Windows x86-64 with an Intel GPU or NPU | **Opt-in** (see the note below): the jar does nothing until `-Dnet.ladenthin.llama.backend=openvino` names it. The Intel OpenVINO runtime DLLs on `PATH` (the OS supplies `OpenCL.dll`). |
 
 > [!NOTE]
 > No vendor runtime is bundled; it comes from the GPU driver or toolkit on the host. The GPU
@@ -279,9 +279,36 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 > every GPU module of the platform next to the library and see ggml skip each one for lack of a
 > runtime, so end-to-end GPU inference is verified locally / on self-hosted hardware. A module
 > whose runtime is installed but finds no device (e.g. the CUDA toolkit without an NVIDIA GPU)
-> simply registers none. `-Dnet.ladenthin.llama.backend=<a>,<b>` restricts the modules put in
+> simply registers none -- **with two measured exceptions, both described below.** `-Dnet.ladenthin.llama.backend=<a>,<b>` restricts the modules put in
 > place to the named ones (`cpu` for none) and fails loud when a named jar is not on the
 > classpath; unset, every GPU module jar on the classpath is used.
+
+> [!IMPORTANT]
+> **Two GPU jars need more than their runtime, and both were found by measurement rather than by
+> reading the code** ([`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md)).
+>
+> **CUDA: the driver must be new enough for the toolkit the module was built with (13.4).** The
+> module ships native code for the GPU generations listed in `CMAKE_CUDA_ARCHITECTURES`
+> (Turing through Blackwell); a GPU outside that set runs only if the driver can compile the
+> module's PTX, and **a driver too old to do so does not fall back to the CPU -- it ends the
+> process.** ggml calls `abort()`, which no Java `catch` can intercept, and it happens even with
+> `-ngl 0`: having the jar on the classpath is enough, because the backend registers and the device
+> is used during setup whatever the layer count says. Measured on a Tesla T4 with driver
+> 595.91.07, where that generation still shipped as PTX only. If you cannot control the driver,
+> keep the jar off the classpath or pass `-Dnet.ladenthin.llama.backend=cpu`.
+>
+> **OpenVINO is opt-in, and that is why.** On a host *without* an Intel accelerator its CPU plugin
+> opens perfectly well and contributes a device, so llama.cpp prefers it -- measured at
+> **17x slower prompt processing and 172x slower generation** than the CPU modules (490.4/34.5
+> down to 29.4/**0.2** tokens per second). It therefore breaks the premise every other module jar
+> keeps ("a module that cannot help is skipped") in both directions: it also fails to open at all
+> without an OpenCL ICD loader, which its own runtime archive does not include. So its jar on the
+> classpath does nothing until `net.ladenthin.llama.backend` names it, and the loader says so on
+> stderr.
+>
+> **Vulkan is the one that behaves exactly as designed** and is the recommended portable choice:
+> without an ICD it is skipped, with throughput identical to the CPU baseline (201.8/24.1 against
+> 202.2/24.1 on the same machine).
 
 > [!NOTE]
 > On the **module path** each natives jar is an automatic module

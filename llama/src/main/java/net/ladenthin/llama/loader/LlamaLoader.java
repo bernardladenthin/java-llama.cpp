@@ -1059,7 +1059,7 @@ public class LlamaLoader {
         return classLoader().getResource(name);
     }
 
-    private static @Nullable InputStream resourceAsStream(String name) {
+    static @Nullable InputStream resourceAsStream(String name) {
         return classLoader().getResourceAsStream(name);
     }
 

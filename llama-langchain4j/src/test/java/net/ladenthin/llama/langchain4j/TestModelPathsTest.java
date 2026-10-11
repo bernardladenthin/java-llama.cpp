@@ -6,6 +6,7 @@ package net.ladenthin.llama.langchain4j;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -80,6 +81,38 @@ class TestModelPathsTest {
     @Test
     void fromPropertyIsNullWhenThePropertyIsUnset() {
         assertThat(TestModelPaths.fromProperty("net.ladenthin.llama.langchain4j.definitely.unset"), is(nullValue()));
+    }
+
+    /**
+     * The half the unset case cannot see: a property that IS set has to go through the resolver, not
+     * through a bare {@code System.getProperty}. Without this, {@code fromProperty} could return the
+     * literal and every model-gated class in this module would abort in its {@code @BeforeAll}
+     * assumption and report as nothing at all -- which is the exact failure the resolver was written
+     * for, and the one that stayed invisible in the core module for hundreds of builds because a
+     * class-level assumption records no test entries.
+     *
+     * <p>The fixture is this module's own pom, which exists only when looked up from the reactor root
+     * -- so a pass proves the second branch ran rather than that the path happened to be right.
+     */
+    @Test
+    void fromPropertyResolvesAndDoesNotReturnTheLiteral() {
+        String property = "net.ladenthin.llama.langchain4j.resolver.probe";
+        String literal = "llama-langchain4j/pom.xml";
+        String previous = System.getProperty(property);
+        try {
+            System.setProperty(property, literal);
+            Path resolved = TestModelPaths.fromProperty(property);
+            assertThat("a set property must be resolved", resolved, is(notNullValue()));
+            assertThat("the resolved path must exist: " + resolved, Files.exists(resolved), is(true));
+            assertThat("the resolver's second branch must have run, not a bare getProperty",
+                    resolved, is(not(Paths.get(literal))));
+        } finally {
+            if (previous == null) {
+                System.clearProperty(property);
+            } else {
+                System.setProperty(property, previous);
+            }
+        }
     }
 
     /**
