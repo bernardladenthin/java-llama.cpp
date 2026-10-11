@@ -22,7 +22,7 @@ domain is the only string that must be globally unique.
 
 Structure (mirrors the consumer-test's plumbing):
 - **`settings.gradle.kts`** — `rootProject.name = "android-llmservice"`; pins AGP `9.4.0` + the
-  Compose compiler plugin (`2.4.20`); `mavenLocal()` first so the freshly-built AAR + façade
+  Compose compiler plugin (`2.4.21`); `mavenLocal()` first so the freshly-built AAR + façade
   resolve there in CI (Maven Central for real users). Stay at `>= 9.2.1`: `9.2.1` (not `9.2.0`)
   first fixed a real R8 regression (`ClassNotFoundException` on `com.android.tools.r8.RecordTag`
   after upgrading Gradle to 9.x with AGP 9.2.0) that hits this project directly since
@@ -34,7 +34,7 @@ Structure (mirrors the consumer-test's plumbing):
   Kotlin Gradle plugin 2.2.10+), so the standalone `org.jetbrains.kotlin.android` plugin is no longer
   applied — applying it now fails the build with "no longer required for Kotlin support since
   AGP 9.0" (`app/build.gradle.kts` line 7). The Compose compiler plugin still applies
-  separately and its 2.4.20 pin exceeds AGP's 2.2.10 floor, so no other version changed.
+  separately and its 2.4.21 pin exceeds AGP's 2.2.10 floor, so no other version changed.
 - **`app/build.gradle.kts`** — `namespace`/`applicationId` `net.ladenthin.android.llmservice`,
   `minSdk 28` (AAR floor), `compileSdk 37` (raised from 35 — Compose/lifecycle/activity AAR
   metadata now requires it), `targetSdk 35`, Jetpack Compose, `androidx.appcompat` (only for

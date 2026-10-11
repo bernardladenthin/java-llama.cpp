@@ -61,7 +61,7 @@ SPDX-License-Identifier: MIT
 		<!-- Checker Framework: the processor AND the checker-qual qualifiers it resolves.
 		     Both run on the build JDK and neither ships (checker-qual is provided scope), so
 		     this tracks the newest release. -->
-		<checker.version>4.3.0</checker.version>
+		<checker.version>4.3.1</checker.version>
 		<!-- jackson.version is inherited from the parent pom (one source for every module) -->
 		<reactor.version>3.8.7</reactor.version>
 		<slf4j.version>2.0.20</slf4j.version>
@@ -99,7 +99,7 @@ SPDX-License-Identifier: MIT
 		<spotbugs.version>4.10.4.1</spotbugs.version>
 		<fb-contrib.version>7.7.4</fb-contrib.version>
 		<findsecbugs.version>1.14.0</findsecbugs.version>
-		<spotless.version>3.10.3</spotless.version>
+		<spotless.version>3.10.4</spotless.version>
 		<palantir-java-format.version>2.102.0</palantir-java-format.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<project.build.outputTimestamp>2026-09-01T07:57:45Z</project.build.outputTimestamp>

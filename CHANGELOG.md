@@ -142,6 +142,23 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **The local agent speaks ACP through SDK 0.80.0** (`com.agentclientprotocol:acp-core` +
+  `acp-json-jackson2`, from 0.18.0 -- upstream's binary-incompatible release of 2026-10-08). The wire
+  format is unchanged, so `AcpServerTest`, which drives the server with plain JSON, is unchanged too; the
+  port is mechanical: session updates go out through `sendSessionUpdate` without the discriminator
+  argument the records now write themselves, `session/request_permission` is a call on the prompt
+  context's `client()`, `awaitTermination()` replaces `await()`, and the constructors that gained the
+  protocol's new tool-call `name` carry the agent's tool name there (`read_file`, `shell`, ...), so an
+  editor can show it next to the title.
+- **Build tooling in step with the sibling repositories:** Spotless 3.10.4, Checker Framework 4.3.1,
+  `exec-maven-plugin` 3.6.4 in `examples/server/pom.xml` -- which `check-versions.py` reads now, so the
+  drift it had (3.6.2 against the reactor's 3.6.4) can no longer go unseen -- and the Compose compiler
+  plugin 2.4.21, the Kotlin the POMs already used. `check-versions.py` compares the Kotlin Gradle
+  plugins of every `*.gradle.kts` with the POMs' Kotlin from now on: Dependabot bumps `kotlin.version`
+  and never sees the Gradle files.
+- **`print-host-info.sh` is a shared file** (`.github/shared-files.sha256`, in all four repositories):
+  the runner's CPU at the top of every test job, which is how a chosen CPU module or a timing is read
+  against the hardware the job drew.
 - **Upgraded the pinned llama.cpp from b11538 to b11556**, one reviewed step (18 commits, 96 files, no
   `tools/ui` change, so the WebUI is unchanged). All twelve patches apply unchanged and every drop-check
   still finds its defect. In the range: a request pinned to a **busy** slot (`id_slot`,

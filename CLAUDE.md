@@ -342,7 +342,12 @@ resolved) with the siblings' default branches and **warns** per difference. Warn
 bump lands in four pull requests and the first one merged must not turn the other three red; the
 repos' own artifacts (`net.ladenthin:*`) are left out. It compares what is used, not property names:
 those differ between repos and include values that must differ (`maven.compiler.release`). The POM
-list per repo is `versions.POMS` -- a new module's POM goes there, in all four copies.
+list per repo is `versions.POMS` -- a new module's POM goes there, in all four copies (here also
+`examples/server/pom.xml`, whose `exec-maven-plugin` sat two patch releases behind the reactor's unseen
+until it was listed). It also compares the Kotlin Gradle plugins of every `*.gradle.kts` with the Kotlin
+the POMs use (`org.jetbrains.kotlin:*`): Dependabot's maven ecosystem bumps `kotlin.version` and never
+sees the Gradle files, which is how the Compose compiler plugin stayed at 2.4.20 while the POMs went to
+2.4.21.
 
 **Run scripts parse (`check-run-scripts.py`).** A cleanup once lost the trailing ` \` of six continued
 lines in `publish.yml` -- each left a line starting with `||`/`&&`, a syntax error in a step only a
@@ -357,7 +362,8 @@ file line), folded and plain values as YAML folds them, `${{ ... }}` becomes a w
 `workflow.py` it reads the two-space layout these workflows use, not general YAML.
 
 Shared today: the `buildcheck` modules above marked shared in
-`__init__.py` (+ their tests and CLIs), `print-crash-logs.sh`, `verify-signing-key.sh`,
+`__init__.py` (+ their tests and CLIs), `print-crash-logs.sh`, `print-host-info.sh` (the runner's CPU at the top of every
+test job, so a timing or a chosen CPU module can be read against the hardware), `verify-signing-key.sh`,
 `verify-bytecode-version.sh`, `smoke-fatjar-cli.sh` (BAF + srcmorph; `sign-fatjars.sh` is srcmorph's
 alone since jllama ships no fat jar), the signing self-test, `lombok.config`, the issue/PR templates, `CODE_OF_CONDUCT.md`,
 `claude.yml`, `claude-code-review.yml`, `codeql.yml`, `scorecard.yml`, `reuse.yml`, `osv-scanner.yml`,

@@ -69,7 +69,7 @@ public final class AcpServer implements AutoCloseable {
                     AgentSession session = sessionFactory.apply(Path.of(request.cwd()));
                     sessions.put(id, session);
                     announceCommandsSoon(self[0], id);
-                    return new AcpSchema.NewSessionResponse(id, modes(session.mode()), null);
+                    return new AcpSchema.NewSessionResponse(id, modes(session.mode()));
                 })
                 .promptHandler(this::prompt)
                 .setSessionModeHandler(request -> {
@@ -126,7 +126,7 @@ public final class AcpServer implements AutoCloseable {
                     AcpServer.class.getPackage().getImplementationVersion() == null
                             ? "dev"
                             : AcpServer.class.getPackage().getImplementationVersion())) {
-                server.agent.await();
+                server.agent.awaitTermination();
             }
         }
         return 0;
@@ -145,9 +145,7 @@ public final class AcpServer implements AutoCloseable {
             return new AcpSchema.PromptResponse(AcpSchema.StopReason.CANCELLED);
         }
         if (session.mode() != before) {
-            context.sendUpdate(
-                    request.sessionId(),
-                    new AcpSchema.CurrentModeUpdate("current_mode_update", modeId(session.mode())));
+            context.sendSessionUpdate(new AcpSchema.CurrentModeUpdate(modeId(session.mode())));
         }
         return new AcpSchema.PromptResponse(
                 session.stopRequested() ? AcpSchema.StopReason.CANCELLED : AcpSchema.StopReason.END_TURN);
@@ -245,8 +243,7 @@ public final class AcpServer implements AutoCloseable {
                 // The session id reaches the editor with the response to session/new; an update that
                 // arrives before it names a session the editor does not know yet.
                 Thread.sleep(100);
-                agent.sendSessionUpdate(
-                        sessionId, new AcpSchema.AvailableCommandsUpdate("available_commands_update", commands()));
+                agent.sendSessionUpdate(sessionId, new AcpSchema.AvailableCommandsUpdate(commands()));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             } catch (RuntimeException e) {

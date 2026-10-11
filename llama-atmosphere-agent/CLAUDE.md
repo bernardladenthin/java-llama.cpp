@@ -855,7 +855,10 @@ object before `buildAsync`**, or the handshake message races the listener into a
 `request(1)` is never called — a flaky test that looked like a server bug.
 
 **`--acp` (`AcpServer`, `AcpFrontend`).** The ACP Java SDK (`com.agentclientprotocol:acp-core` +
-`acp-json-jackson2`, 0.18.0) over `StdioAcpAgentTransport`. Its sync handlers run on the SDK's own pool,
+`acp-json-jackson2`, 0.80.0 -- binary-incompatible with 0.18.0, ported 2026-10-11: session updates go out
+through `sendSessionUpdate` without the discriminator argument the records write themselves,
+`session/request_permission` is a call on `context.client()`, `awaitTermination()` replaces `await()`, and
+the tool-call `name` the protocol added carries the agent's tool name) over `StdioAcpAgentTransport`. Its sync handlers run on the SDK's own pool,
 so a blocking `session/prompt` does not block `session/cancel` or the answer to a permission request.
 One `AgentSession` per ACP session, built for the editor's `cwd` (`AgentOptions.withWorkspace`); the
 model endpoint is opened once per process. **stdout is the protocol**: `run()` keeps the real stdout for
