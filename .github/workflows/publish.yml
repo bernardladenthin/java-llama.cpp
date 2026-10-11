@@ -2000,6 +2000,43 @@ jobs:
         run: |
           source /opt/intel/oneapi/setvars.sh
           .github/build.sh "-DJLLAMA_MODULE_ONLY=ON -DGGML_SYCL=ON -DGGML_SYCL_F16=ON -DCMAKE_C_COMPILER=icx -DCMAKE_CXX_COMPILER=icpx -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
+      - name: Normalise the module's run path to $ORIGIN
+        # oneAPI's MKL and TBB targets hand the linker their own install paths as -Wl,-rpath, so the
+        # module shipped with '$ORIGIN:/opt/intel/oneapi/mkl/<v>/lib:/opt/intel/oneapi/tbb/<v>/...'
+        # even though llama/CMakeLists.txt sets INSTALL_RPATH "$ORIGIN" -- a target property cannot
+        # remove a flag the linker was handed, which is why the obvious CMake fix is not one.
+        #
+        # It is the only Linux library of the 36 that does not carry exactly $ORIGIN: CUDA, ROCm,
+        # OpenVINO and Vulkan all do, and each finds its vendor runtime through the consumer's own
+        # environment -- for oneAPI that is setvars.sh. So this is not a special case to accommodate
+        # but the one outlier, and the absolute paths are build-host leakage of exactly the class
+        # verify-native-deps.py was written to catch (the Homebrew openssl dylib that shipped in
+        # 5.0.6). It also failed `package` outright: 99 libraries checked, this one violation
+        # (run 38149667195).
+        #
+        # patchelf rather than a configure flag because it acts on the artifact: whatever put the
+        # paths there, the shipped file ends up with the run path every sibling has, and the check
+        # below makes that a job failure rather than a surprise two jobs later.
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq patchelf
+          found=0
+          while IFS= read -r so; do
+            found=1
+            echo "${so}: run path before = '$(patchelf --print-rpath "${so}")'"
+            patchelf --set-rpath '$ORIGIN' "${so}"
+            rp="$(patchelf --print-rpath "${so}")"
+            echo "${so}: run path after  = '${rp}'"
+            if [ "${rp}" != '$ORIGIN' ]; then
+              echo "::error::${so} has run path '${rp}' after patchelf, expected exactly \$ORIGIN"
+              exit 1
+            fi
+          done < <(find llama/src/main/natives -name 'libggml-sycl.so' -type f)
+          if [ "${found}" -eq 0 ]; then
+            echo "::error::no libggml-sycl.so under llama/src/main/natives -- the build produced nothing to ship"
+            exit 1
+          fi
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
