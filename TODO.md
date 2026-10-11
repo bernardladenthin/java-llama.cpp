@@ -341,10 +341,33 @@ The consolidated investigation lives in
 high-value from it has shipped, the jbang one-file example (`examples/jbang/Chat.java`) included.
 Further per-repo findings in the doc can be pulled on demand; none is prioritized.
 
+### The ROCm Windows job runs with a CRT strategy that was never measured
+
+**Recovered from the session transcript on 2026-10-11; it had been stated repeatedly and recorded
+nowhere.** The hybrid-CRT change reaches the ROCm Windows build through its plain-clang branch, and
+that branch applies because the job compiles with `%HIP_PATH%\lib\llvmin\clang.exe` -- a GNU
+driver, so CMake's `MSVC` is false there. Before the change that job had **no** branch and therefore
+the dynamic CRT; it now gets the hybrid one (`-fms-runtime-lib=static` plus
+`/nodefaultlib:libucrt.lib`). That may be an improvement (fewer dependencies) or it may break the
+link, and it is exactly the `/MT`-against-`/MD` mixture across library boundaries that the comment in
+`CMakeLists.txt` warns about for SYCL and OpenVINO: **ROCm's device libraries may be built against
+the dynamic CRT.**
+
+The job has been **green** since, so the link holds. What is unmeasured is the **runtime** behaviour
+of the resulting module on an actual Radeon GPU -- and that cannot be rented (see the rented-hardware
+plan), because the only AMD-GPU instance class has been withdrawn and never officially supported
+ROCm anyway. So this needs a real Radeon machine, or a deliberate decision to ship it on the strength
+of a green link plus `verify-native-deps.py`'s dependency allowlist. Do not quietly treat "the job is
+green" as the measurement.
+
 ### Needs a machine the sessions do not have
 
 Everything here is implemented or decided; what is missing is hardware or a model the cloud sessions
-cannot reach. The local agent (Windows, Ryzen 7 5800H + RTX 3070 + AMD iGPU) covers the first three.
+cannot reach. **Most of it is rentable** -- see
+[`docs/rented-hardware-test-plan.md`](docs/rented-hardware-test-plan.md) for the queue, the
+invariants and what rented hardware explicitly cannot answer. The items that stay with a developer
+machine are the **interactive agent** (console behaviour needs a human at a real terminal) and a real
+**arm64 Android device**.
 
 - **The GPU module jars on a GPU**: item 1 of "Modular natives -- follow-ups" above (CUDA + Vulkan
   modules next to the Windows CPU jar, devices, offload, the CUDA graphs re-measurement).
