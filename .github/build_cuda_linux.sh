@@ -29,7 +29,38 @@ sudo dnf install -y cuda-toolkit-13-4
 # GPU — needs a GPU present at configure time); override with CUDA_ARCH, e.g. CUDA_ARCH=90. This is
 # a MANUAL local-dev knob only: CI and release never set it, because an artifact built this
 # way runs on a single GPU generation. (Direct-cmake equivalent: -DCMAKE_CUDA_ARCHITECTURES=native.)
-CUDA_ARCH_ARGS=""
+# Release default: an EXPLICIT arch list, because ggml's own default leaves the datacenter GPUs on
+# PTX and this project's consumers are server applications.
+#
+# ggml states its policy in ggml/src/ggml-cuda/CMakeLists.txt: build *virtual* architectures "to
+# cover all features needed for best performance" and *real* ones "for the most commonly used GPUs"
+# -- and for CUDA >= 13 the real ones are 86 (RTX 3000), 89 (RTX 4000) and consumer Blackwell, while
+# 75 (T4, RTX 20xx), 80 (A100) and 90 (H100) are `-virtual`, i.e. PTX that the driver must JIT on
+# first run. Upstream passes no CMAKE_CUDA_ARCHITECTURES at all and says so in a comment, so their
+# binaries carry the same gap -- which is right for their users, who download a zip for an RTX card.
+#
+# It is wrong for ours. A Maven dependency lands in server applications, and those run on T4, A100,
+# L4 and H100: for this project the "most commonly used GPUs" are exactly the ones upstream leaves
+# as PTX. And the failure is not graceful. Measured on a Tesla T4 with driver 595.91.07 (AWS Deep
+# Learning AMI): the module opened, ggml enumerated the GPU, offloaded 29/29 layers and then
+# ggml_abort killed the JVM with "the provided PTX was compiled with an unsupported toolchain" --
+# the driver's JIT refusing PTX from CUDA 13.4. `-ngl 0` aborts too, so having the jar on the
+# classpath is enough, and abort() cannot be caught from Java. See
+# docs/benchmarks/gpu-module-jars.md.
+#
+# So 75, 80 and 90 become `-real` as well. Everything ggml lists stays, including the virtual tail
+# that lets a future architecture JIT. The price is paid in the build, not by the consumer: nvcc
+# compiles every .cu once per real architecture, so this roughly doubles the device-compile half of
+# a job that already takes 47-80 minutes uncached, and the module grows from 154 MB by about the
+# same proportion. That trade is the point -- a jar that is larger and slower to build, against one
+# that kills the JVM on the most common cloud GPU.
+#
+# On a bump, re-read ggml's list at the new tag (`grep -A 30 CUDA_ARCHITECTURES
+# ggml/src/ggml-cuda/CMakeLists.txt`) and extend this one rather than dropping it: new hardware
+# arrives as a new entry there, and silently inheriting their default would reintroduce the gap.
+CUDA_ARCH_RELEASE="75-real;80-real;86-real;89-real;90-real;100-real;120-real;121-real;121-virtual"
+
+CUDA_ARCH_ARGS="-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH_RELEASE}"
 case "${CUDA_FAST_BUILD:-}" in
   1 | true | TRUE | yes | on)
     CUDA_ARCH_ARGS="-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH:-native}"

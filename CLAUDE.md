@@ -36,6 +36,13 @@ artifact, classifier `<backend>-<os>-<arch>`, each holding exactly one directory
   every layer and then call `abort()`, killing the JVM instead of falling back (a Tesla T4 on driver
   595.91.07 -- Turing, A100 and Hopper ship as PTX only, so they depend on the driver's JIT). Several together are fine: llama.cpp
   dedups the devices by `device_id`, so the same GPU seen through CUDA and Vulkan is one device.
+  **`openvino` is opt-in** (`LlamaLoader.OPT_IN_BACKENDS`): its jar on the classpath does nothing
+  until `net.ladenthin.llama.backend` names it, and the loader says so on stderr. Every other module
+  is additive because the rule above holds for it; OpenVINO breaks it at both ends (measured, see
+  [`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md)) -- its CPU plugin opens
+  and contributes a *device*, so llama.cpp prefers it and a host without an Intel accelerator drops
+  from 490.4/34.5 to 29.4/**0.2** tokens per second, while without an OpenCL ICD loader
+  (`libOpenCL.so.1`, which the OpenVINO archive does not ship) it does not open at all.
   `net.ladenthin.llama.backend=<a>,<b>` is a **filter** over the module jars (`cpu` = none); a name
   that is no module backend, or whose jar is not on the classpath, fails the load with a message
   naming the jar to add. **A module jar needs the library jar of the same build**: every natives
@@ -470,7 +477,15 @@ To change the CUDA version, update the following places:
    `-DCMAKE_CUDA_COMPILER=/usr/local/cuda-13.4/bin/nvcc` line (plus the header comment).
 2. **`.github/workflows/publish.yml`** — the `build-windows-x86_64-cuda` job's
    "Install CUDA Toolkit … (NVIDIA redist archives)" step: the `v13.x` directory, `CUDA_PATH_V13_x`,
-   and the per-component archive list. **Copy that list from upstream's
+   and the per-component archive list. **The explicit `CMAKE_CUDA_ARCHITECTURES`** sits in this job
+   and in `build_cuda_linux.sh`, and the two lists must stay equal: ggml's default leaves `75` (T4),
+   `80` (A100) and `90` (H100) as PTX, and a driver too old to JIT the toolkit's PTX makes ggml
+   `abort()` the JVM after offloading every layer instead of falling back -- `-ngl 0` aborts too, so
+   having the jar on the classpath is enough (measured on a Tesla T4, see
+   [`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md)). Server applications run
+   on exactly those GPUs, which is why this deviates from upstream, who ship to RTX owners and say in
+   a comment that they rely on the default. On a bump, re-read ggml's list at the new tag and
+   **extend** ours rather than dropping it. **Copy that list from upstream's
    `.github/actions/windows-setup-cuda/action.yml` at the pinned `GIT_TAG`** — the component versions
    differ per component (cuBLAS and CCCL have their own numbering) and cannot be derived from the CUDA
    version. (This replaced `Jimver/cuda-toolkit`, which never shipped 13.4.)
@@ -668,8 +683,25 @@ dependency list as a side effect (MSVC's OpenMP, a third redistributable DLL aft
 imports `libomp140.x86_64.dll`, which no redistributable carries -- the same `0xc0000135` class the
 arm64 job hit.
 
-**Linux keeps OpenMP, and that is measured, not an omission.** The Linux CPU jobs pass no
-`GGML_OPENMP`, so they ship with it ON (ggml's default) through **libgomp** -- and libgomp does
+**Linux passes `GGML_OPENMP=OFF` now, and that is a deployment decision rather than a throughput
+one** (`llama/CMakeLists.txt`, forced for `OS_NAME MATCHES "^Linux"` and not Android).
+`libggml-base.so` -- the first file `LlamaLoader` loads -- declares `libgomp.so.1` whenever ggml
+builds with OpenMP, and GCC's `-fopenmp` links it *dynamically*, so it is a runtime requirement of
+the shipped jar that a plain Ubuntu server image and a distroless Java image do not satisfy; the
+whole jar then fails with `The native library of backend 'cpu' could not be loaded`, which reads like
+a packaging defect. It costs nothing: built twice on one 16-vCPU machine and benchmarked with
+`llama-bench`, generation is slightly *faster* without OpenMP at 4, 8 and 16 threads and prompt
+processing lower by 0.4-2.1%, all inside the error bars
+([`docs/benchmarks/cpu-backend-modules.md`](docs/benchmarks/cpu-backend-modules.md)); the ~6% figure
+in the paragraph below was a single sample and does not reproduce. **Only OpenMP:**
+`libstdc++`/`libgcc_s` stay dynamic, because HotSpot's own `libjvm.so` links them -- every image that
+can run this library has them -- and `-static-libstdc++` would give each shared object its own
+unwinder for no gain. `verify-native-deps.py` enforces the *absence* (`libgomp.so.1` is out of the
+three Linux `cpu` allowlists, with a unit test saying why widening it again defeats the purpose).
+The older throughput measurement follows and still stands on its own terms:
+
+**Linux used to keep OpenMP, and that was measured, not an omission.** The Linux CPU jobs passed no
+`GGML_OPENMP`, so they shipped with it ON (ggml's default) through **libgomp** -- and libgomp does
 *not* show the penalty. Measured the same way in the project's own `manylinux_2_28_x86_64` image
 (gcc 14.2.1, the compiler and libgomp the `crosscompile-linux-x86_64` job uses; same model, 8
 threads, interleaved): tg128 72.8 with OpenMP against 77.3 without, pp512 357.0 against 358.7 --

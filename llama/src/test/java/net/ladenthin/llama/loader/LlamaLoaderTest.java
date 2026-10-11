@@ -179,6 +179,38 @@ public class LlamaLoaderTest {
     }
 
     @Test
+    public void anOptInModuleIsLeftOutUntilThePropertyNamesIt() {
+        // OpenVINO is the one module jar that is not additive, and the reason is measured rather than
+        // cautious: its CPU plugin opens fine and contributes a *device*, so llama.cpp's device
+        // selection prefers it, and on a host without an Intel accelerator the same model on the same
+        // machine fell from 490.4 to 29.4 t/s of prompt processing and from 34.5 to 0.2 of generation
+        // -- five seconds per token, with inference still reporting success. Having the jar on the
+        // classpath must therefore cost nothing by itself.
+        final java.util.List<String> withOptIn = java.util.Arrays.asList("cuda13", "vulkan", "openvino");
+
+        assertEquals(
+                java.util.Arrays.asList("cuda13", "vulkan"),
+                LlamaLoader.selectModules(withOptIn, null),
+                "an opt-in module must not be extracted just because its jar is present");
+        assertEquals(java.util.Arrays.asList("cuda13", "vulkan"), LlamaLoader.selectModules(withOptIn, " "));
+
+        // Naming it is the opt-in, and then it is the only one -- the property has always been a
+        // filter, so this needs no special case.
+        assertEquals(java.util.Collections.singletonList("openvino"), LlamaLoader.selectModules(withOptIn, "openvino"));
+        assertEquals(
+                java.util.Arrays.asList("cuda13", "openvino"),
+                LlamaLoader.selectModules(withOptIn, "openvino,cuda13"),
+                "naming it alongside another module must select both");
+
+        // And the counterpart that keeps this honest: every other module stays additive. A test that
+        // only checked OpenVINO would still pass if someone made the whole list opt-in.
+        assertEquals(PRESENT, LlamaLoader.selectModules(PRESENT, null));
+        assertTrue(
+                LlamaLoader.OPT_IN_BACKENDS.size() < LlamaLoader.MODULE_BACKENDS.size(),
+                "opt-in is the exception, not the rule");
+    }
+
+    @Test
     public void selectModulesNarrowsToTheNamedModulesInListOrder() {
         assertEquals(java.util.Arrays.asList("cuda13", "opencl"), LlamaLoader.selectModules(PRESENT, "opencl, cuda13"));
         assertEquals(

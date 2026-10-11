@@ -219,6 +219,39 @@ class ViolationsTest(unittest.TestCase):
                                                siblings={"jllama-build.txt", "jllama-files.txt"}), [])
 
 
+class OpenMpDependencyTest(unittest.TestCase):
+    """The Linux jars must not regain libgomp, and this is the check that keeps it that way.
+
+    llama/CMakeLists.txt forces GGML_OPENMP=OFF on Linux because libggml-base.so otherwise declares
+    libgomp.so.1 -- which a plain Ubuntu server image and a distroless Java image do not have, so the
+    whole jar fails to load with a message that reads like a packaging defect. Removing libgomp from
+    ALLOWED is what turns a regression into a red `package` job instead of an unloadable release.
+
+    The failure mode this guards against is social rather than technical: when a future build regains
+    the dependency, the quickest way to make CI green again is to put libgomp back in the allowlist.
+    These assertions say in the test suite that doing so defeats the purpose.
+    """
+
+    def test_the_linux_cpu_allowlists_do_not_permit_libgomp(self):
+        for directory in ("Linux/x86_64/cpu", "Linux/aarch64/cpu", "Linux/s390x/cpu"):
+            self.assertIn(directory, nativedeps.ALLOWED, directory)
+            self.assertNotIn(
+                "libgomp.so.1",
+                nativedeps.ALLOWED[directory],
+                directory + ": GGML_OPENMP=OFF is forced for this platform, so a build that needs "
+                "libgomp is a regression -- fix the build, do not widen the allowlist",
+            )
+
+    def test_the_runtimes_the_jvm_itself_needs_stay_allowed(self):
+        # The counterpart, so the entry above is not read as "strip every dependency": libstdc++ and
+        # libgcc_s stay dynamic on purpose, because every image that can run this library has them --
+        # HotSpot's own libjvm.so links both -- and linking them statically would give each of our
+        # shared objects its own unwinder.
+        for directory in ("Linux/x86_64/cpu", "Linux/aarch64/cpu"):
+            self.assertIn("libstdc++.so.6", nativedeps.ALLOWED[directory], directory)
+            self.assertIn("libgcc_s.so.1", nativedeps.ALLOWED[directory], directory)
+
+
 class MainTest(unittest.TestCase):
 
     def test_checks_a_tree_and_reports_violations(self):
