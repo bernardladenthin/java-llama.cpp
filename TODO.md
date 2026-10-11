@@ -391,14 +391,27 @@ alike. The large accelerator families (8-GPU training instances) prove nothing h
 small GPU does not, and cost two orders of magnitude more.
 
 **The first item is not a benchmark but a suspected defect.** `Java Tests Windows 2025 x86_64
-(default / CPU variants, clang)` dies in `JNI_OnLoad` with `0xC0000374 STATUS_HEAP_CORRUPTION` at
-`Tests run: 0` on a **Granite Rapids** runner (Xeon 6973P-C, Family 6 Model 173 -- the only AMX
-machine observed), and the same commit passes 1916 tests on **Ice Lake-SP** (Xeon Platinum 8370C,
-Model 106) and on a Zen 3 workstation, where CI's own uploaded DLLs also load cleanly. GitHub mixes
-runner hardware, so the job is intermittently red. All 14 modules load **in isolation** on Zen 3 and
-on Cascade Lake, so no single module is broken at load time on a CPU that declines AMX;
-`CpuModuleIsolationTest` reports the per-module table on every run so a Granite Rapids run names the
-module instead of the symptom. An AMX instance makes that reproducible on demand instead of by luck.
+(default / CPU variants, clang)` dies with `0xC0000374 STATUS_HEAP_CORRUPTION` at `Tests run: 0` on a
+**Granite Rapids** runner (Xeon 6973P-C, Family 6 Model 173 -- the only AMX machine CI has shown),
+while the same commit passes 1916 tests on **Ice Lake-SP** (Xeon Platinum 8370C, Model 106) and on a
+Zen 3 workstation, where CI's own uploaded DLLs also load cleanly. GitHub mixes runner hardware, so
+the job is intermittently red.
+
+**It is not in `JNI_OnLoad`, and the earlier claim here that it was is retracted.** A rented
+Granite Rapids instance (Xeon 6975P-C, same Family 6 Model 173) running CI's own DLLs loads the full
+module set cleanly: ggml picks `ggml-cpu-sapphirerapids.dll` -- the AMX module -- registers RPC + CPU
+and returns `exit 0`, and all 14 modules also load one by one there, each registering its backend.
+That is 14/14 x86 levels confirmed as a *chosen* backend. The reading that pointed at `JNI_OnLoad`
+came from the CI log ending after `[jllama] native backend 'cpu' loaded ...` with no
+`... backend(s) registered ...` line, but **that Java line is printed after `System.load` returns**,
+so `JNI_OnLoad` had completed; the missing native lines are a capture artefact (Surefire does not
+redirect native stdout into its `-output.txt`), not a crash point.
+
+So the crash happens **after the library loads, in the first test's real work** -- `examples.ExamplesTest`
+loads a model and computes, and the probe above only loaded. The suspect is therefore the **AMX
+compute kernels**, not module loading. Deciding it needs real inference on an AMX machine with one
+module staged at a time: `sapphirerapids` (AMX) against `cooperlake` and `icelake` (AVX-512, no AMX)
+on the *same* instance and model, which isolates AMX from everything else.
 
 ### AIX on POWER -- an open porting question, not a test
 

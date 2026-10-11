@@ -37,10 +37,17 @@ import org.junit.jupiter.api.io.TempDir;
  * are loaded, scored and unloaded again, so on any single machine only one module is ever the
  * <em>chosen</em> backend. A module that corrupts the process therefore stays invisible until a
  * machine turns up whose CPU prefers it, and it then takes down the JVM before the first test
- * reports: a Granite Rapids runner (Xeon 6973P-C, AVX-512 + AMX) died in {@code JNI_OnLoad} with
- * Windows {@code 0xC0000374 STATUS_HEAP_CORRUPTION} and {@code Tests run: 0}, while the identical
- * build and jars passed 1915 tests on a Zen 3 machine, which declines the AMX module. No amount of
- * running the suite on one CPU can find that.
+ * reports: a Granite Rapids runner (AVX-512 + AMX) died with Windows
+ * {@code 0xC0000374 STATUS_HEAP_CORRUPTION} and {@code Tests run: 0}, while the identical build and
+ * jars passed 1915 tests on a Zen 3 machine, which declines the AMX module. No amount of running the
+ * suite on one CPU can find that.
+ *
+ * <p>What this test does <em>not</em> cover, measured afterwards on a rented Granite Rapids machine:
+ * loading is not where that crash is. There the full module set loads cleanly, ggml picks the AMX
+ * module, and all 14 modules load one by one as well -- so the crash is in the first test's real
+ * work (a model load and inference), after {@code System.load} has returned. This test still earns
+ * its runtime, because a module that cannot even be loaded is a different and cheaper failure to
+ * find, and because its per-module table records which levels a given CPU accepts at all.
  *
  * <p>So each module gets a directory of its own holding the library, {@code ggml}, {@code ggml-base},
  * {@code ggml-rpc} and that single module, and a JVM of its own -- which also exercises the
