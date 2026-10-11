@@ -51,7 +51,17 @@ library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still 
    across the set of loaded modules (`Vulkan0` was the NVIDIA GPU with CUDA loaded, the AMD iGPU
    without), so any device setting must go by name, never by index -- worth a README sentence once
    measured.
-2. **Benchmark on AVX-512/VNNI/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra). The Zen 3
+2. ~~**Benchmark on AVX-512/VNNI/AMX hardware**~~ **-- done 2026-10-11, see
+   [`docs/benchmarks/cpu-backend-modules.md`](docs/benchmarks/cpu-backend-modules.md).** All 14 x86
+   modules now have numbers from one Granite Rapids machine (the first on which every level loads),
+   plus a Zen 4 machine and the Graviton 4 run. **AMX is worth +148 % on prompt processing** over the
+   Haswell baseline, and the plain `x64` module is **66x** slower than the chosen one, not the 10.4x
+   the Zen 3 figure suggested. The finding that outgrew the item: on all three machines
+   `ggml_backend_load_best` gives up **10-11 % of token generation** by picking the richest module,
+   and on aarch64 it also gives up 27 % of prompt processing -- it scores by feature level, not by
+   measured throughput. That belongs upstream (see "Upstream submissions"), not in a downstream
+   override. The original wording follows for the record:
+   **Benchmark on AVX-512/VNNI/AMX hardware** (Sapphire Rapids, Zen 4/5, Core Ultra). The Zen 3
    measurement could only show the floor: the plain x86-64 module is 10.4x slower at prompt
    processing (313 -> 30 t/s, Qwen3-0.6B Q4_K_M) and 1.6x at generation than `haswell`, which is what
    the single-level build was. The gain upwards (`zen4` BF16, `sapphirerapids` AMX) is unmeasured.

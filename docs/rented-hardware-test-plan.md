@@ -11,6 +11,10 @@ worked through one rented instance at a time. The companion document for a local
 [`local-test-plan.md`](local-test-plan.md); the open items themselves live in
 [`../TODO.md`](../TODO.md), and this file is only the *how and in which order*.
 
+**What has already been measured is in [`benchmarks/`](benchmarks/)** --
+[`benchmarks/cpu-backend-modules.md`](benchmarks/cpu-backend-modules.md) for the per-module numbers
+and [`benchmarks/ec2-harness.md`](benchmarks/ec2-harness.md) for the mechanics of a run.
+
 **The account-specific mechanics are deliberately not here** — how an instance is launched, how a
 result comes back, which bucket and which credentials. Those are private notes, because they are
 account data rather than project knowledge.
