@@ -210,12 +210,48 @@ files as each other, so they can go in one branch:
    exactly the failure the resolver exists for, and the one that stayed hidden in the core for
    hundreds of builds because a class-level assumption records no test entries. One test added.
 
-**Round 2 -- needs round 0 to have produced artifacts.**
-4. **A `g4dn` run proving a T4 works** with the new arch list (round 0 builds the module; the probe
-   package and harness already exist).
-5. **The Windows extraction-reuse measurement** -- two JVMs, file locks, the one item on the
-   measurement list that is both cheap and still completely unmeasured.
-6. **A slim-image load test**: build a container from `eclipse-temurin:21-jre-noble` and from
+**Round 2 -- ~~needs round 0 to have produced artifacts~~ DONE 2026-10-12.** All three were measured
+against the **published** snapshot jars (`20261012.035453-12`) rather than a build tree, so the
+numbers are what a consumer resolving from Maven gets. Written up in
+[`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md) and the new
+[`docs/benchmarks/native-loading.md`](docs/benchmarks/native-loading.md); the account-specific record
+is in the private workspace. Two AWS boots, **under 0.08 USD together**, both terminated and four
+regions swept afterwards.
+4. ~~**A `g4dn` run proving a T4 works** with the new arch list~~ -- **done, and the abort is gone.**
+   Same AMI, same driver 595.91.07, same Tesla T4; only the module changed. **Three exit-134 aborts
+   became three clean runs**, including `-ngl 0`, which was the most absurd of them since no layer was
+   on the GPU. The GPU gives **20.6x prompt processing and 7.0x generation** over the CPU baseline on
+   that machine. `cuobjdump` on the published module confirms native code for `sm_75`, `sm_80`,
+   `sm_86`, `sm_89`, `sm_90`, `sm_100`, `sm_120a` and `sm_121a` plus PTX for `sm_121a` -- so Turing,
+   A100 and Hopper no longer depend on the driver and anything newer than Blackwell still has a
+   fallback. The `a` suffixes are upstream's own rewrite of every `12x` architecture, not a defect in
+   the list this project passes. **The README's figures were corrected with it**: the CUDA paragraph
+   described the pre-fix state, and OpenVINO's cost was understated (see item 6).
+5. ~~**The Windows extraction-reuse measurement**~~ -- **done, all four documented properties
+   confirmed.** Extracting 18 files / 39 MB costs **~810 ms per JVM start** (cold ~2175 ms against
+   warm ~1365 ms) and the reuse removes it -- per start, so also per surefire fork. The directory key
+   visibly carries the module set (`...-11b5000` against `...-11b5000-mf39ba978`). Two JVMs of one
+   build run concurrently without interfering. And the sharpest case: with an `RpcServer` holding the
+   library and the directory backdated past `STALE_EXTRACTION_AGE`, a sweeper left **exactly the five
+   files that JVM still had open** -- the library, the two pre-loaded ggml libraries, the one CPU
+   module ggml kept, and `ggml-rpc` -- while the 13 it had scored and closed went and were
+   re-extracted on the next start. The server kept running throughout.
+6. ~~**The slim-image / distroless load test**~~ -- **done.** The published Linux jar declares only
+   what a JVM brings with it (`libc`, `libm`, `libdl`, `libpthread`, `libstdc++`, `libgcc_s`, run path
+   `$ORIGIN`, `GLIBC_2.27` at most) -- **`libgomp.so.1` is gone from the artifact**, not only from the
+   allowlist. `net.ladenthin.llama.Diagnose` from the published jars loads in
+   `gcr.io/distroless/java21-debian12` and `eclipse-temurin:21-jre`, and is refused by
+   `eclipse-temurin:21-jre-alpine` **by name**: `No native library found for os.name=Linux-Musl`.
+   That last row is not a defect -- musl was never a shipped platform -- and it was in the matrix on
+   purpose, because a measurement that only admits successes cannot show where the boundary is.
+   **Also measured, and it corrects this file and the README:** OpenVINO on an Intel Sapphire Rapids
+   instance costs **21.7x prompt processing and 336x generation** against the baseline of the same
+   machine (481.3/33.6 down to 22.2/**0.1**), not the 17x/172x recorded from the earlier machine.
+   Without an OpenCL ICD the module does not open at all (2 backends, full CPU speed); with
+   `ocl-icd-libopencl1` it registers a third and collapses. And with the jar on the classpath but
+   `net.ladenthin.llama.backend` unset the loader says `is on the classpath but not used` and the
+   machine runs at full speed -- **the only hardware proof the opt-in decision has**, since CI has no
+   Intel accelerator and nothing happening there proves nothing.
    distroless Java, drop the classes jar plus the Linux library jar in, and load. This is the check
    that CI *structurally cannot* do, because it runs on full runners -- and it is the direct
    verification of what round 0's dependency check only implies.
