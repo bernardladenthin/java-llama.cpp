@@ -1039,9 +1039,20 @@ unlaunched.
 
 `publish-snapshot` / `publish-release` `need` all three (a matrix job is done when every row is;
 fail-loud gating). `github-snapshot` / `github-release-signed` then attach the Maven artifacts with
-the `.asc` maven-gpg wrote at deploy -- the classes jar, every natives jar, the poms, sources,
-javadoc, the AARs -- and nothing is signed or assembled in those jobs any more (no `sign-fatjars.sh`,
-no `environment:`; `verify-signing-key` still proves the key, and the publish jobs sign with it).
+the `.asc` maven-gpg wrote at deploy -- the classes jar, every natives jar, every module's pom
+(`llama-parent` and `llama-platform` included: maven-gpg writes `target/<artifactId>-<version>.pom`
+next to its `.pom.asc`, also for a pom-only module), sources, javadoc, the agent's thin jar, and the
+two AARs with the `.aar.asc` Gradle writes next to them, their poms
+(`build/publications/<publication>/pom-default.xml`) and their sources/javadoc jars
+(`build/distributions/`) -- and nothing is signed or assembled in those jobs any more (no
+`sign-fatjars.sh`, no `environment:`; `verify-signing-key` still proves the key, and the publish jobs
+sign with it). Until 2026-10-12 the collect steps copied jars and bare AARs only: every pom was
+missing, `llama-platform` was absent entirely, the AARs went out unsigned and the `*.jar`-only
+signature check never noticed. The check counts jars, AARs and poms now, and `github-snapshot` ends by
+deleting every asset of the `snapshot` pre-release the run did not upload, each printed by name
+(`gh release upload --clobber` never removed anything: 208 assets, 109 of them from 5.0.x); a versioned
+release is never pruned (`workspace/policies/fat-jar-release-assets.md`, "The `snapshot` pre-release
+holds exactly the current upload").
 
 The common part of the three smoke scripts is `.github/smoke-lib.sh` (`smoke_classpath`,
 `smoke_set_modules`, `smoke_assert_loader_line`); the PowerShell script repeats it, since the Windows
