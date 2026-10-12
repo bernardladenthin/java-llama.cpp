@@ -15,12 +15,17 @@ cross-cutting initiative.
 `crossrepostatus.md`; a finished item is deleted from this file rather than annotated,
 so everything below is genuinely still open.
 
-## Where the modular natives stand, and what the next CI run is for
+## Where the modular natives stand
 
-**The goal was exchangeable native libraries built with LLVM, replacing the fat jars. That is
-implemented and, as of 2026-10-11, partly proven on real hardware.** This section is the state of it
-in one place, because a Publish run costs hours and the question "what is this run supposed to show"
-has to be answerable before starting one.
+**The goal was exchangeable native libraries built with LLVM, replacing the fat jars. As of
+2026-10-12 that is implemented and proven -- on real hardware and through the whole pipeline.** Two
+consecutive `workflow_dispatch` runs on `main` finished **completely green** (67 jobs, 0 red): runs
+**38186841655** and **38218935644**, both through `Package JARs`, all six smoke jobs, both GPG checks,
+`Publish Snapshot to Central` and the GitHub pre-release. Before those, nothing behind `package` had
+ever run with modular natives.
+
+This section stays because a Publish run costs hours and "what is this run supposed to show" has to
+be answerable before starting one -- but that question now has an answer for the state as shipped.
 
 **Done and proven.** 8 library jars plus 15 additive GPU module jars, each holding one ggml backend
 module; `jllama-build.txt` pinning a module to its library's llama.cpp tag before anything is
@@ -379,6 +384,36 @@ other GPU jobs write `ggml-<backend>.dll`, and `JLLAMA_MODULE_ONLY` writes `$<TA
 the upload's `if-no-files-found: error` did not catch it. The two GPG jobs red in the same run are
 **unrelated and expected** on a branch: they need the `maven-central` environment secret.
 
+### ~~Four defects in the published artefact set~~ -- found and fixed 2026-10-12
+
+The first snapshot the green pipeline published was compared against `natives.csv` and against Maven
+Central. **Central was complete and correct**; the **GitHub release** was not, and the three gaps were
+all in one collect step that copied `*.jar`, `*.jar.asc` and `*.aar` only:
+
+1. **no `*.pom` at all**, so `llama-platform` -- a pom-packaging module, the artifact consumers are
+   told to depend on -- was absent from the release entirely;
+2. **the AARs were attached unsigned**, while Central had `aar.asc` for both;
+3. **the signature check globbed `*.jar` only**, which is why the job reported success while
+   attaching something unsigned -- the check had exactly the hole the collect step had;
+4. **`gh release upload --clobber` never removes anything**, so the rolling `snapshot` release had
+   grown to **208 assets**: 109 from versions 5.0.0-5.0.7, 43 in shapes that no longer exist
+   (`msvc-windows`, `all-*-jar-with-dependencies`) and three SpotBugs plugin jars an old collect step
+   had swept in during 2026-05/06 -- the same three are still on srcmorph's and streambuffer's
+   releases.
+
+Fixed in #529 and #531 and **verified on the live release** after run 38218935644: **208 -> 98
+assets**, every one of them `5.2.0-SNAPSHOT`, **49 artefacts with 49 `.asc`** (1:1, nothing unsigned),
+**23 of 23** natives jars against the list, and `llama-platform-5.2.0-SNAPSHOT.pom` present. The
+prune computes its keep-set from what the run actually uploaded rather than from a version pattern --
+a pattern is what produced the 43 stale shapes -- deletes **after** the upload, runs only on the
+rolling release (a `v*` release is history) and prints every deletion by name.
+
+**Still to do in the siblings:** item 4 applies to BitcoinAddressFinder, srcmorph and streambuffer
+too; all three accumulate, and two carry the same SpotBugs jars. `publish.yml#github-snapshot` and
+`#github-release` are *shared jobs* there (byte-identical, hashed in `shared-files.sha256`), so a
+change lands in all three plus `check-shared-files.py --write` in each. jllama's copies are not in its
+own manifest and already diverge.
+
 ### Three measured gaps between "the jar is on the classpath" and "it works" (2026-10-11)
 
 All from the first runs in which a GPU module jar was ever *used* rather than placed, and from
@@ -425,7 +460,17 @@ loading the Linux jar on an image that is not Amazon Linux. Numbers and method:
    it in the README. That 6% is one sample inside its own spread; re-measure it on the rented
    machines before deciding, which is cheap now that the harness exists.
 
-2. ~~**`cuda13` does not fall back when the driver is too old.**~~ **Mitigated:** both CUDA jobs now pass an explicit `CMAKE_CUDA_ARCHITECTURES` making `75 80 86 89 90 100 120 121` **real** with a `121-virtual` tail, so the datacenter GPUs no longer depend on the driver's JIT. **Still to verify:** the build time and module size this costs (nvcc compiles each `.cu` per real arch -- expect roughly double on a job already at 47-80 min uncached), and then a `g4dn` run proving a T4 works. A minimum driver version for the README is still open, because PTX JIT remains the path for any architecture not in the list. The original entry follows.
+2. ~~**`cuda13` does not fall back when the driver is too old.**~~ **Fixed and verified on the
+   same hardware (2026-10-12).** Both CUDA jobs pass an explicit `CMAKE_CUDA_ARCHITECTURES` that
+   makes `75 80 86 89 90 100 120 121` **real**, so Turing, A100 and Hopper ship native code
+   instead of PTX; `121-virtual` keeps a JIT fallback for anything newer. Re-measured with the
+   **same AMI, the same driver 595.91.07 and the same Tesla T4 -- only the module changed**:
+   **three `exit 134` aborts became three clean runs** (including `-ngl 0`, the most absurd of
+   them since no layer was on the GPU), and the GPU gives **20.6x prompt processing / 7.0x
+   generation** over the CPU baseline. `cuobjdump` on the published jar confirms cubins for
+   `sm_75 sm_80 sm_86 sm_89 sm_90 sm_100 sm_120a sm_121a` plus PTX for `sm_121a`; the `a`
+   suffixes are upstream's own rewrite of every `12x` architecture, not a defect in our list.
+   Numbers and method: [`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md).
    **`cuda13` does not fall back when the driver is too old -- it aborts the JVM.** On a Tesla T4
    with driver 595.91.07 the module opened, ggml enumerated the GPU and offloaded 29/29 layers, and
    then `ggml_abort` killed the process: `the provided PTX was compiled with an unsupported
@@ -458,7 +503,18 @@ loading the Linux jar on an image that is not Amazon Linux. Numbers and method:
    way to have both the small jar and no JIT dependency; the question is only which one the consumer
    should pay for.
 
-3. ~~**`openvino` takes over silently and is 172x slower.**~~ **Done:** `openvino` is in `LlamaLoader.OPT_IN_BACKENDS`, so its jar does nothing until `net.ladenthin.llama.backend` names it, and the loader prints why on stderr. Pinned by `LlamaLoaderTest` from both sides (left out by default, selected when named, and every other module still additive). **Still open:** the README needs to say the jar requires an Intel GPU/NPU *and* an OpenCL ICD loader, and nothing is known about its behaviour on the hardware it is actually for. The original entry follows.
+3. ~~**`openvino` takes over silently and is 172x slower.**~~ **Done, and re-measured on Intel
+   hardware (2026-10-12): the cost was understated.** `openvino` is in
+   `LlamaLoader.OPT_IN_BACKENDS` and declared by the `optin` column of `natives.csv`, so its jar
+   does nothing until `net.ladenthin.llama.backend` names it. On an `m7i.xlarge` (Sapphire
+   Rapids, no accelerator) the real figures are **21.7x slower prompt processing and 336x
+   slower generation** -- 481.3/33.6 down to 22.2/**0.1** tokens per second, about ten seconds
+   per token -- not the 17x/172x first recorded. Two things that run settled which the earlier
+   one could not: **without an OpenCL ICD the module does not open at all** (2 backends, full
+   CPU speed; `ocl-icd-libopencl1` is what changes the answer), and **with the jar on the
+   classpath and the property unset the loader leaves it out** and the machine runs at full
+   speed -- the only hardware proof the opt-in decision has, since CI has no Intel accelerator
+   and nothing happening there proves nothing. The README carries the corrected numbers.
    **`openvino` on a host without an Intel accelerator is 172x slower, and takes over silently.**
    Same CPU library, same machine: `cpu` only 490.4 pp / 34.5 tg, with the OpenVINO module present
    29.4 / **0.2** -- five seconds per token, over 27000 log lines mentioning OpenVINO. Its CPU plugin
@@ -576,7 +632,57 @@ interface (what already happens), and keep one guard: a configure-time check tha
 is on `jllama`'s include path, so a future upstream move of the vendor directory cannot silently flip the order
 back. Not done in the bump PR on purpose -- a bump changes the pin, nothing else.
 
+### Waiting on sccache: four open issues, and they cost the pipeline hours
+
+**Nothing to do here but watch.** Checked 2026-10-12: `SCCACHE_DL_VERSION` is **0.18.0 and that is the
+newest release** (2026-09-14), so there is no bump to take, and the cause is a family of **open**
+issues upstream:
+
+| issue | what it is |
+|---|---|
+| [mozilla/sccache#1122](https://github.com/mozilla/sccache/issues/1122) | *"Generically assume that unknown flags are `PassThrough`"* -- **the structural fix**: it would make every one of the others moot |
+| [#1603](https://github.com/mozilla/sccache/issues/1603) | handling `-Xclang` custom plugins and flags |
+| [#2522](https://github.com/mozilla/sccache/issues/2522) | `-Xclang -fopenmp` errors with `UnknownFlag` |
+| [#2717](https://github.com/mozilla/sccache/issues/2717) | add `-fno-cxx-modules` to the known `-Xclang` flags |
+
+**Why this is not cosmetic.** sccache refuses any translation unit carrying an `-Xclang` argument, and
+CMake's `Platform/Windows-Clang.cmake` puts one on **every** plain-clang Windows TU, because that is
+how it implements `CMAKE_MSVC_RUNTIME_LIBRARY` -- the hybrid CRT every Windows job here sets
+(`-Xclang -flto-visibility-public-std -D_MT -Xclang --dependent-lib=libcmt`). So two jobs cache
+nothing at all:
+
+* **`build-windows-x86_64`** (plain clang, modular CPU): measured at b11538, **719 of 720 compile
+  requests non-cacheable, 0.00% hit rate**. The job builds cold on every run, which is why it has no
+  sccache install step at all.
+* **`build-windows-x86_64-rocm`**: TheRock's clang is a plain clang too, and upstream compiles the HIP
+  sources as C++ on Windows, so its ~140 HIP TUs -- each compiled for **23** GPU targets -- all go
+  through the launcher and are all refused (run 38069595101: 67 requests, every one non-cacheable, 0
+  compilations). **This is the pipeline's critical path**: 2:40 h to 3:08 h for its build step in the
+  measured runs, against ~1 h for everything else in the run put together. A pipeline run is
+  three hours because of this one job, and a working cache is the only thing that would shorten it.
+
+**What is already in place, so nothing is blocked meanwhile:** `build.sh`/`build.bat` probe-compile
+through sccache before trusting it as the launcher, retry once without it when a build fails with a
+cache error, and pass `-DGGML_CCACHE=OFF` so ggml cannot re-enable a launcher behind the retry's back.
+The refusal therefore costs time, never a red build.
+
+**The re-check, when it is worth doing.** On the next sccache **release** (not on a schedule): bump
+`SCCACHE_DL_VERSION` in `build.sh`, add the install step back to `build-windows-x86_64`, and read the
+`### sccache statistics` table the build script writes into the job summary. A hit rate above zero on
+that job is the answer; anything else and the pin goes back. The ROCm job keeps its install step
+already, so its summary table answers the same question for free on any run.
+
+**Worth one comment upstream** rather than a new issue: this project's case -- CMake putting `-Xclang`
+on every Windows TU, so the flag is not exotic but unavoidable -- belongs in #1122, which is where the
+general fix is being discussed. That is the only action available until something merges.
+
 ### CUDA job: nvcc through sccache (`SCCACHE_WRAP_NVCC`, off since the second failure)
+
+**Checked 2026-10-12: there is nothing to bump to.** `SCCACHE_DL_VERSION` is 0.18.0 and that is the
+newest release (2026-09-14). The `-Xclang` refusal that also costs the plain-clang Windows jobs their
+cache is tracked in open sccache issues (#1603, #2522, #2717, #1122), none merged. So the
+re-test recipe below is still the right one -- it just cannot be run yet. Re-check on the next
+sccache release rather than on a schedule.
 
 - Run 37680715063 (b11476 bump) and run 37925157175 (#492, 2026-10-09): the Linux CUDA build logged
   `sccache: caused by: Missing "cubin" file output` and `sccache: Compiler killed by signal 126` on
@@ -740,6 +846,32 @@ nothing here blocks on it.
 
 **Nothing is filed upstream before the release is out**, neither issues nor PRs; the drafts are not
 written before that either. Everything below is the inventory for that day, so it is not rediscovered.
+
+#### The four issues to file, prepared
+
+These are the ones with **no patch to offer** -- a measurement and a question. The work left on each is
+writing it; the evidence exists and is linked. File them as **four separate issues**, since they touch
+three different subsystems and a combined report gets triaged as one.
+
+| # | title to use | the evidence to paste | the question for the maintainers |
+|---|---|---|---|
+| 1 | `ggml_backend_load_best picks the richest CPU module, not the fastest` | the three tables in [`docs/benchmarks/cpu-backend-modules.md`](docs/benchmarks/cpu-backend-modules.md): on Granite Rapids the pick gives up 10-11% of token generation, on Graviton 4 **27% of prompt processing** as well | scoring is by feature level by construction. Is a throughput-aware choice wanted at all, or should a consumer be able to override the pick? There is no downstream lever today -- `net.ladenthin.llama.backend` cannot select a *CPU* module |
+| 2 | `ggml-rpc: a server lost mid-inference aborts the process` | `patches/0015`'s header plus the RPC section of `CLAUDE.md`: registration was made non-aborting downstream, every path *after* registration still ends in `GGML_ABORT` | the ggml backend interface has no error return for a device that went away. Is adding one in scope, or is aborting the intended contract for a lost device? This is the blocker for using RPC from a long-lived host process |
+| 3 | `ggml-rpc: the client answers every supports_op with true` | the RPC section of `CLAUDE.md`: a served device that lacks an op **aborts the server**. Reproduced on the macOS CI runners' paravirtual Metal GPU, which has no `MUL_MAT` and took the first run down; it is why every test here serves `CPU` by name | upstream's own TODO comment admits it. Should the client forward the query to the server, or should `rpc-server -d` refuse a device whose op set it cannot report? |
+| 4 | `windows-rocm: 83,362 compiler warnings, against 9 on linux-rocm` | the table below in this section (714,345 log lines against 2,455; the per-class counts; all of them in `ggml/src/ggml-cuda/*.cu`) | the cause is the language, not the arch count: HIP sources are compiled as plain C++ on Windows (`CXX_IS_HIPCC` on `WIN32`) and as HIP on Linux. Fix the warnings, or the C++-on-Windows choice? Their own `windows-rocm` job pays the identical cost |
+
+**Two rules for the day.** State the measurement and ask the question; do not propose the fix for 1-3,
+because each is a design decision in code this project does not own. And say plainly what was done
+downstream instead (the opt-in, the non-aborting registration, the `-w` on `ggml-hip`), so a
+maintainer can see what a merged change would let this project delete.
+
+A fifth report is **not** for llama.cpp: sccache refuses every TU carrying an `-Xclang` argument, and
+CMake's runtime-library selection puts one on every plain-clang Windows TU. Checked 2026-10-12:
+**0.18.0 is the newest release** (2026-09-14), so there is no bump to take, and the flag handling is a
+family of **open** sccache issues -- mozilla/sccache#1603, #2522, #2717 and #1122 (the structural one:
+treat an unknown flag as pass-through). So the measurement stands as recorded and the only action is
+to add this case to one of those issues, or wait. Re-check on the next sccache release before
+spending a CI run on it.
 
 There are **twelve** patches today (`0001`-`0003`, `0006`-`0008`, `0012`, `0014`-`0018`). Each
 accepted upstream change deletes a patch from the bump checklist once the pin is bumped past it.

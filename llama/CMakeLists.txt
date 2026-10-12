@@ -117,14 +117,28 @@ if(JLLAMA_MODULE_ONLY)
     set(JLLAMA_BACKEND_DL ON)
 endif()
 
-#################### json ####################
-
-FetchContent_Declare(
-	json
-	GIT_REPOSITORY https://github.com/nlohmann/json
-	GIT_TAG        v3.12.0
-)
-FetchContent_MakeAvailable(json)
+#################### json: upstream's vendored copy, and only that one ####################
+#
+# There is no FetchContent for nlohmann/json any more, because there never was a compile that used
+# it. llama.cpp carries its own copy at vendor/nlohmann/ and exports that directory through the
+# vendor::nlohmann INTERFACE target which llama-common links PUBLIC, and that directory comes BEFORE
+# a FetchContent include dir on every jllama compile line -- measured at the b11556 bump in
+# CMakeFiles/jllama.dir/flags.make: `vendor/nlohmann/..` was -I number 7 and `json-src/include`
+# number 12. So the two project headers that include nlohmann/json.hpp (log_helpers.hpp and
+# train_engine.cpp) always resolved to upstream's copy, exactly as every upstream TU does.
+#
+# That is the good case and the reason to keep it: ONE copy in every translation unit of the library.
+# Two copies of the same classes with different layouts in one link is what the httplib incident was
+# (see "HTTPS: BoringSSL, statically" in CLAUDE.md) -- the linker's choice per platform decided the
+# behaviour there, and it differed per platform.
+#
+# What made the duplicate indefensible rather than merely idle: since b11556 upstream applies
+# vendor/nlohmann/json-deep-nesting.patch to its copy (nlohmann/json#5387 -- deep values crashed
+# copy, dump() and operator==), so the fetched v3.12.0 was not even the same code. It cost a clone
+# per fresh build directory, two link entries, and a pinned tag that looked like something to keep
+# in sync with a library this project does not choose the version of.
+#
+# The guard that replaces it is below, next to the llama.cpp fetch: upstream's copy must be there.
 
 #################### llama.cpp ####################
 
@@ -338,6 +352,21 @@ FetchContent_MakeAvailable(llama.cpp)
 # because no machine without AMX can notice the defect at run time.
 include(cmake/check-aligned-free-pairing.cmake)
 jllama_check_aligned_free_pairing(${llama.cpp_SOURCE_DIR})
+
+# nlohmann/json comes from upstream's vendored copy and from nowhere else (see the json block above).
+# Asserted here rather than left to the compiler: a missing header fails every TU that includes it
+# with a message about the header, while this one says where the file is expected and what to do.
+# A future upstream move of vendor/nlohmann/ is the case it catches.
+if(NOT EXISTS "${llama.cpp_SOURCE_DIR}/vendor/nlohmann/json.hpp")
+    message(FATAL_ERROR
+            "nlohmann/json.hpp is not at ${llama.cpp_SOURCE_DIR}/vendor/nlohmann/json.hpp.\n"
+            "This project takes that header from llama.cpp's vendored copy, which reaches jllama "
+            "through the vendor::nlohmann interface target of llama-common, and keeps no copy of its "
+            "own on purpose: two copies of the same classes in one link is the httplib failure mode. "
+            "If upstream moved the directory at this tag, point the include at the new location; do "
+            "not re-add a FetchContent for it, which would put a second, differently-patched copy "
+            "back on the include path.")
+endif()
 if(JLLAMA_BACKEND_DL)
     # Where ggml can be loaded as modules here (CLAUDE.md "Modular natives"): Linux x86-64 / aarch64
     # (the dockcross Android toolchain reports Linux too, see the Android block above) and Windows
@@ -769,14 +798,9 @@ endif()
 # (b10488) replaced its `PUBLIC . ../vendor` include dir with PUBLIC links to the
 # vendor::nlohmann / vendor::sheredom INTERFACE targets, and each of those exports
 # the vendor/ root (`target_include_directories(<t> INTERFACE ..)`), so the same
-# directory still reaches jllama transitively.  That vendor/ directory comes BEFORE the
-# FetchContent json-src include dir on every jllama compile line (measured in
-# CMakeFiles/jllama.dir/flags.make: `vendor/nlohmann/..` is -I number 7, `json-src/include`
-# number 12), so our own `#include <nlohmann/json.hpp>` (log_helpers.hpp, train_engine.cpp)
-# resolves to upstream's bundled copy -- one copy in every TU of the library, which is what
-# matters.  Since b11556 that copy is 3.12.0 PLUS upstream's `json-deep-nesting.patch`
-# (nlohmann/json#5387: deep values crashed copy, dump() and operator==), so the two are no
-# longer byte-identical; the FetchContent one is effectively unused (TODO.md).
+# directory still reaches jllama transitively.  The same link is what supplies
+# nlohmann/json.hpp to log_helpers.hpp and train_engine.cpp -- see the json block at
+# the top of this file for why there is no second copy of it.
 target_sources(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server/server-http.cpp
 )
@@ -822,7 +846,7 @@ target_include_directories(jllama PRIVATE
     ${llama.cpp_SOURCE_DIR}/tools/server)
 # Note: the WebUI ui.h include dir (generated webui-generated/ or the empty stub
 # src/main/cpp/webui_stub) is added by the "WebUI assets" conditional above.
-target_link_libraries(jllama PRIVATE llama-common mtmd llama nlohmann_json cpp-httplib)
+target_link_libraries(jllama PRIVATE llama-common mtmd llama cpp-httplib)
 target_compile_features(jllama PRIVATE cxx_std_11)
 
 target_compile_definitions(jllama PRIVATE
@@ -1062,7 +1086,7 @@ if(BUILD_TESTING)
         # The generated Java-CLI-flag list consumed by test_model_flags.cpp.
         ${CMAKE_CURRENT_BINARY_DIR}/generated
     )
-    target_link_libraries(jllama_test PRIVATE llama-common mtmd llama nlohmann_json cpp-httplib GTest::gtest_main)
+    target_link_libraries(jllama_test PRIVATE llama-common mtmd llama cpp-httplib GTest::gtest_main)
     target_compile_features(jllama_test PRIVATE cxx_std_17)
 
     # The embedded llama-server's shutdown path (test_native_server_shutdown.cpp) drives the real
