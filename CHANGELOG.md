@@ -191,6 +191,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   refreshed onto the rewritten logging context with the same changes; the other eleven apply unchanged
   and every drop-check still finds its defect. Per-step record:
   `docs/history/llama-cpp-breaking-changes.md`.
+- **Upgraded the pinned llama.cpp from b11558 to b11574**, in 5 reviewed steps, each ending at a tag
+  (b11559, b11560, b11570, b11573, b11574; 16 commits, 69 files; one `tools/ui` fix, which the
+  auto-followed WebUI picks up). What reaches this project: **ggml's shared libraries hide their
+  symbols by default** (#30014, under `BUILD_SHARED_LIBS` only, i.e. the modular library jars) --
+  everything `libjllama` and the modules take from `ggml` / `ggml-base` is public API, verified by a
+  local modular build and the Java native-load smoke over it; `llama_perf_context_data` reports
+  **compute-graph reallocations** (#30329: two appended fields and a `graph reallocs` log line per
+  slot, no JSON change, so `Timings` and `getMetrics()` are untouched); two new **decision model
+  types** for `/v1/systemone` (#30378 vllm-decision2 with a strict payload, #30383 vllm-d3 with
+  non-causal attention) behind an unchanged contract for the existing ones; `--kv-unified` reaches the
+  speculative example (#30095). Patch `0012` is refreshed onto #30299's `tests/CMakeLists.txt`
+  (`LINK llama`); the other eleven apply unchanged and every drop-check still finds its defect.
+  Per-step record: `docs/history/llama-cpp-breaking-changes.md`.
 - **No fat jars, no release assets beyond the Maven artifacts.** The all-backends
   `llama-<v>-all-<os>-<arch>-jar-with-dependencies.jar`, the default CPU fat jar and the agent's
   `llama-atmosphere-agent-<v>-jar-with-dependencies.jar` are gone (see Removed): with modular natives
