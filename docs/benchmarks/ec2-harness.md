@@ -91,6 +91,14 @@ secret lands on a throwaway machine). The EC2 console log is **not** a usable ch
    language that treats `\f` and `\b` as escapes becomes a form feed or a backspace, and the
    resulting error (`Could not find or load main class C:\pixpkg\…`) costs a full boot. Build such
    paths from `chr(92)` or with forward slashes.
+10. **The harness is the first suspect, not the artifact.** Two measurements this project ran looked
+   like product defects and were neither. A Windows classpath built in a POSIX shell had `C:/…`
+   rewritten to `C` plus `\Users\…`, so Java received broken entries and the loader correctly
+   reported no natives jar on the classpath (`MSYS_NO_PATHCONV=1` fixes it). And a local probe
+   declared all five SDK layouts broken because `chmod +x` does not stick on that filesystem, so
+   `[ -x ]` answered false for every fixture -- including the one that demonstrably works in CI. In
+   both cases the tool under test was telling the truth. Reproduce the *expected* case first; if even
+   that fails, the harness is wrong.
 
 ## Cost, measured
 
@@ -114,5 +122,7 @@ not just the one that was used.
 
 A **GPU instance family starts at a zero vCPU quota** on a fresh account. Raising it is a support
 request measured in hours to days; the On-Demand and Spot quotas are **independent**, with separate
-approvals, so filing both is worth it. Note that a Spot instance can only be terminated, never
+approvals, so filing both is worth it. Both were granted here within a day, which is what finally
+made the GPU findings in [`gpu-module-jars.md`](gpu-module-jars.md) measurable -- and the second GPU
+run of this project cost under 0.05 USD, because the probe needed four minutes once it started. Note that a Spot instance can only be terminated, never
 stopped — which does not matter for a measurement that terminates anyway.
