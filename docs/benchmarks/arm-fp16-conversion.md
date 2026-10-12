@@ -153,9 +153,15 @@ run interleaved with upstream's own `llama-bench`, `-r 5`, on a **1.5 GB F16** m
 | Q4_K_M `pp512` | 84.63 | 84.59 | -0.05 % |
 | Q4_K_M `tg128` | 40.98 | 40.95 | -0.07 % |
 
-All four inside the run-to-run spread (two runs of the *same* binary differ by up to 0.09 %). The
-`-t 32` rows of the same run are **discarded**, not reported: that machine carries a permanent
-8-core foreign load, so 32 threads oversubscribe it and two runs of the same binary spread 7.5 %.
+All four inside the run-to-run spread (two runs of the *same* binary differ by up to 0.09 %).
+
+The `-t 32` rows of the same run are **discarded**, not reported, and they are worth showing as the
+reason why. That machine carries a permanent 8-core foreign load, so 32 threads oversubscribe it:
+two runs of the same binary spread by up to **10.5 %** there, and `llama-bench`'s own error bar
+reaches **+-9.8 %** within a single run. Taken at face value those rows would say the fix makes
+generation **12 % to 18 % slower** -- a confident-looking result, with error bars, that is plainly
+false. A number from a machine whose load is unknown is not a number, and the check that exposes it
+is cheap: interleave the variants and compare two runs of the *same* binary first.
 
 **Why there is nothing to see**, from `perf` on the F16 `pp512` run:
 
