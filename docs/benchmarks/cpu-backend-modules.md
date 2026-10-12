@@ -153,6 +153,88 @@ issue with these tables (`TODO.md`, "Upstream submissions"), and worth knowing f
 about generation latency — `net.ladenthin.llama.backend` cannot select a *CPU* module, so the only
 lever today is shipping a directory with one module in it.
 
+## Re-measured at b11558 on 64 cores: the baseline moved, and the ranking reverses
+
+Measured **2026-10-12** against the **published** jars (`5.2.0-20261012.112736-13`, llama.cpp
+**b11558**) on an `m8i.16xlarge` -- the **same CPU model** as the table above (Xeon 6975P-C, Granite
+Rapids) but **64 vCPU instead of 4**. Same method: one module staged at a time, same model, 35 runs in
+one boot.
+
+This exists because the section below predicted it: the b11538 tables are relative to `haswell`, and
+**upstream #30270 (merged 2026-10-11, in the b11538..b11556 range) makes AVX2+F16C CPUs use the
+hardware conversion instead of a lookup table** -- i.e. it moves exactly that baseline.
+
+### All 14 modules at 16 threads
+
+| module | pp512 | tg128 | against `haswell` (pp) |
+|---|---:|---:|---:|
+| **`sapphirerapids`** (AMX) ← ggml's choice | **2775.5** | **160.0** | **+96 %** |
+| `cooperlake` | 1949.1 | 152.5 | +37 % |
+| `skylakex` | 1801.4 | 153.0 | +27 % |
+| `cannonlake` | 1787.7 | 151.9 | +26 % |
+| `icelake` | 1565.7 | 152.9 | +10 % |
+| `cascadelake` | 1563.1 | 152.8 | +10 % |
+| `zen4` | 1553.2 | 153.9 | +10 % |
+| `haswell` | 1417.6 | 151.8 | — |
+| `alderlake` | 1410.0 | 150.4 | −1 % |
+| `piledriver` | 892.6 | 140.6 | −37 % |
+| `ivybridge` | 861.2 | 138.3 | −39 % |
+| `sandybridge` | 841.2 | 76.2 | −41 % |
+| `sse42` | 68.9 | 36.4 | −95 % |
+| `x64` | 63.4 | 33.2 | −96 % |
+
+Full set on the same machine: ggml chose `sapphirerapids`, 2763.4 / 159.6 -- within noise of the
+staged run, so the staging still does not distort anything. **All 14 load and run**, as at b11538.
+
+**AMX is worth +96 % on prompt processing here, against +148 % in the 4-vCPU table.** Two things
+changed at once (the pin and the machine size), so see the isolation attempt below before reading that
+as the effect of #30270 alone.
+
+### The thread sweep: at 64 threads `haswell` beats the module ggml picks
+
+The open question was whether the generation ranking reverses with thread count, as the Windows
+OpenMP measurements showed it can. **It does.** Token generation, four modules, same machine:
+
+| threads | 1st | 2nd | 3rd | 4th |
+|---:|---|---|---|---|
+| 4 | **`sapphirerapids`** 59.7 | `zen4` 55.2 | `cascadelake` 54.1 | `haswell` 53.8 |
+| 8 | **`sapphirerapids`** 105.6 | `cascadelake` 102.0 | `zen4` 101.5 | `haswell` 99.4 |
+| 16 | **`sapphirerapids`** 159.1 | `zen4` 153.1 | `cascadelake` 151.7 | `haswell` 150.7 |
+| 32 | **`sapphirerapids`** 188.2 | `cascadelake` 186.8 | `haswell` 185.1 | `zen4` 183.8 |
+| **64** | **`haswell` 192.6** | `zen4` 190.0 | `cascadelake` 188.6 | **`sapphirerapids` 181.8** |
+
+At 64 threads the richest module is **last**, and the one ggml would never pick on this CPU is first.
+Prompt processing turns over there too: between 32 and 64 threads `sapphirerapids` falls 4119.7 → 3880.2
+and `zen4` collapses 2069.0 → **1143.3**, while `haswell` keeps rising 1752.8 → 1960.3. The machine has
+32 physical cores with SMT, so 64 threads means hyperthreads -- which is a realistic default, since
+`std::thread::hardware_concurrency()` and most "use all cores" settings report 64 here.
+
+**This sharpens the upstream finding below rather than adding a new one**: `ggml_backend_load_best`
+scores by feature level, which costs 10-11 % of generation at 4 vCPU and **loses outright at 64
+threads**.
+
+### #30270 is NOT the reason the baseline moved -- measured, and it refutes what this page first said
+
+Same CPU model and the **same thread count** (4), the only pair comparable across the two tables:
+
+| | b11538, 4 vCPU | b11558, 64 vCPU at t=4 | change |
+|---|---:|---:|---:|
+| `haswell` pp512 | 221.8 | 422.7 | **+91 %** |
+| `sapphirerapids` pp512 | 550.0 | 847.9 | +54 % |
+| ratio | 2.48x | **2.01x** | |
+
+This page first read that asymmetry as *consistent with #30270*, since `haswell` gained far more than
+the AMX module and #30270 is an AVX2-specific fix. **That was wrong, and the clean isolation says so**
+([`upstream-f16c-30270.md`](upstream-f16c-30270.md)): one source tree built twice on one machine with
+those eight lines removed shows **no measurable effect at all** -- every difference inside ±2 %, with
+two non-F16C control modules moving just as much.
+
+So the +91 % is **the instance size**: 4 threads on a 64-vCPU machine have far more memory bandwidth
+to themselves than a 4-vCPU machine does, and `haswell` is the more bandwidth-bound of the two. The
+asymmetry between two rows of two different machines is not an isolation, and reading it as one was
+the mistake. It is kept here rather than quietly removed, because the next person comparing two tables
+across a pin **and** a machine size will be tempted the same way.
+
 ## These numbers are bound to llama.cpp b11538, and b11556 already moved one of them
 
 Every table above was measured against the natives jars built at **b11538**. That is not boilerplate:
