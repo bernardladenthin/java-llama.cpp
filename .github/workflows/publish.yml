@@ -3129,19 +3129,42 @@ jobs:
           MAVEN_GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
       # Runs even when the deploy step failed: a Central publish-poll timeout reds the
       # job *after* the bundle was uploaded (and typically published server-side), while
-      # the signed jars + .asc files already exist in target/ (signing happens at
+      # the signed jars and poms + .asc files already exist in target/ (signing happens at
       # verify). Collecting on failure lets the github-snapshot job still attach them.
       - name: Collect signed artifacts
         if: ${{ !cancelled() }}
         run: |
           mkdir -p signed-snapshot-assets
-          cp llama/target/*.jar signed-snapshot-assets/ 2>/dev/null || true
-          cp llama/target/*.jar.asc signed-snapshot-assets/ 2>/dev/null || true
-          cp llama-langchain4j/target/*.jar signed-snapshot-assets/ 2>/dev/null || true
-          cp llama-langchain4j/target/*.jar.asc signed-snapshot-assets/ 2>/dev/null || true
-          cp llama-kotlin/target/*.jar signed-snapshot-assets/ 2>/dev/null || true
-          cp llama-kotlin/target/*.jar.asc signed-snapshot-assets/ 2>/dev/null || true
-          cp llama-android/build/aar/*.aar signed-snapshot-assets/ 2>/dev/null || true
+          # Every Maven artifact Central gets, with its .asc: the jars of every jar module and the
+          # pom of every module -- maven-gpg writes target/<artifactId>-<version>.pom next to its
+          # .pom.asc, also for the pom-only modules (`.` is llama-parent, llama-platform is the one
+          # consumers are told to depend on and used to be absent from the release entirely).
+          for m in . llama llama-langchain4j llama-kotlin llama-platform llama-atmosphere-agent; do
+            cp "$m"/target/*.jar signed-snapshot-assets/ 2>/dev/null || true
+            cp "$m"/target/*.jar.asc signed-snapshot-assets/ 2>/dev/null || true
+            cp "$m"/target/*.pom signed-snapshot-assets/ 2>/dev/null || true
+            cp "$m"/target/*.pom.asc signed-snapshot-assets/ 2>/dev/null || true
+          done
+          # The two AARs, as Central names them: Gradle signs the AAR next to itself
+          # (build/aar/*.aar.asc -- the signature was always there, it was never copied), each
+          # publication's pom as build/publications/<publication>/pom-default.xml(.asc), and the
+          # sources/javadoc jars the two publications share under build/distributions/.
+          for aar in llama-android/build/aar/*.aar; do
+            [ -e "$aar" ] || continue
+            base="$(basename "$aar" .aar)"
+            case "$base" in
+              llama-android-opencl-*) pub=llamaAndroidOpencl; v="${base#llama-android-opencl-}" ;;
+              *)                      pub=llamaAndroid;       v="${base#llama-android-}" ;;
+            esac
+            cp "$aar" signed-snapshot-assets/ 2>/dev/null || true
+            cp "$aar.asc" signed-snapshot-assets/ 2>/dev/null || true
+            cp "llama-android/build/publications/$pub/pom-default.xml" "signed-snapshot-assets/$base.pom" 2>/dev/null || true
+            cp "llama-android/build/publications/$pub/pom-default.xml.asc" "signed-snapshot-assets/$base.pom.asc" 2>/dev/null || true
+            for c in sources javadoc; do
+              cp "llama-android/build/distributions/llama-android-$v-$c.jar" "signed-snapshot-assets/$base-$c.jar" 2>/dev/null || true
+              cp "llama-android/build/distributions/llama-android-$v-$c.jar.asc" "signed-snapshot-assets/$base-$c.jar.asc" 2>/dev/null || true
+            done
+          done
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
@@ -3180,21 +3203,23 @@ jobs:
         run: |
           set -uo pipefail
           dir="snapshot-assets"
-          jars=$(find "$dir" -maxdepth 1 -name '*.jar' | sort)
-          if [ -z "$jars" ]; then
-            echo "::error::no jars in $dir -- the collection step produced nothing"
+          # Every attachable artifact type, not only jars: with '*.jar' alone the AARs were attached
+          # unsigned for months and nothing counted them, so the job reported success.
+          artifacts=$(find "$dir" -maxdepth 1 \( -name '*.jar' -o -name '*.aar' -o -name '*.pom' \) | sort)
+          if [ -z "$artifacts" ]; then
+            echo "::error::no artifacts in $dir -- the collection step produced nothing"
             echo "missing=-1" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           missing=0
-          for jar in $jars; do
-            if [ ! -e "$jar.asc" ]; then
-              echo "::error::unsigned: $(basename "$jar") has no detached .asc"
+          for artifact in $artifacts; do
+            if [ ! -e "$artifact.asc" ]; then
+              echo "::error::unsigned: $(basename "$artifact") has no detached .asc"
               missing=$((missing + 1))
             fi
           done
           echo "missing=$missing" >> "$GITHUB_OUTPUT"
-          [ "$missing" -eq 0 ] && echo "all $(echo "$jars" | wc -l) jar(s) signed"
+          [ "$missing" -eq 0 ] && echo "all $(echo "$artifacts" | wc -l) artifact(s) signed"
           exit 0
       - name: Update snapshot pre-release
         env:
@@ -3209,6 +3234,35 @@ jobs:
           gh release upload snapshot snapshot-assets/* \
             --repo ${{ github.repository }} \
             --clobber
+      - name: Remove the assets this run did not upload
+        # `snapshot` is a rolling "latest" pre-release, and `gh release upload --clobber` replaces
+        # same-named assets but never removes any other, so every asset of every past version stayed
+        # forever: 208 on java-llama.cpp (109 of them from 5.0.x, 43 in shapes that no longer exist),
+        # and SpotBugs plugin jars an old collect step attached in 2026-05 on three repositories. A
+        # non-current asset on this release is noise by definition. The keep-set is what this run
+        # uploaded -- the files in the asset directory -- never a version pattern, which would have to
+        # be re-taught at every classifier added or dropped (how the stale shapes arose). AFTER the
+        # upload on purpose: a failed upload must not leave the release emptier than it was. And only
+        # here: a versioned v* release is history, github-release never deletes anything. Every
+        # deletion is printed by name, so the job log is the audit trail.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          keep="$(ls -1 snapshot-assets | sort)"
+          current="$(gh release view snapshot --repo ${{ github.repository }} --json assets --jq '.assets[].name' | sort)"
+          stale="$(comm -13 <(printf '%s\n' "$keep") <(printf '%s\n' "$current"))"
+          if [ -z "$stale" ]; then
+            echo "nothing to remove: the release holds exactly the $(printf '%s\n' "$keep" | wc -l) asset(s) of this upload"
+            exit 0
+          fi
+          echo "removing $(printf '%s\n' "$stale" | wc -l) asset(s) that are not part of this upload:"
+          while IFS= read -r name; do
+            [ -n "$name" ] || continue
+            echo "  deleting $name"
+            gh release delete-asset snapshot "$name" --repo ${{ github.repository }} --yes
+          done <<< "$stale"
+          echo "kept the $(printf '%s\n' "$keep" | wc -l) asset(s) of this upload"
       - name: Fail if anything was attached unsigned
         # After the upload on purpose: the assets must exist even when the signature does not.
         if: ${{ always() && steps.signatures.outputs.missing != '0' }}
@@ -3313,19 +3367,42 @@ jobs:
           MAVEN_GPG_KEY_ID: ${{ secrets.GPG_KEY_ID }}
       # Runs even when the deploy step failed: a Central publish-poll timeout reds the
       # job *after* the bundle was uploaded (and typically published server-side), while
-      # the signed jars + .asc files already exist in target/ (signing happens at
+      # the signed jars and poms + .asc files already exist in target/ (signing happens at
       # verify). Collecting on failure lets the github-release-signed job still attach them.
       - name: Collect signed artifacts
         if: ${{ !cancelled() }}
         run: |
           mkdir -p signed-release-assets
-          cp llama/target/*.jar signed-release-assets/ 2>/dev/null || true
-          cp llama/target/*.jar.asc signed-release-assets/ 2>/dev/null || true
-          cp llama-langchain4j/target/*.jar signed-release-assets/ 2>/dev/null || true
-          cp llama-langchain4j/target/*.jar.asc signed-release-assets/ 2>/dev/null || true
-          cp llama-kotlin/target/*.jar signed-release-assets/ 2>/dev/null || true
-          cp llama-kotlin/target/*.jar.asc signed-release-assets/ 2>/dev/null || true
-          cp llama-android/build/aar/*.aar signed-release-assets/ 2>/dev/null || true
+          # Every Maven artifact Central gets, with its .asc: the jars of every jar module and the
+          # pom of every module -- maven-gpg writes target/<artifactId>-<version>.pom next to its
+          # .pom.asc, also for the pom-only modules (`.` is llama-parent, llama-platform is the one
+          # consumers are told to depend on and used to be absent from the release entirely).
+          for m in . llama llama-langchain4j llama-kotlin llama-platform llama-atmosphere-agent; do
+            cp "$m"/target/*.jar signed-release-assets/ 2>/dev/null || true
+            cp "$m"/target/*.jar.asc signed-release-assets/ 2>/dev/null || true
+            cp "$m"/target/*.pom signed-release-assets/ 2>/dev/null || true
+            cp "$m"/target/*.pom.asc signed-release-assets/ 2>/dev/null || true
+          done
+          # The two AARs, as Central names them: Gradle signs the AAR next to itself
+          # (build/aar/*.aar.asc -- the signature was always there, it was never copied), each
+          # publication's pom as build/publications/<publication>/pom-default.xml(.asc), and the
+          # sources/javadoc jars the two publications share under build/distributions/.
+          for aar in llama-android/build/aar/*.aar; do
+            [ -e "$aar" ] || continue
+            base="$(basename "$aar" .aar)"
+            case "$base" in
+              llama-android-opencl-*) pub=llamaAndroidOpencl; v="${base#llama-android-opencl-}" ;;
+              *)                      pub=llamaAndroid;       v="${base#llama-android-}" ;;
+            esac
+            cp "$aar" signed-release-assets/ 2>/dev/null || true
+            cp "$aar.asc" signed-release-assets/ 2>/dev/null || true
+            cp "llama-android/build/publications/$pub/pom-default.xml" "signed-release-assets/$base.pom" 2>/dev/null || true
+            cp "llama-android/build/publications/$pub/pom-default.xml.asc" "signed-release-assets/$base.pom.asc" 2>/dev/null || true
+            for c in sources javadoc; do
+              cp "llama-android/build/distributions/llama-android-$v-$c.jar" "signed-release-assets/$base-$c.jar" 2>/dev/null || true
+              cp "llama-android/build/distributions/llama-android-$v-$c.jar.asc" "signed-release-assets/$base-$c.jar.asc" 2>/dev/null || true
+            done
+          done
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
@@ -3364,21 +3441,23 @@ jobs:
         run: |
           set -uo pipefail
           dir="release-assets"
-          jars=$(find "$dir" -maxdepth 1 -name '*.jar' | sort)
-          if [ -z "$jars" ]; then
-            echo "::error::no jars in $dir -- the collection step produced nothing"
+          # Every attachable artifact type, not only jars: with '*.jar' alone the AARs were attached
+          # unsigned for months and nothing counted them, so the job reported success.
+          artifacts=$(find "$dir" -maxdepth 1 \( -name '*.jar' -o -name '*.aar' -o -name '*.pom' \) | sort)
+          if [ -z "$artifacts" ]; then
+            echo "::error::no artifacts in $dir -- the collection step produced nothing"
             echo "missing=-1" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           missing=0
-          for jar in $jars; do
-            if [ ! -e "$jar.asc" ]; then
-              echo "::error::unsigned: $(basename "$jar") has no detached .asc"
+          for artifact in $artifacts; do
+            if [ ! -e "$artifact.asc" ]; then
+              echo "::error::unsigned: $(basename "$artifact") has no detached .asc"
               missing=$((missing + 1))
             fi
           done
           echo "missing=$missing" >> "$GITHUB_OUTPUT"
-          [ "$missing" -eq 0 ] && echo "all $(echo "$jars" | wc -l) jar(s) signed"
+          [ "$missing" -eq 0 ] && echo "all $(echo "$artifacts" | wc -l) artifact(s) signed"
           exit 0
       - name: Upload release assets
         uses: softprops/action-gh-release@v3

@@ -487,6 +487,21 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **The GitHub `snapshot` pre-release and the versioned releases carry what Maven Central carries,
+  and the `snapshot` release no longer accumulates.** The collect steps copied `*.jar` / `*.jar.asc`
+  and the bare AARs, so every `.pom` with its `.pom.asc` was missing, `llama-platform` (a pom-only
+  module, the artifact consumers are told to depend on) was absent from the release entirely, the
+  AARs were attached **unsigned** although Gradle had written their `.asc` next to them, and the
+  agent's thin jar was never attached; the signature check globbed `*.jar` only, so the unsigned AARs
+  never turned the job red. Now every module's jars and poms (`llama-parent` and `llama-platform`
+  included), the AARs with their signatures, poms and sources/javadoc jars, and the agent's thin jar
+  are collected in both the snapshot and the release job, the check counts jars, AARs and poms, and
+  `github-snapshot` deletes every asset the run did not upload, after the upload and each printed by
+  name -- `gh release upload --clobber` never removed anything, so the release held 208 assets, 109 of
+  them from 5.0.x and 43 in shapes that no longer exist (`msvc-windows`,
+  `all-*-jar-with-dependencies`), plus three SpotBugs plugin jars an old collect step attached in
+  2026-05. Versioned releases are never pruned; the next snapshot run clears the backlog by itself
+  (`workspace/policies/fat-jar-release-assets.md`).
 - **A Windows build on an AMX CPU (Sapphire, Emerald or Granite Rapids) crashed the JVM with
   `STATUS_HEAP_CORRUPTION` when a model was unloaded.** ggml's AMX weight buffer -- used by the
   `sapphirerapids` CPU module for Q4_0/Q4_1/Q8_0/Q4_K/Q5_K/Q6_K/IQ4_XS weights -- is allocated with
