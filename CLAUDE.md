@@ -1048,11 +1048,14 @@ two AARs with the `.aar.asc` Gradle writes next to them, their poms
 `sign-fatjars.sh`, no `environment:`; `verify-signing-key` still proves the key, and the publish jobs
 sign with it). Until 2026-10-12 the collect steps copied jars and bare AARs only: every pom was
 missing, `llama-platform` was absent entirely, the AARs went out unsigned and the `*.jar`-only
-signature check never noticed. The check counts jars, AARs and poms now, and `github-snapshot` ends by
-deleting every asset of the `snapshot` pre-release the run did not upload, each printed by name
-(`gh release upload --clobber` never removed anything: 208 assets, 109 of them from 5.0.x); a versioned
-release is never pruned (`workspace/policies/fat-jar-release-assets.md`, "The `snapshot` pre-release
-holds exactly the current upload").
+signature check never noticed. The check counts jars, AARs and poms now, and `github-snapshot` ends
+by deleting every asset of the `snapshot` pre-release the run did not upload, each printed by name
+(`gh release upload --clobber` never removed anything: 208 assets, 109 of them from 5.0.x). The
+prune refuses an empty upload, treats an asset that is already gone as removed and fails only after
+trying every deletion; a versioned release is never pruned. Why it prunes asset by asset instead of
+deleting and recreating the release -- the job's first form, which failed in every burst of main
+pushes in May 2026 -- is recorded in `workspace/policies/fat-jar-release-assets.md`, "The `snapshot`
+pre-release holds exactly the current upload".
 
 The common part of the three smoke scripts is `.github/smoke-lib.sh` (`smoke_classpath`,
 `smoke_set_modules`, `smoke_assert_loader_line`); the PowerShell script repeats it, since the Windows

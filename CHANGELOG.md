@@ -500,7 +500,10 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   name -- `gh release upload --clobber` never removed anything, so the release held 208 assets, 109 of
   them from 5.0.x and 43 in shapes that no longer exist (`msvc-windows`,
   `all-*-jar-with-dependencies`), plus three SpotBugs plugin jars an old collect step attached in
-  2026-05. Versioned releases are never pruned; the next snapshot run clears the backlog by itself
+  2026-05. The prune refuses an empty upload, treats an asset that is already gone as removed and
+  fails only after trying every deletion (asset by asset on purpose: the job's first form deleted
+  and recreated the release, and failed in every burst of main pushes in May 2026). Versioned
+  releases are never pruned; the next snapshot run clears the backlog by itself
   (`workspace/policies/fat-jar-release-assets.md`).
 - **A Windows build on an AMX CPU (Sapphire, Emerald or Granite Rapids) crashed the JVM with
   `STATUS_HEAP_CORRUPTION` when a model was unloaded.** ggml's AMX weight buffer -- used by the
