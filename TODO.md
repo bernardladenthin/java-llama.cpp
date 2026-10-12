@@ -274,12 +274,12 @@ Kept as a list because each entry names the machine it needs -- the harness is
 | what | needs | why it cannot wait for CI |
 |---|---|---|
 | ~~the cost of `GGML_OPENMP=OFF`~~ | ~~16-vCPU Linux~~ | **done 2026-10-11: no measurable cost** |
-| **re-baseline the module tables at the current pin** | the same instances | the tables are b11538, and **#30270 in the b11556 range fixes F16C on AVX2**, i.e. the `haswell` class every "against haswell" column is computed against -- so nothing measured from b11556 on may be compared with that page (noted there too) |
-| Does a self-contained jar load on a **slim/distroless** image? | any Linux instance, a container | CI runs on full runners, so it cannot see this class at all |
-| Does **`75-real 80-real 90-real`** make a T4 work? | a rebuilt CUDA module + a `g4dn` instance | the module has to be built first, so this follows a CI run |
-| **Windows extraction reuse**: second start copies nothing, a running JVM's locked DLLs survive another build's cleanup | a rented Windows instance, two JVMs | file locking is Windows-only and needs two processes |
-| the **`sapphirerapids` vs `haswell`** gap at high core counts | a large Intel instance | one 4-vCPU table exists; generation ranking can reverse with threads |
-| **OpenVINO on an Intel GPU/NPU** | hardware nobody rents | the 172x figure is the CPU-plugin fallback only, so nothing is known about the hardware it is for |
+| ~~re-baseline the module tables at the current pin~~ | — | **done 2026-10-12 at b11558 on 64 cores**, and the suspicion behind it was **refuted**: #30270 changes nothing measurable ([`docs/benchmarks/upstream-f16c-30270.md`](docs/benchmarks/upstream-f16c-30270.md)), so the baseline moved with the machine size, not with the pin |
+| ~~Does a self-contained jar load on a slim/distroless image?~~ | — | **done 2026-10-12**: distroless and `temurin:21-jre` load, `temurin:21-jre-alpine` is refused by name (`os.name=Linux-Musl`) -- see [`docs/benchmarks/native-loading.md`](docs/benchmarks/native-loading.md) |
+| ~~Does `75-real 80-real 90-real` make a T4 work?~~ | — | **done 2026-10-12: yes.** Three `exit 134` aborts became three clean runs on the same AMI, driver and GPU |
+| ~~Windows extraction reuse~~ | — | **done 2026-10-12 locally**, no rented machine needed: ~810 ms saved per start, and a sweep leaves exactly the five files a running JVM still holds |
+| ~~the `sapphirerapids` vs `haswell` gap at high core counts~~ | — | **done 2026-10-12: the ranking reverses.** At 64 threads `haswell` leads token generation at 192.6 while `sapphirerapids` is last at 181.8 -- and ggml picks the latter |
+| **OpenVINO on an Intel GPU/NPU** | hardware nobody rents | the 21.7x/336x figures are the CPU-plugin fallback only, so nothing is known about the hardware the jar is actually for |
 | the two **SME** aarch64 modules | not rentable anywhere | — |
 
 ## Open — jllama-specific
@@ -859,6 +859,45 @@ three different subsystems and a combined report gets triaged as one.
 | 2 | `ggml-rpc: a server lost mid-inference aborts the process` | `patches/0015`'s header plus the RPC section of `CLAUDE.md`: registration was made non-aborting downstream, every path *after* registration still ends in `GGML_ABORT` | the ggml backend interface has no error return for a device that went away. Is adding one in scope, or is aborting the intended contract for a lost device? This is the blocker for using RPC from a long-lived host process |
 | 3 | `ggml-rpc: the client answers every supports_op with true` | the RPC section of `CLAUDE.md`: a served device that lacks an op **aborts the server**. Reproduced on the macOS CI runners' paravirtual Metal GPU, which has no `MUL_MAT` and took the first run down; it is why every test here serves `CPU` by name | upstream's own TODO comment admits it. Should the client forward the query to the server, or should `rpc-server -d` refuse a device whose op set it cannot report? |
 | 4 | `windows-rocm: 83,362 compiler warnings, against 9 on linux-rocm` | the table below in this section (714,345 log lines against 2,455; the per-class counts; all of them in `ggml/src/ggml-cuda/*.cu`) | the cause is the language, not the arch count: HIP sources are compiled as plain C++ on Windows (`CXX_IS_HIPCC` on `WIN32`) and as HIP on Linux. Fix the warnings, or the C++-on-Windows choice? Their own `windows-rocm` job pays the identical cost |
+
+#### A fifth, and this one is a small PR rather than an issue: the #30270 follow-up
+
+Unlike the four above, here there **is** something to offer -- and the measurement is already done
+([`docs/benchmarks/upstream-f16c-30270.md`](docs/benchmarks/upstream-f16c-30270.md)).
+
+[#30270](https://github.com/ggml-org/llama.cpp/pull/30270) (commit `c28e174141dd`, merged 2026-10-11)
+fixes a real defect: the `#elif defined(__F16C__)` branch of `simd-mappings.h` defined only
+`GGML_CPU_COMPUTE_FP16_TO_FP32`, so the selected macro fell through to the 64K lookup table and an
+F16C CPU never used the hardware instruction. NEON, POWER9 and RISC-V each define **both** macros in
+their branch; only F16C defined half of its own decision.
+
+Two things to offer, both independent of throughput:
+
+1. **Move the two `#define`s into the branch**, where the COMPUTE macros are defined, as every other
+   branch does. They currently sit **88 lines** further down and outside the chain, which is why the
+   new code has to explain the ordering in its own comment ("checks below don't test for `__F16C__`").
+   A future reordering of the file breaks it **silently**, back to the lookup table -- the exact defect
+   that went unnoticed until now.
+2. **Add a guard so the omission cannot recur**, after the branch chain and before the fallback:
+
+   ```c
+   #if defined(GGML_CPU_COMPUTE_FP16_TO_FP32) && !defined(GGML_CPU_FP16_TO_FP32)
+   #error "a branch defined GGML_CPU_COMPUTE_FP16_TO_FP32 but not GGML_CPU_FP16_TO_FP32"
+   #endif
+   ```
+
+   **Proven both ways** with clang `-fsyntax-only` against the real b11574 header: it passes on the
+   fixed tree, fails with the `#error` on the reverted one, does not fire without `__F16C__`, and both
+   trees compile when the guard is absent -- so the guard is the only thing that changes the outcome.
+
+And one thing to **say** in the same comment, because it is honest and useful rather than an
+objection: a clean isolation on Granite Rapids (one tree built twice, upstream's own `llama-bench`,
+5 repetitions, two non-F16C control modules) finds **no measurable effect** for Q4_K_M at 8 and 16
+threads -- every difference inside ±2 % with random signs. The author's own description (a FreeBSD box
+with "clock-mismatched RAM", "gains like these may be greater than reasoned") fits that: the fix
+removes a ~256 KB table from the path, which costs on a bandwidth-starved machine and nothing on a
+server CPU. **The change stays right; the number is not general.** Offering the measurement with the
+PR is the point, not disputing it.
 
 **Two rules for the day.** State the measurement and ask the question; do not propose the fix for 1-3,
 because each is a design decision in code this project does not own. And say plainly what was done
