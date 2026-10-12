@@ -287,24 +287,30 @@ platforms you target, e.g. `cpu-linux-x86-64`.
 > **Two GPU jars need more than their runtime, and both were found by measurement rather than by
 > reading the code** ([`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md)).
 >
-> **CUDA: the driver must be new enough for the toolkit the module was built with (13.4).** The
-> module ships native code for the GPU generations listed in `CMAKE_CUDA_ARCHITECTURES`
-> (Turing through Blackwell); a GPU outside that set runs only if the driver can compile the
-> module's PTX, and **a driver too old to do so does not fall back to the CPU -- it ends the
-> process.** ggml calls `abort()`, which no Java `catch` can intercept, and it happens even with
-> `-ngl 0`: having the jar on the classpath is enough, because the backend registers and the device
-> is used during setup whatever the layer count says. Measured on a Tesla T4 with driver
-> 595.91.07, where that generation still shipped as PTX only. If you cannot control the driver,
-> keep the jar off the classpath or pass `-Dnet.ladenthin.llama.backend=cpu`.
+> **CUDA: the module ships native code for Turing through Blackwell, and a GPU outside that set
+> needs a driver new enough for CUDA 13.4.** `sm_75` (T4, RTX 20xx), `sm_80` (A100), `sm_86`,
+> `sm_89`, `sm_90` (H100), `sm_100` and Blackwell are compiled in, so those GPUs do not depend on
+> the driver at all; anything newer falls back to the module's PTX, which the driver must be able to
+> compile. **A driver too old for that does not fall back to the CPU -- it ends the process**: ggml
+> calls `abort()`, which no Java `catch` can intercept, and it happens even with `-ngl 0`, because
+> having the jar on the classpath is enough for the backend to register and the device to be used
+> during setup whatever the layer count says.
+>
+> That was measured the hard way. On a Tesla T4 with driver 595.91.07 the previous module, which
+> shipped Turing as PTX only, aborted the JVM in all three configurations; the same AMI, driver and
+> GPU with native `sm_75` code runs cleanly and gives **20.6x prompt processing and 7.0x generation**
+> over the CPU baseline. If you run a GPU generation newer than the list above and cannot control the
+> driver, keep the jar off the classpath or pass `-Dnet.ladenthin.llama.backend=cpu`.
 >
 > **OpenVINO is opt-in, and that is why.** On a host *without* an Intel accelerator its CPU plugin
-> opens perfectly well and contributes a device, so llama.cpp prefers it -- measured at
-> **17x slower prompt processing and 172x slower generation** than the CPU modules (490.4/34.5
-> down to 29.4/**0.2** tokens per second). It therefore breaks the premise every other module jar
-> keeps ("a module that cannot help is skipped") in both directions: it also fails to open at all
-> without an OpenCL ICD loader, which its own runtime archive does not include. So its jar on the
-> classpath does nothing until `net.ladenthin.llama.backend` names it, and the loader says so on
-> stderr.
+> opens perfectly well and contributes a device, so llama.cpp prefers it -- measured on an Intel
+> Sapphire Rapids machine at **21.7x slower prompt processing and 336x slower generation** than the
+> CPU modules (481.3/33.6 down to 22.2/**0.1** tokens per second, i.e. about ten seconds per token).
+> It therefore breaks the premise every other module jar keeps ("a module that cannot help is
+> skipped") in both directions: it also fails to open at all without an OpenCL ICD loader
+> (`libOpenCL.so.1`, package `ocl-icd-libopencl1`), which its own runtime archive does not include.
+> So its jar on the classpath does nothing until `net.ladenthin.llama.backend` names it, and the
+> loader says so on stderr.
 >
 > **Vulkan is the one that behaves exactly as designed** and is the recommended portable choice:
 > without an ICD it is skipped, with throughput identical to the CPU baseline (201.8/24.1 against
