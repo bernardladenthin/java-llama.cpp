@@ -736,8 +736,37 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   carries an `-Xclang` argument, which on Windows every plain-clang TU does -- CMake's runtime-library
   selection puts it there -- so no plain-clang Windows build caches at all (CLAUDE.md "Windows
   natives"); that one is an sccache issue, if none is open.
-- **A fourth, measured 2026-10-11: `ggml.h`'s `dllimport` form reaches the HIP *device* pass and
-  floods the log.** `GGML_API` expands to `__declspec(dllimport) extern` for a consumer of a shared
+- **A fourth, measured 2026-10-11 and again 2026-10-12: the Windows HIP build produces 83,362
+  compiler warnings, and the Linux one produces 9.** The dllimport note below was the first
+  symptom; the full measurement came from run 38172107721, where the Windows ROCm job's log was
+  **714,345 lines with 83,362 warning messages** against **2,455 lines and 9 warnings** in the Linux
+  ROCm job -- the same upstream sources, the same TheRock clang, the same 23 GPU targets. It is
+  **60x larger than the next biggest job of that run** and carries **98.5%** of all the warnings its
+  Windows jobs emit:
+
+  | job | log lines | warnings |
+  |---|---:|---:|
+  | **Windows ROCm/HIP** | **714,345** | **83,362** |
+  | Windows SYCL | 11,981 | 724 |
+  | Windows CPU (clang) | 2,627 | 407 |
+  | Linux CUDA | 3,266 | 9 |
+  | Linux ROCm/HIP | 2,455 | 9 |
+  | C++ Tests Windows | 1,655 | 66 |
+  | Windows arm64 | 1,499 | 24 |
+  | Windows CUDA | 1,068 | 0 |
+
+  The cause is **the language, not the arch count**: upstream compiles the HIP sources as plain C++
+  on Windows (`CXX_IS_HIPCC` on `WIN32`) and as the HIP language on Linux, and clang's C++ frontend
+  reports what the HIP one does not -- `-Wsign-compare` 29,673 times, `-Wnested-anon-types` 17,964,
+  `-Wmissing-noreturn` 16,378, then unused variables, missing braces, unused parameters, cast-qual
+  and unreachable breaks. **Every one is in `ggml/src/ggml-cuda/*.cu`**, upstream's own code: not a
+  line of ours. Mitigated downstream with `-w` on the `ggml-hip` target, Windows only, which
+  subsumes the dllimport suppression; the Linux job keeps every warning, so the information stays
+  where it is legible. **Worth an upstream issue with this table** -- the fix is theirs (either the
+  warnings or the C++-on-Windows choice), and their own `windows-rocm` job pays the same cost.
+
+- **The original dllimport note, which is one of the eight classes above: `ggml.h`'s `dllimport`
+  form reaches the HIP *device* pass.** `GGML_API` expands to `__declspec(dllimport) extern` for a consumer of a shared
   ggml on `_WIN32`, and HIP compiles every translation unit once per GPU architecture for the amdgcn
   **device** target, which has no DLL storage class -- so clang reports
   `__declspec attribute 'dllimport' is not supported` for each `GGML_API` declaration, times the 23

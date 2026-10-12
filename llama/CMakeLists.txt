@@ -452,9 +452,25 @@ if(TARGET ggml-hip)
     # Upstream has the same flood in its own windows-rocm job -- worth an issue with these counts
     # (TODO.md, "Upstream submissions"), since the real fix belongs in ggml.h: a device pass should
     # not see the dllimport form at all.
+    #
+    # Measured again in run 38172107721, and the comparison is what decided the form of this: the
+    # Windows ROCm job's log was **714,345 lines with 83,362 warning messages**, while the Linux ROCm
+    # job -- the same upstream sources, the same TheRock clang, the same 23 GPU targets -- had **9
+    # warnings in 2,455 lines**. The difference is not the arch count but the language: upstream
+    # compiles the HIP sources as plain C++ on Windows (`CXX_IS_HIPCC` on `WIN32`) and as the HIP
+    # language on Linux, and clang's C++ frontend reports what the HIP one does not --
+    # `-Wsign-compare` 29,673 times, `-Wnested-anon-types` 17,964, `-Wmissing-noreturn` 16,378, then
+    # unused variables, missing braces, unused parameters, cast-qual, unreachable breaks. **Every one
+    # of them is in `ggml/src/ggml-cuda/*.cu`**, upstream's own code: not a single line of ours.
+    #
+    # So `-w` on this target on Windows, which subsumes the dllimport suppression above. Suppressing a
+    # whole warning set is normally the wrong instrument, and the reason it is right here is the Linux
+    # job: it compiles the same sources and keeps every warning, in a log short enough to read. The
+    # information is preserved where it is legible and dropped where it is multiplied by 23 -- rather
+    # than chasing one class per toolchain bump, which the eight above would otherwise require.
+    # Errors are untouched: a real compile failure still fails the job.
     if(WIN32)
-        target_compile_options(ggml-hip PRIVATE
-                               $<$<COMPILE_LANGUAGE:HIP,CXX>:-Wno-ignored-attributes>)
+        target_compile_options(ggml-hip PRIVATE $<$<COMPILE_LANGUAGE:HIP,CXX>:-w>)
     endif()
 endif()
 
