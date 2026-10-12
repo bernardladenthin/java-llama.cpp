@@ -860,44 +860,39 @@ three different subsystems and a combined report gets triaged as one.
 | 3 | `ggml-rpc: the client answers every supports_op with true` | the RPC section of `CLAUDE.md`: a served device that lacks an op **aborts the server**. Reproduced on the macOS CI runners' paravirtual Metal GPU, which has no `MUL_MAT` and took the first run down; it is why every test here serves `CPU` by name | upstream's own TODO comment admits it. Should the client forward the query to the server, or should `rpc-server -d` refuse a device whose op set it cannot report? |
 | 4 | `windows-rocm: 83,362 compiler warnings, against 9 on linux-rocm` | the table below in this section (714,345 log lines against 2,455; the per-class counts; all of them in `ggml/src/ggml-cuda/*.cu`) | the cause is the language, not the arch count: HIP sources are compiled as plain C++ on Windows (`CXX_IS_HIPCC` on `WIN32`) and as HIP on Linux. Fix the warnings, or the C++-on-Windows choice? Their own `windows-rocm` job pays the identical cost |
 
-#### A fifth, and this one is a small PR rather than an issue: the #30270 follow-up
+#### A fifth, and the only one where we hold a finished fix: the ARM fp16 conversion
 
-Unlike the four above, here there **is** something to offer -- and the measurement is already done
-([`docs/benchmarks/upstream-f16c-30270.md`](docs/benchmarks/upstream-f16c-30270.md)).
+Unlike the four above, a fix exists, is measured from every side, and sits in three local commits on
+`llama.cpp.bernardladenthin` (branch `f16c-select-in-branch`, **not pushed, no PR**). The full record
+is [`docs/benchmarks/arm-fp16-conversion.md`](docs/benchmarks/arm-fp16-conversion.md).
 
-[#30270](https://github.com/ggml-org/llama.cpp/pull/30270) (commit `c28e174141dd`, merged 2026-10-11)
-fixes a real defect: the `#elif defined(__F16C__)` branch of `simd-mappings.h` defined only
-`GGML_CPU_COMPUTE_FP16_TO_FP32`, so the selected macro fell through to the 64K lookup table and an
-F16C CPU never used the hardware instruction. NEON, POWER9 and RISC-V each define **both** macros in
-their branch; only F16C defined half of its own decision.
+**The finding grew while isolating #30270.** The `__ARM_NEON` branch of `simd-mappings.h` defines both
+`GGML_CPU_COMPUTE_*` macros and selects only one, so `GGML_CPU_FP32_TO_FP16` falls through to
+ggml-base's portable software conversion while `neon_compute_fp32_to_fp16` -- one `fcvt` -- stays
+unused. **In 26 of 26 shipped ARM binaries** -- our four operating systems plus upstream's own
+`bin-ubuntu-arm64` and `bin-macos-arm64` -- that function contains **no floating-point conversion
+instruction at all**. The function is 8.9x (clang) to 13.3x (gcc) slower than it needs to be, 25
+instructions per element against `fcvtn`'s four elements per instruction, and bit-exact over all 2^32
+float inputs.
 
-Two things to offer, both independent of throughput:
+**And it does not make inference faster**, which is the half that must travel with it: `perf` puts
+83.9 % of an F16 `pp512` run in tinyBLAS's gemm, which converts inside its own microkernel, and
+**0.03 %** in the broken function -- so end to end the change is inside the run-to-run spread
+(+0.13 %). A prediction of a large gain was written down here before the run and was wrong; that is
+the same mistake #30270 made, in the other direction, and the reason the measurement was done at all.
 
-1. **Move the two `#define`s into the branch**, where the COMPUTE macros are defined, as every other
-   branch does. They currently sit **88 lines** further down and outside the chain, which is why the
-   new code has to explain the ordering in its own comment ("checks below don't test for `__F16C__`").
-   A future reordering of the file breaks it **silently**, back to the lookup table -- the exact defect
-   that went unnoticed until now.
-2. **Add a guard so the omission cannot recur**, after the branch chain and before the fallback:
+The three commits are deliberately separable:
 
-   ```c
-   #if defined(GGML_CPU_COMPUTE_FP16_TO_FP32) && !defined(GGML_CPU_FP16_TO_FP32)
-   #error "a branch defined GGML_CPU_COMPUTE_FP16_TO_FP32 but not GGML_CPU_FP16_TO_FP32"
-   #endif
-   ```
+1. **`ggml-cpu : select the NEON fp32->fp16 conversion`** -- the defect, one `#define`.
+2. **`ggml-cpu : move the F16C selection into its own branch`** -- #30270 fixed its half from 88 lines
+   below the chain, outside it, which is why that code has to explain its own position in a comment.
+   Proven behaviour-preserving: all three configurations resolve byte-identically before and after.
+3. **`ggml-cpu : refuse a branch that defines a COMPUTE macro without selecting it`** -- the `#error`
+   that found this one, verified red on the unfixed tree and green on the fixed one, with a control
+   showing both trees compile without it.
 
-   **Proven both ways** with clang `-fsyntax-only` against the real b11574 header: it passes on the
-   fixed tree, fails with the `#error` on the reverted one, does not fire without `__F16C__`, and both
-   trees compile when the guard is absent -- so the guard is the only thing that changes the outcome.
-
-And one thing to **say** in the same comment, because it is honest and useful rather than an
-objection: a clean isolation on Granite Rapids (one tree built twice, upstream's own `llama-bench`,
-5 repetitions, two non-F16C control modules) finds **no measurable effect** for Q4_K_M at 8 and 16
-threads -- every difference inside ±2 % with random signs. The author's own description (a FreeBSD box
-with "clock-mismatched RAM", "gains like these may be greater than reasoned") fits that: the fix
-removes a ~256 KB table from the path, which costs on a bandwidth-starved machine and nothing on a
-server CPU. **The change stays right; the number is not general.** Offering the measurement with the
-PR is the point, not disputing it.
+**Open decision, to be taken together:** one PR for all three, a PR for 1 and an issue for the rest,
+or a comment on #30270 carrying the measurement. Nothing is filed yet.
 
 **Two rules for the day.** State the measurement and ask the question; do not propose the fix for 1-3,
 because each is a design decision in code this project does not own. And say plainly what was done
