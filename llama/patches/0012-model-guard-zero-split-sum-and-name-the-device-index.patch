@@ -1,8 +1,8 @@
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
-index ffedf89e6..97ef25746 100644
+index 6872589fa..a56e4bb04 100644
 --- a/src/llama-model.cpp
 +++ b/src/llama-model.cpp
-@@ -1399,6 +1399,75 @@ void llama_model_base::load_vocab(llama_model_loader & ml) {
+@@ -1559,6 +1559,75 @@ void llama_model_base::load_vocab(llama_model_loader & ml) {
      vocab.load(ml, kv);
  }
  
@@ -78,7 +78,7 @@ index ffedf89e6..97ef25746 100644
  bool llama_model_base::load_tensors(llama_model_loader & ml) {
      const auto & split_mode   = params.split_mode;
      const bool use_mlock      = params.load_mode == LLAMA_LOAD_MODE_MLOCK || params.load_mode == LLAMA_LOAD_MODE_MMAP_MLOCK;
-@@ -1466,15 +1535,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+@@ -1638,15 +1707,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
          std::copy(tensor_split, tensor_split + n_devices(), splits.begin());
      }
  
@@ -95,7 +95,7 @@ index ffedf89e6..97ef25746 100644
  
      const int i_gpu_start = std::max(n_layer_all + 1 - n_gpu_layers, 0);
      const int act_gpu_layers = devices.empty() ? 0 : std::min(n_gpu_layers, n_layer_all + 1);
-@@ -1484,7 +1545,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
+@@ -1656,7 +1717,7 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
              LLAMA_LOG_DEBUG("load_tensors: layer %3d assigned to device %s, is_swa = %d\n", il, ggml_backend_dev_name(cpu_dev), is_swa);
              return {cpu_dev, &pimpl->cpu_buft_list};
          }
@@ -105,10 +105,10 @@ index ffedf89e6..97ef25746 100644
          LLAMA_LOG_DEBUG("load_tensors: layer %3d assigned to device %s, is_swa = %d\n", il, ggml_backend_dev_name(dev), is_swa);
          return {dev, &pimpl->gpu_buft_list.at(dev)};
 diff --git a/src/llama-model.h b/src/llama-model.h
-index 4c4a30e01..dc5560254 100644
+index dff84c574..3b1e98305 100644
 --- a/src/llama-model.h
 +++ b/src/llama-model.h
-@@ -821,6 +821,11 @@ struct llama_model_base : public llama_model {
+@@ -919,6 +919,11 @@ struct llama_model_base : public llama_model {
  
  const char * llm_type_name(llm_type type);
  
@@ -121,14 +121,14 @@ index 4c4a30e01..dc5560254 100644
  // note: cast to int64_t since we will use these for the tensor dimensions
  #define LLAMA_LOAD_LOCALS \
 diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
-index c46377c76..229cb768d 100644
+index daccea063..6746023b1 100644
 --- a/tests/CMakeLists.txt
 +++ b/tests/CMakeLists.txt
-@@ -160,6 +160,7 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
+@@ -178,6 +178,7 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
      llama_build_and_test(test-grammar-integration.cpp)
-     llama_build_and_test(test-llama-grammar.cpp)
-     llama_build_and_test(test-batch-alloc.cpp)
-+    llama_build_and_test(test-model-split.cpp)
+     llama_build_and_test(test-llama-grammar.cpp LINK llama)
+     llama_build_and_test(test-batch-alloc.cpp LINK llama)
++    llama_build_and_test(test-model-split.cpp LINK llama)
      llama_build_and_test(test-chat.cpp WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
      target_include_directories(test-chat PRIVATE ${PROJECT_SOURCE_DIR}/tools/server)
      target_link_libraries(test-chat PRIVATE server-context)

@@ -142,6 +142,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **Lombok-generated code carries JSpecify nullness** (`lombok.addNullAnnotations = jspecify` in the
+  shared `lombok.config`): the generated `equals(Object)` / `canEqual` parameter is `@Nullable`, as
+  `Object.equals` promises. Under the `@NullMarked` packages it read as non-null before, which
+  SpotBugs 4.10.5 (JSpecify-aware since this release) reported as
+  `NP_METHOD_PARAMETER_TIGHTENS_ANNOTATION` on 27 value and parameter classes, and which told a
+  consumer's nullness checker the same wrong contract about the published bytecode. Build tooling:
+  spotbugs-maven-plugin 4.10.4.1 -> 4.10.5.0, JLine 4.4.7 -> 4.4.8 (the agent).
 - **The local agent speaks ACP through SDK 0.80.0** (`com.agentclientprotocol:acp-core` +
   `acp-json-jackson2`, from 0.18.0 -- upstream's binary-incompatible release of 2026-10-08). The wire
   format is unchanged, so `AcpServerTest`, which drives the server with plain JSON, is unchanged too; the
@@ -184,6 +191,19 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   refreshed onto the rewritten logging context with the same changes; the other eleven apply unchanged
   and every drop-check still finds its defect. Per-step record:
   `docs/history/llama-cpp-breaking-changes.md`.
+- **Upgraded the pinned llama.cpp from b11558 to b11574**, in 5 reviewed steps, each ending at a tag
+  (b11559, b11560, b11570, b11573, b11574; 16 commits, 69 files; one `tools/ui` fix, which the
+  auto-followed WebUI picks up). What reaches this project: **ggml's shared libraries hide their
+  symbols by default** (#30014, under `BUILD_SHARED_LIBS` only, i.e. the modular library jars) --
+  everything `libjllama` and the modules take from `ggml` / `ggml-base` is public API, verified by a
+  local modular build and the Java native-load smoke over it; `llama_perf_context_data` reports
+  **compute-graph reallocations** (#30329: two appended fields and a `graph reallocs` log line per
+  slot, no JSON change, so `Timings` and `getMetrics()` are untouched); two new **decision model
+  types** for `/v1/systemone` (#30378 vllm-decision2 with a strict payload, #30383 vllm-d3 with
+  non-causal attention) behind an unchanged contract for the existing ones; `--kv-unified` reaches the
+  speculative example (#30095). Patch `0012` is refreshed onto #30299's `tests/CMakeLists.txt`
+  (`LINK llama`); the other eleven apply unchanged and every drop-check still finds its defect.
+  Per-step record: `docs/history/llama-cpp-breaking-changes.md`.
 - **No fat jars, no release assets beyond the Maven artifacts.** The all-backends
   `llama-<v>-all-<os>-<arch>-jar-with-dependencies.jar`, the default CPU fat jar and the agent's
   `llama-atmosphere-agent-<v>-jar-with-dependencies.jar` are gone (see Removed): with modular natives
