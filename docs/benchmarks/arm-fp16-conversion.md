@@ -19,6 +19,11 @@ written to stop the omission recurring fired immediately on upstream's unmodifie
 and carried here until it merges as
 [`llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`](../../llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch).
 
+> **Read "One day later" before taking the guard or the F16C move in this page at face value.** The
+> PR was rebased on 2026-10-14 after upstream #30343 reverted half of #30270; the guard grew a
+> carve-out, the F16C move was dropped, and the ARM measurements below are unaffected (the function
+> and the NEON branch are byte-identical across that base change).
+
 **Two findings, and they must not be confused:**
 
 | | |
@@ -43,7 +48,7 @@ Read at b11576, all four branches:
 | branch | defines COMPUTE pair | selects fp16 to fp32 | selects fp32 to fp16 |
 |---|:-:|:-:|:-:|
 | `__ARM_NEON && __ARM_FP16_FORMAT_IEEE` | yes | yes | **no** |
-| `__F16C__` (x86) | yes | from outside the chain, by #30270 | same |
+| `__F16C__` (x86) | yes | from outside the chain, by #30270 (**reverted to the table by #30343**, see "One day later") | from outside the chain, by #30270 |
 | `__POWER9_VECTOR__` | yes | yes | yes |
 | `__riscv && __riscv_zfhmin` | yes | yes | yes |
 
@@ -305,13 +310,91 @@ removed by moving the F16C selection into its branch; the guard does not have to
 
 So the chosen shape is **A plus the move**: the move makes the chain regular, the guard at A catches
 everything that silently costs the instruction, and the two are independent -- the guard works with
-or without the move, which keeps the change reviewable in pieces.
+or without the move, which keeps the change reviewable in pieces. **The move did not survive the day;
+see "One day later" below, which also turns A from the safer position into the only one that builds.**
 
 The first version of this measurement was invalid and is worth naming for anyone repeating it: it set
 the expectation per mutant instead of per configuration (on x86 without F16C no branch is taken, so
 there is nothing to catch), its injected branches were unreachable behind an earlier `#elif`, and its
 error filter counted `1 error generated.` as a compile failure. All three made a guard look blind
 when the test was.
+
+## One day later: #30343 took back half of #30270, and the change had to answer for it
+
+**2026-10-14.** The maintainer asked for a rebase. 26 minutes before that request,
+[#30343](https://github.com/ggml-org/llama.cpp/pull/30343) (`685f70894`) had landed and **reverted
+half of #30270**: F16C keeps `fp32->fp16`, while `fp16->fp32` goes back on the lookup table, with the
+selecting `#define` commented out in place and an issue link above it. The reason is measured by its
+author and is not about this function at all -- clang 20.1.8 lowers `_cvtsh_ss` into a `vpinsrw` that
+merges into the live accumulator register of the quantized dot products and serialises the loop,
+**45-65 % slower Q8_0/Q4_0 `MUL_MAT_ID`** kernels.
+
+Three things followed, all measured with `clang -E` against the real header before anything was
+pushed.
+
+**1. The guard, unchanged, breaks the x86 build.** The `__F16C__` branch now defines
+`GGML_CPU_COMPUTE_FP16_TO_FP32` and deliberately does not select it -- exactly the state the guard
+refuses:
+
+| upstream master + the guard as submitted | result |
+|---|---|
+| `-mavx2 -mf16c -mfma` | **fires** `fp16_to_fp32` |
+| `-mavx512f -mf16c` | **fires** `fp16_to_fp32` |
+| `-msse4.2` | silent |
+| NEON | fires `fp32_to_fp16` -- the defect this change fixes |
+
+So the invariant the guard encodes had acquired a deliberate exception. The `FP16_TO_FP32` half now
+carries `&& !defined(__F16C__)`, with the issue link **on the condition line** so that whoever
+resolves #30342 sees the clause that has to go with it. Commenting the whole half out, paired with
+#30343's own commented-out `#define`, was the first idea and was rejected on measurement: the
+carve-out keeps the check alive for NEON, POWER9, RISC-V and any future branch, while a commented-out
+`#error` checks nothing anywhere.
+
+Re-measured in that shape against current master:
+
+| | result |
+|---|---|
+| x86 +F16C+AVX2, +F16C+AVX512, sse42, plain x86, NEON | **5 of 5 silent** |
+| NEON selection removed again (the defect restored) | **fires** |
+| a new chain branch defining both COMPUTE macros, selecting neither | **fires, both halves** |
+| a `COMPUTE_FP32_TO_FP16` defined after the chain, unselected | **fires** |
+| a `COMPUTE_FP16_TO_FP32` defined after the chain, unselected, non-F16C target | **fires** |
+
+**4 of 4 correctness cases still caught** on every architecture without the documented exception. The
+blind spot is exactly that exception and nothing wider: on x86 with F16C the `fp16->fp32` direction is
+unchecked, which is the state #30343 intends.
+
+**2. Position B stopped being merely weaker and became unbuildable.** #30343 leaves the F16C
+*selection* in the block below the lookup-table declarations -- that is, **after** the end of the
+chain. The same guard placed directly after the chain therefore runs before that selection exists:
+
+| the guard at position B, clean tree | result |
+|---|---|
+| x86 +F16C | **`no select fp32_to_fp16`** -- every x86 F16C build red |
+| x86 -F16C, NEON | silent |
+
+The mutation result above said A catches 4 of 4 against B's 3 of 4. It now also says B does not
+compile. The reviewing bot had independently endorsed A on the first ground; the second was not
+available to it, because #30343 had not landed yet.
+
+**3. The F16C move was dropped.** Its argument was that the two selections sat 88 lines below the
+branch they complete, explaining their own position in a comment. After #30343 that block is a
+*documented exception carrying an issue link*, not a stray placement -- and it is the whole conflict
+surface of the rebase. Moving upstream's fresh comment while the maintainer asked for a narrow rebase
+buys nothing, so the block is untouched. One consequence worth having: **the diff now applies both at
+the pinned tag and on upstream master**, verified with `git apply --check` against each.
+
+**And one correction to the replacement comment.** The first draft of the fallback comment read "for
+any architecture whose branch above selected neither" -- which #30343 makes false, since F16C selects
+one of the two directions. It is phrased per *direction* now. The reviewing bot had suggested almost
+that wording ("when no accelerated branch selected"); it would have been inaccurate for the same
+reason, one day later.
+
+**What this says about the earlier numbers.** Nothing in the throughput, bit-exactness or
+disassembly sections depends on #30343: both `ggml_cpu_fp32_to_fp16` and the `__ARM_NEON` branch of
+this header are **byte-identical** between the base those were measured on and current master
+(`722bc30bc9865793` and `f4ab08fd209502c4` on either side), so the ARM measurements still describe
+the tree as it stands. What changed is the guard and the scope of the diff, both re-measured above.
 
 ## Limits of this measurement
 
