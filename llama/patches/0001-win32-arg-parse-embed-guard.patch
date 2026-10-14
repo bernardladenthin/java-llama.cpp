@@ -300,19 +300,6 @@ index 46ded1398..d5f1cabe7 100644
          return 1;
      }
  
-diff --git a/tests/test-state-restore-fragmented.cpp b/tests/test-state-restore-fragmented.cpp
-index d5548afba..95ba2b67b 100644
---- a/tests/test-state-restore-fragmented.cpp
-+++ b/tests/test-state-restore-fragmented.cpp
-@@ -24,7 +24,7 @@ int main(int argc, char ** argv) {
- 
-     common_init();
- 
--    if (!common_params_parse(argc, argv, params, LLAMA_EXAMPLE_COMMON)) {
-+    if (!common_params_parse_main(argc, argv, params, LLAMA_EXAMPLE_COMMON)) {
-         return 1;
-     }
- 
 diff --git a/tests/test-thread-safety.cpp b/tests/test-thread-safety.cpp
 index d0b5946e2..5b665b426 100644
 --- a/tests/test-thread-safety.cpp

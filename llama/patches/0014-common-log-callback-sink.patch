@@ -17,10 +17,10 @@ Upstream-submittable ("common : add a callback sink to common_log for embedding
 hosts"); not yet filed. Guarded by src/test/cpp/test_common_log_callback.cpp.
 
 diff --git a/common/log.cpp b/common/log.cpp
-index 86c98e8e6..79c8d8a2a 100644
+index 25f12684e..1e0b89f1e 100644
 --- a/common/log.cpp
 +++ b/common/log.cpp
-@@ -168,6 +168,9 @@ struct common_log {
+@@ -169,6 +169,9 @@ struct common_log {
          running    = false;
          t_start    = t_us();
  
@@ -30,31 +30,29 @@ index 86c98e8e6..79c8d8a2a 100644
          queue.resize(capacity, common_log_entry(256));
          head = 0;
          tail = 0;
-@@ -190,6 +193,9 @@ private:
+@@ -191,6 +194,9 @@ private:
  
      FILE * file;
  
 +    common_log_callback callback;
 +    void *              callback_user_data;
 +
+     bool stdo;
      bool colors;
      bool prefix;
-     bool timestamps;
-@@ -205,7 +211,12 @@ private:
+@@ -207,7 +213,10 @@ private:
      bool print_entry(const common_log_entry & e) const {
          if (e.is_end) return true;
  
--        e.print();
+-        if (stdo) {
 +        if (callback) {
 +            // the sink replaces the console, not the file
 +            callback(e.level, e.msg.data(), callback_user_data);
-+        } else {
-+            e.print();
-+        }
-         if (file) {
-             e.print(file);
++        } else if (stdo) {
+             e.print();
          }
-@@ -400,6 +411,17 @@ public:
+         if (file) {
+@@ -412,6 +421,17 @@ public:
          resume();
      }
  
@@ -72,8 +70,8 @@ index 86c98e8e6..79c8d8a2a 100644
      bool get_colors() const {
          return colors;
      }
-@@ -497,6 +519,10 @@ void common_log_set_file(struct common_log * log, const char * file) {
-     log->set_file(file);
+@@ -513,6 +533,10 @@ void common_log_set_stdo(struct common_log * log, bool enabled) {
+     log->set_stdo(enabled);
  }
  
 +void common_log_set_callback(struct common_log * log, common_log_callback callback, void * user_data) {
@@ -84,10 +82,10 @@ index 86c98e8e6..79c8d8a2a 100644
      if (colors == LOG_COLORS_AUTO) {
          log->set_colors(tty_can_use_colors());
 diff --git a/common/log.h b/common/log.h
-index e9e1f1761..5d6ede9aa 100644
+index 93ea58e76..c2353173f 100644
 --- a/common/log.h
 +++ b/common/log.h
-@@ -98,6 +98,18 @@ void common_log_set_prefix    (struct common_log * log, bool prefix);       // w
+@@ -99,6 +99,18 @@ void common_log_set_prefix    (struct common_log * log, bool prefix);       // w
  void common_log_set_timestamps(struct common_log * log, bool timestamps);   // whether to output timestamps in the prefix
  void common_log_flush         (struct common_log * log);                    // flush all pending log messages
  

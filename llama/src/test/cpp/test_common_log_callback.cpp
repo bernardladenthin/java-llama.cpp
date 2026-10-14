@@ -170,3 +170,23 @@ TEST(CommonLogCallback, LevelsPassThroughUnchanged) {
 
     common_log_free(log);
 }
+
+TEST(CommonLogCallback, SinkTakesPrecedenceOverTheStdoSwitch) {
+    // b11612 (#30023) added common_log_set_stdo(), a console on/off switch that print_entry()
+    // consults instead of printing unconditionally. The sink replaces the console, so it is not
+    // gated on that switch: entries still reach the callback with stdout/stderr output turned off.
+    recorder rec;
+    common_log *log = common_log_init();
+    common_log_set_stdo(log, false);
+    common_log_set_callback(log, record, &rec);
+
+    common_log_add(log, GGML_LOG_LEVEL_WARN, "still delivered\n");
+    common_log_flush(log);
+
+    const entries got = snapshot(rec);
+    ASSERT_EQ(got.size(), 1u);
+    EXPECT_EQ(got[0].first, GGML_LOG_LEVEL_WARN);
+    EXPECT_EQ(got[0].second, "still delivered\n");
+
+    common_log_free(log);
+}

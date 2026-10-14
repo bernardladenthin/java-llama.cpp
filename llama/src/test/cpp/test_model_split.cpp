@@ -13,6 +13,13 @@
 // Note that the failure it guards against is NOT reproducible on this side: it needs a GPU
 // backend that reports zero free memory, and without one `devices` is empty and the mapping is
 // never reached. What is testable -- and is what actually broke -- is the arithmetic itself.
+//
+// Upstream fixed the defect itself on 2026-10-14 (ggml-org/llama.cpp#29677, commit df18bee11,
+// https://github.com/ggml-org/llama.cpp/commit/df18bee11e96557b07aa7b12db0976f3c7ac9165): the same
+// even-split fallback, inline in load_tensors(), and no test. The commit is not in b11612, the pin at
+// the time of writing, so the patch and this guard still stand there. At the first bump past it
+// patches/0012 is dropped, and with it the two functions this file links -- see TODO.md, "Drop patch
+// 0012 at the first bump past b11612", for what replaces this guard.
 
 #include "llama-model.h"
 
