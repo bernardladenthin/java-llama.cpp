@@ -916,9 +916,22 @@ three different subsystems and a combined report gets triaged as one.
 #### ~~A fifth: the ARM fp16 conversion~~ -- FILED as llama.cpp#30505
 
 **Done 2026-10-14.** [ggml-org/llama.cpp#30505](https://github.com/ggml-org/llama.cpp/pull/30505),
-one commit, `+10/-6` in `ggml/src/ggml-cpu/simd-mappings.h`, open. Carried downstream meanwhile as
+one commit, `+13/-3` in `ggml/src/ggml-cpu/simd-mappings.h`, open. Carried downstream meanwhile as
 `llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`; the full measurement
 record is [`docs/benchmarks/arm-fp16-conversion.md`](docs/benchmarks/arm-fp16-conversion.md).
+
+**Rebased the same day, at the maintainer's request, and the rebase changed the change.** `#30343`
+(`685f70894`) landed 26 minutes before that request and takes back half of `#30270`: F16C keeps
+`fp32->fp16` and `fp16->fp32` goes back on the lookup table, because clang lowers the intrinsic into
+the live accumulator register of the quantized dot products and serialises the loop (45-65 % slower
+Q8_0/Q4_0 `MUL_MAT_ID`, measured by its author). Two consequences, both measured here with `clang -E`
+before anything was pushed: the guard's `FP16_TO_FP32` half would have **fired on every x86 F16C
+build**, so it carries `&& !defined(__F16C__)` with the issue link on the condition line; and the
+F16C *move* was dropped from the PR, since the block is now a documented exception rather than a
+stray placement. A third thing fell out of it -- the guard's position is no longer merely the better
+of two, because directly after the `#elif` chain it does not build at all on x86+F16C (#30343 leaves
+the F16C selection *below* the lookup-table declarations). The downstream patch is the rebased diff
+byte for byte and applies at the pin **and** on master.
 
 What remains to do here is the **drop-check on every llama.cpp bump**, which the patch header states:
 `git grep -n "GGML_CPU_FP32_TO_FP16(x) GGML_CPU_COMPUTE_FP32_TO_FP16" ggml/src/ggml-cpu/simd-mappings.h`
