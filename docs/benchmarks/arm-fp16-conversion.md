@@ -123,24 +123,28 @@ and clang then vectorises it to four elements per conversion.
 The latency chain, not the instruction count, is what dominates: five serial FP operations at
 several cycles each, per element.
 
-## Throughput of the function, on four ARM core generations
+## Throughput of the function, on five ARM core types and three operating systems
 
 A 16M-element bulk conversion, best of 7, with the **opposite direction measured in the same binary
 and the same run** as a control the change cannot touch. All three machines are GCC Compile Farm
 hosts:
 
-| machine | core | compiler | upstream | fixed | factor | control |
-|---|---|---|---:|---:|---:|---|
-| cfarm185 | Ampere eMAG (2018) | gcc 8.5 | 82.0 Melem/s | 1087.2 | **13.3x** | -0.02 % |
-| cfarm185 | Ampere eMAG | clang 21.1.8 | 341.9 | 3031.6 | **8.9x** | +0.3 % |
-| cfarm424 | **ARM Neoverse-N1**, 64 cores | gcc 14 | 323.8 | 1310.1 | **4.0x** | -2.0 % |
-| cfarm424 | ARM Neoverse-N1 | clang 19.1.7 | 976.2 | 3030.3 | **3.1x** | +2.2 % |
-| `c8g.large` | **ARM Neoverse-V2** (AWS Graviton 4) | gcc 11 | 583.0 | 2442.0 | **4.2x** | -3.2 % |
-| `c8g.large` | ARM Neoverse-V2 | clang 15.0.7 | 1595.7 | 6127.1 | **3.8x** | -1.5 % |
-| cfarm104 | **Apple M1**, macOS 25.5.0 | Apple clang 21 | 2751.7 | 9811.2 | **3.6x** | -2.5 % |
+| machine | core | OS / notes | compiler | upstream | fixed | factor | control |
+|---|---|---|---|---:|---:|---:|---|
+| cfarm185 | Ampere eMAG (2018) | Linux | gcc 8.5 | 82.0 Melem/s | 1087.2 | **13.3x** | -0.02 % |
+| cfarm185 | Ampere eMAG | Linux | clang 21.1.8 | 341.9 | 3031.6 | **8.9x** | +0.3 % |
+| cfarm423 | **Cortex-A55** (in-order) | Linux, **64K pages** | gcc 14.2 | 265.1 | 1136.2 | **4.3x** | **0.00 %** |
+| cfarm424 | **ARM Neoverse-N1**, 64 cores | Linux | gcc 14 | 323.8 | 1310.1 | **4.0x** | -2.0 % |
+| cfarm424 | ARM Neoverse-N1 | Linux | clang 19.1.7 | 976.2 | 3030.3 | **3.1x** | +2.2 % |
+| cfarm427 | ARM Neoverse-N1 | **FreeBSD 16** | FreeBSD clang 21.1.8 | 886.1 | 2168.4 | **2.45x** | -2.4 % |
+| `c8g.large` | **ARM Neoverse-V2** (Graviton 4) | Linux | gcc 11 | 583.0 | 2442.0 | **4.2x** | -3.2 % |
+| `c8g.large` | ARM Neoverse-V2 | Linux | clang 15.0.7 | 1595.7 | 6127.1 | **3.8x** | -1.5 % |
+| cfarm104 | **Apple M1** | macOS 25.5.0 | Apple clang 21 | 2751.7 | 9811.2 | **3.6x** | -2.5 % |
 
-**The factor narrows on newer cores and never vanishes: 3.1x to 13.3x**, across every ARM server
-core generation from 2018 to Graviton 4 plus Apple Silicon. That shape makes sense --
+**The factor narrows on wider cores and never vanishes: 2.45x to 13.3x**, across every ARM server
+core generation from 2018 to Graviton 4, an in-order little core, a 64K-page machine, Apple Silicon,
+and Linux, macOS and FreeBSD. The control on the Cortex-A55 is identical to the digit (3683.67 both
+ways), which is as tight as this measurement can get. That shape makes sense --
 a wider, deeper core executes the software path's serial float chain faster, so it loses less by
 taking it, but the hardware instruction is still several times better. Where the older machine's
 controls hold to ±0.3 %, the two newer ones move ±2.5 %; both are shared machines and that is an
@@ -224,7 +228,7 @@ on cfarm185):
 Run on three different architectures -- Ampere eMAG, Graviton 4 and x86-64 -- with identical counts
 in each (7.4 s on Graviton 4, 44 s on the eMAG).
 
-The 16M-element checksum of the microbenchmark is **byte-identical on all four cores and every compiler** (`00924503571709770412`: Ampere eMAG, Neoverse-N1, Neoverse-V2, Apple M1; gcc 8.5, gcc 11, gcc 14, clang 15, clang 19, clang 21, Apple clang 21), which is the same equality seen from a second direction.
+The 16M-element checksum of the microbenchmark is **byte-identical on all five core types and every compiler** (`00924503571709770412`: Ampere eMAG, Cortex-A55, Neoverse-N1, Neoverse-V2, Apple M1; nine compiler builds across Linux, macOS and FreeBSD), which is the same equality seen from a second direction.
 
 So for every finite value, every zero, every denormal and both infinities the two paths agree bit for
 bit. They differ only on **NaN inputs**, where the software encoder emits a canonical quiet NaN
@@ -258,17 +262,63 @@ header: it **fires** on upstream's unmodified file and **passes** once the `#def
 cannot fire spuriously -- POWER9 and RISC-V select both macros, and a platform with no branch at all
 (s390x) defines no COMPUTE macro for it to catch.
 
+## Where the guard goes, decided by mutation rather than by argument
+
+Two positions are plausible: **A**, where #30270's out-of-chain block stood, immediately before the
+portable fallback; and **B**, directly after the branch chain, which is the adjacent-to-the-cause
+reading. Both compile, both pass the full eight-variant ARM build, and both are silent on a correct
+tree -- so the question cannot be settled by trying one.
+
+It can be settled by **mutation**: build a header for every way the invariant can be violated, and
+for ways it can look violated but is not, then compile each with the guard at A and at B. Two kinds
+of case are kept apart, because only one of them is a bug:
+
+* **correctness** -- a `COMPUTE` macro is defined and never selected anywhere, so the build silently
+  takes the software fallback. This is the defect that shipped.
+* **style** -- a `COMPUTE` macro is defined in the chain but selected far below it. Builds correctly
+  today; fragile, because reordering the file breaks it silently.
+
+| case | kind | A | B |
+|---|---|:-:|:-:|
+| NEON defines, never selects (the shipped defect) | correctness | FIRES | FIRES |
+| the NEON selection removed from the fixed tree again | correctness | FIRES | FIRES |
+| a new first-in-chain branch defines but never selects | correctness | FIRES | FIRES |
+| **a `COMPUTE` defined after the chain, never selected, no branch taken** | correctness | **FIRES** | **silent** |
+| F16C defines in the chain and selects below the tables (#30270) | style | silent | FIRES |
+| a `COMPUTE` defined after the chain and selected right there | style | silent | silent |
+| the fixed tree, x86+F16C / NEON / plain x86 | clean | silent | silent |
+| a new first-in-chain branch, complete | clean | silent | silent |
+
+| position | correctness caught | correctness missed | false alarms | style flagged |
+|---|---:|---:|---:|---:|
+| **A** | **4 of 4** | **0** | 0 | 0 |
+| B | 3 of 4 | **1** | 0 | 1 |
+
+**A is strictly safer**: it catches every correctness defect, while B misses one -- a `COMPUTE`
+definition added after the chain and never selected, which is exactly the silent-software-fallback
+class this change is about. What B catches instead is a *style* case, and that one is already
+removed by moving the F16C selection into its branch; the guard does not have to carry it.
+
+So the chosen shape is **A plus the move**: the move makes the chain regular, the guard at A catches
+everything that silently costs the instruction, and the two are independent -- the guard works with
+or without the move, which keeps the change reviewable in pieces.
+
+The first version of this measurement was invalid and is worth naming for anyone repeating it: it set
+the expectation per mutant instead of per configuration (on x86 without F16C no branch is taken, so
+there is nothing to catch), its injected branches were unreachable behind an earlier `#elif`, and its
+error filter counted `1 error generated.` as a compile failure. All three made a guard look blind
+when the test was.
+
 ## Limits of this measurement
 
-* ~~One ARM core generation~~ -- **closed**: four generations measured (Ampere eMAG 2018, Neoverse-N1,
-  Neoverse-V2 via AWS Graviton 4, Apple M1) across Linux and macOS and seven compiler builds, i.e.
-  every ARM server core generation in service plus Apple Silicon. The factor does depend on the core,
-  from 3.1x to 13.3x, which is why it is reported as a range. Still untested: Neoverse N2, Apple M2
-  and later, and the 64K-page and FreeBSD hosts the farm also has.
+* ~~One ARM core generation~~ -- **closed**: five core types measured (Ampere eMAG 2018, Cortex-A55,
+  Neoverse-N1, Neoverse-V2 via AWS Graviton 4, Apple M1) on Linux, macOS and FreeBSD, with nine
+  compiler builds, including a 64K-page machine. The factor does depend on the core, from 2.45x to
+  13.3x, which is why it is reported as a range. Still untested: Neoverse N2, Apple M2 and later.
 * **A shared machine.** Permanent 8-core foreign load. `-t 16` reproduced to 0.05 % between runs of
   the same binary and is reported; `-t 32` spread 7.5 % and is not.
-* **Seven compiler builds** (gcc 8.5, gcc 11, gcc 14, clang 15.0.7, clang 19.1.7, clang 21.1.8,
-  Apple clang 21). MSVC on
+* **Nine compiler builds** (gcc 8.5, gcc 11, gcc 14, gcc 14.2, clang 15.0.7, clang 19.1.7,
+  clang 21.1.8, FreeBSD clang 21.1.8, Apple clang 21). MSVC on
   Windows-on-ARM is untested, though its shipped `ggml-cpu.dll` shows the same zero.
 * **Only one model size and two quantisations.** A build with `GGML_LLAMAFILE=OFF`, a very large KV
   cache, or an embedder calling the CPU backend's `from_float` directly would weight the function
