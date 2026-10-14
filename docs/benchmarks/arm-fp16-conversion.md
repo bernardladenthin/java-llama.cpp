@@ -123,7 +123,7 @@ and clang then vectorises it to four elements per conversion.
 The latency chain, not the instruction count, is what dominates: five serial FP operations at
 several cycles each, per element.
 
-## Throughput of the function, on three ARM core generations
+## Throughput of the function, on four ARM core generations
 
 A 16M-element bulk conversion, best of 7, with the **opposite direction measured in the same binary
 and the same run** as a control the change cannot touch. All three machines are GCC Compile Farm
@@ -135,9 +135,12 @@ hosts:
 | cfarm185 | Ampere eMAG | clang 21.1.8 | 341.9 | 3031.6 | **8.9x** | +0.3 % |
 | cfarm424 | **ARM Neoverse-N1**, 64 cores | gcc 14 | 323.8 | 1310.1 | **4.0x** | -2.0 % |
 | cfarm424 | ARM Neoverse-N1 | clang 19.1.7 | 976.2 | 3030.3 | **3.1x** | +2.2 % |
+| `c8g.large` | **ARM Neoverse-V2** (AWS Graviton 4) | gcc 11 | 583.0 | 2442.0 | **4.2x** | -3.2 % |
+| `c8g.large` | ARM Neoverse-V2 | clang 15.0.7 | 1595.7 | 6127.1 | **3.8x** | -1.5 % |
 | cfarm104 | **Apple M1**, macOS 25.5.0 | Apple clang 21 | 2751.7 | 9811.2 | **3.6x** | -2.5 % |
 
-**The factor narrows on newer cores and never vanishes: 3.1x to 13.3x.** That shape makes sense --
+**The factor narrows on newer cores and never vanishes: 3.1x to 13.3x**, across every ARM server
+core generation from 2018 to Graviton 4 plus Apple Silicon. That shape makes sense --
 a wider, deeper core executes the software path's serial float chain faster, so it loses less by
 taking it, but the hardware instruction is still several times better. Where the older machine's
 controls hold to ±0.3 %, the two newer ones move ±2.5 %; both are shared machines and that is an
@@ -218,7 +221,10 @@ on cfarm185):
 | differing, **non-NaN** | **0** |
 | differing, NaN payload | 16 744 448 |
 
-The 16M-element checksum of the microbenchmark is **byte-identical on all three cores and every compiler** (`00924503571709770412`: Ampere eMAG, Neoverse-N1, Apple M1; gcc 8.5, gcc 14, clang 19, clang 21, Apple clang 21), which is the same equality seen from a second direction.
+Run on three different architectures -- Ampere eMAG, Graviton 4 and x86-64 -- with identical counts
+in each (7.4 s on Graviton 4, 44 s on the eMAG).
+
+The 16M-element checksum of the microbenchmark is **byte-identical on all four cores and every compiler** (`00924503571709770412`: Ampere eMAG, Neoverse-N1, Neoverse-V2, Apple M1; gcc 8.5, gcc 11, gcc 14, clang 15, clang 19, clang 21, Apple clang 21), which is the same equality seen from a second direction.
 
 So for every finite value, every zero, every denormal and both infinities the two paths agree bit for
 bit. They differ only on **NaN inputs**, where the software encoder emits a canonical quiet NaN
@@ -254,13 +260,15 @@ cannot fire spuriously -- POWER9 and RISC-V select both macros, and a platform w
 
 ## Limits of this measurement
 
-* ~~One ARM core generation~~ -- **closed**: three generations measured (Ampere eMAG 2018, ARM
-  Neoverse-N1, Apple M1) across Linux and macOS and five compiler builds. The factor does depend on
-  the core, from 3.1x to 13.3x, which is why it is reported as a range rather than a number. Still
-  untested: Neoverse V2/N2, Apple M2 and later, and the 64K-page and FreeBSD hosts the farm also has.
+* ~~One ARM core generation~~ -- **closed**: four generations measured (Ampere eMAG 2018, Neoverse-N1,
+  Neoverse-V2 via AWS Graviton 4, Apple M1) across Linux and macOS and seven compiler builds, i.e.
+  every ARM server core generation in service plus Apple Silicon. The factor does depend on the core,
+  from 3.1x to 13.3x, which is why it is reported as a range. Still untested: Neoverse N2, Apple M2
+  and later, and the 64K-page and FreeBSD hosts the farm also has.
 * **A shared machine.** Permanent 8-core foreign load. `-t 16` reproduced to 0.05 % between runs of
   the same binary and is reported; `-t 32` spread 7.5 % and is not.
-* **Five compiler builds** (gcc 8.5, gcc 14, clang 19.1.7, clang 21.1.8, Apple clang 21). MSVC on
+* **Seven compiler builds** (gcc 8.5, gcc 11, gcc 14, clang 15.0.7, clang 19.1.7, clang 21.1.8,
+  Apple clang 21). MSVC on
   Windows-on-ARM is untested, though its shipped `ggml-cpu.dll` shows the same zero.
 * **Only one model size and two quantisations.** A build with `GGML_LLAMAFILE=OFF`, a very large KV
   cache, or an embedder calling the CPU backend's `from_float` directly would weight the function

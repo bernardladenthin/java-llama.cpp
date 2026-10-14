@@ -130,7 +130,7 @@ reviews unless a maintainer adds the "merge ready" label.
 > data-dependent branch for the inf/NaN case. With the selection it is a load, one `fcvt` and a store,
 > which the compiler then vectorises to `fcvtn v0.4h, v0.4s` -- four elements per instruction.
 >
-> Measured on three ARM core generations: a 16M-element bulk conversion, best of 7, with the
+> Measured on four ARM core generations: a 16M-element bulk conversion, best of 7, with the
 > **opposite direction measured in the same binary and the same run** as a control the change cannot
 > touch.
 >
@@ -140,10 +140,13 @@ reviews unless a maintainer adds the "merge ready" label.
 > | Ampere eMAG | clang 21.1.8 | 341.9 | 3031.6 | 8.9x |
 > | ARM Neoverse-N1 | gcc 14 | 323.8 | 1310.1 | 4.0x |
 > | ARM Neoverse-N1 | clang 19.1.7 | 976.2 | 3030.3 | 3.1x |
+> | ARM Neoverse-V2 (Graviton 4) | gcc 11 | 583.0 | 2442.0 | 4.2x |
+> | ARM Neoverse-V2 | clang 15.0.7 | 1595.7 | 6127.1 | 3.8x |
 > | Apple M1, macOS | Apple clang 21 | 2751.7 | 9811.2 | 3.6x |
 >
-> The factor narrows on newer cores and never vanishes -- **3.1x to 13.3x**. In all ten runs the
-> control direction stays within 2.5 %, against an effect of 3x and up.
+> The factor narrows on newer cores and never vanishes -- **3.1x to 13.3x** -- across every ARM
+> server core generation from 2018 to Graviton 4, plus Apple Silicon. In all fourteen runs the
+> control direction stays within 3.2 %, against an effect of 3x and up.
 >
 > ### It is bit-exact
 >
@@ -152,7 +155,8 @@ reviews unless a maintainer adds the "merge ready" label.
 > software encoder emits a canonical quiet NaN and the instruction propagates the truncated payload.
 > The identical comparison on x86 with F16C gives the same two numbers, so this brings ARM into
 > agreement with the behaviour x86 already ships rather than splitting them. The 16M-element output
-> checksum is byte-identical on all three cores and all five compiler builds.
+> checksum is byte-identical on all four cores and all seven compiler builds, and the exhaustive run
+> was repeated on three architectures (Ampere eMAG, Graviton 4, x86-64) with identical counts.
 >
 > ### It does not make inference faster
 >
@@ -209,7 +213,7 @@ reviews unless a maintainer adds the "merge ready" label.
 >   `x86 -F16C`, `x86` plain, NEON) for `master`, `master`+guard and the final tree.
 > * A real x86 translation unit compiled and disassembled, before and after, three flag sets.
 > * Full build with all 8 ARM CPU variants plus `ctest`, and the revert round trip in the same tree.
-> * Microbenchmark on three ARM cores and five compiler builds, with an in-run control.
+> * Microbenchmark on four ARM cores and seven compiler builds, with an in-run control.
 > * `llama-bench` (f16 and Q4_K_M, interleaved, `-r 5`) plus `perf record`.
 > * Exhaustive 2^32 equivalence, on ARM and on x86.
 > * Disassembly of 26 released ARM binaries.
@@ -217,8 +221,8 @@ reviews unless a maintainer adds the "merge ready" label.
 > ### Not claimed
 >
 > * No inference speed-up, as measured above.
-> * Three ARM core generations were measured (Ampere eMAG, Neoverse-N1, Apple M1) on Linux and macOS
->   with five compiler builds. Neoverse V2/N2 and Apple M2 and later are untested, which is why the
->   factor is given as a range.
+> * Four ARM core generations were measured (Ampere eMAG, Neoverse-N1, Neoverse-V2, Apple M1) on
+>   Linux and macOS with seven compiler builds. Neoverse N2 and Apple M2 and later are untested,
+>   which is why the factor is given as a range.
 > * MSVC on Windows-on-ARM is untested as a compiler, although the `ggml-cpu.dll` built with it shows
 >   the same absence of `fcvt`.
