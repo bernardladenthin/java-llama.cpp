@@ -67,8 +67,13 @@ whole expression, `(const char *)(&x[ib] + sizeof(block_q4_0))`, which fixes (1)
 keeps (2).
 
 On a bump, check whether upstream fixed this themselves:
-`git grep -n _mm_prefetch ggml/src/ggml-cpu/arch/x86/quants.c` in the new tag. If the call sites
-already cast before the addition, DROP this patch rather than refreshing it.
+`git grep -n _mm_prefetch ggml/src/ggml-cpu/arch/x86/quants.c` in the new tag. That grep is a
+LOCATOR, NOT A VERDICT -- it returns FOUR hits at every tag, because the calls exist either way
+(measured at b11639 (a0e6dc738): lines 846, 847, 864, 865). Read them: the fix is upstream's only
+when the cast to a byte pointer happens BEFORE the addition. `(const char *)(&x[ib] + sizeof(...))`
+casts the whole expression, silences the compiler and keeps the wrong address, so it looks fixed and
+is not -- test_prefetch.cpp is what tells those two apart. Only then DROP this patch rather than
+refreshing it.
 
 diff --git a/ggml/src/ggml-cpu/arch/x86/prefetch.h b/ggml/src/ggml-cpu/arch/x86/prefetch.h
 new file mode 100644

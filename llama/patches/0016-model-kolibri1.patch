@@ -4,7 +4,11 @@ Aleph Alpha's Kolibri-1 is a 78B-parameter German/English reasoning MoE (3.46B a
 token, Apache-2.0). Upstream llama.cpp has no support yet; the request is
 https://github.com/ggml-org/llama.cpp/issues/29922 (open, no PR at the time of writing).
 DROP THIS PATCH as soon as upstream registers the architecture -- check on every bump with
-`git grep -n kolibri src/llama-arch.cpp` in the new llama.cpp tag.
+`git grep -n kolibri src/llama-arch.cpp` in the new llama.cpp tag. This one is a clean true/false,
+unlike the drop-checks of 0017, 0018 and 0019: the name reaches that file only through this patch,
+so NO hits means the patch is still needed and any hit means upstream has it. Run it against the
+pristine tag, never against a patched source tree, which would show this patch's own lines.
+Measured at b11639 (a0e6dc738): 0 hits.
 
 Architecture (from Aleph Alpha's own vLLM implementation, the reference used here):
   - GQA attention with per-head q/k RMSNorm. config.layer_types interleaves sliding-window

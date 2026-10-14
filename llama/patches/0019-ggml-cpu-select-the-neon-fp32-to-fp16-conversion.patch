@@ -70,10 +70,23 @@ the pinned source after the rebase: the guard is silent in all five configuratio
 SUBMITTED UPSTREAM as ggml-org/llama.cpp#30505 (open), rebased onto master and byte-identical to
 this diff.
 
-On a bump, check whether upstream merged it:
+On a bump, check whether upstream merged it. THE OUTPUT MUST BE READ, NOT TESTED -- run it against
+the branch, so that "nothing" is the answer while the patch is needed:
+
+  git show <pin>:ggml/src/ggml-cpu/simd-mappings.h \
+    | sed -n '/^#if defined(__ARM_NEON)/,/^#elif/p' | grep -n GGML_CPU_FP32_TO_FP16
+
+One line printed means upstream merged it; then DROP this patch rather than refreshing it -- the
+fail-loud applier detects "does not apply", never "upstream already fixed this".
+
+Do NOT reduce the looser form
 `git grep -n "GGML_CPU_FP32_TO_FP16(x) GGML_CPU_COMPUTE_FP32_TO_FP16" ggml/src/ggml-cpu/simd-mappings.h`
-in the new tag. If the __ARM_NEON branch carries that line, DROP this patch rather than refreshing
-it -- the fail-loud applier detects "does not apply", never "upstream already fixed this".
+to a true/false: it returns THREE hits at every tag so far -- __POWER9_VECTOR__, __riscv_zfhmin and
+the out-of-chain __F16C__ block -- and the first two carry the NEON line's four-space indentation, so
+a `grep -q` reports "upstream fixed it" at every tag and deletes a fix that is still needed.
+Measured at b11639 (a0e6dc738): hits at lines 71, 114 and 150, none of them inside the __ARM_NEON
+branch, while `git apply --check` of this patch is clean -- the two answers contradict each other,
+and the grep is the one that is wrong.
 
 diff --git a/ggml/src/ggml-cpu/simd-mappings.h b/ggml/src/ggml-cpu/simd-mappings.h
 index ebb54a4ab..e886347cd 100644
