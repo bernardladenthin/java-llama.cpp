@@ -15,6 +15,10 @@ for x86 F16C on 2026-10-11 -- in the other direction, on a different architectur
 Found while isolating that PR ([`upstream-f16c-30270.md`](upstream-f16c-30270.md)): a `#error` guard
 written to stop the omission recurring fired immediately on upstream's unmodified header.
 
+**Submitted upstream as [ggml-org/llama.cpp#30505](https://github.com/ggml-org/llama.cpp/pull/30505)**
+and carried here until it merges as
+[`llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`](../../llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch).
+
 **Two findings, and they must not be confused:**
 
 | | |

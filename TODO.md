@@ -860,39 +860,17 @@ three different subsystems and a combined report gets triaged as one.
 | 3 | `ggml-rpc: the client answers every supports_op with true` | the RPC section of `CLAUDE.md`: a served device that lacks an op **aborts the server**. Reproduced on the macOS CI runners' paravirtual Metal GPU, which has no `MUL_MAT` and took the first run down; it is why every test here serves `CPU` by name | upstream's own TODO comment admits it. Should the client forward the query to the server, or should `rpc-server -d` refuse a device whose op set it cannot report? |
 | 4 | `windows-rocm: 83,362 compiler warnings, against 9 on linux-rocm` | the table below in this section (714,345 log lines against 2,455; the per-class counts; all of them in `ggml/src/ggml-cuda/*.cu`) | the cause is the language, not the arch count: HIP sources are compiled as plain C++ on Windows (`CXX_IS_HIPCC` on `WIN32`) and as HIP on Linux. Fix the warnings, or the C++-on-Windows choice? Their own `windows-rocm` job pays the identical cost |
 
-#### A fifth, and the only one where we hold a finished fix: the ARM fp16 conversion
+#### ~~A fifth: the ARM fp16 conversion~~ -- FILED as llama.cpp#30505
 
-Unlike the four above, a fix exists, is measured from every side, and sits in three local commits on
-`llama.cpp.bernardladenthin` (branch `f16c-select-in-branch`, **not pushed, no PR**). The full record
-is [`docs/benchmarks/arm-fp16-conversion.md`](docs/benchmarks/arm-fp16-conversion.md).
+**Done 2026-10-14.** [ggml-org/llama.cpp#30505](https://github.com/ggml-org/llama.cpp/pull/30505),
+one commit, `+10/-6` in `ggml/src/ggml-cpu/simd-mappings.h`, open. Carried downstream meanwhile as
+`llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`; the full measurement
+record is [`docs/benchmarks/arm-fp16-conversion.md`](docs/benchmarks/arm-fp16-conversion.md).
 
-**The finding grew while isolating #30270.** The `__ARM_NEON` branch of `simd-mappings.h` defines both
-`GGML_CPU_COMPUTE_*` macros and selects only one, so `GGML_CPU_FP32_TO_FP16` falls through to
-ggml-base's portable software conversion while `neon_compute_fp32_to_fp16` -- one `fcvt` -- stays
-unused. **In 26 of 26 shipped ARM binaries** -- our four operating systems plus upstream's own
-`bin-ubuntu-arm64` and `bin-macos-arm64` -- that function contains **no floating-point conversion
-instruction at all**. The function is 8.9x (clang) to 13.3x (gcc) slower than it needs to be, 25
-instructions per element against `fcvtn`'s four elements per instruction, and bit-exact over all 2^32
-float inputs.
-
-**And it does not make inference faster**, which is the half that must travel with it: `perf` puts
-83.9 % of an F16 `pp512` run in tinyBLAS's gemm, which converts inside its own microkernel, and
-**0.03 %** in the broken function -- so end to end the change is inside the run-to-run spread
-(+0.13 %). A prediction of a large gain was written down here before the run and was wrong; that is
-the same mistake #30270 made, in the other direction, and the reason the measurement was done at all.
-
-The three commits are deliberately separable:
-
-1. **`ggml-cpu : select the NEON fp32->fp16 conversion`** -- the defect, one `#define`.
-2. **`ggml-cpu : move the F16C selection into its own branch`** -- #30270 fixed its half from 88 lines
-   below the chain, outside it, which is why that code has to explain its own position in a comment.
-   Proven behaviour-preserving: all three configurations resolve byte-identically before and after.
-3. **`ggml-cpu : refuse a branch that defines a COMPUTE macro without selecting it`** -- the `#error`
-   that found this one, verified red on the unfixed tree and green on the fixed one, with a control
-   showing both trees compile without it.
-
-**Open decision, to be taken together:** one PR for all three, a PR for 1 and an issue for the rest,
-or a comment on #30270 carrying the measurement. Nothing is filed yet.
+What remains to do here is the **drop-check on every llama.cpp bump**, which the patch header states:
+`git grep -n "GGML_CPU_FP32_TO_FP16(x) GGML_CPU_COMPUTE_FP32_TO_FP16" ggml/src/ggml-cpu/simd-mappings.h`
+at the new tag -- if the `__ARM_NEON` branch carries that line the PR merged, and the patch is
+**dropped rather than refreshed**.
 
 **Two rules for the day.** State the measurement and ask the question; do not propose the fix for 1-3,
 because each is a design decision in code this project does not own. And say plainly what was done

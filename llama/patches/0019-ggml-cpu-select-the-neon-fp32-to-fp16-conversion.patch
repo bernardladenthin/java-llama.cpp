@@ -1,0 +1,96 @@
+ggml-cpu: select the NEON fp32->fp16 conversion
+
+The __ARM_NEON branch of ggml/src/ggml-cpu/simd-mappings.h defines both
+GGML_CPU_COMPUTE_FP16_TO_FP32 and GGML_CPU_COMPUTE_FP32_TO_FP16 but selects only the first, so
+GGML_CPU_FP32_TO_FP16 falls through to GGML_COMPUTE_FP32_TO_FP16 at the end of that section --
+ggml-base's deliberately portable software bit manipulation, the one ggml.c uses everywhere
+because ggml-base may not assume CPU features -- while neon_compute_fp32_to_fp16, a one-line
+__fp16 conversion, stays defined and referenced by nothing. The whole purpose of the GGML_CPU_*
+pair is to be the accelerated variant; on ARM it was defined to be the unaccelerated one.
+
+__POWER9_VECTOR__ and __riscv_zfhmin select both macros, and the comment on that fallback has
+always said NEON does too ("so we define GGML_CPU_FP16_TO_FP32 and GGML_CPU_FP32_TO_FP16
+elsewhere for NEON. This is also true for POWER9."). Not a regression: the NEON selection is
+absent in all 25 most recent commits touching the file, back to 2025-04-10.
+
+Why it is felt on ARM and nowhere else: ggml_cpu_fp32_to_fp16 -- the from_float of GGML_TYPE_F16
+-- has vector paths for F16C, RISC-V and s390x (the last added in llama.cpp #30157) and none for
+NEON, so there the whole function is the scalar loop through the macro.
+
+Two further changes keep the chain regular. The two F16C selections added in llama.cpp #30270
+move from 88 lines below the chain, after the lookup-table declarations, into the __F16C__ branch
+beside the intrinsics they select; that is behaviour-preserving, proven at object level (a
+translation unit calling both macros emits vcvtps2ph before and after with -mavx2 -mf16c -mfma and
+with -mavx512f -mf16c, and the software path with -msse4.2). In their place an #error pair refuses
+a branch that defines a COMPUTE macro without selecting it -- the omission that neither a build,
+a warning nor a test could see, because the fallback silently supplies a correct implementation.
+
+WHY THIS PROJECT CARRIES IT. All 17 ARM artifacts shipped here -- cpu-linux-aarch64 (8 variants),
+cpu-android-aarch64 (7), cpu-windows-aarch64 and metal-macos-aarch64 -- contain no fcvt of any
+form in ggml_cpu_fp32_to_fp16, and neither do upstream's own llama-b11576-bin-ubuntu-arm64 and
+-macos-arm64. A plain gcc with no flags defines __ARM_NEON and __ARM_FP16_FORMAT_IEEE on aarch64,
+so there is no opt-in and no way to miss it.
+
+MEASURED. The function runs 2.45x to 13.3x faster with the selection, across five ARM core types
+(Ampere eMAG, Cortex-A55, Neoverse-N1, Neoverse-V2, Apple M1), three operating systems and nine
+compiler builds, with the opposite direction measured in the same binary and run as a control that
+stays within 3.2 % everywhere. Bit-exact: both paths agree on every one of the 2^32 float32 bit
+patterns, differing only in NaN payload -- where the same comparison on x86 F16C gives the same
+numbers, so this brings ARM into agreement with what x86 already ships. It is NOT an inference
+speed-up: perf puts 83.9 % of an F16 pp512 run in tinyBLAS's gemm, which converts inside its own
+microkernel, and 0.03 % in this function. The full record, including the mutation measurement that
+chose the guard's position, is docs/benchmarks/arm-fp16-conversion.md.
+
+Built in upstream's own ARM release configuration (GGML_BACKEND_DL, GGML_CPU_ALL_VARIANTS,
+GGML_NATIVE=OFF): all eight variant modules compile, the guard fires nowhere, fcvt/fcvtn/fcvtn2
+appear in every one of them, reverting in the same tree puts that back to zero, and ctest gives
+52 of 54 with the two failures identical on unpatched master.
+
+SUBMITTED UPSTREAM as ggml-org/llama.cpp#30505 (open), byte-identical to this diff.
+
+On a bump, check whether upstream merged it:
+`git grep -n "GGML_CPU_FP32_TO_FP16(x) GGML_CPU_COMPUTE_FP32_TO_FP16" ggml/src/ggml-cpu/simd-mappings.h`
+in the new tag. If the __ARM_NEON branch carries that line, DROP this patch rather than refreshing
+it -- the fail-loud applier detects "does not apply", never "upstream already fixed this".
+
+diff --git a/ggml/src/ggml-cpu/simd-mappings.h b/ggml/src/ggml-cpu/simd-mappings.h
+index fb53ecdf4..fad710cb3 100644
+--- a/ggml/src/ggml-cpu/simd-mappings.h
++++ b/ggml/src/ggml-cpu/simd-mappings.h
+@@ -42,6 +42,7 @@ extern "C" {
+     #define GGML_CPU_COMPUTE_FP32_TO_FP16(x) neon_compute_fp32_to_fp16(x)
+ 
+     #define GGML_CPU_FP16_TO_FP32(x) GGML_CPU_COMPUTE_FP16_TO_FP32(x)
++    #define GGML_CPU_FP32_TO_FP16(x) GGML_CPU_COMPUTE_FP32_TO_FP16(x)
+ 
+     static inline float neon_compute_fp16_to_fp32(ggml_fp16_t h) {
+         __fp16 tmp;
+@@ -63,6 +64,8 @@ extern "C" {
+         #define GGML_CPU_COMPUTE_FP16_TO_FP32(x) _cvtsh_ss(x)
+         #define GGML_CPU_COMPUTE_FP32_TO_FP16(x) _cvtss_sh(x, 0)
+     #endif
++    #define GGML_CPU_FP16_TO_FP32(x) GGML_CPU_COMPUTE_FP16_TO_FP32(x)
++    #define GGML_CPU_FP32_TO_FP16(x) GGML_CPU_COMPUTE_FP32_TO_FP16(x)
+ #elif defined(__POWER9_VECTOR__)
+     #define GGML_CPU_COMPUTE_FP16_TO_FP32(x) power_compute_fp16_to_fp32(x)
+     #define GGML_CPU_COMPUTE_FP32_TO_FP16(x) power_compute_fp32_to_fp16(x)
+@@ -140,12 +143,13 @@ extern float ggml_table_f32_ue4m3[1 << 8];
+ #define GGML_CPU_UE4M3_TO_FP32(x) ggml_ue4m3_to_fp32(x)
+ #endif
+ 
+-// Pre AVX512 CPUs (AVX2 with F16C, such as i5-8th gen or i7-4790)
+-// do not produce codegen as checks below don't test for __F16C__
+-// but this check does.
+-#if defined(__F16C__)
+-#define GGML_CPU_FP16_TO_FP32(x) GGML_CPU_COMPUTE_FP16_TO_FP32(x)
+-#define GGML_CPU_FP32_TO_FP16(x) GGML_CPU_COMPUTE_FP32_TO_FP16(x)
++// A branch above that defines a GGML_CPU_COMPUTE_* macro must also select it: left unselected it
++// falls through to the portable fallback below, which is correct but never uses the instruction.
++#if defined(GGML_CPU_COMPUTE_FP16_TO_FP32) && !defined(GGML_CPU_FP16_TO_FP32)
++#error "a branch defines GGML_CPU_COMPUTE_FP16_TO_FP32 without selecting it as GGML_CPU_FP16_TO_FP32"
++#endif
++#if defined(GGML_CPU_COMPUTE_FP32_TO_FP16) && !defined(GGML_CPU_FP32_TO_FP16)
++#error "a branch defines GGML_CPU_COMPUTE_FP32_TO_FP16 without selecting it as GGML_CPU_FP32_TO_FP16"
+ #endif
+ 
+ // On ARM NEON, it's quicker to directly convert x -> x instead of calling into ggml_lookup_fp16_to_fp32,
