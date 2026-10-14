@@ -1,0 +1,64 @@
+ggml-alloc : validate the leafs before reusing a graph's allocation
+
+ggml_gallocr_alloc_graph() assigns every tensor of a graph by position from the previous
+ggml_gallocr_reserve(): node i takes node_allocs[i], leaf i takes leaf_allocs[i].
+ggml_gallocr_needs_realloc() decides whether those assignments still fit, and it validates every
+node and every node's sources -- but of the leafs it compares only the count. A graph with the
+same number of leafs in another order therefore reuses the old leaf assignments: an input leaf
+lands on a slot that belonged to a weight (buffer_id -1, nothing allocated), and with NDEBUG the
+asserts in ggml_gallocr_init_tensor() are gone, so ggml_vbuffer_tensor_alloc() indexes
+galloc->buffers[-1]. A leaf that lands on a slot of another input is not caught either: its size
+is never checked, so it may get a region too small for it.
+
+Reached since #30445 ("graph: skip the LM head for pooled embeddings", cb55ffe6e, b11574..b11612):
+the models no longer expand their LM head themselves, build_logits() does, after build_pooling().
+In a context with embeddings enabled the reserved graph expands t_embd first and t_logits
+second; a generation step on the same context (the server switches embeddings off for a slot
+that samples, llama_set_embeddings(ctx, false)) expands only t_logits, whose first source is
+output.weight. Same node and leaf counts, every leaf after output.weight shifted by one. Found
+by java-llama.cpp's Publish run 38648257387 (2026-10-14): ErrorHandlingTest loads its model with
+--embedding and posts an infill request to it, and the forked JVM died with SIGSEGV in
+ggml_gallocr_alloc_graph on Linux, and with 0xC0000005 under both Windows toolchains:
+
+    ggml_gallocr_alloc_graph <- ggml_backend_sched_alloc_graph <- llama_context::process_ubatch
+    <- llama_context::decode <- server_context_impl::update_slots
+
+Reproduced locally with a random 2-layer llama GGUF (FIM tokens set) and a context of 128:
+infill on the model without --embedding works, with --embedding it crashes; a debug print shows
+leaf 31 'out_ids' arriving at a slot with no allocation. Reverting cb55ffe6e makes it pass, and
+so does this patch, which validates the leafs exactly as the nodes are validated: an invalid
+leaf makes the allocator reserve again (one buffer) or report false, on which
+ggml_backend_sched reserves the graph itself. With it, greedy infill on the --embedding model
+returns the same tokens as on the model without, run after run.
+
+The guard is src/test/cpp/test_gallocr_leafs.cpp: two graphs with the same node and leaf counts
+and the leafs swapped, reserve with one, allocate the other.
+
+Drop-check on every bump: read ggml_gallocr_needs_realloc() in ggml/src/ggml-alloc.c at the new
+tag -- once it walks graph->leafs itself, drop this patch rather than refreshing it.
+
+diff --git a/ggml/src/ggml-alloc.c b/ggml/src/ggml-alloc.c
+index b0c067b49..35e4d2573 100644
+--- a/ggml/src/ggml-alloc.c
++++ b/ggml/src/ggml-alloc.c
+@@ -1021,6 +1021,20 @@ static bool ggml_gallocr_needs_realloc(ggml_gallocr_t galloc, struct ggml_cgraph
+         return true;
+     }
+ 
++    // the leafs are allocated by position too, so a graph whose leafs come in another order -- the same
++    // count, e.g. outputs expanded in a different order -- must not reuse the previous assignments
++    for (int i = 0; i < graph->n_leafs; i++) {
++        struct ggml_tensor * leaf = graph->leafs[i];
++        struct leaf_alloc * leaf_alloc = &galloc->leaf_allocs[i];
++
++        if (!ggml_gallocr_node_needs_realloc(galloc, leaf, &leaf_alloc->leaf)) {
++#ifndef NDEBUG
++            GGML_LOG_DEBUG("%s: leaf %s is not valid\n", __func__, leaf->name);
++#endif
++            return true;
++        }
++    }
++
+     for (int i = 0; i < graph->n_nodes; i++) {
+         struct ggml_tensor * node = graph->nodes[i];
+         struct node_alloc * node_alloc = &galloc->node_allocs[i];
