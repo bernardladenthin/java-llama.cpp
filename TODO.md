@@ -842,9 +842,11 @@ whose "17 issues found" status once posted on PRs #248/#298; it posts nothing on
 never set up deliberately. Whether the project wants one, with which policy, is the owner's call;
 nothing here blocks on it.
 
-### Drop patch `0012` at the first bump past b11612 (upstream merged the fix as #29677)
+### ~~Drop patch `0012` at the first bump that carries #29677~~ -- done at the b11632 bump
 
-**The drop-check of `0012` fires at the *next* bump, not at the b11612 one.** On 2026-10-14 upstream
+**Done at b11632** (the first number carrying the fix is b11626, `df18bee11`; the bump went to master's head of the day, b11632, pinned through `JLLAMA_GIT_COMMIT` ahead of the tag). The applier fired as predicted in reverse: `0012` does **not** apply at `df18bee11` (upstream's line sits inside the block the patch replaces), so the drop was forced, not silent. The guard went with it -- see the `0012` note in `docs/history/dropped-llama-patches.md` for why no replacement exists. The text below is the plan as it stood, kept for the reasoning.
+
+**The drop-check of `0012` fires at the first bump to a tag that contains `df18bee11` -- not at b11612, and not at b11617 either** (checked: no tag up to b11618 carries it; b11617 still divides by `split_sum` unguarded at `src/llama-model.cpp:1648`). On 2026-10-14 upstream
 merged [ggml-org/llama.cpp#29677](https://github.com/ggml-org/llama.cpp/pull/29677), commit
 [`df18bee11`](https://github.com/ggml-org/llama.cpp/commit/df18bee11e96557b07aa7b12db0976f3c7ac9165)
 ("model: split layers evenly when no device reports free memory"), one line in `load_tensors()`:
@@ -936,7 +938,7 @@ treat an unknown flag as pass-through). So the measurement stands as recorded an
 to add this case to one of those issues, or wait. Re-check on the next sccache release before
 spending a CI run on it.
 
-There are **thirteen** patches today (`0001`-`0003`, `0006`-`0008`, `0012`, `0014`-`0019`). Each
+There are **twelve** patches today (`0001`-`0003`, `0006`-`0008`, `0014`-`0019`). Each
 accepted upstream change deletes a patch from the bump checklist once the pin is bumped past it.
 
 - **Submittable as they are** (self-contained, no jllama specifics): `0001` (Windows arg-parse embed
@@ -945,7 +947,7 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   direction), `0002` (preserve the caller's load-progress callback), `0006` (embeddable
   `llama_server`), `0007` (`llama_server_attach`), `0008` (`LLAMA_SERVER_WORKER_CMD`), ~~`0012`~~ (zero
   split-sum guard -- **fixed upstream independently on 2026-10-14 by #29677**, nothing left to submit;
-  dropped at the first bump past b11612, see the section right above), `0014` (`common_log_set_callback`), `0015`
+  dropped at the first bump that carries #29677, see the section right above), `0014` (`common_log_set_callback`), `0015`
   (non-aborting RPC registration, stoppable server, transport fixes), `0017` (x86 prefetch helper),
   **`0018`** (the AMX buffer released with `free()` instead of `ggml_aligned_free` -- one line, with
   the 6/6-against-0/6 measurement in its header and a configure-time guard that is red without it;

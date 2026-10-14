@@ -11,8 +11,32 @@ mechanical edit steps in [`../../CLAUDE.md`](../../CLAUDE.md#upgradingdowngradin
 together with a repeatable **target-selection + chunking** strategy so a bump never lands an
 unreviewably large diff in one step.
 
-The current pin lives in `llama/CMakeLists.txt` as `GIT_TAG b<nnnn>`. llama.cpp tags **every**
-master commit as `b<nnnn>`, but only a subset get GitHub *Releases*.
+The current pin lives in `llama/CMakeLists.txt` as `set(JLLAMA_GIT_TAG b<nnnn>)`. llama.cpp tags
+**every** master commit as `b<nnnn>`, but only a subset get GitHub *Releases*.
+
+## Pinning a number upstream has not tagged yet (a virtual b-number)
+
+The number is the pin everywhere -- `jllama-build.txt`, `LlamaCppVersion`, the README badge, the
+WebUI job -- and it is derivable: upstream's `release.yml` numbers a tag by `git rev-list --count`
+of the master commit, so `b<nnnn>` names exactly one commit whether or not the tag has been pushed
+yet (the tags trail master by hours to days). When a bump wants a commit that is already on master
+but not yet tagged, keep the number and name the commit next to it:
+
+```cmake
+set(JLLAMA_GIT_TAG    b11626)
+set(JLLAMA_GIT_COMMIT "df18bee11e96557b07aa7b12db0976f3c7ac9165")   # until upstream tags b11626
+```
+
+`.github/scripts/llama-next-version.sh --resolve b<nnnn>` prints that hash (from the mirror clone,
+walking master for the commit whose count is the number). Only the two fetches read the commit --
+`FetchContent` in `llama/CMakeLists.txt` and the `build-webui` checkout -- and the configure then
+**asserts** that the fetched commit's count is the number (`llama.cpp pin check` in the CMake
+output), so a wrong hash cannot ship as `b<nnnn>`; llama.cpp's own `build-info` derives its number
+the same way, which is why `NativeLibraryLoadSmokeTest` passes against a virtual number too. Every
+other consumer keeps the number. Once upstream publishes the tag, clear `JLLAMA_GIT_COMMIT`
+(`llama-next-version.sh` prints a NOTE when it is stale); nothing else changes. Two limits: the
+commit must be on master (a side branch's count is not a tag number), and the README's release link
+points at a page that does not exist until the tag does.
 
 ---
 
@@ -123,14 +147,17 @@ Once you have the `b<cur> -> b<next>` step, apply it exactly as
 Concretely:
 
 1. **Edit the pin — four files:**
-   - `llama/CMakeLists.txt` — the `GIT_TAG b<cur>` line. (It is the only `b<nnnn>` tag in this file — the other two `GIT_TAG` lines pin nlohmann/json `v3.12.0` and GoogleTest `v1.18.0` and must NOT move with a llama.cpp bump. The
+   - `llama/CMakeLists.txt` — the `set(JLLAMA_GIT_TAG b<cur>)` line (and `JLLAMA_GIT_COMMIT`, see
+     "Pinning a number upstream has not tagged yet": set it when the number is not tagged yet, clear
+     it when it is). It is the only `b<nnnn>` in this file — the two `GIT_TAG` lines of nlohmann/json
+     `v3.12.0` and GoogleTest `v1.18.0` must NOT move with a llama.cpp bump. The
      `-DLLAMA_TAG=b<cur>` that once fed the build-time TTS extraction was removed with the
-     Qwen3-TTS rework, and the WebUI auto-follows `GIT_TAG` in CI.)
+     Qwen3-TTS rework, and the WebUI auto-follows `JLLAMA_GIT_TAG` in CI.)
    - `README.md` — the llama.cpp badge and link (the tag appears three times, all on one line: the
      badge alt text, the badge URL and the release link).
    - `CLAUDE.md` — the "Current llama.cpp pinned version" line (and any build-example `b<nnnn>`).
    - `llama/src/main/java/net/ladenthin/llama/value/LlamaCppVersion.java` — the `LLAMA_CPP_VERSION`
-     constant (the pure-Java pin consumers read for a version badge/log line). It mirrors `GIT_TAG`;
+     constant (the pure-Java pin consumers read for a version badge/log line). It mirrors `JLLAMA_GIT_TAG`;
      if you forget it, `NativeLibraryLoadSmokeTest.nativeBuildInfoMatchesPinnedVersionConstant` fails
      the build (it cross-checks the constant against `LlamaModel.getLlamaCppBuildInfo()`, which reads
      llama.cpp's own linked-in `build-info`).
@@ -151,7 +178,7 @@ Concretely:
    else: `apply-llama-patches.cmake` `file(GLOB)`s the directory and applies them in filename order,
    so an enumeration can only go stale (it did, one commit after being written). Use a **fresh**
    build dir: the applier's stamp file pins the patch set to the *checked-out llama.cpp commit*, so
-   after a `GIT_TAG` change an existing build dir is exactly the case it refuses to guess at — it
+   after a pin change an existing build dir is exactly the case it refuses to guess at — it
    aborts and tells you to configure fresh, which is what actually re-runs the patches against the
    new source:
    ```bash

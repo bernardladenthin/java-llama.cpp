@@ -8,7 +8,12 @@
 # The runbook this supports is docs/upgrade/llama-cpp-version-bump.md. Strategy:
 #   * TARGET   = the topmost RELEASE on the GitHub releases page (read from the release atom feed),
 #                or an explicit "b<nnnn>" passed as $1.
-#   * CURRENT  = the pinned tag in llama/CMakeLists.txt (GIT_TAG b<nnnn>).
+#   * CURRENT  = the pinned number in llama/CMakeLists.txt (set(JLLAMA_GIT_TAG b<nnnn>)). It may be a
+#                "virtual" number -- one upstream has not tagged yet, pinned through JLLAMA_GIT_COMMIT --
+#                in which case it is resolved to the master commit whose `git rev-list --count` is the
+#                number, the way upstream's release.yml numbers its tags.
+#   * `--resolve b<nnnn>` prints that commit for any number (the tag's commit when the tag exists) and
+#                exits: the hash to put into JLLAMA_GIT_COMMIT.
 #   * If `git diff CURRENT..TARGET` is smaller than the threshold (default 100 KiB), bump straight
 #     to TARGET. Otherwise CHUNK: pick the largest intermediate b<nnnn> tag whose diff from CURRENT
 #     is still under the threshold, so each bump stays a small, reviewable patch. Re-run after each
@@ -36,9 +41,10 @@ CACHE="${LLAMA_BUMP_CACHE:-$HOME/.cache/jllama-llamacpp-mirror}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 CMAKELISTS="$ROOT/llama/CMakeLists.txt"
 
-# --- current pinned tag number, e.g. "GIT_TAG b9866" -> 9866 -----------------------------------
-cur="$(grep -oE 'GIT_TAG[[:space:]]+b[0-9]+' "$CMAKELISTS" | grep -oE '[0-9]+' | head -1 || true)"
-[ -n "$cur" ] || { echo "ERROR: could not read 'GIT_TAG b<nnnn>' from $CMAKELISTS" >&2; exit 1; }
+# --- current pinned number, e.g. "set(JLLAMA_GIT_TAG b9866)" -> 9866, and the optional commit ------
+cur="$(grep -oE '^set\(JLLAMA_GIT_TAG[[:space:]]+b[0-9]+\)' "$CMAKELISTS" | grep -oE '[0-9]+' | head -1 || true)"
+[ -n "$cur" ] || { echo "ERROR: could not read 'set(JLLAMA_GIT_TAG b<nnnn>)' from $CMAKELISTS" >&2; exit 1; }
+pinned_commit="$(grep -oE '^set\(JLLAMA_GIT_COMMIT[[:space:]]+"[0-9a-f]{40}"\)' "$CMAKELISTS" | grep -oE '[0-9a-f]{40}' | head -1 || true)"
 
 # --- cached blobless mirror of llama.cpp (clone once, then fetch tags) --------------------------
 if [ -d "$CACHE/.git" ]; then
@@ -46,6 +52,40 @@ if [ -d "$CACHE/.git" ]; then
 else
     echo "cloning ${REPO} (blobless) into $CACHE (one-time) ..." >&2
     git clone --filter=blob:none --no-checkout --quiet "$GIT_URL" "$CACHE"
+fi
+
+# --- a number -> the ref that carries it: the tag when upstream published it, else the master -----
+# commit whose `git rev-list --count` is the number (upstream's own numbering rule). A virtual number
+# is recent by nature, so the walk down first-parent master is short; it stops at the first commit
+# whose count is <= the number and errors when that count is not the number (a number no master
+# commit carries, or one further back than the walk looks).
+ref_of_number() {
+    local n="$1" c count i=0
+    if git -C "$CACHE" rev-parse -q --verify "b${n}^{commit}" >/dev/null 2>&1; then
+        echo "b$n"; return 0
+    fi
+    git -C "$CACHE" fetch --quiet origin master 2>/dev/null || true
+    while read -r c; do
+        count="$(git -C "$CACHE" rev-list --count "$c")"
+        if [ "$count" -eq "$n" ]; then echo "$c"; return 0; fi
+        if [ "$count" -lt "$n" ]; then break; fi
+        i=$((i + 1)); [ "$i" -lt 2000 ] || break
+    done < <(git -C "$CACHE" rev-list --first-parent origin/master)
+    echo "ERROR: b$n is not a tag in the mirror and no recent master commit has commit count $n" >&2
+    return 1
+}
+
+if [ "${1:-}" = "--resolve" ]; then
+    n="$(printf '%s' "${2:-}" | grep -oE '[0-9]+' | head -1)"
+    [ -n "$n" ] || { echo "usage: $0 --resolve b<nnnn>" >&2; exit 1; }
+    ref="$(ref_of_number "$n")" || exit 3
+    sha="$(git -C "$CACHE" rev-parse "${ref}^{commit}")"
+    if [ "$ref" = "b$n" ]; then
+        echo "b$n is published: $sha (JLLAMA_GIT_COMMIT can stay empty)"
+    else
+        echo "b$n is not published yet; it will be $sha -- set(JLLAMA_GIT_COMMIT \"$sha\")"
+    fi
+    exit 0
 fi
 
 # --- target: explicit "$1" (b<nnnn>) or the latest RELEASE from the atom feed -------------------
@@ -59,21 +99,33 @@ else
     [ -n "$target" ] || { echo "ERROR: parsed no release tags from the feed." >&2; exit 3; }
 fi
 
-git -C "$CACHE" rev-parse -q --verify "b${cur}^{commit}"    >/dev/null 2>&1 || { echo "ERROR: b$cur is not a tag in the mirror" >&2; exit 3; }
+curref="$(ref_of_number "$cur")" || exit 3
 git -C "$CACHE" rev-parse -q --verify "b${target}^{commit}" >/dev/null 2>&1 || { echo "ERROR: b$target is not a tag in the mirror" >&2; exit 3; }
+if [ -n "$pinned_commit" ]; then
+    # JLLAMA_GIT_COMMIT is set: it must be the commit the number names, and it is stale once the tag exists
+    pinned_count="$(git -C "$CACHE" rev-list --count "$pinned_commit" 2>/dev/null || true)"
+    if [ "$pinned_count" != "$cur" ]; then
+        echo "ERROR: JLLAMA_GIT_COMMIT $pinned_commit has commit count ${pinned_count:-?}, not $cur -- it does not resolve b$cur (run: $0 --resolve b$cur)" >&2; exit 3
+    fi
+    if [ "$curref" = "b$cur" ]; then
+        echo "NOTE: upstream has published b$cur ($(git -C "$CACHE" rev-parse "b$cur^{commit}")): clear JLLAMA_GIT_COMMIT in $CMAKELISTS, the tag carries the pin now." >&2
+    fi
+elif [ "$curref" != "b$cur" ]; then
+    echo "NOTE: b$cur is not a published tag and JLLAMA_GIT_COMMIT is empty -- the native fetch will fail; set(JLLAMA_GIT_COMMIT \"$curref\")" >&2
+fi
 
-# diff byte size between two tag numbers, honoring the WebUI-exclusion toggle
+# diff byte size between the current ref and a tag number, honoring the WebUI-exclusion toggle
 diffsize() {
     if [ "$EXCLUDE_WEBUI" = "1" ]; then
-        git -C "$CACHE" diff "b$1" "b$2" -- . ':(exclude)tools/ui' 2>/dev/null | wc -c
+        git -C "$CACHE" diff "$1" "b$2" -- . ':(exclude)tools/ui' 2>/dev/null | wc -c
     else
-        git -C "$CACHE" diff "b$1" "b$2" 2>/dev/null | wc -c
+        git -C "$CACHE" diff "$1" "b$2" 2>/dev/null | wc -c
     fi
 }
 
 scope="full diff"
 [ "$EXCLUDE_WEBUI" = "1" ] && scope="diff excluding tools/ui"
-echo "current pin    : b$cur"
+echo "current pin    : b$cur$( [ "$curref" = "b$cur" ] || echo " (virtual: not tagged upstream yet, resolved to $curref)")"
 echo "latest release : b$target"
 echo "threshold      : ${THRESHOLD_KB} KiB per step (${scope})"
 
@@ -83,7 +135,7 @@ if [ "$cur" -ge "$target" ]; then
 fi
 
 # --- choose next step: TARGET if it fits, else the largest intermediate tag under the threshold -
-if [ "$(diffsize "$cur" "$target")" -lt "$THRESHOLD" ]; then
+if [ "$(diffsize "$curref" "$target")" -lt "$THRESHOLD" ]; then
     next="$target"
 else
     # existing b-tags strictly after cur, up to and including target, ascending
@@ -95,7 +147,7 @@ else
     lo=0; hi=$(( ${#cands[@]} - 1 )); best=""
     while [ "$lo" -le "$hi" ]; do
         mid=$(( (lo + hi) / 2 )); T="${cands[$mid]}"
-        if [ "$(diffsize "$cur" "$T")" -lt "$THRESHOLD" ]; then best="$T"; lo=$(( mid + 1 )); else hi=$(( mid - 1 )); fi
+        if [ "$(diffsize "$curref" "$T")" -lt "$THRESHOLD" ]; then best="$T"; lo=$(( mid + 1 )); else hi=$(( mid - 1 )); fi
     done
     if [ -n "$best" ]; then
         next="$best"
@@ -105,9 +157,9 @@ else
     fi
 fi
 
-full=$(git -C "$CACHE" diff "b$cur" "b$next" | wc -c)
-noui=$(git -C "$CACHE" diff "b$cur" "b$next" -- . ':(exclude)tools/ui' | wc -c)
-commits=$(git -C "$CACHE" rev-list --count "b$cur".."b$next")
+full=$(git -C "$CACHE" diff "$curref" "b$next" | wc -c)
+noui=$(git -C "$CACHE" diff "$curref" "b$next" -- . ':(exclude)tools/ui' | wc -c)
+commits=$(git -C "$CACHE" rev-list --count "$curref".."b$next")
 echo
 echo "next step      : b$cur -> b$next"
 echo "  diff size    : $((full / 1024)) KiB full  /  $((noui / 1024)) KiB excluding tools/ui (auto-followed WebUI)"
@@ -117,7 +169,7 @@ if [ "$next" -eq "$target" ]; then
 else
     echo "  progress     : intermediate chunk — re-run this script after the bump for the next one"
 fi
-echo "  review diff  : https://github.com/${REPO}/compare/b$cur...b$next"
-echo "  raw .patch   : https://github.com/${REPO}/compare/b$cur...b$next.patch"
+echo "  review diff  : https://github.com/${REPO}/compare/$curref...b$next"
+echo "  raw .patch   : https://github.com/${REPO}/compare/$curref...b$next.patch"
 echo
 echo "Apply this bump per docs/upgrade/llama-cpp-version-bump.md (b$cur -> b$next)."
