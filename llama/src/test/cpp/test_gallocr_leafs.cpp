@@ -13,11 +13,15 @@
 // (t_embd + t_logits expanded at reserve, only t_logits at decode); it killed the JVM in
 // ErrorHandlingTest on every platform.
 //
-// The two graphs below have one node and two leafs each, the leafs swapped: add(w, x) visits the
-// weight first, add(x, w) the input first. Reserved with the first, the second must still get an
-// allocation for x inside the allocator's buffer -- and compute the right sum on it. Without the
-// patch the allocation step reads past galloc->buffers and the test dies or fails here, on every
-// platform, without a model.
+// The two graphs below have the same two nodes in the same order -- n1 = add(x, x), then
+// n2 = mul(w, n1) -- so every node and every node source matches its slot, which the old check did
+// verify. Only the leafs move: the first graph expands n1 before n2 and meets the input x first, the
+// second expands only n2, whose first source is the weight w. That is the shape of the llama.cpp
+// case (t_embd then t_logits at reserve, only t_logits at decode, output.weight first). Reserved
+// with the first, the second must still get an allocation for x inside the allocator's buffer and
+// compute the right product on it. Without the patch x takes the slot of w (no allocation) and the
+// allocation step reads galloc->buffers[-1]; the test dies or fails here, on every platform, without
+// a model.
 
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
@@ -67,12 +71,15 @@ TEST(GallocrLeafOrder, AGraphWithItsLeafsInAnotherOrderIsAllocatedAgain) {
     ggml_set_name(x, "x");
     ggml_set_input(x);
 
-    ggml_cgraph *reserved = ggml_new_graph(gctx.get());
-    ggml_build_forward_expand(reserved, ggml_add(gctx.get(), w, x)); // leafs: w, x
-    ggml_tensor *out = ggml_add(gctx.get(), x, w);
+    ggml_tensor *n1 = ggml_add(gctx.get(), x, x);
+    ggml_tensor *out = ggml_mul(gctx.get(), w, n1);
     ggml_set_output(out);
+
+    ggml_cgraph *reserved = ggml_new_graph(gctx.get());
+    ggml_build_forward_expand(reserved, n1);  // leafs: x, w
+    ggml_build_forward_expand(reserved, out); // nodes: n1, out
     ggml_cgraph *decoded = ggml_new_graph(gctx.get());
-    ggml_build_forward_expand(decoded, out); // leafs: x, w
+    ggml_build_forward_expand(decoded, out); // leafs: w, x -- nodes: n1, out
     ASSERT_EQ(ggml_graph_n_nodes(reserved), ggml_graph_n_nodes(decoded));
 
     ggml_gallocr_t galloc = ggml_gallocr_new(ggml_backend_get_default_buffer_type(backend));
@@ -97,7 +104,7 @@ TEST(GallocrLeafOrder, AGraphWithItsLeafsInAnotherOrderIsAllocatedAgain) {
     ASSERT_EQ(ggml_backend_graph_compute(backend, decoded), GGML_STATUS_SUCCESS);
     ggml_backend_tensor_get(out, ov.data(), 0, ggml_nbytes(out));
     for (int64_t i = 0; i < N; i++) {
-        EXPECT_FLOAT_EQ(ov[i], 100.0f + static_cast<float>(i)) << "at " << i;
+        EXPECT_FLOAT_EQ(ov[i], 200.0f * static_cast<float>(i)) << "at " << i;
     }
 
     ggml_gallocr_free(galloc);

@@ -31,8 +31,8 @@ leaf makes the allocator reserve again (one buffer) or report false, on which
 ggml_backend_sched reserves the graph itself. With it, greedy infill on the --embedding model
 returns the same tokens as on the model without, run after run.
 
-The guard is src/test/cpp/test_gallocr_leafs.cpp: two graphs with the same node and leaf counts
-and the leafs swapped, reserve with one, allocate the other.
+The guard is src/test/cpp/test_gallocr_leafs.cpp: two graphs with the same nodes in the same order
+and only the leafs moved (it dies with SIGSEGV without this patch), reserve with one, allocate the other.
 
 Drop-check on every bump: read ggml_gallocr_needs_realloc() in ggml/src/ggml-alloc.c at the new
 tag -- once it walks graph->leafs itself, drop this patch rather than refreshing it.
