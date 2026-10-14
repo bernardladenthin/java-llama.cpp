@@ -44,7 +44,9 @@ run-time test cannot replace it -- without an AMX CPU there is nothing to observ
 how this shipped.
 
 Drop this patch when upstream frees the AMX buffer with ggml_aligned_free() or _aligned_free():
-grep "free(buffer->context)" ggml/src/ggml-cpu/amx/amx.cpp at the new tag.
+grep "free(buffer->context)" ggml/src/ggml-cpu/amx/amx.cpp at the new tag. NOTE THE INVERSION --
+a hit means the bare free() is STILL THERE and this patch is still needed; it is droppable when the
+grep prints NOTHING. Measured at b11639 (a0e6dc738): one hit, line 46, so the defect stands.
 
 diff --git a/ggml/src/ggml-cpu/amx/amx.cpp b/ggml/src/ggml-cpu/amx/amx.cpp
 index e90c279..a65ab88 100644

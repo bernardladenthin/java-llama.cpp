@@ -933,10 +933,20 @@ of two, because directly after the `#elif` chain it does not build at all on x86
 the F16C selection *below* the lookup-table declarations). The downstream patch is the rebased diff
 byte for byte and applies at the pin **and** on master.
 
-What remains to do here is the **drop-check on every llama.cpp bump**, which the patch header states:
-`git grep -n "GGML_CPU_FP32_TO_FP16(x) GGML_CPU_COMPUTE_FP32_TO_FP16" ggml/src/ggml-cpu/simd-mappings.h`
-at the new tag -- if the `__ARM_NEON` branch carries that line the PR merged, and the patch is
-**dropped rather than refreshed**.
+What remains to do here is the **drop-check on every llama.cpp bump**, which the patch header states
+-- and whose output must be **read, not tested**:
+
+```bash
+git show <pin>:ggml/src/ggml-cpu/simd-mappings.h \
+  | sed -n '/^#if defined(__ARM_NEON)/,/^#elif/p' | grep -n GGML_CPU_FP32_TO_FP16
+```
+
+Nothing printed means the patch is still needed; one line means the PR merged and the patch is
+**dropped rather than refreshed**. The loose form of that grep over the whole file returns **three**
+hits at every tag so far (`__POWER9_VECTOR__`, `__riscv_zfhmin`, the out-of-chain `__F16C__` block),
+two of them with the NEON line's own indentation -- run as `grep -q` at b11639 it answered "upstream
+merged it, drop the patch" while `git apply --check` of the patch was clean. That contradiction is
+the whole lesson, and it now stands in each patch header and in `CLAUDE.md`.
 
 **Two rules for the day.** State the measurement and ask the question; do not propose the fix for 1-3,
 because each is a design decision in code this project does not own. And say plainly what was done
