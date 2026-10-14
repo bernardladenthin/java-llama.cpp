@@ -860,44 +860,17 @@ three different subsystems and a combined report gets triaged as one.
 | 3 | `ggml-rpc: the client answers every supports_op with true` | the RPC section of `CLAUDE.md`: a served device that lacks an op **aborts the server**. Reproduced on the macOS CI runners' paravirtual Metal GPU, which has no `MUL_MAT` and took the first run down; it is why every test here serves `CPU` by name | upstream's own TODO comment admits it. Should the client forward the query to the server, or should `rpc-server -d` refuse a device whose op set it cannot report? |
 | 4 | `windows-rocm: 83,362 compiler warnings, against 9 on linux-rocm` | the table below in this section (714,345 log lines against 2,455; the per-class counts; all of them in `ggml/src/ggml-cuda/*.cu`) | the cause is the language, not the arch count: HIP sources are compiled as plain C++ on Windows (`CXX_IS_HIPCC` on `WIN32`) and as HIP on Linux. Fix the warnings, or the C++-on-Windows choice? Their own `windows-rocm` job pays the identical cost |
 
-#### A fifth, and this one is a small PR rather than an issue: the #30270 follow-up
+#### ~~A fifth: the ARM fp16 conversion~~ -- FILED as llama.cpp#30505
 
-Unlike the four above, here there **is** something to offer -- and the measurement is already done
-([`docs/benchmarks/upstream-f16c-30270.md`](docs/benchmarks/upstream-f16c-30270.md)).
+**Done 2026-10-14.** [ggml-org/llama.cpp#30505](https://github.com/ggml-org/llama.cpp/pull/30505),
+one commit, `+10/-6` in `ggml/src/ggml-cpu/simd-mappings.h`, open. Carried downstream meanwhile as
+`llama/patches/0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`; the full measurement
+record is [`docs/benchmarks/arm-fp16-conversion.md`](docs/benchmarks/arm-fp16-conversion.md).
 
-[#30270](https://github.com/ggml-org/llama.cpp/pull/30270) (commit `c28e174141dd`, merged 2026-10-11)
-fixes a real defect: the `#elif defined(__F16C__)` branch of `simd-mappings.h` defined only
-`GGML_CPU_COMPUTE_FP16_TO_FP32`, so the selected macro fell through to the 64K lookup table and an
-F16C CPU never used the hardware instruction. NEON, POWER9 and RISC-V each define **both** macros in
-their branch; only F16C defined half of its own decision.
-
-Two things to offer, both independent of throughput:
-
-1. **Move the two `#define`s into the branch**, where the COMPUTE macros are defined, as every other
-   branch does. They currently sit **88 lines** further down and outside the chain, which is why the
-   new code has to explain the ordering in its own comment ("checks below don't test for `__F16C__`").
-   A future reordering of the file breaks it **silently**, back to the lookup table -- the exact defect
-   that went unnoticed until now.
-2. **Add a guard so the omission cannot recur**, after the branch chain and before the fallback:
-
-   ```c
-   #if defined(GGML_CPU_COMPUTE_FP16_TO_FP32) && !defined(GGML_CPU_FP16_TO_FP32)
-   #error "a branch defined GGML_CPU_COMPUTE_FP16_TO_FP32 but not GGML_CPU_FP16_TO_FP32"
-   #endif
-   ```
-
-   **Proven both ways** with clang `-fsyntax-only` against the real b11574 header: it passes on the
-   fixed tree, fails with the `#error` on the reverted one, does not fire without `__F16C__`, and both
-   trees compile when the guard is absent -- so the guard is the only thing that changes the outcome.
-
-And one thing to **say** in the same comment, because it is honest and useful rather than an
-objection: a clean isolation on Granite Rapids (one tree built twice, upstream's own `llama-bench`,
-5 repetitions, two non-F16C control modules) finds **no measurable effect** for Q4_K_M at 8 and 16
-threads -- every difference inside ±2 % with random signs. The author's own description (a FreeBSD box
-with "clock-mismatched RAM", "gains like these may be greater than reasoned") fits that: the fix
-removes a ~256 KB table from the path, which costs on a bandwidth-starved machine and nothing on a
-server CPU. **The change stays right; the number is not general.** Offering the measurement with the
-PR is the point, not disputing it.
+What remains to do here is the **drop-check on every llama.cpp bump**, which the patch header states:
+`git grep -n "GGML_CPU_FP32_TO_FP16(x) GGML_CPU_COMPUTE_FP32_TO_FP16" ggml/src/ggml-cpu/simd-mappings.h`
+at the new tag -- if the `__ARM_NEON` branch carries that line the PR merged, and the patch is
+**dropped rather than refreshed**.
 
 **Two rules for the day.** State the measurement and ask the question; do not propose the fix for 1-3,
 because each is a design decision in code this project does not own. And say plainly what was done

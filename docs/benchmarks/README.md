@@ -15,6 +15,7 @@ themselves live in [`../../TODO.md`](../../TODO.md).
 |---|---|
 | [`cpu-backend-modules.md`](cpu-backend-modules.md) | What each of the 22 shipped CPU backend modules is worth, per microarchitecture — and whether `ggml_backend_load_best` picks the fastest one |
 | [`gpu-module-jars.md`](gpu-module-jars.md) | What happens when a GPU module jar is actually *used* -- two findings that contradict the "a module that cannot help is skipped" premise |
+| [`arm-fp16-conversion.md`](arm-fp16-conversion.md) | Every shipped ARM binary converts fp32 to fp16 in software, ours and upstream's: 26 of 26 disassembled, 8.9x to 13.3x on the function, and 0.03 % of cycles so inference does not move |
 | [`upstream-f16c-30270.md`](upstream-f16c-30270.md) | An isolation of one upstream commit: what it does, that it changes nothing measurable here, and a compile-time guard proven red against the defect |
 | [`native-loading.md`](native-loading.md) | What extracting the natives costs and what the reuse saves, how a running JVM's locked files behave, and which container base images can load the Linux jar |
 | [`ec2-harness.md`](ec2-harness.md) | How a measurement is run on rented hardware, and the invariants that came out of getting it wrong |
