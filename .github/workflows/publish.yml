@@ -538,18 +538,23 @@ jobs:
         id: tag
         shell: bash
         run: |
-          TAG=$(grep -oE 'GIT_TAG[[:space:]]+b[0-9]+' llama/CMakeLists.txt | grep -oE 'b[0-9]+' | head -1)
+          # The pin is JLLAMA_GIT_TAG (b<nnnn>); JLLAMA_GIT_COMMIT, when set, is the commit that number
+          # names while upstream has not published the tag -- the checkout takes it, the UI build keeps
+          # the number (the same rule llama/CMakeLists.txt applies to the native fetch).
+          TAG=$(grep -oE '^set\(JLLAMA_GIT_TAG[[:space:]]+b[0-9]+\)' llama/CMakeLists.txt | grep -oE 'b[0-9]+' | head -1)
           if [ -z "$TAG" ]; then
-            echo "could not resolve llama.cpp GIT_TAG (b<nnnn>) from CMakeLists.txt" >&2
+            echo "could not resolve llama.cpp JLLAMA_GIT_TAG (b<nnnn>) from CMakeLists.txt" >&2
             exit 1
           fi
+          COMMIT=$(grep -oE '^set\(JLLAMA_GIT_COMMIT[[:space:]]+"[0-9a-f]{40}"\)' llama/CMakeLists.txt | grep -oE '[0-9a-f]{40}' | head -1 || true)
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Pinned llama.cpp WebUI tag: $TAG"
+          echo "ref=${COMMIT:-$TAG}" >> "$GITHUB_OUTPUT"
+          echo "Pinned llama.cpp WebUI tag: $TAG${COMMIT:+ (fetched by commit $COMMIT: the tag is not published yet)}"
       - name: Checkout llama.cpp tools/ui at the pinned tag
         uses: actions/checkout@v7
         with:
           repository: ggml-org/llama.cpp
-          ref: ${{ steps.tag.outputs.tag }}
+          ref: ${{ steps.tag.outputs.ref }}
           path: llamacpp-ui
           # tools/ui holds the npm project AND the ui.cpp.in / ui.h.in templates;
           # scripts/ holds ui-assets.cmake, which consumes them. Both are needed

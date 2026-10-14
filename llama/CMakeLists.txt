@@ -334,10 +334,39 @@ set(LLAMA_BUILD_APP OFF CACHE BOOL "" FORCE)
 if(JLLAMA_BACKEND_DL)
     set(JLLAMA_LLAMA_SOURCE_SUBDIR SOURCE_SUBDIR jllama-added-below)
 endif()
+# ---- The llama.cpp pin ------------------------------------------------------------------------
+# JLLAMA_GIT_TAG is THE pin, a b<nnnn> release number, and everything that names the version reads
+# it: jllama-build.txt (the loader's same-build check), the build-webui job, llama-next-version.sh,
+# and by hand README.md, CLAUDE.md and LlamaCppVersion.java. Upstream numbers its tags by
+# `git rev-list --count` of the master commit, so a number names exactly one commit whether or not
+# upstream has pushed the tag yet. That is what JLLAMA_GIT_COMMIT is for: while the tag is not
+# published, set it to that commit's full hash (a "virtual" b-number) -- the fetch below takes the
+# hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
+# asserts that the fetched commit's count IS the number. Clear it once the tag exists;
+# `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
+set(JLLAMA_GIT_TAG    b11617)
+set(JLLAMA_GIT_COMMIT "")
+if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
+    message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
+endif()
+if(JLLAMA_GIT_COMMIT AND NOT JLLAMA_GIT_COMMIT MATCHES "^[0-9a-f]+$")
+    message(FATAL_ERROR "JLLAMA_GIT_COMMIT must be empty or a full 40-hex commit hash, got '${JLLAMA_GIT_COMMIT}'")
+endif()
+if(JLLAMA_GIT_COMMIT)
+    string(LENGTH "${JLLAMA_GIT_COMMIT}" _jllama_commit_len)
+    if(NOT _jllama_commit_len EQUAL 40)
+        message(FATAL_ERROR "JLLAMA_GIT_COMMIT must be the full 40-hex commit hash, got '${JLLAMA_GIT_COMMIT}' (${_jllama_commit_len} chars)")
+    endif()
+    set(_jllama_fetch_ref "${JLLAMA_GIT_COMMIT}")
+    message(STATUS "llama.cpp ${JLLAMA_GIT_TAG} is fetched by commit ${JLLAMA_GIT_COMMIT} (JLLAMA_GIT_COMMIT is set: upstream has not published the tag)")
+else()
+    set(_jllama_fetch_ref "${JLLAMA_GIT_TAG}")
+endif()
+
 FetchContent_Declare(
 	llama.cpp
 	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
-	GIT_TAG        b11617
+	GIT_TAG        ${_jllama_fetch_ref}
 	PATCH_COMMAND  ${CMAKE_COMMAND}
 		-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patches
 		-DLLAMA_SRC=<SOURCE_DIR>
@@ -345,6 +374,33 @@ FetchContent_Declare(
 	${JLLAMA_LLAMA_SOURCE_SUBDIR}
 )
 FetchContent_MakeAvailable(llama.cpp)
+
+# llama.cpp pin check: the fetched commit's count must be the number JLLAMA_GIT_TAG names. Fetched by
+# tag, that is upstream's own invariant (release.yml numbers the tag by that count); fetched by
+# JLLAMA_GIT_COMMIT, it is the proof that the hash resolves the number -- a wrong hash would otherwise
+# ship as b<nnnn> with another commit's code, and the Java pin check (NativeLibraryLoadSmokeTest
+# against build-info, which derives its number the same way) would see it only after the natives
+# were built. Skipped, with a message, where it cannot be answered: no git, a source tree that is not
+# a git checkout (-DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP), or a shallow clone (count is meaningless).
+find_package(Git QUIET)
+if(GIT_EXECUTABLE AND EXISTS "${llama.cpp_SOURCE_DIR}/.git" AND NOT EXISTS "${llama.cpp_SOURCE_DIR}/.git/shallow")
+    string(REGEX REPLACE "^b" "" _jllama_tag_number "${JLLAMA_GIT_TAG}")
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" rev-list --count HEAD
+        WORKING_DIRECTORY "${llama.cpp_SOURCE_DIR}"
+        OUTPUT_VARIABLE _jllama_head_count
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _jllama_count_res)
+    if(NOT _jllama_count_res EQUAL 0)
+        message(WARNING "llama.cpp pin check skipped: `git rev-list --count HEAD` failed in ${llama.cpp_SOURCE_DIR}")
+    elseif(NOT _jllama_head_count STREQUAL _jllama_tag_number)
+        message(FATAL_ERROR "llama.cpp pin check: JLLAMA_GIT_TAG is ${JLLAMA_GIT_TAG}, but the fetched commit (${_jllama_fetch_ref}) has commit count ${_jllama_head_count}, i.e. it is b${_jllama_head_count}. With JLLAMA_GIT_COMMIT set, that hash does not resolve the number (run `.github/scripts/llama-next-version.sh --resolve ${JLLAMA_GIT_TAG}`); without it, upstream's tag and its count disagree, which has never happened.")
+    else()
+        message(STATUS "llama.cpp pin check: fetched commit count ${_jllama_head_count} = ${JLLAMA_GIT_TAG}")
+    endif()
+else()
+    message(STATUS "llama.cpp pin check skipped: no git, or ${llama.cpp_SOURCE_DIR} is not a full git checkout")
+endif()
 
 # Every ggml source allocating with ggml_aligned_malloc must also release with ggml_aligned_free.
 # The AMX buffer type did not, which corrupted the Windows heap on AMX-capable CPUs and killed the
@@ -607,15 +663,10 @@ message(STATUS "Backend '${JLLAMA_BACKEND}' - installing files to ${JLLAMA_DIR}"
 # jllama-build.txt: the build every natives directory came from, read by LlamaLoader before it puts
 # a GPU module next to a CPU jar's library -- the two must be the same llama.cpp tag (the ggml ABI
 # between libggml-base and a module is that commit's), and a mismatch is a LlamaException naming
-# both, never a silent attempt. The tag is read back from this file's own GIT_TAG line so the
-# version bump keeps touching that one line (build-webui and llama-next-version.sh grep it too).
-file(READ ${CMAKE_CURRENT_LIST_FILE} _jllama_self)
-string(REGEX MATCH "GIT_TAG[ \t]+(b[0-9]+)" _jllama_tag_match "${_jllama_self}")
-set(JLLAMA_LLAMA_CPP_TAG "${CMAKE_MATCH_1}")
-unset(_jllama_self)
-if(NOT JLLAMA_LLAMA_CPP_TAG)
-    message(FATAL_ERROR "could not read the llama.cpp GIT_TAG (b<nnnn>) from ${CMAKE_CURRENT_LIST_FILE}")
-endif()
+# both, never a silent attempt. The tag is JLLAMA_GIT_TAG, the pin at the top of the FetchContent
+# block -- the b<nnnn> number also when JLLAMA_GIT_COMMIT fetched the commit for it (a module jar and
+# a library jar of the same number are the same commit either way, the pin check saw to that).
+set(JLLAMA_LLAMA_CPP_TAG "${JLLAMA_GIT_TAG}")
 if(JLLAMA_MODULE_ONLY)
     set(_jllama_kind module)
 else()

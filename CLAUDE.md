@@ -161,8 +161,8 @@ can join it) and macOS (`metal-macos-aarch64`: Metal is compiled into the librar
 macOS static too). There the loader extracts and loads a single file (plus `jllama-extras.txt` and a
 `ggml-metal.metal` a build does not embed).
 
-**Every directory carries `jllama-build.txt`** (`llama.cpp=<tag>` parsed out of this file's own
-`GIT_TAG` line, `backend=`, `kind=library|module`), written with `file(GENERATE)`: the loader's build
+**Every directory carries `jllama-build.txt`** (`llama.cpp=<tag>`, the `JLLAMA_GIT_TAG` number of this
+file's pin, `backend=`, `kind=library|module`), written with `file(GENERATE)`: the loader's build
 check and the merge step's completeness check read it (see "Natives jars").
 
 Before 5.2.0 each jar was **one** library for one level -- x86-64 the Haswell baseline (x86-64-v3,
@@ -1071,7 +1071,8 @@ checked in (same policy as the native libs).
 Pipeline (`.github/workflows/publish.yml`):
 
 1. **`build-webui` job** (ubuntu — the *only* job that runs `npm`): resolves the
-   pinned `b<nnnn>` tag from `llama/CMakeLists.txt`'s `GIT_TAG`, sparse-checks-out
+   pinned `b<nnnn>` tag from `llama/CMakeLists.txt`'s `JLLAMA_GIT_TAG` (checking out
+   `JLLAMA_GIT_COMMIT` instead when that is set, see "Upgrading/Downgrading"), sparse-checks-out
    `ggml-org/llama.cpp@<tag>` `tools/ui`, runs the upstream Svelte build
    (`npm ci && npm run build`), gzips `dist/` into `dist/_gzip/` (LLAMA_UI_GZIP
    parity), then runs upstream's own **`scripts/ui-assets.cmake`** (a plain `cmake -P`
@@ -1099,7 +1100,7 @@ Pipeline (`.github/workflows/publish.yml`):
    empty-asset stub `src/main/cpp/webui_stub/ui.h` (no embedded UI) so local builds —
    and any job without the artifact — still build and run.
 
-The WebUI version **auto-follows** the pinned `GIT_TAG`: a llama.cpp version bump
+The WebUI version **auto-follows** the pinned `JLLAMA_GIT_TAG`: a llama.cpp version bump
 needs no extra step here, `build-webui` re-reads the tag and rebuilds the matching UI.
 
 **Building the WebUI locally** (optional — a plain `cmake` build uses the stub and
@@ -1146,7 +1147,7 @@ cache lives in **Depot Cache** over sccache's **WebDAV** backend:
 - `SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}` — a Depot **organization** token, stored
   as the repo secret **`DEPOT_TOKEN`**.
 
-Because `sccache` is **content-addressed** and llama.cpp is pinned (`GIT_TAG b11617`), the
+Because `sccache` is **content-addressed** and llama.cpp is pinned (`JLLAMA_GIT_TAG b11617`), the
 ~280 upstream object files are byte-identical every run, so a warm cache recompiles only the
 *changed* files. Depot's cache is **shared across all branches** (unlike GitHub's
 per-branch `actions/cache`), so every branch builds incrementally; a `b<nnnn>` version bump
@@ -1615,21 +1616,30 @@ edit/verify/commit loop below. Use it for any non-trivial bump; the steps here a
 
 To change the llama.cpp version, update the following **four** files (and re-verify `patches/`):
 
-1. **llama/CMakeLists.txt** — the `GIT_TAG` line for llama.cpp: `GIT_TAG        b8831`. (There is
-   no second tag to keep in sync any more: the cosmetic `-DLLAMA_TAG=` that fed the old build-time
-   TTS extraction went away with the Qwen3-TTS rework — see "Qwen3-TTS via `mtmd_helper::gen_audio`".)
+1. **llama/CMakeLists.txt** — the pin: `set(JLLAMA_GIT_TAG    b8831)`. (There is no second tag to
+   keep in sync any more: the cosmetic `-DLLAMA_TAG=` that fed the old build-time TTS extraction went
+   away with the Qwen3-TTS rework — see "Qwen3-TTS via `mtmd_helper::gen_audio`".) **A number
+   upstream has not tagged yet** (the tags trail master, and a fix worth bumping to may sit in
+   between) is pinned the same way plus `set(JLLAMA_GIT_COMMIT "<full hash>")`, the commit the
+   number names -- `llama-next-version.sh --resolve b<nnnn>` prints it. Only the two fetches
+   (`FetchContent`, the `build-webui` checkout) read the hash; `jllama-build.txt`, the loader,
+   `LlamaCppVersion`, README and this file keep the number, and the configure asserts that the
+   fetched commit's `git rev-list --count` is the number (upstream's own tag-numbering rule, and
+   also how llama.cpp's `build-info` derives `b<nnnn>-<commit>` -- so the Java pin check holds
+   against a virtual number too). Clear `JLLAMA_GIT_COMMIT` once the tag exists; the helper prints a
+   NOTE while it is stale. Runbook: "Pinning a number upstream has not tagged yet".
 2. **README.md** — the badge and link line with the version number
 3. **CLAUDE.md** — the "Current llama.cpp pinned version" line
 4. **llama/src/main/java/net/ladenthin/llama/value/LlamaCppVersion.java** — the
    `LLAMA_CPP_VERSION` constant (the compile-time pin exposed to Java/Kotlin consumers, e.g. the
-   Android version badge). It is the *pure-Java mirror* of `GIT_TAG` and must stay equal to it —
+   Android version badge). It is the *pure-Java mirror* of `JLLAMA_GIT_TAG` and must stay equal to it —
    the native `LlamaModel.getLlamaCppBuildInfo()` getter reports the actually-linked build
    (`b<number>-<commit>`), and `NativeLibraryLoadSmokeTest.nativeBuildInfoMatchesPinnedVersionConstant`
    **fails the build** if this constant and the linked binary drift apart.
 
 Example: To upgrade from b8808 to b8831:
 ```bash
-# Edit llama/CMakeLists.txt: change GIT_TAG b8808 to b8831
+# Edit llama/CMakeLists.txt: change JLLAMA_GIT_TAG b8808 to b8831
 # Edit README.md: change b8808 to b8831 (in both badge and link)
 # Edit CLAUDE.md: change b8808 to b8831
 # Edit LlamaCppVersion.java: change LLAMA_CPP_VERSION "b8808" to "b8831"
@@ -2412,7 +2422,7 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 
 #### Upstream source location (in CMake build tree)
 
-llama.cpp is fetched via CMake FetchContent, pinned to `GIT_TAG b11617`.
+llama.cpp is fetched via CMake FetchContent, pinned to `JLLAMA_GIT_TAG b11617`.
 
 **GoogleTest** is a separate `BUILD_TESTING`-only FetchContent (`GIT_TAG v1.18.0`), used solely
 by the `jllama_test` C++ unit-test binary — not by the shipped library, and not coupled to the
