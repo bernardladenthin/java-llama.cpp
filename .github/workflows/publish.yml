@@ -2032,12 +2032,18 @@ jobs:
         with:
           distribution: 'temurin'
           java-version-file: .java-version
-      - name: Install Intel oneAPI (DPC++ + MKL)
+      - name: Install Intel oneAPI (DPC++ + MKL + oneDNN)
+        # oneDNN is required since llama.cpp #29107 (b11636): GGML_SYCL_DNN defaults to ON and
+        # ggml-sycl's CMakeLists now stops with FATAL_ERROR when DNNL is missing (it used to log
+        # "oneDNN not found" and build a module whose flash attention runs the slower MKL path).
+        # intel-oneapi-dnnl-devel is the oneAPI-bundled GPU build the error asks for -- not
+        # Ubuntu's CPU-only libdnnl-dev, which the same change rejects -- and setvars.sh puts it on
+        # CMAKE_PREFIX_PATH. The Windows SYCL job installs the matching intel.oneapi.win.dnnl.
         run: |
           wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
           echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" | sudo tee /etc/apt/sources.list.d/oneAPI.list
           sudo apt-get update
-          sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp intel-oneapi-mkl-devel
+          sudo apt-get install -y intel-oneapi-compiler-dpcpp-cpp intel-oneapi-mkl-devel intel-oneapi-dnnl-devel
       - name: Build libraries
         shell: bash
         run: |
