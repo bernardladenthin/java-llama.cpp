@@ -842,6 +842,57 @@ whose "17 issues found" status once posted on PRs #248/#298; it posts nothing on
 never set up deliberately. Whether the project wants one, with which policy, is the owner's call;
 nothing here blocks on it.
 
+### Drop patch `0012` at the first bump past b11612 (upstream merged the fix as #29677)
+
+**The drop-check of `0012` fires at the *next* bump, not at the b11612 one.** On 2026-10-14 upstream
+merged [ggml-org/llama.cpp#29677](https://github.com/ggml-org/llama.cpp/pull/29677), commit
+[`df18bee11`](https://github.com/ggml-org/llama.cpp/commit/df18bee11e96557b07aa7b12db0976f3c7ac9165)
+("model: split layers evenly when no device reports free memory"), one line in `load_tensors()`:
+
+```cpp
+splits[i] = split_sum != 0.0f ? splits[i] / split_sum : float(i + 1) / n_devices();
+```
+
+That is the even-split fallback `patches/0012` carries in `llama_model_splits_normalize()`, 15 commits
+**after** b11612 (`10da8c463`) on master -- at b11612 `src/llama-model.cpp:1648` is still the bare
+`splits[i] /= split_sum` (measured on the pristine tag), so the patch is still carried at this pin and
+applies unchanged. The PR touches `src/llama-model.cpp` only: no warning, no diagnostic on the device
+lookup, **no test**.
+
+**The rule for the bump that crosses it:**
+
+1. `git grep -n split_sum src/llama-model.cpp` at the new tag. The guarded line is there → **drop
+   `0012`, do not refresh it.** The applier will not say so: `0012` applies *next to* upstream's line
+   (its hunks lift the two blocks out of `load_tensors()` and touch other lines), so it keeps applying
+   cleanly -- the `0010` case, "still applies, no longer needed". Delete the patch file; its `CLAUDE.md`
+   row moves to `docs/history/dropped-llama-patches.md` with the note below.
+2. What goes with it, deliberately: the `LLAMA_LOG_WARN` naming the cause, the bounds check in
+   `llama_model_splits_select_device()` whose message names layer, index and split points (upstream keeps
+   `devices.at()`, so a malformed split still reads `"vector"`), and the never-compiled upstream
+   `tests/test-model-split.cpp`. None of that is worth a patch on its own. One thing upstream's line does
+   **not** cover, for the record: a NaN weight (`-ts nan,1` -- `std::stof` accepts it, `NaN != 0.0f` is
+   true) still produces NaN split points and the bare `"vector"`; `0012`'s message named it. If that ever
+   matters it is a separate upstream issue, not a reason to keep the patch.
+3. **The guard `src/test/cpp/test_model_split.cpp` cannot stay as it is.** It links
+   `llama_model_splits_normalize` and `llama_model_splits_select_device`, which exist only through the
+   patch -- without it `jllama_test` fails to link on every platform. That was the design (a dropped
+   patch reds `C++ Tests`), and at the drop it works against us; and upstream shipped no test the guard
+   could be re-pointed at. So the guard is replaced by one over upstream's contract, like `0010` / `0011`:
+   - **Preferred: an end-to-end test through the real load path**, the only public route to the fixed
+     line. The backend-independent trigger the `0012` row documents is `--tensor-split 1,-1`, which needs
+     **two** devices: two loopback RPC servers serving the CPU (`test_rpc.cpp`'s `loopback_server`)
+     register two GPU-type devices; load a tiny GGUF written with the `gguf` API (as `test_kolibri1.cpp`
+     does) with `tensor_split = {1, -1}` and every layer offloaded. At an unfixed tag the load fails
+     (`std::out_of_range` from `devices.at()`, the bare `"vector"` in the log); at a fixed one it loads
+     with the layers split evenly. That pins upstream's line on every platform in `C++ Tests` without a
+     patch. **Verify first** that two `ggml_backend_rpc_start_server` instances coexist in one process
+     (`0015`'s stop mechanism is global state); if they cannot, this option is out.
+   - **Otherwise the guard goes with the patch**, and the drop note says why no unit-level guard is
+     possible (the line sits inside a member function with no seam). Do **not** keep a refactor-only
+     residue of `0012` just so the test keeps linking: that is a patch to refresh on every bump for a line
+     upstream owns, the exact thing the drop rule exists to avoid.
+4. `patches/0012`'s header and `test_model_split.cpp`'s header carry the same pointer to this section.
+
 ### Upstream submissions -- not before the release (policy)
 
 **Nothing is filed upstream before the release is out**, neither issues nor PRs; the drafts are not
@@ -885,15 +936,16 @@ treat an unknown flag as pass-through). So the measurement stands as recorded an
 to add this case to one of those issues, or wait. Re-check on the next sccache release before
 spending a CI run on it.
 
-There are **twelve** patches today (`0001`-`0003`, `0006`-`0008`, `0012`, `0014`-`0018`). Each
+There are **thirteen** patches today (`0001`-`0003`, `0006`-`0008`, `0012`, `0014`-`0019`). Each
 accepted upstream change deletes a patch from the bump checklist once the pin is bumped past it.
 
 - **Submittable as they are** (self-contained, no jllama specifics): `0001` (Windows arg-parse embed
   guard, already reported as ggml-org/llama.cpp#26416 with the reproducer in
   `docs/upstream-investigation-win32-argv-substitution.md`; the maintainers have not picked a
   direction), `0002` (preserve the caller's load-progress callback), `0006` (embeddable
-  `llama_server`), `0007` (`llama_server_attach`), `0008` (`LLAMA_SERVER_WORKER_CMD`), `0012` (zero
-  split-sum guard, ships `tests/test-model-split.cpp`), `0014` (`common_log_set_callback`), `0015`
+  `llama_server`), `0007` (`llama_server_attach`), `0008` (`LLAMA_SERVER_WORKER_CMD`), ~~`0012`~~ (zero
+  split-sum guard -- **fixed upstream independently on 2026-10-14 by #29677**, nothing left to submit;
+  dropped at the first bump past b11612, see the section right above), `0014` (`common_log_set_callback`), `0015`
   (non-aborting RPC registration, stoppable server, transport fixes), `0017` (x86 prefetch helper),
   **`0018`** (the AMX buffer released with `free()` instead of `ggml_aligned_free` -- one line, with
   the 6/6-against-0/6 measurement in its header and a configure-time guard that is red without it;
