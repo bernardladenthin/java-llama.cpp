@@ -16,10 +16,11 @@
 //
 // Upstream fixed the defect itself on 2026-10-14 (ggml-org/llama.cpp#29677, commit df18bee11,
 // https://github.com/ggml-org/llama.cpp/commit/df18bee11e96557b07aa7b12db0976f3c7ac9165): the same
-// even-split fallback, inline in load_tensors(), and no test. The commit is not in b11612, the pin at
-// the time of writing, so the patch and this guard still stand there. At the first bump past it
-// patches/0012 is dropped, and with it the two functions this file links -- see TODO.md, "Drop patch
-// 0012 at the first bump past b11612", for what replaces this guard.
+// even-split fallback, inline in load_tensors(), and no test. The commit is in no tag up to b11618
+// (b11617 is the pin at the time of writing), so the patch and this guard still stand. At the first
+// bump to a tag that carries it, patches/0012 is dropped, and with it the two functions this file
+// links -- see TODO.md, "Drop patch 0012 at the first bump that carries #29677", for what replaces
+// this guard.
 
 #include "llama-model.h"
 

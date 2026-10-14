@@ -1,19 +1,19 @@
 model: fall back to an even split when no device reports free memory, and name the device index
 on a bad lookup (the two load_tensors() blocks lifted into free functions so they can be tested).
 
-STATUS 2026-10-14: FIXED UPSTREAM -- DROP THIS PATCH AT THE FIRST llama.cpp BUMP PAST b11612.
+STATUS 2026-10-14: FIXED UPSTREAM -- DROP THIS PATCH AT THE FIRST llama.cpp BUMP TO A TAG THAT CARRIES df18bee11.
 ggml-org/llama.cpp#29677, commit df18bee11 ("model: split layers evenly when no device reports
 free memory"), https://github.com/ggml-org/llama.cpp/commit/df18bee11e96557b07aa7b12db0976f3c7ac9165,
 puts the same even-split fallback into load_tensors():
 
     splits[i] = split_sum != 0.0f ? splits[i] / split_sum : float(i + 1) / n_devices();
 
-It is NOT in b11612 (10da8c463, 15 commits earlier on master), so the patch is still needed at that
-pin and applies unchanged. Drop-check: `git grep -n split_sum src/llama-model.cpp` at the new tag --
+It is NOT in b11612 (10da8c463, 15 commits earlier on master) nor in b11617, so the patch is still
+needed at those pins and applies unchanged. Drop-check: `git grep -n split_sum src/llama-model.cpp` at the new tag --
 the guarded line means DROP, not refresh (the patch keeps applying next to it, so the applier will
 not notice). Upstream ships no test. The runnable guard src/test/cpp/test_model_split.cpp links the
 two functions this patch adds and cannot outlive it as it is; what replaces it is decided in
-TODO.md, "Drop patch 0012 at the first bump past b11612".
+TODO.md, "Drop patch 0012 at the first bump that carries #29677".
 
 diff --git a/src/llama-model.cpp b/src/llama-model.cpp
 index 6872589fa..a56e4bb04 100644
