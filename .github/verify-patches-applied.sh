@@ -17,7 +17,6 @@
 #
 #   0003, 0006, 0007, 0008  -> jllama.cpp / native_server.cpp call the symbols they add,
 #                              so dropping one is a compile or link error.
-#   0012                    -> src/test/cpp/test_model_split.cpp.
 #   0014                    -> src/test/cpp/test_common_log_callback.cpp (link error).
 #   0001, 0002              -> model-gated Java jobs (Windows argv, LoadProgressCallbackTest).
 #

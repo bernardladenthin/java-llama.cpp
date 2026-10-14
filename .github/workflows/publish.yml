@@ -2337,7 +2337,7 @@ jobs:
           mvn -q --no-transfer-progress -f llama/pom.xml compile
           .github/build.sh -DBUILD_TESTING=ON
       # Every patch has a runnable guard that reds this job if it goes missing (a link error, or
-      # test_utils.cpp / test_model_split.cpp / test_common_log_callback.cpp). This is the second
+      # test_utils.cpp / test_common_log_callback.cpp / test_rpc.cpp). This is the second
       # line: it asserts the applier actually ran and nothing reverted the patched tree, which no
       # per-patch guard covers directly. Model-free, milliseconds.
       - name: Verify llama.cpp patches are applied

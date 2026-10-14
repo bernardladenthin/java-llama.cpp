@@ -344,8 +344,8 @@ endif()
 # hash, every other consumer keeps the number, and the pin check after FetchContent_MakeAvailable
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
-set(JLLAMA_GIT_TAG    b11617)
-set(JLLAMA_GIT_COMMIT "")
+set(JLLAMA_GIT_TAG    b11632)
+set(JLLAMA_GIT_COMMIT "62df1815bc053066761f4eac58e288f23778e164")   # until upstream tags b11632
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
@@ -1099,7 +1099,6 @@ if(BUILD_TESTING)
         src/test/cpp/test_common_log_callback.cpp
         src/test/cpp/test_tts_wav.cpp
         src/test/cpp/test_tts_params.cpp
-        src/test/cpp/test_model_split.cpp
         src/test/cpp/test_prefetch.cpp
         src/test/cpp/test_kolibri1.cpp
         src/test/cpp/test_model_flags.cpp
@@ -1123,11 +1122,6 @@ if(BUILD_TESTING)
         # jni.h / jni_md.h needed by jni_helpers.hpp (mock JNI tests, no JVM required)
         ${JNI_INCLUDE_DIRS}
         ${llama.cpp_SOURCE_DIR}/tools/server
-        # llama.cpp's internal src/ -- test_model_split.cpp includes llama-model.h to drive the
-        # two load_tensors() split helpers that patches/0012 extracts. Upstream's own tests do the
-        # same (tests/test-batch-alloc.cpp, tests/test-quantize-stats.cpp include "../src/...").
-        # No header name in that directory collides with tools/server, tools/mtmd or src/main/cpp.
-        ${llama.cpp_SOURCE_DIR}/src
         # ggml's internal src/ and the x86 CPU-backend directory -- test_prefetch.cpp includes
         # ggml-common.h (for block_q4_0 / block_q8_0, whose sizes the prefetch offsets depend on)
         # and prefetch.h, the helper patches/0017 adds. Same reasoning as the line above: the

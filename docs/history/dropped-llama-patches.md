@@ -11,6 +11,40 @@ themselves. Moved here from `CLAUDE.md`, which lists only the patches still carr
 records why the patch went and what guard, if any, stays behind -- read the matching note before
 reintroducing a patch for the same defect.
 
+**`0012` was dropped at the b11632 bump** (the first number that carries the fix is b11626). Upstream merged
+[ggml-org/llama.cpp#29677](https://github.com/ggml-org/llama.cpp/pull/29677) (commit
+[`df18bee11`](https://github.com/ggml-org/llama.cpp/commit/df18bee11e96557b07aa7b12db0976f3c7ac9165),
+"model: split layers evenly when no device reports free memory", 2026-10-14, first tagged at
+**b11626**): one line in `llama_model_base::load_tensors()`,
+`splits[i] = split_sum != 0.0f ? splits[i] / split_sum : float(i + 1) / n_devices();` -- the same
+even-split fallback `0012` carried in `llama_model_splits_normalize()`, for the same two triggers (a
+device reporting zero free memory, the over-committed Metal case of b10797, and a `--tensor-split`
+that cancels out, `-ts 1,-1`, on any backend). **Here the applier did fire**, unlike for `0010`: the
+fixed line sits inside the block `0012` lifted out of `load_tensors()`, so the patch stopped applying
+at exactly the commit that made it redundant. Dropped, not refreshed.
+
+**What went with it, deliberately:** the `LLAMA_LOG_WARN` naming the cause (upstream splits evenly
+without a word), the bounds check in `llama_model_splits_select_device()` whose message named the
+layer, the device index and the split points (upstream keeps `devices.at()`, so a malformed split
+still reads as libc++'s bare `"vector"`), and the never-compiled upstream `tests/test-model-split.cpp`.
+None of that is worth a patch on its own. One input upstream's line does **not** cover, for the
+record: a NaN weight (`-ts nan,1` -- `std::stof` accepts it, and `NaN != 0.0f` is true) still produces
+NaN split points and the bare `"vector"`. If that ever matters it is a separate upstream issue.
+
+**The runnable guard went with the patch, and no guard replaced it -- the one drop note in this file
+that says so.** `src/test/cpp/test_model_split.cpp` drove `llama_model_splits_normalize` and
+`llama_model_splits_select_device`, two free functions that existed only through the patch, so it
+could not link without it; and the fixed line is inside a member function with no seam, so there is
+nothing upstream to point a unit test at. The end-to-end route (`llama_model_load` with two GPU-type
+devices and `-ts 1,-1`) was examined and is not reachable from `jllama_test` on a GPU-less runner: it
+needs **two** devices of type GPU, and the only in-process source of one is the RPC backend, whose
+server state is global (`0015`'s `g_rpc_server_*`), so a second loopback server cannot coexist with
+the first. What remains possible is a CI smoke on the `linux-x86-64` row -- two `RpcServer` JVMs and
+a third load with `--tensor-split 1,-1` -- one platform, one row, and not taken: the fix is one line
+of upstream's that every GPU build now exercises on every load, and the macOS Java test jobs, where
+the defect was found, run it on Metal every time. Should the line regress, that is where it shows,
+as it did at b10797.
+
 **`0010` was dropped at the b11080 bump.** Upstream merged
 [ggml-org/llama.cpp#28518](https://github.com/ggml-org/llama.cpp/pull/28518)
 ("json: Fixed json enum handling", first tagged at **b11080**), which fixes the defect at its
