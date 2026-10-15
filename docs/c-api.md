@@ -28,7 +28,7 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 
 | Function | What it does |
 |---|---|
-| `jllama_api_version()` | the `net.ladenthin:llama` version this library was built as, e.g. `5.2.0`; the C API is versioned with the library (a function present in `x.y.z` keeps its semantics in every later `x.y.*`) |
+| `jllama_api_version()` | the `net.ladenthin:llama` version this library was built as, e.g. `6.0.0`; the C API is versioned with the library (a function present in `x.y.z` keeps its semantics in every later `x.y.*`) |
 | `jllama_build_info()` | the llama.cpp build inside, `b<number>-<commit>` |
 | `jllama_last_error()` | the message of the last failed call on this thread (thread-local) |
 | `jllama_string_free()`, `jllama_floats_free()`, `jllama_tokens_free()` | release what the library returned through an out-parameter |

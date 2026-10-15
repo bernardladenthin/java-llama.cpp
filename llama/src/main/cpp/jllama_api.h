@@ -94,7 +94,7 @@ typedef bool (*jllama_load_progress_fn)(float progress, void *user_data);
  */
 typedef void (*jllama_log_fn)(int level, const char *text, void *user_data);
 
-/** The net.ladenthin:llama version this library was built as, e.g. "5.2.0" (static string). */
+/** The net.ladenthin:llama version this library was built as, e.g. "6.0.0" (static string). */
 JLLAMA_API const char *jllama_api_version(void);
 
 /** The llama.cpp build inside, "b<number>-<commit>" (static string), as LlamaModel.getLlamaCppBuildInfo(). */

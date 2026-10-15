@@ -124,7 +124,7 @@ val coreJarFile = file("../llama/target/llama-$reactorVersion.jar")
 // AAR content tasks.
 // ---------------------------------------------------------------------------
 
-// The AAR classes.jar: the Maven-built core jar (classes only since 5.2.0 -- the natives
+// The AAR classes.jar: the Maven-built core jar (classes only since 6.0.0 -- the natives
 // ship as separate natives jars, the Android .so under jni/ here) minus module-info.class
 // (D8 does not accept JPMS descriptors in classes.jar) and the Maven descriptor.
 val coreClassesJar = tasks.register<Jar>("coreClassesJar") {

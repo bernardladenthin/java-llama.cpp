@@ -33,7 +33,7 @@ offline:
     their own permission dialog for writes and commands.
 
 This folder is a **standalone Maven project**, deliberately *not* a reactor module: CI builds and tests
-it against the core of the same checkout. Its version moves in lockstep with the core's (**5.2.0**),
+it against the core of the same checkout. Its version moves in lockstep with the core's (**6.0.0**),
 and it ships three ways: on **Maven Central** as `net.ladenthin:llama-atmosphere-agent` (run it with
 JBang, no download and no checkout, see below), as a ready-built jar on every release, and as this
 folder to copy and run. It runs on the core of its own version; pass `-Dllama.version=…` to try
@@ -56,7 +56,7 @@ Atmosphere and the core with the CPU natives of every desktop platform (Metal on
 no checkout, no build, no jar to download by hand:
 
 ```bash
-jbang net.ladenthin:llama-atmosphere-agent:5.2.0 \
+jbang net.ladenthin:llama-atmosphere-agent:6.0.0 \
     --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --workspace /path/to/project
 ```
 
@@ -67,7 +67,7 @@ is skipped with a log line, so the CPU stays the fallback:
 
 ```bash
 # e.g. Vulkan on Linux x86-64 (any current GPU driver); cuda13-linux-x86-64 needs the CUDA 13 toolkit
-jbang --deps net.ladenthin:llama:5.2.0:vulkan-linux-x86-64 net.ladenthin:llama-atmosphere-agent:5.2.0 \
+jbang --deps net.ladenthin:llama:6.0.0:vulkan-linux-x86-64 net.ladenthin:llama-atmosphere-agent:6.0.0 \
     --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --ngl 99 --workspace /path/to/project
 ```
 
@@ -75,7 +75,7 @@ The root README's natives table lists every backend (`<backend>-<os>-<arch>`); s
 be on the classpath at once. There is no fat jar to download: the natives are modular, and the
 resolved classpath above is exactly what a jar of everything would have had to bundle for every
 platform at once. Every option below works the same way; only
-`mvn -q compile exec:java -Dexec.args="…"` becomes `jbang net.ladenthin:llama-atmosphere-agent:5.2.0 …`.
+`mvn -q compile exec:java -Dexec.args="…"` becomes `jbang net.ladenthin:llama-atmosphere-agent:6.0.0 …`.
 
 **1. Get this folder.** To build it yourself instead, clone the repository (or download it
 as a ZIP from GitHub) and work in `llama-atmosphere-agent/`. The folder is self-contained — you can
@@ -125,7 +125,7 @@ natives table lists every backend.
 
    ```bash
    jbang --main net.ladenthin.llama.server.ServerLauncher \
-       --deps net.ladenthin:llama:5.2.0:cpu-linux-x86-64 net.ladenthin:llama:5.2.0 \
+       --deps net.ladenthin:llama:6.0.0:cpu-linux-x86-64 net.ladenthin:llama:6.0.0 \
        -m models/Qwen3-4B-Instruct-2507-Q4_K_M.gguf --jinja --port 8080
    ```
 
@@ -274,7 +274,7 @@ turn is shown and how an approval is asked.
 #### In the browser (`--web`)
 
 ```bash
-jbang net.ladenthin:llama-atmosphere-agent:5.2.0 --model model.gguf --allow-shell --web
+jbang net.ladenthin:llama-atmosphere-agent:6.0.0 --model model.gguf --allow-shell --web
 # Open in a browser: http://127.0.0.1:8787/?token=…
 ```
 
@@ -313,7 +313,7 @@ that project. JetBrains IDEs (AI Assistant, `~/.jetbrains/acp.json`):
   "agent_servers": {
     "Local llama": {
       "command": "jbang",
-      "args": ["net.ladenthin:llama-atmosphere-agent:5.2.0",
+      "args": ["net.ladenthin:llama-atmosphere-agent:6.0.0",
                "--acp", "--model", "/path/model.gguf", "--allow-shell"]
     }
   }

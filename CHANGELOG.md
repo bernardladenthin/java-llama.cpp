@@ -9,7 +9,96 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
 
 ## [Unreleased]
 
+### Upgrading from 5.1
+
+Everything a 5.1 consumer has to change, in one place; the bullets below record each change where it
+happened. Nothing was published between 5.1.0 (2026-08-29) and this release, which is 6.0.0 because
+the first two items break every existing consumer at upgrade.
+
+1. **The natives are separate jars.** `net.ladenthin:llama` is the Java classes only; a 5.1-style
+   `<dependency>` on it alone resolves to a jar without natives and fails at the first load with
+   `UnsatisfiedLinkError`. Depend on **`net.ladenthin:llama-platform`** with `<type>pom</type>`
+   (Gradle: `implementation("net.ladenthin:llama-platform:6.0.0")`) -- the classes plus the CPU
+   natives jar of every desktop platform -- or name the natives jars you need by classifier
+   (`cpu-linux-x86-64`, `metal-macos-aarch64`, ...). A GPU is one **more** jar next to them
+   (`cuda13-linux-x86-64`, `vulkan-windows-x86-64`, ...: one ggml backend module each, loaded when
+   its driver is installed, skipped otherwise); the 5.1 GPU classifiers were complete replacement
+   jars, and the `-jar-with-dependencies` fat jars are gone. The natives need the library jar of
+   the **same version**: mixing a 6.0.0 module jar with another build's library jar fails the load
+   before anything is extracted. Without Maven: a natives jar is a zip of one directory, and
+   `-Dnet.ladenthin.llama.lib.path=<that directory>` loads it (README, "Natives outside Maven").
+2. **The shipped SLF4J binding is `slf4j-simple`, not `logback-classic`.** `logback.xml` is no
+   longer read; configure with `simplelogger.properties` or `-Dorg.slf4j.simpleLogger.*`, or
+   exclude `org.slf4j:slf4j-simple` and declare your own binding. `checker-qual` no longer reaches
+   your classpath at all (`provided` scope).
+3. **Builder methods renamed or removed.** `setTensorReadLazy` / `TensorReadLazyMode` are
+   `setLazyMode` / `LazyMode`; `enableFlashAttn()` and `ModelFlag.FLASH_ATTN` are gone, use
+   `setFlashAttn(FlashAttn)`; twelve methods that wrote a name llama.cpp no longer reads are
+   deleted without a deprecation window (`withTfsZ`, `withPenalizeNl`, `withPenaltyPrompt`,
+   `withUseChatTemplate`, `withChatTemplate`, `setGrpAttnN`/`-W`, `enableDumpKvCache`,
+   `setHfRepoV`/`setHfFileV`, `enableMlock`, `disableMmap` -- the Removed section names the
+   replacement where one exists, e.g. `setLoadMode(LoadMode)`). The attach-mode server reads the
+   endpoint toggles from `ModelParameters` now (`enableMetricsEndpoint()` & co.), not from its argv.
+4. **`NativeServer` listens on 9931 when no `--port` is given** (llama.cpp's new default);
+   `OpenAiCompatServer` stays on 8080. Pass `--port` where a fixed port matters.
+5. **Platform floors:** Windows 10 or newer (Universal CRT), macOS 15.0, glibc 2.28 on Linux
+   (RHEL 8, Ubuntu 20.04, Debian 10 and later), Android API 28; the ROCm jars need a ROCm 10
+   runtime, the CUDA jars CUDA 13. 32-bit Windows and the `msvc-windows-x86-64` jar no longer ship.
+6. **Rejected requests** come back as `InvalidRequestException` (a `LlamaException`, so existing
+   handlers still match) with the bare reason as the message; the OpenAI-compatible server answers
+   `400` for them.
+7. **The Java floor is still 8.** The C API (`jllama_api.h` in every natives directory), the
+   provenance record (`jllama-build.txt`, `LlamaModel.getJllamaBuildInfo()`) and upstream's own
+   `libllama` next to `libjllama` are additions; nothing else about loading or calling changed.
+
 ### Added
+- **The C API of `libjllama` (`jllama_api.h`, shipped in every natives directory).** Every operation
+  of `LlamaModel`, `LlamaQuantizer`, `NativeServer` (classic, attach and the router's worker
+  command), `RpcServer`, `TextToSpeech` and `LlamaTrainer` is a plain C function with an opaque
+  handle, JSON text in and out, status codes with a thread-local `jllama_last_error()`, typed
+  `*_free` functions for what the library returns, and C function pointers for the load-progress
+  and log callbacks -- callable from C, C++, Python's ctypes or Rust without a JVM. The JNI entry
+  points are thin shells over the same functions, so one implementation serves both call paths
+  (`jllama_engine.{hpp,cpp}` holds it; the JNI files hold no server logic any more).
+  `jllama_api_version()` is the library's Maven version, and a function present in `x.y.z` keeps
+  its semantics in every later `x.y.*`. On Windows the linker's import library `jllama.lib` ships
+  next to the header. `test_c_api.cpp` drives the whole surface inside `jllama_test` over a tiny
+  random GGUF it writes itself, in every `C++ Tests` job; `docs/c-api.md` is the consumer page.
+- **Upstream's own C API ships next to `libjllama` (layer A).** On every modular platform (Linux
+  x86-64 / aarch64, Android, Windows x86-64 / arm64) `libllama` and `libmtmd` are shared libraries
+  of their own in the natives directory, exporting exactly upstream's `llama.h` / `mtmd.h` from the
+  patched source -- the same file names and symbols as upstream's release zips. A plain-C test
+  program (`src/test/c/test_c_abi.c`, `ctest c_abi`) links them in every modular build job, the
+  first `ctest` those jobs run. macOS and s390x stay one static library.
+- **Build provenance in every natives directory.** `jllama-build.txt` names the fetched llama.cpp
+  commit, the classifier, the `net.ladenthin:llama` version and commit, the carried patches and one
+  hash over them, the compiler, the vendor toolkit and the signature state, next to a CycloneDX
+  `jllama-sbom.json`; `LlamaModel.getJllamaBuildInfo()` returns the keys and `Diagnose` prints them.
+  `docs/patches.md` is generated from the patch headers and held current by CI. The `package` and
+  publish jobs attest build provenance through Sigstore (`gh attestation verify --owner
+  bernardladenthin <file>` proves a jar, a natives jar, a pom or an AAR came out of this workflow
+  at a given commit, which the `.asc` alone cannot), and every Maven module attaches a CycloneDX BOM.
+- **The natives directory is a contract, loaded from `lib.path` with the jar branch's logic.**
+  `-Dnet.ladenthin.llama.lib.path=<dir>` (and `java.library.path`) now preloads what the
+  directory's `jllama-extras.txt` names -- which is what makes the modular Windows build loadable
+  from a directory at all, since Windows does not resolve `jllama.dll`'s imports next to the DLL --
+  reads `jllama-build.txt`, reports listed files that are missing, recognises the GPU modules next
+  to the library and prints the same loader line as the jar branch; the backend filter and the
+  temp-directory cleanup run only when the jars are reached, so a stale filter cannot fail a
+  `lib.path` start, and a failed load names its reason. `LlamaModel` warns when the loaded natives
+  name another llama.cpp tag than the classes jar pins. `NativeLibraryLoadSmokeTest` launches a
+  fresh JVM through `lib.path` on every Java test job, and every natives smoke unpacks the published
+  jars into a directory and starts from it with no natives jar on the classpath. README, "Natives
+  outside Maven", documents the directory, how to fetch a natives jar without Maven and the WDAC /
+  AppLocker case.
+- **The patched llama.cpp source of a release is an asset of its own, and mirrored.**
+  `archive-llama-source` packs the pinned commit with the patches applied, reproducibly, as
+  `llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz`, signed and attached with the Maven artifacts;
+  `test-source-archive` builds the C++ suite from that archive before either publish job runs, and a
+  consumer rebuilds a release with `-DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<unpacked>`. After a release
+  `mirror-llama-source` pushes the pinned commit to `bernardladenthin/llama.cpp` as `jllama/b<nnnn>`
+  (`JLLAMA_GIT_REPOSITORY` selects the mirror for a build); the patches stay files in this
+  repository, never fork commits.
 - **Modular natives: the GPU backends are additive module jars, and every platform a GPU can join is
   built modular.** A GPU natives jar (`cuda13-linux-x86-64`, `vulkan-windows-aarch64`, ... -- 15 of
   them) now holds **only** ggml's backend module for that GPU (`libggml-cuda.so`, `ggml-vulkan.dll`,
@@ -142,6 +231,22 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- **`libjllama` exports only its interface.** Hidden visibility for the project's own translation
+  units, a version script on ELF and an exported-symbols list on macOS keep the statically linked
+  llama, llama-common, mtmd, cpp-httplib and BoringSSL symbols local: the Linux library exported
+  14,220 symbols, 47 of them JNI -- an accidental C++ ABI with no header contract -- and exports
+  `JNI_OnLoad`, `JNI_OnUnload`, `Java_*` and `jllama_*` now, which `verify-native-deps.py` holds it
+  to (ELF `.dynsym`, PE export directory, Mach-O symbol table) in `package`.
+- **Every build input is pinned by content.** All `uses:` of the workflows carry the action's commit
+  SHA (Dependabot keeps them current); CI refuses a llama.cpp fetch by tag name
+  (`JLLAMA_REQUIRE_COMMIT`), and `JLLAMA_GIT_COMMIT` stays set after upstream publishes the tag;
+  googletest is pinned by commit; the sccache archives are checked against mozilla's SHA-256s, the
+  CUDA redist archives against NVIDIA's manifest, the OpenVINO archives and the Vulkan arm64
+  installer against the checksum each vendor publishes next to the file.
+- **A `v*` tag release is built without the shared compiler cache.** `USE_CACHE` is `false` on every
+  tag ref whatever the dispatch input says, so each natives build of a release compiles every object
+  in the job that ships it; snapshots and PR builds keep the sccache/Depot cache. The cache provider
+  is thereby out of a release's trust chain.
 - **Lombok-generated code carries JSpecify nullness** (`lombok.addNullAnnotations = jspecify` in the
   shared `lombok.config`): the generated `equals(Object)` / `canEqual` parameter is `@Nullable`, as
   `Object.equals` promises. Under the `@NullMarked` packages it read as non-null before, which
@@ -242,7 +347,7 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   `common_log::pause()` makes a normal exit; each delivery runs in its own local-reference frame.
   `LlamaLoggerTest` pins both.
 - **`cpu-windows-x86-64` is the modular CPU build, built with clang** (`build-windows-x86_64`,
-  `-DJLLAMA_BACKEND_DL=ON`): like the two Linux CPU jars since 5.2.0, the directory holds
+  `-DJLLAMA_BACKEND_DL=ON`): like the two Linux CPU jars since 6.0.0, the directory holds
   `jllama.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-rpc.dll` and one `ggml-cpu-<level>.dll` per
   instruction-set level (14), of which ggml loads the best for the running CPU -- an AVX-512 / AVX-VNNI
   / AMX machine uses its kernels and a CPU without AVX2 works, where the one static library was built
@@ -746,11 +851,13 @@ from version 5.0.0 onward. Pre-fork releases (`1.x`–`4.2.0`) were authored by
   with the fat jars, see Removed. A server started with `jbang` or `examples/server/pom.xml` logs
   slf4j-simple's defaults, INFO to stderr, unless `-Dorg.slf4j.simpleLogger.*` says otherwise.)
 
-- **`checker-qual` pinned to 3.55.1 and marked optional.** 4.x is major 55 and its annotations are
+- **`checker-qual` is `provided` scope and ships to nobody.** 4.x is major 55 and its annotations are
   `@Retention(RUNTIME)`, so a Java 8 JVM throws `UnsupportedClassVersionError` the moment anything
-  reflects over an annotated element. The optional flag keeps it out of consumers' transitive graph;
-  the version pin is what protects a consumer's fat jar, since `jar-with-dependencies` filters on scope only.
-  The build-time Checker Framework processor stays on 4.2.2 under its own property.
+  reflects over an annotated element (Jackson does). A first version pinned the shipped copy to the
+  last Java 8 line, 3.55.1, which broke every build -- the Nullness Checker resolves its qualifiers
+  through the compile classpath, so processor and qualifiers must share a major version. `provided`
+  satisfies both: the 4.x qualifiers where the checker needs them, and nothing of any version in a
+  consumer's dependency graph or fat jar (`jar-with-dependencies` takes scope `runtime`).
 
 ### Added
 - **`ModelParameters.setFlashAttn(FlashAttn)` — the only way to express `--flash-attn` correctly.**

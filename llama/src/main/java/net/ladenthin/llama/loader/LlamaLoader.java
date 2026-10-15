@@ -311,7 +311,7 @@ public class LlamaLoader {
      * start of the same build finds its files in place (every one is still compared with the jar byte
      * for byte before it is loaded, see {@link #extractFile}) and skips the copy -- 18 files, ~1 s with
      * an on-access scanner on Windows, on every JVM start before. What goes: the flat files of the
-     * layout before 5.2.0 ({@code jllama*}, {@code llama*}, {@code ggml*} directly in the temp dir; on
+     * layout before 6.0.0 ({@code jllama*}, {@code llama*}, {@code ggml*} directly in the temp dir; on
      * Windows a loaded DLL was never removed at VM exit, bug #80) and the extraction directories of
      * other builds once they are {@link #STALE_EXTRACTION_AGE} old -- a younger one may belong to a
      * JVM that is still extracting. Every delete is best-effort: a file a running JVM has loaded is
@@ -330,7 +330,7 @@ public class LlamaLoader {
 
     /**
      * Whether {@link #cleanup(Set)} removes {@code path}: a {@link #shouldCleanPath named} temp entry
-     * that is not a per-build extraction directory (the pre-5.2.0 flat layout), or an extraction
+     * that is not a per-build extraction directory (the pre-6.0.0 flat layout), or an extraction
      * directory of a build not in {@code keep} whose last modification is more than
      * {@link #STALE_EXTRACTION_AGE} before {@code now}. A directory whose modification time cannot be
      * read is left alone.

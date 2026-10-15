@@ -151,10 +151,10 @@ the port, the floors, the renamed and removed builder methods -- the list in "Th
 under "Open -- jllama-specific", which stays the detailed reference), so semantic versioning says
 **6.0.0**, and the owner decided so on 2026-10-15. What this item does, in order:
 
-- [ ] `main` moves to `6.0.0-SNAPSHOT` (`mvn versions:set` for the five reactor poms, then the
-      hand-maintained places CLAUDE.md "Version bump" lists; `check-natives.py` holds the ones it sees).
-- [ ] CHANGELOG `[Unreleased]` gets an **"Upgrading from 5.1"** section at its top, one place for
-      someone who reads nothing else; the bullets below it stay as the record.
+*(Landed 2026-10-15: `main` is `6.0.0-SNAPSHOT` in the five reactor poms, the agent pom and every
+hand-maintained snippet -- every consumer-facing "5.2.0" now reads 6.0.0, since that number was never
+published; srcmorph's pin and the cross-repo status follow; CHANGELOG `[Unreleased]` opens with
+"Upgrading from 5.1" and carries the roadmap work of items 2 to 8, which it did not before.)*
 - [ ] The release itself is the owner's: the `v6.0.0` tag after a green Publish run, then the
       `main` bump to the next `-SNAPSHOT` (`../workspace/workflows/release-process.md`).
 
