@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT
+#
+# The symbols libjllama exports on ELF platforms (Linux, Android; GNU ld / lld version script):
+# the JNI entry points the JVM resolves and the jllama_* C API, nothing else. Everything the
+# library links statically -- llama, llama-common, mtmd, cpp-httplib, BoringSSL, and ggml in a
+# static build -- stays local: before this file the Linux library exported 14,220 symbols (12,711
+# of them from llama/ggml/mtmd/BoringSSL) against 47 JNI ones, an accidental C++ ABI with no header
+# contract. verify-native-deps.py holds the export set to the same list (TODO.md, delivery
+# roadmap, item 4).
+{
+  global:
+    JNI_OnLoad;
+    JNI_OnUnload;
+    Java_*;
+    jllama_*;
+  local:
+    *;
+};

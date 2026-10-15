@@ -895,6 +895,24 @@ else()
 endif()
 
 set_target_properties(jllama PROPERTIES POSITION_INDEPENDENT_CODE ON)
+# Export hygiene (TODO.md, delivery roadmap, item 4): libjllama exports the JNI entry points and the
+# jllama_* C API and nothing else. Hidden visibility for its own translation units (JNIEXPORT and
+# JLLAMA_API mark the exported ones), and -- because the libraries it links statically were
+# compiled with default visibility -- a linker export list that keeps every llama/ggml/mtmd/
+# BoringSSL symbol local: a version script on ELF (Linux, Android), an exported-symbols list on
+# macOS. Windows exports nothing without __declspec(dllexport), so it needs no list. The shipped
+# export set is held to the same list by verify-native-deps.py.
+set_target_properties(jllama PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON)
+if(APPLE)
+    target_link_options(jllama PRIVATE "LINKER:-exported_symbols_list,${CMAKE_CURRENT_SOURCE_DIR}/cmake/jllama-exports-macos.txt")
+    set_property(TARGET jllama APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/jllama-exports-macos.txt)
+elseif(NOT WIN32)
+    target_link_options(jllama PRIVATE "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cmake/jllama-exports.map")
+    set_property(TARGET jllama APPEND PROPERTY LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/cmake/jllama-exports.map)
+endif()
 target_include_directories(jllama PRIVATE
     src/main/cpp
     ${JNI_INCLUDE_DIRS}

@@ -81,12 +81,12 @@ each vendor publishes next to the file.)* Still open, each with the reason:
 - [ ] BoringSSL stays on upstream's pin (`BORINGSSL_VERSION` in `vendor/cpp-httplib/CMakeLists.txt`,
       a tag name): a commit pin there is upstream's change to make; recorded, not worked around.
 
-### 4. Export hygiene (B.1) -- the precondition of every "clean" library
+### 4. Export hygiene (B.1)
 
-- [ ] `-fvisibility=hidden` for `jllama` (JNI symbols carry `JNIEXPORT`), a `JLLAMA_API` macro, and an
-      "export allowlist" check in `nativedeps.py` (ELF `.dynsym`, PE export table, Mach-O symbol
-      table -- the parsers exist) that `package` runs: `JNI_OnLoad`, `JNI_OnUnload`, `Java_*`,
-      `jllama_*` and nothing else, red against today's Linux library.
+*(Landed 2026-10-15: hidden visibility for `jllama`'s own units, a version script on ELF and an
+exported-symbols list on macOS keeping every statically linked symbol local, and
+`verify-native-deps.py` holding the export set of every `jllama` library to `JNI_OnLoad`,
+`JNI_OnUnload`, `Java_*`, `jllama_*` -- measured 14,220 -> 47 exports on Linux.)*
 
 ### 5. Layer A: upstream's C API shipped next to `jllama` (B.A)
 

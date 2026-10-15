@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+#
+# SPDX-License-Identifier: MIT
+#
+# The symbols libjllama.dylib exports (ld64 -exported_symbols_list; Mach-O C symbols carry a
+# leading underscore): the JNI entry points and the jllama_* C API. See jllama-exports.map.
+_JNI_OnLoad
+_JNI_OnUnload
+_Java_*
+_jllama_*

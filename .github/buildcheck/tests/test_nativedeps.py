@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
 import os
+import io
+import contextlib
 import struct
 import tempfile
 import unittest
@@ -10,12 +12,14 @@ import unittest
 from buildcheck import nativedeps
 
 
-def elf64(needed, runpath=None, glibc=()):
+def elf64(needed, runpath=None, glibc=(), exports=(), undefined=()):
     """A minimal little-endian ELF64 with a .dynstr and a .dynamic naming `needed` (and a
-    DT_RUNPATH when given), plus a .gnu.version_r requiring the `glibc` symbol versions."""
+    DT_RUNPATH when given), plus a .gnu.version_r requiring the `glibc` symbol versions, plus a
+    .dynsym defining `exports` (global) and referencing `undefined`."""
     strtab = b"\0"
     offsets = {}
-    for name in list(needed) + ([runpath] if runpath is not None else []) + (["libc.so.6"] if glibc else []) + list(glibc):
+    for name in (list(needed) + ([runpath] if runpath is not None else []) + (["libc.so.6"] if glibc else [])
+                 + list(glibc) + list(exports) + list(undefined)):
         offsets[name] = len(strtab)
         strtab += name.encode() + b"\0"
     dynamic = b"".join(struct.pack("<qQ", 1, offsets[n]) for n in needed)
@@ -27,21 +31,30 @@ def elf64(needed, runpath=None, glibc=()):
         verneed = struct.pack("<HHIII", 1, len(glibc), offsets["libc.so.6"], 16, 0)
         for i, v in enumerate(glibc):
             verneed += struct.pack("<IHHII", 0, 0, 2 + i, offsets[v], 16 if i + 1 < len(glibc) else 0)
+    dynsym = bytes(24)  # the null symbol
+    for name in exports:  # STB_GLOBAL (1) << 4 | STT_FUNC (2), defined in section 1
+        dynsym += struct.pack("<IBBHQQ", offsets[name], (1 << 4) | 2, 0, 1, 0x1000, 8)
+    for name in undefined:  # SHN_UNDEF: a reference, not an export
+        dynsym += struct.pack("<IBBHQQ", offsets[name], (1 << 4) | 2, 0, 0, 0, 0)
     header_size, section_size = 64, 64
     strtab_off = header_size
     dynamic_off = strtab_off + len(strtab)
     verneed_off = dynamic_off + len(dynamic)
-    shoff = verneed_off + len(verneed)
+    dynsym_off = verneed_off + len(verneed)
+    shoff = dynsym_off + len(dynsym)
     header = bytearray(header_size)
     header[:6] = b"\x7fELF\x02\x01"
     struct.pack_into("<Q", header, 0x28, shoff)
-    struct.pack_into("<HH", header, 0x3A, section_size, 4 if glibc else 3)
+    nsections = 3 + (1 if glibc else 0) + (1 if exports or undefined else 0)
+    struct.pack_into("<HH", header, 0x3A, section_size, nsections)
     sections = bytes(section_size)  # SHT_NULL
     sections += struct.pack("<IIQQQQIIQQ", 0, 3, 0, 0, strtab_off, len(strtab), 0, 0, 1, 0)  # SHT_STRTAB
     sections += struct.pack("<IIQQQQIIQQ", 0, 6, 0, 0, dynamic_off, len(dynamic), 1, 0, 8, 16)  # SHT_DYNAMIC
     if glibc:
         sections += struct.pack("<IIQQQQIIQQ", 0, 0x6FFFFFFE, 0, 0, verneed_off, len(verneed), 1, 1, 4, 0)
-    return bytes(header) + strtab + dynamic + verneed + sections
+    if exports or undefined:
+        sections += struct.pack("<IIQQQQIIQQ", 0, 11, 0, 0, dynsym_off, len(dynsym), 1, 1, 8, 24)  # SHT_DYNSYM
+    return bytes(header) + strtab + dynamic + verneed + dynsym + sections
 
 
 def elf64_segments(alignments):
@@ -54,8 +67,9 @@ def elf64_segments(alignments):
     return bytes(header) + phdrs
 
 
-def pe64(imports):
-    """A minimal PE32+ with one section holding an import directory naming `imports`."""
+def pe64(imports, exports=()):
+    """A minimal PE32+ with one section holding an import directory naming `imports` and, when
+    given, an export directory naming `exports`."""
     pe = 0x40
     opt_size = 240
     section_table = pe + 24 + opt_size
@@ -69,26 +83,58 @@ def pe64(imports):
         names += name.encode() + b"\0"
     directory = b"".join(struct.pack("<IIIII", 0, 0, 0, n, 0) for n in name_rvas) + bytes(20)
     body = directory + names
+    export_rva = 0
+    if exports:
+        export_rva = rva + len(body)
+        # IMAGE_EXPORT_DIRECTORY (40 bytes), then the name RVA table, then the names
+        table_rva = export_rva + 40
+        export_names = b""
+        export_name_rvas = []
+        for name in exports:
+            export_name_rvas.append(table_rva + 4 * len(exports) + len(export_names))
+            export_names += name.encode() + b"\0"
+        export_dir = struct.pack("<IIHHIIIIIII", 0, 0, 0, 0, 0, 1, len(exports), len(exports), 0, table_rva, 0)
+        body += export_dir + b"".join(struct.pack("<I", r) for r in export_name_rvas) + export_names
     data = bytearray(raw + len(body))
     data[:2] = b"MZ"
     struct.pack_into("<I", data, 0x3C, pe)
     struct.pack_into("<H", data, pe + 6, 1)
     struct.pack_into("<H", data, pe + 20, opt_size)
     struct.pack_into("<H", data, pe + 24, 0x20B)
+    if exports:
+        struct.pack_into("<II", data, pe + 24 + 112, export_rva, len(body) - (export_rva - rva))
     struct.pack_into("<I", data, pe + 24 + 112 + 8, rva)
     struct.pack_into("<IIII", data, section_table + 8, len(body), rva, len(body), raw)
     data[raw:] = body
     return bytes(data)
 
 
-def macho64(dylibs):
+def macho64(dylibs, exports=(), private=()):
+    """A minimal 64-bit Mach-O with LC_LOAD_DYLIB commands and, when symbols are given, an
+    LC_SYMTAB whose table defines `exports` as external and `private` as non-external."""
     commands = b""
     for name in dylibs:
         payload = name.encode() + b"\0"
         size = (24 + len(payload) + 7) // 8 * 8
         commands += struct.pack("<IIIIII", 0xC, size, 24, 0, 0, 0) + payload.ljust(size - 24, b"\0")
-    header = struct.pack("<IiiIIIII", 0xFEEDFACF, 0, 0, 6, len(dylibs), len(commands), 0, 0)
-    return header + commands
+    ncmds = len(dylibs)
+    tail = b""
+    if exports or private:
+        ncmds += 1
+        symtab_cmd_size = 24
+        header_size = 32
+        symoff = header_size + len(commands) + symtab_cmd_size
+        strtab = b"\0"
+        nlist = b""
+        for name, external in [(n, True) for n in exports] + [(n, False) for n in private]:
+            n_strx = len(strtab)
+            strtab += name.encode() + b"\0"
+            nlist += struct.pack("<IBBHQ", n_strx, 0x0E | (0x01 if external else 0), 1, 0, 0x1000)
+        stroff = symoff + len(nlist)
+        commands += struct.pack("<IIIIII", 0x2, symtab_cmd_size, symoff, len(exports) + len(private), stroff, len(strtab))
+        tail = nlist + strtab
+    header = struct.pack("<IiiIIIII", 0xFEEDFACF, 0, 0, 6, ncmds, len(commands), 0, 0)
+    return header + commands + tail
 
 
 class ParserTest(unittest.TestCase):
@@ -117,6 +163,62 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(nativedeps.macho_dylibs(macho64(["/usr/lib/libSystem.B.dylib"])), ["/usr/lib/libSystem.B.dylib"])
         with self.assertRaises(ValueError):
             nativedeps.macho_dylibs(struct.pack("<I", 0xFEEDFACE))
+
+
+class ExportsTest(unittest.TestCase):
+    """The export set of a jllama library: JNI entry points and the jllama_* C API, nothing else."""
+
+    def test_elf_exports_are_the_defined_global_symbols_of_dynsym(self):
+        data = elf64(["libc.so.6"], exports=["JNI_OnLoad", "Java_x", "llama_model_load"], undefined=["dlopen"])
+        self.assertEqual(nativedeps.elf_exports(data), ["JNI_OnLoad", "Java_x", "llama_model_load"])
+        self.assertEqual(nativedeps.elf_exports(elf64(["libc.so.6"])), [])
+
+    def test_pe_exports_are_the_export_directory_names(self):
+        data = pe64(["KERNEL32.dll"], exports=["JNI_OnLoad", "Java_x"])
+        self.assertEqual(nativedeps.pe_exports(data), ["JNI_OnLoad", "Java_x"])
+        self.assertEqual(nativedeps.pe_imports(data), ["KERNEL32.dll"], "the import directory still reads")
+        self.assertEqual(nativedeps.pe_exports(pe64(["KERNEL32.dll"])), [])
+
+    def test_macho_exports_are_the_external_defined_symbols(self):
+        data = macho64(["/usr/lib/libSystem.B.dylib"], exports=["_JNI_OnLoad", "_Java_x"], private=["_helper"])
+        self.assertEqual(nativedeps.macho_exports(data), ["_JNI_OnLoad", "_Java_x"])
+        self.assertEqual(nativedeps.macho_dylibs(data), ["/usr/lib/libSystem.B.dylib"])
+
+    def test_the_allowed_export_set_passes_and_a_stray_symbol_is_named(self):
+        self.assertEqual(nativedeps.export_violations("x/libjllama.so",
+                                                      ["JNI_OnLoad", "JNI_OnUnload", "Java_net_ladenthin_llama_LlamaModel_loadModel",
+                                                       "jllama_api_version"]), [])
+        found = nativedeps.export_violations("x/libjllama.so", ["JNI_OnLoad", "Java_a", "llama_model_load", "ggml_init"])
+        self.assertEqual(len(found), 1)
+        self.assertIn("exports 2 symbol(s) outside", found[0])
+        self.assertIn("llama_model_load, ggml_init", found[0])
+        self.assertIn("jllama-exports.map", found[0])
+
+    def test_a_library_without_a_jni_entry_point_is_never_a_pass(self):
+        found = nativedeps.export_violations("x/libjllama.so", [])
+        self.assertEqual(len(found), 1)
+        self.assertIn("no Java_* entry point", found[0])
+        self.assertTrue(nativedeps.export_violations("x/libjllama.so", ["jllama_api_version"]))
+
+    def test_main_checks_the_jllama_library_and_leaves_the_others_alone(self):
+        with tempfile.TemporaryDirectory() as root:
+            d = os.path.join(root, "Linux", "x86_64", "cpu")
+            os.makedirs(d)
+            with open(os.path.join(d, "libjllama.so"), "wb") as f:
+                f.write(elf64(["libc.so.6", "libstdc++.so.6", "libm.so.6", "libgcc_s.so.1", "libdl.so.2",
+                               "libpthread.so.0", "librt.so.1", "ld-linux-x86-64.so.2"],
+                              runpath="$ORIGIN", glibc=["GLIBC_2.28"], exports=["JNI_OnLoad", "Java_a", "ggml_init"]))
+            with open(os.path.join(d, "libggml-base.so"), "wb") as f:
+                f.write(elf64(["libc.so.6", "libstdc++.so.6", "libm.so.6", "libgcc_s.so.1"],
+                              runpath="$ORIGIN", glibc=["GLIBC_2.28"], exports=["ggml_init"]))
+            out = io.StringIO()
+            err = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = nativedeps.main(["x", root])
+            self.assertEqual(rc, 1)
+            self.assertIn("libjllama.so: exports 1 symbol(s) outside", err.getvalue())
+            self.assertNotIn("libggml-base.so: exports", err.getvalue())
+            self.assertIn("libjllama.so: 3 exported symbol(s)", out.getvalue())
 
 
 class ViolationsTest(unittest.TestCase):
@@ -261,10 +363,10 @@ class MainTest(unittest.TestCase):
             os.makedirs(ok)
             os.makedirs(bad)
             with open(os.path.join(ok, "libjllama.so"), "wb") as f:
-                f.write(elf64(["libc.so.6"]))
+                f.write(elf64(["libc.so.6"], exports=["JNI_OnLoad", "Java_a"]))
             self.assertEqual(nativedeps.main(["x", root]), 0)
             with open(os.path.join(bad, "jllama.dll"), "wb") as f:
-                f.write(pe64(["kernel32.dll", "libomp140.x86_64.dll"]))
+                f.write(pe64(["kernel32.dll", "libomp140.x86_64.dll"], exports=["JNI_OnLoad", "Java_a"]))
             self.assertEqual(nativedeps.main(["x", root]), 1)
 
     def test_checks_every_library_of_a_variant_directory(self):
@@ -272,7 +374,8 @@ class MainTest(unittest.TestCase):
             cpu = os.path.join(root, "net/ladenthin/llama/Linux/x86_64/cpu")
             os.makedirs(cpu)
             with open(os.path.join(cpu, "libjllama.so"), "wb") as f:
-                f.write(elf64(["libggml.so", "libc.so.6"], runpath="$ORIGIN", glibc=["GLIBC_2.28"]))
+                f.write(elf64(["libggml.so", "libc.so.6"], runpath="$ORIGIN", glibc=["GLIBC_2.28"],
+                              exports=["JNI_OnLoad", "Java_a"]))
             with open(os.path.join(cpu, "libggml.so"), "wb") as f:
                 f.write(elf64(["libggml-base.so", "libc.so.6"], runpath="$ORIGIN", glibc=["GLIBC_2.17"]))
             with open(os.path.join(cpu, "libggml-base.so"), "wb") as f:
