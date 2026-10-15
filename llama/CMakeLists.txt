@@ -948,8 +948,11 @@ if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
         ${llama.cpp_SOURCE_DIR}/tools/server/server-mcp.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-tools.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server.cpp
+        ${CMAKE_SOURCE_DIR}/src/main/cpp/native_server_engine.cpp
         ${CMAKE_SOURCE_DIR}/src/main/cpp/native_server.cpp
     )
+    # The C API's jllama_server_* functions (jllama_api.cpp) exist where the engine does.
+    target_compile_definitions(jllama PRIVATE JLLAMA_HAS_NATIVE_SERVER)
 endif()
 
 # b10154's server-tools.cpp embeds a U+2192 (→) in a narrow string literal. MSVC (and clang-cl)
@@ -1308,6 +1311,9 @@ if(BUILD_TESTING)
         src/test/cpp/test_c_api.cpp
         src/main/cpp/jllama_engine.cpp
         src/main/cpp/jllama_api.cpp
+        # The engines behind the C API's TTS and trainer functions (test_c_api.cpp drives them).
+        src/main/cpp/tts_engine.cpp
+        src/main/cpp/train_engine.cpp
         src/test/cpp/test_utils.cpp
         src/test/cpp/test_server.cpp
         src/test/cpp/test_jni_helpers.cpp
@@ -1360,12 +1366,14 @@ if(BUILD_TESTING)
     if(NOT ANDROID_ABI AND NOT OS_NAME MATCHES "Android")
         target_sources(jllama_test PRIVATE
             src/test/cpp/test_native_server_shutdown.cpp
+            src/main/cpp/native_server_engine.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server-tools.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server-mcp.cpp
             ${llama.cpp_SOURCE_DIR}/tools/server/server-http.cpp
         )
         target_include_directories(jllama_test PRIVATE ${CMAKE_SOURCE_DIR}/src/main/cpp/webui_stub)
+        target_compile_definitions(jllama_test PRIVATE JLLAMA_HAS_NATIVE_SERVER)
         if(MSVC)
             target_compile_options(jllama_test PRIVATE /utf-8)
         endif()

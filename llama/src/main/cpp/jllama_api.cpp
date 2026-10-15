@@ -15,6 +15,12 @@
 #include "server-chat.h"
 #include "jllama_engine.hpp"
 #include "jllama_api.h"
+#include "rpc_support.hpp"
+#include "tts_engine.h"
+#include "train_engine.h"
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+#include "native_server_engine.hpp"
+#endif
 
 #include <algorithm>
 #include <cstdlib>
@@ -55,6 +61,16 @@ template <typename Fn> jllama_status guarded(jllama_model *model, Fn &&fn) {
     } catch (...) {
         return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
     }
+}
+
+// A C argv as strings (a null element is "").
+std::vector<std::string> to_strings(int argc, const char *const *argv) {
+    std::vector<std::string> args;
+    args.reserve(static_cast<size_t>(argc));
+    for (int i = 0; i < argc; ++i) {
+        args.emplace_back(argv[i] != nullptr ? argv[i] : "");
+    }
+    return args;
 }
 
 // A caller-owned copy of a string (jllama_string_free releases it).
@@ -103,13 +119,9 @@ jllama_status jllama_model_load(int argc, const char *const *argv, jllama_load_p
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "argv must hold at least the program name");
     }
     try {
-        std::vector<std::string> args;
-        args.reserve(static_cast<size_t>(argc));
-        for (int i = 0; i < argc; ++i) {
-            args.emplace_back(argv[i] != nullptr ? argv[i] : "");
-        }
         // llama_progress_callback and jllama_load_progress_fn have the same shape on purpose.
-        *out = reinterpret_cast<jllama_model *>(jllama::engine::load(args, progress, progress_user_data));
+        *out = reinterpret_cast<jllama_model *>(
+            jllama::engine::load(to_strings(argc, argv), progress, progress_user_data));
         t_last_error.clear();
         return JLLAMA_STATUS_OK;
     } catch (const std::invalid_argument &e) {
@@ -445,6 +457,242 @@ jllama_status jllama_quantize(const char *input_path, const char *output_path, i
         return fail(JLLAMA_STATUS_ERROR, e.what());
     } catch (...) {
         return fail(JLLAMA_STATUS_ERROR, "Unknown C++ exception during quantization");
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
+// The embedded HTTP server (native_server_engine.hpp; not on Android).
+// ------------------------------------------------------------------------------------------------
+
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+
+jllama_status jllama_server_start(int argc, const char *const *argv, jllama_server **out) {
+    if (out == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "out is null");
+    }
+    *out = nullptr;
+    if (argc < 1 || argv == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "argv must hold at least the program name");
+    }
+    try {
+        *out = reinterpret_cast<jllama_server *>(jllama::server_engine::start(to_strings(argc, argv)));
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
+    }
+}
+
+jllama_status jllama_server_start_attached(jllama_model *model, int argc, const char *const *argv,
+                                           jllama_server **out) {
+    if (out == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "out is null");
+    }
+    *out = nullptr;
+    if (argc < 1 || argv == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "argv must hold at least the program name");
+    }
+    return guarded(model, [&](jllama_context *jctx) {
+        *out = reinterpret_cast<jllama_server *>(jllama::server_engine::start_attached(jctx, to_strings(argc, argv)));
+    });
+}
+
+jllama_status jllama_server_stop(jllama_server *server) {
+    try {
+        jllama::server_engine::stop(reinterpret_cast<jllama::server_engine::native_server *>(server));
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    }
+}
+
+bool jllama_server_is_running(const jllama_server *server) {
+    return jllama::server_engine::running(reinterpret_cast<const jllama::server_engine::native_server *>(server));
+}
+
+jllama_status jllama_server_set_worker_command(const char *command) {
+    if (command == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "command must not be null (\"\" clears it)");
+    }
+    jllama::server_engine::set_worker_command(command);
+    t_last_error.clear();
+    return JLLAMA_STATUS_OK;
+}
+
+#endif // JLLAMA_HAS_NATIVE_SERVER
+
+// ------------------------------------------------------------------------------------------------
+// The RPC server (rpc_support.hpp over ggml's own server; patches/0015).
+// ------------------------------------------------------------------------------------------------
+
+void jllama_strings_free(char **strings, size_t count) {
+    if (strings == nullptr) {
+        return;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        std::free(strings[i]);
+    }
+    std::free(strings);
+}
+
+jllama_status jllama_rpc_server_serve(const char *host, int port, int threads, const char *cache_dir,
+                                      const char *devices) {
+    if (host == nullptr || devices == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "host and devices must not be null");
+    }
+    try {
+        const std::string endpoint = std::string(host) + ":" + std::to_string(port);
+        auto selected = jllama::rpc::server_devices(jllama::rpc::split_endpoints(devices));
+        if (selected.empty()) {
+            throw std::runtime_error("no device to serve over RPC");
+        }
+        // Blocks until jllama_rpc_server_stop(), or returns at once when the socket cannot be bound.
+        jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_start_server)>("ggml_backend_rpc_start_server")(
+            endpoint.c_str(), cache_dir != nullptr && cache_dir[0] != '\0' ? cache_dir : nullptr,
+            static_cast<size_t>(threads), selected.size(), selected.data());
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
+    }
+}
+
+jllama_status jllama_rpc_server_stop(void) {
+    try {
+        jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_stop_server)>("ggml_backend_rpc_stop_server")();
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    }
+}
+
+bool jllama_rpc_server_listening(void) {
+    try {
+        return jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_server_listening)>(
+            "ggml_backend_rpc_server_listening")();
+    } catch (...) {
+        return false;
+    }
+}
+
+jllama_status jllama_rpc_server_devices(const char *devices, char ***names, size_t *count) {
+    if (devices == nullptr || names == nullptr || count == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "devices, names and count must not be null");
+    }
+    *names = nullptr;
+    *count = 0;
+    try {
+        const auto selected = jllama::rpc::server_devices(jllama::rpc::split_endpoints(devices));
+        auto **out = static_cast<char **>(std::calloc(std::max<size_t>(selected.size(), 1), sizeof(char *)));
+        if (out == nullptr) {
+            throw std::bad_alloc();
+        }
+        for (size_t i = 0; i < selected.size(); ++i) {
+            out[i] = copy_out(ggml_backend_dev_name(selected[i]));
+        }
+        *names = out;
+        *count = selected.size();
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Text to speech (tts_engine.h).
+// ------------------------------------------------------------------------------------------------
+
+void jllama_bytes_free(unsigned char *bytes) { std::free(bytes); }
+
+jllama_status jllama_tts_load(const char *model_path, const char *mmproj_path, int n_gpu_layers, int n_threads,
+                              jllama_tts_model **out) {
+    if (model_path == nullptr || mmproj_path == nullptr || out == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "model_path, mmproj_path and out must not be null");
+    }
+    *out = nullptr;
+    try {
+        std::string err;
+        jllama_tts::tts_engine *engine = jllama_tts::engine_init(model_path, mmproj_path, n_gpu_layers, n_threads, err);
+        if (engine == nullptr) {
+            return fail(JLLAMA_STATUS_ERROR, err.c_str());
+        }
+        *out = reinterpret_cast<jllama_tts_model *>(engine);
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
+    }
+}
+
+jllama_status jllama_tts_synthesize(jllama_tts_model *tts, const char *text, const char *speaker_reference_path,
+                                    const char *lang, int max_frames, int top_k, unsigned int seed, unsigned char **wav,
+                                    size_t *length) {
+    if (tts == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "TextToSpeech handle is null");
+    }
+    if (text == nullptr || wav == nullptr || length == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "text, wav and length must not be null");
+    }
+    *wav = nullptr;
+    *length = 0;
+    try {
+        std::vector<uint8_t> bytes;
+        std::string err;
+        if (!jllama_tts::engine_synthesize(reinterpret_cast<jllama_tts::tts_engine *>(tts), text,
+                                           speaker_reference_path != nullptr ? speaker_reference_path : "",
+                                           lang != nullptr ? lang : "", max_frames, top_k, seed, bytes, err)) {
+            return fail(JLLAMA_STATUS_ERROR, err.c_str());
+        }
+        auto *out = static_cast<unsigned char *>(std::malloc(std::max<size_t>(bytes.size(), 1)));
+        if (out == nullptr) {
+            throw std::bad_alloc();
+        }
+        std::memcpy(out, bytes.data(), bytes.size());
+        *wav = out;
+        *length = bytes.size();
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
+    }
+}
+
+void jllama_tts_free(jllama_tts_model *tts) {
+    jllama_tts::engine_free(reinterpret_cast<jllama_tts::tts_engine *>(tts));
+}
+
+// ------------------------------------------------------------------------------------------------
+// Fine-tuning (train_engine.h).
+// ------------------------------------------------------------------------------------------------
+
+jllama_status jllama_finetune(const char *config_json) {
+    if (config_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "config_json must not be null");
+    }
+    try {
+        std::string err;
+        if (!jllama_train::finetune_json(config_json, err)) {
+            return fail(JLLAMA_STATUS_ERROR, err.c_str());
+        }
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception during fine-tuning");
     }
 }
 

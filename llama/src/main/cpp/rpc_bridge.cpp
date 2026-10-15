@@ -6,8 +6,9 @@
 // process's devices to llama.cpp RPC clients (`--rpc host:port` on another llama.cpp /
 // java-llama.cpp instance), the in-JVM counterpart of upstream's rpc-server binary.
 //
-// The server loop is ggml's own ggml_backend_rpc_start_server(), which blocks for the life of the
-// server; RpcServer runs it on a Java thread of its own and ends it with ggml_backend_rpc_stop_server()
+// Every entry point is a shell over the C API (jllama_rpc_server_* in jllama_api.h). The server
+// loop is ggml's own ggml_backend_rpc_start_server(), which blocks for the life of the server;
+// RpcServer runs it on a Java thread of its own and ends it with ggml_backend_rpc_stop_server()
 // (added by patches/0015, together with ggml_backend_rpc_server_listening()). ggml keeps the server
 // state in file-scope globals, so only ONE server may run per process; RpcServer enforces that.
 //
@@ -22,13 +23,11 @@
 #include "server-chat.h"
 #include "utils.hpp"
 #include "jni_helpers.hpp"
-#include "rpc_support.hpp"
+#include "jllama_api.h"
 
 #include <jni.h>
 
-#include <stdexcept>
 #include <string>
-#include <vector>
 
 // Standard-UTF-8 jstring extraction, defined in jllama.cpp (see native_server.cpp for why).
 std::string parse_jstring(JNIEnv *env, jstring java_string);
@@ -37,9 +36,11 @@ namespace {
 
 jclass rpc_exception_class(JNIEnv *env) { return env->FindClass("net/ladenthin/llama/exception/LlamaException"); }
 
-// The comma-separated device names RpcServer passes ("" = the default selection).
-std::vector<ggml_backend_dev_t> selected_devices(JNIEnv *env, jstring jdevices) {
-    return jllama::rpc::server_devices(jllama::rpc::split_endpoints(parse_jstring(env, jdevices)));
+void throw_rpc_exception(JNIEnv *env, const char *message) {
+    jclass exception_class = rpc_exception_class(env);
+    if (exception_class != nullptr) {
+        env->ThrowNew(exception_class, message);
+    }
 }
 
 } // namespace
@@ -50,56 +51,54 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_RpcServerNative_serveNative(JNIE
                                                                             jint port, jint threads, jstring jcache_dir,
                                                                             jstring jdevices) {
     return jni_guard_impl(env, rpc_exception_class(env), [&]() -> void {
-        const std::string endpoint = parse_jstring(env, jhost) + ":" + std::to_string(port);
-        std::string cache_dir;
-        if (jcache_dir != nullptr) {
-            cache_dir = parse_jstring(env, jcache_dir);
+        const std::string host = parse_jstring(env, jhost);
+        const std::string cache_dir = jcache_dir != nullptr ? parse_jstring(env, jcache_dir) : std::string();
+        const std::string devices = parse_jstring(env, jdevices);
+        // Blocks until the server is stopped, or returns at once when the socket cannot be bound;
+        // RpcServer tells the two apart with serverListeningNative().
+        if (jllama_rpc_server_serve(host.c_str(), static_cast<int>(port), static_cast<int>(threads),
+                                    cache_dir.empty() ? nullptr : cache_dir.c_str(),
+                                    devices.c_str()) != JLLAMA_STATUS_OK) {
+            throw_rpc_exception(env, jllama_last_error());
         }
-        auto devices = selected_devices(env, jdevices);
-        if (devices.empty()) {
-            throw std::runtime_error("no device to serve over RPC");
-        }
-        // Blocks until ggml_backend_rpc_stop_server(), or returns at once when the socket cannot be
-        // bound; RpcServer tells the two apart with serverListeningNative().
-        jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_start_server)>("ggml_backend_rpc_start_server")(
-            endpoint.c_str(), cache_dir.empty() ? nullptr : cache_dir.c_str(), static_cast<size_t>(threads),
-            devices.size(), devices.data());
     });
 }
 
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_RpcServerNative_stopNative(JNIEnv *env, jclass) {
     return jni_guard_impl(env, rpc_exception_class(env), [&]() -> void {
-        jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_stop_server)>("ggml_backend_rpc_stop_server")();
+        if (jllama_rpc_server_stop() != JLLAMA_STATUS_OK) {
+            throw_rpc_exception(env, jllama_last_error());
+        }
     });
 }
 
 JNIEXPORT jboolean JNICALL Java_net_ladenthin_llama_RpcServerNative_serverListeningNative(JNIEnv *env, jclass) {
-    return jni_guard_impl(env, rpc_exception_class(env), [&]() -> jboolean {
-        return jllama::rpc::rpc_proc<decltype(&ggml_backend_rpc_server_listening)>(
-                   "ggml_backend_rpc_server_listening")()
-                   ? JNI_TRUE
-                   : JNI_FALSE;
-    });
+    return jni_guard_impl(env, rpc_exception_class(env),
+                          [&]() -> jboolean { return jllama_rpc_server_listening() ? JNI_TRUE : JNI_FALSE; });
 }
 
 JNIEXPORT jobjectArray JNICALL Java_net_ladenthin_llama_RpcServerNative_serverDevicesNative(JNIEnv *env, jclass,
                                                                                             jstring jdevices) {
     return jni_guard_impl(env, rpc_exception_class(env), [&]() -> jobjectArray {
-        const auto devices = selected_devices(env, jdevices);
+        const std::string devices = parse_jstring(env, jdevices);
+        char **names = nullptr;
+        size_t count = 0;
+        if (jllama_rpc_server_devices(devices.c_str(), &names, &count) != JLLAMA_STATUS_OK) {
+            throw_rpc_exception(env, jllama_last_error());
+            return nullptr;
+        }
         jclass string_class = env->FindClass("java/lang/String");
-        if (string_class == nullptr) {
-            return nullptr;
+        jobjectArray out =
+            string_class != nullptr ? env->NewObjectArray(static_cast<jsize>(count), string_class, nullptr) : nullptr;
+        if (out != nullptr) {
+            for (size_t i = 0; i < count; ++i) {
+                // device names are ASCII identifiers such as "CPU" or "CUDA0"
+                jstring name = env->NewStringUTF(names[i]);
+                env->SetObjectArrayElement(out, static_cast<jsize>(i), name);
+                env->DeleteLocalRef(name);
+            }
         }
-        jobjectArray out = env->NewObjectArray(static_cast<jsize>(devices.size()), string_class, nullptr);
-        if (out == nullptr) {
-            return nullptr;
-        }
-        for (size_t i = 0; i < devices.size(); ++i) {
-            // device names are ASCII identifiers such as "CPU" or "CUDA0"
-            jstring name = env->NewStringUTF(ggml_backend_dev_name(devices[i]));
-            env->SetObjectArrayElement(out, static_cast<jsize>(i), name);
-            env->DeleteLocalRef(name);
-        }
+        jllama_strings_free(names, count);
         return out;
     });
 }

@@ -28,10 +28,13 @@
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <cstdlib>
+#include <memory>
 #include <mutex>
 #include <random>
 #include <regex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -554,6 +557,141 @@ TEST_F(CApi, QuantizeWritesAModelThatLoads) {
     jllama_model_free(quantized);
     std::filesystem::remove(out, ec);
     EXPECT_EQ(jllama_quantize("/nonexistent/in.gguf", out.c_str(), 7, 1, false), JLLAMA_STATUS_ERROR);
+}
+
+// ---------------------------------------------------------------------------
+// The other engines through the C API: the embedded server, the RPC server, text to speech and
+// the trainer.
+// ---------------------------------------------------------------------------
+
+#ifdef JLLAMA_HAS_NATIVE_SERVER
+TEST(CApiServer, TheEmbeddedServerStartsInRouterModeAndStops) {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() / ("jllama-c-api-models-" + std::to_string(std::random_device{}()));
+    std::filesystem::create_directories(dir);
+    const std::string models_dir = dir.string();
+    const char *argv[] = {"llama-server", "--host", "127.0.0.1", "--port", "0", "--models-dir", models_dir.c_str()};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start(7, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_NE(server, nullptr);
+    EXPECT_TRUE(jllama_server_is_running(server));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_FALSE(jllama_server_is_running(nullptr));
+    EXPECT_EQ(jllama_server_stop(nullptr), JLLAMA_STATUS_OK);
+    std::error_code ignored;
+    std::filesystem::remove_all(dir, ignored);
+
+    EXPECT_EQ(jllama_server_start(0, argv, &server), JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(jllama_server_start(7, argv, nullptr), JLLAMA_STATUS_INVALID_ARGUMENT);
+
+    EXPECT_EQ(jllama_server_set_worker_command("java -cp app.jar net.ladenthin.llama.server.NativeServer"),
+              JLLAMA_STATUS_OK);
+    const char *set = std::getenv("LLAMA_SERVER_WORKER_CMD");
+    ASSERT_NE(set, nullptr);
+    EXPECT_STREQ(set, "java -cp app.jar net.ladenthin.llama.server.NativeServer");
+    EXPECT_EQ(jllama_server_set_worker_command(""), JLLAMA_STATUS_OK);
+    const char *cleared = std::getenv("LLAMA_SERVER_WORKER_CMD");
+    EXPECT_TRUE(cleared == nullptr || cleared[0] == '\0');
+    EXPECT_EQ(jllama_server_set_worker_command(nullptr), JLLAMA_STATUS_INVALID_ARGUMENT);
+}
+
+TEST_F(CApi, TheAttachedServerServesTheModelAndLeavesItUsable) {
+    const char *argv[] = {"llama-server", "--host", "127.0.0.1", "--port", "0"};
+    jllama_server *server = nullptr;
+    ASSERT_EQ(jllama_server_start_attached(model_, 5, argv, &server), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_NE(server, nullptr);
+    EXPECT_TRUE(jllama_server_is_running(server));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // The model answers while the frontend is attached to it.
+    Owned during;
+    EXPECT_EQ(jllama_chat_completions(model_, CHAT_REQUEST, &during.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(jllama_server_stop(server), JLLAMA_STATUS_OK) << jllama_last_error();
+    // And after the server is gone: stopping the frontend never stops the model's own loop.
+    Owned after;
+    EXPECT_EQ(jllama_chat_completions(model_, CHAT_REQUEST, &after.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(jllama_server_start_attached(nullptr, 5, argv, &server), JLLAMA_STATUS_INVALID_ARGUMENT);
+}
+#endif // JLLAMA_HAS_NATIVE_SERVER
+
+TEST(CApiRpc, TheRpcServerServesTheCpuOverLoopbackAndStops) {
+    char **names = nullptr;
+    size_t count = 0;
+    ASSERT_EQ(jllama_rpc_server_devices("CPU", &names, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_EQ(count, 1u);
+    EXPECT_STREQ(names[0], "CPU");
+    jllama_strings_free(names, count);
+    EXPECT_EQ(jllama_rpc_server_devices("no-such-device", &names, &count), JLLAMA_STATUS_ERROR);
+    EXPECT_EQ(names, nullptr);
+    EXPECT_NE(std::strlen(jllama_last_error()), 0u);
+    EXPECT_EQ(jllama_rpc_server_devices(nullptr, &names, &count), JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_FALSE(jllama_rpc_server_listening());
+
+    // The first free port of a small range (a fixed port would collide with parallel jobs); the
+    // server returns at once when it cannot bind, which `listening` tells apart.
+    bool served = false;
+    for (int attempt = 0; attempt < 50 && !served; ++attempt) {
+        const int port =
+            42000 + static_cast<int>(
+                        (std::chrono::steady_clock::now().time_since_epoch().count() / 1000 + attempt * 97) % 20000);
+        auto done = std::make_shared<std::atomic<bool>>(false);
+        auto status = std::make_shared<jllama_status>(JLLAMA_STATUS_OK);
+        std::thread worker([port, done, status]() {
+            *status = jllama_rpc_server_serve("127.0.0.1", port, 2, nullptr, "CPU");
+            done->store(true);
+        });
+        for (int i = 0; i < 500 && !jllama_rpc_server_listening() && !done->load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (jllama_rpc_server_listening()) {
+            served = true;
+            EXPECT_EQ(jllama_rpc_server_stop(), JLLAMA_STATUS_OK);
+            worker.join();
+            EXPECT_EQ(*status, JLLAMA_STATUS_OK) << jllama_last_error();
+        } else {
+            worker.join();
+        }
+    }
+    EXPECT_TRUE(served);
+    EXPECT_FALSE(jllama_rpc_server_listening());
+    EXPECT_EQ(jllama_rpc_server_serve("127.0.0.1", 1, 2, nullptr, "no-such-device"), JLLAMA_STATUS_ERROR);
+}
+
+TEST(CApiTts, TextToSpeechRefusesMissingModelsAndNullHandles) {
+    jllama_tts_model *tts = nullptr;
+    EXPECT_EQ(jllama_tts_load("/nonexistent/backbone.gguf", "/nonexistent/mmproj.gguf", 0, 1, &tts),
+              JLLAMA_STATUS_ERROR);
+    EXPECT_EQ(tts, nullptr);
+    EXPECT_NE(std::strlen(jllama_last_error()), 0u);
+    EXPECT_EQ(jllama_tts_load(nullptr, "x", 0, 1, &tts), JLLAMA_STATUS_INVALID_ARGUMENT);
+    unsigned char *wav = nullptr;
+    size_t length = 0;
+    EXPECT_EQ(jllama_tts_synthesize(nullptr, "Hi", nullptr, nullptr, 10, 1, 1, &wav, &length),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_STREQ(jllama_last_error(), "TextToSpeech handle is null");
+    jllama_tts_free(nullptr);
+    jllama_bytes_free(nullptr);
+}
+
+TEST_F(CApi, FinetuneTrainsTheRandomModelAndRefusesABadConfig) {
+    EXPECT_EQ(jllama_finetune("{not json"), JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("invalid training config"), std::string::npos);
+    EXPECT_EQ(jllama_finetune(nullptr), JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_EQ(jllama_finetune(R"({"model_path":"/nonexistent.gguf","training_text":"abc","output_path":"/dev/null"})"),
+              JLLAMA_STATUS_ERROR);
+
+    const std::string out = path_ + ".finetuned.gguf";
+    std::string corpus;
+    for (int i = 0; i < 16; ++i) {
+        corpus += "the quick brown fox jumps over the lazy dog. ";
+    }
+    const json config = {{"model_path", path_}, {"training_text", corpus}, {"output_path", out},
+                         {"epochs", 1},         {"learning_rate", 1e-4},   {"n_ctx", 64},
+                         {"n_gpu_layers", 0},   {"val_split", 0.0}};
+    ASSERT_EQ(jllama_finetune(config.dump().c_str()), JLLAMA_STATUS_OK) << jllama_last_error();
+    std::error_code ec;
+    EXPECT_GT(std::filesystem::file_size(out, ec), 0u);
+    std::filesystem::remove(out, ec);
 }
 
 TEST_F(CApi, TheLogCallbackSeesTheServersLinesAndNullFlushesSynchronously) {

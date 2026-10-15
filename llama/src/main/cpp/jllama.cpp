@@ -17,7 +17,6 @@
 #include "jllama_engine.hpp"
 #include "jllama_api.h"
 #include "log_helpers.hpp"
-#include "tts_engine.h"
 
 #ifdef GGML_BACKEND_DL
 // load_backends_next_to_this_library() needs this library's own path: dladdr on POSIX,
@@ -1383,21 +1382,16 @@ JNIEXPORT jlong JNICALL Java_net_ladenthin_llama_TextToSpeech_loadNative(JNIEnv 
                                                                          jint threads) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jlong {
         (void)clazz;
-        try {
-            const std::string model = parse_jstring(env, jmodel);
-            const std::string mmproj = parse_jstring(env, jmmproj);
-            std::string err;
-            jllama_tts::tts_engine *engine =
-                jllama_tts::engine_init(model, mmproj, static_cast<int>(gpu_layers), static_cast<int>(threads), err);
-            if (engine == nullptr) {
-                env->ThrowNew(c_llama_error, err.c_str());
-                return 0;
-            }
-            return reinterpret_cast<jlong>(engine);
-        } catch (const std::exception &e) {
-            env->ThrowNew(c_llama_error, e.what());
+        const std::string model = parse_jstring(env, jmodel);
+        const std::string mmproj = parse_jstring(env, jmmproj);
+        jllama_tts_model *tts = nullptr;
+        const jllama_status status = jllama_tts_load(model.c_str(), mmproj.c_str(), static_cast<int>(gpu_layers),
+                                                     static_cast<int>(threads), &tts);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
             return 0;
         }
+        return reinterpret_cast<jlong>(tts);
     });
 }
 
@@ -1408,35 +1402,28 @@ JNIEXPORT jbyteArray JNICALL Java_net_ladenthin_llama_TextToSpeech_synthesizeNat
                                                                                     jint top_k, jint seed) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jbyteArray {
         (void)clazz;
-        try {
-            auto *engine = reinterpret_cast<jllama_tts::tts_engine *>(handle);
-            if (engine == nullptr) {
-                env->ThrowNew(c_llama_error, "TextToSpeech handle is null");
-                return nullptr;
-            }
-            const std::string text = parse_jstring(env, jtext);
-            const std::string speaker_reference_path =
-                jspeaker_reference_path == nullptr ? std::string() : parse_jstring(env, jspeaker_reference_path);
-            const std::string lang = jlang == nullptr ? std::string() : parse_jstring(env, jlang);
-            std::vector<uint8_t> wav;
-            std::string err;
-            if (!jllama_tts::engine_synthesize(engine, text, speaker_reference_path, lang, static_cast<int>(max_frames),
-                                               static_cast<int>(top_k), static_cast<uint32_t>(seed), wav, err)) {
-                env->ThrowNew(c_llama_error, err.c_str());
-                return nullptr;
-            }
-            jbyteArray out = env->NewByteArray(static_cast<jsize>(wav.size()));
-            if (out == nullptr) {
-                env->ThrowNew(c_error_oom, "could not allocate WAV byte array");
-                return nullptr;
-            }
-            env->SetByteArrayRegion(out, 0, static_cast<jsize>(wav.size()),
-                                    reinterpret_cast<const jbyte *>(wav.data()));
-            return out;
-        } catch (const std::exception &e) {
-            env->ThrowNew(c_llama_error, e.what());
+        const std::string text = parse_jstring(env, jtext);
+        const std::string speaker_reference_path =
+            jspeaker_reference_path == nullptr ? std::string() : parse_jstring(env, jspeaker_reference_path);
+        const std::string lang = jlang == nullptr ? std::string() : parse_jstring(env, jlang);
+        unsigned char *wav = nullptr;
+        size_t length = 0;
+        const jllama_status status = jllama_tts_synthesize(
+            reinterpret_cast<jllama_tts_model *>(handle), text.c_str(), speaker_reference_path.c_str(), lang.c_str(),
+            static_cast<int>(max_frames), static_cast<int>(top_k), static_cast<unsigned int>(seed), &wav, &length);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
             return nullptr;
         }
+        jbyteArray out = env->NewByteArray(static_cast<jsize>(length));
+        if (out == nullptr) {
+            jllama_bytes_free(wav);
+            env->ThrowNew(c_error_oom, "could not allocate WAV byte array");
+            return nullptr;
+        }
+        env->SetByteArrayRegion(out, 0, static_cast<jsize>(length), reinterpret_cast<const jbyte *>(wav));
+        jllama_bytes_free(wav);
+        return out;
     });
 }
 
@@ -1444,7 +1431,7 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_TextToSpeech_deleteNative(JNIEnv
     return jni_guard_impl(env, c_llama_error, [&]() -> void {
         (void)env;
         (void)clazz;
-        jllama_tts::engine_free(reinterpret_cast<jllama_tts::tts_engine *>(handle));
+        jllama_tts_free(reinterpret_cast<jllama_tts_model *>(handle));
     });
 }
 

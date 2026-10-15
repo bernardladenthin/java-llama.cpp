@@ -293,6 +293,118 @@ JLLAMA_API jllama_status jllama_json_schema_to_grammar(const char *schema_json, 
 JLLAMA_API jllama_status jllama_quantize(const char *input_path, const char *output_path, int ftype, int nthread,
                                          bool allow_requantize);
 
+/* ------------------------------------------------------------------------------------------------
+ * The embedded HTTP server (NativeServer): upstream's full llama-server, WebUI included, on a
+ * worker thread inside this library. Not available on Android (server.cpp does not build there);
+ * these functions are absent from the Android library. ONE server per process.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** A running embedded server; opaque. */
+typedef struct jllama_server jllama_server;
+
+/**
+ * Starts the server from llama-server's command line (argv[0] is a program name, any; the rest
+ * every llama-server flag, including router mode with `--models-dir`). It loads its own model and
+ * returns as soon as the worker thread runs; a model that fails to load ends the worker, which
+ * jllama_server_is_running reports.
+ */
+JLLAMA_API jllama_status jllama_server_start(int argc, const char *const *argv, jllama_server **out);
+
+/**
+ * Starts the HTTP frontend over an already-loaded model (attach mode): one copy of the weights,
+ * the model's own inference loop serves the routes; the argv configures the HTTP side (`--host`,
+ * `--port`, `--api-key`, ...). The server holds the model until it is stopped: stop the server
+ * before freeing the model. JLLAMA_STATUS_ERROR for a vocab-only model.
+ */
+JLLAMA_API jllama_status jllama_server_start_attached(jllama_model *model, int argc, const char *const *argv,
+                                                      jllama_server **out);
+
+/** Stops the server (blocks until its worker returned) and releases the handle; null is ignored. */
+JLLAMA_API jllama_status jllama_server_stop(jllama_server *server);
+
+/** True while the server's worker runs; false for null and after it returned on its own. */
+JLLAMA_API bool jllama_server_is_running(const jllama_server *server);
+
+/**
+ * The command router mode spawns its model workers with (LLAMA_SERVER_WORKER_CMD, whitespace
+ * split, replaces the binary-path token; patches/0008), e.g. `java -cp app.jar
+ * net.ladenthin.llama.server.NativeServer`; "" clears it. Process-wide.
+ */
+JLLAMA_API jllama_status jllama_server_set_worker_command(const char *command);
+
+/* ------------------------------------------------------------------------------------------------
+ * The RPC server (RpcServer): this process's devices served to llama.cpp RPC clients, ggml's own
+ * loop (patches/0015 makes it stoppable). ONE server per process; no authentication, no
+ * encryption -- bind to loopback unless you mean it.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** Releases an array of strings the library returned (jllama_rpc_server_devices); null is ignored. */
+JLLAMA_API void jllama_strings_free(char **strings, size_t count);
+
+/**
+ * Serves `devices` (comma-separated device names such as "CPU" or "CUDA0"; "" = every accelerator,
+ * else the CPU, never an RPC device) on host:port, blocking until jllama_rpc_server_stop() is
+ * called from another thread -- or returning at once when the socket cannot be bound, which
+ * jllama_rpc_server_listening() tells apart. `host` is an IPv4 literal; `cache_dir` may be null.
+ * JLLAMA_STATUS_ERROR for an unknown device name or no device to serve.
+ */
+JLLAMA_API jllama_status jllama_rpc_server_serve(const char *host, int port, int threads, const char *cache_dir,
+                                                 const char *devices);
+
+/** Stops the running RPC server (no-op when none runs). */
+JLLAMA_API jllama_status jllama_rpc_server_stop(void);
+
+/** True while the RPC server listens. */
+JLLAMA_API bool jllama_rpc_server_listening(void);
+
+/**
+ * The names of the devices `devices` selects (the same rule as jllama_rpc_server_serve), as
+ * *count strings in *names (jllama_strings_free). JLLAMA_STATUS_ERROR for an unknown name, with
+ * the available ones in the message.
+ */
+JLLAMA_API jllama_status jllama_rpc_server_devices(const char *devices, char ***names, size_t *count);
+
+/* ------------------------------------------------------------------------------------------------
+ * Text to speech (TextToSpeech): llama.cpp's Qwen3-TTS pipeline over a backbone GGUF and an mmproj
+ * GGUF (speaker encoder, code predictor, code2wav decoder).
+ * ---------------------------------------------------------------------------------------------- */
+
+/** A loaded text-to-speech model pair; opaque. */
+typedef struct jllama_tts_model jllama_tts_model;
+
+/** Releases a byte buffer the library returned (jllama_tts_synthesize); null is ignored. */
+JLLAMA_API void jllama_bytes_free(unsigned char *bytes);
+
+/** Loads the backbone and the mmproj (`n_gpu_layers` -1 = auto, `n_threads` <= 0 = default). */
+JLLAMA_API jllama_status jllama_tts_load(const char *model_path, const char *mmproj_path, int n_gpu_layers,
+                                         int n_threads, jllama_tts_model **out);
+
+/**
+ * Synthesises `text` to a 24 kHz mono 16-bit WAV in *wav (*length bytes, jllama_bytes_free).
+ * `speaker_reference_path` (a WAV to clone the voice from) and `lang` ("english", "chinese", ...)
+ * may be null; `max_frames` bounds the generation, `top_k` and `seed` the sampling. One synthesis
+ * at a time per handle.
+ */
+JLLAMA_API jllama_status jllama_tts_synthesize(jllama_tts_model *tts, const char *text,
+                                               const char *speaker_reference_path, const char *lang, int max_frames,
+                                               int top_k, unsigned int seed, unsigned char **wav, size_t *length);
+
+/** Frees the model pair; null is ignored. */
+JLLAMA_API void jllama_tts_free(jllama_tts_model *tts);
+
+/* ------------------------------------------------------------------------------------------------
+ * Fine-tuning (LlamaTrainer): llama.cpp's ggml-opt training path over a GGUF and a text corpus.
+ * ---------------------------------------------------------------------------------------------- */
+
+/**
+ * Runs one fine-tuning job from its JSON configuration (`model_path`, `training_text` or
+ * `training_file`, `output_path`, `epochs`, `learning_rate`, `lr_min`, `decay_epochs`,
+ * `weight_decay`, `optimizer`, `n_ctx`, `n_gpu_layers`, `val_split`, `n_batch`, `n_ubatch`; the
+ * keys of LlamaTrainer's TrainingParameters) and writes the fine-tuned GGUF. Blocks for the whole
+ * run; needs no model handle. A configuration that does not parse is "invalid training config".
+ */
+JLLAMA_API jllama_status jllama_finetune(const char *config_json);
+
 #ifdef __cplusplus
 }
 #endif

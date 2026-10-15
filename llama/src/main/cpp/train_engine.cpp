@@ -9,6 +9,7 @@
 #include "llama.h"
 #include "rpc_support.hpp"
 #include "train_params.hpp"
+#include "jllama_api.h"
 
 #include <nlohmann/json.hpp>
 
@@ -94,8 +95,45 @@ bool finetune(const finetune_config &cfg, std::string &err) {
     return true;
 }
 
+bool finetune_json(const std::string &config_json, std::string &err) {
+    finetune_config cfg;
+    try {
+        const json j = json::parse(config_json);
+        cfg.model_path = j.value(keys::MODEL_PATH, std::string());
+        cfg.training_text = j.value(keys::TRAINING_TEXT, std::string());
+        cfg.training_file = j.value(keys::TRAINING_FILE, std::string());
+        cfg.output_path = j.value(keys::OUTPUT_PATH, std::string());
+        cfg.epochs = j.value(keys::EPOCHS, 2);
+        cfg.learning_rate = j.value(keys::LEARNING_RATE, 1e-5f);
+        cfg.lr_min = j.value(keys::LR_MIN, -1.0f);
+        cfg.decay_epochs = j.value(keys::DECAY_EPOCHS, -1.0f);
+        cfg.weight_decay = j.value(keys::WEIGHT_DECAY, 0.0f);
+        cfg.optimizer = j.value(keys::OPTIMIZER, 0);
+        cfg.n_ctx = j.value(keys::N_CTX, 0);
+        cfg.n_gpu_layers = j.value(keys::N_GPU_LAYERS, -1);
+        cfg.val_split = j.value(keys::VAL_SPLIT, 0.05f);
+        cfg.n_batch = j.value(keys::N_BATCH, 0);
+        cfg.n_ubatch = j.value(keys::N_UBATCH, 0);
+    } catch (const std::exception &e) {
+        err = std::string("invalid training config: ") + e.what();
+        return false;
+    }
+    try {
+        return finetune(cfg, err);
+    } catch (const std::exception &e) {
+        err = e.what();
+    } catch (...) {
+        err = "unknown C++ exception during fine-tuning";
+    }
+    return false;
+}
+
 } // namespace jllama_train
 
+// A shell over the C API (jllama_finetune): the configuration crosses as UTF-8, the outcome comes
+// back as this method's return string -- "" for success, the message otherwise (never a Java
+// exception, the contract LlamaTrainer relies on). Function-level backstop, not jni_guard_impl:
+// this TU deliberately keeps its own nlohmann alias and never includes jni_helpers.hpp.
 extern "C" JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaTrainer_finetuneNative(JNIEnv *env, jclass,
                                                                                           jstring jconfig) try {
     std::string config_json;
@@ -106,46 +144,10 @@ extern "C" JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaTrainer_finet
             env->ReleaseStringUTFChars(jconfig, c);
         }
     }
-
-    jllama_train::finetune_config cfg;
-    try {
-        const json j = json::parse(config_json);
-        cfg.model_path = j.value(jllama_train::keys::MODEL_PATH, std::string());
-        cfg.training_text = j.value(jllama_train::keys::TRAINING_TEXT, std::string());
-        cfg.training_file = j.value(jllama_train::keys::TRAINING_FILE, std::string());
-        cfg.output_path = j.value(jllama_train::keys::OUTPUT_PATH, std::string());
-        cfg.epochs = j.value(jllama_train::keys::EPOCHS, 2);
-        cfg.learning_rate = j.value(jllama_train::keys::LEARNING_RATE, 1e-5f);
-        cfg.lr_min = j.value(jllama_train::keys::LR_MIN, -1.0f);
-        cfg.decay_epochs = j.value(jllama_train::keys::DECAY_EPOCHS, -1.0f);
-        cfg.weight_decay = j.value(jllama_train::keys::WEIGHT_DECAY, 0.0f);
-        cfg.optimizer = j.value(jllama_train::keys::OPTIMIZER, 0);
-        cfg.n_ctx = j.value(jllama_train::keys::N_CTX, 0);
-        cfg.n_gpu_layers = j.value(jllama_train::keys::N_GPU_LAYERS, -1);
-        cfg.val_split = j.value(jllama_train::keys::VAL_SPLIT, 0.05f);
-        cfg.n_batch = j.value(jllama_train::keys::N_BATCH, 0);
-        cfg.n_ubatch = j.value(jllama_train::keys::N_UBATCH, 0);
-    } catch (const std::exception &e) {
-        return env->NewStringUTF((std::string("invalid training config: ") + e.what()).c_str());
+    if (jllama_finetune(config_json.c_str()) == JLLAMA_STATUS_OK) {
+        return env->NewStringUTF(""); // empty == success
     }
-
-    std::string err;
-    try {
-        if (jllama_train::finetune(cfg, err)) {
-            return env->NewStringUTF(""); // empty == success
-        }
-    } catch (const std::exception &e) {
-        err = e.what();
-    } catch (...) {
-        err = "unknown C++ exception during fine-tuning";
-    }
-    return env->NewStringUTF(err.c_str());
+    return env->NewStringUTF(jllama_last_error());
 } catch (...) {
-    // Function-level backstop, not jni_guard_impl: this TU deliberately keeps its own nlohmann
-    // alias and never includes jni_helpers.hpp (see CLAUDE.md). The two inner handlers above give
-    // better messages and are reached first; this one covers what they cannot — a non-std
-    // exception from the config parse, and anything thrown before either try block (the
-    // GetStringUTFChars copy can std::bad_alloc). This method reports failure as its return
-    // string rather than a Java exception, so the backstop keeps that contract.
     return env->NewStringUTF("unknown C++ exception crossed the JNI boundary");
 }

@@ -51,11 +51,16 @@ Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.
 | `jllama_json_schema_to_grammar()` | a JSON schema as GBNF (no model needed) |
 | `jllama_quantize()` | `llama_model_quantize` over a GGUF file (no model needed) |
 | `jllama_set_log_callback()` | every log line of llama.cpp, ggml and the server to a callback; null restores the console after a synchronous flush |
+| `jllama_server_start()`, `jllama_server_start_attached()`, `jllama_server_stop()`, `jllama_server_is_running()`, `jllama_server_set_worker_command()` | the embedded llama-server (`NativeServer`): the full upstream server from an argv, WebUI included, or the HTTP frontend attached to a loaded model; router mode's worker command. Not on Android (server.cpp does not build there) |
+| `jllama_rpc_server_serve()`, `jllama_rpc_server_stop()`, `jllama_rpc_server_listening()`, `jllama_rpc_server_devices()`, `jllama_strings_free()` | the RPC server (`RpcServer`): this process's devices served to llama.cpp RPC clients, one per process |
+| `jllama_tts_load()`, `jllama_tts_synthesize()`, `jllama_tts_free()`, `jllama_bytes_free()` | text to speech (`TextToSpeech`): a Qwen3-TTS backbone and mmproj, a WAV per call |
+| `jllama_finetune()` | fine-tuning (`LlamaTrainer`): one training run from its JSON configuration |
 
-Not yet in it (the rest of "B.3"): the embedded HTTP server (`NativeServer`, attach mode, router
-mode), the RPC server, text to speech, the trainer. Their Java entry points live in their own
-translation units over engines that are already JNI-free; each slice moves one of them behind
-`jllama_*` functions.
+That is every native entry point of the Java API: `LlamaModel`, `LlamaQuantizer`, `NativeServer`,
+`RpcServer`, `TextToSpeech` and `LlamaTrainer` are all shells over these functions.
+
+And the `jllama_api.h` header ships in every natives directory, so a consumer of a natives jar
+(or of `net.ladenthin.llama.lib.path`'s directory) has the declarations next to the library.
 
 ## Contract
 
@@ -141,22 +146,29 @@ if (jllama_chat_completions_stream_request(model, request, &task) == JLLAMA_STAT
   then the model meta, raw and OpenAI completions, raw streaming (and the chat-template variant),
   the template, a tokenize/detokenize round trip, metrics, slot erase, the LoRA list, configure,
   the refusals of a model loaded without `--embedding`/`--reranking` and without FIM tokens, the
-  grammar conversion, and a quantisation of the random model to Q8_0 that loads again.
+  grammar conversion, and a quantisation of the random model to Q8_0 that loads again; the
+  embedded server started in router mode and stopped, the frontend attached to the random model
+  and the model still answering after the server stopped, the RPC server serving the CPU over
+  loopback and stopped, text to speech refusing missing models, and a fine-tuning run over the
+  random F32 model that writes a GGUF.
 - `src/test/c/test_c_abi.c` (the ctest `c_abi` of every modular build job): plain C11 linking the
   shipped `libjllama` and `libllama`; it compiles the header as C and resolves `jllama_api_version`
   and `jllama_build_info` through the library's exports, next to its layer-A checks.
 - `.github/verify-native-deps.py` (`package`): `libjllama` exports `JNI_OnLoad`, `JNI_OnUnload`,
   `Java_*` and `jllama_*`, nothing else.
-- The Java suite: every native method of `LlamaModel` and `LlamaQuantizer` calls these functions
-  (the JNI file holds no server logic any more), so every model-backed Java test runs through the
-  C API -- including the ones the random model cannot exercise here (embeddings, rerank, infill,
-  a decision model), which CI runs against the real models.
+- The Java suite: every native method of the Java API calls these functions (no JNI file holds
+  engine logic any more), so every model-backed Java test runs through the C API -- including
+  the ones the random model cannot exercise here (embeddings, rerank, infill, a decision model,
+  real speech, the router with workers), which CI runs against the real models.
 
 ## Implementation notes
 
-`src/main/cpp/jllama_engine.{hpp,cpp}` is the implementation both shells share: C++ over
-`server_context`, exceptions for errors (`jllama_invalid_request` for the request's fault,
-`jllama_interrupted` for a wait cut by a free, `std::runtime_error` otherwise), no JNI in it.
+`src/main/cpp/jllama_engine.{hpp,cpp}` is the implementation both shells share for the model: C++
+over `server_context`, exceptions for errors (`jllama_invalid_request` for the request's fault,
+`jllama_interrupted` for a wait cut by a free, `std::runtime_error` otherwise), no JNI in it. The
+embedded server has its own engine (`native_server_engine.{hpp,cpp}`), as the RPC support
+(`rpc_support.hpp`), text to speech (`tts_engine.{h,cpp}`) and the trainer (`train_engine.{h,cpp}`)
+already had; `jllama_api.cpp` is the one C shell over all of them.
 `jllama_api.cpp` turns that into status codes, a thread-local error string and malloc'd strings, and
 runs every call inside the user-reference guard (`jllama_context.hpp`) so `jllama_model_free` can
 wait for the calls in flight -- the same protocol `LlamaModel.close()` relies on. The inference loop

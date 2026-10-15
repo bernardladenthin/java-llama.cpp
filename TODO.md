@@ -122,10 +122,10 @@ rerank, tokenize/detokenize in both forms, metrics, slot save/restore/erase, LoR
 systemone, the grammar conversion and the quantizer -- each an engine function, a `jllama_*`
 function, a `test_c_api.cpp` case and a JNI shell; `jllama.cpp` carries no server logic any more.)
 
-- [ ] The rest, engine by engine: the server (`NativeServer`: classic, attach, router,
-      `setWorkerCommand`) -> the RPC server -> TTS -> the trainer. Each already has a JNI-free C++
-      engine in its own translation unit; the slice is the `jllama_*` shell, a `test_c_api.cpp`
-      case and the JNI rewrite. The Java API does not change.
+(And the rest the same day: `jllama_server_*` over a new `native_server_engine.{hpp,cpp}` (classic,
+attach, router's worker command; not on Android), `jllama_rpc_server_*`, `jllama_tts_*`,
+`jllama_finetune` -- every native entry point of the Java API is a shell over the C API now, and
+`test_c_api.cpp` drives each engine without a JVM, the trainer included.)
 - [ ] An import library for Windows consumers (`jllama.lib`, from the DLL's exports at package
       time) or a documented `LoadLibrary`/`GetProcAddress` recipe -- today only the latter.
 - [ ] Java 22+ over the C API without JNI (a separate module, Panama/FFM; the core stays Java 8).
