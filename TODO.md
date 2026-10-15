@@ -63,12 +63,21 @@ sccache archives (Linux and Windows) against pinned SHA-256s; the CUDA redist ar
 NVIDIA's own manifest, the OpenVINO archives and the Vulkan arm64 installer against the checksum
 each vendor publishes next to the file.)* Still open, each with the reason:
 
-- [ ] **Pin the vendor checksums into `publish.yml`** (`CUDA_REDIST_MANIFEST`, `OPENVINO_LINUX_SHA256`,
-      `OPENVINO_WINDOWS_SHA256`, `VULKAN_SDK_SHA256`): the steps verify against the vendor's published
-      value when the variable is empty and print it; the session that wrote them could not reach
-      `developer.download.nvidia.com`, `storage.openvinotoolkit.org` or `sdk.lunarg.com` (proxy 403),
-      so the first Publish run after this lands is where the values are read off the log and pinned.
-      Until then a swapped archive on the vendor host would pass; a truncated or wrong download does not.
+- [ ] **Pin the vendor checksums into `publish.yml`** (`OPENVINO_LINUX_SHA256`, `OPENVINO_WINDOWS_SHA256`,
+      `VULKAN_SDK_SHA256`; `CUDA_REDIST_MANIFEST` is pinned to `13.4.3` since the first run printed
+      it): the steps verify against the vendor's published value when the variable is empty and print
+      both values in full; the session that wrote them could not reach `developer.download.nvidia.com`,
+      `storage.openvinotoolkit.org` or `sdk.lunarg.com` (proxy 403), so a Publish run is where the
+      values are read off the log and pinned. Until then a swapped archive on the vendor host would
+      pass; a truncated or wrong download does not. **What the first full run (38808518362) taught,
+      all three Windows steps red on their install:** `Invoke-WebRequest` returns an octet-stream
+      `.sha256` as `byte[]`, and `-split` on a byte array stringifies the bytes in decimal, so the
+      OpenVINO step compared against `53` (ASCII `'5'`, the hash's first character) -- the published
+      files are fetched with `curl.exe` as text now, like the Linux job; LunarG's checksum endpoint is
+      `sdk/sha/<version>/<os>/<file>.txt`, not `sdk/sha256/` (404), and a failed fetch now names the
+      measured hash so it can be pinned after a check on a trusted machine instead of costing another
+      run; and the CUDA archive names come from the manifest (`relative_path`) instead of upstream's
+      hand-written list, whose `cuda_crt 13.4.59` was not the `cuda_crt` the newest manifest hashes.
 - [ ] **The oneAPI Windows installer has no checksum endpoint** Intel publishes next to the file
       (`registrationcenter-download.intel.com/.../intel-deep-learning-essentials-2025.3.3.18_offline.exe`);
       pinning needs one download of the 1.6 GB installer on a machine that can reach it, then
