@@ -666,15 +666,11 @@ message(STATUS "Backend '${JLLAMA_BACKEND}' - installing files to ${JLLAMA_DIR}"
 # both, never a silent attempt. The tag is JLLAMA_GIT_TAG, the pin at the top of the FetchContent
 # block -- the b<nnnn> number also when JLLAMA_GIT_COMMIT fetched the commit for it (a module jar and
 # a library jar of the same number are the same commit either way, the pin check saw to that).
-set(JLLAMA_LLAMA_CPP_TAG "${JLLAMA_GIT_TAG}")
-if(JLLAMA_MODULE_ONLY)
-    set(_jllama_kind module)
-else()
-    set(_jllama_kind library)
-endif()
-file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-build.txt CONTENT
-     "# Written by llama/CMakeLists.txt: the build this directory came from (read by LlamaLoader)\nllama.cpp=${JLLAMA_LLAMA_CPP_TAG}\nbackend=${JLLAMA_BACKEND}\nkind=${_jllama_kind}\n"
-     NEWLINE_STYLE LF)
+# The rest of the file -- the fetched upstream commit, this repository's version and commit, the
+# patch set and its hash, compiler and toolkit -- plus the CycloneDX BOM next to it come from
+# cmake/jllama-build-info.cmake; merge-native-artifacts.sh requires both files of every artifact.
+include(cmake/jllama-build-info.cmake)
+jllama_write_build_info()
 
 if(JLLAMA_MODULE_ONLY)
     # The GPU natives jar: exactly one file, the backend module, next to the two list files. Built

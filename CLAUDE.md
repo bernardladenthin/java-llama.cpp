@@ -52,7 +52,10 @@ artifact, classifier `<backend>-<os>-<arch>`, each holding exactly one directory
   `net.ladenthin.llama.backend=<a>,<b>` is a **filter** over the module jars (`cpu` = none); a name
   that is no module backend, or whose jar is not on the classpath, fails the load with a message
   naming the jar to add. **A module jar needs the library jar of the same build**: every natives
-  directory carries `jllama-build.txt` (`llama.cpp=<tag>`, `backend=`, `kind=`, written by CMake), and
+  directory carries `jllama-build.txt` (`llama.cpp=<tag>`, `backend=`, `kind=` plus the provenance keys
+  `llama.cpp.commit=`, `classifier=`, `jllama.version=`, `jllama.commit=`, `patches=`, `patches.sha256=`,
+  `compiler=`, `toolkit=`, `signed=`, written by `cmake/jllama-build-info.cmake`, which also writes the
+  CycloneDX `jllama-sbom.json` next to it; `LlamaModel.getJllamaBuildInfo()` exposes the keys), and
   `requireSameBuild` refuses a module whose tag differs from the library's **before** anything is
   extracted -- ggml checks only the module's exports at load time, so a mismatched ggml ABI would
   surface later and worse. The extraction directory is keyed by the library's jar entry **and** the
@@ -87,7 +90,7 @@ it or is checked against it:
 
 | Place | Relation to the list |
 |---|---|
-| `llama/CMakeLists.txt` | names the backend directory (`JLLAMA_BACKEND`: GGML flag → name; `metal` = Apple + `GGML_METAL`), writes to `src/main/natives/net/ladenthin/llama/<OS>/<ARCH>/<backend>/`, and writes `jllama-build.txt` there (plus `jllama-files.txt` on the modular platforms and in a module-only build) |
+| `llama/CMakeLists.txt` | names the backend directory (`JLLAMA_BACKEND`: GGML flag → name; `metal` = Apple + `GGML_METAL`), writes to `src/main/natives/net/ladenthin/llama/<OS>/<ARCH>/<backend>/`, and -- through `cmake/jllama-build-info.cmake` -- writes `jllama-build.txt` and `jllama-sbom.json` there (plus `jllama-files.txt` on the modular platforms and in a module-only build); the build file's `classifier=` is derived from the directory and must equal the row's |
 | `llama/pom.xml` `natives` profile | one `maven-jar-plugin` execution per row, **generated**: `python3 .github/check-natives.py pom` prints them |
 | `llama-platform/pom.xml` | depends on the rows with `platform=yes` |
 | `publish.yml` build jobs | each uploads its tree as artifact `natives-<classifier>`; `package` waits for every one of them (transitively) |
@@ -95,7 +98,7 @@ it or is checked against it:
 | the smoke sets | **derived**: one `llama-smoke-<os>-<arch>` per desktop platform with a library jar (no Android, no s390x: no runner) — `check-natives.py smoke-targets` prints them, `smoke-set <t>` the classifiers of one; `package` assembles each with `package-smoke-sets.sh` (the classes jar, its runtime dependencies, the platform's library jar and every GPU module jar of the platform) and uploads it; every target must be downloaded by a smoke job (`smoke-natives` rows, `smoke-natives-macos`), which `check-natives.py` demands |
 | `examples/jbang/Chat.java`, `examples/server/pom.xml` | the JBang `//DEPS` lines name the classes jar and every `platform=yes` jar; the server example's `<llama.version>` and profiles follow the list — both held to the README's install version |
 | `.github/check-natives.py` | runs in `code-style` (first minutes of every run); fails when any row of this table disagrees with the list — including CMake's backend names, the dependency allowlists and the README rows |
-| `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library (or module) and nothing outside its directory, each with a `jllama-build.txt` naming a tag, a module directory holding nothing but its module and the `jllama-*.txt` lists, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows -- never the files a build's own `jllama-files.txt` names, which are only extracted; each of those must exist) |
+| `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library (or module) and nothing outside its directory, each with a `jllama-build.txt` naming a tag, the provenance keys and the row's classifier, next to a `jllama-sbom.json` naming the same classifier, a module directory holding nothing but its module, the `jllama-*.txt` lists and the BOM, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows -- never the files a build's own `jllama-files.txt` names, which are only extracted; each of those must exist) |
 | `.github/package-smoke-sets.sh` | reads the list through `check-natives.py smoke-targets` / `smoke-set`: fails when a natives jar of a set was not built |
 | `.github/verify-native-deps.py` | every library of a directory: exact dependency allowlist per library directory (`cpu`/`metal`) plus the files next to it, and for the Android OpenCL module (bionic + `libOpenCL.so` + `libggml-base.so`); denylist for the other GPU modules, each of which must import `ggml-base` and, as ELF, reach it only through run path `$ORIGIN` (an Android library carries no run path -- bionic's search path is the app's native-library directory -- and only a build-tree one fails there); the manylinux_2_28 builds (both Linux CPU jars, CUDA) held to `GLIBC_2.28`; every Android library 16 KB page-aligned (Google Play). Runs in `package` and on the staged AAR libraries |
 | `.github/smoke-natives-jars.sh` (`package` job) | loads the real jars: classes + all 23 natives jars at once, on the classpath **and** the module path; it passes `net.ladenthin.llama.backend` naming **every** module of the runner's platform, opt-in ones included, and the loader line must then name each -- so a module jar the loader skipped fails here, and this is also the only place in CI that loads an opt-in module at all |
@@ -164,6 +167,24 @@ macOS static too). There the loader extracts and loads a single file (plus `jlla
 **Every directory carries `jllama-build.txt`** (`llama.cpp=<tag>`, the `JLLAMA_GIT_TAG` number of this
 file's pin, `backend=`, `kind=library|module`), written with `file(GENERATE)`: the loader's build
 check and the merge step's completeness check read it (see "Natives jars").
+
+**And since the delivery roadmap (TODO.md) the file is the artefact's provenance record**, written by
+`llama/cmake/jllama-build-info.cmake`: `llama.cpp.commit` (the upstream commit actually fetched),
+`classifier` (derived from the directory, held to the `natives.csv` row by the merge step),
+`jllama.version` (the `<parent>` version of `llama/pom.xml`, or `-DJLLAMA_VERSION=`), `jllama.commit`
+(this repository's commit, `-dirty` with local changes, `GITHUB_SHA` as the fallback), `patches` (the
+ids of `llama/patches/*.patch` in order) and `patches.sha256` (one hash over `<name> <sha256>\n` per
+patch, the lines the applier's stamp carries), `compiler`, `toolkit` (the vendor SDK a GPU module was
+built against, probed per backend) and `signed` (`no` until the signature step exists). A CycloneDX
+1.5 `jllama-sbom.json` next to it carries the same facts, with every patch as the llama.cpp
+component's pedigree. `merge-native-artifacts.sh` requires every key and the BOM of every artifact;
+`LlamaModel.getJllamaBuildInfo()` returns the map, `Diagnose` prints one line per directory, and
+`docs/patches.md` -- generated by `check-patches.py --render`, held current by `code-style` -- is the
+page the `patches=` ids point at. The `package` and publish jobs additionally attest build provenance
+through `actions/attest-build-provenance` (Sigstore): `gh attestation verify --owner bernardladenthin
+<file>` proves a natives jar, a jar, a pom or an AAR came out of this workflow at a given commit, which
+the `.asc` alone cannot (it proves the key, not the build). The reactor's `cyclonedx-maven-plugin`
+attaches a `cyclonedx` json classifier to every Maven module for the Java side.
 
 Before 5.2.0 each jar was **one** library for one level -- x86-64 the Haswell baseline (x86-64-v3,
 a block that forced `GGML_AVX2` & co.: a CPU without AVX2 died with SIGILL, a JVM crash and not an
@@ -304,7 +325,7 @@ shapes this repo writes and rejects anything else loudly.
 |---|---|---|
 | `natives.py` | `check-natives.py` (`code-style`) | everything that names a natives jar agrees with `natives.csv` (see "Natives jars") |
 | `models.py` | `check-natives.py` | every `*_MODEL_NAME` of publish.yml's `env:` is a filename of `models.csv` |
-| `patches.py` | `check-patches.py` (`code-style`) | every hunk of `llama/patches/*.patch` declares exactly the lines it carries -- the half `git apply --check` does not see (see "Local llama.cpp source patches") |
+| `patches.py` | `check-patches.py` (`code-style`) | every hunk of `llama/patches/*.patch` declares exactly the lines it carries -- the half `git apply --check` does not see (see "Local llama.cpp source patches"); and `docs/patches.md` is what `check-patches.py --render` generates from the patch headers (a stale page fails) |
 | `nativedeps.py` | `verify-native-deps.py` (`package`, `package-android-aar`) | dependency allowlists, 16 KB Android alignment |
 | `hipoffload.py` | `verify-hip-offload-compressed.py` (the two ROCm jobs) | no uncompressed GPU code bundle |
 | `workflow.py` | — | the job graph of a workflow (`needs`, uploads, transitive closure) |

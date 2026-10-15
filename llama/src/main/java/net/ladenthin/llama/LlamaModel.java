@@ -487,6 +487,27 @@ public class LlamaModel implements AutoCloseable {
         return nativeLlamaCppBuildInfo();
     }
 
+    /**
+     * What this project's build wrote next to the loaded native library: the llama.cpp tag and the
+     * upstream commit that was fetched for it, the {@code net.ladenthin:llama} version and commit the
+     * library was built from, the ids of the carried {@code llama/patches} and one hash over them, the
+     * compiler and the vendor toolkit, and whether the files carry an OS code signature -- the keys of
+     * the {@code jllama-build.txt} every natives directory ships (written by
+     * {@code llama/cmake/jllama-build-info.cmake}, which lists them all).
+     *
+     * <p>{@link #getLlamaCppBuildInfo()} answers "which llama.cpp" from the binary itself; this answers
+     * "which llama.cpp <em>plus what</em>": a binary of this project is never upstream-identical, and a
+     * bug report or a consumer's audit needs the patch list to know what it is looking at. It is read
+     * from the directory the library was loaded from, so it needs {@code libjllama} to be loaded, and it
+     * is empty for a library loaded through {@code net.ladenthin.llama.lib.path} from a directory that
+     * carries no {@code jllama-build.txt}.</p>
+     *
+     * @return the build facts as {@code key -> value}, unmodifiable, in file order; empty when unknown
+     */
+    public static Map<String, String> getJllamaBuildInfo() {
+        return LlamaLoader.getBuildInfo();
+    }
+
     @Override
     public synchronized void close() {
         // synchronized so two concurrent close() calls cannot both observe a live native

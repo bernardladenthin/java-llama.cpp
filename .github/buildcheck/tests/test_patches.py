@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 
+import os
 import unittest
 
 from buildcheck import patches
@@ -96,3 +97,58 @@ class RepositoryTest(unittest.TestCase):
         self.assertEqual(len(problems), 1, problems)
         self.assertIn("2 line(s) after the hunk for ggml/src/ggml-cpu/arch/x86/prefetch.h", problems[0])
         self.assertIn("-0,+25", problems[0])
+
+
+class RenderTest(unittest.TestCase):
+    """docs/patches.md is generated from the patch headers; the check fails when it is stale."""
+
+    def test_describe_reads_title_prose_files_and_hunks(self):
+        text = ("ggml-cpu: fix the thing\n\nTwo paragraphs of why.\n" + MODIFY
+                + MODIFY.replace("a.c", "b/dir/c.h").replace("b/b/dir", "b/dir"))
+        e = patches.describe(text, "0042-fix-the-thing.patch")
+        self.assertEqual(e["id"], "0042")
+        self.assertEqual(e["title"], "ggml-cpu: fix the thing")
+        self.assertTrue(e["prose"].startswith("ggml-cpu: fix the thing"))
+        self.assertEqual(e["files"], ["a.c", "dir/c.h"])
+        self.assertEqual(e["hunks"], 2)
+
+    def test_a_patch_without_prose_is_titled_by_its_file_name(self):
+        e = patches.describe(MODIFY, "0001-no-prose.patch")
+        self.assertEqual(e["title"], "0001-no-prose.patch")
+        self.assertEqual(e["prose"], "")
+
+    def test_render_lists_every_patch_once_and_escapes_the_table(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            d = os.path.join(root, "llama", "patches")
+            os.makedirs(d)
+            with open(os.path.join(d, "0002-second.patch"), "w") as f:
+                f.write("second | with a pipe\n" + MODIFY)
+            with open(os.path.join(d, "0001-first.patch"), "w") as f:
+                f.write("first\n\n```\nfenced\n```\n" + MODIFY)
+            page = patches.render(root)
+        self.assertIn("**2 patches.**", page)
+        self.assertLess(page.index("## 0001-first.patch"), page.index("## 0002-second.patch"))
+        self.assertIn("| 0002 | [`0002-second.patch`](#0002-secondpatch) | second \\| with a pipe | 1 | 1 |", page)
+        self.assertNotIn("\n```\nfenced", page, "a fence inside the prose must not close the code block")
+        self.assertEqual(page.count("```text"), 2)
+
+    def test_doc_is_current_compares_the_committed_page_with_the_render(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            d = os.path.join(root, "llama", "patches")
+            os.makedirs(d)
+            with open(os.path.join(d, "0001-first.patch"), "w") as f:
+                f.write("first\n" + MODIFY)
+            self.assertEqual(patches.doc_is_current(root)[0], False, "no page yet")
+            os.makedirs(os.path.join(root, "docs"))
+            with open(os.path.join(root, "docs", "patches.md"), "w") as f:
+                f.write(patches.render(root))
+            self.assertTrue(patches.doc_is_current(root)[0])
+            with open(os.path.join(root, "docs", "patches.md"), "a") as f:
+                f.write("hand edit\n")
+            self.assertFalse(patches.doc_is_current(root)[0])
+
+    def test_the_committed_page_of_this_repository_is_current(self):
+        current, path = patches.doc_is_current(REPO)
+        self.assertTrue(current, f"{path} is stale: run python3 .github/check-patches.py --render")

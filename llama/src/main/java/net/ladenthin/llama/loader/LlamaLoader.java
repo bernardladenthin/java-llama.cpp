@@ -188,6 +188,40 @@ public class LlamaLoader {
     /** The key of {@link #BACKEND_BUILD_FILE} naming the llama.cpp tag the directory was built from. */
     static final String BUILD_KEY_LLAMA_CPP = "llama.cpp";
 
+    /** The upstream commit that was fetched for that tag. */
+    static final String BUILD_KEY_LLAMA_CPP_COMMIT = "llama.cpp.commit";
+
+    /** The {@code net.ladenthin:llama} version the directory belongs to. */
+    static final String BUILD_KEY_JLLAMA_VERSION = "jllama.version";
+
+    /** The java-llama.cpp commit the directory was built from ({@code -dirty} when the tree had local changes). */
+    static final String BUILD_KEY_JLLAMA_COMMIT = "jllama.commit";
+
+    /** The ids of the {@code llama/patches} carried on top of upstream, comma-separated. */
+    static final String BUILD_KEY_PATCHES = "patches";
+
+    /** One SHA-256 over the names and contents of the carried patches. */
+    static final String BUILD_KEY_PATCHES_SHA256 = "patches.sha256";
+
+    /** The natives jar classifier the directory is published as. */
+    static final String BUILD_KEY_CLASSIFIER = "classifier";
+
+    /** The compiler that built the directory. */
+    static final String BUILD_KEY_COMPILER = "compiler";
+
+    /** The vendor toolkit a GPU module was built against, or {@code none}. */
+    static final String BUILD_KEY_TOOLKIT = "toolkit";
+
+    /** Whether the libraries carry an OS code signature ({@code yes}/{@code no}). */
+    static final String BUILD_KEY_SIGNED = "signed";
+
+    /**
+     * The parsed {@link #BACKEND_BUILD_FILE} of the library that was loaded, empty before a load and
+     * for a library loaded from a directory that carries none. Set once by the branch that loaded
+     * it, read by {@link #getBuildInfo()}.
+     */
+    private static volatile Map<String, String> loadedBuild = Collections.emptyMap();
+
     /**
      * Prefix of the per-backend extraction subdirectory below the temp dir,
      * {@code jllama-backend-<backend>-<key>} (see {@link #extractionDirectoryName}). Deliberately
@@ -539,6 +573,19 @@ public class LlamaLoader {
     }
 
     /**
+     * What the loaded library says about its own build: the {@code key=value} lines of the
+     * {@value #BACKEND_BUILD_FILE} next to it -- the llama.cpp tag and commit, the
+     * {@code net.ladenthin:llama} version and commit, the carried patches and their hash, the
+     * compiler, the toolkit (see {@code llama/cmake/jllama-build-info.cmake} for every key).
+     *
+     * @return the build facts in file order, unmodifiable; empty before a library was loaded and for
+     *         a library loaded from a directory that carries no build file
+     */
+    public static Map<String, String> getBuildInfo() {
+        return loadedBuild;
+    }
+
+    /**
      * Loads native library using the given path and name of the library
      *
      * @param path path of the native library
@@ -809,6 +856,7 @@ public class LlamaLoader {
         if (!extractAndLoadLibraryFile(libraryDir.resourcePath, libraryFileName, targetFolder)) {
             return false;
         }
+        loadedBuild = Collections.unmodifiableMap(new LinkedHashMap<>(libraryDir.build));
         // The modules are extracted, never loaded from here (ggml loads them at JNI_OnLoad), and a
         // module ggml cannot load fails silently -- so at least say what is there (extractFile reports
         // each file it had to write; the others were reused from an earlier start). The native side

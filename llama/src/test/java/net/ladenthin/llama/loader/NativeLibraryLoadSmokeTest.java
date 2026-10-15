@@ -5,11 +5,13 @@
 package net.ladenthin.llama.loader;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.util.Map;
 import net.ladenthin.llama.ClaudeGenerated;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.LlamaQuantizer;
@@ -97,6 +99,31 @@ class NativeLibraryLoadSmokeTest {
                         + "leaves the old literal here while the native library is already the new tag. "
                         + "If the tag shown above is the one you just bumped to, it is cause (2): run "
                         + "`mvn -pl llama clean test`. CI always builds clean and never hits it.");
+    }
+
+    /**
+     * The provenance the build writes next to the library reaches Java: after a load from a natives
+     * directory of this build, {@link LlamaModel#getJllamaBuildInfo()} names the pinned llama.cpp tag,
+     * the carried patches and the rest of the keys {@code jllama-build.txt} carries. The tag is checked
+     * against the same constant as the linked build-info above, so a directory of another build on the
+     * classpath is caught here as well.
+     */
+    @Test
+    void jllamaBuildInfoNamesThePinnedTagAndTheCarriedPatches() throws ClassNotFoundException {
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping build-info check");
+        Class.forName("net.ladenthin.llama.LlamaModel");
+        Map<String, String> build = LlamaModel.getJllamaBuildInfo();
+        assertEquals(LlamaCppVersion.LLAMA_CPP_VERSION, build.get("llama.cpp"), "llama.cpp tag of " + build);
+        assertTrue(
+                String.valueOf(build.get("llama.cpp.commit")).matches("[0-9a-f]{40}"), "llama.cpp.commit of " + build);
+        assertTrue(String.valueOf(build.get("patches")).matches("\\d{4}(,\\d{4})*"), "patches of " + build);
+        assertTrue(String.valueOf(build.get("patches.sha256")).matches("[0-9a-f]{64}"), "patches.sha256 of " + build);
+        assertTrue(
+                String.valueOf(build.get("jllama.version")).matches("\\d+\\.\\d+\\.\\d+(-SNAPSHOT)?"),
+                "jllama.version of " + build);
+        for (String key : new String[] {"jllama.commit", "classifier", "compiler", "toolkit", "signed", "kind"}) {
+            assertNotNull(build.get(key), key + " of " + build);
+        }
     }
 
     /**

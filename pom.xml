@@ -135,6 +135,35 @@ SPDX-License-Identifier: MIT
 				</plugin>
 			</plugins>
 		</pluginManagement>
+		<plugins>
+			<!--
+				A CycloneDX software bill of materials for every module, attached as the `cyclonedx`
+				classifier (json) so it is deployed to Central next to the jar, signed by maven-gpg
+				like every other attached artifact. The natives directories carry their own
+				jllama-sbom.json, written by llama/cmake/jllama-build-info.cmake from the native
+				inputs (llama.cpp commit, patches, BoringSSL, toolkit), which Maven cannot see.
+				TODO.md, delivery roadmap, item 1.
+			-->
+			<plugin>
+				<groupId>org.cyclonedx</groupId>
+				<artifactId>cyclonedx-maven-plugin</artifactId>
+				<version>2.9.3</version>
+				<executions>
+					<execution>
+						<id>sbom</id>
+						<phase>package</phase>
+						<goals>
+							<goal>makeBom</goal>
+						</goals>
+					</execution>
+				</executions>
+				<configuration>
+					<outputFormat>json</outputFormat>
+					<includeTestScope>false</includeTestScope>
+					<includeProvidedScope>false</includeProvidedScope>
+				</configuration>
+			</plugin>
+		</plugins>
 	</build>
 
 	<profiles>

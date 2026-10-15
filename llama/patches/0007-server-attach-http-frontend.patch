@@ -1,3 +1,17 @@
+server: let an embedding host attach the HTTP frontend to an already-loaded server_context
+
+Adds llama_server_attach(argc, argv, server_context &, server_routes &), which serves a model the
+host has already loaded over the upstream HTTP frontend: no second model load, no start_loop() --
+the host's worker keeps driving the shared server_context and the HTTP routes post tasks to its
+queue. The stable route table is factored out of llama_server() into
+llama_server_register_common_routes(), byte-identical to the block it replaces (the invariant to
+re-check on every bump); the attach entry point registers it plus the non-router resumable-streaming
+handlers and the GCP shim, answers /cors-proxy and /tools with 403 (the MCP/tools host belongs to a
+full llama-server), marks ready immediately and blocks in ctx_http.join() until
+llama_server_request_shutdown(). It serves the caller's server_routes rather than a frame-local one:
+server_routes' constructor registers a sleeping-state callback on the model's task queue that
+outlives the attach call. Applies after 0001 and 0006.
+
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
 index 4c6052d78..cb03f239a 100644
 --- a/tools/server/server.cpp

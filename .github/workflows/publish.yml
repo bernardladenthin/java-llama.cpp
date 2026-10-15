@@ -2689,6 +2689,12 @@ jobs:
       - test-java-windows-x86_64
       - test-java-windows-x86_64-msvc
     runs-on: ubuntu-latest
+    # id-token + attestations: the build-provenance attestation below (Sigstore) signs a statement
+    # that these exact files came out of this workflow at this commit; contents stays read.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
       # Every shipped native build uploads `natives-<classifier>`. Downloaded UNMERGED (one
@@ -2748,6 +2754,20 @@ jobs:
           mvn -B -q --no-transfer-progress -f llama/pom.xml dependency:build-classpath \
             -DincludeScope=runtime -Dmdep.outputFile=runtime-classpath.txt
           bash .github/smoke-natives-jars.sh llama/target "$(cat llama/runtime-classpath.txt)"
+      # Build provenance (SLSA, signed through Sigstore with this job's OIDC identity) over every
+      # native library the merged tree holds and every jar built from it. `.asc` proves the project
+      # key signed a file; this proves which workflow, commit and runner produced it -- what a
+      # consumer verifies with `gh attestation verify --owner bernardladenthin <file>` (TODO.md,
+      # delivery roadmap, item 1). Not on pull requests: a fork's token has no id-token scope.
+      - name: Attest build provenance of the natives and the jars
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            llama/src/main/natives/net/ladenthin/llama/**/*.so
+            llama/src/main/natives/net/ladenthin/llama/**/*.dll
+            llama/src/main/natives/net/ladenthin/llama/**/*.dylib
+            llama/target/*.jar
       - name: Upload JARs
         uses: actions/upload-artifact@v7
         with:
@@ -3048,6 +3068,8 @@ jobs:
     environment: maven-central
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
       # Every shipped native build uploads `natives-<classifier>`. Downloaded UNMERGED (one
@@ -3176,6 +3198,17 @@ jobs:
               cp "llama-android/build/distributions/llama-android-$v-$c.jar.asc" "signed-snapshot-assets/$base-$c.jar.asc" 2>/dev/null || true
             done
           done
+      # The same provenance statement over the files Central and the GitHub release get (jars,
+      # poms, AARs, each next to its .asc). A consumer with the Central file in hand verifies it
+      # with `gh attestation verify --owner bernardladenthin <file>`.
+      - name: Attest build provenance of the published artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            signed-snapshot-assets/*.jar
+            signed-snapshot-assets/*.pom
+            signed-snapshot-assets/*.aar
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:
@@ -3324,6 +3357,8 @@ jobs:
     environment: maven-central
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v7
       # Every shipped native build uploads `natives-<classifier>`. Downloaded UNMERGED (one
@@ -3449,6 +3484,17 @@ jobs:
               cp "llama-android/build/distributions/llama-android-$v-$c.jar.asc" "signed-release-assets/$base-$c.jar.asc" 2>/dev/null || true
             done
           done
+      # The same provenance statement over the files Central and the GitHub release get (jars,
+      # poms, AARs, each next to its .asc). A consumer with the Central file in hand verifies it
+      # with `gh attestation verify --owner bernardladenthin <file>`.
+      - name: Attest build provenance of the published artifacts
+        if: ${{ !cancelled() }}
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            signed-release-assets/*.jar
+            signed-release-assets/*.pom
+            signed-release-assets/*.aar
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

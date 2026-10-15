@@ -259,6 +259,32 @@ public class LlamaLoaderTest {
     }
 
     @Test
+    public void getBuildInfoIsNeverNullAndNamesTheTagOnceALibraryWasLoaded() {
+        java.util.Map<String, String> build = LlamaLoader.getBuildInfo();
+        assertNotNull(build);
+        // Unmodifiable either way: a consumer must not be able to edit the loader's record.
+        assertThrows(UnsupportedOperationException.class, () -> build.put("x", "y"));
+        if (!build.isEmpty()) {
+            // Another test of this JVM loaded the library from a natives directory of the current
+            // build, which writes every provenance key (llama/cmake/jllama-build-info.cmake).
+            for (String key : new String[] {
+                LlamaLoader.BUILD_KEY_LLAMA_CPP,
+                LlamaLoader.BUILD_KEY_LLAMA_CPP_COMMIT,
+                LlamaLoader.BUILD_KEY_JLLAMA_VERSION,
+                LlamaLoader.BUILD_KEY_JLLAMA_COMMIT,
+                LlamaLoader.BUILD_KEY_PATCHES,
+                LlamaLoader.BUILD_KEY_PATCHES_SHA256,
+                LlamaLoader.BUILD_KEY_CLASSIFIER,
+                LlamaLoader.BUILD_KEY_COMPILER,
+                LlamaLoader.BUILD_KEY_TOOLKIT,
+                LlamaLoader.BUILD_KEY_SIGNED
+            }) {
+                assertTrue(build.containsKey(key), key + " missing from " + build);
+            }
+        }
+    }
+
+    @Test
     public void testBackendTempDirPrefixMatchesCleanup() {
         // The per-backend extraction directories must be picked up by the temp-dir cleanup.
         assertTrue(

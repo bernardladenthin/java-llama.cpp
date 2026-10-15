@@ -1,3 +1,13 @@
+server: let the router spawn its model workers through a host-supplied command (LLAMA_SERVER_WORKER_CMD)
+
+The router (server-models.cpp) starts each model worker by re-executing its own binary
+(get_server_exec_path(): /proc/self/exe and friends). Inside a JVM that binary is java, not a
+llama-server, so embedded router workers could never start. The environment variable
+LLAMA_SERVER_WORKER_CMD (whitespace-split, read in server_model_meta::update_args) replaces the
+leading binary-path token of the rendered worker command, so a host relaunches workers through its
+own bootstrap -- here `java -cp app.jar net.ladenthin.llama.server.NativeServer`, set from Java by
+NativeServer.setWorkerCommand(). Also useful for containerised or wrapped deployments.
+
 diff --git a/tools/server/server-models.cpp b/tools/server/server-models.cpp
 index 35d21c876..e8ecb539f 100644
 --- a/tools/server/server-models.cpp

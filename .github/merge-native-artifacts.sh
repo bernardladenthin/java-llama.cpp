@@ -29,7 +29,8 @@
 # JLLAMA_MODULE_ONLY build (CLAUDE.md, "Modular natives"), which the loader only extracts next to the
 # library; loading them from Java would bypass ggml's choice of the module. Each file that list names
 # must exist, or the loader would fail the backend on every machine. Every directory must carry its
-# jllama-build.txt (the llama.cpp tag, CMake writes it): LlamaLoader refuses a GPU module without one.
+# jllama-build.txt (the llama.cpp tag, CMake writes it): LlamaLoader refuses a GPU module without one;
+# it must also carry the provenance keys and sit next to jllama-sbom.json (see the loop below).
 #
 # Usage: merge-native-artifacts.sh <staging-dir> <dest-dir>
 #   <staging-dir>  output of `actions/download-artifact` with `pattern: "natives-*"` and
@@ -75,14 +76,34 @@ while IFS=, read -r classifier dir lib _platform kind; do
     exit 1
   fi
   if [ ! -f "$STAGING/$a/$dir/jllama-build.txt" ] || ! grep -q '^llama.cpp=b[0-9]' "$STAGING/$a/$dir/jllama-build.txt"; then
-    echo "::error::artifact '$a' has no $dir/jllama-build.txt naming its llama.cpp tag -- llama/CMakeLists.txt writes it for every build" >&2
+    echo "::error::artifact '$a' has no $dir/jllama-build.txt naming its llama.cpp tag -- llama/cmake/jllama-build-info.cmake writes it for every build" >&2
+    exit 1
+  fi
+  # The provenance keys (TODO.md, delivery roadmap, item 1): the upstream commit, this repository's
+  # version, the patch set and its hash, and the classifier the directory belongs to -- which must
+  # be this row's, so a directory built for one backend cannot be uploaded under another name.
+  build="$STAGING/$a/$dir/jllama-build.txt"
+  for key in 'llama.cpp.commit=[0-9a-f]\{40\}' 'jllama.version=[0-9]' 'jllama.commit=.' 'patches=[0-9]' \
+             'patches.sha256=[0-9a-f]\{64\}' 'compiler=.' 'toolkit=.' 'signed=\(no\|yes\)'; do
+    if ! tr -d '\r' < "$build" | grep -q "^$key"; then
+      echo "::error::artifact '$a': $dir/jllama-build.txt lacks the key '$key' (jllama-build-info.cmake writes it)" >&2
+      exit 1
+    fi
+  done
+  if ! tr -d '\r' < "$build" | grep -qx "classifier=$classifier"; then
+    echo "::error::artifact '$a': $dir/jllama-build.txt says '$(grep '^classifier=' "$build")', the row says classifier=$classifier" >&2
+    exit 1
+  fi
+  if [ ! -f "$STAGING/$a/$dir/jllama-sbom.json" ] || ! grep -q '"bomFormat": "CycloneDX"' "$STAGING/$a/$dir/jllama-sbom.json" \
+     || ! grep -q "classifier=$classifier\"" "$STAGING/$a/$dir/jllama-sbom.json"; then
+    echo "::error::artifact '$a' has no $dir/jllama-sbom.json naming pkg:maven/net.ladenthin/llama@<version>?classifier=$classifier" >&2
     exit 1
   fi
   if [ "$kind" = "module" ]; then
     # a GPU jar is its module and the two list files, nothing else: no second library, no CPU set
-    others="$(cd "$STAGING/$a/$dir" && find . -maxdepth 1 -type f ! -name "$lib" ! -name 'jllama-*.txt' | sed 's|^\./||' || true)"
+    others="$(cd "$STAGING/$a/$dir" && find . -maxdepth 1 -type f ! -name "$lib" ! -name 'jllama-*.txt' ! -name jllama-sbom.json | sed 's|^\./||' || true)"
     if [ -n "$others" ] || ! grep -qx "$lib" "$STAGING/$a/$dir/jllama-files.txt" 2>/dev/null; then
-      echo "::error::artifact '$a' is a module jar: $dir/ must hold $lib (named in jllama-files.txt) and the jllama-*.txt lists only; found: $others" >&2
+      echo "::error::artifact '$a' is a module jar: $dir/ must hold $lib (named in jllama-files.txt), the jllama-*.txt lists and jllama-sbom.json only; found: $others" >&2
       exit 1
     fi
   fi
@@ -134,7 +155,7 @@ find "$DEST" -mindepth 3 -maxdepth 3 -type d | sort | while IFS= read -r dir; do
     echo "files extracted, not loaded, for ${dir#"$DEST"}: $(echo "$plain" | tr '\n' ' ')"
   fi
   extras="$(cd "$dir" && find . -maxdepth 1 -type f ! -name 'libjllama.*' ! -name 'jllama.dll' ! -name '*.metal' \
-    ! -name jllama-extras.txt ! -name jllama-files.txt ! -name jllama-build.txt | sed 's|^\./||' | sort \
+    ! -name jllama-extras.txt ! -name jllama-files.txt ! -name jllama-build.txt ! -name jllama-sbom.json | sed 's|^\./||' | sort \
     | awk -v plain="$plain" 'BEGIN { n = split(plain, a, "\n"); for (i = 1; i <= n; i++) skip[a[i]] = 1 } !($0 in skip)')"
   if [ -n "$extras" ]; then
     printf '%s\n' "$extras" > "$dir/jllama-extras.txt"

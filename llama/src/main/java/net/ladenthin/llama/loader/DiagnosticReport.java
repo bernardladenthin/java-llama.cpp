@@ -17,6 +17,8 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -208,29 +210,69 @@ public final class DiagnosticReport {
         if (url == null) {
             return false;
         }
-        out.println("  " + kind + " " + pad(backend) + " llama.cpp=" + tagOf(name) + "  " + url);
+        out.println("  " + kind + " " + pad(backend) + " " + buildOf(name) + "  " + url);
         return true;
     }
 
     /**
-     * The llama.cpp tag a {@code jllama-build.txt} names, read through the loader's own parser so the
-     * two cannot disagree on the format.
+     * What a {@code jllama-build.txt} says, read through the loader's own parser so the two cannot
+     * disagree on the format: the llama.cpp tag first (every build names it), then the provenance
+     * keys a build since the delivery roadmap writes -- the upstream commit, this project's version
+     * and commit, the carried patches, compiler, toolkit and signature state -- each only when present,
+     * so a directory of an older build prints its tag alone.
      *
      * @param name the build file's resource name
-     * @return the tag, or a short description of why it could not be read
+     * @return {@code llama.cpp=<tag> ...}, or a short description of why it could not be read
      */
-    private static String tagOf(String name) {
+    static String buildOf(String name) {
         try (InputStream in = LlamaLoader.resourceAsStream(name)) {
             if (in == null) {
-                return "(vanished)";
+                return "llama.cpp=(vanished)";
             }
             BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
-            String tag = LlamaLoader.parseBuild(reader).get(LlamaLoader.BUILD_KEY_LLAMA_CPP);
-            return tag != null ? tag : "(not named)";
+            return summarize(LlamaLoader.parseBuild(reader));
         } catch (IOException | RuntimeException e) {
-            return "(unreadable: " + e + ")";
+            return "llama.cpp=(unreadable: " + e + ")";
         }
     }
+
+    /**
+     * One line of the facts a parsed build file carries, in a fixed order, commits shortened to
+     * their first eight characters the way {@code git log --oneline} prints them.
+     *
+     * @param build the parsed build file
+     * @return the summary, starting with {@code llama.cpp=}
+     */
+    static String summarize(Map<String, String> build) {
+        String tag = build.get(LlamaLoader.BUILD_KEY_LLAMA_CPP);
+        StringBuilder line = new StringBuilder("llama.cpp=").append(tag != null ? tag : "(not named)");
+        appendIfPresent(line, build, LlamaLoader.BUILD_KEY_LLAMA_CPP_COMMIT, true);
+        appendIfPresent(line, build, LlamaLoader.BUILD_KEY_JLLAMA_VERSION, false);
+        appendIfPresent(line, build, LlamaLoader.BUILD_KEY_JLLAMA_COMMIT, true);
+        appendIfPresent(line, build, LlamaLoader.BUILD_KEY_PATCHES, false);
+        appendIfPresent(line, build, LlamaLoader.BUILD_KEY_COMPILER, false);
+        appendIfPresent(line, build, LlamaLoader.BUILD_KEY_TOOLKIT, false);
+        appendIfPresent(line, build, LlamaLoader.BUILD_KEY_SIGNED, false);
+        return line.toString();
+    }
+
+    private static void appendIfPresent(StringBuilder line, Map<String, String> build, String key, boolean commit) {
+        String value = build.get(key);
+        if (value == null) {
+            return;
+        }
+        line.append(' ').append(key).append('=');
+        Matcher full = commit ? FULL_COMMIT.matcher(value) : null;
+        if (full != null && full.matches()) {
+            String suffix = full.group(2);
+            line.append(full.group(1)).append(suffix != null ? suffix : "");
+        } else {
+            line.append(value);
+        }
+    }
+
+    /** A full 40-hex commit, optionally {@code -dirty}: group 1 is its short form, group 2 the suffix. */
+    private static final Pattern FULL_COMMIT = Pattern.compile("([0-9a-f]{8})[0-9a-f]{32}(-dirty)?");
 
     /**
      * Looks a resource up the way the loader does, never throwing.
