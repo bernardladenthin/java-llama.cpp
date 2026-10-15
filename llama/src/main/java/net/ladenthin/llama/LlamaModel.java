@@ -30,6 +30,7 @@ import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
 import net.ladenthin.llama.value.ChatResponse;
 import net.ladenthin.llama.value.CompletionResult;
+import net.ladenthin.llama.value.LlamaCppVersion;
 import net.ladenthin.llama.value.LlamaOutput;
 import net.ladenthin.llama.value.LogLevel;
 import net.ladenthin.llama.value.ModelMeta;
@@ -77,6 +78,23 @@ public class LlamaModel implements AutoCloseable {
 
     static {
         LlamaLoader.initialize();
+        warnOnForeignBuild();
+    }
+
+    /**
+     * Says so, once, when the loaded natives name another llama.cpp tag than this classes jar pins:
+     * a natives directory assembled by hand ({@code net.ladenthin.llama.lib.path}) or a classpath
+     * mixing two versions of {@code net.ladenthin:llama}. A warning, not a failure, because a
+     * developer build may deliberately run a newer or older tree; the model-backed tests pin the
+     * exact match where it must hold.
+     */
+    private static void warnOnForeignBuild() {
+        String tag = LlamaLoader.getBuildInfo().get("llama.cpp");
+        if (tag != null && !LlamaCppVersion.LLAMA_CPP_VERSION.equals(tag)) {
+            System.err.println("[jllama] the loaded natives were built from llama.cpp " + tag + ", this jar pins "
+                    + LlamaCppVersion.LLAMA_CPP_VERSION
+                    + " -- use the natives of the same net.ladenthin:llama version");
+        }
     }
 
     @Native

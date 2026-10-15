@@ -11,13 +11,23 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.io.File;
+import java.io.InputStream;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import net.ladenthin.llama.ClaudeGenerated;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.LlamaQuantizer;
 import net.ladenthin.llama.args.QuantizationType;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.value.LlamaCppVersion;
+import org.jspecify.annotations.Nullable;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -124,6 +134,94 @@ class NativeLibraryLoadSmokeTest {
         for (String key : new String[] {"jllama.commit", "classifier", "compiler", "toolkit", "signed", "kind"}) {
             assertNotNull(build.get(key), key + " of " + build);
         }
+    }
+
+    /**
+     * The natives directory contract, for real and on every platform the Java tests run on: a fresh
+     * JVM with the classes on its classpath but <em>no</em> natives (the {@code src/main/natives}
+     * tree is left out) loads the library from the very directory this build wrote, named with
+     * {@code net.ladenthin.llama.lib.path}. The child's loader line must say so and name the directory;
+     * its build info must carry the pinned tag. This is the test that runs the directory branch on
+     * Windows, where {@code jllama.dll} imports {@code ggml.dll}/{@code ggml-base.dll} and a bare
+     * {@code System.load} used to fail -- nothing else in CI launches that branch there.
+     */
+    @Test
+    void libPathLoadsTheNativesDirectoryInAFreshJvm() throws Exception {
+        assumeTrue(NativeLibraryPresence.onClasspath(), "libjllama not on classpath — skipping lib.path check");
+        URL library = libraryUrl();
+        assumeTrue(
+                library != null && "file".equals(library.getProtocol()),
+                "the library is not a plain file on the classpath (packaged jar): the lib.path child needs a directory");
+        Path dir = Paths.get(library.toURI()).getParent();
+        String classpath = classpathWithoutNatives(System.getProperty("java.class.path"), dir);
+        String java = Paths.get(System.getProperty("java.home"), "bin", "java").toString();
+        ProcessBuilder builder = new ProcessBuilder(
+                java,
+                "-cp",
+                classpath,
+                "-D" + LlamaSystemProperties.PREFIX + ".lib.path=" + dir,
+                LibPathChild.class.getName());
+        builder.redirectErrorStream(true);
+        Process child = builder.start();
+        String output;
+        try (InputStream in = child.getInputStream()) {
+            output = new String(readAll(in), StandardCharsets.UTF_8);
+        }
+        assertTrue(child.waitFor(5, TimeUnit.MINUTES), "the lib.path child JVM did not finish:\n" + output);
+        assertEquals(0, child.exitValue(), "the lib.path child JVM failed:\n" + output);
+        assertTrue(output.contains("native backend '") && output.contains("' loaded from " + dir), output);
+        assertTrue(output.contains("named by " + LlamaSystemProperties.PREFIX + ".lib.path"), output);
+        assertTrue(output.contains("child build llama.cpp=" + LlamaCppVersion.LLAMA_CPP_VERSION), output);
+    }
+
+    /** What the lib.path child runs: load the library through {@link LlamaModel}, print the build facts. */
+    public static final class LibPathChild {
+        private LibPathChild() {}
+
+        public static void main(String[] args) throws ClassNotFoundException {
+            Class.forName("net.ladenthin.llama.LlamaModel");
+            Map<String, String> build = LlamaModel.getJllamaBuildInfo();
+            System.out.println(
+                    "child build llama.cpp=" + build.get("llama.cpp") + " linked=" + LlamaModel.getLlamaCppBuildInfo());
+        }
+    }
+
+    private static @Nullable URL libraryUrl() {
+        ClassLoader loader = NativeLibraryLoadSmokeTest.class.getClassLoader();
+        for (String backend : LlamaLoader.LIBRARY_BACKENDS) {
+            URL url = loader.getResource("net/ladenthin/llama/" + OSInfo.getNativeLibFolderPathForCurrentOS() + "/"
+                    + backend + "/" + System.mapLibraryName("jllama"));
+            if (url != null) {
+                return url;
+            }
+        }
+        return null;
+    }
+
+    /** The classpath without the entry that holds the natives tree (so only lib.path can find them). */
+    static String classpathWithoutNatives(String classpath, Path nativesDir) {
+        List<String> kept = new ArrayList<>();
+        for (String entry : classpath.split(java.util.regex.Pattern.quote(File.pathSeparator))) {
+            if (entry.isEmpty()) {
+                continue;
+            }
+            Path candidate = Paths.get(entry).toAbsolutePath().normalize();
+            if (nativesDir.toAbsolutePath().normalize().startsWith(candidate)) {
+                continue;
+            }
+            kept.add(entry);
+        }
+        return String.join(File.pathSeparator, kept);
+    }
+
+    private static byte[] readAll(InputStream in) throws java.io.IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int n;
+        while ((n = in.read(buffer)) != -1) {
+            out.write(buffer, 0, n);
+        }
+        return out.toByteArray();
     }
 
     /**

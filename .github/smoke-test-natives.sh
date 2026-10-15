@@ -24,9 +24,21 @@
 # directory of this run (LLAMA_CACHE), so round 2 also proves the HTTPS client path with a real
 # certificate chain, which no local check can.
 #
+# Round 3 (the natives directory, no natives jar on the classpath): the natives jars of the set are
+# unpacked into ONE directory the way a consumer does by hand (smoke_natives_directory: the library
+# jar's directory, every module's files copied flat into it) and the server starts with the classes
+# jar plus its dependencies only and -Dnet.ladenthin.llama.lib.path=<that directory>. The loader
+# must take the lib.path branch -- preload the extras the directory lists, read its
+# jllama-build.txt, say so in the same loader line, naming the modules it found next to the
+# library -- and /health and a chat completion must work exactly as in round 1. This is the
+# "put the DLLs next to the application" path (README, "Natives outside Maven"), which until
+# 5.2.x was never launched by CI on any platform but Linux and was broken on Windows (the
+# modular jllama.dll imports ggml.dll, which a bare System.load does not find next to it).
+#
 # Usage: smoke-test-natives.sh <set-dir> <model-path> [port]
-# Server output is written to server-out.log / server-err.log (round 1) and server-tls-out.log /
-# server-tls-err.log (round 2) in the working dir (uploaded by the CI job on failure).
+# Server output is written to server-out.log / server-err.log (round 1), server-tls-out.log /
+# server-tls-err.log (round 2) and server-dir-out.log / server-dir-err.log (round 3) in the
+# working dir (uploaded by the CI job on failure).
 set -euo pipefail
 
 SET_DIR="${1:?usage: smoke-test-natives.sh <set-dir> <model-path> [port]}"
@@ -133,5 +145,28 @@ echo "plain HTTP on the TLS port refused: OK"
 find "$LLAMA_CACHE" -type f -name '*.gguf' | grep -q . \
     || fail "no .gguf under $LLAMA_CACHE — the https:// download did not happen"
 echo "https:// model download OK: $(find "$LLAMA_CACHE" -type f -name '*.gguf' -exec basename {} \; | head -1)"
+kill "$SERVER_PID" 2> /dev/null || true
+wait "$SERVER_PID" 2> /dev/null || true
+SERVER_PID=""
+
+# ---- Round 3: the natives directory through lib.path, no natives jar on the classpath -----------
+DIR_PORT=$((PORT + 2))
+NATIVES_DIR="$(smoke_natives_directory "$SET_DIR" "$PWD/natives-dir")" || fail "could not unpack the natives jars into a directory"
+echo "natives directory: $NATIVES_DIR ($(find "$NATIVES_DIR" -maxdepth 1 -type f | wc -l | tr -d ' ') files)"
+grep -q '^llama.cpp=' "$NATIVES_DIR/jllama-build.txt" || fail "the unpacked directory has no jllama-build.txt"
+CP_NO_NATIVES="$(smoke_classpath_without_natives "$SET_DIR")" || exit 1
+java -cp "$CP_NO_NATIVES" "-Dnet.ladenthin.llama.lib.path=$NATIVES_DIR" "$SMOKE_MAIN" -m "$MODEL" \
+    --host 127.0.0.1 --port "$DIR_PORT" --chat-template chatml \
+    > server-dir-out.log 2> server-dir-err.log &
+SERVER_PID=$!
+wait_healthy "http://127.0.0.1:$DIR_PORT" server-dir-out.log server-dir-err.log
+echo "health OK (lib.path)"
+chat_completion "http://127.0.0.1:$DIR_PORT"
+# The same loader line as round 1, now from the directory branch: it must say it loaded from the
+# directory we gave it and name every module copied next to the library.
+smoke_assert_loader_line "$SET_DIR" server-dir-out.log server-dir-err.log || fail "loader line check failed (lib.path)"
+grep -h "\[jllama\] native backend '[^']*' loaded from $NATIVES_DIR" server-dir-out.log server-dir-err.log | grep -q . \
+    || fail "the loader did not load from the lib.path directory $NATIVES_DIR"
+echo "lib.path round OK"
 
 echo "smoke test PASSED"

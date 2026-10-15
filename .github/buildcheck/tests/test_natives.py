@@ -180,8 +180,17 @@ class ConsumerTest(unittest.TestCase):
         # The fixture declares opencl opt-in (see CSV), so the loader text has to name it.
         text = ('List<String> LIBRARY_BACKENDS = Arrays.asList("metal", "cpu");\n'
                 'List<String> MODULE_BACKENDS = Arrays.asList(\n "cuda13", "vulkan",\n "opencl");\n'
+                'static { names.put("cuda13","ggml-cuda"); names.put("vulkan","ggml-vulkan");\n'
+                ' names.put("opencl","ggml-opencl"); MODULE_LIBRARY_NAMES = x; }\n'
                 'Set<String> OPT_IN_BACKENDS = Collections.singleton("opencl");')
         self.assertEqual(natives.check_loader(ROWS, text), [])
+        # The directory branch recognises a module by its file name: the map must follow the csv.
+        self.assertEqual(natives.check_loader(ROWS, text.replace('"vulkan","ggml-vulkan"', '"vulkan","ggml-vk"')),
+                         ["LlamaLoader.MODULE_LIBRARY_NAMES maps 'vulkan' to 'ggml-vk', natives.csv ships "
+                          "'ggml-vulkan' -- a module in a lib.path directory would go unrecognised"])
+        self.assertEqual(natives.check_loader(ROWS, text.replace(' names.put("opencl","ggml-opencl");',
+                                                                 ' names.put("opencl","ggml-opencl"); names.put("rocm","ggml-hip");')),
+                         ["LlamaLoader.MODULE_LIBRARY_NAMES names 'rocm', which no module jar of natives.csv ships"])
         self.assertEqual(natives.check_loader(ROWS, text.replace('"cuda13", ', "")),
                          ["LlamaLoader.MODULE_BACKENDS does not know 'cuda13' -- its jars would never load"])
         self.assertEqual(

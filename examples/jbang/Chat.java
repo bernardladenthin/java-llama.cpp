@@ -31,7 +31,8 @@ import net.ladenthin.llama.value.LlamaOutput;
  * -- the jars {@code net.ladenthin:llama-platform} names, listed here one by one because JBang treats a
  * {@code pom} dependency as a BOM and puts nothing of it on the classpath. The loader picks the jar of
  * this machine; the others are downloaded once and ignored. A GPU backend (for example
- * {@code net.ladenthin:llama:5.2.0:cuda13-linux-x86-64}) is one more DEPS line and is tried before the CPU.
+ * {@code net.ladenthin:llama:5.2.0:cuda13-linux-x86-64}) is one more DEPS line: its module is put next to the
+ * library and loaded when the vendor runtime is installed, otherwise the model runs on the CPU.
  *
  * <p>A {@link Session} keeps the conversation, so every turn passes only the new message, and the model's
  * chat template is applied for it; each reply is streamed as it is generated. An empty line or the end

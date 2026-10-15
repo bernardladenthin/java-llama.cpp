@@ -2260,12 +2260,25 @@ Java parameters are serialized to JSON strings and passed to native code, which 
 
 ### Native Library Resolution
 `LlamaLoader` tries in order:
-1. System property `net.ladenthin.llama.lib.path`
-2. `System.loadLibrary` on Android (the AAR's `jni/`), then `java.library.path`
+1. System property `net.ladenthin.llama.lib.path` -- a **natives directory** (README, "Natives outside
+   Maven"): the library jar's directory unpacked, optionally with module jars' files copied flat into
+   it. `loadFromDirectory` loads it with the jar branch's logic minus the extraction: the files its
+   `jllama-extras.txt` names by full path first (Windows: `ggml-base.dll`, `ggml.dll` -- a bare
+   `System.load` of `jllama.dll` failed there until 5.2.x, because Windows resolves imports from
+   `java.exe`'s directory and `PATH`, not from the DLL's), then the library; `jllama-build.txt` feeds
+   `getBuildInfo()`; a `jllama-files.txt` entry that is missing is reported; the modules present are
+   recognised by file name (`MODULE_LIBRARY_NAMES`, held to `natives.csv` by `check-natives.py`) and
+   named in the same loader line; the `backend` filter has no effect and says so. The temp-directory
+   cleanup and the module selection run only when the jars are reached, so a stale filter cannot fail
+   a `lib.path` start. Proven by `NativeLibraryLoadSmokeTest` in a fresh JVM on every `test-java-*`
+   job and by round 3 of every smoke row (`smoke_natives_directory`).
+2. `System.loadLibrary` on Android (the AAR's `jni/`), then every `java.library.path` entry as a natives
+   directory (same branch)
 3. The natives jars on the classpath: the library directory `net/ladenthin/llama/{os}/{arch}/{backend}/`
    of the platform (`LIBRARY_BACKENDS`: `metal`, else `cpu`), extracted together with every GPU module
    directory present (`MODULE_BACKENDS`, filtered by `net.ladenthin.llama.backend`, each checked against
-   the library's `jllama-build.txt`), then loaded (see "Natives jars")
+   the library's `jllama-build.txt`), then loaded (see "Natives jars"). `LlamaModel`'s static block warns
+   when the loaded build's tag differs from `LlamaCppVersion` (either branch).
 
 ### Cross-compilation
 Docker-based cross-compilation scripts are in `.github/dockcross/` for **Android** targets and the

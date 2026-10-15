@@ -139,6 +139,27 @@ public class LlamaLoader {
             new LinkedHashSet<>(Arrays.asList("cuda13", "rocm", "sycl", "vulkan", "opencl", "openvino")));
 
     /**
+     * The ggml module each {@link #MODULE_BACKENDS module backend} ships, as the base name
+     * {@link System#mapLibraryName} turns into the platform's file name ({@code libggml-cuda.so},
+     * {@code ggml-cuda.dll}). The jar branch never needs it (a module jar is recognised by its
+     * directory); the directory branch does, because a natives directory a consumer assembled by
+     * hand holds the modules flat next to the library and nothing else says which backends they
+     * are. Held to the {@code library} column of {@code natives.csv} by {@code check-natives.py}.
+     */
+    static final Map<String, String> MODULE_LIBRARY_NAMES;
+
+    static {
+        Map<String, String> names = new LinkedHashMap<>();
+        names.put("cuda13", "ggml-cuda");
+        names.put("rocm", "ggml-hip");
+        names.put("sycl", "ggml-sycl");
+        names.put("vulkan", "ggml-vulkan");
+        names.put("opencl", "ggml-opencl");
+        names.put("openvino", "ggml-openvino");
+        MODULE_LIBRARY_NAMES = Collections.unmodifiableMap(names);
+    }
+
+    /**
      * The module backends that are <em>not</em> extracted unless {@code net.ladenthin.llama.backend}
      * names them, even with their jar on the classpath.
      *
@@ -280,10 +301,6 @@ public class LlamaLoader {
     }
 
     private static void load() {
-        // only cleanup before the first extract
-        if (!extracted) {
-            cleanup(extractionDirectoriesOfThisClasspath());
-        }
         loadNativeLibrary("jllama");
         extracted = true;
     }
@@ -496,8 +513,12 @@ public class LlamaLoader {
         String nativeLibName = System.mapLibraryName(name);
         String nativeLibPath = systemProperties.getLibPath();
         if (nativeLibPath != null) {
-            Path path = Paths.get(nativeLibPath, nativeLibName);
-            if (loadNativeLibrary(path)) {
+            // The natives directory contract (CLAUDE.md, "Natives jars"): a directory a consumer
+            // unpacked from the natives jars, loaded with the jar branch's logic minus the extraction.
+            if (loadFromDirectory(
+                    Paths.get(nativeLibPath),
+                    LlamaSystemProperties.PREFIX + ".lib.path",
+                    LlamaLoader::loadNativeLibrary)) {
                 return;
             } else {
                 triedPaths.add(nativeLibPath);
@@ -529,8 +550,7 @@ public class LlamaLoader {
             if (ldPath.isEmpty()) {
                 continue;
             }
-            Path path = Paths.get(ldPath, nativeLibName);
-            if (loadNativeLibrary(path)) {
+            if (loadFromDirectory(Paths.get(ldPath), "java.library.path", LlamaLoader::loadNativeLibrary)) {
                 return;
             } else {
                 triedPaths.add(ldPath);
@@ -539,6 +559,12 @@ public class LlamaLoader {
 
         // The natives jars: one directory per backend below <os>/<arch>/. The library comes from
         // the one library backend present; every selected module backend is extracted next to it.
+        // The temp-directory cleanup runs here, before the first extraction, and nowhere earlier:
+        // it needs the module selection (the backend filter), which must not be able to fail a
+        // start that never reaches the jars -- a lib.path start with a stale filter property.
+        if (!extracted) {
+            cleanup(extractionDirectoriesOfThisClasspath());
+        }
         String nativeResourcePath = getNativeResourcePath();
         String library = null;
         for (String backend : LIBRARY_BACKENDS) {
@@ -549,13 +575,19 @@ public class LlamaLoader {
             triedPaths.add(nativeResourcePath + "/" + backend);
         }
         if (library == null) {
+            String reason = lastLoadFailure;
             throw new UnsatisfiedLinkError(String.format(
-                    "No native library found for os.name=%s, os.arch=%s, paths=[%s] -- add the natives jar of"
+                    "No native library found for os.name=%s, os.arch=%s, paths=[%s]%s -- add the natives jar of"
                             + " this platform (classifier cpu-<os>-<arch>, or metal-macos-aarch64; the pom"
                             + " net.ladenthin:llama-platform names them all) to the classpath, or on the module path"
                             + " together with --add-modules. A GPU natives jar alone is not enough: it holds only its"
                             + " backend module.",
-                    OSInfo.getOSName(), OSInfo.getArchName(), String.join(File.pathSeparator, triedPaths)));
+                    OSInfo.getOSName(),
+                    OSInfo.getArchName(),
+                    String.join(File.pathSeparator, triedPaths),
+                    // A directory that held the library but failed to load it has said why; the
+                    // reason belongs in the one error the caller sees, not only on stderr.
+                    reason == null ? "" : "; the last load attempt failed with: " + reason));
         }
         List<String> modules = selectModules(presentModules(nativeResourcePath), systemProperties.getBackend());
         if (!loadFromNativesJars(nativeResourcePath, library, modules)) {
@@ -570,6 +602,104 @@ public class LlamaLoader {
                     reason != null ? reason : "none reported -- see the messages above",
                     String.join(File.pathSeparator, triedPaths)));
         }
+    }
+
+    /** The one call the directory branch makes to the operating system, replaceable by a test. */
+    @FunctionalInterface
+    interface LibraryLoader {
+        /**
+         * Loads one library by its full path.
+         *
+         * @param library the file
+         * @return whether it loaded
+         */
+        boolean load(Path library);
+    }
+
+    /**
+     * Loads the library from a natives directory -- what {@code net.ladenthin.llama.lib.path} and
+     * every {@code java.library.path} entry name -- with the jar branch's logic minus the extraction.
+     *
+     * <p>The directory is the content of a library jar's {@code <os>/<arch>/<backend>/} directory,
+     * optionally with the files of module jars of the same build copied flat into it. In order: the
+     * files its {@value #BACKEND_EXTRAS_FILE} names are loaded by full path first (on Windows {@code
+     * ggml-base.dll} and {@code ggml.dll}, which {@code jllama.dll} imports and which the system
+     * loader does not look for next to the DLL -- a bare {@code System.load} of the library failed
+     * there, which is why this branch exists), then the library itself; ggml loads the modules next to
+     * it from {@code JNI_OnLoad}. The {@value #BACKEND_BUILD_FILE} is read for {@link #getBuildInfo()}
+     * and the loader line; a {@value #BACKEND_FILES_FILE} naming a file that is not there is reported
+     * (ggml would silently run with fewer CPU variants). The {@code net.ladenthin.llama.backend}
+     * filter has no effect here -- ggml loads whatever lies in the directory -- and a set filter is
+     * said to be ignored rather than silently obeyed by nothing.
+     *
+     * <p>Package-private, with the operating-system call behind {@link LibraryLoader}, so the order of
+     * loads, the failure paths and the loader line are testable without a library to load.
+     *
+     * @param dir    the natives directory
+     * @param origin what named the directory, for the loader line
+     * @param loader what loads one file (production: {@link #loadNativeLibrary(Path)})
+     * @return whether the library loaded; {@code false} also when the directory holds no library
+     */
+    static boolean loadFromDirectory(Path dir, String origin, LibraryLoader loader) {
+        String libraryFileName = System.mapLibraryName("jllama");
+        Path library = dir.resolve(libraryFileName);
+        if (!Files.isRegularFile(library)) {
+            return false;
+        }
+        List<String> extras;
+        List<String> plainFiles;
+        Map<String, String> build;
+        try {
+            extras = readFileList(dir, BACKEND_EXTRAS_FILE);
+            plainFiles = readFileList(dir, BACKEND_FILES_FILE);
+            build = readBuild(dir);
+        } catch (IOException e) {
+            lastLoadFailure = "cannot read the list files of " + dir + ": " + e.getMessage();
+            System.err.println("[jllama] " + lastLoadFailure);
+            return false;
+        }
+        for (String extra : extras) {
+            Path extraPath = dir.resolve(extra);
+            if (!Files.isRegularFile(extraPath)) {
+                lastLoadFailure = dir + "/" + BACKEND_EXTRAS_FILE + " names '" + extra + "', which is not there";
+                System.err.println("[jllama] " + lastLoadFailure);
+                return false;
+            }
+            if (!loader.load(extraPath)) {
+                return false;
+            }
+        }
+        List<String> missing = new ArrayList<>();
+        for (String plain : plainFiles) {
+            if (!Files.isRegularFile(dir.resolve(plain))) {
+                missing.add(plain);
+            }
+        }
+        if (!missing.isEmpty()) {
+            System.err.println("[jllama] " + dir + "/" + BACKEND_FILES_FILE + " names " + missing.size()
+                    + " file(s) that are not there (ggml will run without them): " + String.join(", ", missing));
+        }
+        if (!loader.load(library)) {
+            return false;
+        }
+        loadedBuild = Collections.unmodifiableMap(new LinkedHashMap<>(build));
+        List<String> modules = new ArrayList<>();
+        for (Map.Entry<String, String> module : MODULE_LIBRARY_NAMES.entrySet()) {
+            if (Files.isRegularFile(dir.resolve(System.mapLibraryName(module.getValue())))) {
+                modules.add(module.getKey());
+            }
+        }
+        String backend = build.get("backend");
+        System.err.println("[jllama] native backend '" + (backend != null ? backend : "unknown") + "' loaded from "
+                + dir + " with " + (modules.isEmpty() ? "no GPU module" : "GPU module(s) " + String.join(", ", modules))
+                + "; the natives directory named by " + origin
+                + (build.isEmpty() ? " (no " + BACKEND_BUILD_FILE + ")" : ""));
+        String filter = systemProperties.getBackend();
+        if (filter != null && !filter.trim().isEmpty()) {
+            System.err.println("[jllama] " + LlamaSystemProperties.PREFIX + ".backend=" + filter
+                    + " has no effect on a natives directory: ggml loads every module that lies in it");
+        }
+        return true;
     }
 
     /**
@@ -739,6 +869,41 @@ public class LlamaLoader {
         }
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
             return parseExtras(reader);
+        }
+    }
+
+    /**
+     * The same list file read from a natives directory on disk (the directory branch).
+     *
+     * @param dir      the natives directory
+     * @param listFile the list's file name
+     * @return the listed file names, or an empty list when the directory has no such list
+     * @throws IOException when the file exists but cannot be read
+     */
+    private static List<String> readFileList(Path dir, String listFile) throws IOException {
+        Path file = dir.resolve(listFile);
+        if (!Files.isRegularFile(file)) {
+            return Collections.emptyList();
+        }
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            return parseExtras(reader);
+        }
+    }
+
+    /**
+     * The {@link #BACKEND_BUILD_FILE} of a natives directory on disk (the directory branch).
+     *
+     * @param dir the natives directory
+     * @return the parsed file, empty when the directory has none
+     * @throws IOException when the file exists but cannot be read
+     */
+    private static Map<String, String> readBuild(Path dir) throws IOException {
+        Path file = dir.resolve(BACKEND_BUILD_FILE);
+        if (!Files.isRegularFile(file)) {
+            return Collections.emptyMap();
+        }
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            return parseBuild(reader);
         }
     }
 

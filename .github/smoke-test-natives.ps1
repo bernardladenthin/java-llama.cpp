@@ -8,9 +8,16 @@
 # round 1 plain HTTP with the cached model, round 2 an HTTPS server behind a self-signed
 # certificate serving a model it downloaded itself from an https:// URL).
 #
+# Round 3 (the natives directory through net.ladenthin.llama.lib.path, no natives jar on the
+# classpath) is the Windows half of what smoke-test-natives.sh explains: this is the platform where
+# the bare System.load used to fail, because jllama.dll imports ggml.dll and ggml-base.dll and
+# Windows does not look next to the DLL for them -- the loader's directory branch preloads them
+# from the directory's jllama-extras.txt, exactly as the jar branch does.
+#
 # Usage: smoke-test-natives.ps1 -SetDir <dir> -Model <gguf> [-Port <p>]
-# Server output is written to server-out.log / server-err.log (round 1) and server-tls-out.log /
-# server-tls-err.log (round 2) in the working dir (uploaded by the CI job on failure).
+# Server output is written to server-out.log / server-err.log (round 1), server-tls-out.log /
+# server-tls-err.log (round 2) and server-dir-out.log / server-dir-err.log (round 3) in the working
+# dir (uploaded by the CI job on failure).
 param(
     [Parameter(Mandatory = $true)][string]$SetDir,
     [Parameter(Mandatory = $true)][string]$Model,
@@ -18,6 +25,7 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $TlsPort = $Port + 1
+$DirPort = $Port + 2
 $HttpsModelName = 'stories260K.gguf'
 $Main = 'net.ladenthin.llama.server.ServerLauncher'
 
@@ -37,6 +45,77 @@ function Get-SetModules([string]$Dir) {
         }
     }
     return $modules
+}
+
+# The rows of natives.csv as objects (classifier, dir, lib, kind).
+function Get-NativesRows() {
+    $list = Join-Path $PSScriptRoot 'natives.csv'
+    $rows = @()
+    foreach ($line in Get-Content $list) {
+        if ($line -match '^#' -or $line -match '^classifier,' -or -not $line.Trim()) { continue }
+        $cols = $line.Split(',')
+        $rows += [pscustomobject]@{ Classifier = $cols[0]; Dir = $cols[1]; Lib = $cols[2]; Kind = $cols[4] }
+    }
+    return $rows
+}
+
+# The classpath of the set without its natives jars (the classes jar and its runtime dependencies):
+# what a consumer has who ships the natives as a directory and names it with lib.path.
+function Get-ClasspathWithoutNatives([string]$Dir) {
+    $classifiers = @(Get-NativesRows | ForEach-Object { $_.Classifier })
+    $jars = @(Get-ChildItem -Path $Dir -Filter '*.jar' -File | Where-Object {
+        $base = $_.BaseName
+        -not ($classifiers | Where-Object { $base.EndsWith("-$_") })
+    } | ForEach-Object { $_.FullName })
+    if ($jars.Count -lt 1) { Write-Error "no non-natives jar in the smoke set $Dir" }
+    return ($jars -join ';')
+}
+
+# Unpacks the natives jars of the set into ONE natives directory the way a consumer does by hand
+# (the bash twin is smoke_natives_directory in smoke-lib.sh): the library jar's directory, every
+# module's files copied flat into it, the modules' jllama-extras.txt / jllama-files.txt lines
+# appended to the library's, their jllama-build.txt and jllama-sbom.json dropped.
+function New-NativesDirectory([string]$Dir, [string]$Out) {
+    if (Test-Path $Out) { Remove-Item -Recurse -Force $Out }
+    New-Item -ItemType Directory -Path $Out | Out-Null
+    $rows = Get-NativesRows
+    $libDir = $null
+    foreach ($row in ($rows | Where-Object { $_.Kind -eq 'library' })) {
+        $jar = Get-ChildItem -Path $Dir -Filter "llama-*-$($row.Classifier).jar" -File | Select-Object -First 1
+        if (-not $jar) { continue }
+        if ($libDir) { Write-Error "two library jars in the smoke set: $libDir and $($row.Classifier)" }
+        $zip = Join-Path $Out "$($row.Classifier).zip"
+        Copy-Item $jar.FullName $zip
+        Expand-Archive -Path $zip -DestinationPath (Join-Path $Out 'library') -Force
+        $libDir = Join-Path (Join-Path $Out 'library') ("net/ladenthin/llama/" + $row.Dir)
+        if (-not (Test-Path (Join-Path $libDir $row.Lib))) { Write-Error "$($jar.Name) holds no net/ladenthin/llama/$($row.Dir)/$($row.Lib)" }
+    }
+    if (-not $libDir) { Write-Error "no library jar in the smoke set $Dir" }
+    foreach ($row in ($rows | Where-Object { $_.Kind -eq 'module' })) {
+        $jar = Get-ChildItem -Path $Dir -Filter "llama-*-$($row.Classifier).jar" -File | Select-Object -First 1
+        if (-not $jar) { continue }
+        $zip = Join-Path $Out "$($row.Classifier).zip"
+        Copy-Item $jar.FullName $zip
+        $modRoot = Join-Path $Out $row.Classifier
+        Expand-Archive -Path $zip -DestinationPath $modRoot -Force
+        $modDir = Join-Path $modRoot ("net/ladenthin/llama/" + $row.Dir)
+        if (-not (Test-Path (Join-Path $modDir $row.Lib))) { Write-Error "$($jar.Name) holds no net/ladenthin/llama/$($row.Dir)/$($row.Lib)" }
+        foreach ($f in Get-ChildItem -Path $modDir -File) {
+            switch ($f.Name) {
+                { $_ -in 'jllama-build.txt', 'jllama-sbom.json' } { }
+                { $_ -in 'jllama-extras.txt', 'jllama-files.txt' } {
+                    $lines = Get-Content $f.FullName | Where-Object { $_.Trim() -and -not $_.StartsWith('#') }
+                    Add-Content -Path (Join-Path $libDir $f.Name) -Value $lines
+                }
+                default {
+                    $target = Join-Path $libDir $f.Name
+                    if (Test-Path $target) { Write-Error "$($row.Classifier) ships $($f.Name), which the library directory already holds" }
+                    Copy-Item $f.FullName $target
+                }
+            }
+        }
+    }
+    return (Resolve-Path $libDir).Path
 }
 
 function Dump-ServerLogs([string[]]$Logs) {
@@ -158,6 +237,43 @@ try {
     $downloaded = @(Get-ChildItem -Path $env:LLAMA_CACHE -Recurse -File -Filter '*.gguf')
     if ($downloaded.Count -lt 1) { Write-Error "no .gguf under $env:LLAMA_CACHE - the https:// download did not happen" }
     Write-Host "https:// model download OK: $($downloaded[0].Name)"
+} finally {
+    if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+}
+
+# ---- Round 3: the natives directory through lib.path, no natives jar on the classpath -----------
+$nativesDir = New-NativesDirectory $SetDir (Join-Path (Get-Location) 'natives-dir')
+$fileCount = @(Get-ChildItem -Path $nativesDir -File).Count
+Write-Host "natives directory: $nativesDir ($fileCount files)"
+if (-not (Select-String -Path (Join-Path $nativesDir 'jllama-build.txt') -Pattern '^llama.cpp=' -Quiet)) {
+    Write-Error "the unpacked directory has no jllama-build.txt"
+}
+$cpNoNatives = Get-ClasspathWithoutNatives $SetDir
+$proc = Start-Process java -PassThru -NoNewWindow `
+    -RedirectStandardOutput server-dir-out.log -RedirectStandardError server-dir-err.log `
+    -ArgumentList '-cp', "`"$cpNoNatives`"", "-Dnet.ladenthin.llama.lib.path=$nativesDir", $Main, '-m', $Model, `
+        '--host', '127.0.0.1', '--port', "$DirPort", '--chat-template', 'chatml'
+try {
+    Wait-Healthy $proc "http://127.0.0.1:$DirPort" @('server-dir-out.log', 'server-dir-err.log')
+    Write-Host "health OK (lib.path)"
+    Test-ChatCompletion "http://127.0.0.1:$DirPort"
+    $selection = Select-String -Path 'server-dir-out.log', 'server-dir-err.log' `
+        -Pattern "\[jllama\] native backend '[^']*' loaded "
+    if (-not $selection) {
+        Dump-ServerLogs @('server-dir-out.log', 'server-dir-err.log')
+        Write-Error "no loader line found - the loader did not report the backend (lib.path)"
+    }
+    $loaderLine = $selection[0].Line
+    Write-Host "loader: $loaderLine"
+    if ($loaderLine -notlike "*loaded from $nativesDir*") {
+        Write-Error "the loader did not load from the lib.path directory ${nativesDir}: $loaderLine"
+    }
+    foreach ($module in $setModules) {
+        if ($loaderLine -notmatch "GPU module\(s\) ([a-z0-9-]+, )*$module(,|;|$)") {
+            Write-Error "the loader did not find the $module module next to the library: $loaderLine"
+        }
+    }
+    Write-Host "lib.path round OK"
     Write-Host "smoke test PASSED"
 } finally {
     if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }

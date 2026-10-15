@@ -49,36 +49,10 @@ zip), fat jars, a Maven plugin for embedding, `GGML_BACKEND_PATH` as a documente
 
 ### 2. The natives directory as a first-class contract (A)
 
-*(Item 1, provenance and transparency, landed 2026-10-15: `jllama-build.txt` keys + `jllama-sbom.json`,
-Sigstore attestations in `package` and the publish jobs, generated `docs/patches.md`, CycloneDX on the
-reactor; `LlamaModel.getJllamaBuildInfo()`.)*
-
-> A natives directory is the content of `net/ladenthin/llama/<OS>/<ARCH>/<backend>/` of a library
-> jar, optionally plus the files of the module jars of the same platform and the same build tag,
-> copied flat into the same directory. The loader loads it from the classpath (extracted) or from
-> `lib.path` (not extracted) **with the same logic**: preload the extras, check the build tag, load
-> the library, let ggml load the modules next to it.
-
-- [ ] `LlamaLoader`: `NativesDirectory` reads from a `Path` as well as from classpath resources; the
-      `lib.path` and `java.library.path` branches preload `jllama-extras.txt`, warn (not fail) on a
-      `jllama-build.txt` tag that differs from `LlamaCppVersion`, print the same `[jllama] native
-      backend ... loaded from <dir>` line; `cleanup()`/`selectModules()` run after the `lib.path`
-      attempt (a `backend` filter naming an absent jar must not abort a `lib.path` start, and in
-      directory mode the filter has no effect -- say so); the "No native library found" error carries
-      `lastLoadFailure` when `lib.path` was set. Model-free unit tests over a `@TempDir` directory
-      with fake list files; `NativeLibraryLoadSmokeTest` gets a `lib.path` variant that runs in every
-      `test-java-*` job, Windows included.
-- [ ] Smoke: `smoke-test-natives.sh` / `.ps1` and `smoke-native-macos.sh` run a second round from the
-      library jar plus one module jar unzipped into a directory, `-Dnet.ladenthin.llama.lib.path`,
-      **no** natives jar on the classpath; `/health`, a chat completion, the loader line naming the
-      module. `smoke-lib.sh` asserts the loader line in both modes.
-- [ ] Docs: README section "Natives outside Maven" next to "Library Location" (contract, Central URL
-      pattern, `dependency:unpack` recipe, GPU module of the same tag, `lib.path`, the WDAC paragraph
-      corrected); stale lines gone (README 124/405/1263, `examples/jbang/Chat.java` "tried before the
-      CPU", the agent pom's "loader prefers it", `llama-android/build.gradle.kts` "~70 MB", README
-      1514, `docs/graalvm-native-image-evaluation.md`'s `BACKEND_PRIORITY`,
-      `workspace/crossrepostatus.md` 189-195); CLAUDE.md "Native Library Resolution" names the
-      directory mode as an equal path.
+*(Landed 2026-10-15: `LlamaLoader.loadFromDirectory` for `lib.path` and `java.library.path` with the
+jar branch's logic, the fresh-JVM `NativeLibraryLoadSmokeTest` on every Java test job, round 3 of
+every smoke row and the macOS smoke, README "Natives outside Maven", the stale lines. Items 1 and 2
+of this roadmap are done; the contract text stays in README and CLAUDE.md.)*
 
 ### 3. Hard pinning (C.2) -- four repos
 

@@ -121,7 +121,7 @@ Inference of Meta's LLaMA model (and others) in pure C/C++.
 - **Conversation checkpoints** — `Session.checkpoint(...)` / `rewind(...)` / `fork(...)` branch and roll back a chat (KV-cache slot save/restore + transcript snapshot) without re-prefilling.
 - **GGUF metadata inspection** without loading the model (`GgufInspector` — pure Java, reads header + key/value table only, big-endian aware).
 - **Distributed inference over RPC** — offload a model's layers to llama.cpp RPC servers on other machines (`ModelParameters.setRpcServers(...)` / `--rpc host:port`), and serve this machine's devices to them with `RpcServer` (the in-JVM `rpc-server`). See [Distributed inference over RPC](#distributed-inference-over-rpc).
-- **Local agent** ([`llama-atmosphere-agent`](llama-atmosphere-agent/), release asset, JDK 21+) — a fully offline agent on top of this library that reads and edits files and, if allowed, runs commands. One agent session, three ways to use it: a **terminal** (full console or line-oriented `--plain`, fine over SSH/PuTTY), a **browser** (`--web`, token-protected, loopback by default — reach it from elsewhere through an SSH tunnel), and **IDEs** over the [Agent Client Protocol](https://agentclientprotocol.com) (`--acp`: JetBrains IDEs and Zed natively, VS Code through an ACP extension). See [Local agent](#local-agent-terminal-browser-ide-via-acp).
+- **Local agent** ([`llama-atmosphere-agent`](llama-atmosphere-agent/), JDK 21+) — a fully offline agent on top of this library that reads and edits files and, if allowed, runs commands. One agent session, three ways to use it: a **terminal** (full console or line-oriented `--plain`, fine over SSH/PuTTY), a **browser** (`--web`, token-protected, loopback by default — reach it from elsewhere through an SSH tunnel), and **IDEs** over the [Agent Client Protocol](https://agentclientprotocol.com) (`--acp`: JetBrains IDEs and Zed natively, VS Code through an ACP extension). See [Local agent](#local-agent-terminal-browser-ide-via-acp).
 - **Multi-model router mode** (`--models-dir` + per-request model selection, managed via the typed `RouterClient`) and **attach mode** (`NativeServer(LlamaModel, ...)` serves an already-loaded model over the full upstream HTTP frontend — one copy of the weights).
 - **HTTPS built in** — model downloads from `https://` URLs (`--model-url`, `-hf`) and a TLS-capable embedded server (`--ssl-key-file`/`--ssl-cert-file`) on every desktop platform, with BoringSSL linked statically: no OpenSSL to install, and no dependency on one (Android and s390x ship without SSL).
 - Pre-built native binaries for Linux (x86-64, aarch64, s390x), macOS (arm64, Metal included), Windows (x86-64, x86, arm64) and Android (arm64, x86-64), plus GPU backends (CUDA, Vulkan, OpenCL, ROCm/HIP, SYCL, OpenVINO) — one natives jar each, all loadable side by side with automatic CPU fallback; see [Choosing the natives jars](#choosing-the-natives-jars). Android additionally ships as the [`llama-android` AAR](#importing-in-android) with the optional `llama-kotlin` coroutines façade.
@@ -402,18 +402,75 @@ natives jar (in CI, together with every other platform's).
 
 #### Library Location
 
-This project has to load a single shared library `jllama`.
+The loader looks for a **natives directory** -- the `jllama` library (`jllama.dll`, `libjllama.so`,
+`libjllama.dylib`) together with the files next to it: on the modular platforms ggml's shared
+libraries and the CPU backend modules, any GPU backend modules, and the three list files
+`jllama-build.txt`, `jllama-files.txt` and (on Windows) `jllama-extras.txt`. It searches in this
+order and stops at the first directory that holds the library:
 
-Note, that the file name varies between operating systems, e.g., `jllama.dll` on Windows, `jllama.so` on Linux, and `jllama.dylib` on macOS.
+- **net.ladenthin.llama.lib.path**: one directory you name, `-Dnet.ladenthin.llama.lib.path=/path/to/directory`.
+  This is the "natives outside Maven" path, see the next section.
+- **java.library.path**: every entry of the JVM's library path is tried as a natives directory
+  (`System.out.println(System.getProperty("java.library.path"))` prints them). Use this to install
+  the natives as system libraries.
+- The **natives jars** on the classpath: the library directory of your platform plus every GPU
+  module directory found, extracted into the temp directory and loaded from there, as described in
+  [Choosing the natives jars](#choosing-the-natives-jars).
 
-The application will search in the following order in the following locations:
+The first two load **the same way as the third, minus the extraction**: the files
+`jllama-extras.txt` names are loaded first (on Windows `ggml-base.dll` and `ggml.dll`, which
+`jllama.dll` imports and which the system loader does not look for next to the DLL), then the
+library; ggml then loads every backend module that lies in the directory. The start-up line
+`[jllama] native backend '<backend>' loaded from <directory> ...` says which branch loaded what.
 
-- In **net.ladenthin.llama.lib.path**: Use this option if you want a custom location for your shared libraries, i.e., set VM option `-Dnet.ladenthin.llama.lib.path=/path/to/directory`.
-- In **java.library.path**: These are predefined locations for each OS, e.g., `/usr/java/packages/lib:/usr/lib64:/lib64:/lib:/usr/lib` on Linux.
-  You can find out the locations using `System.out.println(System.getProperty("java.library.path"))`.
-  Use this option if you want to install the shared libraries as system libraries.
-- From the **natives jars** on the classpath: every backend directory found for your platform, in the
-  order described in [Choosing the natives jars](#choosing-the-natives-jars).
+#### Natives outside Maven: the natives directory
+
+Every natives jar is a zip holding exactly one directory, so the natives can be used without Maven
+resolving them onto a classpath -- next to an application, in a Docker image layer, in a directory
+an application-control policy allows, or as sidecar files of a native image. The contract:
+
+> A natives directory is the content of `net/ladenthin/llama/<OS>/<ARCH>/<backend>/` of a **library
+> jar** (`cpu-<os>-<arch>`, `metal-macos-aarch64`), optionally plus the files of **GPU module jars** of
+> the same platform and the same version, copied flat into that directory. The loader loads it from
+> `net.ladenthin.llama.lib.path` exactly like from the classpath: extras first, then the library,
+> and ggml loads the modules next to it.
+
+Getting a natives jar on its own: it is an ordinary Maven artifact, so any of these works
+
+```bash
+# Maven: copy one classifier jar into a directory (any artifact repository you resolve from)
+mvn dependency:copy -Dartifact=net.ladenthin:llama:5.2.0:jar:cpu-linux-x86-64 -DoutputDirectory=.
+# or unpack it straight away
+mvn dependency:unpack -Dartifact=net.ladenthin:llama:5.2.0:jar:cpu-linux-x86-64 -DoutputDirectory=natives
+# plain HTTP: Maven Central's layout is <group path>/<artifact>/<version>/<artifact>-<version>-<classifier>.jar
+curl -LO https://repo1.maven.org/maven2/net/ladenthin/llama/5.2.0/llama-5.2.0-cpu-linux-x86-64.jar
+unzip llama-5.2.0-cpu-linux-x86-64.jar 'net/ladenthin/llama/*'
+```
+
+Then start the JVM with the classes jar (and its dependencies, Jackson and SLF4J) on the classpath
+and the directory named:
+
+```bash
+java -cp 'llama-5.2.0.jar:lib/*' -Dnet.ladenthin.llama.lib.path=natives/net/ladenthin/llama/Linux/x86_64/cpu MyApp
+```
+
+To add a GPU backend, unpack its module jar the same way and copy the files of its directory
+(`net/ladenthin/llama/Linux/x86_64/cuda13/` for example) **flat** into the library's directory: the
+module library next to the CPU set; if the module ships a `jllama-extras.txt` (a vendor loader it
+needs preloaded), append its lines to the library's; its own `jllama-build.txt` and `jllama-sbom.json`
+are not needed (the module and the library must come from the same `net.ladenthin:llama` version,
+which the loader checks when the jars are on the classpath and you check by taking both from the same
+version here). What the directory tells you: `jllama-build.txt` names the llama.cpp tag and commit,
+this project's version and commit, the [carried patches](docs/patches.md), the compiler and the
+toolkit; `jllama-sbom.json` is the same as a CycloneDX bill of materials; `LlamaModel.getJllamaBuildInfo()`
+returns the keys at run time, and a tag that differs from the classes jar's pin is reported on
+stderr at start. `net.ladenthin.llama.backend` has no effect on a directory (ggml loads every module
+that lies in it); the loader says so when it is set. Nothing is extracted and nothing is written:
+the directory may be read-only.
+
+The CI smoke of every desktop platform runs this path on the published jars (unpacked into a
+directory, started with `lib.path` and no natives jar on the classpath), so a release cannot ship
+with the directory mode broken on a platform.
 
 #### System Properties Reference
 
@@ -421,7 +478,7 @@ Every `net.ladenthin.llama.*` system property recognised by the library, deep-sc
 
 | Property | Default | Scope | Consumer | Description |
 |---|---|---|---|---|
-| `net.ladenthin.llama.lib.path` | unset (falls back to `java.library.path`) | runtime | `LlamaLoader` | Directory containing the native `jllama` shared library. Checked first, before `java.library.path`. Set with `-Dnet.ladenthin.llama.lib.path=/path/to/dir`. |
+| `net.ladenthin.llama.lib.path` | unset (falls back to `java.library.path`, then the natives jars) | runtime | `LlamaLoader` | A natives directory (see [Natives outside Maven](#natives-outside-maven-the-natives-directory)): the `jllama` library with the files next to it, loaded with the same logic as from the natives jars but without extraction. Checked first. Set with `-Dnet.ladenthin.llama.lib.path=/path/to/dir`. |
 | `net.ladenthin.llama.tmpdir` | unset (falls back to `java.io.tmpdir`) | runtime | `LlamaLoader` | Directory the natives are extracted into, one subdirectory per backend and build (`jllama-backend-<backend>-<key>`). It is kept across runs: the next start of the same build compares each file with the jar and copies nothing; a directory of a build that is no longer on the classpath is removed by a later start once it is 10 minutes old. Point it elsewhere when the default temp directory is on a slow or policy-restricted volume. |
 | `net.ladenthin.llama.osinfo.architecture` | unset (uses `os.arch`) | runtime | `OSInfo` | Override for the architecture string used to locate the bundled library inside the JAR. Useful when `os.arch` reports an unexpected value (e.g. inside dockcross / chrooted environments). |
 | `net.ladenthin.llama.backend` | unset (every GPU module jar on the classpath is put next to the library) | runtime | `LlamaLoader` | A comma-separated filter over the GPU module jars (e.g. `vulkan`, `cuda13,vulkan`): only the named modules are put in place, `cpu` names none; a named module whose jar is not on the classpath, or an unknown name, fails the load. The library jar is never a choice — it is the one of the running platform. See [Choosing the natives jars](#choosing-the-natives-jars). |
@@ -1260,8 +1317,7 @@ jbang net.ladenthin:llama-atmosphere-agent:5.2.0 \
     --model Qwen3-4B-Instruct-2507-Q4_K_M.gguf --workspace /path/to/project
 ```
 
-Or download it from a release (below, JDK 21+ only), or clone the repository and run it from that
-folder, which needs only JDK 21+ and Maven — the core jar from Maven Central ships the natives:
+Or clone the repository and run it from that folder, which needs only JDK 21+ and Maven — the core jar from Maven Central ships the natives:
 
 ```bash
 # get the folder and a tool-capable model (Qwen3-4B-Instruct-2507, 2.3 GB)
@@ -1512,8 +1568,8 @@ enforces against your app. The OpenCL AAR adds the `libggml-opencl.so` module, w
 start loads when the device has an OpenCL ICD and skips otherwise. CI boots an x86_64 emulator
 and runs real on-device inference against every AAR build.
 Do **not** also depend on the desktop `net.ladenthin:llama` JAR in the same app — the AAR
-already contains those classes, and the JAR would drag ~70 MB of desktop natives into your
-APK. See [`llama-android/README.md`](llama-android/README.md) and
+already contains those classes (the JAR carries no natives since 5.2.0, it would only duplicate
+every class). See [`llama-android/README.md`](llama-android/README.md) and
 [`llama-kotlin/README.md`](llama-kotlin/README.md) for details.
 
 **Runnable example app — "LLM Service".** A minimal, KISS, fully-offline on-device chat app
@@ -1630,10 +1686,15 @@ issue with that file rather than editing your JDK installation.
 The native libraries are **not Authenticode-signed** (upstream llama.cpp ships its DLLs unsigned
 too), and `LlamaLoader` extracts them into the temp directory on first use. A client whose
 application-control policy (WDAC, AppLocker) blocks unsigned DLLs, or any DLL under `%TEMP%`,
-refuses the load with `UnsatisfiedLinkError`. The way out is a directory the policy allows: put the
-contents of the natives jar's `net/ladenthin/llama/Windows/x86_64/cpu/` directory there and start
-the JVM with `-Dnet.ladenthin.llama.lib.path=<that directory>`, which loads from it without
-extracting anything. (The project's release-signing key is an OpenPGP key, which signs the jars with detached `.asc`
+refuses the load with `UnsatisfiedLinkError`. The way out is a directory the policy allows: unpack
+the natives jar's `net/ladenthin/llama/Windows/x86_64/cpu/` directory there (a GPU module jar's
+files flat next to it, if you use one) and start the JVM with
+`-Dnet.ladenthin.llama.lib.path=<that directory>`, which loads from it without extracting anything
+-- the full recipe is in [Natives outside Maven](#natives-outside-maven-the-natives-directory). (Until
+5.2.x this advice did not work on the modular Windows build: the `lib.path` branch loaded only
+`jllama.dll`, whose imports of `ggml.dll` and `ggml-base.dll` Windows then looked for next to
+`java.exe`; the branch now preloads what `jllama-extras.txt` names, and CI runs it on every
+desktop platform.) (The project's release-signing key is an OpenPGP key, which signs the jars with detached `.asc`
 files; Windows does not look at those, so the DLLs would need a separate code-signing
 certificate.)
 

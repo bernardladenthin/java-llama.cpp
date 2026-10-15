@@ -267,6 +267,25 @@ def check_loader(natives, loader_text):
                      for b in sorted(listed - known)]
         failures += [f"LlamaLoader.{const} names '{b}', which no {kind} jar of natives.csv ships"
                      for b in sorted(known - listed)]
+    # MODULE_LIBRARY_NAMES is how the directory branch (net.ladenthin.llama.lib.path) recognises a
+    # module that lies flat next to the library: backend -> base library name, which must be the
+    # `library` column of every module row with its lib prefix and extension removed, in both
+    # directions. (A module backend has one base name on every OS: libggml-cuda.so / ggml-cuda.dll.)
+    expected = {}
+    for r in natives:
+        if r["kind"] == "module":
+            base = re.sub(r"^lib", "", re.sub(r"\.(so|dll|dylib)$", "", r["library"]))
+            expected.setdefault(backend(r), set()).add(base)
+    block = re.search(r"names\.put\(.*?MODULE_LIBRARY_NAMES = ", loader_text, re.S)
+    declared = dict(re.findall(r'names\.put\("([^"]+)",\s*"([^"]+)"\)', block.group(0))) if block else {}
+    for b, bases in sorted(expected.items()):
+        if len(bases) != 1:
+            failures.append(f"natives.csv: the module backend '{b}' ships differently named libraries: {sorted(bases)}")
+        elif declared.get(b) != next(iter(bases)):
+            failures.append(f"LlamaLoader.MODULE_LIBRARY_NAMES maps '{b}' to '{declared.get(b)}', natives.csv ships "
+                            f"'{next(iter(bases))}' -- a module in a lib.path directory would go unrecognised")
+    failures += [f"LlamaLoader.MODULE_LIBRARY_NAMES names '{b}', which no module jar of natives.csv ships"
+                 for b in sorted(set(declared) - set(expected))]
     return failures
 
 
