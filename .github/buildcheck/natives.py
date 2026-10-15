@@ -239,26 +239,48 @@ def check_workflow(natives, jobs):
 
 def check_signing(natives, jobs, uploads):
     """`sign-windows-natives` re-uploads every Windows natives artifact signed: one upload-artifact step
-    per Windows row of the list, with `overwrite: true` (the same name as the build job's artifact),
-    and the job waits for every job that uploads one of them -- `overwrite` deletes the artifact for a
-    moment, so a build or test job still reading it would race. A Windows row without its step would
-    ship that jar unsigned on a signed run, which `--require-signed` in `package` then reports late."""
+    per Windows row of the list, with `overwrite: true` (the same name as the build job's artifact) and
+    `if-no-files-found: error` (a download that matched fewer artifacts must not leave the unsigned
+    build artifact in place), nothing of another platform, and the job waits for every job that uploads
+    or reads one of them -- `overwrite` deletes the artifact for a moment, so a build or test job still
+    reading it would race (the Windows Java test job reads natives-cpu-windows-x86-64 through the
+    reusable workflow's input). A Windows row without its step would ship that jar unsigned on a
+    signed run, which `--require-signed` in `package` then reports late."""
     windows = [r["classifier"] for r in natives if tree(r).split("/")[0] == "Windows"]
     sign = jobs.get(SIGN_JOB)
     if sign is None:
         return [f"publish.yml has no `{SIGN_JOB}` job"] if windows else []
     signed = {c for c, uploaders in uploads.items() if SIGN_JOB in uploaders}
-    failures = compare(f"publish.yml {SIGN_JOB} re-uploads (one per Windows row)", windows, signed)
-    for classifier in sorted(signed):
+    failures = [f"publish.yml {SIGN_JOB} re-uploads (one per Windows row): missing {c}"
+                for c in sorted(set(windows) - signed)]
+    failures += [f"publish.yml {SIGN_JOB} re-uploads natives-{c}, which is not a Windows row -- it would replace "
+                 f"the build artifact of another platform with an unsigned copy"
+                 for c in sorted(signed - set(windows))]
+    uploaders = set()
+    for classifier in sorted(signed & set(windows)):
         for job in sorted(uploads[classifier] - {SIGN_JOB}):
+            uploaders.add(job)
             if job not in sign.needs:
                 failures.append(f"publish.yml: {SIGN_JOB} does not wait for {job}, which uploads "
                                 f"natives-{classifier} -- add it to the job's needs")
+    downstream = {name for name in jobs if SIGN_JOB in workflow.closure(jobs, name)}
+    for name, job in jobs.items():
+        if name == SIGN_JOB or name in downstream or name in uploaders or name in sign.needs:
+            continue
+        code = "\n".join(line for line in job.lines if not line.lstrip().startswith("#"))
+        read = [c for c in windows if f"natives-{c}" in code]
+        if read:
+            failures.append(f"publish.yml: {name} reads natives-{read[0]} but {SIGN_JOB} does not wait for it -- the "
+                            f"signed re-upload deletes the artifact for a moment; add {name} to the job's needs")
     for step in sign.steps():
-        if any("actions/upload-artifact@" in line for line in step) \
-                and not any(line.strip() == "overwrite: true" for line in step):
+        if not any("actions/upload-artifact@" in line for line in step):
+            continue
+        if not any(line.strip() == "overwrite: true" for line in step):
             failures.append(f"publish.yml {SIGN_JOB}: an upload-artifact step without `overwrite: true` would fail "
                             f"on the artifact the build job uploaded")
+        if not any(line.strip() == "if-no-files-found: error" for line in step):
+            failures.append(f"publish.yml {SIGN_JOB}: an upload-artifact step without `if-no-files-found: error` "
+                            f"would leave the unsigned build artifact in place when the download matched nothing")
     return failures
 
 
@@ -352,6 +374,35 @@ def readme_version(readme_text):
     return match.group(1) if match else None
 
 
+# The READMEs whose dependency snippets name a release version by hand (CLAUDE.md "Version bump"); the
+# langchain4j one is the snippet that was forgotten on the 5.0.4 -> 5.0.5 bump, the kotlin one on 5.1.0 -> 6.0.0.
+MODULE_READMES = ("llama-langchain4j/README.md", "llama-kotlin/README.md", "llama-android/README.md",
+                  "llama-ffm/README.md")
+SNIPPET_VERSION = re.compile(r"<groupId>net\.ladenthin</groupId>\s*<artifactId>[a-z0-9-]+</artifactId>\s*"
+                             r"<version>([^<]+)</version>|[\"']net\.ladenthin:[a-z0-9-]+:([^\"':]+)(?::[a-z0-9-]+)?[\"']")
+
+
+def snippet_versions(text):
+    """Every release version a Maven (`<groupId>net.ladenthin</groupId> ... <version>`) or Gradle
+    (`"net.ladenthin:<artifact>:<version>"`) dependency snippet of `text` names, in order."""
+    return [a or b for a, b in SNIPPET_VERSION.findall(text)]
+
+
+def check_module_readmes(readme_text, module_readmes):
+    """The dependency snippets of the module READMEs (`module_readmes`: path -> text) and the root README's
+    own `llama-langchain4j` snippet name the version of the root README's install snippet -- the bump
+    edits every one of them by hand, and a forgotten one points consumers at the previous release."""
+    expected = readme_version(readme_text)
+    failures = []
+    for path, text in sorted(module_readmes.items()):
+        failures += [f"{path}: a dependency snippet names {v}, the README install snippet's version is {expected}"
+                     for v in snippet_versions(text) if v != expected]
+    failures += [f"README.md: the llama-langchain4j snippet names {v}, the install snippet {expected}"
+                 for v in re.findall(r"<artifactId>llama-langchain4j</artifactId>\s*<version>([^<]+)</version>",
+                                     readme_text) if v != expected]
+    return failures
+
+
 def check_jbang_example(natives, script_text, readme_text):
     """The one-file JBang example runs without a checkout, so it cannot take `llama-platform`: JBang
     treats a `pom` dependency as a BOM and puts nothing of it on the classpath (measured). It therefore
@@ -438,4 +489,5 @@ def check(root):
             + check_readme(natives, readme)
             + check_jbang_example(natives, read(root, JBANG_EXAMPLE), readme)
             + check_server_example(natives, read(root, SERVER_EXAMPLE), readme)
+            + check_module_readmes(readme, {p: read(root, p) for p in MODULE_READMES})
             + check_agent_version(read(root, "pom.xml"), read(root, "llama-atmosphere-agent/pom.xml")))

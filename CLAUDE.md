@@ -3126,9 +3126,11 @@ certificate and the secrets exist.
   code itself), SHA-256, an RFC 3161 timestamp from `ts.ssl.com`, every `Windows/*/*/*.dll` of the
   tree in one call; then `signed=no` -> `signed=yes` in each directory's `jllama-build.txt` (CMake
   writes `no`; the merge step requires the key with either value). `JSIGN_JAR` names a local jar
-  instead of the Maven fetch (measured with a synthetic PE and dummy credentials: the options are
-  accepted and the run fails at SSL.com's authentication, nothing flipped). No `set -x`, no echoed
-  argument.
+  instead of the Maven fetch (measured with a real DLL and dummy credentials: the options are
+  accepted and the run fails at SSL.com's authentication, nothing flipped). The two passwords reach
+  jsign through its `env:` prefix (`--storepass env:JSIGN_STOREPASS`, `--keypass env:ES_TOTP_SECRET`;
+  both of `KeyStoreBuilder`'s password getters resolve it), so no secret is a process argument. No
+  `set -x`, no echoed argument.
 - **Secrets and variables**: `ES_USERNAME`, `ES_PASSWORD`, `CREDENTIAL_ID`, `ES_TOTP_SECRET` -- the
   names of SSL.com's own GitHub action, so their documentation maps 1:1 -- as secrets of the
   `maven-central` environment; optionally the repository variable `ES_ENDPOINT` (empty =

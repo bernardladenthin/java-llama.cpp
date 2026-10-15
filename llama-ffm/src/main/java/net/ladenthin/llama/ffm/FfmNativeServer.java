@@ -32,10 +32,12 @@ public final class FfmNativeServer implements AutoCloseable {
 
     /**
      * Starts the server with its own model (classic mode), or in router mode without a model argument.
+     * The call returns as soon as the server's worker runs; a model that then fails to load ends the
+     * worker without an exception, visible as {@link #isRunning()} being {@code false}.
      *
      * @param args llama-server's arguments, without the program name
-     * @return the running server
-     * @throws LlamaException when it cannot start
+     * @return the server; check {@link #isRunning()} when the model may fail to load
+     * @throws LlamaException when the worker cannot be started at all
      */
     public static FfmNativeServer start(String... args) {
         Objects.requireNonNull(args, "args");

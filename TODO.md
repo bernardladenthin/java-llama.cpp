@@ -25,7 +25,7 @@ skipped or re-ordered.** The code-signing items are the one exception by the own
 stay open at the end until everything else runs (see "Code-sign the Windows DLLs" below).
 
 **What the review established, so nobody re-derives it.** The "ship a small Java artefact and let
-the user put the DLLs next to it" model already exists since the modular natives (5.2.0):
+the user put the DLLs next to it" model already exists since the modular natives (6.0.0):
 `net.ladenthin:llama` is classes only, every native build is its own classifier jar holding exactly
 one directory, that directory has the same layout as upstream's own release zips (`GGML_BACKEND_DL`,
 one CPU library set plus one `ggml-<backend>` module per GPU jar, additive), a jar is a zip, and
@@ -172,7 +172,7 @@ Not for Android (no FFM there).
 
 *(Landed 2026-10-15: the module with `JllamaNative`, `FfmLlamaModel`, `FfmTaskStream`,
 `FfmNativeServer`, `FfmRpcServer`, `FfmTextToSpeech`, `Jllama`; `JllamaNativeTest` and
-`FfmLlamaModelIntegrationTest` (21 tests, green locally with Temurin 25 over the modular build and
+`FfmLlamaModelIntegrationTest` (23 tests, green locally with Temurin 25 over the modular build and
 a tiny random GGUF); the `toolchain-jdk22` profile; `test-java-llama-ffm` plus the JDK 25 step in
 `package` and both publish jobs; `versions.POMS` in the four repositories; README, CLAUDE.md "Java
 22+ without JNI", `docs/c-api.md`, `llama-ffm/README.md`. First CI run pending.)*
@@ -500,7 +500,7 @@ Kept as a list because each entry names the machine it needs -- the harness is
 
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 
-**Nothing has been published since 5.1.0 on 2026-08-29.** `pom.xml` is `5.2.0-SNAPSHOT`, and
+**Nothing has been published since 5.1.0 on 2026-08-29.** `pom.xml` is `6.0.0-SNAPSHOT`, and
 `CHANGELOG.md`'s `[Unreleased]` holds six weeks of work no consumer can get from Central: the modular
 natives, the Windows generation speed-up, the Linux and Windows CPU variants, RPC, the agent,
 Kolibri-1, the bump to b11556. It also holds changes that break every existing consumer at upgrade,
@@ -763,7 +763,7 @@ loading the Linux jar on an image that is not Amazon Linux. Numbers and method:
 
 ### Modular natives -- follow-ups
 
-Every platform a GPU can join ships modular since 5.2.0 (CLAUDE.md "Modular natives": `JLLAMA_BACKEND_DL`
+Every platform a GPU can join ships modular since 6.0.0 (CLAUDE.md "Modular natives": `JLLAMA_BACKEND_DL`
 library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still open:
 
 1. **GPU modules on real hardware.** The 12 module-only jobs are build-only in CI; what no session can

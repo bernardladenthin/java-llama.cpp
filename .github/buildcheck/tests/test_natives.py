@@ -47,18 +47,23 @@ def download(artifact):
 WINDOWS = [r["classifier"] for r in ROWS if r["directory"].startswith("Windows/")]
 
 
-def sign_uploads(classifiers=WINDOWS, overwrite=True):
-    return [line for c in classifiers for line in upload("natives-" + c, overwrite=overwrite)]
+def sign_uploads(classifiers=WINDOWS, overwrite=True, if_no_files_found="error"):
+    return [line for c in classifiers for line in upload("natives-" + c, overwrite=overwrite,
+                                                         if_no_files_found=if_no_files_found)]
 
 
 def jobs(rows=ROWS, package_needs="[build, sign-windows-natives]", set_targets=TARGETS, run_targets=TARGETS,
-         sign=None, sign_needs="[build]"):
+         sign=None, sign_needs="[build]", consumer_needs=None):
+    """The workflow of the checks; `consumer_needs` adds a job `consumer` that downloads a Windows natives
+    artifact (the shape of the Windows Java test job)."""
     build = [line for r in rows for line in upload("natives-" + r["classifier"])]
     sets = [line for t in set_targets for line in upload("llama-smoke-" + t, f"smoke-sets/{t}/")]
     smoke = [line for t in run_targets for line in download("llama-smoke-" + t)]
-    return workflow.parse(workflow_text([("build", None, build), ("other", None, []),
-                                         ("sign-windows-natives", sign_needs, sign_uploads() if sign is None else sign),
-                                         ("package", package_needs, sets), ("smoke", "[package]", smoke)]))
+    consumer = [] if consumer_needs is None else [("consumer", consumer_needs,
+                                                   download("natives-cpu-windows-aarch64"))]
+    return workflow.parse(workflow_text([("build", None, build), ("other", None, [])] + consumer + [
+        ("sign-windows-natives", sign_needs, sign_uploads() if sign is None else sign),
+        ("package", package_needs, sets), ("smoke", "[package]", smoke)]))
 
 
 def matrix_jobs(targets, download_name="llama-smoke-${{ matrix.target }}"):
@@ -171,11 +176,25 @@ class ConsumerTest(unittest.TestCase):
         self.assertEqual(natives.check_workflow(ROWS, jobs(sign=sign_uploads(WINDOWS[1:]))),
                          ["publish.yml sign-windows-natives re-uploads (one per Windows row): missing cpu-windows-aarch64"])
         self.assertEqual(natives.check_workflow(ROWS, jobs(sign=sign_uploads(WINDOWS + ["cpu-linux-x86-64"]))),
-                         ["publish.yml sign-windows-natives re-uploads (one per Windows row): cpu-linux-x86-64 is not "
-                          "in .github/natives.csv"])  # a Linux artifact overwritten with an unsigned copy
+                         ["publish.yml sign-windows-natives re-uploads natives-cpu-linux-x86-64, which is not a Windows "
+                          "row -- it would replace the build artifact of another platform with an unsigned copy"])
         self.assertEqual(natives.check_workflow(ROWS, jobs(sign=sign_uploads(overwrite=False))),
                          ["publish.yml sign-windows-natives: an upload-artifact step without `overwrite: true` would "
                           "fail on the artifact the build job uploaded"] * len(WINDOWS))
+        self.assertEqual(natives.check_workflow(ROWS, jobs(sign=sign_uploads(if_no_files_found=None))),
+                         ["publish.yml sign-windows-natives: an upload-artifact step without `if-no-files-found: "
+                          "error` would leave the unsigned build artifact in place when the download matched "
+                          "nothing"] * len(WINDOWS))
+
+    def test_the_sign_job_waits_for_every_reader_of_a_windows_artifact(self):
+        # a job reading the artifact between the build and the signed re-upload would race the overwrite
+        self.assertEqual(natives.check_workflow(ROWS, jobs(consumer_needs="[build]")),
+                         ["publish.yml: consumer reads natives-cpu-windows-aarch64 but sign-windows-natives does not "
+                          "wait for it -- the signed re-upload deletes the artifact for a moment; add consumer to the "
+                          "job's needs"])
+        self.assertEqual(natives.check_workflow(ROWS, jobs(consumer_needs="[build]", sign_needs="[build, consumer]")), [])
+        # a reader downstream of the sign job gets the signed artifact and is no race
+        self.assertEqual(natives.check_workflow(ROWS, jobs(consumer_needs="[sign-windows-natives]")), [])
 
     def test_the_sign_job_waits_for_the_build_jobs_and_package_for_it(self):
         failures = natives.check_workflow(ROWS, jobs(sign_needs="[other]"))
@@ -295,6 +314,21 @@ class ConsumerTest(unittest.TestCase):
         self.assertEqual(failures, ["README.md does not document the natives jar `cpu-linux-s390x`"])
 
     README = "<artifactId>llama-platform</artifactId>\n    <version>5.2.0</version>\n</dependency>"
+
+    def test_module_readmes_follow_the_install_version(self):
+        maven = ("<dependency>\n    <groupId>net.ladenthin</groupId>\n    <artifactId>llama-langchain4j</artifactId>\n"
+                 "    <version>5.2.0</version>\n</dependency>")
+        gradle = 'implementation("net.ladenthin:llama-kotlin:5.2.0")\n// implementation("net.ladenthin:llama-android:5.2.0")'
+        self.assertEqual(natives.snippet_versions(maven + gradle), ["5.2.0", "5.2.0", "5.2.0"])
+        readme = self.README + "\n<artifactId>llama-langchain4j</artifactId>\n    <version>5.2.0</version>"
+        self.assertEqual(natives.check_module_readmes(readme, {"a/README.md": maven, "b/README.md": gradle}), [])
+        self.assertEqual(natives.check_module_readmes(readme, {"b/README.md": gradle.replace("kotlin:5.2.0", "kotlin:5.1.0")}),
+                         ["b/README.md: a dependency snippet names 5.1.0, the README install snippet's version is 5.2.0"])
+        self.assertEqual(natives.check_module_readmes(readme.replace("langchain4j</artifactId>\n    <version>5.2.0",
+                                                                     "langchain4j</artifactId>\n    <version>5.1.0"), {}),
+                         ["README.md: the llama-langchain4j snippet names 5.1.0, the install snippet 5.2.0"])
+        # a classifier coordinate (jbang --deps net.ladenthin:llama:<v>:<classifier>) is a version too
+        self.assertEqual(natives.snippet_versions('"net.ladenthin:llama:5.2.0:cuda13-linux-x86-64"'), ["5.2.0"])
 
     def test_jbang_example(self):
         readme = self.README

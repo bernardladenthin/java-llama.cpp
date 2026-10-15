@@ -73,6 +73,23 @@ class JllamaNativeTest {
     }
 
     @Test
+    void anErrorThrownByTheLogCallbackLosesTheLineAndNothingElse() {
+        // An Error crossing an FFM upcall would end the JVM; the bridge swallows it like a RuntimeException.
+        List<String> lines = new CopyOnWriteArrayList<>();
+        Jllama.setLogCallback((level, text) -> {
+            lines.add(text);
+            throw new AssertionError("from the callback");
+        });
+        try {
+            assertThrows(LlamaException.class, () -> FfmLlamaModel.load(
+                    new String[] {"jllama", "-m", "/nonexistent/model.gguf", "--no-warmup"}, null));
+        } finally {
+            Jllama.setLogCallback(null);
+        }
+        assertThat(lines, not(org.hamcrest.Matchers.empty()));
+    }
+
+    @Test
     void rpcServerDevicesResolveTheCpuAndRefuseAnUnknownName() {
         assertThat(FfmRpcServer.devices("CPU"), hasItem("CPU"));
         LlamaException e = assertThrows(LlamaException.class, () -> FfmRpcServer.devices("NoSuchDevice9"));

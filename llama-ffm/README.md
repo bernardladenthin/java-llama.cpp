@@ -85,7 +85,7 @@ builds like every other module.
 
 ```bash
 mvn -pl llama -am -DskipTests install          # the core first
-mvn -f llama-ffm/pom.xml verify                # 6 model-free tests + the model-backed one
+mvn -f llama-ffm/pom.xml verify                # 7 model-free tests + the model-backed ones
 # the model-backed test takes the draft model of .github/models.csv, or:
 mvn -f llama-ffm/pom.xml verify -Dnet.ladenthin.llama.ffm.model=/path/to/model.gguf
 ```

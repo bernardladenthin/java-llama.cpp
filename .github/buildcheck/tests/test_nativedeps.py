@@ -337,7 +337,7 @@ class ViolationsTest(unittest.TestCase):
         self.assertEqual(nativedeps.violations(rel, module, runpath="$ORIGIN"), [])
         self.assertIn("no consumer can be expected",
                       nativedeps.violations(rel, module + ["libibverbs.so.1"], runpath="$ORIGIN")[0])
-        # a monolithic library in a module directory (the layout before 5.2.0) is refused: it does not
+        # a monolithic library in a module directory (the layout before 6.0.0) is refused: it does not
         # import ggml-base, because it carries its own
         found = nativedeps.violations("x/Linux/x86_64/cuda13/libjllama.so", ["libcudart.so.13", "libc.so.6"],
                                       runpath="$ORIGIN")

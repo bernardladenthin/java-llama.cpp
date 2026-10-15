@@ -18,7 +18,7 @@
 # "HTTPS"), so out of the release asset two things must work on every platform -- the embedded
 # server behind its own TLS key and certificate (--ssl-key-file / --ssl-cert-file), and a model
 # download from an https:// URL verified against the OS certificate store (crypt32 on Windows,
-# Security on macOS, /etc/ssl on Linux). Neither held before 5.2.0: the Linux jars had no SSL at
+# Security on macOS, /etc/ssl on Linux). Neither held before 6.0.0: the Linux jars had no SSL at
 # all (an https:// download threw "HTTPS is not supported"), and macOS depended on the runner's
 # Homebrew OpenSSL. The download is the 1 MB stories260K.gguf of .github/models.csv, into a cache
 # directory of this run (LLAMA_CACHE), so round 2 also proves the HTTPS client path with a real

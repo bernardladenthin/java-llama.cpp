@@ -106,8 +106,10 @@ public final class FfmLlamaModel implements AutoCloseable {
     private static boolean onProgress(LoadProgressCallback callback, float progress, MemorySegment userData) {
         try {
             return callback.onProgress(progress);
-        } catch (RuntimeException e) {
-            return false; // never let an exception cross the upcall boundary; abort the load instead
+        } catch (Throwable e) {
+            // Nothing may cross the upcall boundary -- a RuntimeException or an Error alike would end the
+            // JVM ("Unrecoverable uncaught exception") -- so the load is aborted instead.
+            return false;
         }
     }
 

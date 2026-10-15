@@ -1279,7 +1279,7 @@ forcing that floor on every core consumer. It ships and versions in lockstep wit
 <dependency>
     <groupId>net.ladenthin</groupId>
     <artifactId>llama-langchain4j</artifactId>
-    <version>5.1.0</version>
+    <version>6.0.0</version>
 </dependency>
 ```
 

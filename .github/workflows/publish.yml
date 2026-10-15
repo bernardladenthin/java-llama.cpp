@@ -469,14 +469,16 @@ jobs:
           mvn -B --no-transfer-progress -f llama-ffm/pom.xml verify -Dgpg.skip=true
           -Dnet.ladenthin.llama.ffm.model=models/${DRAFT_MODEL_NAME}
           -Dnet.ladenthin.llama.lib.path=${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/Linux/x86_64/cpu
-      - name: Require the model-backed test to have run (a self-skip would hide a broken binding)
+      - name: Require the native-backed tests to have run (a self-skip would hide a broken binding)
         run: |
-          report=llama-ffm/target/surefire-reports/TEST-net.ladenthin.llama.ffm.FfmLlamaModelIntegrationTest.xml
-          test -f "$report" || { echo "::error::no report for FfmLlamaModelIntegrationTest"; exit 1; }
-          if grep -q 'skipped="[1-9]' "$report" || grep -q 'tests="0"' "$report"; then
-            echo "::error::FfmLlamaModelIntegrationTest skipped itself -- the model or the natives were not found"
-            exit 1
-          fi
+          for test in FfmLlamaModelIntegrationTest JllamaNativeTest; do
+            report="llama-ffm/target/surefire-reports/TEST-net.ladenthin.llama.ffm.$test.xml"
+            test -f "$report" || { echo "::error::no report for $test"; exit 1; }
+            if grep -q 'skipped="[1-9]' "$report" || grep -q 'tests="0"' "$report"; then
+              echo "::error::$test skipped itself -- the model or the natives were not found"
+              exit 1
+            fi
+          done
       - name: Print crash logs (on failure)
         if: failure()
         shell: bash
@@ -2925,51 +2927,61 @@ jobs:
           name: natives-cpu-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-cpu-windows-x86-64/
           overwrite: true
+          if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-cpu-windows-aarch64
           path: ${{ github.workspace }}/native-artifacts/natives-cpu-windows-aarch64/
           overwrite: true
+          if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-cuda13-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-cuda13-windows-x86-64/
           overwrite: true
+          if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-vulkan-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-vulkan-windows-x86-64/
           overwrite: true
+          if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-opencl-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-opencl-windows-x86-64/
           overwrite: true
+          if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-rocm-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-rocm-windows-x86-64/
           overwrite: true
+          if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-sycl-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-sycl-windows-x86-64/
           overwrite: true
+          if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-opencl-windows-aarch64
           path: ${{ github.workspace }}/native-artifacts/natives-opencl-windows-aarch64/
           overwrite: true
+          if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-vulkan-windows-aarch64
           path: ${{ github.workspace }}/native-artifacts/natives-vulkan-windows-aarch64/
           overwrite: true
+          if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-openvino-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-openvino-windows-x86-64/
           overwrite: true
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------
   # Package and publish

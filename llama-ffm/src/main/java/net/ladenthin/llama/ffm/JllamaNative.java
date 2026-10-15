@@ -150,10 +150,18 @@ final class JllamaNative {
         return FunctionDescriptor.of(JAVA_INT, arguments);
     }
 
+    /** This module's version from its manifest, or {@code unknown} outside a jar. */
+    private static String version() {
+        String version = JllamaNative.class.getPackage().getImplementationVersion();
+        return version == null ? "unknown" : version;
+    }
+
     private static MethodHandle downcall(String name, FunctionDescriptor descriptor) {
         MemorySegment symbol = LOOKUP.find(name)
                 .orElseThrow(() -> new UnsatisfiedLinkError("the loaded libjllama exports no " + name
-                        + ": this module needs the natives of the same version (" + Jllama.class.getPackage() + ")"));
+                        + ": either the natives are of another version than this module (" + version() + ") or "
+                        + "llama-ffm and the core jar are in different class loaders (the symbols are looked up in "
+                        + "the loader that loaded the library)"));
         return LINKER.downcallHandle(symbol, descriptor);
     }
 

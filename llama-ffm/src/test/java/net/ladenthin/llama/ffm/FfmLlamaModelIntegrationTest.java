@@ -191,6 +191,18 @@ class FfmLlamaModelIntegrationTest {
     }
 
     @Test
+    void anErrorThrownByTheProgressCallbackAbortsTheLoadInsteadOfTheJvm() {
+        ModelParameters parameters = new ModelParameters()
+                .setModel(FfmTestSupport.modelPath().toString())
+                .setCtxSize(64)
+                .setGpuLayers(0)
+                .setThreads(1);
+        assertThrows(LlamaException.class, () -> FfmLlamaModel.load(parameters, progress -> {
+            throw new AssertionError("from the callback");
+        }));
+    }
+
+    @Test
     void aClosedModelRefusesCalls() {
         FfmLlamaModel other = FfmLlamaModel.load(new ModelParameters()
                 .setModel(FfmTestSupport.modelPath().toString())

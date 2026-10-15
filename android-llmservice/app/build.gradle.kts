@@ -15,7 +15,7 @@ plugins {
 // + facade that were just built and published to mavenLocal. Falls back to the last release
 // when built by hand / in Android Studio without the property.
 val jllamaVersion: String =
-    providers.gradleProperty("jllamaVersion").getOrElse("5.0.6")
+    providers.gradleProperty("jllamaVersion").getOrElse("5.1.0")
 
 // -- Release signing (Play upload key) -------------------------------------------------
 // The APK/AAB signing key is a Java keystore (PKCS12/JKS + RSA), NOT the Maven Central

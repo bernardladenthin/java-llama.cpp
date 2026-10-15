@@ -53,10 +53,12 @@ public final class Jllama {
     /**
      * Routes every log line of the library (llama.cpp, ggml, the server) to {@code callback} instead of
      * the console; {@code null} restores the console after flushing the lines queued for the previous
-     * callback, synchronously. Process-wide, like {@code LlamaModel.setLogger}. The callback runs on the
-     * logger's own worker thread, never on the thread that logged, and gets the bare formatted message
-     * (no prefix, no timestamp; a {@code CONT} line arrives as {@link LogLevel#INFO}). An exception it
-     * throws is swallowed: an exception crossing an FFM upcall would end the JVM.
+     * callback, synchronously. Process-wide, and the same sink as {@code LlamaModel.setLogger} of the
+     * core: the two replace each other, so a later {@code setLogger} silently detaches this callback. The
+     * callback runs on the logger's own worker thread, never on the thread that logged, and gets the bare
+     * formatted message (no prefix, no timestamp; a {@code CONT} line arrives as {@link LogLevel#INFO}).
+     * Anything it throws, an {@code Error} included, is swallowed: an exception crossing an FFM upcall
+     * would end the JVM.
      *
      * @param callback the sink, or {@code null} for the console
      */
@@ -94,8 +96,8 @@ public final class Jllama {
             MemorySegment userData) {
         try {
             callback.accept(logLevel(level), readString(text));
-        } catch (RuntimeException ignored) {
-            // never let an exception cross the upcall boundary
+        } catch (Throwable ignored) {
+            // Nothing may cross the upcall boundary: a RuntimeException or an Error alike would end the JVM.
         }
     }
 

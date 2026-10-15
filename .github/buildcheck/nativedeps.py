@@ -12,7 +12,10 @@ it runs on any runner and checks every architecture, including the ones binutils
 (Windows arm64, Mach-O).
 
 Usage (the CLI is .github/verify-native-deps.py):
-  verify-native-deps.py <natives-root>
+  verify-native-deps.py [--require-signed] <natives-root>
+
+--require-signed: every Windows DLL must be Authenticode-signed (jllama-build.txt says signed=yes
+and the file carries a signature); without it only a directory saying signed=yes is checked.
 
 Checks every native library (.so, .dll, .dylib) under <natives-root>/.../<OS>/<ARCH>/<backend>/, and
 the export set of every jllama library (JNI entry points and the jllama_* C API only).
