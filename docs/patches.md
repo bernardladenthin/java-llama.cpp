@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**12 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**13 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -34,6 +34,7 @@ match a binary to this page.
 | 0017 | [`0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-type.patch`](#0017-ggml-cpu-x86-prefetch-byte-offset-and-msvc-typepatch) | ggml-cpu(x86): byte-wise prefetch address, and a type clang accepts on MSVC targets | 2 | 4 |
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0019 | [`0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`](#0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversionpatch) | ggml-cpu : select the NEON fp32->fp16 conversion | 1 | 2 |
+| 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
 
 ## 0001-win32-arg-parse-embed-guard.patch
 
@@ -555,4 +556,51 @@ a `grep -q` reports "upstream fixed it" at every tag and deletes a fix that is s
 Measured at b11639 (a0e6dc738): hits at lines 71, 114 and 150, none of them inside the __ARM_NEON
 branch, while `git apply --check` of this patch is clean -- the two answers contradict each other,
 and the grep is the one that is wrong.
+```
+
+## 0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch
+
+**Files (1):** `ggml/src/ggml-alloc.c`
+
+The patch's own header, verbatim:
+
+```text
+ggml-alloc : validate the leafs before reusing a graph's allocation
+
+ggml_gallocr_alloc_graph() assigns every tensor of a graph by position from the previous
+ggml_gallocr_reserve(): node i takes node_allocs[i], leaf i takes leaf_allocs[i].
+ggml_gallocr_needs_realloc() decides whether those assignments still fit, and it validates every
+node and every node's sources -- but of the leafs it compares only the count. A graph with the
+same number of leafs in another order therefore reuses the old leaf assignments: an input leaf
+lands on a slot that belonged to a weight (buffer_id -1, nothing allocated), and with NDEBUG the
+asserts in ggml_gallocr_init_tensor() are gone, so ggml_vbuffer_tensor_alloc() indexes
+galloc->buffers[-1]. A leaf that lands on a slot of another input is not caught either: its size
+is never checked, so it may get a region too small for it.
+
+Reached since #30445 ("graph: skip the LM head for pooled embeddings", cb55ffe6e, b11574..b11612):
+the models no longer expand their LM head themselves, build_logits() does, after build_pooling().
+In a context with embeddings enabled the reserved graph expands t_embd first and t_logits
+second; a generation step on the same context (the server switches embeddings off for a slot
+that samples, llama_set_embeddings(ctx, false)) expands only t_logits, whose first source is
+output.weight. Same node and leaf counts, every leaf after output.weight shifted by one. Found
+by java-llama.cpp's Publish run 38648257387 (2026-10-14): ErrorHandlingTest loads its model with
+--embedding and posts an infill request to it, and the forked JVM died with SIGSEGV in
+ggml_gallocr_alloc_graph on Linux, and with 0xC0000005 under both Windows toolchains:
+
+    ggml_gallocr_alloc_graph <- ggml_backend_sched_alloc_graph <- llama_context::process_ubatch
+    <- llama_context::decode <- server_context_impl::update_slots
+
+Reproduced locally with a random 2-layer llama GGUF (FIM tokens set) and a context of 128:
+infill on the model without --embedding works, with --embedding it crashes; a debug print shows
+leaf 31 'out_ids' arriving at a slot with no allocation. Reverting cb55ffe6e makes it pass, and
+so does this patch, which validates the leafs exactly as the nodes are validated: an invalid
+leaf makes the allocator reserve again (one buffer) or report false, on which
+ggml_backend_sched reserves the graph itself. With it, greedy infill on the --embedding model
+returns the same tokens as on the model without, run after run.
+
+The guard is src/test/cpp/test_gallocr_leafs.cpp: two graphs with the same nodes in the same order
+and only the leafs moved (it dies with SIGSEGV without this patch), reserve with one, allocate the other.
+
+Drop-check on every bump: read ggml_gallocr_needs_realloc() in ggml/src/ggml-alloc.c at the new
+tag -- once it walks graph->leafs itself, drop this patch rather than refreshing it.
 ```

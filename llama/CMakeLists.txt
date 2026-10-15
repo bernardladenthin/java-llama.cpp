@@ -1349,6 +1349,7 @@ if(BUILD_TESTING)
         src/test/cpp/test_model_flags.cpp
         src/test/cpp/test_wire_contracts.cpp
         src/test/cpp/test_rpc.cpp
+        src/test/cpp/test_gallocr_leafs.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-common.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-chat.cpp
         ${llama.cpp_SOURCE_DIR}/tools/server/server-context.cpp
