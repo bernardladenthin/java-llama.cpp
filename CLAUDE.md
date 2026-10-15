@@ -412,6 +412,17 @@ skipped, an unknown shell is an error. Literal blocks are checked line for line 
 file line), folded and plain values as YAML folds them, `${{ ... }}` becomes a word. Like
 `workflow.py` it reads the two-space layout these workflows use, not general YAML.
 
+**And the workflows must parse as YAML (`code-style`, first step).** None of the checks above reads the
+files as YAML -- `workflow.py` and `runscripts.py` read the two-space layout on purpose, and a run script
+that parses in bash tells nothing about the document around it. So a step `name:` with an unquoted
+`: ` inside it (`(full history: the commit count is checked)`, a plain scalar that YAML reads as a nested
+mapping) passed every check, `code-style` included, and failed the **whole** run of the 6.0.0 merge
+(38807436221) before a single job started: zero jobs, the run named after the file path, `gh run view`
+saying "workflow file issue". The step loads every `.github/workflows/*.yml` and
+`.github/actions/*/action.yml` with PyYAML (preinstalled on the Ubuntu runner, `pip install --user`
+as the fallback) and fails on the first file that does not parse. It stays out of `buildcheck/`, which
+is stdlib-only by design; a colon in a step name is best avoided rather than quoted.
+
 Shared today: the `buildcheck` modules above marked shared in
 `__init__.py` (+ their tests and CLIs), `print-crash-logs.sh`, `print-host-info.sh` (the runner's CPU at the top of every
 test job, so a timing or a chosen CPU module can be read against the hardware), `verify-signing-key.sh`,
