@@ -16,9 +16,11 @@
 #include "jllama_engine.hpp"
 #include "jllama_api.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <vector>
 
 #ifndef JLLAMA_VERSION_STRING
 #error "JLLAMA_VERSION_STRING must be defined by the build (llama/CMakeLists.txt sets it from the pom)"
@@ -158,6 +160,292 @@ jllama_status jllama_chat_completions_stream_receive(jllama_model *model, int ta
 
 jllama_status jllama_task_release(jllama_model *model, int task_id) {
     return guarded(model, [&](jllama_context *jctx) { jllama::engine::task_release(jctx, task_id); });
+}
+
+// ------------------------------------------------------------------------------------------------
+// The rest of LlamaModel.
+// ------------------------------------------------------------------------------------------------
+
+void jllama_floats_free(float *values) { std::free(values); }
+
+void jllama_tokens_free(int *tokens) { std::free(tokens); }
+
+jllama_status jllama_model_meta(jllama_model *model, char **response_json) {
+    if (response_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "response_json must not be null");
+    }
+    *response_json = nullptr;
+    return guarded(model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::model_meta(jctx)); });
+}
+
+jllama_status jllama_completions(jllama_model *model, const char *request_json, char **response_json) {
+    if (request_json == nullptr || response_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
+    }
+    *response_json = nullptr;
+    return guarded(model, [&](jllama_context *jctx) {
+        *response_json = copy_out(jllama::engine::completions(jctx, request_json));
+    });
+}
+
+jllama_status jllama_completions_oai(jllama_model *model, const char *request_json, char **response_json) {
+    if (request_json == nullptr || response_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
+    }
+    *response_json = nullptr;
+    return guarded(model, [&](jllama_context *jctx) {
+        *response_json = copy_out(jllama::engine::completions_oai(jctx, request_json));
+    });
+}
+
+jllama_status jllama_infill(jllama_model *model, const char *request_json, char **response_json) {
+    if (request_json == nullptr || response_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
+    }
+    *response_json = nullptr;
+    return guarded(
+        model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::infill(jctx, request_json)); });
+}
+
+jllama_status jllama_completions_stream_request(jllama_model *model, const char *request_json, int *task_id) {
+    if (request_json == nullptr || task_id == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and task_id must not be null");
+    }
+    *task_id = 0;
+    return guarded(model, [&](jllama_context *jctx) {
+        *task_id = jllama::engine::completions_stream_request(jctx, request_json);
+    });
+}
+
+jllama_status jllama_chat_completions_request(jllama_model *model, const char *request_json, int *task_id) {
+    if (request_json == nullptr || task_id == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and task_id must not be null");
+    }
+    *task_id = 0;
+    return guarded(model, [&](jllama_context *jctx) {
+        *task_id = jllama::engine::chat_completions_stream_request(jctx, request_json, false);
+    });
+}
+
+jllama_status jllama_completions_stream_receive(jllama_model *model, int task_id, char **response_json, bool *stop) {
+    if (response_json == nullptr || stop == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "response_json and stop must not be null");
+    }
+    *response_json = nullptr;
+    *stop = false;
+    return guarded(model, [&](jllama_context *jctx) {
+        bool s = false;
+        std::string response = jllama::engine::completions_stream_receive(jctx, task_id, s);
+        *response_json = copy_out(response);
+        *stop = s;
+    });
+}
+
+jllama_status jllama_apply_template(jllama_model *model, const char *request_json, char **prompt) {
+    if (request_json == nullptr || prompt == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and prompt must not be null");
+    }
+    *prompt = nullptr;
+    return guarded(
+        model, [&](jllama_context *jctx) { *prompt = copy_out(jllama::engine::apply_template(jctx, request_json)); });
+}
+
+jllama_status jllama_embed(jllama_model *model, const char *prompt, float **values, size_t *count) {
+    if (prompt == nullptr || values == nullptr || count == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "prompt, values and count must not be null");
+    }
+    *values = nullptr;
+    *count = 0;
+    return guarded(model, [&](jllama_context *jctx) {
+        const std::vector<float> embedding = jllama::engine::embed(jctx, prompt);
+        auto *out = static_cast<float *>(std::malloc(std::max<size_t>(embedding.size(), 1) * sizeof(float)));
+        if (out == nullptr) {
+            throw std::bad_alloc();
+        }
+        std::memcpy(out, embedding.data(), embedding.size() * sizeof(float));
+        *values = out;
+        *count = embedding.size();
+    });
+}
+
+jllama_status jllama_embeddings(jllama_model *model, const char *request_json, bool oai_compat, char **response_json) {
+    if (request_json == nullptr || response_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
+    }
+    *response_json = nullptr;
+    return guarded(model, [&](jllama_context *jctx) {
+        *response_json = copy_out(jllama::engine::embeddings(jctx, request_json, oai_compat));
+    });
+}
+
+jllama_status jllama_rerank(jllama_model *model, const char *query, int n_documents, const char *const *documents,
+                            char **response_json) {
+    if (query == nullptr || response_json == nullptr || (n_documents > 0 && documents == nullptr) || n_documents < 0) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "query, documents and response_json must not be null");
+    }
+    *response_json = nullptr;
+    return guarded(model, [&](jllama_context *jctx) {
+        std::vector<std::string> docs;
+        docs.reserve(static_cast<size_t>(n_documents));
+        for (int i = 0; i < n_documents; ++i) {
+            docs.emplace_back(documents[i] != nullptr ? documents[i] : "");
+        }
+        *response_json = copy_out(jllama::engine::rerank(jctx, query, docs));
+    });
+}
+
+jllama_status jllama_tokenize(jllama_model *model, const char *text, bool add_special, int **tokens, size_t *count) {
+    if (text == nullptr || tokens == nullptr || count == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "text, tokens and count must not be null");
+    }
+    *tokens = nullptr;
+    *count = 0;
+    return guarded(model, [&](jllama_context *jctx) {
+        const std::vector<llama_token> ids = jllama::engine::tokenize(jctx, text, add_special);
+        auto *out = static_cast<int *>(std::malloc(std::max<size_t>(ids.size(), 1) * sizeof(int)));
+        if (out == nullptr) {
+            throw std::bad_alloc();
+        }
+        std::memcpy(out, ids.data(), ids.size() * sizeof(int));
+        *tokens = out;
+        *count = ids.size();
+    });
+}
+
+jllama_status jllama_tokenize_json(jllama_model *model, const char *text, bool add_special, bool with_pieces,
+                                   char **response_json) {
+    if (text == nullptr || response_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "text and response_json must not be null");
+    }
+    *response_json = nullptr;
+    return guarded(model, [&](jllama_context *jctx) {
+        *response_json = copy_out(jllama::engine::tokenize_json(jctx, text, add_special, with_pieces));
+    });
+}
+
+jllama_status jllama_detokenize(jllama_model *model, const int *tokens, size_t count, char **text, size_t *length) {
+    if ((tokens == nullptr && count > 0) || text == nullptr || length == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "tokens, text and length must not be null");
+    }
+    *text = nullptr;
+    *length = 0;
+    return guarded(model, [&](jllama_context *jctx) {
+        const std::vector<llama_token> ids(tokens, tokens + count);
+        const std::string bytes = jllama::engine::detokenize(jctx, ids);
+        *text = copy_out(bytes);
+        *length = bytes.size();
+    });
+}
+
+jllama_status jllama_detokenize_json(jllama_model *model, const int *tokens, size_t count, char **response_json) {
+    if ((tokens == nullptr && count > 0) || response_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "tokens and response_json must not be null");
+    }
+    *response_json = nullptr;
+    return guarded(model, [&](jllama_context *jctx) {
+        const std::vector<llama_token> ids(tokens, tokens + count);
+        *response_json = copy_out(jllama::engine::detokenize_json(jctx, ids));
+    });
+}
+
+jllama_status jllama_metrics(jllama_model *model, char **response_json) {
+    if (response_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "response_json must not be null");
+    }
+    *response_json = nullptr;
+    return guarded(model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::metrics(jctx)); });
+}
+
+jllama_status jllama_slot_action(jllama_model *model, jllama_slot_op action, int slot_id, const char *filename,
+                                 char **response_json) {
+    if (response_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "response_json must not be null");
+    }
+    *response_json = nullptr;
+    jllama::engine::slot_op op;
+    switch (action) {
+    case JLLAMA_SLOT_SAVE:
+        op = jllama::engine::slot_op::save;
+        break;
+    case JLLAMA_SLOT_RESTORE:
+        op = jllama::engine::slot_op::restore;
+        break;
+    case JLLAMA_SLOT_ERASE:
+        op = jllama::engine::slot_op::erase;
+        break;
+    default:
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "Invalid slot action");
+    }
+    return guarded(model, [&](jllama_context *jctx) {
+        *response_json = copy_out(jllama::engine::slot_action(jctx, op, slot_id, filename != nullptr ? filename : ""));
+    });
+}
+
+jllama_status jllama_lora_adapters(jllama_model *model, char **response_json) {
+    if (response_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "response_json must not be null");
+    }
+    *response_json = nullptr;
+    return guarded(model,
+                   [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::lora_adapters(jctx)); });
+}
+
+jllama_status jllama_set_lora_adapters(jllama_model *model, const char *adapters_json, char **response_json) {
+    if (adapters_json == nullptr || response_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "adapters_json and response_json must not be null");
+    }
+    *response_json = nullptr;
+    return guarded(model, [&](jllama_context *jctx) {
+        *response_json = copy_out(jllama::engine::set_lora_adapters(jctx, adapters_json));
+    });
+}
+
+jllama_status jllama_configure(jllama_model *model, const char *config_json) {
+    if (config_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "config_json must not be null");
+    }
+    return guarded(model, [&](jllama_context *jctx) { jllama::engine::configure(jctx, config_json); });
+}
+
+jllama_status jllama_systemone(jllama_model *model, const char *request_json, char **response_json) {
+    if (request_json == nullptr || response_json == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and response_json must not be null");
+    }
+    *response_json = nullptr;
+    return guarded(
+        model, [&](jllama_context *jctx) { *response_json = copy_out(jllama::engine::systemone(jctx, request_json)); });
+}
+
+jllama_status jllama_json_schema_to_grammar(const char *schema_json, char **grammar) {
+    if (schema_json == nullptr || grammar == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "schema_json and grammar must not be null");
+    }
+    *grammar = nullptr;
+    try {
+        *grammar = copy_out(jllama::engine::json_schema_to_grammar_text(schema_json));
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "unknown C++ exception");
+    }
+}
+
+jllama_status jllama_quantize(const char *input_path, const char *output_path, int ftype, int nthread,
+                              bool allow_requantize) {
+    if (input_path == nullptr || output_path == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "input_path and output_path must not be null");
+    }
+    try {
+        jllama::engine::quantize(input_path, output_path, ftype, nthread, allow_requantize);
+        t_last_error.clear();
+        return JLLAMA_STATUS_OK;
+    } catch (const std::exception &e) {
+        return fail(JLLAMA_STATUS_ERROR, e.what());
+    } catch (...) {
+        return fail(JLLAMA_STATUS_ERROR, "Unknown C++ exception during quantization");
+    }
 }
 
 jllama_status jllama_set_log_callback(jllama_log_fn callback, void *user_data) {

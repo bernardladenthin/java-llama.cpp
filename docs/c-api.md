@@ -23,23 +23,39 @@ what Java gets.
 
 ## Status of the surface
 
-This is the first slice (the roadmap's "B.2 spike", TODO.md). It covers:
+Every operation of `LlamaModel` and `LlamaQuantizer` is in it (the roadmap's "B.2 spike" and the
+`LlamaModel` half of "B.3", TODO.md item 7):
 
 | Function | What it does |
 |---|---|
 | `jllama_api_version()` | the `net.ladenthin:llama` version this library was built as, e.g. `5.2.0`; the C API is versioned with the library (a function present in `x.y.z` keeps its semantics in every later `x.y.*`) |
 | `jllama_build_info()` | the llama.cpp build inside, `b<number>-<commit>` |
 | `jllama_last_error()` | the message of the last failed call on this thread (thread-local) |
-| `jllama_string_free()` | releases a string the library returned |
+| `jllama_string_free()`, `jllama_floats_free()`, `jllama_tokens_free()` | release what the library returned through an out-parameter |
 | `jllama_model_load()` / `jllama_model_free()` | a model from llama-server's command line (`-m`, `-c`, `-ngl`, ... and `--vocab-only`), with an optional load-progress callback |
+| `jllama_model_meta()` | the model's metadata object (vocab, context, modalities, chat template, the GGUF key/value map) |
 | `jllama_chat_completions()` | one OpenAI chat completion, blocking |
 | `jllama_chat_completions_stream_request()` / `_receive()` / `jllama_task_release()` | a streamed one: a task id, then one `{"data": <chunk>, "stop": <bool>}` envelope per call until `stop` |
+| `jllama_chat_completions_request()` | a streamed chat completion whose results are llama.cpp's raw result objects (received with `jllama_completions_stream_receive`) |
+| `jllama_completions()`, `jllama_completions_oai()`, `jllama_infill()` | a raw `/completion`, an OpenAI `/v1/completions`, a fill-in-the-middle request, blocking |
+| `jllama_completions_stream_request()` / `jllama_completions_stream_receive()` | a raw streamed completion (an infill one when the body has the infill fields): each result object with a `"stop"` key |
+| `jllama_apply_template()` | the chat template applied to a messages body: the prompt text |
+| `jllama_embed()`, `jllama_embeddings()` | one embedding vector; an `/embeddings` or `/v1/embeddings` request (`--embedding`) |
+| `jllama_rerank()` | documents scored against a query (`--reranking`) |
+| `jllama_tokenize()`, `jllama_tokenize_json()`, `jllama_detokenize()`, `jllama_detokenize_json()` | ids or the `/tokenize` response (with pieces on request); bytes with their length, or the `/detokenize` response |
+| `jllama_metrics()` | the counters plus the `slots` array (`LlamaModel.getMetrics()`) |
+| `jllama_slot_action()` | save, restore or erase a slot's KV cache |
+| `jllama_lora_adapters()`, `jllama_set_lora_adapters()` | the LoRA list; the scales from `[{"id", "scale"}]` |
+| `jllama_configure()` | `n_threads`, `n_threads_batch`, `slot_prompt_similarity` at run time |
+| `jllama_systemone()` | a `/v1/systemone` request to a decision model |
+| `jllama_json_schema_to_grammar()` | a JSON schema as GBNF (no model needed) |
+| `jllama_quantize()` | `llama_model_quantize` over a GGUF file (no model needed) |
 | `jllama_set_log_callback()` | every log line of llama.cpp, ggml and the server to a callback; null restores the console after a synchronous flush |
 
-Not yet in it (the roadmap's "B.3", engine by engine): completions, infill, embeddings, rerank,
-tokenize/detokenize, metrics and slots, LoRA, the embedded HTTP server (`NativeServer`), the RPC
-server, text to speech, the quantizer, the trainer. Their Java entry points still carry their own
-glue; each slice moves one of them behind a `jllama_*` function.
+Not yet in it (the rest of "B.3"): the embedded HTTP server (`NativeServer`, attach mode, router
+mode), the RPC server, text to speech, the trainer. Their Java entry points live in their own
+translation units over engines that are already JNI-free; each slice moves one of them behind
+`jllama_*` functions.
 
 ## Contract
 
@@ -121,15 +137,20 @@ if (jllama_chat_completions_stream_request(model, request, &task) == JLLAMA_STAT
   from a tiny random llama-architecture GGUF the test writes itself (hermetic: no download, no
   network), a chat completion answered with a `chat.completion` object, a stream received to its
   stop and found released, the log sink fed with the server's lines and flushed synchronously, the
-  status codes of a malformed body, a refused body, a missing model and null arguments pinned.
+  status codes of a malformed body, a refused body, a missing model and null arguments pinned;
+  then the model meta, raw and OpenAI completions, raw streaming (and the chat-template variant),
+  the template, a tokenize/detokenize round trip, metrics, slot erase, the LoRA list, configure,
+  the refusals of a model loaded without `--embedding`/`--reranking` and without FIM tokens, the
+  grammar conversion, and a quantisation of the random model to Q8_0 that loads again.
 - `src/test/c/test_c_abi.c` (the ctest `c_abi` of every modular build job): plain C11 linking the
   shipped `libjllama` and `libllama`; it compiles the header as C and resolves `jllama_api_version`
   and `jllama_build_info` through the library's exports, next to its layer-A checks.
 - `.github/verify-native-deps.py` (`package`): `libjllama` exports `JNI_OnLoad`, `JNI_OnUnload`,
   `Java_*` and `jllama_*`, nothing else.
-- The Java suite: `handleChatCompletions`, `requestChatCompletionStream`,
-  `receiveChatCompletionChunk`, `releaseTask`, `cancelCompletion`, `loadModel`, `close` and
-  `setLogger` call these functions, so every model-backed Java test runs through the C API.
+- The Java suite: every native method of `LlamaModel` and `LlamaQuantizer` calls these functions
+  (the JNI file holds no server logic any more), so every model-backed Java test runs through the
+  C API -- including the ones the random model cannot exercise here (embeddings, rerank, infill,
+  a decision model), which CI runs against the real models.
 
 ## Implementation notes
 

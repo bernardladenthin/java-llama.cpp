@@ -35,6 +35,7 @@
 #define JLLAMA_API_H
 
 #include <stdbool.h>
+#include <stddef.h>
 
 #if defined(_WIN32) && !defined(__MINGW32__)
 #if defined(JLLAMA_BUILD)
@@ -153,6 +154,144 @@ JLLAMA_API jllama_status jllama_task_release(jllama_model *model, int task_id);
  * (synchronously, so a callback's user_data may be released after this returns). Process-wide.
  */
 JLLAMA_API jllama_status jllama_set_log_callback(jllama_log_fn callback, void *user_data);
+
+/* ------------------------------------------------------------------------------------------------
+ * The rest of LlamaModel. Request and response bodies are the ones llama.cpp's HTTP server reads
+ * and writes for the route of the same name; every out-string is released with jllama_string_free,
+ * every out-array with the free function named next to it.
+ * ---------------------------------------------------------------------------------------------- */
+
+/** Releases a float array the library returned (jllama_embed); null is ignored. */
+JLLAMA_API void jllama_floats_free(float *values);
+
+/** Releases a token array the library returned (jllama_tokenize); null is ignored. */
+JLLAMA_API void jllama_tokens_free(int *tokens);
+
+/**
+ * The model's metadata object (LlamaModel.getModelMeta()): vocab type and size, context length,
+ * embedding size, parameter count, file size, modalities, name, architecture, chat template, the
+ * special tokens and the full GGUF key/value map.
+ */
+JLLAMA_API jllama_status jllama_model_meta(jllama_model *model, char **response_json);
+
+/**
+ * A raw completion (llama.cpp's /completion body: `{"prompt": ..., "n_predict": ..., ...}`),
+ * blocking; *response_json is the array of result objects.
+ */
+JLLAMA_API jllama_status jllama_completions(jllama_model *model, const char *request_json, char **response_json);
+
+/** An OpenAI /v1/completions request, blocking; *response_json the text_completion object(s). */
+JLLAMA_API jllama_status jllama_completions_oai(jllama_model *model, const char *request_json, char **response_json);
+
+/**
+ * A fill-in-the-middle request (`input_prefix`, `input_suffix`, optional `input_extra` and
+ * `prompt`), blocking. JLLAMA_STATUS_ERROR when the model has no FIM tokens.
+ */
+JLLAMA_API jllama_status jllama_infill(jllama_model *model, const char *request_json, char **response_json);
+
+/**
+ * Starts a raw streaming completion (`"stream": true`; an infill one when the body carries
+ * `input_prefix`/`input_suffix`) and returns its task id; receive with
+ * jllama_completions_stream_receive.
+ */
+JLLAMA_API jllama_status jllama_completions_stream_request(jllama_model *model, const char *request_json, int *task_id);
+
+/**
+ * Starts a streaming chat completion whose results are llama.cpp's raw result objects (the chat
+ * template applied, no OpenAI chunk formatting); receive with jllama_completions_stream_receive.
+ */
+JLLAMA_API jllama_status jllama_chat_completions_request(jllama_model *model, const char *request_json, int *task_id);
+
+/**
+ * The next result of a raw streaming task, blocking until one is available: the result object
+ * with a `"stop"` key added; *stop is the same flag, after which the task is released.
+ * JLLAMA_STATUS_ERROR with "Task not found" for an unknown or already released id.
+ */
+JLLAMA_API jllama_status jllama_completions_stream_receive(jllama_model *model, int task_id, char **response_json,
+                                                           bool *stop);
+
+/** The chat template applied to an OpenAI chat body (`{"messages": [...]}`): the prompt text. */
+JLLAMA_API jllama_status jllama_apply_template(jllama_model *model, const char *request_json, char **prompt);
+
+/**
+ * The embedding of one prompt (a model loaded with `--embedding`): *values holds *count floats
+ * (jllama_floats_free).
+ */
+JLLAMA_API jllama_status jllama_embed(jllama_model *model, const char *prompt, float **values, size_t *count);
+
+/**
+ * An /embeddings request (`{"content": ...}` or `{"input": ...}`), blocking; with oai_compat the
+ * OpenAI /v1/embeddings response shape (`encoding_format` honoured), else the raw result array.
+ */
+JLLAMA_API jllama_status jllama_embeddings(jllama_model *model, const char *request_json, bool oai_compat,
+                                           char **response_json);
+
+/**
+ * Reranks `n_documents` documents against `query` (a model loaded with `--reranking`); the result
+ * array, each entry with its `index` and `score`.
+ */
+JLLAMA_API jllama_status jllama_rerank(jllama_model *model, const char *query, int n_documents,
+                                       const char *const *documents, char **response_json);
+
+/** Tokenises `text`: *tokens holds *count ids (jllama_tokens_free). */
+JLLAMA_API jllama_status jllama_tokenize(jllama_model *model, const char *text, bool add_special, int **tokens,
+                                         size_t *count);
+
+/** The /tokenize response for `text` (`{"tokens": [...]}`, ids or `{id, piece}` objects). */
+JLLAMA_API jllama_status jllama_tokenize_json(jllama_model *model, const char *text, bool add_special, bool with_pieces,
+                                              char **response_json);
+
+/**
+ * Detokenises `count` ids: *text holds the UTF-8 bytes with *length (jllama_string_free; the bytes
+ * may include NUL, which is why the length is returned).
+ */
+JLLAMA_API jllama_status jllama_detokenize(jllama_model *model, const int *tokens, size_t count, char **text,
+                                           size_t *length);
+
+/** The /detokenize response for `count` ids (`{"content": "..."}`). */
+JLLAMA_API jllama_status jllama_detokenize_json(jllama_model *model, const int *tokens, size_t count,
+                                                char **response_json);
+
+/** The server metrics object (LlamaModel.getMetrics()): the counters plus the `slots` array. */
+JLLAMA_API jllama_status jllama_metrics(jllama_model *model, char **response_json);
+
+typedef enum jllama_slot_op {
+    /** Saves a slot's KV cache to `filename` (under `--slot-save-path`). */
+    JLLAMA_SLOT_SAVE = 1,
+    /** Restores a slot's KV cache from `filename`. */
+    JLLAMA_SLOT_RESTORE = 2,
+    /** Erases a slot's KV cache (`filename` ignored). */
+    JLLAMA_SLOT_ERASE = 3
+} jllama_slot_op;
+
+/** A slot save/restore/erase; *response_json is the server's result object. */
+JLLAMA_API jllama_status jllama_slot_action(jllama_model *model, jllama_slot_op action, int slot_id,
+                                            const char *filename, char **response_json);
+
+/** The LoRA adapters of the model (the GET /lora-adapters array). */
+JLLAMA_API jllama_status jllama_lora_adapters(jllama_model *model, char **response_json);
+
+/** Sets the LoRA adapter scales from a JSON array of `{"id": n, "scale": f}`; the resulting list. */
+JLLAMA_API jllama_status jllama_set_lora_adapters(jllama_model *model, const char *adapters_json, char **response_json);
+
+/**
+ * Runtime tuning from a JSON object with any of `n_threads`, `n_threads_batch` (positive
+ * integers) and `slot_prompt_similarity` (0.0 to 1.0).
+ */
+JLLAMA_API jllama_status jllama_configure(jllama_model *model, const char *config_json);
+
+/** A /v1/systemone request (a decision model); *response_json is the handler's answer body. */
+JLLAMA_API jllama_status jllama_systemone(jllama_model *model, const char *request_json, char **response_json);
+
+/** A JSON schema converted to a GBNF grammar (needs no model). */
+JLLAMA_API jllama_status jllama_json_schema_to_grammar(const char *schema_json, char **grammar);
+
+/**
+ * Quantises a GGUF file to `ftype` (a llama_ftype value) with `nthread` threads (0 = all);
+ * `allow_requantize` permits a non-f32/f16 input. Needs no model; initialises the backend.
+ */
+JLLAMA_API jllama_status jllama_quantize(const char *input_path, const char *output_path, int ftype, int nthread,
+                                         bool allow_requantize);
 
 #ifdef __cplusplus
 }

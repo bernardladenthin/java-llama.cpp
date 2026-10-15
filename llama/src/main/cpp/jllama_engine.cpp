@@ -11,13 +11,17 @@
 #include "server-schema.h"
 #include "server-common.h"
 #include "server-chat.h"
+#include "server-http.h"
+#include "json-schema-to-grammar.h"
 #include "utils.hpp"
 #include "jllama_engine.hpp"
 #include "json_helpers.hpp"
 #include "rpc_support.hpp"
 
 #include <chrono>
+#include <functional>
 #include <mutex>
+#include <optional>
 #include <thread>
 
 namespace jllama::engine {
@@ -53,6 +57,78 @@ void require_result_ok(const server_task_result_ptr &result) {
     if (result->is_error()) {
         throw_result_error(result);
     }
+}
+
+// A JSON request body; a body that does not parse is the request's fault.
+json parse_json_body(const std::string &body_text) {
+    try {
+        return json::parse(body_text);
+    } catch (const std::exception &e) {
+        throw jllama_invalid_request(e.what());
+    }
+}
+
+// Rethrows `e` under the rule of upstream's ex_wrapper (tools/server/server.cpp): a
+// std::invalid_argument or a common_json_error out of tokenization, prompt formatting or a route
+// handler is the request's fault, anything else a server error.
+[[noreturn]] void rethrow_by_type(const std::exception &e) {
+    if (dynamic_cast<const std::invalid_argument *>(&e) != nullptr ||
+        dynamic_cast<const common_json_error *>(&e) != nullptr) {
+        throw jllama_invalid_request(e.what());
+    }
+    throw std::runtime_error(e.what());
+}
+
+// The batch completed without a task-level error, or this throws.
+void require_batch_ok(const server_response_reader::batch_response &br) {
+    if (br.error) {
+        throw_result_error(br.error);
+    }
+    if (br.is_terminated) {
+        // wait_for_all was cut short because free() set closing: the results vector is only
+        // partially filled (null entries), so don't dereference it -- unwind cleanly instead.
+        throw jllama_interrupted("inference interrupted by close()");
+    }
+}
+
+// One indexed token task for batch submission (rerank and embeddings).
+server_task indexed_token_task(server_response_reader &rd, server_task_type type, server_tokens &&tokens, int index,
+                               task_response_type res_type) {
+    server_task task(type);
+    task.id = rd.get_new_id();
+    task.tokens = std::move(tokens);
+    task.index = index;
+    task.params.res_type = res_type;
+    return task;
+}
+
+// Posts one pre-built task at the front of the queue (as upstream does for its own introspection
+// endpoints) and waits for its result; the task's id is assigned here.
+//
+// wake_and_post() has already left any idle-sleep state, so the task is guaranteed to be seen by a
+// running loop. The is_sleeping() disjunct is only a backstop for the narrow window in which the
+// queue could fall asleep again between the wake and this wait -- it takes a full idle period
+// (>= 1s) of quiet to re-enter. Should it ever happen, the result is a thrown "No result" rather
+// than a block until free(); upstream's /metrics handler adds the same guard for the same reason.
+server_task_result_ptr post_and_wait(jllama_context *jctx, server_task task) {
+    auto rd = jctx->server.get_response_reader();
+    task.id = rd.get_new_id();
+    wake_and_post(rd, std::move(task), true);
+    auto result = rd.next([jctx, &rd] { return jctx->closing.load() || rd.queue_tasks.is_sleeping(); });
+    require_result_ok(result);
+    return result;
+}
+
+std::string one_shot(jllama_context *jctx, server_task task) {
+    return safe_json_to_str(post_and_wait(jctx, std::move(task))->to_json());
+}
+
+// The special-token id map (a token is -1 / LLAMA_TOKEN_NULL when the model defines none).
+json special_tokens_json(const llama_vocab *vocab) {
+    return {
+        {"bos", llama_vocab_bos(vocab)}, {"eos", llama_vocab_eos(vocab)}, {"eot", llama_vocab_eot(vocab)},
+        {"sep", llama_vocab_sep(vocab)}, {"nl", llama_vocab_nl(vocab)},   {"pad", llama_vocab_pad(vocab)},
+    };
 }
 
 // The streaming reader of a task, copied out under the lock so it stays alive across next(),
@@ -333,14 +409,7 @@ std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, co
     tasks.push_back(std::move(task));
     wake_and_post(rd, std::move(tasks), session);
     auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
-    if (br.error) {
-        throw_result_error(br.error);
-    }
-    if (br.is_terminated) {
-        // wait_for_all was cut short because free() set closing: the results vector is only
-        // partially filled (null entries), so don't dereference it -- unwind cleanly instead.
-        throw jllama_interrupted("inference interrupted by close()");
-    }
+    require_batch_ok(br);
     return std::move(br.results);
 }
 
@@ -396,12 +465,7 @@ json stream_next(jllama_context *jctx, int id_task, bool &stop) {
 void task_release(jllama_context *jctx, int id_task) { erase_reader(jctx, id_task); }
 
 std::string chat_completions(jllama_context *jctx, const std::string &body_text) {
-    json body;
-    try {
-        body = json::parse(body_text);
-    } catch (const std::exception &e) {
-        throw jllama_invalid_request(e.what());
-    }
+    json body = parse_json_body(body_text);
     std::vector<raw_buffer> files;
     common_chat_session session;
     json data = parse_oai_chat_params(jctx, body, files, session);
@@ -413,12 +477,7 @@ std::string chat_completions(jllama_context *jctx, const std::string &body_text)
 }
 
 int chat_completions_stream_request(jllama_context *jctx, const std::string &body_text, bool oai_chunks) {
-    json body;
-    try {
-        body = json::parse(body_text);
-    } catch (const std::exception &e) {
-        throw jllama_invalid_request(e.what());
-    }
+    json body = parse_json_body(body_text);
     std::vector<raw_buffer> files;
     common_chat_session session;
     json data = parse_oai_chat_params(jctx, body, files, session);
@@ -443,6 +502,446 @@ void set_log_sink(common_log_callback callback, void *user_data) {
         // llama/ggml lines feed common_log even before the first model load runs common_init(),
         // which re-points llama_log_set() at this same default callback anyway.
         llama_log_set(common_log_default_callback, nullptr);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The rest of LlamaModel (B.3).
+// ---------------------------------------------------------------------------
+
+std::string model_meta(jllama_context *jctx) {
+    if (jctx->vocab_only) {
+        json meta = {
+            // static_cast: an unscoped enum binds to common_json_value(bool) and would serialise as
+            // true/false -- see the "vocab_type" note in docs/history/llama-cpp-breaking-changes.md
+            {"vocab_type", static_cast<int>(llama_vocab_type(jctx->vocab))},
+            {"n_vocab", llama_vocab_n_tokens(jctx->vocab)},
+            {"special_tokens", special_tokens_json(jctx->vocab)},
+        };
+        return safe_json_to_str(meta);
+    }
+    auto m = wake_and_get_meta(jctx);
+    // general.architecture from the GGUF metadata. Sized dynamically: llama_model_meta_val_str
+    // returns the required length for a null buffer, so a long name is never truncated; a char
+    // vector keeps the API's terminating '\0' off a std::string's internal terminator slot.
+    std::string arch;
+    const llama_model *mdl = llama_get_model(jctx->server.get_llama_context());
+    if (mdl != nullptr) {
+        const int need = llama_model_meta_val_str(mdl, "general.architecture", nullptr, 0);
+        if (need > 0) {
+            std::vector<char> buf(static_cast<size_t>(need) + 1, '\0');
+            llama_model_meta_val_str(mdl, "general.architecture", buf.data(), buf.size());
+            arch.assign(buf.data());
+        }
+    }
+    json j = {
+        // static_cast: see the vocab_only branch above
+        {"vocab_type", static_cast<int>(m.model_vocab_type)},
+        {"n_vocab", m.model_vocab_n_tokens},
+        {"n_ctx_train", m.model_n_ctx_train},
+        {"n_embd", m.model_n_embd_inp},
+        {"n_params", m.model_n_params},
+        {"size", m.model_size},
+        // All three modalities upstream tracks, as its own /props emits them.
+        {"modalities", {{"vision", m.has_inp_image}, {"audio", m.has_inp_audio}, {"video", m.has_inp_video}}},
+        {"name", m.model_name},
+        {"architecture", arch},
+        {"ftype", m.model_ftype},
+    };
+    // The input/output modalities of upstream's GET /models `architecture` object (b11429, #29987),
+    // flattened to the top level because "architecture" above already names the GGUF architecture
+    // string. A native decision model reports ["decisions"].
+    {
+        const json modalities = server_model_architecture_json(m.has_inp_image, m.has_inp_audio, m.has_inp_video,
+                                                               m.model_output_modalities);
+        j["input_modalities"] = modalities.at("input_modalities");
+        j["output_modalities"] = modalities.at("output_modalities");
+    }
+    // Resolved default chat template (Jinja); empty when the model ships none.
+    const char *chat_tmpl = mdl != nullptr ? llama_model_chat_template(mdl, /*name*/ nullptr) : nullptr;
+    j["chat_template"] = chat_tmpl != nullptr ? std::string(chat_tmpl) : std::string();
+    j["special_tokens"] = special_tokens_json(jctx->vocab);
+    // Full GGUF metadata key/value map.
+    if (mdl != nullptr) {
+        json meta_map = json::object();
+        const int meta_count = llama_model_meta_count(mdl);
+        for (int i = 0; i < meta_count; i++) {
+            char key_buf[256] = {};
+            // 2 KB/value cap: scalar metadata fits; huge array values (tokenizer tokens/merges)
+            // truncate rather than bloating the JSON.
+            char val_buf[2048] = {};
+            if (llama_model_meta_key_by_index(mdl, i, key_buf, sizeof(key_buf)) >= 0 &&
+                llama_model_meta_val_str_by_index(mdl, i, val_buf, sizeof(val_buf)) >= 0) {
+                meta_map[std::string(key_buf)] = std::string(val_buf);
+            }
+        }
+        j["metadata"] = std::move(meta_map);
+    }
+    return safe_json_to_str(j);
+}
+
+std::string completions(jllama_context *jctx, const std::string &body_text) {
+    const json data = parse_json_body(body_text);
+    return safe_json_to_str(
+        results_to_json(blocking_completion(jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_NONE)));
+}
+
+std::string completions_oai(jllama_context *jctx, const std::string &body_text) {
+    const json body = parse_json_body(body_text);
+    json data;
+    try {
+        data = oaicompat_completion_params_parse(body);
+    } catch (const std::exception &e) {
+        throw jllama_invalid_request(e.what());
+    }
+    return safe_json_to_str(
+        results_to_json(blocking_completion(jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CMPL)));
+}
+
+std::string infill(jllama_context *jctx, const std::string &body_text) {
+    // FIM token support via server_context_meta (populated from the same llama_vocab_fim_* calls
+    // inside server-context). Upstream answers 501 here, a server-side error.
+    auto meta = wake_and_get_meta(jctx);
+    if (meta.fim_pre_token == LLAMA_TOKEN_NULL || meta.fim_sub_token == LLAMA_TOKEN_NULL ||
+        meta.fim_mid_token == LLAMA_TOKEN_NULL) {
+        throw std::runtime_error("Model does not support fill-in-the-middle infill");
+    }
+    json data = parse_json_body(body_text);
+    for (const char *field : {"input_prefix", "input_suffix"}) {
+        if (!data.contains(field)) {
+            throw jllama_invalid_request(std::string("\"") + field + "\" is required");
+        }
+    }
+    data["input_extra"] = json_value(data, "input_extra", json::array());
+    const std::string prompt = json_value(data, "prompt", std::string());
+    try {
+        std::vector<server_tokens> tokenized_prompts =
+            tokenize_input_prompts(jctx->vocab, nullptr, prompt, false, true, mtmd_helper_init_opt_default());
+        data["prompt"] =
+            format_prompt_infill(jctx->vocab, data.at("input_prefix"), data.at("input_suffix"), data.at("input_extra"),
+                                 jctx->params.n_batch, jctx->params.n_predict, meta.slot_n_ctx, jctx->params.spm_infill,
+                                 tokenized_prompts.empty() ? llama_tokens() : tokenized_prompts[0].get_tokens());
+    } catch (const std::exception &e) {
+        rethrow_by_type(e);
+    }
+    return safe_json_to_str(
+        results_to_json(blocking_completion(jctx, data, SERVER_TASK_TYPE_INFILL, TASK_RESPONSE_TYPE_NONE)));
+}
+
+int completions_stream_request(jllama_context *jctx, const std::string &body_text) {
+    const json data = parse_json_body(body_text);
+    const server_task_type type = is_infill_request(data) ? SERVER_TASK_TYPE_INFILL : SERVER_TASK_TYPE_COMPLETION;
+    return streaming_request(jctx, data, type, TASK_RESPONSE_TYPE_NONE);
+}
+
+std::string completions_stream_receive(jllama_context *jctx, int id_task, bool &stop) {
+    stop = false;
+    json payload = stream_next(jctx, id_task, stop);
+    payload["stop"] = stop;
+    return safe_json_to_str(payload);
+}
+
+std::string apply_template(jllama_context *jctx, const std::string &body_text) {
+    json body = parse_json_body(body_text);
+    std::vector<raw_buffer> files;
+    common_chat_session session; // built with the prompt, not needed afterwards
+    const json data = parse_oai_chat_params(jctx, body, files, session);
+    if (!data.contains("prompt") || !data.at("prompt").is_string()) {
+        throw std::runtime_error("applyTemplate did not produce a string prompt");
+    }
+    const std::string prompt = data.at("prompt");
+    return prompt;
+}
+
+std::vector<float> embed(jllama_context *jctx, const std::string &prompt) {
+    // Idle sleep frees the model and invalidates the cached vocab; wake and re-sync first.
+    wake_server(jctx);
+    if (!jctx->params.embedding) {
+        throw std::runtime_error(
+            "Model was not loaded with embedding support (see ModelParameters#setEmbedding(boolean))");
+    }
+    SRV_INF("Calling embedding '%s'\n", prompt.c_str());
+    llama_tokens tokens;
+    try {
+        tokens = tokenize_mixed(jctx->vocab, prompt, true, true);
+    } catch (const std::exception &e) {
+        rethrow_by_type(e);
+    }
+    auto rd = jctx->server.get_response_reader();
+    server_task task(SERVER_TASK_TYPE_EMBEDDING);
+    task.id = rd.get_new_id();
+    task.tokens = server_tokens(tokens, false);
+    task.index = 0;
+    wake_and_post(rd, std::move(task));
+    auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
+    require_batch_ok(br);
+    if (br.results.empty()) {
+        throw std::runtime_error("embedding result is empty");
+    }
+    auto *embd_result = dynamic_cast<server_task_result_embd *>(br.results[0].get());
+    if (embd_result == nullptr || embd_result->embedding.empty() || embd_result->embedding[0].empty()) {
+        throw std::runtime_error("embedding result is empty");
+    }
+    SRV_INF("Embedding has %d columns\n", static_cast<int>(embd_result->embedding[0].size()));
+    return embd_result->embedding[0];
+}
+
+std::string embeddings(jllama_context *jctx, const std::string &body_text, bool oai_compat) {
+    if (!jctx->params.embedding) {
+        throw std::runtime_error(
+            "Model was not loaded with embedding support (see ModelParameters#setEmbedding(boolean))");
+    }
+    task_response_type res_type = oai_compat ? TASK_RESPONSE_TYPE_OAI_EMBD : TASK_RESPONSE_TYPE_NONE;
+    {
+        auto meta = wake_and_get_meta(jctx);
+        if (res_type != TASK_RESPONSE_TYPE_NONE && meta.pooling_type == LLAMA_POOLING_TYPE_NONE) {
+            throw jllama_invalid_request(
+                "Pooling type 'none' is not OAI compatible. Please use a different pooling type");
+        }
+    }
+    const json body = parse_json_body(body_text);
+    bool force_no_oaicompat = false;
+    json prompt;
+    bool use_base64 = false;
+    try {
+        prompt = extract_embedding_prompt(body, force_no_oaicompat);
+        use_base64 = parse_encoding_format(body);
+    } catch (const std::exception &e) {
+        throw jllama_invalid_request(e.what());
+    }
+    if (force_no_oaicompat) {
+        res_type = TASK_RESPONSE_TYPE_NONE;
+    }
+    std::vector<server_tokens> tokenized_prompts;
+    try {
+        tokenized_prompts =
+            tokenize_input_prompts(jctx->vocab, nullptr, prompt, true, true, mtmd_helper_init_opt_default());
+    } catch (const std::exception &e) {
+        // `"prompt" must not be empty` is a std::invalid_argument, as upstream throws it
+        rethrow_by_type(e);
+    }
+    for (const auto &toks : tokenized_prompts) {
+        if (toks.get_tokens().empty()) {
+            throw jllama_invalid_request("Input content cannot be empty");
+        }
+    }
+    auto rd = jctx->server.get_response_reader();
+    std::vector<server_task> tasks;
+    tasks.reserve(tokenized_prompts.size());
+    for (size_t i = 0; i < tokenized_prompts.size(); i++) {
+        tasks.push_back(indexed_token_task(rd, SERVER_TASK_TYPE_EMBEDDING,
+                                           server_tokens(tokenized_prompts[i].get_tokens(), false), static_cast<int>(i),
+                                           res_type));
+    }
+    wake_and_post(rd, std::move(tasks));
+    auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
+    require_batch_ok(br);
+    json responses = json::array();
+    for (const auto &result : br.results) {
+        responses.push_back(result->to_json());
+    }
+    const json out =
+        (res_type == TASK_RESPONSE_TYPE_OAI_EMBD)
+            ? format_embeddings_response_oaicompat(
+                  body, json_value(body, "model", std::string(DEFAULT_OAICOMPAT_MODEL)), responses, use_base64)
+            : responses;
+    return safe_json_to_str(out);
+}
+
+std::string rerank(jllama_context *jctx, const std::string &query, const std::vector<std::string> &documents) {
+    {
+        auto meta = wake_and_get_meta(jctx);
+        if (!jctx->params.embedding || meta.pooling_type != LLAMA_POOLING_TYPE_RANK) {
+            throw std::runtime_error(
+                "This server does not support reranking. Start it with `--reranking` and without `--embedding`");
+        }
+    }
+    const llama_model *model = llama_get_model(jctx->server.get_llama_context());
+    auto rd = jctx->server.get_response_reader();
+    std::vector<server_task> tasks;
+    tasks.reserve(documents.size());
+    for (size_t i = 0; i < documents.size(); i++) {
+        tasks.push_back(indexed_token_task(
+            rd, SERVER_TASK_TYPE_RERANK,
+            format_prompt_rerank(model, jctx->vocab, nullptr, query, documents[i], mtmd_helper_init_opt_default()),
+            static_cast<int>(i), TASK_RESPONSE_TYPE_NONE));
+    }
+    wake_and_post(rd, std::move(tasks));
+    auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
+    require_batch_ok(br);
+    // rerank_results_to_json throws std::invalid_argument on a malformed/out-of-range result index:
+    // a broken result, not the caller's fault.
+    try {
+        return safe_json_to_str(rerank_results_to_json(br.results, documents));
+    } catch (const std::exception &e) {
+        throw std::runtime_error(e.what());
+    }
+}
+
+std::vector<llama_token> tokenize(jllama_context *jctx, const std::string &text, bool add_special) {
+    // Idle sleep frees the model and invalidates the cached vocab; wake and re-sync first.
+    wake_server(jctx);
+    return tokenize_mixed(jctx->vocab, text, add_special, true);
+}
+
+std::string tokenize_json(jllama_context *jctx, const std::string &text, bool add_special, bool with_pieces) {
+    const llama_tokens tokens = tokenize(jctx, text, add_special);
+    json tokens_response = json::array();
+    if (with_pieces) {
+        llama_context *lctx = jctx->vocab_only ? nullptr : jctx->server.get_llama_context();
+        for (const auto &token : tokens) {
+            std::string piece;
+            if (lctx != nullptr) {
+                piece = common_token_to_piece(lctx, token);
+            } else {
+                char buf[256];
+                const int n = llama_token_to_piece(jctx->vocab, token, buf, static_cast<int>(sizeof(buf)), 0, false);
+                piece = n > 0 ? std::string(buf, n) : std::string();
+            }
+            tokens_response.push_back({{"id", token}, {"piece", token_piece_value(piece)}});
+        }
+    } else {
+        tokens_response = tokens;
+    }
+    return safe_json_to_str(format_tokenizer_response(tokens_response));
+}
+
+std::string detokenize(jllama_context *jctx, const std::vector<llama_token> &tokens) {
+    wake_server(jctx);
+    if (jctx->vocab_only) {
+        return tokens_to_str(jctx->vocab, tokens);
+    }
+    return tokens_to_str(jctx->server.get_llama_context(), tokens);
+}
+
+std::string detokenize_json(jllama_context *jctx, const std::vector<llama_token> &tokens) {
+    return safe_json_to_str(format_detokenized_response(detokenize(jctx, tokens)));
+}
+
+std::string metrics(jllama_context *jctx) {
+    // b10408 (upstream #26920) reduced server_task_result_metrics::to_json() to the slot array and
+    // b10519 (#27376) split the task in two: METRICS keeps only the counters (its to_json() is unused
+    // and returns JSON null; to_metrics() renders them as Prometheus text) and SLOT_GET carries the
+    // slot array plus the idle-slot count. Post both and merge them so getMetrics() keeps returning
+    // the single documented object.
+    auto metrics_result = post_and_wait(jctx, server_task(SERVER_TASK_TYPE_METRICS));
+    auto slots_result = post_and_wait(jctx, server_task(SERVER_TASK_TYPE_SLOT_GET));
+    const auto *counters = dynamic_cast<const server_task_result_metrics *>(metrics_result.get());
+    const auto *slots = dynamic_cast<const server_task_result_slots *>(slots_result.get());
+    if (counters == nullptr || slots == nullptr) {
+        throw std::runtime_error("Unexpected result type for server metrics");
+    }
+    return safe_json_to_str(server_metrics_to_json(*counters, *slots));
+}
+
+std::string slot_action(jllama_context *jctx, slot_op op, int id_slot, const std::string &filename) {
+    if (op == slot_op::erase) {
+        server_task task(SERVER_TASK_TYPE_SLOT_ERASE);
+        task.slot_action.id_slot = id_slot;
+        return one_shot(jctx, std::move(task));
+    }
+    if (filename.empty()) {
+        throw std::runtime_error(op == slot_op::save ? "Filename is required for slot save"
+                                                     : "Filename is required for slot restore");
+    }
+    server_task task(op == slot_op::save ? SERVER_TASK_TYPE_SLOT_SAVE : SERVER_TASK_TYPE_SLOT_RESTORE);
+    task.slot_action.id_slot = id_slot;
+    task.slot_action.filename = filename;
+    task.slot_action.filepath = filename;
+    return one_shot(jctx, std::move(task));
+}
+
+std::string lora_adapters(jllama_context *jctx) { return one_shot(jctx, server_task(SERVER_TASK_TYPE_GET_LORA)); }
+
+std::string set_lora_adapters(jllama_context *jctx, const std::string &adapters_json) {
+    const json data = parse_json_body(adapters_json);
+    if (!data.is_array()) {
+        // Same contract as the upstream POST /lora-adapters route body.
+        throw std::runtime_error("LoRA adapter list must be a JSON array of {id, scale} objects");
+    }
+    server_task task(SERVER_TASK_TYPE_SET_LORA);
+    task.set_lora = parse_lora_request(data);
+    return one_shot(jctx, std::move(task));
+}
+
+void configure(jllama_context *jctx, const std::string &config_json) {
+    const json config = parse_json_body(config_json);
+    std::optional<float> slot_sim_opt;
+    std::optional<int> n_threads_opt;
+    std::optional<int> n_threads_batch_opt;
+    try {
+        slot_sim_opt = parse_slot_prompt_similarity(config);
+        n_threads_opt = parse_positive_int_config(config, "n_threads");
+        n_threads_batch_opt = parse_positive_int_config(config, "n_threads_batch");
+    } catch (const std::exception &e) {
+        throw std::runtime_error(e.what());
+    }
+    // n_threads / n_threads_batch through the public llama.h API. The setter requires both values;
+    // a missing one is filled from the cached common_params so a single-field update is a no-op for
+    // the other field, and the cache is kept in sync so a follow-up call reads back what was applied.
+    if (n_threads_opt.has_value() || n_threads_batch_opt.has_value()) {
+        llama_context *lctx = jctx->server.get_llama_context();
+        if (lctx == nullptr) {
+            throw std::runtime_error("configureParallelInference: llama_context not available "
+                                     "(model sleeping or not loaded)");
+        }
+        const int n = n_threads_opt.value_or(jctx->params.cpuparams.n_threads);
+        const int nb = n_threads_batch_opt.value_or(jctx->params.cpuparams_batch.n_threads);
+        llama_set_n_threads(lctx, n, nb);
+        jctx->params.cpuparams.n_threads = n;
+        jctx->params.cpuparams_batch.n_threads = nb;
+    }
+    // slot_prompt_similarity: validated above ([0.0, 1.0]). Live mutation uses
+    // server_context::set_slot_prompt_similarity(), carried as patches/0003 (upstream #22393).
+    if (slot_sim_opt.has_value()) {
+        jctx->server.set_slot_prompt_similarity(*slot_sim_opt);
+    }
+}
+
+std::string systemone(jllama_context *jctx, const std::string &body) {
+    // Forwarded to upstream's route handler (b11361, #29818) rather than re-implemented: the request
+    // parsing, the per-model prompt layout, the shared-prefix grouping and the answer formatting live
+    // in server_decision_context, private to server_context_impl and reachable only through
+    // server_routes. The handler waits for the server to leave sleep itself (create_response()).
+    if (!jctx->routes) {
+        throw std::runtime_error("systemone is not available in vocab-only mode");
+    }
+    const std::function<bool()> should_stop = [jctx] { return jctx->closing.load(); };
+    const server_http_req req{{}, {}, "/v1/systemone", "", body, {}, should_stop};
+    server_http_res_ptr res;
+    try {
+        res = jctx->routes->post_systemone(req);
+    } catch (const std::exception &e) {
+        rethrow_by_type(e);
+    }
+    if (res->status != 200) {
+        // the handler's own verdict: server_res_generator::error() sets the status from the error code
+        const std::string message = route_error_message(res->data);
+        if (res->status == 400) {
+            throw jllama_invalid_request(message);
+        }
+        throw std::runtime_error(message);
+    }
+    return res->data;
+}
+
+std::string json_schema_to_grammar_text(const std::string &schema_json) {
+    const json schema = json::parse(schema_json);
+    return json_schema_to_grammar(schema);
+}
+
+void quantize(const std::string &input_path, const std::string &output_path, int ftype, int nthread,
+              bool allow_requantize) {
+    // Idempotent; intentionally never paired with llama_backend_free here -- a model loaded in the
+    // same process shares the backend and must not have it freed underneath it.
+    llama_backend_init();
+    llama_model_quantize_params qparams = llama_model_quantize_default_params();
+    qparams.ftype = static_cast<llama_ftype>(ftype);
+    qparams.nthread = nthread;
+    qparams.allow_requantize = allow_requantize;
+    const uint32_t rc = llama_model_quantize(input_path.c_str(), output_path.c_str(), &qparams);
+    if (rc != 0) {
+        throw std::runtime_error("Quantization of '" + input_path + "' failed with code " + std::to_string(rc));
     }
 }
 

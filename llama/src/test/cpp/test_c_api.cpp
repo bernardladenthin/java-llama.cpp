@@ -339,6 +339,223 @@ TEST_F(CApi, AReleasedStreamingTaskIsGone) {
     EXPECT_STREQ(jllama_last_error(), "Task not found");
 }
 
+// ---------------------------------------------------------------------------
+// The rest of LlamaModel through the C API (B.3). The model is random, so what is asserted is the
+// shape and the contract of every answer, never its content.
+// ---------------------------------------------------------------------------
+
+TEST_F(CApi, ModelMetaDescribesTheModel) {
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model_, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json j = json::parse(meta.str());
+    EXPECT_EQ(j.at("n_vocab").get<int>(), N_VOCAB);
+    EXPECT_EQ(j.at("n_ctx_train").get<int>(), N_CTX_TRAIN);
+    EXPECT_EQ(j.at("n_embd").get<int>(), N_EMBD);
+    EXPECT_EQ(j.at("architecture").get<std::string>(), "llama");
+    EXPECT_EQ(j.at("special_tokens").at("bos").get<int>(), '<');
+    EXPECT_EQ(j.at("special_tokens").at("eos").get<int>(), '>');
+    EXPECT_TRUE(j.at("modalities").at("vision").is_boolean());
+    EXPECT_TRUE(j.at("input_modalities").is_array());
+    EXPECT_EQ(j.at("metadata").at("general.architecture").get<std::string>(), "llama");
+    EXPECT_EQ(jllama_model_meta(model_, nullptr), JLLAMA_STATUS_INVALID_ARGUMENT);
+}
+
+TEST_F(CApi, RawCompletionsReturnTheResultObject) {
+    Owned response;
+    ASSERT_EQ(jllama_completions(model_, R"({"prompt":"Hi","n_predict":2,"temperature":0})", &response.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json j = json::parse(response.str());
+    EXPECT_TRUE(j.at("content").is_string());
+    EXPECT_LE(j.at("tokens_predicted").get<int>(), 2);
+    EXPECT_TRUE(j.at("stop").get<bool>());
+    EXPECT_EQ(jllama_completions(model_, "{not json", &response.s), JLLAMA_STATUS_INVALID_REQUEST);
+}
+
+TEST_F(CApi, OaiCompletionsReturnATextCompletionObject) {
+    Owned response;
+    ASSERT_EQ(jllama_completions_oai(model_, R"({"prompt":"Hi","max_tokens":2,"temperature":0})", &response.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json j = json::parse(response.str());
+    EXPECT_EQ(j.at("object").get<std::string>(), "text_completion");
+    ASSERT_EQ(j.at("choices").size(), 1u);
+    EXPECT_TRUE(j.at("choices")[0].at("text").is_string());
+    // The OAI layer refuses a body without a prompt before anything reaches the model.
+    EXPECT_EQ(jllama_completions_oai(model_, R"({"max_tokens":2})", &response.s), JLLAMA_STATUS_INVALID_REQUEST);
+}
+
+TEST_F(CApi, RawStreamingDeliversResultsWithAStopKeyAndReleasesTheTask) {
+    int task = -1;
+    ASSERT_EQ(jllama_completions_stream_request(
+                  model_, R"({"prompt":"Hi","n_predict":3,"temperature":0,"stream":true})", &task),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_GE(task, 0);
+    bool stop = false;
+    int results = 0;
+    for (int i = 0; i < 20 && !stop; ++i) {
+        Owned payload;
+        ASSERT_EQ(jllama_completions_stream_receive(model_, task, &payload.s, &stop), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json j = json::parse(payload.str());
+        EXPECT_EQ(j.at("stop").get<bool>(), stop);
+        EXPECT_TRUE(j.at("content").is_string());
+        ++results;
+    }
+    EXPECT_TRUE(stop);
+    EXPECT_GE(results, 2); // the partial results and the final one
+    Owned again;
+    bool s = false;
+    EXPECT_EQ(jllama_completions_stream_receive(model_, task, &again.s, &s), JLLAMA_STATUS_ERROR);
+    EXPECT_STREQ(jllama_last_error(), "Task not found");
+}
+
+TEST_F(CApi, ChatCompletionsRequestStreamsRawResultsOverTheChatTemplate) {
+    int task = -1;
+    ASSERT_EQ(jllama_chat_completions_request(
+                  model_,
+                  R"({"messages":[{"role":"user","content":"Hi"}],"max_tokens":2,"temperature":0,"stream":true})",
+                  &task),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    bool stop = false;
+    for (int i = 0; i < 20 && !stop; ++i) {
+        Owned payload;
+        ASSERT_EQ(jllama_completions_stream_receive(model_, task, &payload.s, &stop), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json j = json::parse(payload.str());
+        EXPECT_FALSE(j.contains("object")); // raw results, not chat.completion.chunk objects
+    }
+    EXPECT_TRUE(stop);
+    EXPECT_EQ(jllama_chat_completions_request(model_, R"({"messages":"no"})", &task), JLLAMA_STATUS_INVALID_REQUEST);
+}
+
+TEST_F(CApi, ApplyTemplateRendersThePrompt) {
+    Owned prompt;
+    ASSERT_EQ(jllama_apply_template(model_, R"({"messages":[{"role":"user","content":"Hi there"}]})", &prompt.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_NE(prompt.str().find("Hi there"), std::string::npos);
+    EXPECT_EQ(jllama_apply_template(model_, R"({"messages":"no"})", &prompt.s), JLLAMA_STATUS_INVALID_REQUEST);
+}
+
+TEST_F(CApi, TokenizeAndDetokenizeRoundTrip) {
+    int *tokens = nullptr;
+    size_t count = 0;
+    ASSERT_EQ(jllama_tokenize(model_, "Hello", false, &tokens, &count), JLLAMA_STATUS_OK) << jllama_last_error();
+    ASSERT_NE(tokens, nullptr);
+    EXPECT_EQ(count, 5u); // one byte token per byte
+    Owned text;
+    size_t length = 0;
+    ASSERT_EQ(jllama_detokenize(model_, tokens, count, &text.s, &length), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(std::string(text.s, length), "Hello");
+    jllama_tokens_free(tokens);
+
+    Owned with_pieces;
+    ASSERT_EQ(jllama_tokenize_json(model_, "Hi", false, true, &with_pieces.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json tj = json::parse(with_pieces.str());
+    ASSERT_EQ(tj.at("tokens").size(), 2u);
+    EXPECT_EQ(tj.at("tokens")[0].at("id").get<int>(), 'H');
+    EXPECT_EQ(tj.at("tokens")[0].at("piece").get<std::string>(), "H");
+    const int ids[] = {'H', 'i'};
+    Owned detok;
+    ASSERT_EQ(jllama_detokenize_json(model_, ids, 2, &detok.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(json::parse(detok.str()).at("content").get<std::string>(), "Hi");
+    EXPECT_EQ(jllama_tokenize(model_, nullptr, false, &tokens, &count), JLLAMA_STATUS_INVALID_ARGUMENT);
+}
+
+TEST_F(CApi, MetricsCarryTheCountersAndTheSlots) {
+    Owned metrics;
+    ASSERT_EQ(jllama_metrics(model_, &metrics.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const json j = json::parse(metrics.str());
+    EXPECT_TRUE(j.at("idle").is_number());
+    EXPECT_TRUE(j.at("n_prompt_tokens_processed_total").is_number());
+    ASSERT_TRUE(j.at("slots").is_array());
+    EXPECT_EQ(j.at("slots").size(), 1u);
+}
+
+TEST_F(CApi, SlotActionsAndLoraAdapters) {
+    Owned response;
+    ASSERT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_ERASE, 0, nullptr, &response.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_TRUE(json::parse(response.str()).is_object());
+    Owned refused;
+    EXPECT_EQ(jllama_slot_action(model_, JLLAMA_SLOT_SAVE, 0, "", &refused.s), JLLAMA_STATUS_ERROR);
+    EXPECT_STREQ(jllama_last_error(), "Filename is required for slot save");
+    EXPECT_EQ(jllama_slot_action(model_, static_cast<jllama_slot_op>(7), 0, nullptr, &refused.s),
+              JLLAMA_STATUS_INVALID_ARGUMENT);
+    EXPECT_STREQ(jllama_last_error(), "Invalid slot action");
+
+    Owned adapters;
+    ASSERT_EQ(jllama_lora_adapters(model_, &adapters.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_TRUE(json::parse(adapters.str()).is_array());
+    Owned set;
+    ASSERT_EQ(jllama_set_lora_adapters(model_, "[]", &set.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_NO_THROW(json::parse(set.str())); // upstream's own result object for the set task
+    EXPECT_EQ(jllama_set_lora_adapters(model_, "{}", &set.s), JLLAMA_STATUS_ERROR);
+    EXPECT_EQ(jllama_set_lora_adapters(model_, "[", &set.s), JLLAMA_STATUS_INVALID_REQUEST);
+}
+
+TEST_F(CApi, ConfigureTunesTheThreadsAndRefusesNonsense) {
+    EXPECT_EQ(jllama_configure(model_, R"({"n_threads":1,"n_threads_batch":1})"), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(jllama_configure(model_, R"({"slot_prompt_similarity":0.5})"), JLLAMA_STATUS_OK) << jllama_last_error();
+    EXPECT_EQ(jllama_configure(model_, R"({"slot_prompt_similarity":2.0})"), JLLAMA_STATUS_ERROR);
+    EXPECT_EQ(jllama_configure(model_, "{not json"), JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_EQ(jllama_configure(model_, nullptr), JLLAMA_STATUS_INVALID_ARGUMENT);
+}
+
+TEST_F(CApi, OperationsTheModelWasNotLoadedForAreServerErrors) {
+    // Loaded without --embedding / --reranking, and a model without FIM tokens or decisions.
+    float *values = nullptr;
+    size_t count = 0;
+    EXPECT_EQ(jllama_embed(model_, "Hi", &values, &count), JLLAMA_STATUS_ERROR);
+    EXPECT_EQ(values, nullptr);
+    EXPECT_NE(std::string(jllama_last_error()).find("embedding support"), std::string::npos);
+    Owned response;
+    EXPECT_EQ(jllama_embeddings(model_, R"({"content":"Hi"})", false, &response.s), JLLAMA_STATUS_ERROR);
+    const char *docs[] = {"a", "b"};
+    EXPECT_EQ(jllama_rerank(model_, "q", 2, docs, &response.s), JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("reranking"), std::string::npos);
+    EXPECT_EQ(jllama_infill(model_, R"({"input_prefix":"a","input_suffix":"b"})", &response.s), JLLAMA_STATUS_ERROR);
+    EXPECT_NE(std::string(jllama_last_error()).find("fill-in-the-middle"), std::string::npos);
+    EXPECT_NE(jllama_systemone(model_, R"({"state":"x","questions":[]})", &response.s), JLLAMA_STATUS_OK);
+    EXPECT_EQ(response.s, nullptr);
+    EXPECT_NE(std::strlen(jllama_last_error()), 0u);
+}
+
+TEST(CApiStatic, JsonSchemaToGrammarNeedsNoModel) {
+    Owned grammar;
+    ASSERT_EQ(jllama_json_schema_to_grammar(R"({"type":"object","properties":{"a":{"type":"string"}}})", &grammar.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_NE(grammar.str().find("root"), std::string::npos);
+    EXPECT_EQ(jllama_json_schema_to_grammar("{bad", &grammar.s), JLLAMA_STATUS_ERROR);
+    EXPECT_EQ(grammar.s, nullptr);
+    EXPECT_EQ(jllama_json_schema_to_grammar(nullptr, &grammar.s), JLLAMA_STATUS_INVALID_ARGUMENT);
+}
+
+TEST_F(CApi, QuantizeWritesAModelThatLoads) {
+    const std::string out = path_ + ".q8_0.gguf";
+    ASSERT_EQ(jllama_quantize(path_.c_str(), out.c_str(), /*LLAMA_FTYPE_MOSTLY_Q8_0*/ 7, 1, false), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::error_code ec;
+    EXPECT_GT(std::filesystem::file_size(out, ec), 0u);
+    const std::vector<std::string> args = {"jllama", "-m", out, "-c", "64", "-ngl", "0", "--no-warmup", "-t", "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *quantized = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &quantized),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    jllama_model_free(quantized);
+    std::filesystem::remove(out, ec);
+    EXPECT_EQ(jllama_quantize("/nonexistent/in.gguf", out.c_str(), 7, 1, false), JLLAMA_STATUS_ERROR);
+}
+
 TEST_F(CApi, TheLogCallbackSeesTheServersLinesAndNullFlushesSynchronously) {
     struct Sink {
         std::mutex m;

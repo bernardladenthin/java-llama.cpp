@@ -131,6 +131,77 @@ void task_release(jllama_context *jctx, int id_task);
  */
 void set_log_sink(common_log_callback callback, void *user_data);
 
+// ---------------------------------------------------------------------------
+// The rest of LlamaModel, operation by operation (TODO.md item 7, B.3). Every function takes and
+// returns JSON text or plain C++ values, wakes the server from idle sleep where it touches the
+// model, and reports failure by throwing under the contract above.
+// ---------------------------------------------------------------------------
+
+/** The model's metadata object (LlamaModel.getModelMeta()): vocab, context, modalities, template. */
+[[nodiscard]] std::string model_meta(jllama_context *jctx);
+
+/** A raw completion (llama.cpp's /completion body), blocking; the array of result objects. */
+[[nodiscard]] std::string completions(jllama_context *jctx, const std::string &body);
+
+/** An OpenAI /v1/completions request, blocking; the text_completion object(s). */
+[[nodiscard]] std::string completions_oai(jllama_context *jctx, const std::string &body);
+
+/** A fill-in-the-middle request (`input_prefix`, `input_suffix`, optional `input_extra`), blocking. */
+[[nodiscard]] std::string infill(jllama_context *jctx, const std::string &body);
+
+/**
+ * A raw streaming completion (an infill one when the body carries the infill fields); its task id,
+ * received with completions_stream_receive(): each result as JSON with a "stop" key added.
+ */
+[[nodiscard]] int completions_stream_request(jllama_context *jctx, const std::string &body);
+[[nodiscard]] std::string completions_stream_receive(jllama_context *jctx, int id_task, bool &stop);
+
+/** The chat template applied to an OpenAI chat body: the prompt text the model would see. */
+[[nodiscard]] std::string apply_template(jllama_context *jctx, const std::string &body);
+
+/** The embedding vector of one prompt (needs `--embedding`). */
+[[nodiscard]] std::vector<float> embed(jllama_context *jctx, const std::string &prompt);
+
+/** An /embeddings (or, with oai_compat, /v1/embeddings) request, blocking; the response body. */
+[[nodiscard]] std::string embeddings(jllama_context *jctx, const std::string &body, bool oai_compat);
+
+/** Reranks documents against a query (needs `--reranking`); the result array. */
+[[nodiscard]] std::string rerank(jllama_context *jctx, const std::string &query,
+                                 const std::vector<std::string> &documents);
+
+/** Tokenisation: the ids, or the /tokenize response (optionally with pieces). */
+[[nodiscard]] std::vector<llama_token> tokenize(jllama_context *jctx, const std::string &text, bool add_special);
+[[nodiscard]] std::string tokenize_json(jllama_context *jctx, const std::string &text, bool add_special,
+                                        bool with_pieces);
+
+/** Detokenisation: the UTF-8 bytes (may hold any byte), or the /detokenize response. */
+[[nodiscard]] std::string detokenize(jllama_context *jctx, const std::vector<llama_token> &tokens);
+[[nodiscard]] std::string detokenize_json(jllama_context *jctx, const std::vector<llama_token> &tokens);
+
+/** The server metrics object (LlamaModel.getMetrics()): counters plus the slots array. */
+[[nodiscard]] std::string metrics(jllama_context *jctx);
+
+enum class slot_op { save, restore, erase };
+/** Saves, restores or erases a slot's KV cache (filename for save/restore); the result object. */
+[[nodiscard]] std::string slot_action(jllama_context *jctx, slot_op op, int id_slot, const std::string &filename);
+
+/** The LoRA adapter list, and setting the scales from a JSON array of {id, scale}. */
+[[nodiscard]] std::string lora_adapters(jllama_context *jctx);
+[[nodiscard]] std::string set_lora_adapters(jllama_context *jctx, const std::string &adapters_json);
+
+/** Runtime tuning: `n_threads`, `n_threads_batch`, `slot_prompt_similarity` (each optional). */
+void configure(jllama_context *jctx, const std::string &config_json);
+
+/** A /v1/systemone request (a decision model), forwarded to upstream's route handler. */
+[[nodiscard]] std::string systemone(jllama_context *jctx, const std::string &body);
+
+/** A JSON schema as a GBNF grammar; needs no model. */
+[[nodiscard]] std::string json_schema_to_grammar_text(const std::string &schema_json);
+
+/** Quantises a GGUF file (llama_model_quantize); `ftype` is a llama_ftype. Needs no model. */
+void quantize(const std::string &input_path, const std::string &output_path, int ftype, int nthread,
+              bool allow_requantize);
+
 } // namespace jllama::engine
 
 // ===========================================================================
