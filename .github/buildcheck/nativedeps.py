@@ -317,6 +317,55 @@ def _pe_layout(data):
     return dd, to_offset
 
 
+def pe_signed(data):
+    """Whether the PE carries an Authenticode signature: IMAGE_DIRECTORY_ENTRY_SECURITY (index 4)
+    names a non-empty attribute certificate table. Presence only -- the chain is verified by the
+    signer's own tooling and by Windows; a stripped or never-signed file has a zero entry."""
+    dd, _ = _pe_layout(data)
+    address, size = struct.unpack_from("<II", data, dd + 4 * 8)
+    return address != 0 and size != 0
+
+
+def signed_state(directory):
+    """The `signed=` value of a natives directory's jllama-build.txt, or None without the file."""
+    build = os.path.join(directory, "jllama-build.txt")
+    if not os.path.isfile(build):
+        return None
+    with open(build, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\r\n")
+            if line.startswith("signed="):
+                return line[len("signed="):]
+    return None
+
+
+def signature_violations(root, require_signed=False):
+    """The Windows directories whose signature state and DLLs disagree.
+
+    A directory whose jllama-build.txt says `signed=yes` must hold only Authenticode-signed DLLs
+    (the sign step flips the key after signing every DLL, so a `yes` over an unsigned file means a
+    file was added or replaced afterwards). With `require_signed`, a Windows directory that says
+    `signed=no` (or carries no build file) is a violation too: the release rule once the owner's
+    signing account exists, so that no unsigned DLL ever reaches a release jar."""
+    failures = []
+    for path in sorted(find_libraries(root)):
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        if "/Windows/" not in "/" + rel or not path.lower().endswith(".dll"):
+            continue
+        state = signed_state(os.path.dirname(path))
+        if state == "yes":
+            with open(path, "rb") as f:
+                data = f.read()
+            try:
+                if not pe_signed(data):
+                    failures.append(f"{rel}: jllama-build.txt says signed=yes but the DLL carries no Authenticode signature")
+            except (ValueError, struct.error) as e:
+                failures.append(f"{rel}: not a readable PE ({e})")
+        elif require_signed:
+            failures.append(f"{rel}: unsigned (jllama-build.txt says signed={state}) while a signature is required")
+    return failures
+
+
 def pe_exports(data):
     """The names of the export directory (IMAGE_DIRECTORY_ENTRY_EXPORT)."""
     dd, to_offset = _pe_layout(data)
@@ -514,10 +563,13 @@ def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
 
 
 def main(argv):
-    if len(argv) != 2:
+    args = list(argv[1:])
+    require_signed = "--require-signed" in args
+    args = [a for a in args if a != "--require-signed"]
+    if len(args) != 1:
         print(__doc__, file=sys.stderr)
         return 2
-    root = argv[1]
+    root = args[0]
     checked = 0
     failures = []
     for path in sorted(find_libraries(root)):
@@ -552,6 +604,7 @@ def main(argv):
     if checked == 0:
         print(f"no native library found under {root}", file=sys.stderr)
         return 2
+    failures += signature_violations(root, require_signed)
     for f in failures:
         print(f"::error::{f}", file=sys.stderr)
     print(f"{checked} native libraries checked, {len(failures)} violations")

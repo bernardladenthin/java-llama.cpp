@@ -67,9 +67,10 @@ def elf64_segments(alignments):
     return bytes(header) + phdrs
 
 
-def pe64(imports, exports=()):
+def pe64(imports, exports=(), signed=False):
     """A minimal PE32+ with one section holding an import directory naming `imports` and, when
-    given, an export directory naming `exports`."""
+    given, an export directory naming `exports`; `signed` adds an attribute certificate table entry
+    (IMAGE_DIRECTORY_ENTRY_SECURITY) the way an Authenticode signature does."""
     pe = 0x40
     opt_size = 240
     section_table = pe + 24 + opt_size
@@ -106,6 +107,11 @@ def pe64(imports, exports=()):
     struct.pack_into("<I", data, pe + 24 + 112 + 8, rva)
     struct.pack_into("<IIII", data, section_table + 8, len(body), rva, len(body), raw)
     data[raw:] = body
+    if signed:
+        # The security directory holds a FILE OFFSET (not an RVA) of the WIN_CERTIFICATE blob,
+        # appended after the sections; the check reads presence, not the blob.
+        struct.pack_into("<II", data, pe + 24 + 112 + 4 * 8, len(data), 8)
+        data += bytes(8)
     return bytes(data)
 
 
@@ -219,6 +225,67 @@ class ExportsTest(unittest.TestCase):
             self.assertIn("libjllama.so: exports 1 symbol(s) outside", err.getvalue())
             self.assertNotIn("libggml-base.so: exports", err.getvalue())
             self.assertIn("libjllama.so: 3 exported symbol(s)", out.getvalue())
+
+
+class SignatureTest(unittest.TestCase):
+
+    def _tree(self, root, signed_state, dll_signed):
+        d = os.path.join(root, "net/ladenthin/llama/Windows/x86_64/cpu")
+        os.makedirs(d)
+        with open(os.path.join(d, "jllama.dll"), "wb") as f:
+            f.write(pe64(["kernel32.dll"], exports=["JNI_OnLoad", "Java_a"], signed=dll_signed))
+        with open(os.path.join(d, "ggml.dll"), "wb") as f:
+            f.write(pe64(["kernel32.dll"], exports=["ggml_init"], signed=dll_signed))
+        if signed_state is not None:
+            with open(os.path.join(d, "jllama-build.txt"), "w", encoding="utf-8") as f:
+                f.write(f"llama.cpp=b1\nsigned={signed_state}\n")
+        return root
+
+    def test_a_signed_pe_is_recognised_and_an_unsigned_one_is_not(self):
+        self.assertTrue(nativedeps.pe_signed(pe64(["kernel32.dll"], signed=True)))
+        self.assertFalse(nativedeps.pe_signed(pe64(["kernel32.dll"])))
+
+    def test_signed_yes_over_an_unsigned_dll_names_every_such_file(self):
+        with tempfile.TemporaryDirectory() as root:
+            failures = nativedeps.signature_violations(self._tree(root, "yes", False))
+            self.assertEqual(len(failures), 2)
+            self.assertIn("Windows/x86_64/cpu/jllama.dll: jllama-build.txt says signed=yes", failures[1])
+
+    def test_signed_yes_over_signed_dlls_passes_and_signed_no_is_fine_unless_required(self):
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(nativedeps.signature_violations(self._tree(root, "yes", True)), [])
+        with tempfile.TemporaryDirectory() as root:
+            self._tree(root, "no", False)
+            self.assertEqual(nativedeps.signature_violations(root), [])
+            failures = nativedeps.signature_violations(root, require_signed=True)
+            self.assertEqual(len(failures), 2)
+            self.assertIn("unsigned (jllama-build.txt says signed=no) while a signature is required", failures[0])
+
+    def test_a_directory_without_a_build_file_is_unsigned_when_required(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._tree(root, None, False)
+            self.assertEqual(nativedeps.signature_violations(root), [])
+            self.assertEqual(len(nativedeps.signature_violations(root, require_signed=True)), 2)
+
+    def test_non_windows_directories_are_never_subject_to_the_signature_rule(self):
+        with tempfile.TemporaryDirectory() as root:
+            d = os.path.join(root, "net/ladenthin/llama/Linux/x86_64/cpu")
+            os.makedirs(d)
+            with open(os.path.join(d, "libjllama.so"), "wb") as f:
+                f.write(elf64(["libc.so.6"], exports=["JNI_OnLoad", "Java_a"]))
+            self.assertEqual(nativedeps.signature_violations(root, require_signed=True), [])
+
+    def test_main_takes_the_flag_before_the_root(self):
+        with tempfile.TemporaryDirectory() as root:
+            self._tree(root, "no", False)
+            with open(os.path.join(root, "net/ladenthin/llama/Windows/x86_64/cpu/jllama.dll"), "wb") as f:
+                f.write(pe64(["kernel32.dll", "api-ms-win-crt-runtime-l1-1-0.dll"] , exports=["JNI_OnLoad", "Java_a"]))
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = nativedeps.main(["x", "--require-signed", root])
+            self.assertEqual(rc, 1)
+            self.assertIn("while a signature is required", err.getvalue())
+            self.assertEqual(nativedeps.main(["x", "--require-signed"]), 2)
 
 
 class ViolationsTest(unittest.TestCase):

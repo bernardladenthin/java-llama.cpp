@@ -1698,10 +1698,16 @@ If you still see a crash inside `msvcp140.dll`, it originates in **another** nat
 into the same JVM, not in `jllama.dll` -- check the rest of the `hs_err` frame list. Please open an
 issue with that file rather than editing your JDK installation.
 
-### Windows: unsigned DLLs on a WDAC / AppLocker-managed client
+### Windows: DLLs on a WDAC / AppLocker-managed client, and the code signature
 
-The native libraries are **not Authenticode-signed** (upstream llama.cpp ships its DLLs unsigned
-too), and `LlamaLoader` extracts them into the temp directory on first use. A client whose
+Whether the Windows DLLs of a build are **Authenticode-signed** is in its `jllama-build.txt`
+(`signed=yes` or `signed=no`, also `LlamaModel.getJllamaBuildInfo()` and `Diagnose`). The pipeline
+signs them with Azure Trusted Signing on `main` and on release tags **once the project's signing
+account is configured** (the signature carries an RFC 3161 timestamp; a release refuses to ship an
+unsigned DLL from then on); a snapshot before that, a pull-request build and a local build say
+`signed=no`. Upstream llama.cpp ships its DLLs unsigned. The `.asc` next to every jar is the
+project's OpenPGP signature, which Windows does not look at. `LlamaLoader` extracts the DLLs into
+the temp directory on first use. A client whose
 application-control policy (WDAC, AppLocker) blocks unsigned DLLs, or any DLL under `%TEMP%`,
 refuses the load with `UnsatisfiedLinkError`. The way out is a directory the policy allows: unpack
 the natives jar's `net/ladenthin/llama/Windows/x86_64/cpu/` directory there (a GPU module jar's
@@ -1711,9 +1717,8 @@ files flat next to it, if you use one) and start the JVM with
 5.2.x this advice did not work on the modular Windows build: the `lib.path` branch loaded only
 `jllama.dll`, whose imports of `ggml.dll` and `ggml-base.dll` Windows then looked for next to
 `java.exe`; the branch now preloads what `jllama-extras.txt` names, and CI runs it on every
-desktop platform.) (The project's release-signing key is an OpenPGP key, which signs the jars with detached `.asc`
-files; Windows does not look at those, so the DLLs would need a separate code-signing
-certificate.)
+desktop platform.) A signed DLL is also what lets such a policy allow the files by publisher
+instead of by hash.
 
 ### Contributors: build with Temurin 21, not Oracle JDK 21
 

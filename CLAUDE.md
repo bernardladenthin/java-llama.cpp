@@ -3084,6 +3084,53 @@ the "Java 22+ over the C API" item of the delivery roadmap (TODO.md item 10), de
   tiny random llama GGUF written with `gguf-py`, serves as the model where no download is possible.
 - **`versions.POMS`** names `llama-ffm/pom.xml` in all four repositories (a shared file).
 
+## Code signing of the Windows DLLs (Azure Trusted Signing; prepared, inert until the account exists)
+
+Decided 2026-10-15 (TODO.md, delivery roadmap, item 11): Authenticode over every DLL of every Windows
+natives jar with **Azure Trusted Signing**, Windows only (the macOS Developer ID was declined; the
+dylib stays ad-hoc signed by the linker, with the `.asc` and the Sigstore attestation as its
+provenance). The code side is in place and does nothing until the owner's account exists.
+
+- **Where**: the `package` job, after `merge-native-artifacts.sh` and the first `verify-native-deps.py`
+  run, after the JDKs are set up and **before** `Build JARs` -- so the jars carry signed DLLs and the
+  Windows `smoke-natives` rows run the signed sets ("no asset ships that CI has not run"). The
+  Windows build and Java test jobs see the unsigned build output; a signature changes no code.
+- **How**: `.github/sign-windows-natives.sh` -- **jsign** (`net.jsign:jsign:7.2` from Maven Central,
+  pinned by version and SHA-256; Java, runs on the Linux runner, no signtool) with
+  `--storetype TRUSTEDSIGNING --keystore <endpoint> --alias <account>/<profile>`, SHA-256, an RFC 3161
+  timestamp from `timestamp.acs.microsoft.com`, every `Windows/*/*/*.dll` in one call; then
+  `signed=no` -> `signed=yes` in each directory's `jllama-build.txt` (CMake writes `no`; the merge
+  step requires the key with either value). The access token is the job's GitHub OIDC token
+  exchanged at `login.microsoftonline.com` through the app registration's **federated credential**
+  (client-credentials grant with a `client_assertion`), so nothing long-lived is stored anywhere.
+- **Gating**: the step runs only with `vars.TRUSTED_SIGNING_ENDPOINT` set and on `main` or a `v*` tag
+  (a pull request has no identity Azure would accept, and a fork's token has no `id-token` scope
+  anyway). The five values are **repository variables**, not secrets: tenant id, client id, endpoint,
+  account and profile are identifiers; the trust is the federated credential, which Azure binds to
+  this repository's `main` ref and its `v*` tags.
+- **The gate on the result**: `verify-native-deps.py` grew `pe_signed()` (the attribute certificate
+  table, `IMAGE_DIRECTORY_ENTRY_SECURITY`, presence only -- the chain is Windows' and jsign's business)
+  and `signature_violations()`: a Windows directory whose `jllama-build.txt` says `signed=yes` must hold
+  only signed DLLs, and with `--require-signed` a directory saying `signed=no` is a violation. The
+  `package` job runs it a second time after signing, with `--require-signed` on a `v*` tag, both only
+  when the endpoint variable is set -- so a tag build with the account configured but the signing
+  broken is red, and a tag build before the account exists (the 6.0.0 release, say) is not blocked.
+  Unit tests in `test_nativedeps.py` (`SignatureTest`, a synthetic PE with and without the security
+  directory).
+- **What the owner does, in order** (TODO.md item 11 and "Code-sign the Windows DLLs" carry the
+  details): Microsoft's identity validation for Trusted Signing (the gate, weeks); an Azure
+  subscription, a Trusted Signing account and a Public Trust certificate profile; an app registration
+  with the role *Trusted Signing Certificate Profile Signer* on the profile and two federated
+  credentials for the GitHub issuer (`https://token.actions.githubusercontent.com`, audience
+  `api://AzureADTokenExchange`): subject `repo:bernardladenthin/java-llama.cpp:ref:refs/heads/main`,
+  and for the tags a flexible federated credential matching
+  `repo:bernardladenthin/java-llama.cpp:ref:refs/tags/v*`; then the five repository variables
+  `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `TRUSTED_SIGNING_ENDPOINT` (`https://<region>.codesigning.azure.net`),
+  `TRUSTED_SIGNING_ACCOUNT`, `TRUSTED_SIGNING_PROFILE`. The next `main` run signs; a consumer checks a
+  DLL with `Get-AuthenticodeSignature` (or `osslsigncode verify`) and the publisher name on it.
+- **Not covered, on purpose**: the jars (`jarsigner` only on a consumer's request -- a fat jar breaks
+  it), Linux and Android (no OS mechanism; `.asc` + attestation), macOS (declined).
+
 ## LangChain4j integration (`llama-langchain4j` reactor module)
 
 `llama-langchain4j/` adapts a `LlamaModel` to LangChain4j's `ChatModel`,

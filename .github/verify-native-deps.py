@@ -4,7 +4,10 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Fail when a shipped native library needs a runtime library it did not need before.
 
-See buildcheck/nativedeps.py. Usage: verify-native-deps.py <natives-root>
+See buildcheck/nativedeps.py. Usage: verify-native-deps.py [--require-signed] <natives-root>
+
+--require-signed: every Windows DLL must be Authenticode-signed (jllama-build.txt says signed=yes
+and the DLL carries a signature) -- the release rule once the signing account is configured.
 """
 
 import os

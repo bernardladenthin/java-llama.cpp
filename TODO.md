@@ -187,10 +187,25 @@ code side is prepared inert -- without the Azure secrets the step is skipped and
 `signed=no` -- and switched on after the first green Publish run, per the owner's order. **The
 macOS half is dropped by the owner's decision** (no Apple Developer Program): the dylib stays
 ad-hoc signed by the linker, verified by `smoke-natives-macos`, with the `.asc` and the Sigstore
-attestation as its provenance. **Owner, now, because it takes weeks:** Microsoft's identity
-validation for Trusted Signing (see "Code-sign the Windows DLLs" below for the gate), then the
-account, the certificate profile and the federated credential for this repository's
-`maven-central` environment.
+attestation as its provenance.
+
+*(The code side landed 2026-10-15: `.github/sign-windows-natives.sh` (jsign 7.2 pinned by SHA-256,
+the OIDC-to-Azure token exchange, every `Windows/*/*/*.dll`, `signed=yes` afterwards), the two steps
+in `package` gated on `vars.TRUSTED_SIGNING_ENDPOINT` and main / `v*`, `pe_signed()` +
+`signature_violations()` + `--require-signed` in `verify-native-deps.py` with unit tests; CLAUDE.md
+"Code signing of the Windows DLLs", README. Unexercised until the account exists.)*
+
+- [ ] **Owner, now, because it takes weeks:** Microsoft's identity validation for Trusted Signing
+      (see "Code-sign the Windows DLLs" below for the gate); then the subscription, the Trusted
+      Signing account, a Public Trust certificate profile, an app registration with the *Trusted
+      Signing Certificate Profile Signer* role and two federated credentials for the GitHub issuer
+      (subject `repo:bernardladenthin/java-llama.cpp:ref:refs/heads/main`, and a flexible one
+      matching `...:ref:refs/tags/v*`); then the repository variables `AZURE_TENANT_ID`,
+      `AZURE_CLIENT_ID`, `TRUSTED_SIGNING_ENDPOINT`, `TRUSTED_SIGNING_ACCOUNT`,
+      `TRUSTED_SIGNING_PROFILE` (CLAUDE.md lists them). The next `main` run signs.
+- [ ] First signed run: read the publisher off a shipped DLL (`Get-AuthenticodeSignature`), confirm
+      the Windows smoke rows ran the signed sets, and -- if Trusted Signing's quota matters -- count
+      the DLLs per run (18 per CPU jar + one per Windows GPU jar, twice on a release day).
 
 ## Where the modular natives stand
 

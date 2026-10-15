@@ -2947,6 +2947,30 @@ jobs:
         with:
           distribution: 'temurin'
           java-version-file: .java-version
+      # Authenticode over every Windows DLL with Azure Trusted Signing (TODO.md, delivery roadmap,
+      # item 11), before the jars are built so what is packaged is signed and the Windows smoke
+      # rows run the signed sets. Inert until the owner's account exists: the five repository
+      # variables below are empty, the step is skipped and every jllama-build.txt keeps
+      # `signed=no`. Only on main and on v* tags, which is also where the app registration's
+      # federated credential is bound -- a pull request has no identity Azure would accept. No
+      # stored secret: the runner's OIDC token is exchanged for the Azure token in the script.
+      - name: Sign the Windows DLLs (Azure Trusted Signing)
+        if: vars.TRUSTED_SIGNING_ENDPOINT != '' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        env:
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          TRUSTED_SIGNING_ENDPOINT: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}
+          TRUSTED_SIGNING_PROFILE: ${{ vars.TRUSTED_SIGNING_PROFILE }}
+        run: bash .github/sign-windows-natives.sh llama/src/main/natives/net/ladenthin/llama
+      # The signatures, read from the files: a directory that says signed=yes must hold only signed
+      # DLLs, and on a v* tag -- once the account is configured -- every Windows DLL must be signed,
+      # so no unsigned DLL reaches a release jar. (The first verify-native-deps run above saw
+      # signed=no everywhere and checked nothing about signatures.)
+      - name: Verify the Windows signatures
+        if: vars.TRUSTED_SIGNING_ENDPOINT != ''
+        run: |
+          python3 .github/verify-native-deps.py ${{ startsWith(github.ref, 'refs/tags/v') && '--require-signed' || '' }} llama/src/main/natives
       - name: Build JARs
         # `natives` builds one jar per row of natives.csv from the tree merged above (the classes
         # jar carries no natives). No fat jar: the project ships the natives jars on Maven Central

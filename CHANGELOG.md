@@ -250,6 +250,11 @@ the first two items break every existing consumer at upgrade.
   googletest is pinned by commit; the sccache archives are checked against mozilla's SHA-256s, the
   CUDA redist archives against NVIDIA's manifest, the OpenVINO archives and the Vulkan arm64
   installer against the checksum each vendor publishes next to the file.
+- **The Windows DLLs are Authenticode-signed with Azure Trusted Signing once the project's account
+  exists** (`.github/sign-windows-natives.sh` in `package`, jsign over the job's OIDC identity, an
+  RFC 3161 timestamp, `signed=yes` in the directory's `jllama-build.txt`; `verify-native-deps.py`
+  checks the signatures and refuses an unsigned DLL in a release from then on). Until the account is
+  configured the step is skipped and every build says `signed=no`, as before.
 - **A `v*` tag release is built without the shared compiler cache.** `USE_CACHE` is `false` on every
   tag ref whatever the dispatch input says, so each natives build of a release compiles every object
   in the job that ships it; snapshots and PR builds keep the sccache/Depot cache. The cache provider
