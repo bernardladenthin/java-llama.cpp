@@ -13,12 +13,12 @@ runs:
   using: composite
   steps:
     - name: Download Android CPU natives (arm64)
-      uses: actions/download-artifact@v8
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
       with:
         name: natives-cpu-android-aarch64
         path: stage/cpu/
     - name: Download Android CPU natives (x86_64)
-      uses: actions/download-artifact@v8
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
       with:
         name: natives-cpu-android-x86-64
         path: stage/cpu-x86_64/

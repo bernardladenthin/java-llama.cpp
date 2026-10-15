@@ -101,7 +101,7 @@ jobs:
     needs: startgate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Shared files match .github/shared-files.sha256 (siblings compared, warnings only)
@@ -139,7 +139,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: maven-central
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Import key + run sign/verify self-test (prints only PUBLIC metadata)
@@ -174,12 +174,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: maven-central
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           gradle-version: "9.8.1"
       - name: Sign a throwaway artifact via useInMemoryPgpKeys (BouncyCastle)
@@ -227,14 +227,14 @@ jobs:
     needs: startgate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Cache GGUF models (GitHub Actions cache; avoids re-downloading from HuggingFace)
         # This job is the ONLY writer of the model cache (every consumer job uses the
         # restore-only action). enableCrossOsArchive makes the one ubuntu-built entry
         # restorable on macOS AND Windows — without it, cache entries are versioned
         # per-OS, and the unreachable Windows-side entry was once found re-saved EMPTY
         # (343 B) after an eviction, silently starving the Windows jobs of models.
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: models/
           # GGUF is platform-independent, so ubuntu + macOS + Windows share one entry.
@@ -270,7 +270,7 @@ jobs:
         os: [ubuntu-latest, macos-15, windows-2025-vs2026]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/restore-models
         with:
           fail-on-cache-miss: true
@@ -284,8 +284,8 @@ jobs:
     needs: startgate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
@@ -322,8 +322,8 @@ jobs:
     needs: startgate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
@@ -343,8 +343,8 @@ jobs:
     needs: startgate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
@@ -368,17 +368,17 @@ jobs:
     needs: [crosscompile-linux-x86_64, verify-model-cache]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
       - name: Download Linux x86_64 native library (reused, not rebuilt)
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       - uses: ./.github/actions/restore-models
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -399,7 +399,7 @@ jobs:
         shell: bash
         run: bash .github/print-crash-logs.sh llama-langchain4j
       - if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: error-log-langchain4j-integration
           path: |
@@ -446,8 +446,8 @@ jobs:
     needs: startgate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
@@ -474,7 +474,7 @@ jobs:
             -DoutputDirectory="${{ github.workspace }}/agent-jar"
           ls agent-jar
       - name: Upload the agent jar and its dependencies
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: llama-atmosphere-agent-jar
           path: agent-jar/
@@ -487,17 +487,17 @@ jobs:
     needs: [crosscompile-linux-x86_64, verify-model-cache]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
       - name: Download Linux x86_64 native library (reused, not rebuilt)
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       - uses: ./.github/actions/restore-models
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -520,7 +520,7 @@ jobs:
         shell: bash
         run: bash .github/print-crash-logs.sh llama-atmosphere-agent
       - if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: error-log-atmosphere-agent-integration
           path: |
@@ -533,7 +533,7 @@ jobs:
     needs: startgate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Resolve pinned llama.cpp tag from CMakeLists.txt
         id: tag
         shell: bash
@@ -551,7 +551,7 @@ jobs:
           echo "ref=${COMMIT:-$TAG}" >> "$GITHUB_OUTPUT"
           echo "Pinned llama.cpp WebUI tag: $TAG${COMMIT:+ (fetched by commit $COMMIT: the tag is not published yet)}"
       - name: Checkout llama.cpp tools/ui at the pinned tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ggml-org/llama.cpp
           ref: ${{ steps.tag.outputs.ref }}
@@ -563,7 +563,7 @@ jobs:
             tools/ui
             scripts
           sparse-checkout-cone-mode: true
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '24'
           cache: npm
@@ -620,7 +620,7 @@ jobs:
             exit 1
           fi
       - name: Upload WebUI artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -651,10 +651,10 @@ jobs:
         # The GPU toolkit this job installs runs to several GB on top of the llama.cpp build tree;
         # same guard upstream llama.cpp's CUDA/ROCm jobs use. Linux-only action; the tool cache is
         # kept (default) so nothing a later setup-* step relies on is removed.
-        uses: ggml-org/free-disk-space@v1.3.1
-      - uses: actions/checkout@v7
+        uses: ggml-org/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -666,7 +666,7 @@ jobs:
         run: |
           .github/dockcross/dockcross-manylinux_2_28-x64 .github/build_cuda_linux.sh "-DJLLAMA_MODULE_ONLY=ON -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-cuda13-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -690,9 +690,9 @@ jobs:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -704,7 +704,7 @@ jobs:
         run: |
           .github/dockcross/dockcross-manylinux_2_28-x64 .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=x86_64 -DJLLAMA_BACKEND_DL=ON"
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -728,9 +728,9 @@ jobs:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       MANYLINUX_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -742,7 +742,7 @@ jobs:
         run: |
           .github/manylinux/manylinux_2_28-aarch64 .github/build.sh "-DOS_NAME=Linux -DOS_ARCH=aarch64 -DJLLAMA_BACKEND_DL=ON"
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-cpu-linux-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -765,16 +765,16 @@ jobs:
       QEMU_LD_PREFIX: /usr/s390x-linux-gnu
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -800,7 +800,7 @@ jobs:
       - name: Run C++ unit tests under qemu-s390x (big-endian gate)
         run: ctest --test-dir llama/build --output-on-failure
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-cpu-linux-s390x
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -820,13 +820,13 @@ jobs:
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -839,7 +839,7 @@ jobs:
         run: |
           .github/build.sh "-DJLLAMA_MODULE_ONLY=ON -DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-vulkan-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -855,13 +855,13 @@ jobs:
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -876,7 +876,7 @@ jobs:
         run: |
           .github/build.sh "-DJLLAMA_MODULE_ONLY=ON -DGGML_VULKAN=ON -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=aarch64"
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-vulkan-linux-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -897,9 +897,9 @@ jobs:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -911,7 +911,7 @@ jobs:
         run: |
           .github/dockcross/dockcross-android-arm64 .github/build.sh "-DJLLAMA_BACKEND_DL=ON -DOS_NAME=Linux-Android -DOS_ARCH=aarch64"
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-cpu-android-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -928,9 +928,9 @@ jobs:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -939,7 +939,7 @@ jobs:
         run: |
           .github/dockcross/dockcross-android-x86_64 .github/build.sh "-DJLLAMA_BACKEND_DL=ON -DOS_NAME=Linux-Android -DOS_ARCH=x86_64"
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-cpu-android-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -959,9 +959,9 @@ jobs:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       DOCKCROSS_ARGS: "-e SCCACHE_WEBDAV_ENDPOINT -e SCCACHE_WEBDAV_TOKEN -e USE_CACHE"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -970,7 +970,7 @@ jobs:
         run: |
           .github/dockcross/dockcross-android-arm64 .github/build_opencl_android.sh "-DJLLAMA_MODULE_ONLY=ON -DOS_NAME=Linux-Android -DOS_ARCH=aarch64 -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON"
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-opencl-android-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -994,12 +994,12 @@ jobs:
     needs: [crosscompile-android-aarch64, crosscompile-android-x86_64, crosscompile-android-aarch64-opencl]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           # AGP 9.4.0 (the .github/android-consumer-test fixture) requires Gradle >= 9.6.0.
           gradle-version: ${{ env.GRADLE_VERSION }}
@@ -1008,17 +1008,17 @@ jobs:
         with:
           goal: package
       - name: Download Android CPU natives (arm64)
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: natives-cpu-android-aarch64
           path: stage/cpu/
       - name: Download Android CPU natives (x86_64)
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: natives-cpu-android-x86-64
           path: stage/cpu-x86_64/
       - name: Download Android OpenCL natives
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: natives-opencl-android-aarch64
           path: stage/opencl/
@@ -1105,7 +1105,7 @@ jobs:
           unzip -p "$APK" "classes*.dex" | grep -aq "Lnet/ladenthin/llama/LlamaModel;" \
             || { echo "::error::R8 stripped net.ladenthin.llama.LlamaModel — consumer proguard rules broken"; exit 1; }
       - name: Upload AARs
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: llama-android-aars
           path: llama-android/build/aar/*.aar
@@ -1134,21 +1134,21 @@ jobs:
         # The AVD userdata partition needs ~7.4 GB. Android SDK and the apt "large packages"
         # (it removes libgl1-mesa-dri among others) are kept for the emulator, and so is the swap
         # file it may lean on; the tool cache is kept because setup-java/setup-gradle install into it.
-        uses: ggml-org/free-disk-space@v1.3.1
+        uses: ggml-org/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           android: false
           large-packages: false
           tool-cache: false
           swap-storage: false
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           # AGP 9.4.0 (the .github/android-consumer-test fixture) requires Gradle >= 9.6.0.
           gradle-version: ${{ env.GRADLE_VERSION }}
@@ -1234,7 +1234,7 @@ jobs:
           echo "::error::the Android emulator package could not be installed in 4 attempts with '$SDKMANAGER' (dl.google.com download or archive broken)"
           exit 1
       - name: Run on-emulator instrumentation (connectedDebugAndroidTest)
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 30
           arch: x86_64
@@ -1246,7 +1246,7 @@ jobs:
           script: .github/run-android-emulator-test.sh
       - name: Upload instrumentation reports (on failure)
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: android-emulator-test-reports
           path: .github/android-consumer-test/app/build/reports/androidTests/
@@ -1272,12 +1272,12 @@ jobs:
     needs: [crosscompile-android-aarch64, crosscompile-android-x86_64]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           # AGP 9.4.0 (android-llmservice) requires Gradle >= 9.6.0; also satisfies Kotlin
           # 2.4's Gradle-plugin floor. The AAR/lib-only jobs stay on an older Gradle since
@@ -1322,7 +1322,7 @@ jobs:
           test -f android-llmservice/app/build/outputs/bundle/release/app-release.aab
           test -f android-llmservice/app/build/outputs/apk/release/app-release.apk
       - name: Upload release bundle (AAB — for Play upload)
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: android-llmservice-aab
           path: android-llmservice/app/build/outputs/bundle/release/*.aab
@@ -1331,7 +1331,7 @@ jobs:
         # Directly installable APK, downloadable from this run's Artifacts (independent of any
         # release). Debug-signed unless the ANDROID_UPLOAD_* secrets are set. This is the file to
         # grab to try the app on a phone; the .aab above is only for the Play Console.
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: android-llmservice-apk
           path: android-llmservice/app/build/outputs/apk/release/*.apk
@@ -1346,18 +1346,18 @@ jobs:
         # The AVD userdata partition needs ~7.4 GB. Android SDK and the apt "large packages"
         # (it removes libgl1-mesa-dri among others) are kept for the emulator, and so is the swap
         # file it may lean on; the tool cache is kept because setup-java/setup-gradle install into it.
-        uses: ggml-org/free-disk-space@v1.3.1
+        uses: ggml-org/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           android: false
           large-packages: false
           tool-cache: false
           swap-storage: false
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: temurin
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           # AGP 9.4.0 (android-llmservice) requires Gradle >= 9.6.0.
           gradle-version: ${{ env.GRADLE_VERSION }}
@@ -1443,7 +1443,7 @@ jobs:
           echo "::error::the Android emulator package could not be installed in 4 attempts with '$SDKMANAGER' (dl.google.com download or archive broken)"
           exit 1
       - name: Run LLM Service UI test on emulator (connectedDebugAndroidTest)
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 30
           arch: x86_64
@@ -1454,7 +1454,7 @@ jobs:
           script: .github/run-android-llmservice-test.sh
       - name: Upload instrumentation reports (on failure)
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: android-llmservice-test-reports
           path: android-llmservice/app/build/reports/androidTests/
@@ -1472,13 +1472,13 @@ jobs:
       BUILD_JOBS: 2
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -1497,7 +1497,7 @@ jobs:
       - name: Run C++ unit tests
         run: ctest --test-dir llama/build --output-on-failure
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: macos-15-no-metal
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1510,13 +1510,13 @@ jobs:
       BUILD_JOBS: 2
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -1535,7 +1535,7 @@ jobs:
       - name: Run C++ unit tests
         run: ctest --test-dir llama/build --output-on-failure
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: macos-26-metal
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1551,9 +1551,9 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
@@ -1567,7 +1567,7 @@ jobs:
       - name: Run C++ unit tests
         run: ctest --test-dir llama/build --output-on-failure
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: msvc-windows-x86_64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1605,14 +1605,14 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Set up MSVC developer environment (x64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
       - name: Display CPU Info
@@ -1626,7 +1626,7 @@ jobs:
           clang --version
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_BACKEND_DL=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-cpu-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1661,17 +1661,17 @@ jobs:
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Set up MSVC developer environment (arm64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: arm64
       - name: Install sccache (shared compiler cache)
@@ -1687,7 +1687,7 @@ jobs:
         run: |
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_BACKEND_DL=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DOS_NAME=Windows -DOS_ARCH=aarch64
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-cpu-windows-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1711,16 +1711,19 @@ jobs:
     needs: [startgate, build-webui]
     runs-on: windows-2025-vs2026
     env:
+      # The CUDA redist manifest (redistrib_<this>.json) the archives are verified against; empty
+      # takes the newest 13.4.x manifest the redist index lists (the run prints which).
+      CUDA_REDIST_MANIFEST: ""
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Set up MSVC developer environment (x64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
       - name: Install CUDA Toolkit 13.4 (NVIDIA redist archives)
@@ -1749,12 +1752,33 @@ jobs:
             "cccl/cccl-windows-x86_64-13.3.4.2.1"
           )
           New-Item -ItemType Directory -Force -Path $cuda | Out-Null
+          # Every archive is checked against the SHA-256 NVIDIA publishes for it in the redist
+          # manifest of this toolkit (redistrib_<version>.json next to the archives): a truncated or
+          # swapped download fails here, not at link time. CUDA_REDIST_MANIFEST names the manifest
+          # version; it moves with the toolkit (TODO.md, delivery roadmap, item 3: the hashes are to
+          # be pinned into this file once a machine that can reach NVIDIA's host has read them).
+          $manifestVersion = $env:CUDA_REDIST_MANIFEST
+          if (-not $manifestVersion) {
+            # Unpinned: the newest 13.4.x manifest the redist index lists (the index is NVIDIA's
+            # own directory page). Pin it in CUDA_REDIST_MANIFEST once a run has printed it.
+            $index = (Invoke-WebRequest -Uri "$base/" -UseBasicParsing).Content
+            $manifestVersion = [regex]::Matches($index, 'redistrib_(13\.4\.\d+)\.json') |
+              ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique { [version]$_ } | Select-Object -Last 1
+            if (-not $manifestVersion) { throw "no redistrib_13.4.x.json in the index at $base/" }
+          }
+          $manifestUrl = "$base/redistrib_$manifestVersion.json"
+          Write-Host "Reading $manifestUrl"
+          $manifest = Invoke-RestMethod -Uri $manifestUrl
           foreach ($p in $parts) {
             $dir, $name = $p.Split("/")
             $url = "$base/$dir/windows-x86_64/$name-archive.zip"
             $zip = "$env:RUNNER_TEMP\$name.zip"
-            Write-Host "Downloading $url"
+            $expected = $manifest.$dir.'windows-x86_64'.sha256
+            if (-not $expected) { throw "the redist manifest $manifestUrl has no windows-x86_64 sha256 for $dir" }
+            Write-Host "Downloading $url (sha256 $expected)"
             Invoke-WebRequest -Uri $url -OutFile $zip
+            $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+            if ($actual -ne $expected.ToLowerInvariant()) { throw "$name-archive.zip SHA-256 $actual does not match the manifest's $expected" }
             Expand-Archive -Path $zip -DestinationPath "$env:RUNNER_TEMP\cuda-redist" -Force
             Copy-Item -Path "$env:RUNNER_TEMP\cuda-redist\$name-archive\*" -Destination $cuda -Recurse -Force
           }
@@ -1781,7 +1805,7 @@ jobs:
         run: |
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="75-real;80-real;86-real;89-real;90-real;100-real;120-real;121-real;121-virtual" -DGGML_CUDA_CCCL_VERSION=v3.4.3 -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-cuda13-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1794,18 +1818,18 @@ jobs:
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Set up MSVC developer environment (x64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
       - name: Install Vulkan SDK
-        uses: jakoch/install-vulkan-sdk-action@v1.7.0
+        uses: jakoch/install-vulkan-sdk-action@d17de7e2f5e50efb5d2123efed18497d3c58c533 # v1.7.0
         with:
           vulkan_version: 1.4.350.0
           cache: true
@@ -1820,7 +1844,7 @@ jobs:
         run: |
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_VULKAN=ON -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-vulkan-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1833,14 +1857,14 @@ jobs:
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Set up MSVC developer environment (x64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
       - name: Install sccache (shared compiler cache)
@@ -1854,7 +1878,7 @@ jobs:
         run: |
           .github\build_opencl_windows.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-opencl-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1881,16 +1905,16 @@ jobs:
       - name: Free up disk space
         # The TheRock wheels unpack to several GB; upstream's ubuntu-rocm job frees the runner
         # the same way. Runs first, before setup-java puts the JDK into the tool cache.
-        uses: ggml-org/free-disk-space@v1.3.1
+        uses: ggml-org/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
         with:
           tool-cache: true
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -1931,7 +1955,7 @@ jobs:
         # library carries every target's kernels uncompressed. Fails on an uncompressed bundle.
         run: python3 .github/verify-hip-offload-compressed.py llama/src/main/natives
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-rocm-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -1949,14 +1973,14 @@ jobs:
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Set up MSVC developer environment (x64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
       - name: Install ROCm/HIP (TheRock wheels)
@@ -2004,7 +2028,7 @@ jobs:
         shell: pwsh
         run: python .github/verify-hip-offload-compressed.py llama/src/main/natives
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-rocm-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2021,14 +2045,14 @@ jobs:
         # The GPU toolkit this job installs runs to several GB on top of the llama.cpp build tree;
         # same guard upstream llama.cpp's CUDA/ROCm jobs use. Linux-only action; the tool cache is
         # kept (default) so nothing a later setup-* step relies on is removed.
-        uses: ggml-org/free-disk-space@v1.3.1
-      - uses: actions/checkout@v7
+        uses: ggml-org/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -2087,7 +2111,7 @@ jobs:
             exit 1
           fi
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-sycl-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2100,14 +2124,14 @@ jobs:
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Set up MSVC developer environment (x64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
       - name: Install Intel oneAPI (DPC++ + MKL + oneDNN + TBB)
@@ -2128,7 +2152,7 @@ jobs:
           call "C:\Program Files (x86)\Intel\oneAPI\setvars.bat" intel64 --force
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_SYCL=ON -DGGML_SYCL_F16=ON -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=icx -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-sycl-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2145,14 +2169,14 @@ jobs:
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Set up MSVC developer environment (arm64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: arm64
       - name: Install sccache (shared compiler cache)
@@ -2164,7 +2188,7 @@ jobs:
         run: |
           .github\build_opencl_windows.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DGGML_OPENCL=ON -DGGML_OPENCL_EMBED_KERNELS=ON -DGGML_OPENCL_USE_ADRENO_KERNELS=ON -DOS_NAME=Windows -DOS_ARCH=aarch64
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-opencl-windows-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2185,14 +2209,14 @@ jobs:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
       VULKAN_VERSION: 1.4.357.0
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Set up MSVC developer environment (arm64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: arm64
       - name: Install Vulkan SDK (with the arm64 component)
@@ -2200,6 +2224,14 @@ jobs:
         # Version and installer arguments as in upstream's release.yml (windows, vulkan arm64).
         run: |
           curl.exe -fSL -o "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
+          # Verified against the SHA-256 LunarG publishes for the installer (sdk/sha256/...; pinned
+          # into VULKAN_SDK_SHA256 once read, empty takes the published value). TODO.md, delivery
+          # roadmap, item 3.
+          $expected = $env:VULKAN_SDK_SHA256
+          if (-not $expected) { $expected = ((Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/sha256/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe.txt" -UseBasicParsing).Content -split '\s+')[0] }
+          if (-not $expected) { throw "no SHA-256 for the Vulkan SDK installer (neither pinned nor published)" }
+          $actual = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP\VulkanSDK-Installer.exe").Hash.ToLowerInvariant()
+          if ($actual -ne $expected.ToLowerInvariant()) { throw "VulkanSDK-Installer.exe SHA-256 $actual does not match $expected" }
           & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install com.lunarg.vulkan.arm64
           if (-not (Test-Path "C:\VulkanSDK\$env:VULKAN_VERSION")) { throw "Vulkan SDK $env:VULKAN_VERSION was not installed" }
           Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_VERSION"
@@ -2215,7 +2247,7 @@ jobs:
         run: |
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DGGML_OPENMP=OFF -DGGML_VULKAN=ON -DOS_NAME=Windows -DOS_ARCH=aarch64
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-vulkan-windows-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2228,13 +2260,13 @@ jobs:
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -2255,7 +2287,14 @@ jobs:
           sudo apt-get install -y ocl-icd-opencl-dev opencl-headers opencl-clhpp-headers intel-opencl-icd
           url="https://storage.openvinotoolkit.org/repositories/openvino/packages/2026.4.1/linux/openvino_toolkit_ubuntu24_2026.4.1.22982.07f9c262b05_x86_64.tgz"
           sudo mkdir -p /opt/intel/openvino
-          curl -fSL "$url" | sudo tar -xz --strip-components=1 -C /opt/intel/openvino
+          # Verified against the .sha256 the toolkit server publishes next to the archive (pinned
+          # into OPENVINO_LINUX_SHA256 once read; empty means "take the published value", which still
+          # catches a truncated or swapped download). TODO.md, delivery roadmap, item 3.
+          curl -fSL --proto =https --proto-redir =https "$url" -o "$RUNNER_TEMP/openvino.tgz"
+          expected="${OPENVINO_LINUX_SHA256:-$(curl -fsSL --proto =https "$url.sha256" | awk '{print $1}')}"
+          [ -n "$expected" ] || { echo "::error::no SHA-256 for $url (neither pinned nor published)"; exit 1; }
+          echo "$expected  $RUNNER_TEMP/openvino.tgz" | sha256sum -c -
+          sudo tar -xzf "$RUNNER_TEMP/openvino.tgz" --strip-components=1 -C /opt/intel/openvino
           echo "OpenVINO_DIR=/opt/intel/openvino/runtime/cmake" >> "$GITHUB_ENV"
       - name: Build libraries
         shell: bash
@@ -2263,7 +2302,7 @@ jobs:
           source /opt/intel/openvino/setupvars.sh || true
           .github/build.sh "-DJLLAMA_MODULE_ONLY=ON -DGGML_OPENVINO=ON -DOpenVINO_DIR=$OpenVINO_DIR -DGGML_NATIVE=OFF -DOS_NAME=Linux -DOS_ARCH=x86_64"
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-openvino-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2276,14 +2315,14 @@ jobs:
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
       - name: Set up MSVC developer environment (x64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
       - name: Install OpenCL headers (vcpkg) + Intel OpenVINO 2026.4.1
@@ -2297,6 +2336,14 @@ jobs:
           C:\vcpkg\vcpkg install opencl:x64-windows
           $url = "https://storage.openvinotoolkit.org/repositories/openvino/packages/2026.4.1/windows/openvino_toolkit_windows_2026.4.1.22982.07f9c262b05_x86_64.zip"
           Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\openvino.zip"
+          # Verified against the .sha256 the toolkit server publishes next to the archive (pinned
+          # into OPENVINO_WINDOWS_SHA256 once read; empty takes the published value). TODO.md,
+          # delivery roadmap, item 3.
+          $expected = $env:OPENVINO_WINDOWS_SHA256
+          if (-not $expected) { $expected = ((Invoke-WebRequest -Uri "$url.sha256" -UseBasicParsing).Content -split '\s+')[0] }
+          if (-not $expected) { throw "no SHA-256 for $url (neither pinned nor published)" }
+          $actual = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP\openvino.zip").Hash.ToLowerInvariant()
+          if ($actual -ne $expected.ToLowerInvariant()) { throw "openvino.zip SHA-256 $actual does not match $expected" }
           Expand-Archive -Path "$env:RUNNER_TEMP\openvino.zip" -DestinationPath "C:\openvino" -Force
           # The archive extracts into a nested versioned folder; point OpenVINO_DIR at its runtime/cmake.
           $root = (Get-ChildItem "C:\openvino" -Directory | Select-Object -First 1).FullName
@@ -2315,7 +2362,7 @@ jobs:
         run: |
           .github\build.bat -G "Ninja Multi-Config" -DJLLAMA_MODULE_ONLY=ON -DGGML_OPENVINO=ON -DOpenVINO_DIR="%OpenVINO_DIR%" -DVCPKG_APPLOCAL_DEPS=OFF -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake -DOS_NAME=Windows -DOS_ARCH=x86_64
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-openvino-windows-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2330,8 +2377,8 @@ jobs:
     needs: startgate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -2361,8 +2408,8 @@ jobs:
     env:
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -2397,9 +2444,9 @@ jobs:
     # build job: clang TUs do not cache).
     runs-on: windows-2025-vs2026
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up MSVC developer environment (x64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: x64
       - name: Display CPU Info
@@ -2425,9 +2472,9 @@ jobs:
     needs: startgate
     runs-on: windows-11-arm
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up MSVC developer environment (arm64)
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: arm64
       - name: Display CPU Info
@@ -2451,13 +2498,13 @@ jobs:
       BUILD_JOBS: 2
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download shared WebUI assets
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: webui-generated
           path: ${{ github.workspace }}/llama/webui-generated/
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -2476,7 +2523,7 @@ jobs:
       - name: Run C++ unit tests
         run: ctest --test-dir llama/build --output-on-failure
       - name: Upload artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: natives-metal-macos-aarch64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
@@ -2490,16 +2537,16 @@ jobs:
     needs: [crosscompile-linux-x86_64, verify-model-cache]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
       - uses: ./.github/actions/restore-models
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -2519,7 +2566,7 @@ jobs:
       # zero check is the sensitive half.
       - name: Verify tests actually ran
         run: .github/verify-test-counts.sh llama/target/surefire-reports --min-executed 1800
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: success()
         with:
           name: jacoco-report
@@ -2538,7 +2585,7 @@ jobs:
               echo ""
             fi
           done
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with: { name: pit-reports, path: llama/target/pit-reports/ }
       - name: Memory after tests
@@ -2550,7 +2597,7 @@ jobs:
         shell: bash
         run: bash .github/print-crash-logs.sh llama
       - if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: error-log-linux-x86_64
           path: |
@@ -2572,8 +2619,8 @@ jobs:
     needs: startgate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -2585,7 +2632,7 @@ jobs:
         run: >-
           mvn --batch-mode --no-transfer-progress -f llama/pom.xml -Pvmlens test
           -Dtest=VmlensInterleavingSmokeTest,SessionStateInterleavingTest -DfailIfNoTests=false
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: vmlens-report
@@ -2696,7 +2743,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Every shipped native build uploads `natives-<classifier>`. Downloaded UNMERGED (one
       # subdirectory per artifact) on purpose: merge-native-artifacts.sh checks that each artifact
       # holds exactly the <OS>/<ARCH>/<backend>/ directory its name promises and that no path is
@@ -2707,7 +2754,7 @@ jobs:
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: "natives-*"
           path: ${{ github.workspace }}/native-artifacts/
@@ -2726,7 +2773,7 @@ jobs:
       - name: Verify native runtime dependencies
         run: |
           python3 .github/verify-native-deps.py llama/src/main/natives
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -2761,7 +2808,7 @@ jobs:
       # delivery roadmap, item 1). Not on pull requests: a fork's token has no id-token scope.
       - name: Attest build provenance of the natives and the jars
         if: github.event_name != 'pull_request'
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             llama/src/main/natives/net/ladenthin/llama/**/*.so
@@ -2769,7 +2816,7 @@ jobs:
             llama/src/main/natives/net/ladenthin/llama/**/*.dylib
             llama/target/*.jar
       - name: Upload JARs
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: llama-jars
           path: llama/target/*.jar
@@ -2787,7 +2834,7 @@ jobs:
             -DincludeScope=runtime -DoutputDirectory="${{ github.workspace }}/runtime-deps"
           bash .github/package-smoke-sets.sh llama/target runtime-deps smoke-sets
       - name: Upload smoke set linux-x86-64
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: llama-smoke-linux-x86-64
           path: smoke-sets/linux-x86-64/
@@ -2795,7 +2842,7 @@ jobs:
           retention-days: 7
           if-no-files-found: error
       - name: Upload smoke set linux-aarch64
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: llama-smoke-linux-aarch64
           path: smoke-sets/linux-aarch64/
@@ -2803,7 +2850,7 @@ jobs:
           retention-days: 7
           if-no-files-found: error
       - name: Upload smoke set windows-x86-64
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: llama-smoke-windows-x86-64
           path: smoke-sets/windows-x86-64/
@@ -2811,7 +2858,7 @@ jobs:
           retention-days: 7
           if-no-files-found: error
       - name: Upload smoke set windows-aarch64
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: llama-smoke-windows-aarch64
           path: smoke-sets/windows-aarch64/
@@ -2819,7 +2866,7 @@ jobs:
           retention-days: 7
           if-no-files-found: error
       - name: Upload smoke set macos-aarch64
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: llama-smoke-macos-aarch64
           path: smoke-sets/macos-aarch64/
@@ -2850,18 +2897,18 @@ jobs:
           - { target: windows-aarch64, runner: windows-11-arm }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: llama-smoke-${{ matrix.target }}
           path: smoke/
       - uses: ./.github/actions/restore-models
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -2891,7 +2938,7 @@ jobs:
         run: .github/smoke-rpc.sh smoke "models/${DRAFT_MODEL_NAME}"
       - name: Upload server logs
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: smoke-natives-${{ matrix.target }}-logs
           path: |
@@ -2916,20 +2963,20 @@ jobs:
     needs: [test-java-llama-atmosphere-agent, package, verify-model-cache]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: llama-atmosphere-agent-jar
           path: agent/
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: llama-smoke-linux-x86-64
           path: smoke/
       - uses: ./.github/actions/restore-models
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -2955,7 +3002,7 @@ jobs:
         run: .github/smoke-agent.sh agent smoke "models/${TOOL_MODEL_NAME}"
       - name: Upload agent logs
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: agent-smoke-linux-logs
           path: agent-*.log
@@ -2984,15 +3031,15 @@ jobs:
     needs: [package]
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Display CPU Info
         shell: bash
         run: bash .github/print-host-info.sh
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: llama-smoke-macos-aarch64
           path: smoke/
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
           java-version-file: .java-version
@@ -3000,7 +3047,7 @@ jobs:
         run: .github/smoke-native-macos.sh smoke
       - name: Upload server logs
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: smoke-natives-macos-logs
           path: |
@@ -3015,26 +3062,26 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with: { java-version-file: .java-version, distribution: temurin }
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with: { name: jacoco-report, path: target/site/jacoco/ }
         continue-on-error: true
       # Submits the dependency graph to GitHub. Informational: it says nothing about whether the
       # artifacts are correct, but it sits in the `report` job, which the release path needs -- so
       # without this flag a third-party action having a bad day can block a publish.
-      - uses: advanced-security/maven-dependency-submission-action@v6
+      - uses: advanced-security/maven-dependency-submission-action@a64327a7329c9939cf675e458452febe1894a70c # v6
         continue-on-error: true
       - name: Coveralls
-        uses: coverallsapp/github-action@v2
+        uses: coverallsapp/github-action@8d6379e14d29928660c4ba802d8e85393440b329 # v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           file: target/site/jacoco/jacoco.xml
           format: jacoco
         continue-on-error: true
       - name: Codecov
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/site/jacoco/jacoco.xml
@@ -3071,7 +3118,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Every shipped native build uploads `natives-<classifier>`. Downloaded UNMERGED (one
       # subdirectory per artifact) on purpose: merge-native-artifacts.sh checks that each artifact
       # holds exactly the <OS>/<ARCH>/<backend>/ directory its name promises and that no path is
@@ -3079,7 +3126,7 @@ jobs:
       # byte-level interleave -- two artifacts with the same path, which is how a corrupt macOS
       # dylib shipped; the test-only macOS builds (macos-26-metal, macos-15-no-metal) are named
       # outside the glob for that reason.
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: "natives-*"
           path: ${{ github.workspace }}/native-artifacts/
@@ -3089,7 +3136,7 @@ jobs:
             "${{ github.workspace }}/native-artifacts" \
             "${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/"
       - name: Set up Maven Central Repository
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: 'temurin'
@@ -3143,7 +3190,7 @@ jobs:
       # the plain-Gradle build in llama-android/ — Maven cannot deploy
       # <packaging>aar</packaging>. Natives are already on disk from the artifact
       # downloads above; the core jar was just built by the reactor deploy.
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Publish Android AAR snapshots (llama-android + llama-android-opencl)
@@ -3203,13 +3250,13 @@ jobs:
       # with `gh attestation verify --owner bernardladenthin <file>`.
       - name: Attest build provenance of the published artifacts
         if: ${{ !cancelled() }}
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             signed-snapshot-assets/*.jar
             signed-snapshot-assets/*.pom
             signed-snapshot-assets/*.aar
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: ${{ !cancelled() }}
         with:
           name: signed-snapshot-assets
@@ -3230,8 +3277,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signed-snapshot-assets
           path: snapshot-assets/
@@ -3360,7 +3407,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Every shipped native build uploads `natives-<classifier>`. Downloaded UNMERGED (one
       # subdirectory per artifact) on purpose: merge-native-artifacts.sh checks that each artifact
       # holds exactly the <OS>/<ARCH>/<backend>/ directory its name promises and that no path is
@@ -3368,7 +3415,7 @@ jobs:
       # byte-level interleave -- two artifacts with the same path, which is how a corrupt macOS
       # dylib shipped; the test-only macOS builds (macos-26-metal, macos-15-no-metal) are named
       # outside the glob for that reason.
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: "natives-*"
           path: ${{ github.workspace }}/native-artifacts/
@@ -3378,7 +3425,7 @@ jobs:
             "${{ github.workspace }}/native-artifacts" \
             "${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/"
       - name: Set up Maven Central Repository
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           java-version-file: .java-version
           distribution: 'temurin'
@@ -3420,7 +3467,7 @@ jobs:
       # the deployment publishes as soon as portal validation passes). Natives are
       # already on disk from the artifact downloads above; the core jar was just
       # built by the reactor deploy.
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
       - name: Publish Android AAR release bundle to Central Portal
@@ -3489,13 +3536,13 @@ jobs:
       # with `gh attestation verify --owner bernardladenthin <file>`.
       - name: Attest build provenance of the published artifacts
         if: ${{ !cancelled() }}
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: |
             signed-release-assets/*.jar
             signed-release-assets/*.pom
             signed-release-assets/*.aar
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: ${{ !cancelled() }}
         with:
           name: signed-release-assets
@@ -3516,8 +3563,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: signed-release-assets
           path: release-assets/
@@ -3552,7 +3599,7 @@ jobs:
           [ "$missing" -eq 0 ] && echo "all $(echo "$artifacts" | wc -l) artifact(s) signed"
           exit 0
       - name: Upload release assets
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
         with:
           files: release-assets/*
       - name: Fail if anything was attached unsigned

@@ -56,14 +56,30 @@ of this roadmap are done; the contract text stays in README and CLAUDE.md.)*
 
 ### 3. Hard pinning (C.2) -- four repos
 
-- [ ] Every `uses:` pinned to a commit SHA with the version in a comment, in all four repos (the
-      workflow files are shared: rewrite `shared-files.sha256` in each); Dependabot keeps them current.
-- [ ] CMake: `JLLAMA_GIT_COMMIT` is always set (the tag stays the display name),
-      `llama-next-version.sh` writes both, `-DJLLAMA_REQUIRE_COMMIT=ON` in CI refuses a fetch by tag
-      name; googletest on a commit; BoringSSL stays on upstream's pin (documented).
-- [ ] Every downloaded toolchain archive (CUDA redist, OpenVINO, Vulkan SDK, oneAPI installer, sccache
-      zip) is checked with `sha256sum -c`; the ROCm wheels come from a fixed version with
-      `--require-hashes` instead of the moving `whl-next` index.
+*(Landed 2026-10-15: every `uses:` of the four repositories pinned to a commit SHA with the tag in a
+comment, Dependabot keeps them current; `JLLAMA_REQUIRE_COMMIT` under GitHub Actions refuses a
+llama.cpp fetch by tag name and the commit stays set after the tag exists; googletest by commit; the
+sccache archives (Linux and Windows) against pinned SHA-256s; the CUDA redist archives against
+NVIDIA's own manifest, the OpenVINO archives and the Vulkan arm64 installer against the checksum
+each vendor publishes next to the file.)* Still open, each with the reason:
+
+- [ ] **Pin the vendor checksums into `publish.yml`** (`CUDA_REDIST_MANIFEST`, `OPENVINO_LINUX_SHA256`,
+      `OPENVINO_WINDOWS_SHA256`, `VULKAN_SDK_SHA256`): the steps verify against the vendor's published
+      value when the variable is empty and print it; the session that wrote them could not reach
+      `developer.download.nvidia.com`, `storage.openvinotoolkit.org` or `sdk.lunarg.com` (proxy 403),
+      so the first Publish run after this lands is where the values are read off the log and pinned.
+      Until then a swapped archive on the vendor host would pass; a truncated or wrong download does not.
+- [ ] **The oneAPI Windows installer has no checksum endpoint** Intel publishes next to the file
+      (`registrationcenter-download.intel.com/.../intel-deep-learning-essentials-2025.3.3.18_offline.exe`);
+      pinning needs one download of the 1.6 GB installer on a machine that can reach it, then
+      `Get-FileHash` into a `ONEAPI_INSTALLER_SHA256` check like the Vulkan one.
+- [ ] **ROCm wheels come from a moving index** (`stable.repo.amd.com/rocm/whl-next/`, version-pinned
+      with `==` but not hashed): `pip install --require-hashes` needs a requirements file with the
+      hash of every wheel of `rocm[libraries,devel]`, which only a machine that can download the
+      multi-GB wheel set can write (`pip download` + `pip hash`). Upstream's `release.yml` has the
+      same gap.
+- [ ] BoringSSL stays on upstream's pin (`BORINGSSL_VERSION` in `vendor/cpp-httplib/CMakeLists.txt`,
+      a tag name): a commit pin there is upstream's change to make; recorded, not worked around.
 
 ### 4. Export hygiene (B.1) -- the precondition of every "clean" library
 

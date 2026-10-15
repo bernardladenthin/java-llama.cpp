@@ -62,7 +62,11 @@ REM No goto/labels on purpose: this file is checked out with LF line endings
 REM (.gitattributes eol=lf), and cmd's label search is unreliable in LF-only scripts.
 set "RETRY="
 mkdir build
-cmake -Bbuild %LAUNCH% -DGGML_CCACHE=OFF %*
+REM Under GitHub Actions llama.cpp is fetched by commit only (JLLAMA_REQUIRE_COMMIT refuses the
+REM moving tag name); the retry below passes it too.
+set "REQUIRE_COMMIT="
+if defined GITHUB_ACTIONS set "REQUIRE_COMMIT=-DJLLAMA_REQUIRE_COMMIT=ON"
+cmake -Bbuild %LAUNCH% -DGGML_CCACHE=OFF %REQUIRE_COMMIT% %*
 if errorlevel 1 (
     if not defined LAUNCH exit /b 1
     set "RETRY=1"
@@ -77,7 +81,7 @@ if defined RETRY (
     set "LAUNCH="
     rmdir /s /q build
     mkdir build
-    cmake -Bbuild -DGGML_CCACHE=OFF %*
+    cmake -Bbuild -DGGML_CCACHE=OFF %REQUIRE_COMMIT% %*
     if errorlevel 1 exit /b 1
     cmake --build build --config Release
     set "BUILD_RC=!ERRORLEVEL!"

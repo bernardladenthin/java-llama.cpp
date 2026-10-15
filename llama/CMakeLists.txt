@@ -345,22 +345,31 @@ endif()
 # asserts that the fetched commit's count IS the number. Clear it once the tag exists;
 # `llama-next-version.sh` says when, and `llama-next-version.sh --resolve b<nnnn>` prints the hash.
 set(JLLAMA_GIT_TAG    b11639)
-set(JLLAMA_GIT_COMMIT "a0e6dc7384edb8f5d927155e1d26c10b4a310e6d")   # until upstream tags b11639
+set(JLLAMA_GIT_COMMIT "a0e6dc7384edb8f5d927155e1d26c10b4a310e6d")   # the commit b11639 names; kept after the tag exists
 if(NOT JLLAMA_GIT_TAG MATCHES "^b[0-9]+$")
     message(FATAL_ERROR "JLLAMA_GIT_TAG must be a llama.cpp release number b<nnnn>, got '${JLLAMA_GIT_TAG}'")
 endif()
 if(JLLAMA_GIT_COMMIT AND NOT JLLAMA_GIT_COMMIT MATCHES "^[0-9a-f]+$")
     message(FATAL_ERROR "JLLAMA_GIT_COMMIT must be empty or a full 40-hex commit hash, got '${JLLAMA_GIT_COMMIT}'")
 endif()
+# A tag name is a moving reference: upstream can re-point it, and `git rev-list --count` only proves
+# the number, not the content. So the commit stays the pin for good -- JLLAMA_GIT_COMMIT is kept
+# after upstream publishes the tag, not cleared -- and CI refuses to fetch by name
+# (JLLAMA_REQUIRE_COMMIT, set by build.sh/build.bat under GitHub Actions; TODO.md, delivery
+# roadmap, item 3). A local build with an empty commit still works, by the tag, for convenience.
+option(JLLAMA_REQUIRE_COMMIT "Refuse to fetch llama.cpp by tag name: JLLAMA_GIT_COMMIT must name the commit" OFF)
 if(JLLAMA_GIT_COMMIT)
     string(LENGTH "${JLLAMA_GIT_COMMIT}" _jllama_commit_len)
     if(NOT _jllama_commit_len EQUAL 40)
         message(FATAL_ERROR "JLLAMA_GIT_COMMIT must be the full 40-hex commit hash, got '${JLLAMA_GIT_COMMIT}' (${_jllama_commit_len} chars)")
     endif()
     set(_jllama_fetch_ref "${JLLAMA_GIT_COMMIT}")
-    message(STATUS "llama.cpp ${JLLAMA_GIT_TAG} is fetched by commit ${JLLAMA_GIT_COMMIT} (JLLAMA_GIT_COMMIT is set: upstream has not published the tag)")
+    message(STATUS "llama.cpp ${JLLAMA_GIT_TAG} is fetched by commit ${JLLAMA_GIT_COMMIT}")
+elseif(JLLAMA_REQUIRE_COMMIT)
+    message(FATAL_ERROR "JLLAMA_REQUIRE_COMMIT is ON and JLLAMA_GIT_COMMIT is empty: a release build never fetches llama.cpp by the moving tag name. Run `.github/scripts/llama-next-version.sh --resolve ${JLLAMA_GIT_TAG}` and set the commit.")
 else()
     set(_jllama_fetch_ref "${JLLAMA_GIT_TAG}")
+    message(STATUS "llama.cpp ${JLLAMA_GIT_TAG} is fetched by tag name (JLLAMA_GIT_COMMIT is empty; CI would refuse this)")
 endif()
 
 FetchContent_Declare(
@@ -1033,10 +1042,11 @@ if(BUILD_TESTING)
     FetchContent_Declare(
         googletest
         GIT_REPOSITORY https://github.com/google/googletest.git
-        # No constraint behind this exact tag — GoogleTest is only used by this repo's own
+        # No constraint behind this exact version — GoogleTest is only used by this repo's own
         # C++ unit tests (jllama_test), not by the shipped library and not tied to llama.cpp.
         # It is just "latest stable at the time"; bump it from time to time (see CLAUDE.md).
-        GIT_TAG        v1.18.0
+        # Pinned by commit, not by the tag name it stands for (v1.18.0): tags move, commits do not.
+        GIT_TAG        063de7e9578f82b369302001269680b4b1553359 # v1.18.0
     )
     # Keep GTest on the same CRT as the rest of the project.
     # OFF means GTest respects CMAKE_MSVC_RUNTIME_LIBRARY (static /MT here).

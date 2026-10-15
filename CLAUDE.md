@@ -1663,8 +1663,11 @@ To change the llama.cpp version, update the following **four** files (and re-ver
    `LlamaCppVersion`, README and this file keep the number, and the configure asserts that the
    fetched commit's `git rev-list --count` is the number (upstream's own tag-numbering rule, and
    also how llama.cpp's `build-info` derives `b<nnnn>-<commit>` -- so the Java pin check holds
-   against a virtual number too). Clear `JLLAMA_GIT_COMMIT` once the tag exists; the helper prints a
-   NOTE while it is stale. Runbook: "Pinning a number upstream has not tagged yet".
+   against a virtual number too). **Keep `JLLAMA_GIT_COMMIT` after upstream publishes the tag**: a
+   tag name is a moving reference, so the commit is the pin and the tag only the display name, and
+   CI refuses a fetch by name (`JLLAMA_REQUIRE_COMMIT`, set by `build.sh`/`build.bat` under GitHub
+   Actions; a local configure without the commit still works, by the tag). Runbook: "Pinning a
+   number upstream has not tagged yet".
 2. **README.md** — the badge and link line with the version number
 3. **CLAUDE.md** — the "Current llama.cpp pinned version" line
 4. **llama/src/main/java/net/ladenthin/llama/value/LlamaCppVersion.java** — the
