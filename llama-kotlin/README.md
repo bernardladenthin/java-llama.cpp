@@ -44,10 +44,11 @@ token boundary and frees the slot — the missing piece a hand-rolled
 
 ## Why `provided` scope on the core?
 
-The desktop `net.ladenthin:llama` JAR bundles native libraries for every desktop platform as Java
-resources. If this module depended on it transitively, every Android APK using the façade would
-package ~70 MB of dead desktop natives. Declaring the binding yourself keeps the choice explicit:
-`llama` on the JVM, the `llama-android` AAR on Android.
+The desktop binding and the Android AAR carry the same classes: `net.ladenthin:llama` is the Java
+classes only (the natives are separate jars since 6.0.0), and `llama-android` repackages those
+classes with the Android natives. A transitive dependency on either would duplicate them on the
+other platform, so declaring the binding yourself keeps the choice explicit: `llama` (plus
+`llama-platform` or the natives jars) on the JVM, the `llama-android` AAR on Android.
 
 ## Build
 

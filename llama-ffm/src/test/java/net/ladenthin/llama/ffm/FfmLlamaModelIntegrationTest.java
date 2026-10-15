@@ -1,0 +1,225 @@
+// SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+//
+// SPDX-License-Identifier: MIT
+package net.ladenthin.llama.ffm;
+
+import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.greaterThan;
+import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.ServerSocket;
+import java.net.URI;
+import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicInteger;
+import net.ladenthin.llama.exception.InvalidRequestException;
+import net.ladenthin.llama.exception.LlamaException;
+import net.ladenthin.llama.parameters.ModelParameters;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+
+/**
+ * A model through the C API: loaded with the core's {@code ModelParameters}, the contract of each
+ * operation asserted (the text of a small model is noise, the shape is what counts). Self-skips
+ * without a native build or the model ({@code -Dnet.ladenthin.llama.ffm.model}).
+ */
+class FfmLlamaModelIntegrationTest {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final String CHAT_REQUEST =
+            "{\"messages\": [{\"role\": \"user\", \"content\": \"Hi\"}], \"max_tokens\": 4, \"temperature\": 0}";
+
+    private static FfmLlamaModel model;
+    private static final AtomicInteger PROGRESS_CALLS = new AtomicInteger();
+
+    @BeforeAll
+    static void load() {
+        Path path = FfmTestSupport.assumeModel();
+        ModelParameters parameters = new ModelParameters()
+                .setModel(path.toString())
+                .setCtxSize(128)
+                .setGpuLayers(0)
+                .setThreads(2);
+        model = FfmLlamaModel.load(parameters, progress -> {
+            PROGRESS_CALLS.incrementAndGet();
+            return true;
+        });
+    }
+
+    @AfterAll
+    static void free() {
+        if (model != null) {
+            model.close();
+            model.close(); // idempotent
+        }
+    }
+
+    @Test
+    void theProgressCallbackWasReported() {
+        assertThat(PROGRESS_CALLS.get(), greaterThan(0));
+    }
+
+    @Test
+    void metaDescribesTheModel() throws IOException {
+        JsonNode meta = JSON.readTree(model.meta());
+        assertThat(meta.path("n_vocab").asInt(), greaterThan(0));
+        assertTrue(meta.has("metadata"));
+    }
+
+    @Test
+    void chatCompletionIsAnOpenAiObject() throws IOException {
+        JsonNode response = JSON.readTree(model.chatCompletions(CHAT_REQUEST));
+        assertEquals("chat.completion", response.path("object").asText());
+        assertTrue(response.path("choices").isArray());
+        assertTrue(response.path("choices").get(0).path("message").has("content"));
+    }
+
+    @Test
+    void chatCompletionStreamsEnvelopesUntilStop() throws IOException {
+        int envelopes = 0;
+        boolean sawStop = false;
+        try (FfmTaskStream stream = model.chatCompletionsStream(CHAT_REQUEST)) {
+            assertThat(stream.taskId(), is(greaterThan(-1)));
+            while (stream.hasNext()) {
+                JsonNode envelope = JSON.readTree(stream.next());
+                assertTrue(envelope.has("data"));
+                envelopes++;
+                sawStop = envelope.path("stop").asBoolean();
+            }
+        }
+        assertThat(envelopes, greaterThan(0));
+        assertTrue(sawStop, "the last envelope carries stop");
+    }
+
+    @Test
+    void aStreamClosedEarlyReleasesItsTaskAndTheModelStillAnswers() throws IOException {
+        try (FfmTaskStream stream = model.chatCompletionsStream(CHAT_REQUEST)) {
+            stream.next();
+        }
+        assertEquals("chat.completion", JSON.readTree(model.chatCompletions(CHAT_REQUEST)).path("object").asText());
+    }
+
+    @Test
+    void rawCompletionAndItsStream() throws IOException {
+        String request = "{\"prompt\": \"Hello\", \"n_predict\": 3, \"temperature\": 0}";
+        assertTrue(JSON.readTree(model.completions(request)).has("content"));
+        int results = 0;
+        try (FfmTaskStream stream = model.completionsStream(request)) {
+            while (stream.hasNext()) {
+                JSON.readTree(stream.next());
+                results++;
+            }
+        }
+        assertThat(results, greaterThan(0));
+    }
+
+    @Test
+    void tokenizeAndDetokenizeRoundTrip() throws IOException {
+        int[] tokens = model.tokenize("Hello", false);
+        assertThat(tokens.length, greaterThan(0));
+        assertEquals("Hello", model.detokenize(tokens));
+        JsonNode json = JSON.readTree(model.tokenizeJson("Hello", false, true));
+        assertEquals(tokens.length, json.path("tokens").size());
+        assertArrayEquals(tokens, JSON.convertValue(json.path("tokens").findValues("id"), int[].class));
+        assertTrue(JSON.readTree(model.detokenizeJson(tokens)).has("content"));
+    }
+
+    @Test
+    void applyTemplateRendersAPrompt() {
+        String prompt = model.applyTemplate("{\"messages\": [{\"role\": \"user\", \"content\": \"Hi\"}]}");
+        assertTrue(prompt.contains("Hi"));
+    }
+
+    @Test
+    void metricsListTheSlots() throws IOException {
+        JsonNode metrics = JSON.readTree(model.metrics());
+        assertTrue(metrics.path("slots").isArray());
+        assertThat(metrics.path("slots").size(), greaterThan(0));
+    }
+
+    @Test
+    void loraAdaptersAndConfigure() throws IOException {
+        assertTrue(JSON.readTree(model.loraAdapters()).isArray());
+        assertTrue(JSON.readTree(model.setLoraAdapters("[]")).isContainerNode());
+        assertThrows(LlamaException.class, () -> model.setLoraAdapters("{}"));
+        assertThrows(InvalidRequestException.class, () -> model.setLoraAdapters("["));
+        model.configure("{\"slot_prompt_similarity\": 0.5}");
+        assertThrows(InvalidRequestException.class, () -> model.configure("{not json"));
+    }
+
+    @Test
+    void slotEraseAnswersAndASaveWithoutAFilenameIsRefused() throws IOException {
+        assertTrue(JSON.readTree(model.slotAction(SlotOp.ERASE, 0, null)).isObject());
+        LlamaException e = assertThrows(LlamaException.class, () -> model.slotAction(SlotOp.SAVE, 0, null));
+        assertEquals("Filename is required for slot save", e.getMessage());
+    }
+
+    @Test
+    void aModelWithoutEmbeddingSupportRefusesToEmbed() {
+        assertThrows(LlamaException.class, () -> model.embed("Hello"));
+        assertThrows(LlamaException.class, () -> model.rerank("query", "a document"));
+    }
+
+    @Test
+    void anInvalidRequestIsTheCallersFault() {
+        assertThrows(InvalidRequestException.class, () -> model.chatCompletions("{not json"));
+        assertThrows(InvalidRequestException.class, () -> model.chatCompletions("{\"messages\": \"no\"}"));
+        assertThrows(InvalidRequestException.class, () -> model.applyTemplate("{\"messages\": \"no\"}"));
+    }
+
+    @Test
+    void theServerAttachedToTheModelAnswersAndTheModelOutlivesIt() throws Exception {
+        int port;
+        try (ServerSocket socket = new ServerSocket(0)) {
+            port = socket.getLocalPort();
+        }
+        try (FfmNativeServer server = FfmNativeServer.startAttached(model, "--host", "127.0.0.1", "--port",
+                String.valueOf(port))) {
+            assertTrue(server.isRunning());
+            assertEquals(200, awaitHealth(port));
+        }
+        assertEquals("chat.completion", JSON.readTree(model.chatCompletions(CHAT_REQUEST)).path("object").asText());
+    }
+
+    @Test
+    void aClosedModelRefusesCalls() {
+        FfmLlamaModel other = FfmLlamaModel.load(new ModelParameters()
+                .setModel(FfmTestSupport.modelPath().toString())
+                .setCtxSize(64)
+                .setGpuLayers(0)
+                .setThreads(1));
+        other.close();
+        assertThrows(IllegalStateException.class, other::meta);
+        assertFalse(FfmRpcServer.isListening(), "no RPC server runs in this JVM");
+    }
+
+    private static int awaitHealth(int port) throws Exception {
+        URI health = URI.create("http://127.0.0.1:" + port + "/health");
+        int last = -1;
+        for (int attempt = 0; attempt < 200; attempt++) {
+            try {
+                HttpURLConnection connection = (HttpURLConnection) health.toURL().openConnection();
+                connection.setConnectTimeout(500);
+                connection.setReadTimeout(2000);
+                last = connection.getResponseCode();
+                connection.disconnect();
+                if (last == 200) {
+                    return last;
+                }
+            } catch (IOException e) {
+                // not listening yet
+            }
+            Thread.sleep(50);
+        }
+        return last;
+    }
+}

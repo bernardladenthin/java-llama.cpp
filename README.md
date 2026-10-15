@@ -479,6 +479,12 @@ server, text to speech, quantisation, fine-tuning, logging -- callable from C, R
 Java 22+ without a JVM; the Java entry points are shells over the same functions. See
 [docs/c-api.md](docs/c-api.md).
 
+**Java 22+ without JNI: `net.ladenthin:llama-ffm`.** The same C API through the Foreign Function
+and Memory API ([`llama-ffm/README.md`](llama-ffm/README.md)): `FfmLlamaModel`, `FfmNativeServer`,
+`FfmRpcServer`, `FfmTextToSpeech` and `Jllama` over the same natives jars (loaded by the core's
+loader, so `llama-platform` and the GPU module jars apply unchanged), JSON in and out, the core's
+exceptions. Java 22 or newer, `--enable-native-access=ALL-UNNAMED`; not for Android.
+
 The CI smoke of every desktop platform runs this path on the published jars (unpacked into a
 directory, started with `lib.path` and no natives jar on the classpath), so a release cannot ship
 with the directory mode broken on a platform.

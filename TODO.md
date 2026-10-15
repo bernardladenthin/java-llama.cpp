@@ -170,8 +170,12 @@ Java 8; CI builds the module with a JDK 25 toolchain next to the `.java-version`
 (`maven-toolchains-plugin`, a second `setup-java` step in its test job and in the publish jobs).
 Not for Android (no FFM there).
 
-- [ ] The module, its model-free and model-backed tests, the `test-java-llama-ffm` job gating both
-      publish jobs, `versions.POMS` in the four repositories, README / CLAUDE.md / `docs/c-api.md`.
+*(Landed 2026-10-15: the module with `JllamaNative`, `FfmLlamaModel`, `FfmTaskStream`,
+`FfmNativeServer`, `FfmRpcServer`, `FfmTextToSpeech`, `Jllama`; `JllamaNativeTest` and
+`FfmLlamaModelIntegrationTest` (21 tests, green locally with Temurin 25 over the modular build and
+a tiny random GGUF); the `toolchain-jdk22` profile; `test-java-llama-ffm` plus the JDK 25 step in
+`package` and both publish jobs; `versions.POMS` in the four repositories; README, CLAUDE.md "Java
+22+ without JNI", `docs/c-api.md`, `llama-ffm/README.md`. First CI run pending.)*
 
 ### 11. Deferred by the owner until everything above runs: the Windows code signature (C.4, C.5)
 

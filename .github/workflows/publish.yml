@@ -416,6 +416,74 @@ jobs:
           if-no-files-found: warn
 
   # ---------------------------------------------------------------------------
+  # llama-ffm: the C API of libjllama (jllama_api.h) through the Java 22+ Foreign Function and
+  # Memory API, no JNI. Reuses the Linux x86_64 natives artifact and the cached models like the
+  # langchain4j integration job (lib.path, no second loading path); Maven runs on the JDK of
+  # .java-version and compiles, tests and documents this module with the JDK 25 toolchain the first
+  # setup-java step registers. Gates both publish jobs: the module ships on Maven Central.
+  # ---------------------------------------------------------------------------
+
+  test-java-llama-ffm:
+    name: Build and Test llama-ffm (Java 22+ FFM over the C API, model-backed)
+    needs: [crosscompile-linux-x86_64, verify-model-cache]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
+      - name: Download Linux x86_64 native library (reused, not rebuilt)
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: natives-cpu-linux-x86-64
+          path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
+      - uses: ./.github/actions/restore-models
+      # A second JDK next to the one of .java-version: llama-ffm (the C API through the Java 22+ FFM
+      # API) has a Java floor of its own and builds through maven-toolchains-plugin; setup-java writes
+      # a toolchains.xml entry for every JDK it installs, and the step that follows keeps JAVA_HOME on
+      # the workflow's JDK. Version: the current LTS above the floor (not .java-version, which is a
+      # shared file of the four repositories).
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: 'temurin'
+          java-version: '25'
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: 'temurin'
+          java-version-file: .java-version
+      - name: Install parent + core net.ladenthin:llama (classes; the test JVM loads the downloaded native library via lib.path)
+        uses: ./.github/actions/build-core
+      - name: Build, test and document llama-ffm (the model-backed test runs on the cached draft model)
+        run: >
+          mvn -B --no-transfer-progress -f llama-ffm/pom.xml verify -Dgpg.skip=true
+          -Dnet.ladenthin.llama.ffm.model=models/${DRAFT_MODEL_NAME}
+          -Dnet.ladenthin.llama.lib.path=${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/Linux/x86_64/cpu
+      - name: Require the model-backed test to have run (a self-skip would hide a broken binding)
+        run: |
+          report=llama-ffm/target/surefire-reports/TEST-net.ladenthin.llama.ffm.FfmLlamaModelIntegrationTest.xml
+          test -f "$report" || { echo "::error::no report for FfmLlamaModelIntegrationTest"; exit 1; }
+          if grep -q 'skipped="[1-9]' "$report" || grep -q 'tests="0"' "$report"; then
+            echo "::error::FfmLlamaModelIntegrationTest skipped itself -- the model or the natives were not found"
+            exit 1
+          fi
+      - name: Print crash logs (on failure)
+        if: failure()
+        shell: bash
+        run: bash .github/print-crash-logs.sh llama-ffm
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: error-log-llama-ffm
+          path: |
+            ${{ github.workspace }}/llama-ffm/hs_err_pid*.log
+            ${{ github.workspace }}/core.*
+            ${{ github.workspace }}/llama-ffm/target/surefire-reports/*.dump
+            ${{ github.workspace }}/llama-ffm/target/surefire-reports/*.dumpstream
+            ${{ github.workspace }}/llama-ffm/target/surefire-reports/*.txt
+            ${{ github.workspace }}/llama-ffm/target/surefire-reports/TEST-*.xml
+          if-no-files-found: warn
+
+  # ---------------------------------------------------------------------------
   # Build the llama.cpp WebUI ONCE, from the same pinned tag CMakeLists.txt fetches,
   # and share it to every native build as the generated, platform-independent
   # ui.cpp/ui.h ("webui-generated" artifact).  The native builds embed it into
@@ -2866,6 +2934,15 @@ jobs:
       - name: Verify native runtime dependencies
         run: |
           python3 .github/verify-native-deps.py llama/src/main/natives
+      # A second JDK next to the one of .java-version: llama-ffm (the C API through the Java 22+ FFM
+      # API) has a Java floor of its own and builds through maven-toolchains-plugin; setup-java writes
+      # a toolchains.xml entry for every JDK it installs, and the step that follows keeps JAVA_HOME on
+      # the workflow's JDK. Version: the current LTS above the floor (not .java-version, which is a
+      # shared file of the four repositories).
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: 'temurin'
+          java-version: '25'
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: 'temurin'
@@ -3202,7 +3279,7 @@ jobs:
 
   publish-snapshot:
     name: Publish Snapshot to Central
-    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, test-source-archive, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
+    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, test-source-archive, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-ffm, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
     if: needs.check-snapshot.result == 'success' && inputs.publish_to_central
     runs-on: ubuntu-latest
     environment: maven-central
@@ -3228,6 +3305,15 @@ jobs:
           bash .github/merge-native-artifacts.sh \
             "${{ github.workspace }}/native-artifacts" \
             "${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/"
+      # A second JDK next to the one of .java-version: llama-ffm (the C API through the Java 22+ FFM
+      # API) has a Java floor of its own and builds through maven-toolchains-plugin; setup-java writes
+      # a toolchains.xml entry for every JDK it installs, and the step that follows keeps JAVA_HOME on
+      # the workflow's JDK. Version: the current LTS above the floor (not .java-version, which is a
+      # shared file of the four repositories).
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: 'temurin'
+          java-version: '25'
       - name: Set up Maven Central Repository
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
@@ -3265,9 +3351,9 @@ jobs:
             *-SNAPSHOT) echo "OK: -SNAPSHOT version, continuing snapshot deploy." ;;
             *) echo "::error::Refusing to publish non-SNAPSHOT version '$VERSION' from the snapshot job. Snapshot publishing requires a -SNAPSHOT version; releases go through the v* tag path."; exit 1 ;;
           esac
-      # One reactor deploy publishes all five Maven artifacts at the same version:
+      # One reactor deploy publishes all six Maven artifacts at the same version:
       # net.ladenthin:llama-parent (the pom), :llama (the classes jar + natives jars),
-      # :llama-langchain4j, :llama-kotlin and :llama-platform (a pom). The `release` profile (GPG + Central
+      # :llama-langchain4j, :llama-kotlin, :llama-ffm and :llama-platform (a pom). The `release` profile (GPG + Central
       # Publishing) is inherited from the parent, so every module — including the
       # parent pom — is signed. The Android AARs are published by the separate
       # Gradle step below (Maven cannot deploy <packaging>aar</packaging>).
@@ -3514,7 +3600,7 @@ jobs:
   publish-release:
     name: Publish Release to Central
     if: needs.check-tag.result == 'success' && inputs.publish_to_central
-    needs: [check-tag, crosscompile-linux-x86_64-cuda, test-source-archive, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
+    needs: [check-tag, crosscompile-linux-x86_64-cuda, test-source-archive, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-ffm, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
     runs-on: ubuntu-latest
     environment: maven-central
     permissions:
@@ -3539,6 +3625,15 @@ jobs:
           bash .github/merge-native-artifacts.sh \
             "${{ github.workspace }}/native-artifacts" \
             "${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/"
+      # A second JDK next to the one of .java-version: llama-ffm (the C API through the Java 22+ FFM
+      # API) has a Java floor of its own and builds through maven-toolchains-plugin; setup-java writes
+      # a toolchains.xml entry for every JDK it installs, and the step that follows keeps JAVA_HOME on
+      # the workflow's JDK. Version: the current LTS above the floor (not .java-version, which is a
+      # shared file of the four repositories).
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: 'temurin'
+          java-version: '25'
       - name: Set up Maven Central Repository
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
@@ -3567,9 +3662,9 @@ jobs:
             printf '%s' "$MAVEN_GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign --armor "$f"
             gpg --batch --verify "$f.asc" "$f"
           done
-      # One reactor deploy publishes all five Maven artifacts at the same version:
+      # One reactor deploy publishes all six Maven artifacts at the same version:
       # net.ladenthin:llama-parent (the pom), :llama (the classes jar + natives jars),
-      # :llama-langchain4j, :llama-kotlin and :llama-platform (a pom). The `release` profile (GPG + Central Publishing) is inherited
+      # :llama-langchain4j, :llama-kotlin, :llama-ffm and :llama-platform (a pom). The `release` profile (GPG + Central Publishing) is inherited
       # from the parent, so every module — including the parent pom — is signed.
       # Informational only (nothing depends on it): logs the effective POM with the same
       # profile set as the deploy below, so the resolved central-publishing configuration

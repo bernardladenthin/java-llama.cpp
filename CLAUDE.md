@@ -2924,10 +2924,10 @@ keeping it clear of the JPMS module-mode javadoc trap that bit BAF. **Before rai
 javadoc source level to ≥ 9, read**
 [`../workspace/policies/jpms-module-descriptor.md`](../workspace/policies/jpms-module-descriptor.md).
 
-## Repository layout — Maven reactor (`llama/` + `llama-langchain4j/` + `llama-kotlin/` + `llama-platform/`) + the `llama-android/` Gradle build
+## Repository layout — Maven reactor (`llama/` + `llama-langchain4j/` + `llama-kotlin/` + `llama-ffm/` + `llama-platform/`) + the `llama-android/` Gradle build
 
 The repo root is a thin **aggregator/parent POM** (`net.ladenthin:llama-parent`,
-`packaging=pom`) with four modules:
+`packaging=pom`) with five modules:
 
 - **`llama/`** — the native JNI core (`net.ladenthin:llama`). *All the core sources and build
   files live here now:* `llama/src/`, `llama/CMakeLists.txt`, `llama/cmake/`, `llama/patches/`,
@@ -2935,6 +2935,7 @@ The repo root is a thin **aggregator/parent POM** (`net.ladenthin:llama-parent`,
   Its published coordinates are unchanged (`net.ladenthin:llama`), so consumers are unaffected.
 - **`llama-langchain4j/`** — the LangChain4j adapters (see below).
 - **`llama-kotlin/`** — the Kotlin coroutines façade (see "Android AAR + Kotlin façade" below).
+- **`llama-ffm/`** — the C API through the Java 22+ FFM API, no JNI (see "Java 22+ without JNI" below).
 - **`llama-platform/`** — a pom-packaging dependency list: the classes jar plus the CPU natives jars
   of every desktop platform (see "Natives jars" above).
 
@@ -2943,9 +2944,9 @@ construction** (no CI guard needed). The parent also holds the shared `release` 
 Central Publishing) and a `<pluginManagement>` with every plugin version more than one module uses
 (compiler, jar, resources, surefire, source, javadoc, gpg, central-publishing -- a module names such a
 plugin without a version; without it a module that pins nothing builds with the default of whatever
-Maven runs it, which differed between CI and a local build), so one reactor `mvn -P release,natives deploy` signs and publishes all five
+Maven runs it, which differed between CI and a local build), so one reactor `mvn -P release,natives deploy` signs and publishes all six
 Maven artifacts (`llama-parent` pom, `llama` with its natives jars, `llama-langchain4j`,
-`llama-kotlin`, `llama-platform` pom) at the same version.
+`llama-kotlin`, `llama-ffm`, `llama-platform` pom) at the same version.
 
 **`llama-android/` is deliberately NOT a reactor module** but a standalone plain-Gradle build
 (no AGP, no Android SDK needed to build): Maven cannot produce or deploy an artifact with
@@ -2973,12 +2974,13 @@ versioning** here), so a version change must be applied to **all five poms in lo
 - `llama/pom.xml` — `<parent><version>`
 - `llama-langchain4j/pom.xml` — `<parent><version>`
 - `llama-kotlin/pom.xml` — `<parent><version>`
+- `llama-ffm/pom.xml` — `<parent><version>`
 - `llama-platform/pom.xml` — `<parent><version>`
 
 (`llama-android/` needs **no** edit — its Gradle build reads the root pom's version at
 configure time.)
 
-The safe way is `mvn -q versions:set -DnewVersion=X.Y.Z -DgenerateBackupPoms=false` from the repo
+(`versions:set` reaches all six.) The safe way is `mvn -q versions:set -DnewVersion=X.Y.Z -DgenerateBackupPoms=false` from the repo
 root (it updates the parent and every child `<parent>` reference at once). Changing only the root
 `<version>` leaves the children pointing at a non-existent parent and **fails the reactor build**
 (`Could not find artifact net.ladenthin:llama-parent:pom:X.Y.Z`).
@@ -3007,10 +3009,80 @@ missed again.)
 - **`llama-android/README.md`** and **`llama-kotlin/README.md`** — their Gradle dependency
   snippets, plus the `llama-android`/`llama-kotlin` snippets in the root README's
   "Importing in Android" section.
+- **`llama-ffm/README.md`** — its `<dependency>` snippets (the module and `llama-platform`).
 
 (If single-source ergonomics are wanted, the Maven
 CI-friendly `${revision}` property + `flatten-maven-plugin` would let a bump touch only the root —
 that plugin is not configured today, so do not rely on "root only".)
+
+## Java 22+ without JNI (`llama-ffm` reactor module)
+
+`llama-ffm/` is the C API ("The C API: `jllama_api.h`") called through the Java 22+ Foreign Function
+and Memory API: `net.ladenthin:llama-ffm`, package `net.ladenthin.llama.ffm`, **Java floor 22**
+(`maven.compiler.release`; the FFM API is final there, JEP 454) while the core stays Java 8. It is
+the "Java 22+ over the C API" item of the delivery roadmap (TODO.md item 10), decided 2026-10-15.
+
+- **One loading path.** `JllamaNative`'s static initializer initializes `LlamaModel`, whose static
+  block runs the core's `LlamaLoader.initialize()` -- the same natives jars, `lib.path` /
+  `java.library.path`, module jars and build check as `LlamaModel` -- and resolves every `jllama_*`
+  function with `SymbolLookup.loaderLookup()`, which sees what `System.load` put into the class
+  loader. Through `LlamaModel` and not `LlamaLoader` on purpose: the core's `module-info.java` does
+  not export `net.ladenthin.llama.loader` (javadoc in module mode refused the import, and a
+  module-path consumer would hit the same wall), and the module surface of the core is not this
+  module's to widen. There is no `System.load` and no jar handling in this module; a library of
+  another version fails with an `UnsatisfiedLinkError` naming the missing symbol.
+- **Hand-written bindings, no jextract** (not in the JDK, not in CI): one `MethodHandle` per
+  declaration of `jllama_api.h` in `JllamaNative`, plus the marshalling helpers (`cString`,
+  `cStrings` for an argv, `takeString` / `takeFloats` / `takeTokens` / `takeBytes` / `takeStrings` for
+  the out-parameters, each releasing with the typed `jllama_*_free`). `size_t` is `JAVA_LONG`: every
+  platform this project ships natives for is 64-bit. The callbacks are upcall stubs: the load-progress
+  one in the confined arena of the load call (it runs on the loading thread), the log one in a shared
+  arena `Jllama` keeps until the next `setLogCallback` swap -- the C side drains the previous sink
+  before `jllama_set_log_callback` returns, so the old stub is closed after the call. An exception
+  inside an upcall would end the JVM, so both bridges catch everything (the progress bridge aborts
+  the load instead).
+- **The core's exceptions.** `JllamaNative.check` maps `JLLAMA_STATUS_INVALID_REQUEST` to
+  `InvalidRequestException`, `JLLAMA_STATUS_INVALID_ARGUMENT` to `IllegalArgumentException`, everything
+  else to `LlamaException`, each with `jllama_last_error()` as the message -- the same verdicts the
+  JNI shells give.
+- **Public API**: `FfmLlamaModel` (the `LlamaModel` operations, JSON text in and out, `FfmTaskStream`
+  for the streams: an `Iterator<String>` that releases the task at `stop` or on `close()`),
+  `FfmNativeServer` (classic, attached, `setWorkerCommand`), `FfmRpcServer` (static; `serve` blocks
+  like `RpcServer`'s thread body), `FfmTextToSpeech`, `Jllama` (version, build info, the log callback,
+  grammar conversion, quantise, finetune), `SlotOp`. `ModelParameters.toArray()` is the argv
+  (`argv[0]` is "", which the C API accepts as the program name).
+- **No `module-info.java`**, on purpose: javadoc stays in classpath mode
+  (`../workspace/policies/jpms-module-descriptor.md`), the manifest carries
+  `Automatic-Module-Name: net.ladenthin.llama.ffm`. The compiler runs `-Xlint:all -Werror` minus
+  `restricted` (every FFM call is one) and `classfile` (the core's checker-qual annotations are
+  provided scope there and absent here). Surefire passes `--enable-native-access=ALL-UNNAMED`.
+- **Toolchain.** The reactor builds with the JDK of `.java-version` (21, a shared file of the four
+  repositories). The profile `toolchain-jdk22` (active on a JDK below 22) runs `maven-toolchains-plugin`
+  with `<jdk><version>[22,)</version></jdk>`, so the compiler, surefire and javadoc of this module use
+  a JDK 22+ from `~/.m2/toolchains.xml` while Maven itself stays on 21; on a JDK 22+ the profile is
+  inactive. **Every job that runs Maven over the whole reactor therefore registers a second JDK**:
+  `package`, `publish-snapshot`, `publish-release` and the module's own `test-java-llama-ffm` each
+  have a `setup-java` step with `java-version: '25'` (the current LTS above the floor) **before** the
+  `.java-version` one -- setup-java writes a `toolchains.xml` entry per installed JDK and the last
+  step keeps `JAVA_HOME` on 21. `build-core` (`-pl llama -am`) never reaches the module and stays as it
+  is. Locally: unpack a Temurin 22+ (the Adoptium GitHub releases are reachable where
+  `api.adoptium.net` is not) and write the entry by hand.
+- **CI**: `test-java-llama-ffm` (`needs: [crosscompile-linux-x86_64, verify-model-cache]`) downloads
+  the Linux x86-64 natives, restores the models, builds the core, runs `mvn -f llama-ffm/pom.xml
+  verify` with `lib.path` and the draft model, and fails when `FfmLlamaModelIntegrationTest` skipped
+  itself (a self-skip would hide a broken binding). It gates both publish jobs; the release gate check
+  demands it. `verify-bytecode-version.sh` keeps scanning `llama/target` only: the module's classes
+  are major 66 and are not part of the smoke sets.
+- **Tests**: `JllamaNativeTest` (model-free: `apiVersion` equals the pom version surefire passes,
+  `buildInfo` starts with `LlamaCppVersion`, a grammar conversion, a missing model's message, the log
+  callback reached from the worker and flushed on `null`, RPC device names) and
+  `FfmLlamaModelIntegrationTest` (the draft model, or `-Dnet.ladenthin.llama.ffm.model`: progress
+  callback, meta, chat completion, streaming to `stop` and an early close, raw completion and its
+  stream, tokenize/detokenize round trip, template, metrics, LoRA and configure, slot erase and the
+  refused save, the embedding refusal, invalid requests, the attached server answering `/health` and
+  the model outliving it, a closed model refusing calls). Locally the C++ test fixture's twin, a
+  tiny random llama GGUF written with `gguf-py`, serves as the model where no download is possible.
+- **`versions.POMS`** names `llama-ffm/pom.xml` in all four repositories (a shared file).
 
 ## LangChain4j integration (`llama-langchain4j` reactor module)
 

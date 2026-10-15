@@ -19,7 +19,9 @@ from the patched source. Layer B is what upstream will never offer in that form 
 *server* core (OpenAI chat completions with templates, tool calls and reasoning, streaming by task
 id, the log sink) as plain C functions over an opaque handle, with JSON text in and out. The Java
 entry points of `LlamaModel` are a thin shell over the same functions, so what is tested here is
-what Java gets.
+what Java gets. A Java 22+ program can call this API without JNI through
+[`net.ladenthin:llama-ffm`](../llama-ffm/README.md), the Foreign Function and Memory API over the
+same natives.
 
 ## Status of the surface
 

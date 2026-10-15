@@ -64,6 +64,13 @@ the first two items break every existing consumer at upgrade.
   its semantics in every later `x.y.*`. On Windows the linker's import library `jllama.lib` ships
   next to the header. `test_c_api.cpp` drives the whole surface inside `jllama_test` over a tiny
   random GGUF it writes itself, in every `C++ Tests` job; `docs/c-api.md` is the consumer page.
+- **`net.ladenthin:llama-ffm`: Java 22+ without JNI.** The C API through the Foreign Function and
+  Memory API -- `FfmLlamaModel`, `FfmTaskStream`, `FfmNativeServer`, `FfmRpcServer`,
+  `FfmTextToSpeech`, `Jllama` -- over the same natives jars, loaded by the core's `LlamaLoader` (so
+  `llama-platform`, the GPU module jars and `lib.path` apply unchanged), JSON in and out, the core's
+  exceptions. Java floor 22 for this module only; the core stays Java 8. Built with a JDK 25 toolchain
+  next to the reactor's JDK 21 (`maven-toolchains-plugin`), tested model-backed in CI
+  (`test-java-llama-ffm`, gating both publish jobs). Not for Android.
 - **Upstream's own C API ships next to `libjllama` (layer A).** On every modular platform (Linux
   x86-64 / aarch64, Android, Windows x86-64 / arm64) `libllama` and `libmtmd` are shared libraries
   of their own in the natives directory, exporting exactly upstream's `llama.h` / `mtmd.h` from the
