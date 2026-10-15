@@ -1,0 +1,225 @@
+<!--
+SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+
+SPDX-License-Identifier: MIT
+-->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<parent>
+		<groupId>net.ladenthin</groupId>
+		<artifactId>llama-parent</artifactId>
+		<version>6.0.0-SNAPSHOT</version>
+		<relativePath>../pom.xml</relativePath>
+	</parent>
+
+	<artifactId>llama-ffm</artifactId>
+	<packaging>jar</packaging>
+
+	<name>${project.groupId}:${project.artifactId}</name>
+	<description>java-llama.cpp without JNI: the C API of libjllama (jllama_api.h) called through
+		the Java 22+ Foreign Function and Memory API. The same natives jars as the core, the same
+		loader; one implementation behind both call paths.</description>
+	<url>https://github.com/bernardladenthin/java-llama.cpp</url>
+
+	<licenses>
+		<license>
+			<name>MIT License</name>
+			<url>https://www.opensource.org/licenses/mit-license.php</url>
+			<distribution>repo</distribution>
+		</license>
+	</licenses>
+
+	<developers>
+		<developer>
+			<name>Bernard Ladenthin</name>
+			<organizationUrl>https://github.com/bernardladenthin</organizationUrl>
+		</developer>
+	</developers>
+
+	<scm>
+		<connection>scm:git:https://github.com/bernardladenthin/java-llama.cpp.git</connection>
+		<developerConnection>scm:git:https://github.com/bernardladenthin/java-llama.cpp.git</developerConnection>
+		<url>https://github.com/bernardladenthin/java-llama.cpp/tree/main</url>
+	</scm>
+
+	<distributionManagement>
+		<snapshotRepository>
+			<id>central</id>
+			<url>https://central.sonatype.com/repository/maven-snapshots/</url>
+		</snapshotRepository>
+	</distributionManagement>
+
+	<properties>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<!-- The Foreign Function and Memory API is final from Java 22 on (JEP 454); the core
+		     net.ladenthin:llama stays Java 8. This module therefore has a Java floor of its own,
+		     and a JDK below it builds the module through a toolchain (the profile below). -->
+		<maven.compiler.release>22</maven.compiler.release>
+		<junit.version>6.1.3</junit.version>
+		<hamcrest.version>3.0</hamcrest.version>
+	</properties>
+
+	<dependencies>
+		<!-- The core: its LlamaLoader puts the natives in place (the same natives jars, the same
+		     lib.path, the same build check), its exceptions are what this module throws, and its
+		     ModelParameters / InferenceParameters render the argv and the request bodies. Compile
+		     scope: the classes jar is small, and a consumer adds the natives jars next to it exactly
+		     as for the core (llama-platform, or the classifier jars by name). -->
+		<dependency>
+			<groupId>net.ladenthin</groupId>
+			<artifactId>llama</artifactId>
+			<version>${project.version}</version>
+		</dependency>
+
+		<dependency>
+			<groupId>org.junit.jupiter</groupId>
+			<artifactId>junit-jupiter</artifactId>
+			<version>${junit.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>org.hamcrest</groupId>
+			<artifactId>hamcrest</artifactId>
+			<version>${hamcrest.version}</version>
+			<scope>test</scope>
+		</dependency>
+	</dependencies>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-compiler-plugin</artifactId>
+				<configuration>
+					<compilerArgs>
+						<!-- `restricted`: every FFM downcall, upcall stub and reinterpret is one by
+						     design, that is the whole module. `classfile`: the core's checker-qual
+						     annotations are provided scope there and absent here, which javac reports
+						     as "Cannot find annotation method 'result()' in type 'EnsuresNonNullIf'". -->
+						<arg>-Xlint:all,-restricted,-classfile</arg>
+						<arg>-Werror</arg>
+					</compilerArgs>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-jar-plugin</artifactId>
+				<configuration>
+					<archive>
+						<manifestEntries>
+							<!-- No module-info.java on purpose (javadoc stays in classpath mode, see
+							     ../workspace/policies/jpms-module-descriptor.md); a module-path consumer
+							     gets a stable automatic module name instead. -->
+							<Automatic-Module-Name>net.ladenthin.llama.ffm</Automatic-Module-Name>
+						</manifestEntries>
+					</archive>
+				</configuration>
+			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<!-- The FFM downcalls are restricted methods: without the flag a Java 22/23 JVM
+					     warns and a Java 24+ JVM warns once per module; a consumer passes the same
+					     flag (or `Enable-Native-Access` in an executable jar's manifest). -->
+					<argLine>--enable-native-access=ALL-UNNAMED -Xmx2g -XX:ErrorFile=hs_err_pid%p.log</argLine>
+					<systemPropertyVariables>
+						<!-- JllamaNativeTest holds jllama_api_version() to the version this module
+						     was built as: the C API is versioned with the library. -->
+						<net.ladenthin.llama.ffm.expected.version>${project.version}</net.ladenthin.llama.ffm.expected.version>
+					</systemPropertyVariables>
+					<!-- A local CMake build of the core writes its natives to llama/src/main/natives
+					     (git-ignored); on the test classpath the loader finds them like the core's own
+					     tests do. CI passes -Dnet.ladenthin.llama.lib.path instead. Without either, the
+					     native-backed tests skip themselves. -->
+					<additionalClasspathElements>
+						<additionalClasspathElement>${project.basedir}/../llama/src/main/natives</additionalClasspathElement>
+					</additionalClasspathElements>
+					<redirectTestOutputToFile>true</redirectTestOutputToFile>
+				</configuration>
+			</plugin>
+			<!-- -sources.jar (Maven Central requirement). -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-source-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>attach-sources</id>
+						<goals>
+							<goal>jar-no-fork</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+			<!-- -javadoc.jar (Maven Central requirement). Classpath mode (no module-info in this
+			     module), so it is clear of the JPMS module-mode javadoc trap. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<configuration>
+					<release>22</release>
+					<failOnError>true</failOnError>
+					<doclint>all</doclint>
+				</configuration>
+				<executions>
+					<execution>
+						<id>attach-javadocs</id>
+						<goals>
+							<goal>jar</goal>
+						</goals>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+
+	<profiles>
+		<!--
+			The reactor is built with the JDK of .java-version (21, shared across the four sibling
+			repositories), where the FFM API does not compile. When Maven runs on a JDK below 22 this
+			profile makes the compiler, surefire and javadoc of THIS module use a JDK 22+ from
+			~/.m2/toolchains.xml (CI: a second setup-java step installs Temurin 25 and writes the
+			entry; locally: any JDK 22+ registered there). On a JDK 22+ the profile is inactive and the
+			module builds with the running JDK, like every other module.
+		-->
+		<profile>
+			<id>toolchain-jdk22</id>
+			<activation>
+				<jdk>(,22)</jdk>
+			</activation>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-toolchains-plugin</artifactId>
+						<version>3.2.0</version>
+						<executions>
+							<execution>
+								<goals>
+									<goal>toolchain</goal>
+								</goals>
+							</execution>
+						</executions>
+						<configuration>
+							<toolchains>
+								<jdk>
+									<version>[22,)</version>
+								</jdk>
+							</toolchains>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
+		</profile>
+	</profiles>
+
+	<!--
+		No `release` profile here: GPG signing + Central Publishing are inherited from the
+		parent pom (../pom.xml), so a single reactor `mvn -P release deploy` signs and
+		publishes this module alongside the core.
+	-->
+</project>

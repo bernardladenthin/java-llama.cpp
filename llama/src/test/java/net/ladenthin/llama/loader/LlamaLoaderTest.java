@@ -259,6 +259,16 @@ public class LlamaLoaderTest {
     }
 
     @Test
+    public void getBuildInfoIsNeverNullAndCannotBeEdited() {
+        java.util.Map<String, String> build = LlamaLoader.getBuildInfo();
+        assertNotNull(build);
+        // Unmodifiable either way: a consumer must not be able to edit the loader's record. (Which
+        // build it names depends on what this JVM loaded last -- a real library or a fake directory
+        // of the loadFromDirectory tests; NativeLibraryLoadSmokeTest pins the real keys.)
+        assertThrows(UnsupportedOperationException.class, () -> build.put("x", "y"));
+    }
+
+    @Test
     public void testBackendTempDirPrefixMatchesCleanup() {
         // The per-backend extraction directories must be picked up by the temp-dir cleanup.
         assertTrue(
@@ -719,6 +729,140 @@ public class LlamaLoaderTest {
             System.clearProperty(key);
         } else {
             System.setProperty(key, value);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // loadFromDirectory: the natives directory contract (lib.path / java.library.path)
+
+    /** A natives directory with the given files (each holding its own name) and list files. */
+    private static Path nativesDirectory(Path root, String extras, String files, String build, String... libraries)
+            throws IOException {
+        Path dir = root.resolve("natives-"
+                + Math.abs(String.valueOf(extras).hashCode()
+                        + String.valueOf(files).hashCode()
+                        + libraries.length));
+        Files.createDirectories(dir);
+        for (String library : libraries) {
+            Files.write(dir.resolve(library), library.getBytes(StandardCharsets.UTF_8));
+        }
+        if (extras != null) {
+            Files.write(dir.resolve(LlamaLoader.BACKEND_EXTRAS_FILE), extras.getBytes(StandardCharsets.UTF_8));
+        }
+        if (files != null) {
+            Files.write(dir.resolve(LlamaLoader.BACKEND_FILES_FILE), files.getBytes(StandardCharsets.UTF_8));
+        }
+        if (build != null) {
+            Files.write(dir.resolve(LlamaLoader.BACKEND_BUILD_FILE), build.getBytes(StandardCharsets.UTF_8));
+        }
+        return dir;
+    }
+
+    private static String captureStderr(Runnable body) {
+        java.io.PrintStream previous = System.err;
+        java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+        try (java.io.PrintStream capture = new java.io.PrintStream(buffer, true)) {
+            System.setErr(capture);
+            body.run();
+        } finally {
+            System.setErr(previous);
+        }
+        return new String(buffer.toByteArray(), StandardCharsets.UTF_8);
+    }
+
+    @Test
+    public void loadFromDirectoryPreloadsTheExtrasThenTheLibraryAndNamesTheModulesItFinds(@TempDir Path tempDir)
+            throws IOException {
+        String lib = System.mapLibraryName("jllama");
+        String base = System.mapLibraryName("ggml-base");
+        String ggml = System.mapLibraryName("ggml");
+        String vulkan = System.mapLibraryName("ggml-vulkan");
+        String cpuModule = System.mapLibraryName("ggml-cpu-haswell");
+        Path dir = nativesDirectory(
+                tempDir,
+                "# preloaded\n" + base + "\n" + ggml + "\n",
+                cpuModule + "\n" + vulkan + "\n",
+                "llama.cpp=b11639\nbackend=cpu\nkind=library\njllama.version=5.2.0\n",
+                lib,
+                base,
+                ggml,
+                vulkan,
+                cpuModule);
+        java.util.List<Path> loaded = new java.util.ArrayList<>();
+        String err = captureStderr(() -> assertTrue(LlamaLoader.loadFromDirectory(dir, "a-test", path -> {
+            loaded.add(path);
+            return true;
+        })));
+        assertEquals(
+                java.util.Arrays.asList(dir.resolve(base), dir.resolve(ggml), dir.resolve(lib)),
+                loaded,
+                "the extras first, in list order, then the library, nothing else");
+        assertTrue(
+                err.contains("[jllama] native backend 'cpu' loaded from " + dir + " with GPU module(s) vulkan;"), err);
+        assertTrue(err.contains("named by a-test"), err);
+        assertEquals("b11639", LlamaLoader.getBuildInfo().get(LlamaLoader.BUILD_KEY_LLAMA_CPP));
+        assertEquals("5.2.0", LlamaLoader.getBuildInfo().get(LlamaLoader.BUILD_KEY_JLLAMA_VERSION));
+    }
+
+    @Test
+    public void loadFromDirectoryWithoutListFilesLoadsTheBareLibrary(@TempDir Path tempDir) throws IOException {
+        String lib = System.mapLibraryName("jllama");
+        Path dir = nativesDirectory(tempDir, null, null, null, lib);
+        java.util.List<Path> loaded = new java.util.ArrayList<>();
+        String err = captureStderr(() -> assertTrue(LlamaLoader.loadFromDirectory(dir, "lib.path", loaded::add)));
+        // a static build (macOS, s390x) ships one file and no lists: that must still load
+        assertTrue(err.contains("native backend 'unknown' loaded from " + dir + " with no GPU module;"), err);
+        assertTrue(err.contains("(no " + LlamaLoader.BACKEND_BUILD_FILE + ")"), err);
+        assertEquals(Collections.singletonList(dir.resolve(lib)), loaded);
+    }
+
+    @Test
+    public void loadFromDirectoryIsFalseWithoutTheLibraryAndLoadsNothing(@TempDir Path tempDir) throws IOException {
+        Path dir = nativesDirectory(tempDir, "x\n", null, null, System.mapLibraryName("ggml-base"));
+        java.util.List<Path> loaded = new java.util.ArrayList<>();
+        assertFalse(LlamaLoader.loadFromDirectory(dir, "lib.path", loaded::add));
+        assertFalse(LlamaLoader.loadFromDirectory(tempDir.resolve("absent"), "lib.path", loaded::add));
+        assertTrue(loaded.isEmpty());
+    }
+
+    @Test
+    public void loadFromDirectoryStopsAtAnExtraThatIsMissingOrFailsToLoad(@TempDir Path tempDir) throws IOException {
+        String lib = System.mapLibraryName("jllama");
+        String base = System.mapLibraryName("ggml-base");
+        Path missing = nativesDirectory(tempDir, base + "\n", null, null, lib);
+        java.util.List<Path> loaded = new java.util.ArrayList<>();
+        String err = captureStderr(() -> assertFalse(LlamaLoader.loadFromDirectory(missing, "lib.path", loaded::add)));
+        assertTrue(loaded.isEmpty(), "the library is not loaded when an extra it imports is missing");
+        assertTrue(err.contains("names '" + base + "', which is not there"), err);
+        assertTrue(String.valueOf(LlamaLoader.lastLoadFailure).contains(base));
+
+        Path failing = nativesDirectory(tempDir.resolve("b"), base + "\n", null, null, lib, base);
+        assertFalse(LlamaLoader.loadFromDirectory(failing, "lib.path", path -> {
+            loaded.add(path);
+            return false;
+        }));
+        assertEquals(Collections.singletonList(failing.resolve(base)), loaded, "stops at the extra that failed");
+    }
+
+    @Test
+    public void loadFromDirectoryReportsListedFilesThatAreNotThereAndAnIgnoredBackendFilter(@TempDir Path tempDir)
+            throws IOException {
+        String lib = System.mapLibraryName("jllama");
+        String module = System.mapLibraryName("ggml-cpu-x64");
+        Path dir = nativesDirectory(tempDir, null, module + "\n", "llama.cpp=b11639\nbackend=cpu\n", lib);
+        String previous = System.getProperty(LlamaSystemProperties.PREFIX + ".backend");
+        System.setProperty(LlamaSystemProperties.PREFIX + ".backend", "vulkan");
+        try {
+            String err = captureStderr(() -> assertTrue(LlamaLoader.loadFromDirectory(dir, "lib.path", path -> true)));
+            assertTrue(err.contains("names 1 file(s) that are not there"), err);
+            assertTrue(err.contains(module), err);
+            assertTrue(err.contains(".backend=vulkan has no effect on a natives directory"), err);
+        } finally {
+            if (previous == null) {
+                System.clearProperty(LlamaSystemProperties.PREFIX + ".backend");
+            } else {
+                System.setProperty(LlamaSystemProperties.PREFIX + ".backend", previous);
+            }
         }
     }
 }

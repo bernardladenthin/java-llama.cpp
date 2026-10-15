@@ -12,9 +12,13 @@ it runs on any runner and checks every architecture, including the ones binutils
 (Windows arm64, Mach-O).
 
 Usage (the CLI is .github/verify-native-deps.py):
-  verify-native-deps.py <natives-root>
+  verify-native-deps.py [--require-signed] <natives-root>
 
-Checks every native library (.so, .dll, .dylib) under <natives-root>/.../<OS>/<ARCH>/<backend>/.
+--require-signed: every Windows DLL must be Authenticode-signed (jllama-build.txt says signed=yes
+and the file carries a signature); without it only a directory saying signed=yes is checked.
+
+Checks every native library (.so, .dll, .dylib) under <natives-root>/.../<OS>/<ARCH>/<backend>/, and
+the export set of every jllama library (JNI entry points and the jllama_* C API only).
 A library directory (backend cpu or metal) holds libjllama -- alone where llama.cpp and ggml are
 linked in statically (macOS, s390x), next to ggml's shared libraries and one CPU backend module per
 instruction-set level in a JLLAMA_BACKEND_DL build (CLAUDE.md "Modular natives") -- and every one of
@@ -208,6 +212,33 @@ def elf_needed(data):
     return elf_info(data)["needed"]
 
 
+SHT_DYNSYM = 11
+STB_GLOBAL, STB_WEAK = 1, 2
+
+
+def elf_exports(data):
+    """The defined global and weak symbols of the dynamic symbol table (.dynsym), i.e. what a
+    consumer of the shared object can resolve."""
+    is64, end, sections = _elf_sections(data)
+    out = []
+    for sh_type, sh_offset, sh_size, sh_link, _ in sections:
+        if sh_type != SHT_DYNSYM:
+            continue
+        strtab = sections[sh_link][1]
+        entry = 24 if is64 else 16
+        for off in range(sh_offset, sh_offset + sh_size, entry):
+            if is64:
+                st_name, st_info, _, st_shndx = struct.unpack_from(end + "IBBH", data, off)
+            else:
+                st_name, _, _, st_info, _, st_shndx = struct.unpack_from(end + "IIIBBH", data, off)
+            if st_shndx == 0 or (st_info >> 4) not in (STB_GLOBAL, STB_WEAK):
+                continue
+            name = _cstring(data, strtab + st_name)
+            if name:
+                out.append(name)
+    return out
+
+
 def elf_load_alignments(data):
     """p_align of every PT_LOAD program header."""
     if data[:4] != b"\x7fELF":
@@ -264,6 +295,120 @@ def pe_imports(data):
     return out
 
 
+def _pe_layout(data):
+    """(data directory offset, rva -> file offset) of a PE32/PE32+ image."""
+    if data[:2] != b"MZ":
+        raise ValueError("not a PE file")
+    pe = struct.unpack_from("<I", data, 0x3C)[0]
+    nsections = struct.unpack_from("<H", data, pe + 6)[0]
+    opt_size = struct.unpack_from("<H", data, pe + 20)[0]
+    opt = pe + 24
+    magic = struct.unpack_from("<H", data, opt)[0]
+    dd = opt + (112 if magic == 0x20B else 96)
+    sec = opt + opt_size
+    table = []
+    for i in range(nsections):
+        vsize, vaddr, rsize, raddr = struct.unpack_from("<IIII", data, sec + i * 40 + 8)
+        table.append((vaddr, max(vsize, rsize), raddr))
+
+    def to_offset(rva):
+        for vaddr, size, raddr in table:
+            if vaddr <= rva < vaddr + size:
+                return rva - vaddr + raddr
+        raise ValueError("RVA outside every section")
+
+    return dd, to_offset
+
+
+def pe_signed(data):
+    """Whether the PE carries an Authenticode signature: IMAGE_DIRECTORY_ENTRY_SECURITY (index 4)
+    names a non-empty attribute certificate table. Presence only -- the chain is verified by the
+    signer's own tooling and by Windows; a stripped or never-signed file has a zero entry."""
+    dd, _ = _pe_layout(data)
+    address, size = struct.unpack_from("<II", data, dd + 4 * 8)
+    return address != 0 and size != 0
+
+
+def signed_state(directory):
+    """The `signed=` value of a natives directory's jllama-build.txt, or None without the file."""
+    build = os.path.join(directory, "jllama-build.txt")
+    if not os.path.isfile(build):
+        return None
+    with open(build, encoding="utf-8") as f:
+        for line in f:
+            line = line.rstrip("\r\n")
+            if line.startswith("signed="):
+                return line[len("signed="):]
+    return None
+
+
+def signature_violations(root, require_signed=False):
+    """The Windows directories whose signature state and DLLs disagree.
+
+    A directory whose jllama-build.txt says `signed=yes` must hold only Authenticode-signed DLLs
+    (the sign step flips the key after signing every DLL, so a `yes` over an unsigned file means a
+    file was added or replaced afterwards). With `require_signed`, a Windows directory that says
+    `signed=no` (or carries no build file) is a violation too: the release rule once the owner's
+    signing account exists, so that no unsigned DLL ever reaches a release jar."""
+    failures = []
+    for path in sorted(find_libraries(root)):
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        if "/Windows/" not in "/" + rel or not path.lower().endswith(".dll"):
+            continue
+        state = signed_state(os.path.dirname(path))
+        if state == "yes":
+            with open(path, "rb") as f:
+                data = f.read()
+            try:
+                if not pe_signed(data):
+                    failures.append(f"{rel}: jllama-build.txt says signed=yes but the DLL carries no Authenticode signature")
+            except (ValueError, struct.error) as e:
+                failures.append(f"{rel}: not a readable PE ({e})")
+        elif require_signed:
+            failures.append(f"{rel}: unsigned (jllama-build.txt says signed={state}) while a signature is required")
+    return failures
+
+
+def pe_exports(data):
+    """The names of the export directory (IMAGE_DIRECTORY_ENTRY_EXPORT)."""
+    dd, to_offset = _pe_layout(data)
+    export_rva, export_size = struct.unpack_from("<II", data, dd)
+    if export_rva == 0 or export_size == 0:
+        return []
+    directory = to_offset(export_rva)
+    number_of_names = struct.unpack_from("<I", data, directory + 24)[0]
+    names_rva = struct.unpack_from("<I", data, directory + 32)[0]
+    names = to_offset(names_rva)
+    return [_cstring(data, to_offset(struct.unpack_from("<I", data, names + 4 * i)[0])) for i in range(number_of_names)]
+
+
+N_EXT, N_PEXT, N_TYPE, N_SECT, N_STAB = 0x01, 0x10, 0x0E, 0x0E, 0xE0
+
+
+def macho_exports(data):
+    """The external, defined, non-private symbols of the symbol table (LC_SYMTAB) of a 64-bit
+    Mach-O, with their leading underscore kept as the file carries it."""
+    magic = struct.unpack_from("<I", data, 0)[0]
+    if magic != 0xFEEDFACF:
+        raise ValueError("not a 64-bit Mach-O file")
+    ncmds = struct.unpack_from("<I", data, 16)[0]
+    off = 32
+    out = []
+    for _ in range(ncmds):
+        cmd, size = struct.unpack_from("<II", data, off)
+        if cmd == 0x2:  # LC_SYMTAB
+            symoff, nsyms, stroff, _ = struct.unpack_from("<IIII", data, off + 8)
+            for i in range(nsyms):
+                n_strx, n_type, _, _, _ = struct.unpack_from("<IBBHQ", data, symoff + 16 * i)
+                if n_type & N_STAB or not n_type & N_EXT or n_type & N_PEXT or (n_type & N_TYPE) != N_SECT:
+                    continue
+                name = _cstring(data, stroff + n_strx)
+                if name:
+                    out.append(name)
+        off += size
+    return out
+
+
 def macho_dylibs(data):
     magic = struct.unpack_from("<I", data, 0)[0]
     if magic != 0xFEEDFACF:
@@ -288,6 +433,42 @@ def dependencies(path):
     if path.endswith(".dll"):
         return pe_imports(data)
     return macho_dylibs(data)
+
+
+def exports(path):
+    with open(path, "rb") as f:
+        data = f.read()
+    if path.endswith(".so"):
+        return elf_exports(data)
+    if path.endswith(".dll"):
+        return pe_exports(data)
+    return [n[1:] if n.startswith("_") else n for n in macho_exports(data)]
+
+
+# The jllama library exports the JNI entry points the JVM resolves and the jllama_* C API, nothing
+# else (llama/cmake/jllama-exports.map): everything it links statically -- llama, llama-common,
+# mtmd, cpp-httplib, BoringSSL, ggml in a static build -- stays local. Before the export list the
+# Linux library exported 14,220 symbols, 47 of them JNI: an accidental C++ ABI with no header
+# contract, which a consumer could link against and which every llama.cpp bump would break.
+JLLAMA_LIBRARIES = ("libjllama.so", "jllama.dll", "libjllama.dylib")
+EXPORT_ALLOWED = ("JNI_OnLoad", "JNI_OnUnload")
+EXPORT_PREFIXES = ("Java_", "jllama_")
+
+
+def export_violations(rel, names):
+    """Why the export set of a jllama library is wrong: a symbol outside the allowed set, or no
+    JNI entry point at all (an empty list means the file is not a loadable library, or the parser
+    read nothing -- never a pass)."""
+    if not any(n.startswith("Java_") for n in names):
+        return [f"{rel}: exports no Java_* entry point ({len(names)} exported symbols) -- not a JNI library, or the "
+                f"symbol table could not be read"]
+    stray = [n for n in names if n not in EXPORT_ALLOWED and not n.startswith(EXPORT_PREFIXES)]
+    if not stray:
+        return []
+    shown = ", ".join(stray[:8]) + (f", ... ({len(stray)} in all)" if len(stray) > 8 else "")
+    return [f"{rel}: exports {len(stray)} symbol(s) outside JNI_OnLoad/JNI_OnUnload/Java_*/jllama_*: {shown} -- "
+            f"the export list (llama/cmake/jllama-exports.map, jllama-exports-macos.txt) or the visibility "
+            f"preset is not in effect"]
 
 
 def find_libraries(root):
@@ -385,10 +566,13 @@ def violations(rel, deps, alignments=(), siblings=(), runpath=None, glibc=None):
 
 
 def main(argv):
-    if len(argv) != 2:
+    args = list(argv[1:])
+    require_signed = "--require-signed" in args
+    args = [a for a in args if a != "--require-signed"]
+    if len(args) != 1:
         print(__doc__, file=sys.stderr)
         return 2
-    root = argv[1]
+    root = args[0]
     checked = 0
     failures = []
     for path in sorted(find_libraries(root)):
@@ -412,9 +596,18 @@ def main(argv):
             continue
         print(f"{rel}: {' '.join(deps)}{note}")
         failures += violations(rel, deps, alignments, siblings, runpath, glibc)
+        if os.path.basename(path) in JLLAMA_LIBRARIES:
+            try:
+                names = exports(path)
+            except (ValueError, struct.error) as e:
+                failures.append(f"{rel}: the export table could not be read ({e})")
+                continue
+            print(f"{rel}: {len(names)} exported symbol(s)")
+            failures += export_violations(rel, names)
     if checked == 0:
         print(f"no native library found under {root}", file=sys.stderr)
         return 2
+    failures += signature_violations(root, require_signed)
     for f in failures:
         print(f"::error::{f}", file=sys.stderr)
     print(f"{checked} native libraries checked, {len(failures)} violations")

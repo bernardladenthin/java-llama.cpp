@@ -1,3 +1,16 @@
+server: make llama_server() embeddable in a host process (no signal handlers, forwarded argv, stoppable)
+
+b9870 exposes int llama_server(int, char **) with no main() in server.cpp; this patch adds what a
+JVM host needs to run it inside libjllama: a g_llama_server_embedded flag with
+llama_server_set_embedded() / llama_server_request_shutdown() (declared by the host in
+native_server_bridge.h), no process-wide SIGINT/SIGTERM handlers in embedded mode (they would
+hijack the JVM's), common_params_parse instead of common_params_parse_main for the forwarded argv
+(the latter's GetCommandLineW recovery would pick up java.exe's command line, the class of defect
+0001 fixes), and a shutdown handler guarded by g_shutdown_handler_mutex and reset before the locals
+it captures are destroyed -- a request landing after llama_server() returned used to run the lambda
+over destroyed objects (SIGSEGV in server_http_context::stop(), seen in router mode).
+Runnable guard: src/test/cpp/test_native_server_shutdown.cpp. Applies after 0001.
+
 diff --git a/tools/server/server.cpp b/tools/server/server.cpp
 index deac18f61..6a1dc82db 100644
 --- a/tools/server/server.cpp

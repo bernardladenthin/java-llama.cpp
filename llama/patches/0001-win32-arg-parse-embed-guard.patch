@@ -1,3 +1,19 @@
+common: parse exactly the argv an embedding caller passes (no GetCommandLineW override)
+
+Since llama.cpp #24779 (b9739) common_params_parse re-derives argv from the PROCESS command line on
+Windows and adopts it, so an embedded caller -- java.exe hosting libjllama through JNI -- loses the
+`--model ...` it passed and the load fails with "Failed to parse model parameters". b9789 narrowed
+that to a count guard, which still fires whenever the embedded argv happens to have the length of
+java.exe's own. This patch keeps common_params_parse to the argv it is given and moves the UTF-8
+recovery for the standalone tools into a new common_params_parse_main(), which every tool's main()
+now calls; a regression case in tests/test-arg-parser.cpp pins the contract. The embedded caller
+(jllama.cpp) keeps calling common_params_parse. Reported upstream as ggml-org/llama.cpp#26416;
+carried here until upstream decides which of the two directions it wants.
+
+Touches common/arg.{cpp,h} and the ~34 standalone main() call sites, which this project does not
+compile (LLAMA_BUILD_TOOLS/TESTS are OFF for a FetchContent subproject) but keeps in the patch so it
+can be submitted verbatim.
+
 diff --git a/common/arg.cpp b/common/arg.cpp
 index 79480e06f..ed7793b4d 100644
 --- a/common/arg.cpp

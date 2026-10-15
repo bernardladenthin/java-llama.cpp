@@ -3,13 +3,13 @@
 //
 // SPDX-License-Identifier: MIT
 //JAVA 8+
-//DEPS net.ladenthin:llama:5.2.0
-//DEPS net.ladenthin:llama:5.2.0:cpu-linux-x86-64
-//DEPS net.ladenthin:llama:5.2.0:cpu-linux-aarch64
-//DEPS net.ladenthin:llama:5.2.0:cpu-linux-s390x
-//DEPS net.ladenthin:llama:5.2.0:cpu-windows-x86-64
-//DEPS net.ladenthin:llama:5.2.0:cpu-windows-aarch64
-//DEPS net.ladenthin:llama:5.2.0:metal-macos-aarch64
+//DEPS net.ladenthin:llama:6.0.0
+//DEPS net.ladenthin:llama:6.0.0:cpu-linux-x86-64
+//DEPS net.ladenthin:llama:6.0.0:cpu-linux-aarch64
+//DEPS net.ladenthin:llama:6.0.0:cpu-linux-s390x
+//DEPS net.ladenthin:llama:6.0.0:cpu-windows-x86-64
+//DEPS net.ladenthin:llama:6.0.0:cpu-windows-aarch64
+//DEPS net.ladenthin:llama:6.0.0:metal-macos-aarch64
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -31,7 +31,8 @@ import net.ladenthin.llama.value.LlamaOutput;
  * -- the jars {@code net.ladenthin:llama-platform} names, listed here one by one because JBang treats a
  * {@code pom} dependency as a BOM and puts nothing of it on the classpath. The loader picks the jar of
  * this machine; the others are downloaded once and ignored. A GPU backend (for example
- * {@code net.ladenthin:llama:5.2.0:cuda13-linux-x86-64}) is one more DEPS line and is tried before the CPU.
+ * {@code net.ladenthin:llama:6.0.0:cuda13-linux-x86-64}) is one more DEPS line: its module is put next to the
+ * library and loaded when the vendor runtime is installed, otherwise the model runs on the CPU.
  *
  * <p>A {@link Session} keeps the conversation, so every turn passes only the new message, and the model's
  * chat template is applied for it; each reply is streamed as it is generated. An empty line or the end

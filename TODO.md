@@ -15,6 +15,220 @@ cross-cutting initiative.
 `crossrepostatus.md`; a finished item is deleted from this file rather than annotated,
 so everything below is genuinely still open.
 
+## Delivery roadmap -- the master list (work top to bottom; 2026-10-15)
+
+The plan behind this section was written on 2026-10-15 after a read-only review of the loader, the
+CMake build, the natives jars, the publish pipeline and the three consumers (srcmorph, the server
+example, the agent). **This section is the master for that work: items are done in this order, each
+item is deleted here when it lands, and a reason is written here when an item is deliberately
+skipped or re-ordered.** The code-signing items are the one exception by the owner's decision: they
+stay open at the end until everything else runs (see "Code-sign the Windows DLLs" below).
+
+**What the review established, so nobody re-derives it.** The "ship a small Java artefact and let
+the user put the DLLs next to it" model already exists since the modular natives (6.0.0):
+`net.ladenthin:llama` is classes only, every native build is its own classifier jar holding exactly
+one directory, that directory has the same layout as upstream's own release zips (`GGML_BACKEND_DL`,
+one CPU library set plus one `ggml-<backend>` module per GPU jar, additive), a jar is a zip, and
+`net.ladenthin.llama.lib.path` loads such a directory without extracting anything. What is missing
+is not a new artefact type but (A) the directory as a *tested contract* -- the `lib.path` branch is a
+bare `System.load` that reads neither `jllama-extras.txt` nor `jllama-build.txt`, so on Windows the
+modular layout almost certainly fails from a user directory (`jllama.dll` imports `ggml.dll`, which
+Windows does not search next to the DLL), and only Linux CI uses the branch; (B) a *clean* native
+library: `jllama` exports JNI only on Windows and leaks every statically linked llama/common/mtmd
+symbol on Linux/macOS with no header contract, and nothing of what this project adds is callable
+without a JVM; (C) *verifiable* delivery: the `.asc` proves the key, not the build -- no provenance
+attestation, no SBOM, every workflow action pinned to a moving tag, llama.cpp fetched by tag name
+once upstream has tagged it, and `jllama-build.txt` naming neither the patches nor the commit that
+are the whole point of "we ship more than upstream". A separate "embedded llama.cpp" library with
+its own C ABI was considered and rejected in favour of **two layers in one natives directory**:
+upstream's own `llama.h`/`mtmd.h`/`ggml.h` as shared libraries from the patched source (layer A, the
+drop-in surface, patches there stay upstream-shaped and are submitted without waiting), and a
+`jllama_*` C API in `jllama` for everything upstream will never offer (layer B, with JNI as a thin
+shell over it). Not done, on purpose: zip/tarball release assets of the raw libraries (the jar is the
+zip), fat jars, a Maven plugin for embedding, `GGML_BACKEND_PATH` as a documented second search path.
+
+### 2. The natives directory as a first-class contract (A)
+
+*(Landed 2026-10-15: `LlamaLoader.loadFromDirectory` for `lib.path` and `java.library.path` with the
+jar branch's logic, the fresh-JVM `NativeLibraryLoadSmokeTest` on every Java test job, round 3 of
+every smoke row and the macOS smoke, README "Natives outside Maven", the stale lines. Items 1 and 2
+of this roadmap are done; the contract text stays in README and CLAUDE.md.)*
+
+### 3. Hard pinning (C.2) -- four repos
+
+*(Landed 2026-10-15: every `uses:` of the four repositories pinned to a commit SHA with the tag in a
+comment, Dependabot keeps them current; `JLLAMA_REQUIRE_COMMIT` under GitHub Actions refuses a
+llama.cpp fetch by tag name and the commit stays set after the tag exists; googletest by commit; the
+sccache archives (Linux and Windows) against pinned SHA-256s; the CUDA redist archives against
+NVIDIA's own manifest, the OpenVINO archives and the Vulkan arm64 installer against the checksum
+each vendor publishes next to the file.)* Still open, each with the reason:
+
+- [ ] **Pin the vendor checksums into `publish.yml`** (`CUDA_REDIST_MANIFEST`, `OPENVINO_LINUX_SHA256`,
+      `OPENVINO_WINDOWS_SHA256`, `VULKAN_SDK_SHA256`): the steps verify against the vendor's published
+      value when the variable is empty and print it; the session that wrote them could not reach
+      `developer.download.nvidia.com`, `storage.openvinotoolkit.org` or `sdk.lunarg.com` (proxy 403),
+      so the first Publish run after this lands is where the values are read off the log and pinned.
+      Until then a swapped archive on the vendor host would pass; a truncated or wrong download does not.
+- [ ] **The oneAPI Windows installer has no checksum endpoint** Intel publishes next to the file
+      (`registrationcenter-download.intel.com/.../intel-deep-learning-essentials-2025.3.3.18_offline.exe`);
+      pinning needs one download of the 1.6 GB installer on a machine that can reach it, then
+      `Get-FileHash` into a `ONEAPI_INSTALLER_SHA256` check like the Vulkan one.
+- [ ] **ROCm wheels come from a moving index** (`stable.repo.amd.com/rocm/whl-next/`, version-pinned
+      with `==` but not hashed): `pip install --require-hashes` needs a requirements file with the
+      hash of every wheel of `rocm[libraries,devel]`, which only a machine that can download the
+      multi-GB wheel set can write (`pip download` + `pip hash`). Upstream's `release.yml` has the
+      same gap.
+- [ ] BoringSSL stays on upstream's pin (`BORINGSSL_VERSION` in `vendor/cpp-httplib/CMakeLists.txt`,
+      a tag name): a commit pin there is upstream's change to make; recorded, not worked around.
+
+### 4. Export hygiene (B.1)
+
+*(Landed 2026-10-15: hidden visibility for `jllama`'s own units, a version script on ELF and an
+exported-symbols list on macOS keeping every statically linked symbol local, and
+`verify-native-deps.py` holding the export set of every `jllama` library to `JNI_OnLoad`,
+`JNI_OnUnload`, `Java_*`, `jllama_*` -- measured 14,220 -> 47 exports on Linux.)*
+
+### 5. Layer A: upstream's C API shipped next to `jllama` (B.A)
+
+(Landed 2026-10-15: `llama` and `mtmd` are shared libraries next to `libjllama` in every
+`JLLAMA_BACKEND_DL` build, `llama-common` static inside it, `c_abi` -- a plain-C program over the
+shared `llama` -- the first `ctest` of the modular jobs; CLAUDE.md "Modular natives". Still open:
+macOS and s390x stay static, the C program loads a model only where `JLLAMA_C_ABI_MODEL` is set --
+no CI job sets it yet, so the model-backed half of that test is unmeasured.)
+
+### 6. Source archive and mirror -- independence from upstream's repository
+
+(Landed 2026-10-15: `archive-llama-source` + `test-source-archive` + the signed
+`llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz` asset, `mirror-llama-source` after a release,
+`JLLAMA_GIT_REPOSITORY`; CLAUDE.md "Source archive and mirror". **Owner: create the
+`LLAMA_MIRROR_TOKEN` secret (contents:write on `bernardladenthin/llama.cpp`) in the `maven-central`
+environment before the next release -- the mirror job fails loud without it.** The first real run
+of both jobs is still pending.)
+
+### 7. Layer B: the `jllama_*` C API (B.2 spike, then B.3 slice by slice)
+
+(The spike landed 2026-10-15: `src/main/cpp/jllama_api.{h,cpp}` over `jllama_engine.{hpp,cpp}`
+with `jllama_api_version`, `jllama_build_info`, `jllama_last_error`, `jllama_string_free`,
+`jllama_model_load`/`_free`, `jllama_chat_completions`, the streaming trio, `jllama_task_release`,
+`jllama_set_log_callback`; the eight matching JNI entry points call it; `test_c_api.cpp` (gtest,
+hermetic over a tiny random GGUF the test writes, so no `restore-models` was needed) and the plain-C
+`c_abi` compile of the header; the header ships in every natives directory; `docs/c-api.md`;
+CLAUDE.md "The C API". The version is the library's (`jllama_api_version()` returns the pom
+version), which closes the contract bullet.)
+
+(The `LlamaModel` and `LlamaQuantizer` half landed 2026-10-15: model meta, raw and OpenAI
+completions, infill, raw streaming and the chat-template variant, apply-template, embed/embeddings,
+rerank, tokenize/detokenize in both forms, metrics, slot save/restore/erase, LoRA get/set, configure,
+systemone, the grammar conversion and the quantizer -- each an engine function, a `jllama_*`
+function, a `test_c_api.cpp` case and a JNI shell; `jllama.cpp` carries no server logic any more.)
+
+(And the rest the same day: `jllama_server_*` over a new `native_server_engine.{hpp,cpp}` (classic,
+attach, router's worker command; not on Android), `jllama_rpc_server_*`, `jllama_tts_*`,
+`jllama_finetune` -- every native entry point of the Java API is a shell over the C API now, and
+`test_c_api.cpp` drives each engine without a JVM, the trainer included.)
+(The Windows import library landed 2026-10-15: `jllama.lib`, the linker's own import library of
+`jllama.dll`, goes into the natives directory and is named in `jllama-files.txt`, so it ships in
+the Windows library jars next to the header; `docs/c-api.md` shows the link line. Unverified on a
+Windows machine in this session -- the first Publish run's `merge-native-artifacts.sh` ("names
+'<f>', which the build did not produce") is where a wrong import-library name would show.)
+
+(Java 22+ over the C API without JNI is item 10 below -- decided 2026-10-15 as a module of its own.)
+
+### 8. Release builds without the shared compiler cache (C.3)
+
+(Landed 2026-10-15: `publish.yml`'s workflow-level `USE_CACHE` is `false` on every `v*` tag ref,
+whatever the dispatch input says, so each natives build of a release compiles every object itself
+and the `Install sccache` steps are skipped; snapshots and PR builds keep the cache.)
+
+- [ ] Open measurement: whether a cached and an uncached build of the same commit give the same
+      natives hashes -- if yes, a reproducibility job is the cheaper permanent check and the tag
+      rule above can go back to the cache.
+
+### 9. The 6.0.0 release (decided 2026-10-15: 6.0.0, not 5.2.0)
+
+The next release carries every breaking change since 5.1.0 (the natives split, the logging binding,
+the port, the floors, the renamed and removed builder methods -- the list in "The release: 6.0.0"
+under "Open -- jllama-specific", which stays the detailed reference), so semantic versioning says
+**6.0.0**, and the owner decided so on 2026-10-15. What this item does, in order:
+
+*(Landed 2026-10-15: `main` is `6.0.0-SNAPSHOT` in the five reactor poms, the agent pom and every
+hand-maintained snippet -- every consumer-facing "5.2.0" now reads 6.0.0, since that number was never
+published; srcmorph's pin and the cross-repo status follow; CHANGELOG `[Unreleased]` opens with
+"Upgrading from 5.1" and carries the roadmap work of items 2 to 8, which it did not before.)*
+- [ ] The release itself is the owner's: the `v6.0.0` tag after a green Publish run, then the
+      `main` bump to the next `-SNAPSHOT` (`../workspace/workflows/release-process.md`).
+
+### 10. Layer B for Java 22+: `llama-ffm`, the C API without JNI (decided 2026-10-15)
+
+A reactor module of its own, `net.ladenthin:llama-ffm`, Java floor 22 (the FFM API is final
+there), hand-written `java.lang.foreign` bindings over `jllama_api.h` -- every `jllama_*` function
+a `MethodHandle`, JSON strings in and out, the callbacks as upcall stubs -- behind a small public
+API (`FfmLlamaModel`, `FfmNativeServer`, `FfmRpcServer`, `FfmTextToSpeech`). It loads the natives
+through the core's `LlamaLoader` (same jars, same `lib.path`, same build check) and finds the
+symbols with `SymbolLookup.loaderLookup()`, so there is no second loading path. The core stays
+Java 8; CI builds the module with a JDK 25 toolchain next to the `.java-version` JDK
+(`maven-toolchains-plugin`, a second `setup-java` step in its test job and in the publish jobs).
+Not for Android (no FFM there).
+
+*(Landed 2026-10-15: the module with `JllamaNative`, `FfmLlamaModel`, `FfmTaskStream`,
+`FfmNativeServer`, `FfmRpcServer`, `FfmTextToSpeech`, `Jllama`; `JllamaNativeTest` and
+`FfmLlamaModelIntegrationTest` (23 tests, green locally with Temurin 25 over the modular build and
+a tiny random GGUF); the `toolchain-jdk22` profile; `test-java-llama-ffm` plus the JDK 25 step in
+`package` and both publish jobs; `versions.POMS` in the four repositories; README, CLAUDE.md "Java
+22+ without JNI", `docs/c-api.md`, `llama-ffm/README.md`. First CI run pending.)*
+
+### 11. Deferred by the owner until everything above runs: the Windows code signature (C.4, C.5)
+
+**Decided 2026-10-15: SSL.com IV certificate + eSigner, Windows only, one switch.** Authenticode
+over every DLL of every Windows natives jar, signed by the job `sign-windows-natives` with jsign
+against SSL.com's cloud HSM, `signed=yes` in `jllama-build.txt` afterwards, and a
+`verify-native-deps.py` check that every PE of a signed run carries a signature; `jarsigner` only on a
+consumer's request (fat jars break it). **The macOS half is dropped by the owner's decision** (no
+Apple Developer Program): the dylib stays ad-hoc signed by the linker, verified by
+`smoke-natives-macos`, with the `.asc` and the Sigstore attestation as its provenance.
+
+**Azure Trusted Signing was decided first and is a dead end (same day):** Microsoft's identity
+validation takes no individual in Germany (country not supported), the organisation form needs a
+registered business, and the signing account created for it costs 9.99 USD/month for nothing --
+**delete it**. SignPath Foundation (free for open source) was declined because the publisher on the
+signature would read "SignPath Foundation", not the owner; Certum's open-source certificate needs a
+card reader a GitHub runner cannot drive. SSL.com's IV certificate (~129 USD/year) in eSigner
+(~15-20 USD/month, **metered per signature**) is the one a private person in Germany can obtain and
+a Linux runner can use.
+
+**One switch, snapshot and release alike:** the `workflow_dispatch` input `sign_windows`, next to
+`publish_to_central` -- the pipeline is identical at that point, a release is both switches on, and
+a run without the switch ships `signed=no` as before (`publish-release` warns). The secrets are
+exactly the four SSL.com names its own action documents (`ES_USERNAME`, `ES_PASSWORD`, `CREDENTIAL_ID`,
+`ES_TOTP_SECRET`), in the `maven-central` environment next to the GPG key: **the TOTP secret lets
+whoever holds it sign in the owner's name**, so it reaches one job, only on the explicit switch,
+only under that environment's rules -- never a step of `package`, which runs on every pull request.
+
+*(The code side landed 2026-10-15: `.github/sign-windows-natives.sh` (jsign 7.2 pinned by SHA-256,
+`--storetype ESIGNER`, every `Windows/*/*/*.dll`, `signed=yes` afterwards; measured with a real DLL
+and dummy credentials: the options are accepted and the run fails at SSL.com's authentication), the
+job `sign-windows-natives` (environment `maven-central`, re-uploads the ten Windows artifacts with
+`overwrite: true`, `check-natives.py` holds the uploads to the Windows rows of `natives.csv`),
+`package` waiting for it with a skip-tolerant `if`, `--require-signed` in `package` and both publish
+jobs whenever `SIGN_WINDOWS` is on, `pe_signed()` + `signature_violations()` in
+`verify-native-deps.py` with unit tests; CLAUDE.md "Code signing of the Windows DLLs", README.
+Unexercised until the certificate exists.)*
+
+- [ ] **Owner:** delete the Azure Trusted Signing account (9.99 USD/month, unusable).
+- [ ] **Owner:** SSL.com IV validation (identity documents; days), the IV code-signing certificate
+      enrolled in eSigner, the eSigner TOTP secret and the credential id (both in the eSigner
+      settings of the order), eSigner's per-signature quota read against **35 DLLs per signed run**
+      (20 in `cpu-windows-x86-64`, 7 in `cpu-windows-aarch64`, one in each of the 8 Windows module
+      jars); then the four secrets into the `maven-central` environment (`ES_USERNAME`, `ES_PASSWORD`,
+      `CREDENTIAL_ID`, `ES_TOTP_SECRET`; optionally the repository variable `ES_ENDPOINT` =
+      `https://cs-try.ssl.com` for one sandbox run first -- its test certificate is not trusted by
+      Windows, so that run proves the pipeline, not the signature).
+- [ ] First signed run: a dispatch on `main` with `sign_windows` and without `publish_to_central`;
+      read the publisher off a `jllama.dll` unpacked from the run's `llama-smoke-windows-x86-64` set
+      (`Get-AuthenticodeSignature`, or `signtool verify /pa /v`), confirm the Windows smoke rows ran
+      the signed sets and that `verify-native-deps.py` in `package` ran with `--require-signed`; then
+      the same with `publish_to_central` for the first signed snapshot.
+
 ## Where the modular natives stand
 
 **The goal was exchangeable native libraries built with LLVM, replacing the fat jars. As of
@@ -284,9 +498,9 @@ Kept as a list because each entry names the machine it needs -- the harness is
 
 ## Open — jllama-specific
 
-### The release: 5.2.0 or 6.0.0, with an "Upgrading from 5.1" section (owner's decision)
+### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 
-**Nothing has been published since 5.1.0 on 2026-08-29.** `pom.xml` is `5.2.0-SNAPSHOT`, and
+**Nothing has been published since 5.1.0 on 2026-08-29.** `pom.xml` is `6.0.0-SNAPSHOT`, and
 `CHANGELOG.md`'s `[Unreleased]` holds six weeks of work no consumer can get from Central: the modular
 natives, the Windows generation speed-up, the Linux and Windows CPU variants, RPC, the agent,
 Kolibri-1, the bump to b11556. It also holds changes that break every existing consumer at upgrade,
@@ -302,8 +516,8 @@ from 5.1 would look:
   `NativeServer` on port 9931 (llama.cpp's new default) while `OpenAiServerConfig` stays on 8080
   (open item below); the floors Windows 10, macOS 15 and glibc 2.28.
 
-Semantic versioning says that is **6.0.0**, not 5.2.0; the decision is the owner's, and so is the
-timing. What the release needs either way, in order:
+Semantic versioning says that is **6.0.0**, not 5.2.0, and the owner decided so on 2026-10-15; the
+timing of the tag stays the owner's. What the release needs, in order:
 
 1. **Round 0 green through `package` and the smokes** -- the modular natives have never passed the
    stages that assemble and launch the published jars (top of this file); a release before that
@@ -549,7 +763,7 @@ loading the Linux jar on an image that is not Amazon Linux. Numbers and method:
 
 ### Modular natives -- follow-ups
 
-Every platform a GPU can join ships modular since 5.2.0 (CLAUDE.md "Modular natives": `JLLAMA_BACKEND_DL`
+Every platform a GPU can join ships modular since 6.0.0 (CLAUDE.md "Modular natives": `JLLAMA_BACKEND_DL`
 library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still open:
 
 1. **GPU modules on real hardware.** The 12 module-only jobs are build-only in CI; what no session can
@@ -581,8 +795,9 @@ library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still 
    says so and names the way out (`net.ladenthin.llama.lib.path` to an allow-listed directory). The
    project's GPG key cannot sign them: Windows checks Authenticode signatures (an X.509 code-signing
    certificate, `signtool`/`osslsigncode`), not OpenPGP. **Owner's decision**, not scheduled: a
-   code-signing certificate (Azure Trusted Signing or an OV/EV certificate, both paid, identity-
-   validated) plus a signing step over every `.dll` before `package`.
+   code-signing certificate (decided since: an SSL.com IV certificate in eSigner, see roadmap item
+   11; Azure Trusted Signing takes no individual in Germany) plus a signing step over every `.dll`
+   before `package`.
 4. **CUDA for Windows arm64 (`cuda13-windows-aarch64`) -- upstream builds it, we do not.** Their
    `windows-cuda` job is a matrix over `x64` and `arm64`, the latter through
    `cmake/arm64-windows-msvc-cuda` plus the arm64 `cudart`/`cublas` redistributables. This project has
@@ -795,16 +1010,23 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
   Responses client) at a running server, since round-trips confirm wire shapes but not each client's
   parser.
 
-### Code-sign the Windows DLLs (Azure Trusted Signing, owner's decision -- it costs money)
+### Code-sign the Windows DLLs (SSL.com IV + eSigner -- decided 2026-10-15, roadmap item 11)
 
-**What.** Microsoft's **Azure Trusted Signing** (formerly Azure Code Signing) signs Windows PE files
-from CI without a hardware token, on a monthly subscription -- the **Basic** tier is in the ~10
-USD/month range and includes a signature quota; **verify the current price and quota before
-committing**, and whether the quota covers signing *18 files per Windows natives jar* on every run
-(`jllama.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-rpc.dll` and the 14 `ggml-cpu-<level>.dll`, plus
-one module per Windows GPU jar). The traditional alternative -- an OV/EV certificate -- is several
-hundred euros a year **and** has required a hardware token since 2023, which a GitHub runner cannot
-use, so it is not a real option for this pipeline.
+**What.** An **IV (individual validation) code-signing certificate from SSL.com, held in eSigner**,
+SSL.com's cloud HSM: CI signs Windows PE files over HTTPS without a hardware token, with jsign on
+the Linux runner. Prices at the time of the decision, to be re-read before ordering: the IV
+certificate ~129 USD/year, eSigner ~15-20 USD/month, **metered per signature** -- and a signed run
+signs 35 files (`jllama.dll`, `llama.dll`, `mtmd.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-rpc.dll`
+and the 14 `ggml-cpu-<level>.dll` of the x86-64 jar, the 7 of the arm64 jar, one module per
+Windows GPU jar), so the quota is read against that. The traditional alternative -- an OV/EV
+certificate -- is several hundred euros a year **and** has required a hardware token since 2023,
+which a GitHub runner cannot use, so it is not a real option for this pipeline.
+
+**Azure Trusted Signing was the first decision of that day and fell on the same day:** Microsoft's
+identity validation offers no path for an individual in Germany (the country is not in the list for
+individual validation), the organisation form requires a registered business, and the signing
+account created in the meantime costs 9.99 USD/month -- it is to be deleted. The paragraphs below
+record what was learned about it, because the question "why not Azure" will come back.
 
 **Why it is worth considering here specifically.** This project's DLLs are **extracted from a jar
 into a temp directory at run time and loaded with `System.load`**, which is exactly the shape
@@ -815,25 +1037,32 @@ and it removes the "unknown publisher" class of false positive that a consumer c
 is no evidence of a user hitting this yet -- so this is prevention, not a fix, which is why it is a
 decision rather than a task.
 
-**The gatekeeper, and the reason to check it first:** Trusted Signing requires **identity
-validation**. An organisation needs a verifiable legal entity; an **individual** must have a
-verifiable public history (Microsoft has required ~3 years), and the account must be in a supported
-region. **Find out whether the account qualifies before paying for anything** -- the subscription is
-useless without a validated identity, and that is the step that fails, not the plumbing.
+**The gatekeeper of Trusted Signing, measured:** it requires **identity validation**, and for an
+**individual** the form accepts only a list of countries that does not include Germany; an
+organisation needs a verifiable legal entity. That was found by trying, after the account had been
+paid for -- which is the lesson: **validate the identity path before paying for anything**, with
+any provider. SSL.com's IV validation is the path that exists for a private person in Germany.
 
-**How it would hook into GitHub.** `azure/trusted-signing-action` with federated OIDC credentials
-(no long-lived secret), run in the Windows build jobs *after* the build and *before* the artifact
-upload, so what gets packaged is already signed. Note what that touches on our side: signing
-**modifies the files**, so it must happen before `merge-native-artifacts.sh` and
-`package-smoke-sets.sh` -- both compare files byte for byte -- and the signature must survive the
-jar round trip (it does; a PE signature is part of the file). Signing *after* packaging would mean
-re-writing jars and re-checking them, which is strictly worse.
+**How it hooks into GitHub.** jsign (`--storetype ESIGNER`) in a job of its own,
+`sign-windows-natives`, between the Windows build jobs and `package`: it downloads the Windows
+natives artifacts, signs every DLL, flips `signed=` and re-uploads the artifacts under their names,
+so `package` merges signed files. Note what that touches on our side: signing **modifies the
+files**, so it happens before `merge-native-artifacts.sh` and `package-smoke-sets.sh` -- both
+compare files byte for byte -- and the signature must survive the jar round trip (it does; a PE
+signature is part of the file). Signing *after* packaging would mean re-writing jars and
+re-checking them, which is strictly worse. **Why the secrets are dangerous and how that is held:**
+eSigner authenticates with username, password, credential id and the **TOTP secret** -- whoever can
+read those four from a workflow can sign in the owner's name, and a GitHub secret is readable by
+any workflow of the repository. So they live in the `maven-central` environment (the GPG key's
+rules apply), reach exactly one job, and that job runs only on an explicit dispatch with the
+`sign_windows` switch -- never on a push, a pull request or inside `package`.
 
 **What it does not cover.** Linux has no equivalent and needs none. **macOS is a separate purchase
 and a separate problem**: a Developer ID certificate (Apple Developer Program, ~99 USD/year) plus
 notarisation, and the dylib is already ad-hoc signed by the linker -- which is what
 `smoke-natives-macos` verifies with `codesign --verify --strict` after a corrupt dylib shipped in
-three releases. Do not bundle the two decisions; the Windows one is cheap and self-contained.
+three releases. The two decisions were not bundled, and the macOS one is **no** (2026-10-15): the
+dylib ships ad-hoc signed, with the `.asc` and the Sigstore attestation as its provenance.
 
 ### License compliance gate (owner's decision)
 

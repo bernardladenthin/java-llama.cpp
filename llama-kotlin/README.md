@@ -11,11 +11,12 @@ Pure Kotlin/JVM — works on desktop JVMs **and** Android.
 
 ```kotlin
 dependencies {
-    implementation("net.ladenthin:llama-kotlin:5.1.0")
+    implementation("net.ladenthin:llama-kotlin:6.0.0")
     // ...plus the binding itself — the façade does NOT drag it in transitively
     // (provided scope), so YOU pick the right flavor:
-    implementation("net.ladenthin:llama:5.1.0")          // desktop JVM
-    // implementation("net.ladenthin:llama-android:5.1.0") // Android (AAR)
+    implementation("net.ladenthin:llama:6.0.0")          // desktop JVM: the classes ...
+    implementation("net.ladenthin:llama-platform:6.0.0") // ... and the CPU natives of every desktop platform
+    // implementation("net.ladenthin:llama-android:6.0.0") // Android (AAR)
 }
 ```
 
@@ -44,10 +45,11 @@ token boundary and frees the slot — the missing piece a hand-rolled
 
 ## Why `provided` scope on the core?
 
-The desktop `net.ladenthin:llama` JAR bundles native libraries for every desktop platform as Java
-resources. If this module depended on it transitively, every Android APK using the façade would
-package ~70 MB of dead desktop natives. Declaring the binding yourself keeps the choice explicit:
-`llama` on the JVM, the `llama-android` AAR on Android.
+The desktop binding and the Android AAR carry the same classes: `net.ladenthin:llama` is the Java
+classes only (the natives are separate jars since 6.0.0), and `llama-android` repackages those
+classes with the Android natives. A transitive dependency on either would duplicate them on the
+other platform, so declaring the binding yourself keeps the choice explicit: `llama` (plus
+`llama-platform` or the natives jars) on the JVM, the `llama-android` AAR on Android.
 
 ## Build
 

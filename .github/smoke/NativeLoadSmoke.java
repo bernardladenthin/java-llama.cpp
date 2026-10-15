@@ -40,6 +40,17 @@ public final class NativeLoadSmoke {
             throw new IllegalStateException("packaged native library reports llama.cpp build '" + build
                     + "' but this jar pins '" + pinned + "' — the jar carries the wrong native library");
         }
-        System.out.println("native load smoke OK: pinned=" + pinned + " linked=" + build);
+        // The provenance the build wrote next to the library (jllama-build.txt) must reach Java, from
+        // the jar and from a directory named with net.ladenthin.llama.lib.path alike: the tag it
+        // names is the pinned one, and the carried patches are listed.
+        final java.util.Map<String, String> info = LlamaModel.getJllamaBuildInfo();
+        if (!pinned.equals(info.get("llama.cpp"))) {
+            throw new IllegalStateException("jllama-build.txt next to the loaded library names llama.cpp '"
+                    + info.get("llama.cpp") + "', this jar pins '" + pinned + "' (build info: " + info + ")");
+        }
+        if (info.get("patches") == null || info.get("patches").isEmpty()) {
+            throw new IllegalStateException("jllama-build.txt names no carried patches: " + info);
+        }
+        System.out.println("native load smoke OK: pinned=" + pinned + " linked=" + build + " build-info=" + info);
     }
 }

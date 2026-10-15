@@ -33,8 +33,10 @@ walking master for the commit whose count is the number). Only the two fetches r
 **asserts** that the fetched commit's count is the number (`llama.cpp pin check` in the CMake
 output), so a wrong hash cannot ship as `b<nnnn>`; llama.cpp's own `build-info` derives its number
 the same way, which is why `NativeLibraryLoadSmokeTest` passes against a virtual number too. Every
-other consumer keeps the number. Once upstream publishes the tag, clear `JLLAMA_GIT_COMMIT`
-(`llama-next-version.sh` prints a NOTE when it is stale); nothing else changes. Two limits: the
+other consumer keeps the number. Keep `JLLAMA_GIT_COMMIT` once upstream publishes the tag: the
+commit is the pin for good (a tag name can be re-pointed, and CI refuses to fetch by name --
+`JLLAMA_REQUIRE_COMMIT`), the tag is the display name; `llama-next-version.sh --resolve` prints the
+commit for every number, published or not. Two limits: the
 commit must be on master (a side branch's count is not a tag number), and the README's release link
 points at a page that does not exist until the tag does.
 

@@ -141,5 +141,25 @@ echo "plain HTTP on the TLS port refused: OK"
 find "$LLAMA_CACHE" -type f -name '*.gguf' | grep -q . \
     || fail "no .gguf under $LLAMA_CACHE — the https:// download did not happen"
 echo "https:// model download OK: $(find "$LLAMA_CACHE" -type f -name '*.gguf' -exec basename {} \; | head -1)"
+kill "$SERVER_PID" 2> /dev/null || true
+wait "$SERVER_PID" 2> /dev/null || true
+
+# 4) The natives directory through lib.path, no natives jar on the classpath: the jar's
+#    Mac/aarch64/metal/ directory unpacked the way a consumer does by hand (smoke_natives_directory),
+#    the JVM started with the classes jar plus its dependencies only and
+#    -Dnet.ladenthin.llama.lib.path=<that directory>. The loader's directory branch must load the
+#    dylib from there, read its jllama-build.txt (NativeLoadSmoke checks the build facts) and say
+#    so in its loader line -- the macOS member of the natives directory contract that the Linux and
+#    Windows smoke rows prove with a server round (README, "Natives outside Maven").
+echo "== lib.path: the natives directory, no natives jar on the classpath =="
+NATIVES_DIR="$(smoke_natives_directory "$SET_DIR" "$WORK/natives-dir")" || fail "could not unpack the natives jar into a directory"
+CP_NO_NATIVES="$(smoke_classpath_without_natives "$SET_DIR")" || exit 1
+java -cp "$CP_NO_NATIVES" "-Dnet.ladenthin.llama.lib.path=$NATIVES_DIR" "$SCRIPT_DIR/smoke/NativeLoadSmoke.java" \
+    > load-dir-out.log 2> load-dir-err.log \
+    || { cat load-dir-out.log load-dir-err.log; fail "the packaged native library did not load from the lib.path directory"; }
+cat load-dir-out.log
+grep -h "\[jllama\] native backend '[^']*' loaded from $NATIVES_DIR" load-dir-out.log load-dir-err.log | grep -q . \
+    || { cat load-dir-err.log; fail "the loader did not load from the lib.path directory $NATIVES_DIR"; }
+echo "lib.path round OK"
 
 echo "smoke test PASSED"

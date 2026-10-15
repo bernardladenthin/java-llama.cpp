@@ -16,9 +16,11 @@ artifact, classifier `<backend>-<os>-<arch>`, each holding exactly one directory
 `natives.csv`):
 
 - **8 library jars**, one per platform (`cpu-*` for Linux x86-64 / aarch64 / s390x, Android aarch64 /
-  x86-64, Windows x86-64 / aarch64; `metal-macos-aarch64`): `libjllama` with llama.cpp, mtmd and the
+  x86-64, Windows x86-64 / aarch64; `metal-macos-aarch64`): `libjllama` with llama-common and the
   server linked in, plus -- on the modular platforms (`JLLAMA_BACKEND_DL`, see "Modular natives") --
-  ggml's shared libraries, `ggml-rpc` and the CPU backend modules. Exactly one is loaded, the one of
+  `libllama` and `libmtmd` as shared libraries of their own (upstream's C API, layer A), ggml's
+  shared libraries, `ggml-rpc` and the CPU backend modules (on the static platforms llama and mtmd
+  are inside `libjllama`). Exactly one is loaded, the one of
   the running platform; `LlamaLoader.LIBRARY_BACKENDS` (`metal`, then `cpu`) names the directory.
 - **15 GPU module jars** (`cuda13`, `rocm`, `sycl`, `vulkan`, `opencl`, `openvino` per OS/arch,
   `LlamaLoader.MODULE_BACKENDS`): each holds **one** ggml backend module (`libggml-cuda.so`,
@@ -52,7 +54,10 @@ artifact, classifier `<backend>-<os>-<arch>`, each holding exactly one directory
   `net.ladenthin.llama.backend=<a>,<b>` is a **filter** over the module jars (`cpu` = none); a name
   that is no module backend, or whose jar is not on the classpath, fails the load with a message
   naming the jar to add. **A module jar needs the library jar of the same build**: every natives
-  directory carries `jllama-build.txt` (`llama.cpp=<tag>`, `backend=`, `kind=`, written by CMake), and
+  directory carries `jllama-build.txt` (`llama.cpp=<tag>`, `backend=`, `kind=` plus the provenance keys
+  `llama.cpp.commit=`, `classifier=`, `jllama.version=`, `jllama.commit=`, `patches=`, `patches.sha256=`,
+  `compiler=`, `toolkit=`, `signed=`, written by `cmake/jllama-build-info.cmake`, which also writes the
+  CycloneDX `jllama-sbom.json` next to it; `LlamaModel.getJllamaBuildInfo()` exposes the keys), and
   `requireSameBuild` refuses a module whose tag differs from the library's **before** anything is
   extracted -- ggml checks only the module's exports at load time, so a mismatched ggml ABI would
   surface later and worse. The extraction directory is keyed by the library's jar entry **and** the
@@ -79,7 +84,7 @@ priority order (`BACKEND_PRIORITY`) until one loaded, and the `all-<os>-<arch>` 
 Both are gone: the GPU jars hold a module each, there is no priority order (every module is loaded),
 and 32-bit Windows (`cpu-windows-x86`, `msvc-windows-x86`), the MSVC jar (`msvc-windows-x86-64`,
 still **built and tested**, see "Windows natives") and the second SYCL precision (`sycl-fp32`) went
-with the fat jars (5.2.0, before the release).
+with the fat jars (6.0.0, before the release).
 
 **The list is `.github/natives.csv`** (classifier, directory, library, platform yes/no, kind, optin yes/no) — the
 one place a natives jar is declared, in the same spirit as `models.csv`. Everything else either reads
@@ -87,7 +92,7 @@ it or is checked against it:
 
 | Place | Relation to the list |
 |---|---|
-| `llama/CMakeLists.txt` | names the backend directory (`JLLAMA_BACKEND`: GGML flag → name; `metal` = Apple + `GGML_METAL`), writes to `src/main/natives/net/ladenthin/llama/<OS>/<ARCH>/<backend>/`, and writes `jllama-build.txt` there (plus `jllama-files.txt` on the modular platforms and in a module-only build) |
+| `llama/CMakeLists.txt` | names the backend directory (`JLLAMA_BACKEND`: GGML flag → name; `metal` = Apple + `GGML_METAL`), writes to `src/main/natives/net/ladenthin/llama/<OS>/<ARCH>/<backend>/`, and -- through `cmake/jllama-build-info.cmake` -- writes `jllama-build.txt` and `jllama-sbom.json` there (plus `jllama-files.txt` on the modular platforms and in a module-only build); the build file's `classifier=` is derived from the directory and must equal the row's |
 | `llama/pom.xml` `natives` profile | one `maven-jar-plugin` execution per row, **generated**: `python3 .github/check-natives.py pom` prints them |
 | `llama-platform/pom.xml` | depends on the rows with `platform=yes` |
 | `publish.yml` build jobs | each uploads its tree as artifact `natives-<classifier>`; `package` waits for every one of them (transitively) |
@@ -95,9 +100,9 @@ it or is checked against it:
 | the smoke sets | **derived**: one `llama-smoke-<os>-<arch>` per desktop platform with a library jar (no Android, no s390x: no runner) — `check-natives.py smoke-targets` prints them, `smoke-set <t>` the classifiers of one; `package` assembles each with `package-smoke-sets.sh` (the classes jar, its runtime dependencies, the platform's library jar and every GPU module jar of the platform) and uploads it; every target must be downloaded by a smoke job (`smoke-natives` rows, `smoke-natives-macos`), which `check-natives.py` demands |
 | `examples/jbang/Chat.java`, `examples/server/pom.xml` | the JBang `//DEPS` lines name the classes jar and every `platform=yes` jar; the server example's `<llama.version>` and profiles follow the list — both held to the README's install version |
 | `.github/check-natives.py` | runs in `code-style` (first minutes of every run); fails when any row of this table disagrees with the list — including CMake's backend names, the dependency allowlists and the README rows |
-| `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library (or module) and nothing outside its directory, each with a `jllama-build.txt` naming a tag, a module directory holding nothing but its module and the `jllama-*.txt` lists, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows -- never the files a build's own `jllama-files.txt` names, which are only extracted; each of those must exist) |
+| `.github/merge-native-artifacts.sh` | reads the list: every listed `natives-*` artifact present, no other, each holding its library (or module) and nothing outside its directory, each with a `jllama-build.txt` naming a tag, the provenance keys and the row's classifier, next to a `jllama-sbom.json` naming the same classifier, a module directory holding nothing but its module, the `jllama-*.txt` lists and the BOM, no path claimed twice; writes `jllama-extras.txt` (sibling files loaded before the library, e.g. OpenVINO's `OpenCL.dll` on Windows -- never the files a build's own `jllama-files.txt` names, which are only extracted; each of those must exist) |
 | `.github/package-smoke-sets.sh` | reads the list through `check-natives.py smoke-targets` / `smoke-set`: fails when a natives jar of a set was not built |
-| `.github/verify-native-deps.py` | every library of a directory: exact dependency allowlist per library directory (`cpu`/`metal`) plus the files next to it, and for the Android OpenCL module (bionic + `libOpenCL.so` + `libggml-base.so`); denylist for the other GPU modules, each of which must import `ggml-base` and, as ELF, reach it only through run path `$ORIGIN` (an Android library carries no run path -- bionic's search path is the app's native-library directory -- and only a build-tree one fails there); the manylinux_2_28 builds (both Linux CPU jars, CUDA) held to `GLIBC_2.28`; every Android library 16 KB page-aligned (Google Play). Runs in `package` and on the staged AAR libraries |
+| `.github/verify-native-deps.py` | every library of a directory: exact dependency allowlist per library directory (`cpu`/`metal`) plus the files next to it; **the export set of every `jllama` library** (`JNI_OnLoad`, `JNI_OnUnload`, `Java_*`, `jllama_*` and nothing else -- `cmake/jllama-exports.map` on ELF and `cmake/jllama-exports-macos.txt` on macOS keep the statically linked llama/ggml/mtmd/BoringSSL symbols local, Windows exports only `dllexport`; before the lists the Linux library exported 14,220 symbols, 47 of them JNI), and for the Android OpenCL module (bionic + `libOpenCL.so` + `libggml-base.so`); denylist for the other GPU modules, each of which must import `ggml-base` and, as ELF, reach it only through run path `$ORIGIN` (an Android library carries no run path -- bionic's search path is the app's native-library directory -- and only a build-tree one fails there); the manylinux_2_28 builds (both Linux CPU jars, CUDA) held to `GLIBC_2.28`; every Android library 16 KB page-aligned (Google Play). Runs in `package` and on the staged AAR libraries |
 | `.github/smoke-natives-jars.sh` (`package` job) | loads the real jars: classes + all 23 natives jars at once, on the classpath **and** the module path; it passes `net.ladenthin.llama.backend` naming **every** module of the runner's platform, opt-in ones included, and the loader line must then name each -- so a module jar the loader skipped fails here, and this is also the only place in CI that loads an opt-in module at all |
 | `.github/smoke-lib.sh` / `smoke-test-natives.ps1` | the model-backed smoke rows expect every module of the set **except** the opt-in ones (`optin` column), because the loader deliberately leaves those out -- it is the same list, read with one more condition |
 
@@ -165,18 +170,48 @@ macOS static too). There the loader extracts and loads a single file (plus `jlla
 file's pin, `backend=`, `kind=library|module`), written with `file(GENERATE)`: the loader's build
 check and the merge step's completeness check read it (see "Natives jars").
 
-Before 5.2.0 each jar was **one** library for one level -- x86-64 the Haswell baseline (x86-64-v3,
+**And since the delivery roadmap (TODO.md) the file is the artefact's provenance record**, written by
+`llama/cmake/jllama-build-info.cmake`: `llama.cpp.commit` (the upstream commit actually fetched),
+`classifier` (derived from the directory, held to the `natives.csv` row by the merge step),
+`jllama.version` (the `<parent>` version of `llama/pom.xml`, or `-DJLLAMA_VERSION=`), `jllama.commit`
+(this repository's commit, `-dirty` with local changes, `GITHUB_SHA` as the fallback), `patches` (the
+ids of `llama/patches/*.patch` in order) and `patches.sha256` (one hash over `<name> <sha256>\n` per
+patch, the lines the applier's stamp carries), `compiler`, `toolkit` (the vendor SDK a GPU module was
+built against, probed per backend) and `signed` (`no` until the signature step exists). A CycloneDX
+1.5 `jllama-sbom.json` next to it carries the same facts, with every patch as the llama.cpp
+component's pedigree. `merge-native-artifacts.sh` requires every key and the BOM of every artifact;
+`LlamaModel.getJllamaBuildInfo()` returns the map, `Diagnose` prints one line per directory, and
+`docs/patches.md` -- generated by `check-patches.py --render`, held current by `code-style` -- is the
+page the `patches=` ids point at. The `package` and publish jobs additionally attest build provenance
+through `actions/attest-build-provenance` (Sigstore): `gh attestation verify --owner bernardladenthin
+<file>` proves a natives jar, a jar, a pom or an AAR came out of this workflow at a given commit, which
+the `.asc` alone cannot (it proves the key, not the build). The reactor's `cyclonedx-maven-plugin`
+attaches a `cyclonedx` json classifier to every Maven module for the Java side.
+
+Before 6.0.0 each jar was **one** library for one level -- x86-64 the Haswell baseline (x86-64-v3,
 a block that forced `GGML_AVX2` & co.: a CPU without AVX2 died with SIGILL, a JVM crash and not an
 exception, at the first matrix multiplication, and AVX-512/VNNI/AMX stayed unused on CPUs that have
 them), aarch64 plain ARMv8 -- and the GPU jars were complete libraries with the CPU backend linked
 in, tried one after the other (`JLLAMA_CPU_VARIANTS`, the two-stage predecessor of this; the
 measurements behind the Windows step are in `docs/handover/local-agent-report-b11538-windows.md`).
 
-- **Only ggml becomes shared.** `FetchContent_MakeAvailable` is pointed at a non-existent
-  `SOURCE_SUBDIR`, so it only fetches and patches; ggml is then added first with
-  `BUILD_SHARED_LIBS ON` and llama.cpp afterwards with it `OFF` (llama.cpp skips its own
-  `add_subdirectory(ggml)` when a `ggml` target exists; a module-only build never adds llama.cpp).
-  llama, mtmd and llama-common stay static in `libjllama.so`. **Every ggml default llama.cpp's own
+- **ggml, llama and mtmd become shared; llama-common stays static.** `FetchContent_MakeAvailable`
+  is pointed at a non-existent `SOURCE_SUBDIR`, so it only fetches and patches; ggml is then added
+  first with `BUILD_SHARED_LIBS ON` (llama.cpp skips its own `add_subdirectory(ggml)` when a `ggml`
+  target exists; a module-only build never adds llama.cpp). **Layer A of the delivery roadmap
+  (TODO.md)** then adds llama.cpp's root with `BUILD_SHARED_LIBS ON` and `LLAMA_BUILD_COMMON OFF`
+  -- `src/` gives `libllama.so`, upstream's own C API (`llama.h`) from the patched source, exactly
+  the file upstream's release zips ship -- and afterwards `vendor/cpp-httplib` plus `common/` with
+  it `OFF` again, because upstream's `common/CMakeLists.txt` follows `BUILD_SHARED_LIBS` like
+  `src/` does and llama-common is a C++ library (no stable ABI, `WINDOWS_EXPORT_ALL_SYMBOLS` when
+  shared) whose only consumer here is the server code compiled into `jllama`. `common/` reads the
+  build-info values (`b<number>-<hash>`, compiler, target) and the version pair from the root's
+  directory scope, which is not visible from ours, so the configure sets them itself from the
+  fetched tree (or from the archived tree's patch stamp, see "Source archive"). `mtmd` is added in
+  its own block as before, shared in this build (`libmtmd.so`, `mtmd.h`). Both are unversioned like
+  ggml and get the `$ORIGIN` run path; the configure refuses a `llama`/`mtmd` that came out static or
+  a `llama-common`/`cpp-httplib` that came out shared (one more file to ship). On the static
+  platforms (macOS, s390x) all of it stays inside `libjllama`. **Every ggml default llama.cpp's own
   CMakeLists changes before its `add_subdirectory(ggml)` is repeated** -- `GGML_LLAMAFILE_DEFAULT`
   and `GGML_CUDA_GRAPHS_DEFAULT` at b11639 -- because adding ggml first skips that block; re-check with
   `grep -n _DEFAULT CMakeLists.txt` at the new tag on every bump. The second one was missing once:
@@ -185,13 +220,14 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   has no equivalent, lost nothing). `ggml` and `ggml-base` are built **unversioned** (`VERSION` /
   `SOVERSION` cleared: the loader extracts plain files, so file name, SONAME and `DT_NEEDED` must
   agree).
-- **The library directory holds 18 files on Linux, Android and Windows x86-64**: `libjllama.so`,
-  `libggml.so`, `libggml-base.so`, 14 `libggml-cpu-<level>.so` (`x64`, `sse42`, `sandybridge`,
-  `ivybridge`, `piledriver`, `haswell`, `skylakex`, `cannonlake`, `cascadelake`, `cooperlake`,
-  `icelake`, `zen4`, `alderlake`, `sapphirerapids`) and `libggml-rpc.so`; **12 on Linux aarch64**
-  (8 modules, `armv8.0_1` to `armv9.2_2`: dotprod, fp16, SVE, i8mm, SVE2, SME); **11 on Android
-  aarch64** (ggml's own Android list of 7, `android_armv8.0_1` to `android_armv9.2_2`); **5 on
-  Windows arm64** (one `ggml-cpu.dll`) -- ELF with run path `$ORIGIN` only, **except on Android,
+- **The library directory holds 20 files on Linux, Android and Windows x86-64**: `libjllama.so`,
+  `libllama.so`, `libmtmd.so`, `libggml.so`, `libggml-base.so`, 14 `libggml-cpu-<level>.so` (`x64`,
+  `sse42`, `sandybridge`, `ivybridge`, `piledriver`, `haswell`, `skylakex`, `cannonlake`,
+  `cascadelake`, `cooperlake`, `icelake`, `zen4`, `alderlake`, `sapphirerapids`) and
+  `libggml-rpc.so`; **14 on Linux aarch64** (8 modules, `armv8.0_1` to `armv9.2_2`: dotprod, fp16,
+  SVE, i8mm, SVE2, SME); **13 on Android aarch64** (ggml's own Android list of 7, `android_armv8.0_1`
+  to `android_armv9.2_2`); **7 on Windows arm64** (one `ggml-cpu.dll`) -- ELF with run path
+  `$ORIGIN` only, **except on Android,
   where the libraries carry no run path at all**: CMake's Android platform drops the flag
   (`Modules/Platform/Android.cmake`, "Android reportedly ignores RPATH"; dockcross's toolchain file
   sets `CMAKE_SYSTEM_NAME Android`), so `INSTALL_RPATH "$ORIGIN"` writes nothing there, and none is
@@ -206,8 +242,9 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   `GetModuleHandleExW` + `GetModuleFileNameW`, handed over as **UTF-8** -- a path with an umlaut loaded
   nothing as ANSI, and no error was logged): ggml's default searches next to the executable, which
   here is `java`. That call also picks up the GPU modules the loader put there.
-- **Windows specifics.** There is no `$ORIGIN`, so the two libraries `jllama.dll` links (`ggml-base.dll`,
-  `ggml.dll`) are left out of `jllama-files.txt` and named in `jllama-extras.txt` instead, which
+- **Windows specifics.** There is no `$ORIGIN`, so the four libraries `jllama.dll` links
+  (`ggml-base.dll`, `ggml.dll`, `llama.dll`, `mtmd.dll`, in that dependency order) are left out of
+  `jllama-files.txt` and named in `jllama-extras.txt` instead, which
   `LlamaLoader` loads by full path **before** `jllama.dll` (otherwise Windows resolves the import from
   `java.exe`'s directory or `PATH`, where a foreign llama.cpp install can answer); CMake writes that
   file itself, byte-identical to what `merge-native-artifacts.sh` derives, so a local build is
@@ -246,7 +283,7 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   `extractFile`'s reuse branch -- compare the file with the jar byte for byte, write only what
   differs, atomically -- does the rest, so a second start copies nothing (18 files, ~1 s with an
   on-access scanner on Windows, on every JVM start before; the same for every surefire fork). What
-  `cleanup()` removes: the flat files of the pre-5.2.0 layout, and the directory of a build that is
+  `cleanup()` removes: the flat files of the pre-6.0.0 layout, and the directory of a build that is
   **not** on this classpath once it is older than `STALE_EXTRACTION_AGE` (10 min) -- a start touches
   its directory's mtime before extracting, so a JVM that is still starting from a directory is never
   swept; every delete is best-effort, and a DLL a running JVM holds is locked on Windows and stays
@@ -266,8 +303,15 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   meet at **2.28**: x86-64 rises from 2.17, aarch64 falls from ~2.39. `verify-native-deps.py` reads
   every library's version-needs table and holds both directories (and CUDA) to `GLIBC_2.28`; the
   modules themselves reference `GLIBC_2.27` at most (measured in the image).
-- **No `ctest` in a modular build job**: `jllama_test` calls the CPU/RPC backends directly, so the
-  option refuses `BUILD_TESTING`; `test-cpp-linux-x86_64`, `test-cpp-linux-aarch64`,
+- **One `ctest` in a modular build job, `c_abi`, and no `jllama_test`**: `jllama_test` calls the
+  CPU/RPC backends directly, so the option refuses `BUILD_TESTING`; what a library-jar build does
+  run (`JLLAMA_C_ABI_TEST`, on by default, not when cross-compiling) is `src/test/c/test_c_abi.c`
+  -- plain C11, linked against the shared `llama` and `ggml-base` only, no JNI, no C++: it calls
+  `ggml_backend_load_all_from_path` on the natives directory, `llama_backend_init`, requires at
+  least one device (the CPU module must have loaded), prints `llama_print_system_info`, and loads a
+  model when `JLLAMA_C_ABI_MODEL` names one. `build.sh`/`build.bat` run `ctest -R '^c_abi$'` after
+  every build that registered it, so the first thing proven about a library jar is that upstream's
+  C API in it works without a JVM (layer A). `test-cpp-linux-x86_64`, `test-cpp-linux-aarch64`,
   `test-cpp-windows-x86_64` and `test-cpp-windows-arm64` build the default static library with the
   tests, each with the compiler of the shipped build. The Java suite (`test-java-linux-x86_64`,
   `test-java-windows-x86_64`, the langchain4j integration job through `-Dnet.ladenthin.llama.lib.path`,
@@ -304,7 +348,7 @@ shapes this repo writes and rejects anything else loudly.
 |---|---|---|
 | `natives.py` | `check-natives.py` (`code-style`) | everything that names a natives jar agrees with `natives.csv` (see "Natives jars") |
 | `models.py` | `check-natives.py` | every `*_MODEL_NAME` of publish.yml's `env:` is a filename of `models.csv` |
-| `patches.py` | `check-patches.py` (`code-style`) | every hunk of `llama/patches/*.patch` declares exactly the lines it carries -- the half `git apply --check` does not see (see "Local llama.cpp source patches") |
+| `patches.py` | `check-patches.py` (`code-style`) | every hunk of `llama/patches/*.patch` declares exactly the lines it carries -- the half `git apply --check` does not see (see "Local llama.cpp source patches"); and `docs/patches.md` is what `check-patches.py --render` generates from the patch headers (a stale page fails) |
 | `nativedeps.py` | `verify-native-deps.py` (`package`, `package-android-aar`) | dependency allowlists, 16 KB Android alignment |
 | `hipoffload.py` | `verify-hip-offload-compressed.py` (the two ROCm jobs) | no uncompressed GPU code bundle |
 | `workflow.py` | — | the job graph of a workflow (`needs`, uploads, transitive closure) |
@@ -424,7 +468,9 @@ new job:**
 > them -- the packaging check and the Java suite against the real artifact.**
 
 Today that means 2 jobs build a shipped artifact **and** run `ctest` (`build-linux-s390x`,
-`build-macos-arm64-metal-15` -- the two static platforms) and 7 only test
+`build-macos-arm64-metal-15` -- the two static platforms; every modular library-jar job additionally
+runs the one plain-C test `c_abi` against the shared `llama` it ships, see "Modular natives") and 7
+only test
 (`test-cpp-linux-x86_64`, `test-cpp-linux-aarch64`, `test-cpp-windows-x86_64`,
 `test-cpp-windows-arm64` -- forced, see below -- plus `build-windows-x86_64-msvc`, the MSVC
 toolchain build that ships no jar since the modular natives but still runs `ctest` and the Java
@@ -1160,7 +1206,10 @@ stays `-O3` and is **bit-identical** to a clean build (release-safe).
 
 **Safety / transparency.** It is **inert** until `DEPOT_TOKEN` is configured and on **fork
 PRs** (secrets are hidden there) — those simply compile normally; the `Install sccache` step
-is `continue-on-error`; and `use_cache=false` forces a pristine, from-scratch build. Crucially,
+is `continue-on-error`; `use_cache=false` forces a pristine, from-scratch build; and **a `v*` tag
+build is always from scratch** (the workflow-level `USE_CACHE` is `false` on a tag ref whatever the
+dispatch input says, TODO.md delivery roadmap item 8), so no release object comes out of the shared
+cache -- the cache provider stays out of a release's trust chain. Crucially,
 `build.sh` runs a **probe-compile health-check** (`sccache_can_wrap_compiler`) before trusting
 sccache as the launcher: it compiles a trivial TU *through* sccache, and only sets
 `-DCMAKE_{C,CXX}_COMPILER_LAUNCHER=sccache` if that succeeds. So a sccache that is present but
@@ -1409,6 +1458,106 @@ exist yet: `git show` returned an empty file, the grep found nothing, and "upstr
 was read out of a file that was never read. **A drop-check that cannot distinguish "no match" from
 "nothing examined" has not been run.**
 
+## Source archive and mirror: a release stays rebuildable without upstream
+
+Every natives jar is compiled from the pinned upstream commit plus `llama/patches/`, a tree that
+used to exist only transiently in each build job's `_deps/`. Two jobs of `publish.yml` keep it
+(TODO.md, delivery roadmap, item 6):
+
+- **`archive-llama-source`** (`.github/archive-llama-source.sh`): a full checkout of
+  `ggml-org/llama.cpp` at the pinned commit (`JLLAMA_GIT_COMMIT`, else the tag; the commit count is
+  checked against the number as the configure does), the applier run exactly as every build runs it
+  (`cmake -P llama/cmake/apply-llama-patches.cmake`), `verify-patches-applied.sh` over the result,
+  `.git` dropped, and the tree packed **reproducibly** (sorted, the commit's time as every mtime, no
+  owner, `gzip -n`; measured: two packs of the same inputs hash the same) as
+  `llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz`, artifact `llama-cpp-source`. The tree keeps the
+  applier's stamp `.jllama-patches-applied` (the commit it was patched at + every patch's hash).
+- **`test-source-archive`** (gates both publish jobs): unpacks the archive and builds the static
+  library with the tests from it through `-DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<dir>`, then `ctest`.
+  **FetchContent skips population entirely for an overridden source directory -- no download and no
+  `PATCH_COMMAND`** (measured in `FetchContent.cmake`: "no population is required"), so the applier
+  never runs there; the stamp is what proves the patches are in, and the job runs
+  `verify-patches-applied.sh <dir>` against it before building. The applier itself also understands
+  such a tree now: a non-git tree whose stamp names exactly the patches on disk with their hashes is
+  "already applied", another patch set is a loud error (before, the legacy per-patch reverse check
+  aborted on `0001`, whose region `0006`/`0007` rewrite). The two build-info writers read the commit
+  from the stamp when `.git` is absent (`jllama_archived_llama_commit` in `llama/CMakeLists.txt`), so
+  `llama_build_info()` and `jllama-build.txt` of an archive build name `b<nnnn>-<commit>` rather than
+  `unknown`.
+- The publish jobs sign the archive with the release key (`gpg --detach-sign --armor`, the key
+  `setup-java` imported, the same passphrase name as maven-gpg) and collect it next to the Maven
+  artifacts; the attestation covers `*.tar.gz`, and the attach jobs' unsigned-asset check counts it.
+  A consumer rebuilds a release with `cmake -B build -DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<unpacked>`.
+- **`mirror-llama-source`** (after a successful `publish-release`, exempt from the release gate like
+  the attach jobs; `.github/mirror-llama-source.sh`): pushes the pristine pinned commit to the fork
+  `bernardladenthin/llama.cpp` as the tag `jllama/b<nnnn>` -- idempotent, and a tag that already
+  names another commit fails rather than being moved. It needs `LLAMA_MIRROR_TOKEN` (contents:write
+  on the fork) in the `maven-central` environment and **fails without it** rather than skipping. The
+  configure's `JLLAMA_GIT_REPOSITORY` cache variable (default upstream) is where the mirror is
+  selected. The patches stay files in this repository, never fork commits: the review surface is the
+  patch file.
+
+## The C API: `jllama_api.h` over the engine (layer B)
+
+[`docs/c-api.md`](docs/c-api.md) is the consumer-facing page; this is the layout. Three files
+carry the one implementation behind both call paths into `libjllama`:
+
+- **`src/main/cpp/jllama_context.hpp`** -- `jllama_context` (the handle both paths hold: the Java
+  field's jlong, the C API's opaque `jllama_model *`), `erase_reader`, the user-reference release
+  and `jllama_context_guard`, and `acquire_jllama_context(jllama_context *)` for a handle already
+  known to be live. No JNI in it; `jni_helpers.hpp` includes it and adds the Java-field half
+  (`acquire_jllama_context_impl`, under `g_ctx_mutex`).
+- **`src/main/cpp/jllama_engine.{hpp,cpp}`** (`namespace jllama::engine`) -- the C++ over
+  `server_context`: `load` (argv -> params, `--vocab-only`, the `--rpc` guard, `common_init`, the
+  worker thread -- a plain thread now, nothing on it calls into a host), `free` (closing flag, the
+  readers cleared, wait for `users == 0`, terminate, join, delete), `wake_server` /
+  `wake_and_get_meta`, `parse_oai_chat_params`, `populate_completion_task`, `wake_and_post`,
+  `blocking_completion`, `streaming_request`, `stream_next`, `task_release`, the three chat
+  operations over JSON text, `set_log_sink` (the swap mutex lives here). Errors are exceptions:
+  `jllama_invalid_request` (400), `jllama_interrupted` (a wait cut by `free`), `std::runtime_error`.
+- **`src/main/cpp/jllama_api.{h,cpp}`** -- the `extern "C"` shell: `jllama_status` codes, a
+  thread-local `jllama_last_error()`, malloc'd strings (`jllama_string_free`), every call inside the
+  user-reference guard, `JLLAMA_API` export macro (`JLLAMA_BUILD` -> dllexport; the ELF/Mach-O
+  export lists already let `jllama_*` through), `jllama_api_version()` =
+  `JLLAMA_VERSION_STRING`, the pom version `cmake/jllama-build-info.cmake` resolves
+  (`JLLAMA_VERSION_RESOLVED`).
+
+**`jllama.cpp` is the shell for Java.** Every `LlamaModel` and `LlamaQuantizer` entry point calls
+the C API and maps a status with `throw_api_status` (`INVALID_REQUEST` -> `InvalidRequestException`,
+else `LlamaException`); the out-strings cross through `api_string`, the task ids through
+`api_task`. The file holds no server logic any more -- the old dispatch helpers, the batch and
+result checks, the indexed token tasks and `post_and_wait` live in the engine. The same holds for
+the other JNI files: `native_server.cpp` (`NativeServer`) is a shell over `jllama_server_*`, whose
+engine is `native_server_engine.{hpp,cpp}` (compiled on every platform but Android, with
+`JLLAMA_HAS_NATIVE_SERVER` guarding the C functions in `jllama_api.cpp`); `rpc_bridge.cpp`
+(`RpcServer`) over `jllama_rpc_server_*` (rpc_support.hpp); the `TextToSpeech` entry points in
+`jllama.cpp` over `jllama_tts_*` (`tts_engine.{h,cpp}`); `train_engine.cpp`'s one entry point over
+`jllama_finetune` (`finetune_json`, the parse it used to do itself). `REQUIRE_SERVER_CONTEXT` stays
+on every `LlamaModel` entry point: it reads the handle from the Java field under `g_ctx_mutex`,
+which is what makes `close()` safe against a racing call; the C API acquires a second, nested user
+reference on the raw pointer (the attach server holds one for its worker's lifetime). **A new native method of
+`LlamaModel` is written as an engine function plus a `jllama_*` function plus a JNI shell, in that
+order** -- the Java side never gets logic the C side lacks again.
+
+**The header ships in every library directory**, named in `jllama-files.txt` so the loader extracts
+it next to the library and never loads it (the static platforms get a one-line `jllama-files.txt`
+for exactly that; without the list the merge step derives every unlisted file into
+`jllama-extras.txt`, which `LlamaLoader` `System.load`s). **On Windows the import library
+`jllama.lib` ships the same way** (`ARCHIVE_OUTPUT_DIRECTORY` of `jllama` is the natives directory
+and the list names `$<TARGET_LINKER_FILE_NAME:jllama>`), so a C consumer links it instead of
+resolving the entry points with `GetProcAddress`. `verify-native-deps.py` looks at library
+suffixes only, and the merge step's "nothing else" rule applies to module directories only.
+
+**Tests.** `src/test/cpp/test_c_api.cpp` drives the C API compiled into `jllama_test`
+(`jllama_engine.cpp` + `jllama_api.cpp` are in its source list, with the same two definitions) over
+a tiny random llama-architecture GGUF it writes itself -- hermetic, so it runs in every `C++ Tests`
+job without `restore-models`; the output of a random model is noise, the contract is what is
+asserted. `test_c_abi.c` (the modular jobs' `c_abi`) links the shipped `libjllama` and resolves
+`jllama_api_version` / `jllama_build_info` through its exports, holding the build info's number to the
+`llama.cpp=` line of the directory's `jllama-build.txt` (`llama_build_info()` itself is llama-common,
+static and hidden inside `libjllama`, so a plain-C consumer cannot compare against it). And every model-backed Java test of
+the migrated entry points runs through the C API.
+
 ## RPC backend: `--rpc` client and the in-JVM `RpcServer`
 
 llama.cpp's RPC backend (`ggml-rpc`) is compiled into **every library jar** with `GGML_RPC=ON` forced
@@ -1435,7 +1584,7 @@ vendor runtime). A new CPU
 directory without an allowlist fails too. (That every build arrived is the merge step's check against
 `natives.csv`.) **It found a pre-existing defect on its first run**: the macOS dylib linked Homebrew's
 `openssl@3` (`/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib` + `libcrypto`), so it did not load on a
-Mac without that formula. Fixed in 5.2.0 by linking BoringSSL statically (see "HTTPS: BoringSSL,
+Mac without that formula. Fixed in 6.0.0 by linking BoringSSL statically (see "HTTPS: BoringSSL,
 statically" below); the allowlist no longer carries those paths, so their return reds `package`.
 
 **Three places every argv goes through (`src/main/cpp/rpc_support.hpp`).** ggml's backend registry
@@ -1541,7 +1690,7 @@ did before. `verify-native-deps.py` is what holds the line: a `libssl` of any ki
 library's dependency list fails `package`. The one import this adds is Windows' `crypt32.dll`
 (cpp-httplib's certificate-store lookup), an OS component since Windows 2000, in `WINDOWS_OS`.
 
-**The defect this replaced was a link-order lottery, not a missing flag.** Until 5.2.0 `jllama`
+**The defect this replaced was a link-order lottery, not a missing flag.** Until 6.0.0 `jllama`
 compiled `vendor/cpp-httplib/httplib.cpp` itself, deliberately without `CPPHTTPLIB_OPENSSL_SUPPORT`
 (the embedded server was "plain HTTP, front it with a TLS proxy"), while upstream's `llama-common`
 -- `common/download.cpp` -- linked its own `cpp-httplib` static library *with* the define whenever an
@@ -1643,8 +1792,11 @@ To change the llama.cpp version, update the following **four** files (and re-ver
    `LlamaCppVersion`, README and this file keep the number, and the configure asserts that the
    fetched commit's `git rev-list --count` is the number (upstream's own tag-numbering rule, and
    also how llama.cpp's `build-info` derives `b<nnnn>-<commit>` -- so the Java pin check holds
-   against a virtual number too). Clear `JLLAMA_GIT_COMMIT` once the tag exists; the helper prints a
-   NOTE while it is stale. Runbook: "Pinning a number upstream has not tagged yet".
+   against a virtual number too). **Keep `JLLAMA_GIT_COMMIT` after upstream publishes the tag**: a
+   tag name is a moving reference, so the commit is the pin and the tag only the display name, and
+   CI refuses a fetch by name (`JLLAMA_REQUIRE_COMMIT`, set by `build.sh`/`build.bat` under GitHub
+   Actions; a local configure without the commit still works, by the tag). Runbook: "Pinning a
+   number upstream has not tagged yet".
 2. **README.md** — the badge and link line with the version number
 3. **CLAUDE.md** — the "Current llama.cpp pinned version" line
 4. **llama/src/main/java/net/ladenthin/llama/value/LlamaCppVersion.java** — the
@@ -2060,7 +2212,7 @@ If the local check passes (`BUILD SUCCESS`), the `mvn package` job in
   - The `server` package is a dedicated top layer in the ArchUnit `layeredArchitecture` rule (the only layer allowed to access the root `Api`); `noInternalJdkImports` carries an explicit exception for the supported `com.sun.net.httpserver` (the exported `jdk.httpserver` module, which `module-info.java` `requires`). See README "OpenAI-compatible HTTP server".
 
 **Native layer** (`src/main/cpp/`):
-- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp. ~1,900 lines; 35 native methods (31 `LlamaModel` + 3 `TextToSpeech` + 1 `LlamaQuantizer`) plus `JNI_OnLoad`/`JNI_OnUnload`.
+- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp. 35 native methods (31 `LlamaModel` + 3 `TextToSpeech` + 1 `LlamaQuantizer`) plus `JNI_OnLoad`/`JNI_OnUnload`; since the C API (see "The C API" below) every one of them is a shell over `jllama_api.cpp` / `jllama_engine.cpp`, where the model logic lives.
 - `utils.hpp` — Helper utilities (format helpers, argv stripping, token-piece serialisation).
 - `json_helpers.hpp` — Pure JSON transformation helpers (no JNI, no llama state). Independently unit-testable.
 - `jni_helpers.hpp` — JNI bridge helpers (handle management + server orchestration). Includes `json_helpers.hpp`.
@@ -2069,7 +2221,7 @@ If the local check passes (`BUILD SUCCESS`), the `mvn package` job in
   2. **`common_json` converts to `std::string` implicitly**, so it binds happily to a `const nlohmann::json &` parameter (via nlohmann's string-constructible converting constructor) and then throws `json::type_error 302` at runtime. Never declare a project helper as taking `nlohmann::json` when callers pass the `json` alias — `require_json_field_impl` is a template for exactly this reason.
   Other differences to know: no `get_ref`/`array_t`/`type_name()`; a braced list in *value* position does not build an array (write `json::array({...})`); `at(key)` needs an explicit `.get<T>()`; errors are `common_json_error`; and `get<T>()` is limited to the types explicitly specialised in `common/json.cpp`. `log_helpers.hpp` and `train_engine.cpp` keep their own `nlohmann::json` alias — they never touch the server's `json`.
 - Uses `nlohmann/json` for JSON deserialization of parameters in the two files named above; everything on the server path uses `common_json`.
-- The upstream server library (`server-context.cpp`, `server-queue.cpp`, `server-task.cpp`, `server-schema.cpp`, `server-models.cpp`, and — since b9829 — `server-stream.cpp`) is compiled directly into `jllama` via CMake — there is no hand-ported `server.hpp` fork. **`server-stream.cpp` is mandatory, not optional:** it defines the resumable-streaming SSE replay buffer (`g_stream_sessions`, `stream_session_attach_pipe`, `stream_aware_should_stop`, `stream_conv_id_from_headers`, the `stream_pipe_*` types) that `server-context.cpp` / `server-http.cpp` / `server-models.cpp` now `#include "server-stream.h"` and call, so omitting it fails the link with undefined references. It is platform-neutral (threads + std mutex/condvar, no `subprocess.h`/`posix_spawn_*`), so it builds on Android too and sits outside the `server-models.cpp` Android guard. `jllama` wires its own JNI routes and never calls `g_stream_sessions.start_gc()` (only the excluded standalone `server.cpp` `main()` does), so its GC thread stays dormant. **Phase 2:** the upstream HTTP transport (`tools/server/server-http.cpp`) is compiled into `jllama` too, and `jllama` links upstream's `cpp-httplib` static target (`vendor/cpp-httplib/`) instead of compiling `httplib.cpp` a second time (it did until 5.2.0, without SSL -- see "HTTPS: BoringSSL, statically" for what that cost), so the OpenAI-compatible server can be driven natively from JNI *inside* `libjllama` — no separate `llama-server` executable (a JNI shared library loads anywhere a JVM runs, which a standalone binary does not). `server-http.cpp` does `#include "ui.h"` (the WebUI asset table that `tools/ui`/`llama-ui` normally generates); since the Svelte WebUI is not shipped, `src/main/cpp/webui_stub/ui.h` supplies the upstream **empty-asset** interface and leaves `LLAMA_UI_HAS_ASSETS` undefined (all static-asset-serving blocks compile out). `<cpp-httplib/httplib.h>` already resolves through `llama-common` — since upstream #27304 (b10488) not from a `PUBLIC ../vendor` include dir of its own but transitively, via the `vendor::nlohmann` / `vendor::sheredom` INTERFACE targets it links PUBLIC, each of which exports the `vendor/` root -- and that root comes **before** the FetchContent `json-src` include dir on every `jllama` compile line (measured in `flags.make`), so even our own `#include <nlohmann/json.hpp>` in `log_helpers.hpp` / `train_engine.cpp` compiles against upstream's **vendored** copy: one copy per TU. Since b11556 that copy is 3.12.0 plus upstream's `json-deep-nesting.patch` (nlohmann/json#5387, applied by `scripts/sync_vendor.py`), so the FetchContent `v3.12.0` is no longer byte-identical to it and is effectively unused (`TODO.md`). **HTTPS is on**: the `cpp-httplib` target carries `CPPHTTPLIB_OPENSSL_SUPPORT` as a PUBLIC define whenever an SSL library is configured, and BoringSSL is linked statically on every desktop platform, so `server-http.cpp` serves TLS with `--ssl-key-file`/`--ssl-cert-file` and `common/download.cpp` fetches `https://` URLs (not on Android and s390x, where `LLAMA_OPENSSL=OFF`). **`server.cpp`, `server-tools.cpp` and `server-mcp.cpp` are now compiled in too** (on non-Android — they pull in `subprocess.h`/`posix_spawn_*`, so they share `server-models.cpp`'s Android guard): b9870 exposes `server.cpp`'s entry as `int llama_server(int, char**)` (no `main` in the file), and `patches/0006` makes it embeddable (no process signal handlers, forwarded-argv parse, out-of-band shutdown). **`server-mcp.cpp` is new in b10154** (upstream MCP-server support): both `server.cpp` (`llama_server`'s `mcp_mgr` lifecycle) and `server-tools.cpp` (`tools.setup(..., mcp_mgr)` / `server_mcp::call_tool`) reference `server_mcp`, so it **must** be in the `target_sources` list or the link fails with undefined `server_mcp::{start,shutdown,call_tool,list_tools,~server_mcp}` — **latent on Linux** (a shared object tolerates undefined symbols) but a **hard link error on macOS/ld64 and Windows/MSVC**. It is compiled into `jllama` and — on non-Android — into `jllama_test` too, together with `server.cpp`, `server-tools.cpp` and `server-http.cpp` (and the linked `cpp-httplib` target), so `test_native_server_shutdown.cpp` can drive the real `llama_server()`. The `NativeServer` JNI bridge (`src/main/cpp/native_server.cpp`) calls `llama_server` on a worker thread, so the **full** upstream server — WebUI and all — runs inside `libjllama`. See "Two server modes" below.
+- The upstream server library (`server-context.cpp`, `server-queue.cpp`, `server-task.cpp`, `server-schema.cpp`, `server-models.cpp`, and — since b9829 — `server-stream.cpp`) is compiled directly into `jllama` via CMake — there is no hand-ported `server.hpp` fork. **`server-stream.cpp` is mandatory, not optional:** it defines the resumable-streaming SSE replay buffer (`g_stream_sessions`, `stream_session_attach_pipe`, `stream_aware_should_stop`, `stream_conv_id_from_headers`, the `stream_pipe_*` types) that `server-context.cpp` / `server-http.cpp` / `server-models.cpp` now `#include "server-stream.h"` and call, so omitting it fails the link with undefined references. It is platform-neutral (threads + std mutex/condvar, no `subprocess.h`/`posix_spawn_*`), so it builds on Android too and sits outside the `server-models.cpp` Android guard. `jllama` wires its own JNI routes and never calls `g_stream_sessions.start_gc()` (only the excluded standalone `server.cpp` `main()` does), so its GC thread stays dormant. **Phase 2:** the upstream HTTP transport (`tools/server/server-http.cpp`) is compiled into `jllama` too, and `jllama` links upstream's `cpp-httplib` static target (`vendor/cpp-httplib/`) instead of compiling `httplib.cpp` a second time (it did until 6.0.0, without SSL -- see "HTTPS: BoringSSL, statically" for what that cost), so the OpenAI-compatible server can be driven natively from JNI *inside* `libjllama` — no separate `llama-server` executable (a JNI shared library loads anywhere a JVM runs, which a standalone binary does not). `server-http.cpp` does `#include "ui.h"` (the WebUI asset table that `tools/ui`/`llama-ui` normally generates); since the Svelte WebUI is not shipped, `src/main/cpp/webui_stub/ui.h` supplies the upstream **empty-asset** interface and leaves `LLAMA_UI_HAS_ASSETS` undefined (all static-asset-serving blocks compile out). `<cpp-httplib/httplib.h>` already resolves through `llama-common` — since upstream #27304 (b10488) not from a `PUBLIC ../vendor` include dir of its own but transitively, via the `vendor::nlohmann` / `vendor::sheredom` INTERFACE targets it links PUBLIC, each of which exports the `vendor/` root -- and that root comes **before** the FetchContent `json-src` include dir on every `jllama` compile line (measured in `flags.make`), so even our own `#include <nlohmann/json.hpp>` in `log_helpers.hpp` / `train_engine.cpp` compiles against upstream's **vendored** copy: one copy per TU. Since b11556 that copy is 3.12.0 plus upstream's `json-deep-nesting.patch` (nlohmann/json#5387, applied by `scripts/sync_vendor.py`), so the FetchContent `v3.12.0` is no longer byte-identical to it and is effectively unused (`TODO.md`). **HTTPS is on**: the `cpp-httplib` target carries `CPPHTTPLIB_OPENSSL_SUPPORT` as a PUBLIC define whenever an SSL library is configured, and BoringSSL is linked statically on every desktop platform, so `server-http.cpp` serves TLS with `--ssl-key-file`/`--ssl-cert-file` and `common/download.cpp` fetches `https://` URLs (not on Android and s390x, where `LLAMA_OPENSSL=OFF`). **`server.cpp`, `server-tools.cpp` and `server-mcp.cpp` are now compiled in too** (on non-Android — they pull in `subprocess.h`/`posix_spawn_*`, so they share `server-models.cpp`'s Android guard): b9870 exposes `server.cpp`'s entry as `int llama_server(int, char**)` (no `main` in the file), and `patches/0006` makes it embeddable (no process signal handlers, forwarded-argv parse, out-of-band shutdown). **`server-mcp.cpp` is new in b10154** (upstream MCP-server support): both `server.cpp` (`llama_server`'s `mcp_mgr` lifecycle) and `server-tools.cpp` (`tools.setup(..., mcp_mgr)` / `server_mcp::call_tool`) reference `server_mcp`, so it **must** be in the `target_sources` list or the link fails with undefined `server_mcp::{start,shutdown,call_tool,list_tools,~server_mcp}` — **latent on Linux** (a shared object tolerates undefined symbols) but a **hard link error on macOS/ld64 and Windows/MSVC**. It is compiled into `jllama` and — on non-Android — into `jllama_test` too, together with `server.cpp`, `server-tools.cpp` and `server-http.cpp` (and the linked `cpp-httplib` target), so `test_native_server_shutdown.cpp` can drive the real `llama_server()`. The `NativeServer` JNI bridge (`src/main/cpp/native_server.cpp`) calls `llama_server` on a worker thread, so the **full** upstream server — WebUI and all — runs inside `libjllama`. See "Two server modes" below.
 
 ### Two server modes (`OpenAiCompatServer` vs `NativeServer`)
 
@@ -2240,12 +2392,25 @@ Java parameters are serialized to JSON strings and passed to native code, which 
 
 ### Native Library Resolution
 `LlamaLoader` tries in order:
-1. System property `net.ladenthin.llama.lib.path`
-2. `System.loadLibrary` on Android (the AAR's `jni/`), then `java.library.path`
+1. System property `net.ladenthin.llama.lib.path` -- a **natives directory** (README, "Natives outside
+   Maven"): the library jar's directory unpacked, optionally with module jars' files copied flat into
+   it. `loadFromDirectory` loads it with the jar branch's logic minus the extraction: the files its
+   `jllama-extras.txt` names by full path first (Windows: `ggml-base.dll`, `ggml.dll` -- a bare
+   `System.load` of `jllama.dll` failed there until 5.2.x, because Windows resolves imports from
+   `java.exe`'s directory and `PATH`, not from the DLL's), then the library; `jllama-build.txt` feeds
+   `getBuildInfo()`; a `jllama-files.txt` entry that is missing is reported; the modules present are
+   recognised by file name (`MODULE_LIBRARY_NAMES`, held to `natives.csv` by `check-natives.py`) and
+   named in the same loader line; the `backend` filter has no effect and says so. The temp-directory
+   cleanup and the module selection run only when the jars are reached, so a stale filter cannot fail
+   a `lib.path` start. Proven by `NativeLibraryLoadSmokeTest` in a fresh JVM on every `test-java-*`
+   job and by round 3 of every smoke row (`smoke_natives_directory`).
+2. `System.loadLibrary` on Android (the AAR's `jni/`), then every `java.library.path` entry as a natives
+   directory (same branch)
 3. The natives jars on the classpath: the library directory `net/ladenthin/llama/{os}/{arch}/{backend}/`
    of the platform (`LIBRARY_BACKENDS`: `metal`, else `cpu`), extracted together with every GPU module
    directory present (`MODULE_BACKENDS`, filtered by `net.ladenthin.llama.backend`, each checked against
-   the library's `jllama-build.txt`), then loaded (see "Natives jars")
+   the library's `jllama-build.txt`), then loaded (see "Natives jars"). `LlamaModel`'s static block warns
+   when the loaded build's tag differs from `LlamaCppVersion` (either branch).
 
 ### Cross-compilation
 Docker-based cross-compilation scripts are in `.github/dockcross/` for **Android** targets and the
@@ -2432,10 +2597,11 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 | `src/test/cpp/test_wire_contracts.cpp` | 6 | **The same contract for the two quieter surfaces.** `RequestField` against `server_schema::make_llama_cmpl_schema(...)` (5 tests) and `TrainingField` against `jllama_train::config_keys()` (1 test). Both receivers *silently ignore* an unknown key — the schema skips it, `train_engine.cpp` reads with `j.value(key, default)` and falls back — so a dead field produces no error anywhere and every string-mapping test keeps passing. `OAI_LAYER`-declared keys (consumed by `oaicompat_*_params_parse` before the schema) are exempt from the schema check, and are checked **both** ways: still unknown to the schema (the inverted check), and read by at least one upstream reader-shaped site (the configure-time sweep — this is what caught `chat_template`, a key a public builder wrote and nothing read). See [`docs/history/parameter-wire-surface.md`](docs/history/parameter-wire-surface.md). |
 | `src/test/cpp/test_rpc.cpp` | 28 | **The runnable guard for `patches/0015` and for `rpc_support.hpp`.** The device-selection rules (pure, literal inputs: `--rpc` endpoints accumulate across repeated options, an explicit `--device`/`-dev` is never overridden, stale RPC devices are replaced by the local GPUs chosen the way llama.cpp's default does — duplicates by device id dropped, iGPUs only without a discrete GPU, `none` on a CPU-only host). Then the **real** ggml-rpc client and server over loopback, no model: a `mul_mat` graph computed on the RPC backend equals the local CPU result; `ggml_backend_rpc_stop_server()` ends the server, frees the port and disconnects a client that is still connected; an unreachable or malformed endpoint is `nullptr`/`std::invalid_argument` instead of an abort; a registered server that went away is re-checked on the next registration; its device reports 0/0 memory instead of aborting; and a stale server is kept out of a later load that did not ask for it. The loopback server picks a free port from a range so parallel jobs do not collide, and serves the **CPU** by name — a served GPU that lacks an op aborts the server (see the RPC section). Also: server devices chosen by name (case-insensitive, deduplicated), an unknown name listing the available devices, and a registered RPC device refused; the mmproj device pinned the way clip would choose it minus the stale server; and `exclude_stale_devices()`, the params-level guard for TTS and the trainer. |
 
+| `src/test/cpp/test_c_api.cpp` | 27 | **The C API (`jllama_api.h`, layer B) without a JVM.** Writes a tiny random two-layer llama GGUF with the GPT-2 byte tokenizer (the public `gguf` API, like `test_kolibri1.cpp`), loads it through `jllama_model_load` and drives the shipped contract: version and build info, null-argument refusal with a message, a missing model failing to load, the load-progress callback (reported, and a `false` return aborts the load), a chat completion that is an OpenAI `chat.completion` object, an invalid request answered as the caller's fault (`JLLAMA_STATUS_INVALID_REQUEST`), streaming until `stop` with the task released afterwards ("Task not found" on the next receive), a released task gone, and the log callback seeing the server's lines with a null set flushing synchronously. Hermetic, so it runs in every `C++ Tests` job without `restore-models`; the output of a random model is noise, the contract is what is asserted. Two things the fixture does on purpose: the output rows of every non-ASCII and special token are scaled to almost nothing, because a byte above 0x7F is an incomplete UTF-8 piece the server holds back rather than streams (a random model that emits only those sends no partial chunk at all), and the task id is checked `>= 0` -- the server numbers its tasks from zero. Then every other `LlamaModel` operation in turn (the meta, raw and OAI completions, raw streaming, the template, tokenize/detokenize, metrics, slots, LoRA, configure, the refusals of a model loaded without `--embedding`/`--reranking`/FIM tokens, the grammar conversion, a Q8_0 quantisation that loads again), then the other engines: the embedded server in router mode and attached to the model (which still answers after the server stopped), the RPC server over loopback, text to speech refusing missing models, and a fine-tuning run over the random F32 model that writes a GGUF -- which is why `tts_engine.cpp`, `train_engine.cpp` and `native_server_engine.cpp` are in `jllama_test`'s source list. Four model-free cases (`CApiStatic`) run before any load. |
 | `src/test/cpp/test_native_server_shutdown.cpp` | 3 | **The runnable guard for the shutdown-handler guard in `patches/0006`/`0007`.** Runs the real `llama_server()` in router mode over an empty `--models-dir` on an ephemeral loopback port (no model, no worker) and stops it the way `native_server.cpp` does. Pins a clean stop (exit code 0), that `llama_server_request_shutdown()` **after** the server returned is a no-op (the deterministic form of the CI `SIGSEGV` — it crashed every run before the fix), and that requests hammered from another thread while the server tears down are safe (5 rounds). Compiled on non-Android only, like `server.cpp` itself. |
 | `src/test/cpp/test_gallocr_leafs.cpp` | 1 | **The runnable guard for `patches/0020`.** Two graphs with the same two nodes in the same order (`n1 = add(x, x)`, `n2 = mul(w, n1)`) and only the leafs moved: one expands `n1` before `n2` and meets the input first, the other expands only `n2`, whose first source is the weight -- the shape of the llama.cpp case, where every node and node source still matches its slot, so the old check passed it. Reserved with the first, the second must get an allocation for the input inside the allocator's buffer and compute the right product on it. No model, every platform. **Verified both ways:** with the fix removed from the source tree the test dies with SIGSEGV (rc 139); a first version that swapped the operands of one `add` passed without the fix, because a swapped *node source* was already caught -- a guard has to move only the leafs. |
 
-**Current total: 602 tests (all passing).**
+**Current total: 629 tests (all passing).**
 
 #### Upstream source location (in CMake build tree)
 
@@ -2760,10 +2926,10 @@ keeping it clear of the JPMS module-mode javadoc trap that bit BAF. **Before rai
 javadoc source level to ≥ 9, read**
 [`../workspace/policies/jpms-module-descriptor.md`](../workspace/policies/jpms-module-descriptor.md).
 
-## Repository layout — Maven reactor (`llama/` + `llama-langchain4j/` + `llama-kotlin/` + `llama-platform/`) + the `llama-android/` Gradle build
+## Repository layout — Maven reactor (`llama/` + `llama-langchain4j/` + `llama-kotlin/` + `llama-ffm/` + `llama-platform/`) + the `llama-android/` Gradle build
 
 The repo root is a thin **aggregator/parent POM** (`net.ladenthin:llama-parent`,
-`packaging=pom`) with four modules:
+`packaging=pom`) with five modules:
 
 - **`llama/`** — the native JNI core (`net.ladenthin:llama`). *All the core sources and build
   files live here now:* `llama/src/`, `llama/CMakeLists.txt`, `llama/cmake/`, `llama/patches/`,
@@ -2771,6 +2937,7 @@ The repo root is a thin **aggregator/parent POM** (`net.ladenthin:llama-parent`,
   Its published coordinates are unchanged (`net.ladenthin:llama`), so consumers are unaffected.
 - **`llama-langchain4j/`** — the LangChain4j adapters (see below).
 - **`llama-kotlin/`** — the Kotlin coroutines façade (see "Android AAR + Kotlin façade" below).
+- **`llama-ffm/`** — the C API through the Java 22+ FFM API, no JNI (see "Java 22+ without JNI" below).
 - **`llama-platform/`** — a pom-packaging dependency list: the classes jar plus the CPU natives jars
   of every desktop platform (see "Natives jars" above).
 
@@ -2779,9 +2946,9 @@ construction** (no CI guard needed). The parent also holds the shared `release` 
 Central Publishing) and a `<pluginManagement>` with every plugin version more than one module uses
 (compiler, jar, resources, surefire, source, javadoc, gpg, central-publishing -- a module names such a
 plugin without a version; without it a module that pins nothing builds with the default of whatever
-Maven runs it, which differed between CI and a local build), so one reactor `mvn -P release,natives deploy` signs and publishes all five
+Maven runs it, which differed between CI and a local build), so one reactor `mvn -P release,natives deploy` signs and publishes all six
 Maven artifacts (`llama-parent` pom, `llama` with its natives jars, `llama-langchain4j`,
-`llama-kotlin`, `llama-platform` pom) at the same version.
+`llama-kotlin`, `llama-ffm`, `llama-platform` pom) at the same version.
 
 **`llama-android/` is deliberately NOT a reactor module** but a standalone plain-Gradle build
 (no AGP, no Android SDK needed to build): Maven cannot produce or deploy an artifact with
@@ -2809,12 +2976,13 @@ versioning** here), so a version change must be applied to **all five poms in lo
 - `llama/pom.xml` — `<parent><version>`
 - `llama-langchain4j/pom.xml` — `<parent><version>`
 - `llama-kotlin/pom.xml` — `<parent><version>`
+- `llama-ffm/pom.xml` — `<parent><version>`
 - `llama-platform/pom.xml` — `<parent><version>`
 
 (`llama-android/` needs **no** edit — its Gradle build reads the root pom's version at
 configure time.)
 
-The safe way is `mvn -q versions:set -DnewVersion=X.Y.Z -DgenerateBackupPoms=false` from the repo
+(`versions:set` reaches all six.) The safe way is `mvn -q versions:set -DnewVersion=X.Y.Z -DgenerateBackupPoms=false` from the repo
 root (it updates the parent and every child `<parent>` reference at once). Changing only the root
 `<version>` leaves the children pointing at a non-existent parent and **fails the reactor build**
 (`Could not find artifact net.ladenthin:llama-parent:pom:X.Y.Z`).
@@ -2843,10 +3011,157 @@ missed again.)
 - **`llama-android/README.md`** and **`llama-kotlin/README.md`** — their Gradle dependency
   snippets, plus the `llama-android`/`llama-kotlin` snippets in the root README's
   "Importing in Android" section.
+- **`llama-ffm/README.md`** — its `<dependency>` snippets (the module and `llama-platform`).
 
 (If single-source ergonomics are wanted, the Maven
 CI-friendly `${revision}` property + `flatten-maven-plugin` would let a bump touch only the root —
 that plugin is not configured today, so do not rely on "root only".)
+
+## Java 22+ without JNI (`llama-ffm` reactor module)
+
+`llama-ffm/` is the C API ("The C API: `jllama_api.h`") called through the Java 22+ Foreign Function
+and Memory API: `net.ladenthin:llama-ffm`, package `net.ladenthin.llama.ffm`, **Java floor 22**
+(`maven.compiler.release`; the FFM API is final there, JEP 454) while the core stays Java 8. It is
+the "Java 22+ over the C API" item of the delivery roadmap (TODO.md item 10), decided 2026-10-15.
+
+- **One loading path.** `JllamaNative`'s static initializer initializes `LlamaModel`, whose static
+  block runs the core's `LlamaLoader.initialize()` -- the same natives jars, `lib.path` /
+  `java.library.path`, module jars and build check as `LlamaModel` -- and resolves every `jllama_*`
+  function with `SymbolLookup.loaderLookup()`, which sees what `System.load` put into the class
+  loader. Through `LlamaModel` and not `LlamaLoader` on purpose: the core's `module-info.java` does
+  not export `net.ladenthin.llama.loader` (javadoc in module mode refused the import, and a
+  module-path consumer would hit the same wall), and the module surface of the core is not this
+  module's to widen. There is no `System.load` and no jar handling in this module; a library of
+  another version fails with an `UnsatisfiedLinkError` naming the missing symbol.
+- **Hand-written bindings, no jextract** (not in the JDK, not in CI): one `MethodHandle` per
+  declaration of `jllama_api.h` in `JllamaNative`, plus the marshalling helpers (`cString`,
+  `cStrings` for an argv, `takeString` / `takeFloats` / `takeTokens` / `takeBytes` / `takeStrings` for
+  the out-parameters, each releasing with the typed `jllama_*_free`). `size_t` is `JAVA_LONG`: every
+  platform this project ships natives for is 64-bit. The callbacks are upcall stubs: the load-progress
+  one in the confined arena of the load call (it runs on the loading thread), the log one in a shared
+  arena `Jllama` keeps until the next `setLogCallback` swap -- the C side drains the previous sink
+  before `jllama_set_log_callback` returns, so the old stub is closed after the call. An exception
+  inside an upcall would end the JVM, so both bridges catch everything (the progress bridge aborts
+  the load instead).
+- **The core's exceptions.** `JllamaNative.check` maps `JLLAMA_STATUS_INVALID_REQUEST` to
+  `InvalidRequestException`, `JLLAMA_STATUS_INVALID_ARGUMENT` to `IllegalArgumentException`, everything
+  else to `LlamaException`, each with `jllama_last_error()` as the message -- the same verdicts the
+  JNI shells give.
+- **Public API**: `FfmLlamaModel` (the `LlamaModel` operations, JSON text in and out, `FfmTaskStream`
+  for the streams: an `Iterator<String>` that releases the task at `stop` or on `close()`),
+  `FfmNativeServer` (classic, attached, `setWorkerCommand`), `FfmRpcServer` (static; `serve` blocks
+  like `RpcServer`'s thread body), `FfmTextToSpeech`, `Jllama` (version, build info, the log callback,
+  grammar conversion, quantise, finetune), `SlotOp`. `ModelParameters.toArray()` is the argv
+  (`argv[0]` is "", which the C API accepts as the program name).
+- **No `module-info.java`**, on purpose: javadoc stays in classpath mode
+  (`../workspace/policies/jpms-module-descriptor.md`), the manifest carries
+  `Automatic-Module-Name: net.ladenthin.llama.ffm`. The compiler runs `-Xlint:all -Werror` minus
+  `restricted` (every FFM call is one) and `classfile` (the core's checker-qual annotations are
+  provided scope there and absent here). Surefire passes `--enable-native-access=ALL-UNNAMED`.
+- **Toolchain.** The reactor builds with the JDK of `.java-version` (21, a shared file of the four
+  repositories). The profile `toolchain-jdk22` (active on a JDK below 22) runs `maven-toolchains-plugin`
+  with `<jdk><version>[22,)</version></jdk>`, so the compiler, surefire and javadoc of this module use
+  a JDK 22+ from `~/.m2/toolchains.xml` while Maven itself stays on 21; on a JDK 22+ the profile is
+  inactive. **Every job that runs Maven over the whole reactor therefore registers a second JDK**:
+  `package`, `publish-snapshot`, `publish-release` and the module's own `test-java-llama-ffm` each
+  have a `setup-java` step with `java-version: '25'` (the current LTS above the floor) **before** the
+  `.java-version` one -- setup-java writes a `toolchains.xml` entry per installed JDK and the last
+  step keeps `JAVA_HOME` on 21. `build-core` (`-pl llama -am`) never reaches the module and stays as it
+  is. Locally: unpack a Temurin 22+ (the Adoptium GitHub releases are reachable where
+  `api.adoptium.net` is not) and write the entry by hand.
+- **CI**: `test-java-llama-ffm` (`needs: [crosscompile-linux-x86_64, verify-model-cache]`) downloads
+  the Linux x86-64 natives, restores the models, builds the core, runs `mvn -f llama-ffm/pom.xml
+  verify` with `lib.path` and the draft model, and fails when `FfmLlamaModelIntegrationTest` skipped
+  itself (a self-skip would hide a broken binding). It gates both publish jobs; the release gate check
+  demands it. `verify-bytecode-version.sh` keeps scanning `llama/target` only: the module's classes
+  are major 66 and are not part of the smoke sets.
+- **Tests**: `JllamaNativeTest` (model-free: `apiVersion` equals the pom version surefire passes,
+  `buildInfo` starts with `LlamaCppVersion`, a grammar conversion, a missing model's message, the log
+  callback reached from the worker and flushed on `null`, RPC device names) and
+  `FfmLlamaModelIntegrationTest` (the draft model, or `-Dnet.ladenthin.llama.ffm.model`: progress
+  callback, meta, chat completion, streaming to `stop` and an early close, raw completion and its
+  stream, tokenize/detokenize round trip, template, metrics, LoRA and configure, slot erase and the
+  refused save, the embedding refusal, invalid requests, the attached server answering `/health` and
+  the model outliving it, a closed model refusing calls). Locally the C++ test fixture's twin, a
+  tiny random llama GGUF written with `gguf-py`, serves as the model where no download is possible.
+- **`versions.POMS`** names `llama-ffm/pom.xml` in all four repositories (a shared file).
+
+## Code signing of the Windows DLLs (SSL.com eSigner, one switch; inert until the certificate exists)
+
+Decided 2026-10-15 (TODO.md, delivery roadmap, item 11): Authenticode over every DLL of every Windows
+natives jar with an **SSL.com IV code-signing certificate held in eSigner** (SSL.com's cloud HSM),
+Windows only (the macOS Developer ID was declined; the dylib stays ad-hoc signed by the linker, with
+the `.asc` and the Sigstore attestation as its provenance). **Azure Trusted Signing was the first
+choice and is a dead end for the owner**: Microsoft's identity validation does not take an individual
+in Germany (country not supported), the organisation form needs a registered business, and the
+account created for it costs 9.99 USD/month for nothing -- the first form of this section and of
+`sign-windows-natives.sh` (OIDC to Azure, `TRUSTEDSIGNING`) was replaced on the same day. SignPath
+Foundation (free for open source) was declined because the publisher on the signature would read
+"SignPath Foundation", not the owner. The code side is in place and does nothing until the
+certificate and the secrets exist.
+
+- **One switch, `sign_windows`**, a `workflow_dispatch` input next to `publish_to_central` and
+  `use_cache`, turned into the workflow-level `SIGN_WINDOWS` the way `USE_CACHE` is. Snapshot and
+  release alike: the pipeline is the same at that point, a release is both switches on, and a push
+  or a pull request never signs (nothing publishes from those either). `publish-release` warns
+  (`::warning::`) when it deploys without the switch -- deliberately no failure, the switch is the
+  decision.
+- **Where**: a job of its own, `sign-windows-natives`, after the ten Windows build jobs and
+  `test-java-windows-x86_64`, before `package`. It downloads the `natives-*-windows-*` artifacts
+  unmerged (one `Windows/<arch>/<backend>/` directory each, as uploaded), signs, verifies and
+  **re-uploads each under its own name with `overwrite: true`**, so `package` and both publish jobs
+  merge signed DLLs, the Windows `smoke-natives` rows run the signed sets and the jars carry them
+  ("no asset ships that CI has not run"). Not steps in `package`: the secrets live in the
+  `maven-central` environment (the GPG key's, same trust class, same rules), and `package` runs on
+  every pull request, where that environment's rules must not apply -- `verify-signing-key` on the
+  same environment is "red by design" on foreign branches. The job waits for the Windows Java test
+  job because it reads `natives-cpu-windows-x86-64`: `overwrite` deletes the artifact for a moment,
+  and a download in that moment fails. `package` lists the job in `needs` with an `if` that
+  tolerates its skip (`!cancelled() && !contains(needs.*.result, 'failure') && ...`): skipped means
+  no switch, run and failed (wrong secrets, the environment refusing the branch) means `package`
+  is skipped too, because the signature was asked for.
+- **How**: `.github/sign-windows-natives.sh` -- **jsign** (`net.jsign:jsign:7.2` from Maven Central,
+  pinned by version and SHA-256; Java, runs on the Linux runner, no signtool) with
+  `--storetype ESIGNER --keystore <endpoint> --storepass "<username>|<password>" --alias
+  <credential id> --keypass <TOTP secret>` (read from jsign's `KeyStoreType`: the store password must
+  carry the `|`, the key password is stored as the TOTP secret and jsign generates each one-time
+  code itself), SHA-256, an RFC 3161 timestamp from `ts.ssl.com`, every `Windows/*/*/*.dll` of the
+  tree in one call; then `signed=no` -> `signed=yes` in each directory's `jllama-build.txt` (CMake
+  writes `no`; the merge step requires the key with either value). `JSIGN_JAR` names a local jar
+  instead of the Maven fetch (measured with a real DLL and dummy credentials: the options are
+  accepted and the run fails at SSL.com's authentication, nothing flipped). The two passwords reach
+  jsign through its `env:` prefix (`--storepass env:JSIGN_STOREPASS`, `--keypass env:ES_TOTP_SECRET`;
+  both of `KeyStoreBuilder`'s password getters resolve it), so no secret is a process argument. No
+  `set -x`, no echoed argument.
+- **Secrets and variables**: `ES_USERNAME`, `ES_PASSWORD`, `CREDENTIAL_ID`, `ES_TOTP_SECRET` -- the
+  names of SSL.com's own GitHub action, so their documentation maps 1:1 -- as secrets of the
+  `maven-central` environment; optionally the repository variable `ES_ENDPOINT` (empty =
+  `https://cs.ssl.com`; `https://cs-try.ssl.com` is SSL.com's sandbox, whose test certificate
+  Windows does not trust, for a dry run of the pipeline). **The TOTP secret lets whoever holds it
+  sign in the owner's name**, which is why it reaches exactly one job, only on the explicit switch,
+  only under that environment's rules.
+- **The gate on the result**: `verify-native-deps.py` carries `pe_signed()` (the attribute certificate
+  table, `IMAGE_DIRECTORY_ENTRY_SECURITY`, presence only -- the chain is Windows' and jsign's business)
+  and `signature_violations()`: a Windows directory whose `jllama-build.txt` says `signed=yes` must hold
+  only signed DLLs, and with `--require-signed` a directory saying `signed=no` is a violation. The
+  sign job runs it with `--require-signed` over the signed artifacts before re-uploading, and
+  `package` and both publish jobs run it over the merged tree with the flag whenever `SIGN_WINDOWS`
+  is on -- so a signed run cannot let an unsigned DLL into a jar, and a run without the switch is
+  not blocked. Unit tests in `test_nativedeps.py` (`SignatureTest`, a synthetic PE with and without
+  the security directory). `check-natives.py` holds the job itself (`natives.check_signing`): one
+  `overwrite: true` upload per Windows row of `natives.csv`, and the job waits for every job that
+  uploads one of them.
+- **What the owner does, in order** (TODO.md item 11 and "Code-sign the Windows DLLs" carry the
+  details and the prices): delete the Azure Trusted Signing account; SSL.com's IV validation; the IV
+  code-signing certificate enrolled in eSigner; the TOTP secret and the credential id from the
+  eSigner settings; the four secrets into the `maven-central` environment; a dispatch with
+  `sign_windows` and without `publish_to_central`; `Get-AuthenticodeSignature` (or `signtool verify
+  /pa /v`) on a `jllama.dll` unpacked from the run's smoke set must name the owner as the publisher.
+  eSigner meters per signature: a signed run signs **35 DLLs** (20 in `cpu-windows-x86-64`, 7 in
+  `cpu-windows-aarch64`, one in each of the 8 Windows module jars), so the plan's quota is read
+  against that before the first run.
+- **Not covered, on purpose**: the jars (`jarsigner` only on a consumer's request -- a fat jar breaks
+  it), Linux and Android (no OS mechanism; `.asc` + attestation), macOS (declined).
 
 ## LangChain4j integration (`llama-langchain4j` reactor module)
 

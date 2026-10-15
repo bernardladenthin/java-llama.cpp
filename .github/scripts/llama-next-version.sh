@@ -81,7 +81,7 @@ if [ "${1:-}" = "--resolve" ]; then
     ref="$(ref_of_number "$n")" || exit 3
     sha="$(git -C "$CACHE" rev-parse "${ref}^{commit}")"
     if [ "$ref" = "b$n" ]; then
-        echo "b$n is published: $sha (JLLAMA_GIT_COMMIT can stay empty)"
+        echo "b$n is published: $sha -- set(JLLAMA_GIT_COMMIT \"$sha\") (the commit stays the pin; CI refuses a fetch by tag name)"
     else
         echo "b$n is not published yet; it will be $sha -- set(JLLAMA_GIT_COMMIT \"$sha\")"
     fi
@@ -102,16 +102,15 @@ fi
 curref="$(ref_of_number "$cur")" || exit 3
 git -C "$CACHE" rev-parse -q --verify "b${target}^{commit}" >/dev/null 2>&1 || { echo "ERROR: b$target is not a tag in the mirror" >&2; exit 3; }
 if [ -n "$pinned_commit" ]; then
-    # JLLAMA_GIT_COMMIT is set: it must be the commit the number names, and it is stale once the tag exists
+    # JLLAMA_GIT_COMMIT is set: it must be the commit the number names (and it stays set once the tag exists)
     pinned_count="$(git -C "$CACHE" rev-list --count "$pinned_commit" 2>/dev/null || true)"
     if [ "$pinned_count" != "$cur" ]; then
         echo "ERROR: JLLAMA_GIT_COMMIT $pinned_commit has commit count ${pinned_count:-?}, not $cur -- it does not resolve b$cur (run: $0 --resolve b$cur)" >&2; exit 3
     fi
-    if [ "$curref" = "b$cur" ]; then
-        echo "NOTE: upstream has published b$cur ($(git -C "$CACHE" rev-parse "b$cur^{commit}")): clear JLLAMA_GIT_COMMIT in $CMAKELISTS, the tag carries the pin now." >&2
-    fi
 elif [ "$curref" != "b$cur" ]; then
     echo "NOTE: b$cur is not a published tag and JLLAMA_GIT_COMMIT is empty -- the native fetch will fail; set(JLLAMA_GIT_COMMIT \"$curref\")" >&2
+else
+    echo "NOTE: JLLAMA_GIT_COMMIT is empty -- CI refuses a fetch by tag name (JLLAMA_REQUIRE_COMMIT); set(JLLAMA_GIT_COMMIT \"$(git -C "$CACHE" rev-parse "b$cur^{commit}")\")" >&2
 fi
 
 # diff byte size between the current ref and a tag number, honoring the WebUI-exclusion toggle

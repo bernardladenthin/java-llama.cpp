@@ -45,9 +45,21 @@ if [ "${USE_CACHE:-true}" = "true" ] && [ -n "${SCCACHE_WEBDAV_TOKEN:-}${SCCACHE
    && [ "$(uname -s)" = "Linux" ] && [ -n "$SCCACHE_DL_ARCH" ]; then
   SCCACHE_REL="sccache-v${SCCACHE_DL_VERSION}-${SCCACHE_DL_ARCH}-unknown-linux-musl"
   echo "build.sh: fetching ${SCCACHE_REL} (no sccache on PATH)..."
-  if curl -fsSL --proto =https --proto-redir =https \
+  # The archive's SHA-256, pinned here for the default version (the values mozilla/sccache
+  # publishes next to the release assets); another SCCACHE_DL_VERSION brings its own through
+  # SCCACHE_DL_SHA256, and without a known hash the fetch is refused rather than trusted.
+  case "${SCCACHE_DL_VERSION}-${SCCACHE_DL_ARCH}" in
+    0.18.0-x86_64)  SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89}" ;;
+    0.18.0-aarch64) SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a}" ;;
+    *)              SCCACHE_DL_SHA256="${SCCACHE_DL_SHA256:-}" ;;
+  esac
+  if [ -z "$SCCACHE_DL_SHA256" ]; then
+    echo "build.sh: no SHA-256 known for sccache ${SCCACHE_DL_VERSION} on ${SCCACHE_DL_ARCH} (set SCCACHE_DL_SHA256); continuing without cache"
+  elif curl -fsSL --proto =https --proto-redir =https \
         "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_DL_VERSION}/${SCCACHE_REL}.tar.gz" \
-        -o /tmp/sccache.tgz && tar -xzf /tmp/sccache.tgz -C /tmp; then
+        -o /tmp/sccache.tgz \
+     && echo "${SCCACHE_DL_SHA256}  /tmp/sccache.tgz" | sha256sum -c - \
+     && tar -xzf /tmp/sccache.tgz -C /tmp; then
     export PATH="/tmp/${SCCACHE_REL}:$PATH"
     echo "build.sh: sccache -> $(command -v sccache || echo 'still missing')"
   else
@@ -134,7 +146,11 @@ else
   echo "build.sh: sccache OFF, building with -j${JOBS}"
 fi
 
-cmake -Bbuild $LAUNCH $@ || exit 1
+# Under GitHub Actions llama.cpp is fetched by commit only (JLLAMA_REQUIRE_COMMIT refuses the
+# moving tag name; the retry below passes it too).
+REQUIRE_COMMIT=""
+[ -n "${GITHUB_ACTIONS:-}" ] && REQUIRE_COMMIT="-DJLLAMA_REQUIRE_COMMIT=ON"
+cmake -Bbuild $LAUNCH $REQUIRE_COMMIT $@ || exit 1
 
 # Build. The pre-build probe only proves the cache was reachable at one instant; it cannot
 # foresee a cache outage that strikes *during* the build. When sccache is the launcher and its
@@ -168,7 +184,7 @@ if [ "$build_rc" -ne 0 ]; then
     # flag the "uncached" retry silently re-enables the very launcher it's trying to avoid and fails
     # identically. Confirmed live: the b10333/CUDA-13.3 retry hit the same fatbinary/.ptx failure
     # because of this (see CLAUDE.md's sccache rollout section for the incident).
-    cmake -Bbuild -DGGML_CCACHE=OFF $@ || exit 1
+    cmake -Bbuild -DGGML_CCACHE=OFF $REQUIRE_COMMIT $@ || exit 1
     cmake --build build --config Release -j"${JOBS}" || exit 1
     LAUNCH=""  # cache disabled for this run; skip the stats query below
   else
@@ -204,6 +220,16 @@ if [ -n "$LAUNCH" ] && command -v sccache >/dev/null 2>&1; then
       } >> "$GITHUB_STEP_SUMMARY"
     fi
   fi
+fi
+
+# The plain-C test of a modular build (ctest `c_abi`, llama/CMakeLists.txt): the shared llama and
+# ggml-base libraries next to libjllama, consumed from C11, the CPU modules loaded from the natives
+# directory. Registered only by a modular, non-cross build; `--no-tests=ignore` keeps every other
+# build (static, module-only, Android) a no-op here. Fails the job when it fails: a modular build
+# whose shared upstream libraries cannot be linked and loaded by a plain C program is broken for
+# every consumer of layer A, Java included.
+if [ -f build/CTestTestfile.cmake ]; then
+  ctest --test-dir build --no-tests=ignore -R '^c_abi$' --output-on-failure || exit 1
 fi
 
 # macOS: put the minimum OS each built dylib was linked for into the log. It is set by

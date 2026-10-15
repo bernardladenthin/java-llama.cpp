@@ -52,3 +52,73 @@ smoke_assert_loader_line() {
     done <<< "$(smoke_set_modules "$set_dir")"
     echo "loader: $line"
 }
+
+# The classpath of a smoke set WITHOUT its natives jars: the classes jar and its runtime
+# dependencies only -- what a consumer has who ships the natives as a directory next to the
+# application and names it with net.ladenthin.llama.lib.path (CLAUDE.md, "Natives jars": the
+# natives directory contract). Every jar of the set whose name ends in a natives.csv classifier is
+# left out; the result is a colon-separated list, never a wildcard.
+smoke_classpath_without_natives() {
+    local set_dir="$1"
+    local sep=":"
+    case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) sep=";" ;; esac
+    local classifiers
+    classifiers="$(grep -v -e '^#' -e '^classifier,' -e '^$' "$SMOKE_LIST" | tr -d '\r' | cut -d, -f1)"
+    local cp="" jar base keep c
+    while IFS= read -r jar; do
+        base="$(basename "$jar" .jar)"
+        keep=1
+        while IFS= read -r c; do
+            case "$base" in *"-$c") keep=0 ;; esac
+        done <<< "$classifiers"
+        [ "$keep" -eq 1 ] && cp="${cp:+$cp$sep}$jar"
+    done < <(find "$set_dir" -maxdepth 1 -name '*.jar' | sort)
+    [ -n "$cp" ] || { echo "::error::no non-natives jar in the smoke set $set_dir" >&2; return 1; }
+    echo "$cp"
+}
+
+# Unpacks the natives jars of a smoke set into ONE natives directory, the way a consumer does by
+# hand (README, "Natives outside Maven"): the library jar's directory
+# net/ladenthin/llama/<OS>/<ARCH>/<backend>/ is the directory, and every GPU module jar's files are
+# copied flat into it -- the module's library next to the CPU set, its jllama-extras.txt lines
+# appended to the library's (a vendor loader a module ships must still be preloaded), its
+# jllama-files.txt lines appended likewise, its own jllama-build.txt and jllama-sbom.json dropped
+# (same tag by contract, which the loader checked when the jars were built). Prints the directory.
+smoke_natives_directory() {
+    local set_dir="$1" out="$2"
+    rm -rf "$out" && mkdir -p "$out"
+    local rows
+    rows="$(grep -v -e '^#' -e '^classifier,' -e '^$' "$SMOKE_LIST" | tr -d '\r')"
+    local lib_dir="" classifier dir lib platform kind optin jar
+    while IFS=, read -r classifier dir lib platform kind optin; do
+        [ "$kind" = "library" ] || continue
+        jar="$(find "$set_dir" -maxdepth 1 -name "llama-*-$classifier.jar" | head -1)"
+        [ -n "$jar" ] || continue
+        [ -z "$lib_dir" ] || { echo "::error::two library jars in the smoke set: $lib_dir and $classifier" >&2; return 1; }
+        mkdir -p "$out/library"
+        (cd "$out/library" && unzip -q "$jar") || { echo "::error::cannot unzip $jar" >&2; return 1; }
+        lib_dir="$out/library/net/ladenthin/llama/$dir"
+        [ -f "$lib_dir/$lib" ] || { echo "::error::$jar holds no net/ladenthin/llama/$dir/$lib" >&2; return 1; }
+    done <<< "$rows"
+    [ -n "$lib_dir" ] || { echo "::error::no library jar in the smoke set $set_dir" >&2; return 1; }
+    while IFS=, read -r classifier dir lib platform kind optin; do
+        [ "$kind" = "module" ] || continue
+        jar="$(find "$set_dir" -maxdepth 1 -name "llama-*-$classifier.jar" | head -1)"
+        [ -n "$jar" ] || continue
+        mkdir -p "$out/$classifier"
+        (cd "$out/$classifier" && unzip -q "$jar") || { echo "::error::cannot unzip $jar" >&2; return 1; }
+        local mod_dir="$out/$classifier/net/ladenthin/llama/$dir" f
+        [ -f "$mod_dir/$lib" ] || { echo "::error::$jar holds no net/ladenthin/llama/$dir/$lib" >&2; return 1; }
+        for f in "$mod_dir"/*; do
+            case "$(basename "$f")" in
+                jllama-build.txt|jllama-sbom.json) ;;
+                jllama-extras.txt|jllama-files.txt)
+                    tr -d '\r' < "$f" | grep -v -e '^#' -e '^$' >> "$lib_dir/$(basename "$f")" || true ;;
+                *) [ ! -e "$lib_dir/$(basename "$f")" ] \
+                       || { echo "::error::$classifier ships $(basename "$f"), which the library directory already holds" >&2; return 1; }
+                   cp "$f" "$lib_dir/" ;;
+            esac
+        done
+    done <<< "$rows"
+    echo "$lib_dir"
+}

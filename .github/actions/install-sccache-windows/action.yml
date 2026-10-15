@@ -26,7 +26,17 @@ runs:
         $arch = if ($env:RUNNER_ARCH -eq 'ARM64') { 'aarch64' } else { 'x86_64' }
         $rel = "sccache-v$env:SCCACHE_VERSION-$arch-pc-windows-msvc"
         $url = "https://github.com/mozilla/sccache/releases/download/v$env:SCCACHE_VERSION/$rel.zip"
+        # The zip's SHA-256 as mozilla/sccache publishes it next to the release asset, pinned per
+        # version and arch; a version without a pinned hash is refused (the caller's
+        # continue-on-error then builds without the cache, which is the safe side).
+        $sha256 = @{
+          '0.18.0-x86_64'  = '8965c74d5e8a225244f741e18ad2f3f504f48228dc1bac948fc22761a348363d'
+          '0.18.0-aarch64' = '205d613fa74a9a0525e41a5ace77b1c71907d5bd4a5e668bad79111776829290'
+        }["$env:SCCACHE_VERSION-$arch"]
+        if (-not $sha256) { throw "no SHA-256 pinned for sccache $env:SCCACHE_VERSION on $arch -- add it to install-sccache-windows/action.yml" }
         Write-Host "Downloading $url"
         Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\sccache.zip"
+        $actual = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP\sccache.zip").Hash.ToLowerInvariant()
+        if ($actual -ne $sha256) { throw "sccache.zip SHA-256 $actual does not match the pinned $sha256" }
         Expand-Archive -Path "$env:RUNNER_TEMP\sccache.zip" -DestinationPath "$env:RUNNER_TEMP\sccache" -Force
         Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\sccache\$rel"

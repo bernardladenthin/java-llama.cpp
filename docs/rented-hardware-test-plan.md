@@ -67,7 +67,7 @@ run cannot end in "looked fine".
 
 ### 1. The GPU module jars on a real GPU
 
-**The question.** Modular natives (5.2.0) made each GPU backend its own module jar, loaded next to
+**The question.** Modular natives (6.0.0) made each GPU backend its own module jar, loaded next to
 the platform's CPU library. CI places them on a GPU-less runner, where `ggml` skips them — so the
 *successful* path has never run. Does a `cuda13` or `vulkan` module jar actually register its device,
 offload layers and compute, next to the CPU library it was built beside?

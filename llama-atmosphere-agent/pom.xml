@@ -23,7 +23,7 @@ SPDX-License-Identifier: MIT
 	-->
 	<groupId>net.ladenthin</groupId>
 	<artifactId>llama-atmosphere-agent</artifactId>
-	<version>5.2.0-SNAPSHOT</version>
+	<version>6.0.0-SNAPSHOT</version>
 	<packaging>jar</packaging>
 
 	<name>${project.groupId}:${project.artifactId}</name>
@@ -313,8 +313,8 @@ SPDX-License-Identifier: MIT
 		</profile>
 		<!--
 			A GPU backend next to the CPU natives: -Dllama.classifier=<natives jar>, e.g.
-			cuda13-linux-x86-64 or vulkan-windows-x86-64 (the vendor runtime must be installed). The
-			loader prefers it and falls back to the CPU natives when it does not load.
+			cuda13-linux-x86-64 or vulkan-windows-x86-64. Its module is put next to the CPU natives; ggml
+			loads it when the vendor runtime is installed and the model runs on the CPU otherwise.
 		-->
 		<profile>
 			<id>gpu-natives</id>

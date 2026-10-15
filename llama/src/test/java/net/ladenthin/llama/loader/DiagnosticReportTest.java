@@ -122,6 +122,31 @@ public class DiagnosticReportTest {
     }
 
     /**
+     * One line per natives directory: the tag always, the provenance keys when the build wrote them
+     * (an older build's file has only the tag), commits shortened the way {@code git log --oneline}
+     * prints them, and never a key the file does not carry.
+     */
+    @Test
+    public void summarizePrintsTheTagAndEveryProvenanceKeyThatIsPresent() {
+        Map<String, String> full = new java.util.LinkedHashMap<>();
+        full.put("llama.cpp", "b11639");
+        full.put("llama.cpp.commit", "a0e6dc7384edb8f5d927155e1d26c10b4a310e6d");
+        full.put("backend", "cpu");
+        full.put("jllama.version", "5.2.0-SNAPSHOT");
+        full.put("jllama.commit", "0123456789abcdef0123456789abcdef01234567-dirty");
+        full.put("patches", "0001,0002");
+        full.put("compiler", "GNU 14.2.1");
+        full.put("toolkit", "none");
+        full.put("signed", "no");
+        assertEquals(
+                "llama.cpp=b11639 llama.cpp.commit=a0e6dc73 jllama.version=5.2.0-SNAPSHOT"
+                        + " jllama.commit=01234567-dirty patches=0001,0002 compiler=GNU 14.2.1 toolkit=none signed=no",
+                DiagnosticReport.summarize(full));
+        assertEquals("llama.cpp=b11538", DiagnosticReport.summarize(Collections.singletonMap("llama.cpp", "b11538")));
+        assertEquals("llama.cpp=(not named)", DiagnosticReport.summarize(Collections.<String, String>emptyMap()));
+    }
+
+    /**
      * The natives section reaches a verdict either way: it lists each directory with the llama.cpp
      * tag of its {@code jllama-build.txt}, or states that there is none. Silence would be the one
      * useless outcome.

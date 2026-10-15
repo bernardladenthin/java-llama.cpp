@@ -5,6 +5,7 @@
 .idea
 target
 build
+build-dl
 build-android
 # Per-bump verification trees. The llama.cpp upgrade runbook requires a FRESH build
 # directory for every version bump -- the patch applier pins its stamp to the checked-out

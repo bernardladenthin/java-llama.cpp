@@ -10,7 +10,7 @@ that pairs [Atmosphere](https://github.com/Atmosphere/atmosphere)'s built-in Ope
 agent runtime with this project's `OpenAiCompatServer`. Like `android-llmservice/` it is a
 **standalone Maven project, NOT a reactor module** — it is an application, it needs Java 21
 (Atmosphere's floor) while the core stays Java 8, and it is built without a parent so the folder can be
-copied out and run on its own. **Its version is the core's** (`5.2.0-SNAPSHOT` on `main`), and
+copied out and run on its own. **Its version is the core's** (`6.0.0-SNAPSHOT` on `main`), and
 `check-natives.py` fails when the two differ: `versions:set` does not reach this pom, so a release bump
 that forgot it would otherwise publish an agent naming the wrong core. `llama.version` defaults to
 `${project.version}`; CI still passes `-Dllama.version=<reactor version>` (the same value).

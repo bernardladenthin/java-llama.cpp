@@ -13,10 +13,10 @@ build, no manual ProGuard rules.
 ```kotlin
 // build.gradle.kts of your app — that's all.
 dependencies {
-    implementation("net.ladenthin:llama-android:5.2.0")
+    implementation("net.ladenthin:llama-android:6.0.0")
     // additionally, for Qualcomm Adreno GPUs (device must provide an OpenCL ICD) -- it depends
     // on llama-android, so the line above may also be left out:
-    // implementation("net.ladenthin:llama-android-opencl:5.2.0")
+    // implementation("net.ladenthin:llama-android-opencl:6.0.0")
 }
 ```
 

@@ -1,3 +1,14 @@
+server: keep a load-progress callback the embedding caller installed
+
+Since b9789 server_context::load_model unconditionally installs the server's own load-progress
+reporter on params_base.load_progress_callback right before common_init_from_params, clobbering the
+callback an embedding caller set -- libjllama wires LoadProgressCallback to a JNI trampoline before
+load_model, so Java saw no progress and the abort-on-false path never fired. The guard installs the
+server's reporter only when no callback is set OR when the one set is the server's own: load_model
+runs a second time on wake from the sleeping state (--sleep-idle-seconds), and a bare nullptr check
+would then leave user_data pointing at the dead stack frame of the first call (segfault on the
+first request after an idle window). Standalone llama-server is unaffected.
+
 diff --git a/tools/server/server-context.cpp b/tools/server/server-context.cpp
 index 39b7eb2..bc73429 100644
 --- a/tools/server/server-context.cpp
