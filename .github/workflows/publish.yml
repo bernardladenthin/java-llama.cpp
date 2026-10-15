@@ -29,8 +29,11 @@ env:
   GRADLE_VERSION: '9.8.1'
   # The sccache/Depot compiler cache (CLAUDE.md, "CI build cache"). Inert without the token, which
   # stays per build job (SCCACHE_WEBDAV_TOKEN): at workflow level it would reach every job,
-  # including those running third-party actions.
-  USE_CACHE: ${{ github.event_name != 'workflow_dispatch' || inputs.use_cache }}
+  # including those running third-party actions. A release build (a v* tag, which is what
+  # publish-release ships) never uses it, whatever the dispatch input says: every object of a
+  # release is compiled in the job that ships it, so the cache provider is not in the trust chain
+  # of a release (TODO.md, delivery roadmap item 8). Snapshots and PR builds keep the cache.
+  USE_CACHE: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.use_cache) }}
   SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
   # The CI model set is .github/models.csv (URLs, and the model cache key is its hash). The Java
   # tests default to exactly that set (TestConstants; TestConstantsTest asserts both directions),

@@ -1206,7 +1206,10 @@ stays `-O3` and is **bit-identical** to a clean build (release-safe).
 
 **Safety / transparency.** It is **inert** until `DEPOT_TOKEN` is configured and on **fork
 PRs** (secrets are hidden there) — those simply compile normally; the `Install sccache` step
-is `continue-on-error`; and `use_cache=false` forces a pristine, from-scratch build. Crucially,
+is `continue-on-error`; `use_cache=false` forces a pristine, from-scratch build; and **a `v*` tag
+build is always from scratch** (the workflow-level `USE_CACHE` is `false` on a tag ref whatever the
+dispatch input says, TODO.md delivery roadmap item 8), so no release object comes out of the shared
+cache -- the cache provider stays out of a release's trust chain. Crucially,
 `build.sh` runs a **probe-compile health-check** (`sccache_can_wrap_compiler`) before trusting
 sccache as the launcher: it compiles a trivial TU *through* sccache, and only sets
 `-DCMAKE_{C,CXX}_COMPILER_LAUNCHER=sccache` if that succeeds. So a sccache that is present but

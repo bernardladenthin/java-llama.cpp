@@ -126,9 +126,13 @@ version), which closes the contract bullet.)
 
 ### 8. Release builds without the shared compiler cache (C.3)
 
-- [ ] `publish-release` (tag build) forces `USE_CACHE=false`; snapshots keep the cache. Open
-      measurement afterwards: whether a cached and an uncached build of the same commit give the same
-      natives hashes -- if yes, a reproducibility job is the cheaper permanent check.
+(Landed 2026-10-15: `publish.yml`'s workflow-level `USE_CACHE` is `false` on every `v*` tag ref,
+whatever the dispatch input says, so each natives build of a release compiles every object itself
+and the `Install sccache` steps are skipped; snapshots and PR builds keep the cache.)
+
+- [ ] Open measurement: whether a cached and an uncached build of the same commit give the same
+      natives hashes -- if yes, a reproducibility job is the cheaper permanent check and the tag
+      rule above can go back to the cache.
 
 ### 9. Deferred by the owner until everything above runs: OS and jar signatures (C.4, C.5)
 
