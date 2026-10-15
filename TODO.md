@@ -126,9 +126,17 @@ function, a `test_c_api.cpp` case and a JNI shell; `jllama.cpp` carries no serve
 attach, router's worker command; not on Android), `jllama_rpc_server_*`, `jllama_tts_*`,
 `jllama_finetune` -- every native entry point of the Java API is a shell over the C API now, and
 `test_c_api.cpp` drives each engine without a JVM, the trainer included.)
-- [ ] An import library for Windows consumers (`jllama.lib`, from the DLL's exports at package
-      time) or a documented `LoadLibrary`/`GetProcAddress` recipe -- today only the latter.
+(The Windows import library landed 2026-10-15: `jllama.lib`, the linker's own import library of
+`jllama.dll`, goes into the natives directory and is named in `jllama-files.txt`, so it ships in
+the Windows library jars next to the header; `docs/c-api.md` shows the link line. Unverified on a
+Windows machine in this session -- the first Publish run's `merge-native-artifacts.sh` ("names
+'<f>', which the build did not produce") is where a wrong import-library name would show.)
+
 - [ ] Java 22+ over the C API without JNI (a separate module, Panama/FFM; the core stays Java 8).
+      Waits on a toolchain decision: CI builds with the JDK of `.java-version` (21), where the FFM
+      API is still a preview (final in 22), and a published artifact must not depend on
+      `--enable-preview`; the module needs its own JDK 22+ in CI (Maven toolchains or a second
+      `setup-java`) and a Java 22 floor of its own, both the owner's call.
 
 ### 8. Release builds without the shared compiler cache (C.3)
 

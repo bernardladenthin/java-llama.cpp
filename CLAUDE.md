@@ -1541,7 +1541,10 @@ order** -- the Java side never gets logic the C side lacks again.
 **The header ships in every library directory**, named in `jllama-files.txt` so the loader extracts
 it next to the library and never loads it (the static platforms get a one-line `jllama-files.txt`
 for exactly that; without the list the merge step derives every unlisted file into
-`jllama-extras.txt`, which `LlamaLoader` `System.load`s). `verify-native-deps.py` looks at library
+`jllama-extras.txt`, which `LlamaLoader` `System.load`s). **On Windows the import library
+`jllama.lib` ships the same way** (`ARCHIVE_OUTPUT_DIRECTORY` of `jllama` is the natives directory
+and the list names `$<TARGET_LINKER_FILE_NAME:jllama>`), so a C consumer links it instead of
+resolving the entry points with `GetProcAddress`. `verify-native-deps.py` looks at library
 suffixes only, and the merge step's "nothing else" rule applies to module directories only.
 
 **Tests.** `src/test/cpp/test_c_api.cpp` drives the C API compiled into `jllama_test`

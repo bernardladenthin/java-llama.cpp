@@ -114,9 +114,10 @@ directory; README "Natives outside Maven"):
 cc -I<natives dir> example.c -L<natives dir> -ljllama -Wl,-rpath,<natives dir> -o example
 ```
 
-On Windows link `jllama.lib` is not shipped: load the DLL with `LoadLibrary` and resolve the
-`jllama_*` entry points with `GetProcAddress`, or generate an import library from the DLL's export
-table. Streaming:
+On Windows the import library `jllama.lib` ships next to `jllama.dll` in the same directory (named
+in `jllama-files.txt`, extracted and never loaded), so `cl example.c /I<natives dir> <natives
+dir>\jllama.lib` links the entry points directly; `LoadLibrary` + `GetProcAddress` works as well.
+Streaming:
 
 ```c
 int task = 0;
