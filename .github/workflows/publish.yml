@@ -1904,7 +1904,7 @@ jobs:
     env:
       # The CUDA redist manifest (redistrib_<this>.json) the archives are verified against; empty
       # takes the newest 13.4.x manifest the redist index lists (the run prints which).
-      CUDA_REDIST_MANIFEST: ""
+      CUDA_REDIST_MANIFEST: "13.4.3"
       SCCACHE_WEBDAV_TOKEN: ${{ secrets.DEPOT_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -1930,24 +1930,27 @@ jobs:
           $ErrorActionPreference = "Stop"
           $cuda = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v13.4"
           $base = "https://developer.download.nvidia.com/compute/cuda/redist"
+          # Components only: the archive name (component version) and its SHA-256 both come from
+          # the redist manifest below, so they cannot disagree. A hand-written archive name checked
+          # against the newest manifest's hash did exactly that in run 38808518362 (cuda_crt 13.4.59
+          # from upstream's list against the 13.4.3 manifest's cuda_crt).
           $parts = @(
-            "cuda_crt/cuda_crt-windows-x86_64-13.4.59",
-            "cuda_cudart/cuda_cudart-windows-x86_64-13.4.49",
-            "cuda_nvcc/cuda_nvcc-windows-x86_64-13.4.59",
-            "cuda_nvrtc/cuda_nvrtc-windows-x86_64-13.4.59",
-            "libcublas/libcublas-windows-x86_64-13.7.0.27",
-            "libnvvm/libnvvm-windows-x86_64-13.4.59",
-            "cuda_nvtx/cuda_nvtx-windows-x86_64-13.4.49",
-            "cuda_profiler_api/cuda_profiler_api-windows-x86_64-13.4.49",
-            "visual_studio_integration/visual_studio_integration-windows-x86_64-13.4.49",
-            "cccl/cccl-windows-x86_64-13.3.4.2.1"
+            "cuda_crt",
+            "cuda_cudart",
+            "cuda_nvcc",
+            "cuda_nvrtc",
+            "libcublas",
+            "libnvvm",
+            "cuda_nvtx",
+            "cuda_profiler_api",
+            "visual_studio_integration",
+            "cccl"
           )
           New-Item -ItemType Directory -Force -Path $cuda | Out-Null
           # Every archive is checked against the SHA-256 NVIDIA publishes for it in the redist
           # manifest of this toolkit (redistrib_<version>.json next to the archives): a truncated or
-          # swapped download fails here, not at link time. CUDA_REDIST_MANIFEST names the manifest
-          # version; it moves with the toolkit (TODO.md, delivery roadmap, item 3: the hashes are to
-          # be pinned into this file once a machine that can reach NVIDIA's host has read them).
+          # swapped download fails here, not at link time. CUDA_REDIST_MANIFEST pins the manifest
+          # version, and with it every component version (TODO.md, delivery roadmap, item 3).
           $manifestVersion = $env:CUDA_REDIST_MANIFEST
           if (-not $manifestVersion) {
             # Unpinned: the newest 13.4.x manifest the redist index lists (the index is NVIDIA's
@@ -1960,13 +1963,14 @@ jobs:
           $manifestUrl = "$base/redistrib_$manifestVersion.json"
           Write-Host "Reading $manifestUrl"
           $manifest = Invoke-RestMethod -Uri $manifestUrl
-          foreach ($p in $parts) {
-            $dir, $name = $p.Split("/")
-            $url = "$base/$dir/windows-x86_64/$name-archive.zip"
+          foreach ($dir in $parts) {
+            $entry = $manifest.$dir.'windows-x86_64'
+            if (-not $entry -or -not $entry.relative_path -or -not $entry.sha256) { throw "the redist manifest $manifestUrl has no windows-x86_64 relative_path/sha256 for $dir" }
+            $url = "$base/$($entry.relative_path)"
+            $name = [System.IO.Path]::GetFileNameWithoutExtension($entry.relative_path) -replace '-archive$', ''
             $zip = "$env:RUNNER_TEMP\$name.zip"
-            $expected = $manifest.$dir.'windows-x86_64'.sha256
-            if (-not $expected) { throw "the redist manifest $manifestUrl has no windows-x86_64 sha256 for $dir" }
-            Write-Host "Downloading $url (sha256 $expected)"
+            $expected = $entry.sha256
+            Write-Host "Downloading $url ($dir $($manifest.$dir.version), sha256 $expected)"
             Invoke-WebRequest -Uri $url -OutFile $zip
             $actual = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
             if ($actual -ne $expected.ToLowerInvariant()) { throw "$name-archive.zip SHA-256 $actual does not match the manifest's $expected" }
@@ -2415,14 +2419,21 @@ jobs:
         # Version and installer arguments as in upstream's release.yml (windows, vulkan arm64).
         run: |
           curl.exe -fSL -o "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe"
-          # Verified against the SHA-256 LunarG publishes for the installer (sdk/sha256/...; pinned
-          # into VULKAN_SDK_SHA256 once read, empty takes the published value). TODO.md, delivery
-          # roadmap, item 3.
-          $expected = $env:VULKAN_SDK_SHA256
-          if (-not $expected) { $expected = ((Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/sha256/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe.txt" -UseBasicParsing).Content -split '\s+')[0] }
-          if (-not $expected) { throw "no SHA-256 for the Vulkan SDK installer (neither pinned nor published)" }
+          # Verified against the SHA-256 LunarG publishes for the installer (its download API serves
+          # it at sdk/sha/<version>/<os>/<file>.txt -- the first run asked sdk/sha256/ and got a 404,
+          # run 38808518362; pinned into VULKAN_SDK_SHA256 once read, empty takes the published value).
+          # Fetched with curl.exe as text (Invoke-WebRequest's byte[] Content, see the OpenVINO job).
+          # TODO.md, delivery roadmap, item 3.
           $actual = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP\VulkanSDK-Installer.exe").Hash.ToLowerInvariant()
-          if ($actual -ne $expected.ToLowerInvariant()) { throw "VulkanSDK-Installer.exe SHA-256 $actual does not match $expected" }
+          $expected = $env:VULKAN_SDK_SHA256
+          if (-not $expected) {
+            $shaUrl = "https://sdk.lunarg.com/sdk/sha/$env:VULKAN_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_VERSION.exe.txt"
+            $published = curl.exe -fsSL $shaUrl
+            if ($LASTEXITCODE -ne 0 -or -not $published) { throw "no SHA-256 for the Vulkan SDK installer: VULKAN_SDK_SHA256 is empty and $shaUrl did not answer (the downloaded installer hashes to $actual -- verify it on a trusted machine and pin it)" }
+            $expected = (($published -join ' ') -split '\s+')[0]
+          }
+          Write-Host "VulkanSDK-Installer.exe SHA-256 actual=$actual expected=$expected"
+          if ($actual -ne $expected.ToLowerInvariant()) { throw "VulkanSDK-Installer.exe SHA-256 $actual does not match the published $expected" }
           & "$env:RUNNER_TEMP\VulkanSDK-Installer.exe" --accept-licenses --default-answer --confirm-command install com.lunarg.vulkan.arm64
           if (-not (Test-Path "C:\VulkanSDK\$env:VULKAN_VERSION")) { throw "Vulkan SDK $env:VULKAN_VERSION was not installed" }
           Add-Content $env:GITHUB_ENV "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_VERSION"
@@ -2529,12 +2540,16 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile "$env:RUNNER_TEMP\openvino.zip"
           # Verified against the .sha256 the toolkit server publishes next to the archive (pinned
           # into OPENVINO_WINDOWS_SHA256 once read; empty takes the published value). TODO.md,
-          # delivery roadmap, item 3.
+          # delivery roadmap, item 3. The .sha256 is fetched with curl.exe as text, like the Linux
+          # job: Invoke-WebRequest hands an octet-stream response over as byte[], and -split on a
+          # byte array stringifies the bytes in decimal -- the first run compared against "53",
+          # the ASCII code of the hash's first character (run 38808518362).
           $expected = $env:OPENVINO_WINDOWS_SHA256
-          if (-not $expected) { $expected = ((Invoke-WebRequest -Uri "$url.sha256" -UseBasicParsing).Content -split '\s+')[0] }
+          if (-not $expected) { $expected = ((curl.exe -fsSL "$url.sha256") -join ' ' -split '\s+')[0] }
           if (-not $expected) { throw "no SHA-256 for $url (neither pinned nor published)" }
           $actual = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP\openvino.zip").Hash.ToLowerInvariant()
-          if ($actual -ne $expected.ToLowerInvariant()) { throw "openvino.zip SHA-256 $actual does not match $expected" }
+          Write-Host "openvino.zip SHA-256 actual=$actual expected=$expected"
+          if ($actual -ne $expected.ToLowerInvariant()) { throw "openvino.zip SHA-256 $actual does not match the published $expected" }
           Expand-Archive -Path "$env:RUNNER_TEMP\openvino.zip" -DestinationPath "C:\openvino" -Force
           # The archive extracts into a nested versioned folder; point OpenVINO_DIR at its runtime/cmake.
           $root = (Get-ChildItem "C:\openvino" -Directory | Select-Object -First 1).FullName

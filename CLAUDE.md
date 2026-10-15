@@ -555,10 +555,15 @@ To change the CUDA version, update the following places:
    [`docs/benchmarks/gpu-module-jars.md`](docs/benchmarks/gpu-module-jars.md)). Server applications run
    on exactly those GPUs, which is why this deviates from upstream, who ship to RTX owners and say in
    a comment that they rely on the default. On a bump, re-read ggml's list at the new tag and
-   **extend** ours rather than dropping it. **Copy that list from upstream's
-   `.github/actions/windows-setup-cuda/action.yml` at the pinned `GIT_TAG`** — the component versions
-   differ per component (cuBLAS and CCCL have their own numbering) and cannot be derived from the CUDA
-   version. (This replaced `Jimver/cuda-toolkit`, which never shipped 13.4.)
+   **extend** ours rather than dropping it. **The component set follows upstream's
+   `.github/actions/windows-setup-cuda/action.yml` at the pinned `GIT_TAG`, the component versions
+   follow NVIDIA's redist manifest** (`CUDA_REDIST_MANIFEST`, e.g. `13.4.3` = `redistrib_13.4.3.json`):
+   the step reads each component's `relative_path` and `sha256` from the manifest, so the archive it
+   downloads and the hash it checks cannot name two different versions. They did once -- the first
+   full run of 6.0.0 (38808518362) paired upstream's hand-written `cuda_crt-…-13.4.59` with the newest
+   manifest's hash for another `cuda_crt` and failed on the first archive. Component versions differ
+   per component (cuBLAS and CCCL have their own numbering), which is why the manifest and not the
+   CUDA version decides them. (This replaced `Jimver/cuda-toolkit`, which never shipped 13.4.)
 3. **Only for a major bump:** the backend name `cuda13` — in `llama/CMakeLists.txt`
    (`JLLAMA_BACKEND`), `.github/natives.csv` (the two `cuda13-*` rows), the generated pom executions
    (`check-natives.py pom`), the build jobs' artifact names, `LlamaLoader.MODULE_BACKENDS` and the

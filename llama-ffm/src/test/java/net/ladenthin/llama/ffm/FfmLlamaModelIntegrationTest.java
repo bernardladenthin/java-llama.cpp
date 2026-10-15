@@ -126,10 +126,19 @@ class FfmLlamaModelIntegrationTest {
     void tokenizeAndDetokenizeRoundTrip() throws IOException {
         int[] tokens = model.tokenize("Hello", false);
         assertThat(tokens.length, greaterThan(0));
-        assertEquals("Hello", model.detokenize(tokens));
+        // A SentencePiece tokenizer (the CI draft model) renders the first piece's word-boundary
+        // marker as a leading space, " Hello"; a byte-level tokenizer (the GPT-2 test fixture)
+        // gives "Hello". The round trip is the text up to that boundary.
+        String detokenized = model.detokenize(tokens);
+        assertEquals("Hello", detokenized.trim());
         JsonNode json = JSON.readTree(model.tokenizeJson("Hello", false, true));
         assertEquals(tokens.length, json.path("tokens").size());
         assertArrayEquals(tokens, JSON.convertValue(json.path("tokens").findValues("id"), int[].class));
+        StringBuilder pieces = new StringBuilder();
+        for (JsonNode piece : json.path("tokens").findValues("piece")) {
+            pieces.append(piece.asText());
+        }
+        assertEquals(detokenized, pieces.toString());
         assertTrue(JSON.readTree(model.detokenizeJson(tokens)).has("content"));
     }
 
