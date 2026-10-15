@@ -472,8 +472,11 @@ the directory may be read-only.
 upstream's own `libllama` / `libmtmd` / `libggml*` as shared libraries built from this project's
 patched source -- the same files and symbols as upstream's release zips, usable with upstream's
 `llama.h` / `mtmd.h` / `ggml.h` -- and on every platform `libjllama` exports this project's own
-**C API** (`jllama_api.h`, shipped in the directory): the chat completions, streaming and logging
-`LlamaModel` offers, callable from C, Rust, Python or Java 22+ without a JVM. See
+**C API** (`jllama_api.h`, shipped in the directory, with the import library `jllama.lib` on
+Windows): everything the Java API offers -- model loading, chat and raw completions, streaming,
+embeddings, rerank, tokenisation, metrics and slots, LoRA, the embedded HTTP server, the RPC
+server, text to speech, quantisation, fine-tuning, logging -- callable from C, Rust, Python or
+Java 22+ without a JVM; the Java entry points are shells over the same functions. See
 [docs/c-api.md](docs/c-api.md).
 
 The CI smoke of every desktop platform runs this path on the published jars (unpacked into a
