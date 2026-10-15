@@ -18,6 +18,10 @@ on:
         description: "Use the shared sccache/Depot compiler cache (faster incremental builds)"
         type: boolean
         default: true
+      sign_windows:
+        description: "Authenticode-sign the Windows DLLs with SSL.com eSigner (secrets of the maven-central environment; snapshot and release alike)"
+        type: boolean
+        default: false
 env:
   # The JDK every job builds with is .java-version (setup-java's java-version-file), so the
   # reusable workflows read the same one without an input.
@@ -34,6 +38,13 @@ env:
   # release is compiled in the job that ships it, so the cache provider is not in the trust chain
   # of a release (TODO.md, delivery roadmap item 8). Snapshots and PR builds keep the cache.
   USE_CACHE: ${{ !startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.use_cache) }}
+  # The Windows code signature (CLAUDE.md, "Code signing of the Windows DLLs"): one switch, the
+  # dispatch input, for snapshot and release alike -- the pipeline is the same at that point, and
+  # a release is `publish_to_central` + `sign_windows` both on. Never on a push or a pull request,
+  # as nothing publishes from those either. What the switch does: the sign-windows-natives job
+  # runs (the maven-central environment's eSigner secrets), and package / the publish jobs require
+  # every Windows DLL of the merged tree to be signed.
+  SIGN_WINDOWS: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_windows }}
   SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
   # The CI model set is .github/models.csv (URLs, and the model cache key is its hash). The Java
   # tests default to exactly that set (TestConstants; TestConstantsTest asserts both directions),
@@ -2858,6 +2869,109 @@ jobs:
       error-artifact: windows-output-msvc
 
   # ---------------------------------------------------------------------------
+  # Windows code signature (CLAUDE.md, "Code signing of the Windows DLLs"; TODO.md, delivery
+  # roadmap, item 11). Only on a dispatch with `sign_windows`: Authenticode over every DLL of
+  # every Windows natives artifact with SSL.com eSigner through jsign, then the artifacts are
+  # re-uploaded under their own names (`overwrite: true`), so `package` and the publish jobs
+  # merge signed DLLs, the Windows smoke rows run the signed sets and the jars carry them.
+  #
+  # A job of its own, not steps in `package`: the eSigner secrets live in the maven-central
+  # environment (the GPG key's), and `package` runs on every pull request, where that
+  # environment's rules must not apply. The TOTP secret lets whoever holds it sign in the owner's
+  # name, so it is handed to exactly one job, which runs only on the explicit switch and only
+  # where the environment allows. The job waits for every job that reads a Windows natives
+  # artifact (the Windows Java test job downloads natives-cpu-windows-x86-64): `overwrite`
+  # deletes the artifact for a moment, and a download in that moment would fail.
+  # check-natives.py holds the upload steps to the Windows rows of natives.csv and the `needs`
+  # to the jobs uploading them.
+  # ---------------------------------------------------------------------------
+  sign-windows-natives:
+    name: Sign the Windows DLLs (SSL.com eSigner)
+    needs: [build-windows-x86_64, build-windows-arm64, build-windows-x86_64-cuda, build-windows-x86_64-vulkan, build-windows-x86_64-opencl, build-windows-x86_64-rocm, build-windows-x86_64-sycl, build-windows-arm64-opencl, build-windows-arm64-vulkan, build-windows-x86_64-openvino, test-java-windows-x86_64]
+    if: github.event_name == 'workflow_dispatch' && inputs.sign_windows
+    runs-on: ubuntu-latest
+    environment: maven-central
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: 'temurin'
+          java-version-file: .java-version
+      # Unmerged, one directory per artifact (Windows/<arch>/<backend>/ inside), the layout the
+      # build jobs uploaded and merge-native-artifacts.sh expects back.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: "natives-*-windows-*"
+          path: ${{ github.workspace }}/native-artifacts/
+      - name: Sign every Windows DLL and mark the directories signed=yes
+        env:
+          ES_USERNAME: ${{ secrets.ES_USERNAME }}
+          ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
+          CREDENTIAL_ID: ${{ secrets.CREDENTIAL_ID }}
+          ES_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
+          ES_ENDPOINT: ${{ vars.ES_ENDPOINT }}
+        run: bash .github/sign-windows-natives.sh "${{ github.workspace }}/native-artifacts"
+      # Every DLL of every directory carries a signature now, read from the file (the attribute
+      # certificate table), before anything is re-uploaded.
+      - name: Verify the signatures
+        run: python3 .github/verify-native-deps.py --require-signed "${{ github.workspace }}/native-artifacts"
+      # One upload per artifact, same name, same layout; overwrite replaces the build job's.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: natives-cpu-windows-x86-64
+          path: ${{ github.workspace }}/native-artifacts/natives-cpu-windows-x86-64/
+          overwrite: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: natives-cpu-windows-aarch64
+          path: ${{ github.workspace }}/native-artifacts/natives-cpu-windows-aarch64/
+          overwrite: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: natives-cuda13-windows-x86-64
+          path: ${{ github.workspace }}/native-artifacts/natives-cuda13-windows-x86-64/
+          overwrite: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: natives-vulkan-windows-x86-64
+          path: ${{ github.workspace }}/native-artifacts/natives-vulkan-windows-x86-64/
+          overwrite: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: natives-opencl-windows-x86-64
+          path: ${{ github.workspace }}/native-artifacts/natives-opencl-windows-x86-64/
+          overwrite: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: natives-rocm-windows-x86-64
+          path: ${{ github.workspace }}/native-artifacts/natives-rocm-windows-x86-64/
+          overwrite: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: natives-sycl-windows-x86-64
+          path: ${{ github.workspace }}/native-artifacts/natives-sycl-windows-x86-64/
+          overwrite: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: natives-opencl-windows-aarch64
+          path: ${{ github.workspace }}/native-artifacts/natives-opencl-windows-aarch64/
+          overwrite: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: natives-vulkan-windows-aarch64
+          path: ${{ github.workspace }}/native-artifacts/natives-vulkan-windows-aarch64/
+          overwrite: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: natives-openvino-windows-x86-64
+          path: ${{ github.workspace }}/native-artifacts/natives-openvino-windows-x86-64/
+          overwrite: true
+
+  # ---------------------------------------------------------------------------
   # Package and publish
   # ---------------------------------------------------------------------------
 
@@ -2896,6 +3010,14 @@ jobs:
       - test-java-macos-arm64-metal-15
       - test-java-windows-x86_64
       - test-java-windows-x86_64-msvc
+      - sign-windows-natives
+    # sign-windows-natives is skipped on every run without the `sign_windows` switch, and a skipped
+    # `needs` entry skips the dependents unless the condition says otherwise: run on success of
+    # everything else, never after a failure or a cancellation (every other entry is an
+    # unconditional job, so "not failed, not cancelled" is "succeeded" for them). A sign job that
+    # ran and failed -- wrong secrets, the environment refusing the branch -- skips this job: the
+    # signature was asked for.
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-latest
     # id-token + attestations: the build-provenance attestation below (Sigstore) signs a statement
     # that these exact files came out of this workflow at this commit; contents stays read.
@@ -2930,10 +3052,13 @@ jobs:
       # on every machine that lacks it. The GPU backends legitimately need their vendor runtime,
       # so there only the denylist applies. The case this was written for: ggml-rpc's RDMA
       # transport, which upstream enables whenever the build host has libibverbs/librdma
-      # (llama/CMakeLists.txt forces it off).
-      - name: Verify native runtime dependencies
+      # (llama/CMakeLists.txt forces it off). Also the Windows signatures: a directory whose
+      # jllama-build.txt says signed=yes must hold only signed DLLs, and with the `sign_windows`
+      # switch (--require-signed) every Windows DLL of the tree must be signed -- what
+      # sign-windows-natives re-uploaded -- so no unsigned DLL reaches a jar of a signed run.
+      - name: Verify native runtime dependencies and the Windows signatures
         run: |
-          python3 .github/verify-native-deps.py llama/src/main/natives
+          python3 .github/verify-native-deps.py ${{ env.SIGN_WINDOWS == 'true' && '--require-signed' || '' }} llama/src/main/natives
       # A second JDK next to the one of .java-version: llama-ffm (the C API through the Java 22+ FFM
       # API) has a Java floor of its own and builds through maven-toolchains-plugin; setup-java writes
       # a toolchains.xml entry for every JDK it installs, and the step that follows keeps JAVA_HOME on
@@ -2947,30 +3072,6 @@ jobs:
         with:
           distribution: 'temurin'
           java-version-file: .java-version
-      # Authenticode over every Windows DLL with Azure Trusted Signing (TODO.md, delivery roadmap,
-      # item 11), before the jars are built so what is packaged is signed and the Windows smoke
-      # rows run the signed sets. Inert until the owner's account exists: the five repository
-      # variables below are empty, the step is skipped and every jllama-build.txt keeps
-      # `signed=no`. Only on main and on v* tags, which is also where the app registration's
-      # federated credential is bound -- a pull request has no identity Azure would accept. No
-      # stored secret: the runner's OIDC token is exchanged for the Azure token in the script.
-      - name: Sign the Windows DLLs (Azure Trusted Signing)
-        if: vars.TRUSTED_SIGNING_ENDPOINT != '' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-        env:
-          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
-          TRUSTED_SIGNING_ENDPOINT: ${{ vars.TRUSTED_SIGNING_ENDPOINT }}
-          TRUSTED_SIGNING_ACCOUNT: ${{ vars.TRUSTED_SIGNING_ACCOUNT }}
-          TRUSTED_SIGNING_PROFILE: ${{ vars.TRUSTED_SIGNING_PROFILE }}
-        run: bash .github/sign-windows-natives.sh llama/src/main/natives/net/ladenthin/llama
-      # The signatures, read from the files: a directory that says signed=yes must hold only signed
-      # DLLs, and on a v* tag -- once the account is configured -- every Windows DLL must be signed,
-      # so no unsigned DLL reaches a release jar. (The first verify-native-deps run above saw
-      # signed=no everywhere and checked nothing about signatures.)
-      - name: Verify the Windows signatures
-        if: vars.TRUSTED_SIGNING_ENDPOINT != ''
-        run: |
-          python3 .github/verify-native-deps.py ${{ startsWith(github.ref, 'refs/tags/v') && '--require-signed' || '' }} llama/src/main/natives
       - name: Build JARs
         # `natives` builds one jar per row of natives.csv from the tree merged above (the classes
         # jar carries no natives). No fat jar: the project ships the natives jars on Maven Central
@@ -3329,6 +3430,11 @@ jobs:
           bash .github/merge-native-artifacts.sh \
             "${{ github.workspace }}/native-artifacts" \
             "${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/"
+      # The same check package ran, over the tree this job deploys: the dependency allowlists and,
+      # with the `sign_windows` switch, every Windows DLL signed.
+      - name: Verify native runtime dependencies and the Windows signatures
+        run: |
+          python3 .github/verify-native-deps.py ${{ env.SIGN_WINDOWS == 'true' && '--require-signed' || '' }} llama/src/main/natives
       # A second JDK next to the one of .java-version: llama-ffm (the C API through the Java 22+ FFM
       # API) has a Java floor of its own and builds through maven-toolchains-plugin; setup-java writes
       # a toolchains.xml entry for every JDK it installs, and the step that follows keeps JAVA_HOME on
@@ -3649,6 +3755,14 @@ jobs:
           bash .github/merge-native-artifacts.sh \
             "${{ github.workspace }}/native-artifacts" \
             "${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/"
+      # The same check package ran, over the tree this job deploys: the dependency allowlists and,
+      # with the `sign_windows` switch, every Windows DLL signed.
+      - name: Verify native runtime dependencies and the Windows signatures
+        run: |
+          python3 .github/verify-native-deps.py ${{ env.SIGN_WINDOWS == 'true' && '--require-signed' || '' }} llama/src/main/natives
+      - name: Warn when the release ships unsigned Windows DLLs
+        if: env.SIGN_WINDOWS != 'true'
+        run: echo "::warning::This release is deployed without the sign_windows switch -- its Windows DLLs carry no Authenticode signature (jllama-build.txt says signed=no)."
       # A second JDK next to the one of .java-version: llama-ffm (the C API through the Java 22+ FFM
       # API) has a Java floor of its own and builds through maven-toolchains-plugin; setup-java writes
       # a toolchains.xml entry for every JDK it installs, and the step that follows keeps JAVA_HOME on

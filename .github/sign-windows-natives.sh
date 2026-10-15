@@ -3,33 +3,34 @@
 #
 # SPDX-License-Identifier: MIT OR Apache-2.0
 #
-# Authenticode-signs every DLL of the Windows natives directories with Azure Trusted Signing and
-# flips `signed=no` to `signed=yes` in each directory's jllama-build.txt (TODO.md, delivery roadmap,
-# item 11). Runs in the `package` job on a Linux runner, after merge-native-artifacts.sh and before
-# the jars are built, so what gets packaged is already signed and the Windows smoke rows run the
-# signed sets. The signer is jsign (Java, pinned by version and SHA-256), which talks to Trusted
-# Signing over HTTPS; no Windows and no signtool needed.
+# Authenticode-signs every DLL of the Windows natives directories with SSL.com eSigner (the
+# project's IV code-signing certificate, held in SSL.com's cloud HSM) and flips `signed=no` to
+# `signed=yes` in each directory's jllama-build.txt (TODO.md, delivery roadmap, item 11). Runs in
+# the `sign-windows-natives` job on a Linux runner over the downloaded `natives-*-windows-*`
+# artifacts, which the job re-uploads signed before `package` merges them, so what gets packaged is
+# already signed and the Windows smoke rows run the signed sets. The signer is jsign (Java, pinned
+# by version and SHA-256), which talks to eSigner over HTTPS; no Windows and no signtool needed.
 #
-# Credentials: none stored. The job's GitHub OIDC token is exchanged for an Azure access token
-# through the federated credential of an app registration (client-credentials grant with a
-# client_assertion), which the owner binds to this repository's `main` ref and `v*` tags. The step
-# runs only where the workflow's `if:` says so (the signing variables set, main or a tag).
+# Credentials: the four values SSL.com's own documentation names, as secrets of the `maven-central`
+# environment (the GPG key's environment). The TOTP secret lets whoever holds it sign in the
+# owner's name, which is why the job runs only on an explicit `sign_windows` dispatch and only
+# with that environment's rules. Nothing here prints an argument; `set -x` stays off.
 #
-# Usage: sign-windows-natives.sh <natives-root>   (the net/ladenthin/llama/ tree)
-# Environment: AZURE_TENANT_ID, AZURE_CLIENT_ID, TRUSTED_SIGNING_ENDPOINT (e.g.
-#   https://weu.codesigning.azure.net), TRUSTED_SIGNING_ACCOUNT, TRUSTED_SIGNING_PROFILE, and the
-#   runner's ACTIONS_ID_TOKEN_REQUEST_URL / ACTIONS_ID_TOKEN_REQUEST_TOKEN (permissions: id-token: write).
+# Usage: sign-windows-natives.sh <root>   (a tree holding */Windows/<arch>/<backend>/*.dll)
+# Environment: ES_USERNAME, ES_PASSWORD, CREDENTIAL_ID, ES_TOTP_SECRET; optional ES_ENDPOINT
+#   (default https://cs.ssl.com; https://cs-try.ssl.com is SSL.com's sandbox, whose test
+#   certificate Windows does not trust) and JSIGN_JAR (a local jsign jar instead of the Maven fetch).
 set -euo pipefail
 
 ROOT="${1:?natives root}"
 JSIGN_VERSION="7.2"
 JSIGN_SHA256="9a99673bb011cc1d7faf00bc840a6b333fc8a9b596098da2f92946b68297f067"
-TSA_URL="http://timestamp.acs.microsoft.com"
+TSA_URL="http://ts.ssl.com"
+ES_ENDPOINT="${ES_ENDPOINT:-https://cs.ssl.com}"
 
-for v in AZURE_TENANT_ID AZURE_CLIENT_ID TRUSTED_SIGNING_ENDPOINT TRUSTED_SIGNING_ACCOUNT TRUSTED_SIGNING_PROFILE \
-         ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN; do
+for v in ES_USERNAME ES_PASSWORD CREDENTIAL_ID ES_TOTP_SECRET; do
   if [ -z "${!v:-}" ]; then
-    echo "::error::sign-windows-natives.sh: $v is not set" >&2
+    echo "::error::sign-windows-natives.sh: $v is not set (a secret of the maven-central environment)" >&2
     exit 1
   fi
 done
@@ -42,37 +43,26 @@ fi
 
 # --- jsign, pinned
 work="$(mktemp -d)"
-mvn -q -B --no-transfer-progress dependency:copy -Dartifact="net.jsign:jsign:${JSIGN_VERSION}" -DoutputDirectory="$work"
-jar="$work/jsign-${JSIGN_VERSION}.jar"
+if [ -n "${JSIGN_JAR:-}" ]; then
+  jar="$JSIGN_JAR"
+else
+  mvn -q -B --no-transfer-progress dependency:copy -Dartifact="net.jsign:jsign:${JSIGN_VERSION}" -DoutputDirectory="$work"
+  jar="$work/jsign-${JSIGN_VERSION}.jar"
+fi
 echo "${JSIGN_SHA256}  ${jar}" | sha256sum -c - >/dev/null
 
-# --- the access token: GitHub OIDC -> Azure (federated credential, no stored secret)
-github_jwt="$(curl -sSf -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
-  "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=api://AzureADTokenExchange" | jq -r .value || true)"
-if [ -z "$github_jwt" ] || [ "$github_jwt" = "null" ]; then
-  echo "::error::no OIDC token from the runner (permissions: id-token: write?)" >&2
-  exit 1
-fi
-token="$(curl -sSf -X POST "https://login.microsoftonline.com/${AZURE_TENANT_ID}/oauth2/v2.0/token" \
-  --data-urlencode "client_id=${AZURE_CLIENT_ID}" \
-  --data-urlencode "grant_type=client_credentials" \
-  --data-urlencode "scope=https://codesigning.azure.net/.default" \
-  --data-urlencode "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer" \
-  --data-urlencode "client_assertion=${github_jwt}" | jq -r .access_token || true)"
-if [ -z "$token" ] || [ "$token" = "null" ]; then
-  echo "::error::Azure refused the federated credential exchange (is the app registration's federated credential bound to this repository and ref?)" >&2
-  exit 1
-fi
-echo "::add-mask::$token"
-
-# --- sign, with an RFC 3161 timestamp from Microsoft's TSA
+# --- sign: eSigner authenticates with "<username>|<password>" as the store password, the
+# credential id as the alias and the TOTP secret as the key password (jsign generates the one-time
+# code per signature itself); an RFC 3161 timestamp from SSL.com's TSA.
+echo "signing ${#dlls[@]} DLL(s) with SSL.com eSigner at ${ES_ENDPOINT}"
 java -jar "$jar" sign \
-  --storetype TRUSTEDSIGNING \
-  --keystore "${TRUSTED_SIGNING_ENDPOINT}" \
-  --storepass "${token}" \
-  --alias "${TRUSTED_SIGNING_ACCOUNT}/${TRUSTED_SIGNING_PROFILE}" \
+  --storetype ESIGNER \
+  --keystore "${ES_ENDPOINT}" \
+  --storepass "${ES_USERNAME}|${ES_PASSWORD}" \
+  --alias "${CREDENTIAL_ID}" \
+  --keypass "${ES_TOTP_SECRET}" \
   --alg SHA-256 --tsaurl "${TSA_URL}" --tsmode RFC3161 --tsretries 3 --tsretrywait 10 \
-  --replace --quiet \
+  --quiet \
   "${dlls[@]}"
 
 # --- record it: every directory a DLL was signed in says signed=yes

@@ -3084,50 +3084,78 @@ the "Java 22+ over the C API" item of the delivery roadmap (TODO.md item 10), de
   tiny random llama GGUF written with `gguf-py`, serves as the model where no download is possible.
 - **`versions.POMS`** names `llama-ffm/pom.xml` in all four repositories (a shared file).
 
-## Code signing of the Windows DLLs (Azure Trusted Signing; prepared, inert until the account exists)
+## Code signing of the Windows DLLs (SSL.com eSigner, one switch; inert until the certificate exists)
 
 Decided 2026-10-15 (TODO.md, delivery roadmap, item 11): Authenticode over every DLL of every Windows
-natives jar with **Azure Trusted Signing**, Windows only (the macOS Developer ID was declined; the
-dylib stays ad-hoc signed by the linker, with the `.asc` and the Sigstore attestation as its
-provenance). The code side is in place and does nothing until the owner's account exists.
+natives jar with an **SSL.com IV code-signing certificate held in eSigner** (SSL.com's cloud HSM),
+Windows only (the macOS Developer ID was declined; the dylib stays ad-hoc signed by the linker, with
+the `.asc` and the Sigstore attestation as its provenance). **Azure Trusted Signing was the first
+choice and is a dead end for the owner**: Microsoft's identity validation does not take an individual
+in Germany (country not supported), the organisation form needs a registered business, and the
+account created for it costs 9.99 USD/month for nothing -- the first form of this section and of
+`sign-windows-natives.sh` (OIDC to Azure, `TRUSTEDSIGNING`) was replaced on the same day. SignPath
+Foundation (free for open source) was declined because the publisher on the signature would read
+"SignPath Foundation", not the owner. The code side is in place and does nothing until the
+certificate and the secrets exist.
 
-- **Where**: the `package` job, after `merge-native-artifacts.sh` and the first `verify-native-deps.py`
-  run, after the JDKs are set up and **before** `Build JARs` -- so the jars carry signed DLLs and the
-  Windows `smoke-natives` rows run the signed sets ("no asset ships that CI has not run"). The
-  Windows build and Java test jobs see the unsigned build output; a signature changes no code.
+- **One switch, `sign_windows`**, a `workflow_dispatch` input next to `publish_to_central` and
+  `use_cache`, turned into the workflow-level `SIGN_WINDOWS` the way `USE_CACHE` is. Snapshot and
+  release alike: the pipeline is the same at that point, a release is both switches on, and a push
+  or a pull request never signs (nothing publishes from those either). `publish-release` warns
+  (`::warning::`) when it deploys without the switch -- deliberately no failure, the switch is the
+  decision.
+- **Where**: a job of its own, `sign-windows-natives`, after the ten Windows build jobs and
+  `test-java-windows-x86_64`, before `package`. It downloads the `natives-*-windows-*` artifacts
+  unmerged (one `Windows/<arch>/<backend>/` directory each, as uploaded), signs, verifies and
+  **re-uploads each under its own name with `overwrite: true`**, so `package` and both publish jobs
+  merge signed DLLs, the Windows `smoke-natives` rows run the signed sets and the jars carry them
+  ("no asset ships that CI has not run"). Not steps in `package`: the secrets live in the
+  `maven-central` environment (the GPG key's, same trust class, same rules), and `package` runs on
+  every pull request, where that environment's rules must not apply -- `verify-signing-key` on the
+  same environment is "red by design" on foreign branches. The job waits for the Windows Java test
+  job because it reads `natives-cpu-windows-x86-64`: `overwrite` deletes the artifact for a moment,
+  and a download in that moment fails. `package` lists the job in `needs` with an `if` that
+  tolerates its skip (`!cancelled() && !contains(needs.*.result, 'failure') && ...`): skipped means
+  no switch, run and failed (wrong secrets, the environment refusing the branch) means `package`
+  is skipped too, because the signature was asked for.
 - **How**: `.github/sign-windows-natives.sh` -- **jsign** (`net.jsign:jsign:7.2` from Maven Central,
   pinned by version and SHA-256; Java, runs on the Linux runner, no signtool) with
-  `--storetype TRUSTEDSIGNING --keystore <endpoint> --alias <account>/<profile>`, SHA-256, an RFC 3161
-  timestamp from `timestamp.acs.microsoft.com`, every `Windows/*/*/*.dll` in one call; then
-  `signed=no` -> `signed=yes` in each directory's `jllama-build.txt` (CMake writes `no`; the merge
-  step requires the key with either value). The access token is the job's GitHub OIDC token
-  exchanged at `login.microsoftonline.com` through the app registration's **federated credential**
-  (client-credentials grant with a `client_assertion`), so nothing long-lived is stored anywhere.
-- **Gating**: the step runs only with `vars.TRUSTED_SIGNING_ENDPOINT` set and on `main` or a `v*` tag
-  (a pull request has no identity Azure would accept, and a fork's token has no `id-token` scope
-  anyway). The five values are **repository variables**, not secrets: tenant id, client id, endpoint,
-  account and profile are identifiers; the trust is the federated credential, which Azure binds to
-  this repository's `main` ref and its `v*` tags.
-- **The gate on the result**: `verify-native-deps.py` grew `pe_signed()` (the attribute certificate
+  `--storetype ESIGNER --keystore <endpoint> --storepass "<username>|<password>" --alias
+  <credential id> --keypass <TOTP secret>` (read from jsign's `KeyStoreType`: the store password must
+  carry the `|`, the key password is stored as the TOTP secret and jsign generates each one-time
+  code itself), SHA-256, an RFC 3161 timestamp from `ts.ssl.com`, every `Windows/*/*/*.dll` of the
+  tree in one call; then `signed=no` -> `signed=yes` in each directory's `jllama-build.txt` (CMake
+  writes `no`; the merge step requires the key with either value). `JSIGN_JAR` names a local jar
+  instead of the Maven fetch (measured with a synthetic PE and dummy credentials: the options are
+  accepted and the run fails at SSL.com's authentication, nothing flipped). No `set -x`, no echoed
+  argument.
+- **Secrets and variables**: `ES_USERNAME`, `ES_PASSWORD`, `CREDENTIAL_ID`, `ES_TOTP_SECRET` -- the
+  names of SSL.com's own GitHub action, so their documentation maps 1:1 -- as secrets of the
+  `maven-central` environment; optionally the repository variable `ES_ENDPOINT` (empty =
+  `https://cs.ssl.com`; `https://cs-try.ssl.com` is SSL.com's sandbox, whose test certificate
+  Windows does not trust, for a dry run of the pipeline). **The TOTP secret lets whoever holds it
+  sign in the owner's name**, which is why it reaches exactly one job, only on the explicit switch,
+  only under that environment's rules.
+- **The gate on the result**: `verify-native-deps.py` carries `pe_signed()` (the attribute certificate
   table, `IMAGE_DIRECTORY_ENTRY_SECURITY`, presence only -- the chain is Windows' and jsign's business)
   and `signature_violations()`: a Windows directory whose `jllama-build.txt` says `signed=yes` must hold
   only signed DLLs, and with `--require-signed` a directory saying `signed=no` is a violation. The
-  `package` job runs it a second time after signing, with `--require-signed` on a `v*` tag, both only
-  when the endpoint variable is set -- so a tag build with the account configured but the signing
-  broken is red, and a tag build before the account exists (the 6.0.0 release, say) is not blocked.
-  Unit tests in `test_nativedeps.py` (`SignatureTest`, a synthetic PE with and without the security
-  directory).
+  sign job runs it with `--require-signed` over the signed artifacts before re-uploading, and
+  `package` and both publish jobs run it over the merged tree with the flag whenever `SIGN_WINDOWS`
+  is on -- so a signed run cannot let an unsigned DLL into a jar, and a run without the switch is
+  not blocked. Unit tests in `test_nativedeps.py` (`SignatureTest`, a synthetic PE with and without
+  the security directory). `check-natives.py` holds the job itself (`natives.check_signing`): one
+  `overwrite: true` upload per Windows row of `natives.csv`, and the job waits for every job that
+  uploads one of them.
 - **What the owner does, in order** (TODO.md item 11 and "Code-sign the Windows DLLs" carry the
-  details): Microsoft's identity validation for Trusted Signing (the gate, weeks); an Azure
-  subscription, a Trusted Signing account and a Public Trust certificate profile; an app registration
-  with the role *Trusted Signing Certificate Profile Signer* on the profile and two federated
-  credentials for the GitHub issuer (`https://token.actions.githubusercontent.com`, audience
-  `api://AzureADTokenExchange`): subject `repo:bernardladenthin/java-llama.cpp:ref:refs/heads/main`,
-  and for the tags a flexible federated credential matching
-  `repo:bernardladenthin/java-llama.cpp:ref:refs/tags/v*`; then the five repository variables
-  `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `TRUSTED_SIGNING_ENDPOINT` (`https://<region>.codesigning.azure.net`),
-  `TRUSTED_SIGNING_ACCOUNT`, `TRUSTED_SIGNING_PROFILE`. The next `main` run signs; a consumer checks a
-  DLL with `Get-AuthenticodeSignature` (or `osslsigncode verify`) and the publisher name on it.
+  details and the prices): delete the Azure Trusted Signing account; SSL.com's IV validation; the IV
+  code-signing certificate enrolled in eSigner; the TOTP secret and the credential id from the
+  eSigner settings; the four secrets into the `maven-central` environment; a dispatch with
+  `sign_windows` and without `publish_to_central`; `Get-AuthenticodeSignature` (or `signtool verify
+  /pa /v`) on a `jllama.dll` unpacked from the run's smoke set must name the owner as the publisher.
+  eSigner meters per signature: a signed run signs **35 DLLs** (20 in `cpu-windows-x86-64`, 7 in
+  `cpu-windows-aarch64`, one in each of the 8 Windows module jars), so the plan's quota is read
+  against that before the first run.
 - **Not covered, on purpose**: the jars (`jarsigner` only on a consumer's request -- a fat jar breaks
   it), Linux and Android (no OS mechanism; `.asc` + attestation), macOS (declined).
 

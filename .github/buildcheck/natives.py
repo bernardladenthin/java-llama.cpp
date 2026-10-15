@@ -45,6 +45,8 @@ KINDS = ("library", "module")
 # Platforms that get no smoke set: `java -cp` does not apply on Android (the AAR and the emulator
 # job do), and no GitHub runner exists for s390x (its C++ suite runs under qemu instead).
 SMOKE_EXCLUDED_OSES = ("Linux-Android",)
+# The job that re-uploads the Windows natives artifacts Authenticode-signed (CLAUDE.md, "Code signing").
+SIGN_JOB = "sign-windows-natives"
 SMOKE_EXCLUDED_TREES = ("Linux/s390x",)
 
 # `package` uploads each smoke set alone, as llama-smoke-<target>, for the smoke jobs; a matrix row
@@ -208,16 +210,18 @@ def check_workflow(natives, jobs):
     for job in jobs.values():
         for name in job.uploads():
             if name.startswith("natives-"):
-                uploads[name[len("natives-"):]] = job.name
+                uploads.setdefault(name[len("natives-"):], set()).add(job.name)
     failures = compare("publish.yml natives-* uploads", [r["classifier"] for r in natives], uploads)
     package = jobs.get("package")
     if package is None:
         return failures + ["publish.yml has no `package` job"]
     waited_for = workflow.closure(jobs, "package")
-    for classifier, job in sorted(uploads.items()):
-        if job not in waited_for:
-            failures.append(f"publish.yml: package does not wait for {job}, which uploads natives-{classifier} "
-                            f"-- add it to package's needs")
+    for classifier, uploaders in sorted(uploads.items()):
+        for job in sorted(uploaders):
+            if job not in waited_for:
+                failures.append(f"publish.yml: package does not wait for {job}, which uploads natives-{classifier} "
+                                f"-- add it to package's needs")
+    failures += check_signing(natives, jobs, uploads)
     targets = smoke_targets(natives)
     uploaded = {n[len(SMOKE_ARTIFACT):] for n in package.uploads() if n.startswith(SMOKE_ARTIFACT)}
     failures += compare("publish.yml package smoke-set uploads", targets, uploaded)
@@ -230,6 +234,31 @@ def check_workflow(natives, jobs):
         if tree(r).split("/")[0] not in SMOKE_EXCLUDED_OSES and target(r) not in targets:
             failures.append(f"natives.csv: the module jar {r['classifier']} has no smoke target -- it would ship "
                             f"unlaunched")
+    return failures
+
+
+def check_signing(natives, jobs, uploads):
+    """`sign-windows-natives` re-uploads every Windows natives artifact signed: one upload-artifact step
+    per Windows row of the list, with `overwrite: true` (the same name as the build job's artifact),
+    and the job waits for every job that uploads one of them -- `overwrite` deletes the artifact for a
+    moment, so a build or test job still reading it would race. A Windows row without its step would
+    ship that jar unsigned on a signed run, which `--require-signed` in `package` then reports late."""
+    windows = [r["classifier"] for r in natives if tree(r).split("/")[0] == "Windows"]
+    sign = jobs.get(SIGN_JOB)
+    if sign is None:
+        return [f"publish.yml has no `{SIGN_JOB}` job"] if windows else []
+    signed = {c for c, uploaders in uploads.items() if SIGN_JOB in uploaders}
+    failures = compare(f"publish.yml {SIGN_JOB} re-uploads (one per Windows row)", windows, signed)
+    for classifier in sorted(signed):
+        for job in sorted(uploads[classifier] - {SIGN_JOB}):
+            if job not in sign.needs:
+                failures.append(f"publish.yml: {SIGN_JOB} does not wait for {job}, which uploads "
+                                f"natives-{classifier} -- add it to the job's needs")
+    for step in sign.steps():
+        if any("actions/upload-artifact@" in line for line in step) \
+                and not any(line.strip() == "overwrite: true" for line in step):
+            failures.append(f"publish.yml {SIGN_JOB}: an upload-artifact step without `overwrite: true` would fail "
+                            f"on the artifact the build job uploaded")
     return failures
 
 

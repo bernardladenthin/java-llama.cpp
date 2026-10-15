@@ -44,11 +44,20 @@ def download(artifact):
             "          path: smoke/"]
 
 
-def jobs(rows=ROWS, package_needs="[build]", set_targets=TARGETS, run_targets=TARGETS):
+WINDOWS = [r["classifier"] for r in ROWS if r["directory"].startswith("Windows/")]
+
+
+def sign_uploads(classifiers=WINDOWS, overwrite=True):
+    return [line for c in classifiers for line in upload("natives-" + c, overwrite=overwrite)]
+
+
+def jobs(rows=ROWS, package_needs="[build, sign-windows-natives]", set_targets=TARGETS, run_targets=TARGETS,
+         sign=None, sign_needs="[build]"):
     build = [line for r in rows for line in upload("natives-" + r["classifier"])]
     sets = [line for t in set_targets for line in upload("llama-smoke-" + t, f"smoke-sets/{t}/")]
     smoke = [line for t in run_targets for line in download("llama-smoke-" + t)]
     return workflow.parse(workflow_text([("build", None, build), ("other", None, []),
+                                         ("sign-windows-natives", sign_needs, sign_uploads() if sign is None else sign),
                                          ("package", package_needs, sets), ("smoke", "[package]", smoke)]))
 
 
@@ -58,7 +67,8 @@ def matrix_jobs(targets, download_name="llama-smoke-${{ matrix.target }}"):
     body = ["    strategy:", "      matrix:", "        include:", rows, "    steps:"] + download(download_name)
     build = [line for r in ROWS for line in upload("natives-" + r["classifier"])]
     sets = [line for t in TARGETS for line in upload("llama-smoke-" + t, f"smoke-sets/{t}/")]
-    return workflow.parse(workflow_text([("build", None, build), ("package", "build", sets),
+    return workflow.parse(workflow_text([("build", None, build), ("sign-windows-natives", "build", sign_uploads()),
+                                         ("package", "[build, sign-windows-natives]", sets),
                                          ("smoke", "package", body),
                                          ("smoke-macos", "package", download("llama-smoke-macos-aarch64"))]))
 
@@ -144,14 +154,45 @@ class ConsumerTest(unittest.TestCase):
     def test_package_must_wait_for_every_natives_build(self):
         failures = natives.check_workflow(ROWS, jobs(package_needs="[other]"))
         self.assertTrue(failures)
-        self.assertTrue(all("package does not wait for build" in f for f in failures), failures)
+        self.assertTrue(all("package does not wait for " in f for f in failures), failures)
+        self.assertIn("publish.yml: package does not wait for build, which uploads natives-cpu-linux-x86-64 -- add it to "
+                      "package's needs", failures)
 
     def test_package_may_wait_transitively(self):
         sets = [line for t in TARGETS for line in upload("llama-smoke-" + t, f"smoke-sets/{t}/")]
         smoke = [line for t in TARGETS for line in download("llama-smoke-" + t)]
         wf = workflow_text([("build", None, [line for r in ROWS for line in upload("natives-" + r["classifier"])]),
-                            ("mid", "build", []), ("package", "mid", sets), ("smoke", "package", smoke)])
+                            ("sign-windows-natives", "build", sign_uploads()),
+                            ("mid", "[build, sign-windows-natives]", []), ("package", "mid", sets),
+                            ("smoke", "package", smoke)])
         self.assertEqual(natives.check_workflow(ROWS, workflow.parse(wf)), [])
+
+    def test_the_sign_job_re_uploads_every_windows_row_with_overwrite(self):
+        self.assertEqual(natives.check_workflow(ROWS, jobs(sign=sign_uploads(WINDOWS[1:]))),
+                         ["publish.yml sign-windows-natives re-uploads (one per Windows row): missing cpu-windows-aarch64"])
+        self.assertEqual(natives.check_workflow(ROWS, jobs(sign=sign_uploads(WINDOWS + ["cpu-linux-x86-64"]))),
+                         ["publish.yml sign-windows-natives re-uploads (one per Windows row): cpu-linux-x86-64 is not "
+                          "in .github/natives.csv"])  # a Linux artifact overwritten with an unsigned copy
+        self.assertEqual(natives.check_workflow(ROWS, jobs(sign=sign_uploads(overwrite=False))),
+                         ["publish.yml sign-windows-natives: an upload-artifact step without `overwrite: true` would "
+                          "fail on the artifact the build job uploaded"] * len(WINDOWS))
+
+    def test_the_sign_job_waits_for_the_build_jobs_and_package_for_it(self):
+        failures = natives.check_workflow(ROWS, jobs(sign_needs="[other]"))
+        self.assertEqual(failures, [f"publish.yml: sign-windows-natives does not wait for build, which uploads "
+                                    f"natives-{c} -- add it to the job's needs" for c in sorted(WINDOWS)])
+        failures = natives.check_workflow(ROWS, jobs(package_needs="[build]"))
+        self.assertEqual(failures, [f"publish.yml: package does not wait for sign-windows-natives, which uploads "
+                                    f"natives-{c} -- add it to package's needs" for c in sorted(WINDOWS)])
+
+    def test_a_list_without_windows_needs_no_sign_job(self):
+        linux = [r for r in ROWS if not r["directory"].startswith("Windows/")]
+        wf = workflow_text([("build", None, [line for r in linux for line in upload("natives-" + r["classifier"])]),
+                            ("package", "build", [line for t in TARGETS[:2]
+                                                  for line in upload("llama-smoke-" + t, f"smoke-sets/{t}/")]),
+                            ("smoke", "package", [line for t in TARGETS[:2] for line in download("llama-smoke-" + t)])])
+        self.assertEqual(natives.check_workflow(linux, workflow.parse(wf)), [])
+        self.assertIn("publish.yml has no `sign-windows-natives` job", natives.check_workflow(ROWS, workflow.parse(wf)))
 
     def test_every_smoke_target_is_uploaded_and_launched(self):
         self.assertEqual(natives.check_workflow(ROWS, jobs(set_targets=TARGETS[1:])),

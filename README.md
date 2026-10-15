@@ -1702,10 +1702,12 @@ issue with that file rather than editing your JDK installation.
 
 Whether the Windows DLLs of a build are **Authenticode-signed** is in its `jllama-build.txt`
 (`signed=yes` or `signed=no`, also `LlamaModel.getJllamaBuildInfo()` and `Diagnose`). The pipeline
-signs them with Azure Trusted Signing on `main` and on release tags **once the project's signing
-account is configured** (the signature carries an RFC 3161 timestamp; a release refuses to ship an
-unsigned DLL from then on); a snapshot before that, a pull-request build and a local build say
-`signed=no`. Upstream llama.cpp ships its DLLs unsigned. The `.asc` next to every jar is the
+signs them with the project's SSL.com code-signing certificate (eSigner) on a publish run started
+with the `sign_windows` switch, snapshot or release, **once the certificate exists** (the signature
+carries an RFC 3161 timestamp, and such a run refuses to ship an unsigned DLL); a run without the
+switch, a pull-request build and a local build say `signed=no`. Check a DLL with
+`Get-AuthenticodeSignature <dll>` in PowerShell or `signtool verify /pa /v <dll>`: the publisher is
+the project's owner. Upstream llama.cpp ships its DLLs unsigned. The `.asc` next to every jar is the
 project's OpenPGP signature, which Windows does not look at. `LlamaLoader` extracts the DLLs into
 the temp directory on first use. A client whose
 application-control policy (WDAC, AppLocker) blocks unsigned DLLs, or any DLL under `%TEMP%`,

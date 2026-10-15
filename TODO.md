@@ -179,33 +179,55 @@ a tiny random GGUF); the `toolchain-jdk22` profile; `test-java-llama-ffm` plus t
 
 ### 11. Deferred by the owner until everything above runs: the Windows code signature (C.4, C.5)
 
-**Decided 2026-10-15: Azure Trusted Signing, Windows only.** Authenticode over every DLL of every
-Windows natives jar, signed in the `package` job with jsign over GitHub OIDC (no long-lived secret),
-`signed=yes` in `jllama-build.txt` afterwards, and a `verify-native-deps.py` check that every PE of
-a release carries a signature; `jarsigner` only on a consumer's request (fat jars break it). The
-code side is prepared inert -- without the Azure secrets the step is skipped and a snapshot ships
-`signed=no` -- and switched on after the first green Publish run, per the owner's order. **The
-macOS half is dropped by the owner's decision** (no Apple Developer Program): the dylib stays
-ad-hoc signed by the linker, verified by `smoke-natives-macos`, with the `.asc` and the Sigstore
-attestation as its provenance.
+**Decided 2026-10-15: SSL.com IV certificate + eSigner, Windows only, one switch.** Authenticode
+over every DLL of every Windows natives jar, signed by the job `sign-windows-natives` with jsign
+against SSL.com's cloud HSM, `signed=yes` in `jllama-build.txt` afterwards, and a
+`verify-native-deps.py` check that every PE of a signed run carries a signature; `jarsigner` only on a
+consumer's request (fat jars break it). **The macOS half is dropped by the owner's decision** (no
+Apple Developer Program): the dylib stays ad-hoc signed by the linker, verified by
+`smoke-natives-macos`, with the `.asc` and the Sigstore attestation as its provenance.
+
+**Azure Trusted Signing was decided first and is a dead end (same day):** Microsoft's identity
+validation takes no individual in Germany (country not supported), the organisation form needs a
+registered business, and the signing account created for it costs 9.99 USD/month for nothing --
+**delete it**. SignPath Foundation (free for open source) was declined because the publisher on the
+signature would read "SignPath Foundation", not the owner; Certum's open-source certificate needs a
+card reader a GitHub runner cannot drive. SSL.com's IV certificate (~129 USD/year) in eSigner
+(~15-20 USD/month, **metered per signature**) is the one a private person in Germany can obtain and
+a Linux runner can use.
+
+**One switch, snapshot and release alike:** the `workflow_dispatch` input `sign_windows`, next to
+`publish_to_central` -- the pipeline is identical at that point, a release is both switches on, and
+a run without the switch ships `signed=no` as before (`publish-release` warns). The secrets are
+exactly the four SSL.com names its own action documents (`ES_USERNAME`, `ES_PASSWORD`, `CREDENTIAL_ID`,
+`ES_TOTP_SECRET`), in the `maven-central` environment next to the GPG key: **the TOTP secret lets
+whoever holds it sign in the owner's name**, so it reaches one job, only on the explicit switch,
+only under that environment's rules -- never a step of `package`, which runs on every pull request.
 
 *(The code side landed 2026-10-15: `.github/sign-windows-natives.sh` (jsign 7.2 pinned by SHA-256,
-the OIDC-to-Azure token exchange, every `Windows/*/*/*.dll`, `signed=yes` afterwards), the two steps
-in `package` gated on `vars.TRUSTED_SIGNING_ENDPOINT` and main / `v*`, `pe_signed()` +
-`signature_violations()` + `--require-signed` in `verify-native-deps.py` with unit tests; CLAUDE.md
-"Code signing of the Windows DLLs", README. Unexercised until the account exists.)*
+`--storetype ESIGNER`, every `Windows/*/*/*.dll`, `signed=yes` afterwards; measured with a real DLL
+and dummy credentials: the options are accepted and the run fails at SSL.com's authentication), the
+job `sign-windows-natives` (environment `maven-central`, re-uploads the ten Windows artifacts with
+`overwrite: true`, `check-natives.py` holds the uploads to the Windows rows of `natives.csv`),
+`package` waiting for it with a skip-tolerant `if`, `--require-signed` in `package` and both publish
+jobs whenever `SIGN_WINDOWS` is on, `pe_signed()` + `signature_violations()` in
+`verify-native-deps.py` with unit tests; CLAUDE.md "Code signing of the Windows DLLs", README.
+Unexercised until the certificate exists.)*
 
-- [ ] **Owner, now, because it takes weeks:** Microsoft's identity validation for Trusted Signing
-      (see "Code-sign the Windows DLLs" below for the gate); then the subscription, the Trusted
-      Signing account, a Public Trust certificate profile, an app registration with the *Trusted
-      Signing Certificate Profile Signer* role and two federated credentials for the GitHub issuer
-      (subject `repo:bernardladenthin/java-llama.cpp:ref:refs/heads/main`, and a flexible one
-      matching `...:ref:refs/tags/v*`); then the repository variables `AZURE_TENANT_ID`,
-      `AZURE_CLIENT_ID`, `TRUSTED_SIGNING_ENDPOINT`, `TRUSTED_SIGNING_ACCOUNT`,
-      `TRUSTED_SIGNING_PROFILE` (CLAUDE.md lists them). The next `main` run signs.
-- [ ] First signed run: read the publisher off a shipped DLL (`Get-AuthenticodeSignature`), confirm
-      the Windows smoke rows ran the signed sets, and -- if Trusted Signing's quota matters -- count
-      the DLLs per run (18 per CPU jar + one per Windows GPU jar, twice on a release day).
+- [ ] **Owner:** delete the Azure Trusted Signing account (9.99 USD/month, unusable).
+- [ ] **Owner:** SSL.com IV validation (identity documents; days), the IV code-signing certificate
+      enrolled in eSigner, the eSigner TOTP secret and the credential id (both in the eSigner
+      settings of the order), eSigner's per-signature quota read against **35 DLLs per signed run**
+      (20 in `cpu-windows-x86-64`, 7 in `cpu-windows-aarch64`, one in each of the 8 Windows module
+      jars); then the four secrets into the `maven-central` environment (`ES_USERNAME`, `ES_PASSWORD`,
+      `CREDENTIAL_ID`, `ES_TOTP_SECRET`; optionally the repository variable `ES_ENDPOINT` =
+      `https://cs-try.ssl.com` for one sandbox run first -- its test certificate is not trusted by
+      Windows, so that run proves the pipeline, not the signature).
+- [ ] First signed run: a dispatch on `main` with `sign_windows` and without `publish_to_central`;
+      read the publisher off a `jllama.dll` unpacked from the run's `llama-smoke-windows-x86-64` set
+      (`Get-AuthenticodeSignature`, or `signtool verify /pa /v`), confirm the Windows smoke rows ran
+      the signed sets and that `verify-native-deps.py` in `package` ran with `--require-signed`; then
+      the same with `publish_to_central` for the first signed snapshot.
 
 ## Where the modular natives stand
 
@@ -773,8 +795,9 @@ library jars, `JLLAMA_MODULE_ONLY` GPU module jars, no fat jars). What is still 
    says so and names the way out (`net.ladenthin.llama.lib.path` to an allow-listed directory). The
    project's GPG key cannot sign them: Windows checks Authenticode signatures (an X.509 code-signing
    certificate, `signtool`/`osslsigncode`), not OpenPGP. **Owner's decision**, not scheduled: a
-   code-signing certificate (Azure Trusted Signing or an OV/EV certificate, both paid, identity-
-   validated) plus a signing step over every `.dll` before `package`.
+   code-signing certificate (decided since: an SSL.com IV certificate in eSigner, see roadmap item
+   11; Azure Trusted Signing takes no individual in Germany) plus a signing step over every `.dll`
+   before `package`.
 4. **CUDA for Windows arm64 (`cuda13-windows-aarch64`) -- upstream builds it, we do not.** Their
    `windows-cuda` job is a matrix over `x64` and `arm64`, the latter through
    `cmake/arm64-windows-msvc-cuda` plus the arm64 `cudart`/`cublas` redistributables. This project has
@@ -987,16 +1010,23 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
   Responses client) at a running server, since round-trips confirm wire shapes but not each client's
   parser.
 
-### Code-sign the Windows DLLs (Azure Trusted Signing -- decided 2026-10-15, roadmap item 11)
+### Code-sign the Windows DLLs (SSL.com IV + eSigner -- decided 2026-10-15, roadmap item 11)
 
-**What.** Microsoft's **Azure Trusted Signing** (formerly Azure Code Signing) signs Windows PE files
-from CI without a hardware token, on a monthly subscription -- the **Basic** tier is in the ~10
-USD/month range and includes a signature quota; **verify the current price and quota before
-committing**, and whether the quota covers signing *18 files per Windows natives jar* on every run
-(`jllama.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-rpc.dll` and the 14 `ggml-cpu-<level>.dll`, plus
-one module per Windows GPU jar). The traditional alternative -- an OV/EV certificate -- is several
-hundred euros a year **and** has required a hardware token since 2023, which a GitHub runner cannot
-use, so it is not a real option for this pipeline.
+**What.** An **IV (individual validation) code-signing certificate from SSL.com, held in eSigner**,
+SSL.com's cloud HSM: CI signs Windows PE files over HTTPS without a hardware token, with jsign on
+the Linux runner. Prices at the time of the decision, to be re-read before ordering: the IV
+certificate ~129 USD/year, eSigner ~15-20 USD/month, **metered per signature** -- and a signed run
+signs 35 files (`jllama.dll`, `llama.dll`, `mtmd.dll`, `ggml.dll`, `ggml-base.dll`, `ggml-rpc.dll`
+and the 14 `ggml-cpu-<level>.dll` of the x86-64 jar, the 7 of the arm64 jar, one module per
+Windows GPU jar), so the quota is read against that. The traditional alternative -- an OV/EV
+certificate -- is several hundred euros a year **and** has required a hardware token since 2023,
+which a GitHub runner cannot use, so it is not a real option for this pipeline.
+
+**Azure Trusted Signing was the first decision of that day and fell on the same day:** Microsoft's
+identity validation offers no path for an individual in Germany (the country is not in the list for
+individual validation), the organisation form requires a registered business, and the signing
+account created in the meantime costs 9.99 USD/month -- it is to be deleted. The paragraphs below
+record what was learned about it, because the question "why not Azure" will come back.
 
 **Why it is worth considering here specifically.** This project's DLLs are **extracted from a jar
 into a temp directory at run time and loaded with `System.load`**, which is exactly the shape
@@ -1007,19 +1037,25 @@ and it removes the "unknown publisher" class of false positive that a consumer c
 is no evidence of a user hitting this yet -- so this is prevention, not a fix, which is why it is a
 decision rather than a task.
 
-**The gatekeeper, and the reason to check it first:** Trusted Signing requires **identity
-validation**. An organisation needs a verifiable legal entity; an **individual** must have a
-verifiable public history (Microsoft has required ~3 years), and the account must be in a supported
-region. **Find out whether the account qualifies before paying for anything** -- the subscription is
-useless without a validated identity, and that is the step that fails, not the plumbing.
+**The gatekeeper of Trusted Signing, measured:** it requires **identity validation**, and for an
+**individual** the form accepts only a list of countries that does not include Germany; an
+organisation needs a verifiable legal entity. That was found by trying, after the account had been
+paid for -- which is the lesson: **validate the identity path before paying for anything**, with
+any provider. SSL.com's IV validation is the path that exists for a private person in Germany.
 
-**How it would hook into GitHub.** `azure/trusted-signing-action` with federated OIDC credentials
-(no long-lived secret), run in the Windows build jobs *after* the build and *before* the artifact
-upload, so what gets packaged is already signed. Note what that touches on our side: signing
-**modifies the files**, so it must happen before `merge-native-artifacts.sh` and
-`package-smoke-sets.sh` -- both compare files byte for byte -- and the signature must survive the
-jar round trip (it does; a PE signature is part of the file). Signing *after* packaging would mean
-re-writing jars and re-checking them, which is strictly worse.
+**How it hooks into GitHub.** jsign (`--storetype ESIGNER`) in a job of its own,
+`sign-windows-natives`, between the Windows build jobs and `package`: it downloads the Windows
+natives artifacts, signs every DLL, flips `signed=` and re-uploads the artifacts under their names,
+so `package` merges signed files. Note what that touches on our side: signing **modifies the
+files**, so it happens before `merge-native-artifacts.sh` and `package-smoke-sets.sh` -- both
+compare files byte for byte -- and the signature must survive the jar round trip (it does; a PE
+signature is part of the file). Signing *after* packaging would mean re-writing jars and
+re-checking them, which is strictly worse. **Why the secrets are dangerous and how that is held:**
+eSigner authenticates with username, password, credential id and the **TOTP secret** -- whoever can
+read those four from a workflow can sign in the owner's name, and a GitHub secret is readable by
+any workflow of the repository. So they live in the `maven-central` environment (the GPG key's
+rules apply), reach exactly one job, and that job runs only on an explicit dispatch with the
+`sign_windows` switch -- never on a push, a pull request or inside `package`.
 
 **What it does not cover.** Linux has no equivalent and needs none. **macOS is a separate purchase
 and a separate problem**: a Developer ID certificate (Apple Developer Program, ~99 USD/year) plus
