@@ -304,6 +304,23 @@ jobs:
           java-version-file: .java-version
           distribution: temurin
       # .github/buildcheck/natives.py; its unit tests run in the shared-files job.
+      - name: Workflows and actions parse as YAML (a plain scalar with a colon fails the whole run before any job starts)
+        run: |
+          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --quiet --user pyyaml
+          python3 - <<'PY'
+          import glob, sys, yaml
+          files = sorted(glob.glob('.github/workflows/*.yml') + glob.glob('.github/actions/*/action.yml'))
+          bad = 0
+          for f in files:
+              try:
+                  with open(f) as fh:
+                      yaml.safe_load(fh)
+              except yaml.YAMLError as e:
+                  bad += 1
+                  print(f'::error file={f}::{e}'.replace('\n', ' '))
+          print(f'{len(files)} workflow files, {bad} that do not parse')
+          sys.exit(1 if bad else 0)
+          PY
       - name: Natives list check (everything that names a natives jar agrees with natives.csv)
         run: python3 .github/check-natives.py
       - name: Patch hunk check (every hunk of llama/patches/*.patch declares exactly the lines it carries)
@@ -830,7 +847,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "ref=${COMMIT:-$TAG}" >> "$GITHUB_OUTPUT"
           echo "Pinned llama.cpp: $TAG${COMMIT:+ (commit $COMMIT)}"
-      - name: Checkout llama.cpp at the pinned commit (full history: the commit count is checked)
+      - name: Checkout llama.cpp at the pinned commit (full history, the commit count is checked)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ggml-org/llama.cpp
@@ -4023,7 +4040,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "ref=${COMMIT:-$TAG}" >> "$GITHUB_OUTPUT"
           echo "Pinned llama.cpp: $TAG${COMMIT:+ (commit $COMMIT)}"
-      - name: Checkout llama.cpp at the pinned commit (full history: the push needs it)
+      - name: Checkout llama.cpp at the pinned commit (full history, the push needs it)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ggml-org/llama.cpp
