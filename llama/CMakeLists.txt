@@ -372,9 +372,18 @@ else()
     message(STATUS "llama.cpp ${JLLAMA_GIT_TAG} is fetched by tag name (JLLAMA_GIT_COMMIT is empty; CI would refuse this)")
 endif()
 
+# Where the pinned commit is fetched from. The default is upstream; the mirror
+# bernardladenthin/llama.cpp (every pinned commit is pushed there as the tag jllama/b<nnnn> by the
+# mirror-llama-source job of publish.yml) serves the same commit when upstream's repository or tag
+# is gone -- the commit hash is identical in both, so nothing else changes. The archived patched
+# source of every release (llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz on the GitHub release) is
+# the third way: -DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<unpacked archive>. TODO.md, delivery roadmap,
+# item 6.
+set(JLLAMA_GIT_REPOSITORY "https://github.com/ggerganov/llama.cpp.git" CACHE STRING
+    "The git repository llama.cpp is fetched from (upstream, or the mirror https://github.com/bernardladenthin/llama.cpp.git)")
 FetchContent_Declare(
 	llama.cpp
-	GIT_REPOSITORY https://github.com/ggerganov/llama.cpp.git
+	GIT_REPOSITORY ${JLLAMA_GIT_REPOSITORY}
 	GIT_TAG        ${_jllama_fetch_ref}
 	PATCH_COMMAND  ${CMAKE_COMMAND}
 		-DPATCH_DIR=${CMAKE_CURRENT_SOURCE_DIR}/patches
@@ -382,6 +391,40 @@ FetchContent_Declare(
 		-P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/apply-llama-patches.cmake
 	${JLLAMA_LLAMA_SOURCE_SUBDIR}
 )
+# The commit of an ARCHIVED llama.cpp source tree: the release asset
+# llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz (publish.yml, archive-llama-source) is the patched
+# checkout with its .git removed, so git cannot answer for it -- but the applier's stamp it carries
+# names the commit it was patched at (`head <hash>`). Empty for a git work tree or a tree without
+# the stamp; the two build-info writers fall back to it. Such a tree only ever arrives through
+# FETCHCONTENT_SOURCE_DIR_LLAMA.CPP, which is why this runs BEFORE FetchContent_MakeAvailable: the
+# static build adds llama.cpp's root inside that call, and the pair below must be set by then.
+function(jllama_archived_llama_commit out_var dir)
+    set(${out_var} "" PARENT_SCOPE)
+    set(_stamp "${dir}/.jllama-patches-applied")
+    if(EXISTS "${_stamp}" AND NOT EXISTS "${dir}/.git")
+        file(STRINGS "${_stamp}" _head_lines REGEX "^head [0-9a-f]+$")
+        list(LENGTH _head_lines _n)
+        if(_n EQUAL 1)
+            string(REGEX REPLACE "^head " "" _head "${_head_lines}")
+            set(${out_var} "${_head}" PARENT_SCOPE)
+        endif()
+    endif()
+endfunction()
+# For such a tree upstream's own build-info (common/CMakeLists.txt via cmake/build-info.cmake:
+# `git rev-list --count` / `rev-parse --short` in the source tree) would report `b0-unknown`; the
+# root CMakeLists honours a predefined LLAMA_BUILD_NUMBER / LLAMA_BUILD_COMMIT, and these normal
+# variables reach every subdirectory, so llama_build_info() of an archive build names
+# `b<nnnn>-<commit>` like a fetched one (NativeLibraryLoadSmokeTest holds it to LlamaCppVersion).
+set(_jllama_archived_commit "")
+if(FETCHCONTENT_SOURCE_DIR_LLAMA.CPP)
+    jllama_archived_llama_commit(_jllama_archived_commit "${FETCHCONTENT_SOURCE_DIR_LLAMA.CPP}")
+endif()
+if(_jllama_archived_commit)
+    string(REGEX REPLACE "^b" "" LLAMA_BUILD_NUMBER "${JLLAMA_GIT_TAG}")
+    string(SUBSTRING "${_jllama_archived_commit}" 0 9 LLAMA_BUILD_COMMIT)
+    message(STATUS "llama.cpp ${JLLAMA_GIT_TAG} from an archived source tree (no .git); build info b${LLAMA_BUILD_NUMBER}-${LLAMA_BUILD_COMMIT} from its patch stamp")
+endif()
+
 FetchContent_MakeAvailable(llama.cpp)
 
 # llama.cpp pin check: the fetched commit's count must be the number JLLAMA_GIT_TAG names. Fetched by
@@ -509,7 +552,74 @@ if(JLLAMA_BACKEND_DL)
     set_property(TARGET ggml ggml-base PROPERTY VERSION)
     set_property(TARGET ggml ggml-base PROPERTY SOVERSION)
     if(NOT JLLAMA_MODULE_ONLY)
+        # Layer A of the delivery roadmap (TODO.md, item 5): llama and mtmd are SHARED libraries next
+        # to libjllama, exactly as upstream's release zips ship them (libllama.so / llama.dll,
+        # libmtmd.so / mtmd.dll) -- so a consumer gets upstream's own C API (llama.h, mtmd.h, ggml.h)
+        # from this project's patched source, and libjllama imports them instead of carrying a
+        # copy. llama-common stays STATIC inside jllama: it is a C++ library (no stable ABI, and
+        # WINDOWS_EXPORT_ALL_SYMBOLS when shared), and the server sources compiled into jllama are
+        # its only consumer here. Upstream's common/CMakeLists.txt follows BUILD_SHARED_LIBS like
+        # src/ does, so the root is added with LLAMA_BUILD_COMMON OFF (src/ -> llama SHARED), and
+        # vendor/cpp-httplib (STATIC by declaration, BoringSSL with BUILD_SHARED_LIBS forced OFF by
+        # upstream) plus common/ are added afterwards with BUILD_SHARED_LIBS OFF. mtmd is added
+        # the same way further down (its own block, as in every build), with BUILD_SHARED_LIBS ON
+        # there. Unversioned like ggml (the loader extracts plain files).
+        set(LLAMA_BUILD_COMMON OFF)
+        set(BUILD_SHARED_LIBS ON)
         add_subdirectory(${llama.cpp_SOURCE_DIR} ${llama.cpp_BINARY_DIR})
+        set(BUILD_SHARED_LIBS OFF)
+        set(LLAMA_BUILD_COMMON ON)
+        get_target_property(_jllama_t_type llama TYPE)
+        if(NOT _jllama_t_type STREQUAL "SHARED_LIBRARY")
+            message(FATAL_ERROR "JLLAMA_BACKEND_DL: upstream built 'llama' as ${_jllama_t_type}, not SHARED -- re-check src/CMakeLists.txt at the new tag")
+        endif()
+        set_property(TARGET llama PROPERTY VERSION)
+        set_property(TARGET llama PROPERTY SOVERSION)
+        # common/ reads four build-info values and the version pair from the root's directory
+        # scope, which is not visible from here: the number and the short hash of the fetched commit
+        # (what llama_build_info() reports as `b<number>-<hash>`, held to LlamaCppVersion by
+        # NativeLibraryLoadSmokeTest), the compiler and the target, each derived the way
+        # cmake/build-info.cmake derives them, only in the fetched tree instead of in ours.
+        if(GIT_EXECUTABLE AND EXISTS "${llama.cpp_SOURCE_DIR}/.git")
+            execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
+                WORKING_DIRECTORY "${llama.cpp_SOURCE_DIR}" OUTPUT_VARIABLE _jllama_common_commit
+                OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE _jllama_common_commit_res)
+            execute_process(COMMAND "${GIT_EXECUTABLE}" rev-list --count HEAD
+                WORKING_DIRECTORY "${llama.cpp_SOURCE_DIR}" OUTPUT_VARIABLE _jllama_common_number
+                OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE _jllama_common_number_res)
+        endif()
+        if(DEFINED LLAMA_BUILD_NUMBER AND DEFINED LLAMA_BUILD_COMMIT)
+            # An archived tree: the pair was set from its stamp above.
+        elseif(_jllama_common_commit_res EQUAL 0 AND _jllama_common_number_res EQUAL 0)
+            set(LLAMA_BUILD_NUMBER ${_jllama_common_number})
+            set(LLAMA_BUILD_COMMIT ${_jllama_common_commit})
+        else()
+            string(REGEX REPLACE "^b" "" LLAMA_BUILD_NUMBER "${JLLAMA_GIT_TAG}")
+            set(LLAMA_BUILD_COMMIT "unknown")
+            message(WARNING "llama-common build info: git could not answer in ${llama.cpp_SOURCE_DIR}; using ${JLLAMA_GIT_TAG}-unknown")
+        endif()
+        set(BUILD_COMPILER "${CMAKE_C_COMPILER_ID} ${CMAKE_C_COMPILER_VERSION}")
+        if(CMAKE_VS_PLATFORM_NAME)
+            set(BUILD_TARGET ${CMAKE_VS_PLATFORM_NAME})
+        else()
+            set(BUILD_TARGET "${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_PROCESSOR}")
+        endif()
+        if(NOT DEFINED LLAMA_VERSION_BASE)
+            set(LLAMA_VERSION_BASE "0")
+        endif()
+        if(NOT DEFINED LLAMA_VERSION_MAJOR)
+            set(LLAMA_VERSION_MAJOR "0")
+        endif()
+        # vendor/ adds cpp-httplib (and with it BoringSSL) only under LLAMA_BUILD_COMMON, so it is
+        # added here, before common/, which links it.
+        add_subdirectory(${llama.cpp_SOURCE_DIR}/vendor/cpp-httplib ${llama.cpp_BINARY_DIR}/vendor/cpp-httplib)
+        add_subdirectory(${llama.cpp_SOURCE_DIR}/common ${llama.cpp_BINARY_DIR}/common)
+        foreach(t llama-common cpp-httplib)
+            get_target_property(_jllama_t_type ${t} TYPE)
+            if(NOT _jllama_t_type STREQUAL "STATIC_LIBRARY")
+                message(FATAL_ERROR "JLLAMA_BACKEND_DL: upstream built '${t}' as ${_jllama_t_type}, not STATIC -- it would ship as one more file; re-check upstream's CMake at the new tag")
+            endif()
+        endforeach()
     endif()
 endif()
 
@@ -576,9 +686,9 @@ if(NOT JLLAMA_MODULE_ONLY AND NOT TARGET mtmd)
     # scope and are not visible here.  tools/mtmd/CMakeLists.txt uses them in
     # set_target_properties() as VERSION/SOVERSION values; if a variable is empty the
     # token list after PROPERTIES becomes odd-length and CMake aborts with "incorrect
-    # number of arguments".  Both are cosmetic for this build (BUILD_SHARED_LIBS is
-    # OFF, so mtmd is a static library and VERSION/SOVERSION are no-ops), hence the
-    # neutral placeholder rather than a mirror of upstream's numbers.
+    # number of arguments".  Both are cosmetic for this build (static mtmd ignores
+    # VERSION/SOVERSION, and the shared mtmd of a JLLAMA_BACKEND_DL build clears them
+    # below), hence the neutral placeholder rather than a mirror of upstream's numbers.
     # (b10398 replaced the older LLAMA_INSTALL_VERSION with these two — upstream
     # #26839, "cmake: introduce semantic versioning".)
     if(NOT DEFINED LLAMA_VERSION_BASE)
@@ -587,7 +697,21 @@ if(NOT JLLAMA_MODULE_ONLY AND NOT TARGET mtmd)
     if(NOT DEFINED LLAMA_VERSION_MAJOR)
         set(LLAMA_VERSION_MAJOR "0")
     endif()
+    if(JLLAMA_BACKEND_DL)
+        # Layer A (see the JLLAMA_BACKEND_DL block): mtmd is a SHARED library next to libjllama,
+        # unversioned like llama and ggml.
+        set(BUILD_SHARED_LIBS ON)
+    endif()
     add_subdirectory(${llama.cpp_SOURCE_DIR}/tools/mtmd ${llama.cpp_BINARY_DIR}/tools/mtmd)
+    set(BUILD_SHARED_LIBS OFF)
+    if(JLLAMA_BACKEND_DL)
+        get_target_property(_jllama_t_type mtmd TYPE)
+        if(NOT _jllama_t_type STREQUAL "SHARED_LIBRARY")
+            message(FATAL_ERROR "JLLAMA_BACKEND_DL: upstream built 'mtmd' as ${_jllama_t_type}, not SHARED -- re-check tools/mtmd/CMakeLists.txt at the new tag")
+        endif()
+        set_property(TARGET mtmd PROPERTY VERSION)
+        set_property(TARGET mtmd PROPERTY SOVERSION)
+    endif()
 endif()
 
 # Workaround: server-common.h (included transitively by llama-cli) includes
@@ -935,13 +1059,13 @@ target_compile_definitions(jllama PRIVATE
 )
 
 if(OS_NAME STREQUAL "Windows")
-    set_target_properties(jllama llama ggml PROPERTIES
+    set_target_properties(jllama llama mtmd ggml PROPERTIES
 	  RUNTIME_OUTPUT_DIRECTORY_DEBUG ${JLLAMA_DIR}
 	  RUNTIME_OUTPUT_DIRECTORY_RELEASE ${JLLAMA_DIR}
 	  RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${JLLAMA_DIR}
 	)
 else()
-	set_target_properties(jllama llama ggml PROPERTIES
+	set_target_properties(jllama llama mtmd ggml PROPERTIES
 	  LIBRARY_OUTPUT_DIRECTORY ${JLLAMA_DIR}
 	)
 endif()
@@ -985,9 +1109,17 @@ if(JLLAMA_BACKEND_DL)
     endif()
     # $ORIGIN only: the default build run path would also carry this machine's absolute build path.
     # (VERSION/SOVERSION of ggml and ggml-base are cleared where ggml is added, see there.)
-    set_target_properties(jllama ${JLLAMA_GGML_TARGETS} PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
+    # The two shared upstream libraries of layer A (llama, mtmd; absent in a module-only build) ride
+    # with the ggml set: same directory, same $ORIGIN, same list files. On Windows they are imports
+    # of jllama.dll like ggml.dll, so they go into jllama-extras.txt (preloaded by full path, in
+    # dependency order) rather than jllama-files.txt.
+    set(JLLAMA_UPSTREAM_SHARED)
+    if(NOT JLLAMA_MODULE_ONLY)
+        set(JLLAMA_UPSTREAM_SHARED llama mtmd)
+    endif()
+    set_target_properties(jllama ${JLLAMA_UPSTREAM_SHARED} ${JLLAMA_GGML_TARGETS} PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
     set(JLLAMA_FILES_CONTENT "# Written by llama/CMakeLists.txt (JLLAMA_BACKEND_DL): extracted, not loaded\n")
-    foreach(t ${JLLAMA_GGML_TARGETS})
+    foreach(t ${JLLAMA_UPSTREAM_SHARED} ${JLLAMA_GGML_TARGETS})
         # On WINDOWS the two libraries jllama LINKS (ggml, ggml-base) must be left out of this list,
         # which puts them into jllama-extras.txt instead (merge-native-artifacts.sh derives that from
         # everything not named here) so LlamaLoader loads them by full path BEFORE jllama.dll.
@@ -1001,7 +1133,7 @@ if(JLLAMA_BACKEND_DL)
         # ggml.dll first would have Windows resolve ggml-base.dll by directory search again.
         # The backend MODULES stay in this list -- extracted, never loaded from Java, because
         # choosing one is ggml_backend_load_best()'s job.
-        if(OS_NAME STREQUAL "Windows" AND (t STREQUAL "ggml" OR t STREQUAL "ggml-base"))
+        if(OS_NAME STREQUAL "Windows" AND (t STREQUAL "ggml" OR t STREQUAL "ggml-base" OR t STREQUAL "llama" OR t STREQUAL "mtmd"))
             continue()
         endif()
         string(APPEND JLLAMA_FILES_CONTENT "$<TARGET_FILE_NAME:${t}>\n")
@@ -1018,8 +1150,15 @@ if(JLLAMA_BACKEND_DL)
         # a local variants build loadable without the merge step: without the file LlamaLoader
         # extracts jllama.dll alone, System.load resolves its ggml.dll import from java.exe's
         # directory or PATH, and every model-backed test fails on the load.
-        file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-extras.txt
-             CONTENT "$<TARGET_FILE_NAME:ggml-base>\n$<TARGET_FILE_NAME:ggml>\n" NEWLINE_STYLE LF)
+        # Dependency order, which is also the alphabetical order the merge script writes:
+        # ggml-base.dll < ggml.dll < llama.dll (imports both) < mtmd.dll (imports llama and ggml).
+        if(JLLAMA_MODULE_ONLY)
+            file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-extras.txt
+                 CONTENT "$<TARGET_FILE_NAME:ggml-base>\n$<TARGET_FILE_NAME:ggml>\n" NEWLINE_STYLE LF)
+        else()
+            file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-extras.txt
+                 CONTENT "$<TARGET_FILE_NAME:ggml-base>\n$<TARGET_FILE_NAME:ggml>\n$<TARGET_FILE_NAME:llama>\n$<TARGET_FILE_NAME:mtmd>\n" NEWLINE_STYLE LF)
+        endif()
     endif()
     message(STATUS "ggml modules: ${JLLAMA_GGML_TARGETS}")
     # Android: the modules are not next to the library as files -- an app's native libraries stay
@@ -1054,6 +1193,36 @@ if (LLAMA_METAL AND NOT LLAMA_METAL_EMBED_LIBRARY)
 endif()
 
 #################### C++ unit tests ####################
+
+# The plain-C consumer of layer A: a modular build (JLLAMA_BACKEND_DL, not module-only) builds
+# src/test/c/test_c_abi.c against the shared llama and ggml-base libraries it just put next to
+# libjllama and registers it as the ctest `c_abi` -- the first and only test of the modular build
+# jobs, which refuse BUILD_TESTING (jllama_test needs the CPU backend statically). build.sh and
+# build.bat run `ctest -R c_abi` right after the build. Off when cross-compiling (the Android jobs
+# cannot run the executable). Also useful locally: `ctest --test-dir build -R c_abi -V`.
+option(JLLAMA_C_ABI_TEST "Build and run the plain-C test of the shared upstream libraries of a modular build" ON)
+if(JLLAMA_BACKEND_DL AND NOT JLLAMA_MODULE_ONLY AND JLLAMA_C_ABI_TEST AND NOT CMAKE_CROSSCOMPILING)
+    enable_language(C)
+    add_executable(jllama_c_abi src/test/c/test_c_abi.c)
+    target_compile_features(jllama_c_abi PRIVATE c_std_11)
+    target_link_libraries(jllama_c_abi PRIVATE llama ggml-base)
+    # The executable lives in the build tree and must resolve libllama/libggml* from the natives
+    # directory: a run path pointing there on ELF, PATH for the test on Windows (where the
+    # libraries are found through the loaded-module list and PATH, never the executable's rpath).
+    set_target_properties(jllama_c_abi PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/c-abi
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG ${CMAKE_BINARY_DIR}/c-abi
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE ${CMAKE_BINARY_DIR}/c-abi
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO ${CMAKE_BINARY_DIR}/c-abi
+        BUILD_RPATH "${JLLAMA_DIR}"
+        BUILD_WITH_INSTALL_RPATH FALSE
+        SKIP_BUILD_RPATH FALSE)
+    enable_testing()
+    add_test(NAME c_abi COMMAND jllama_c_abi "${JLLAMA_DIR}")
+    if(WIN32)
+        set_tests_properties(c_abi PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${JLLAMA_DIR}")
+    endif()
+endif()
 
 # BUILD_TESTING is declared at the top of this file, before any subproject (see there).
 if(BUILD_TESTING)

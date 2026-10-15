@@ -222,6 +222,16 @@ if [ -n "$LAUNCH" ] && command -v sccache >/dev/null 2>&1; then
   fi
 fi
 
+# The plain-C test of a modular build (ctest `c_abi`, llama/CMakeLists.txt): the shared llama and
+# ggml-base libraries next to libjllama, consumed from C11, the CPU modules loaded from the natives
+# directory. Registered only by a modular, non-cross build; `--no-tests=ignore` keeps every other
+# build (static, module-only, Android) a no-op here. Fails the job when it fails: a modular build
+# whose shared upstream libraries cannot be linked and loaded by a plain C program is broken for
+# every consumer of layer A, Java included.
+if [ -f build/CTestTestfile.cmake ]; then
+  ctest --test-dir build --no-tests=ignore -R '^c_abi$' --output-on-failure || exit 1
+fi
+
 # macOS: put the minimum OS each built dylib was linked for into the log. It is set by
 # CMAKE_OSX_DEPLOYMENT_TARGET (llama/CMakeLists.txt, default 15.0); without it the linker takes the
 # build host's own version, so moving a job to a newer runner image would silently raise the floor

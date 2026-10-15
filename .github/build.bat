@@ -122,3 +122,13 @@ if not "!BUILD_RC!"=="0" (
     echo build.bat: cmake --build failed with exit code !BUILD_RC!.
     exit /b !BUILD_RC!
 )
+
+REM The plain-C test of a modular build (ctest `c_abi`, see build.sh for what it proves); a no-op
+REM for every build that registers no such test (--no-tests=ignore).
+if exist build\CTestTestfile.cmake (
+    ctest --test-dir build -C Release --no-tests=ignore -R "^c_abi$" --output-on-failure
+    if errorlevel 1 (
+        echo build.bat: the c_abi test failed.
+        exit /b 1
+    )
+)

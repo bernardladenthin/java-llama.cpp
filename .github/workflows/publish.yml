@@ -709,6 +709,96 @@ jobs:
           name: natives-cpu-linux-x86-64
           path: ${{ github.workspace }}/llama/src/main/natives/net/ladenthin/llama/
 
+  # ---------------------------------------------------------------------------
+  # The patched llama.cpp source, as a release asset (TODO.md, delivery roadmap, item 6).
+  # Every natives jar is compiled from the pinned upstream commit plus llama/patches/, and until
+  # now that tree existed only transiently in each build job's _deps/. archive-llama-source
+  # rebuilds it once -- a full checkout at the pinned commit (the count is checked against the
+  # number, as the configure does), the applier run exactly as every build runs it, .git dropped,
+  # packed reproducibly as llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz -- and test-source-archive
+  # proves the archive builds and passes the C++ suite through
+  # -DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP, which is how a consumer rebuilds a release without
+  # upstream (no fetch, no patching: the archived tree carries the applier's stamp, which
+  # verify-patches-applied.sh checks against the patches on disk). The publish jobs sign the
+  # archive with the release key and attach it next to the Maven artifacts, so "no release asset
+  # is attached that CI has not run" holds for it too. mirror-llama-source (after a release) pushes
+  # the pristine commit to bernardladenthin/llama.cpp as jllama/b<nnnn>, the fallback the
+  # configure's JLLAMA_GIT_REPOSITORY can be pointed at.
+  # ---------------------------------------------------------------------------
+  archive-llama-source:
+    name: Archive the patched llama.cpp source
+    needs: startgate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Resolve pinned llama.cpp tag from CMakeLists.txt
+        id: tag
+        shell: bash
+        run: |
+          # The same rule as build-webui: JLLAMA_GIT_TAG is the number, JLLAMA_GIT_COMMIT the commit
+          # it names; the checkout takes the commit when it is set.
+          TAG=$(grep -oE '^set\(JLLAMA_GIT_TAG[[:space:]]+b[0-9]+\)' llama/CMakeLists.txt | grep -oE 'b[0-9]+' | head -1)
+          if [ -z "$TAG" ]; then
+            echo "could not resolve llama.cpp JLLAMA_GIT_TAG (b<nnnn>) from CMakeLists.txt" >&2
+            exit 1
+          fi
+          COMMIT=$(grep -oE '^set\(JLLAMA_GIT_COMMIT[[:space:]]+"[0-9a-f]{40}"\)' llama/CMakeLists.txt | grep -oE '[0-9a-f]{40}' | head -1 || true)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "ref=${COMMIT:-$TAG}" >> "$GITHUB_OUTPUT"
+          echo "Pinned llama.cpp: $TAG${COMMIT:+ (commit $COMMIT)}"
+      - name: Checkout llama.cpp at the pinned commit (full history: the commit count is checked)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ggml-org/llama.cpp
+          ref: ${{ steps.tag.outputs.ref }}
+          path: llama-src
+          fetch-depth: 0
+      - name: Apply the patches and write the archive
+        shell: bash
+        run: bash .github/archive-llama-source.sh llama-src llama-source-archive
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: llama-cpp-source
+          path: llama-source-archive/
+          if-no-files-found: error
+
+  test-source-archive:
+    name: C++ Tests from the archived llama.cpp source
+    needs: archive-llama-source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: 'temurin'
+          java-version-file: .java-version
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: llama-cpp-source
+          path: llama-source-archive/
+      - name: Unpack the archive and check the stamp against the patches on disk
+        shell: bash
+        run: |
+          set -euo pipefail
+          ( cd llama-source-archive && sha256sum -c ./*.tar.gz.sha256 )
+          mkdir -p "$RUNNER_TEMP/llama-src"
+          tar -xzf llama-source-archive/*.tar.gz -C "$RUNNER_TEMP/llama-src" --strip-components=1
+          test -f "$RUNNER_TEMP/llama-src/include/llama.h"
+          test ! -e "$RUNNER_TEMP/llama-src/.git"
+          # FetchContent skips population -- download AND the patch command -- for an overridden
+          # source directory, so the stamp the archive carries is what proves the patches are in.
+          bash .github/verify-patches-applied.sh "$RUNNER_TEMP/llama-src"
+      - name: Display CPU Info
+        shell: bash
+        run: bash .github/print-host-info.sh
+      - name: Build libraries from the archive
+        shell: bash
+        run: |
+          mvn -q --no-transfer-progress -f llama/pom.xml compile
+          .github/build.sh "-DBUILD_TESTING=ON -DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=$RUNNER_TEMP/llama-src"
+      - name: Run C++ unit tests
+        run: ctest --test-dir llama/build --output-on-failure
+
   crosscompile-linux-aarch64:
     name: Build manylinux_2_28 aarch64 (CPU variants)
     needs: [startgate, build-webui]
@@ -3109,7 +3199,7 @@ jobs:
 
   publish-snapshot:
     name: Publish Snapshot to Central
-    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
+    needs: [check-snapshot, crosscompile-linux-x86_64-cuda, test-source-archive, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
     if: needs.check-snapshot.result == 'success' && inputs.publish_to_central
     runs-on: ubuntu-latest
     environment: maven-central
@@ -3145,6 +3235,24 @@ jobs:
           server-password: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
+      # The patched llama.cpp source this build was compiled from (archive-llama-source, proven
+      # buildable by test-source-archive), signed with the release key setup-java just imported --
+      # the same key and passphrase name as every Maven file -- and collected below next to them.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: llama-cpp-source
+          path: llama-source-archive/
+      - name: Sign the llama.cpp source archive
+        shell: bash
+        env:
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          ( cd llama-source-archive && sha256sum -c ./*.tar.gz.sha256 )
+          for f in llama-source-archive/*.tar.gz; do
+            printf '%s' "$MAVEN_GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign --armor "$f"
+            gpg --batch --verify "$f.asc" "$f"
+          done
       - name: Guard - require a -SNAPSHOT version
         shell: bash
         run: |
@@ -3215,6 +3323,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           mkdir -p signed-snapshot-assets
+          # The signed llama.cpp source archive (see "Sign the llama.cpp source archive" above).
+          cp llama-source-archive/*.tar.gz llama-source-archive/*.tar.gz.asc signed-snapshot-assets/
           # Every Maven artifact Central gets, with its .asc: the jars of every jar module and the
           # pom of every module -- maven-gpg writes target/<artifactId>-<version>.pom next to its
           # .pom.asc, also for the pom-only modules (`.` is llama-parent, llama-platform is the one
@@ -3256,6 +3366,7 @@ jobs:
             signed-snapshot-assets/*.jar
             signed-snapshot-assets/*.pom
             signed-snapshot-assets/*.aar
+            signed-snapshot-assets/*.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: ${{ !cancelled() }}
         with:
@@ -3296,7 +3407,8 @@ jobs:
           dir="snapshot-assets"
           # Every attachable artifact type, not only jars: with '*.jar' alone the AARs were attached
           # unsigned for months and nothing counted them, so the job reported success.
-          artifacts=$(find "$dir" -maxdepth 1 \( -name '*.jar' -o -name '*.aar' -o -name '*.pom' \) | sort)
+          # '*.tar.gz' is the llama.cpp source archive (archive-llama-source), signed by the publish job.
+          artifacts=$(find "$dir" -maxdepth 1 \( -name '*.jar' -o -name '*.aar' -o -name '*.pom' -o -name '*.tar.gz' \) | sort)
           if [ -z "$artifacts" ]; then
             echo "::error::no artifacts in $dir -- the collection step produced nothing"
             echo "missing=-1" >> "$GITHUB_OUTPUT"
@@ -3399,7 +3511,7 @@ jobs:
   publish-release:
     name: Publish Release to Central
     if: needs.check-tag.result == 'success' && inputs.publish_to_central
-    needs: [check-tag, crosscompile-linux-x86_64-cuda, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
+    needs: [check-tag, crosscompile-linux-x86_64-cuda, test-source-archive, crosscompile-android-aarch64-opencl, package-android-aar, test-android-emulator, code-style, test-java-llama-langchain4j, test-java-llama-kotlin, test-java-llama-atmosphere-agent, test-java-llama-atmosphere-agent-integration, smoke-natives, smoke-natives-macos, smoke-agent-linux, vmlens, shared-files]
     runs-on: ubuntu-latest
     environment: maven-central
     permissions:
@@ -3434,6 +3546,24 @@ jobs:
           server-password: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: MAVEN_GPG_PASSPHRASE
+      # The patched llama.cpp source this build was compiled from (archive-llama-source, proven
+      # buildable by test-source-archive), signed with the release key setup-java just imported --
+      # the same key and passphrase name as every Maven file -- and collected below next to them.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: llama-cpp-source
+          path: llama-source-archive/
+      - name: Sign the llama.cpp source archive
+        shell: bash
+        env:
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          ( cd llama-source-archive && sha256sum -c ./*.tar.gz.sha256 )
+          for f in llama-source-archive/*.tar.gz; do
+            printf '%s' "$MAVEN_GPG_PASSPHRASE" | gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign --armor "$f"
+            gpg --batch --verify "$f.asc" "$f"
+          done
       # One reactor deploy publishes all five Maven artifacts at the same version:
       # net.ladenthin:llama-parent (the pom), :llama (the classes jar + natives jars),
       # :llama-langchain4j, :llama-kotlin and :llama-platform (a pom). The `release` profile (GPG + Central Publishing) is inherited
@@ -3501,6 +3631,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           mkdir -p signed-release-assets
+          # The signed llama.cpp source archive (see "Sign the llama.cpp source archive" above).
+          cp llama-source-archive/*.tar.gz llama-source-archive/*.tar.gz.asc signed-release-assets/
           # Every Maven artifact Central gets, with its .asc: the jars of every jar module and the
           # pom of every module -- maven-gpg writes target/<artifactId>-<version>.pom next to its
           # .pom.asc, also for the pom-only modules (`.` is llama-parent, llama-platform is the one
@@ -3542,6 +3674,7 @@ jobs:
             signed-release-assets/*.jar
             signed-release-assets/*.pom
             signed-release-assets/*.aar
+            signed-release-assets/*.tar.gz
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: ${{ !cancelled() }}
         with:
@@ -3582,7 +3715,8 @@ jobs:
           dir="release-assets"
           # Every attachable artifact type, not only jars: with '*.jar' alone the AARs were attached
           # unsigned for months and nothing counted them, so the job reported success.
-          artifacts=$(find "$dir" -maxdepth 1 \( -name '*.jar' -o -name '*.aar' -o -name '*.pom' \) | sort)
+          # '*.tar.gz' is the llama.cpp source archive (archive-llama-source), signed by the publish job.
+          artifacts=$(find "$dir" -maxdepth 1 \( -name '*.jar' -o -name '*.aar' -o -name '*.pom' -o -name '*.tar.gz' \) | sort)
           if [ -z "$artifacts" ]; then
             echo "::error::no artifacts in $dir -- the collection step produced nothing"
             echo "missing=-1" >> "$GITHUB_OUTPUT"
@@ -3608,3 +3742,48 @@ jobs:
         run: |
           echo "::error::${{ steps.signatures.outputs.missing }} asset(s) attached without a signature (-1 means none were collected at all)"
           exit 1
+
+  mirror-llama-source:
+    name: Mirror the pinned llama.cpp commit to bernardladenthin/llama.cpp
+    needs: [publish-release]
+    if: ${{ !cancelled() && needs.publish-release.result == 'success' }}
+    runs-on: ubuntu-latest
+    # The pristine upstream commit every natives jar of this release was built from, pushed to the
+    # project's fork as the tag jllama/b<nnnn> (.github/mirror-llama-source.sh: idempotent, and a
+    # tag that names another commit fails rather than being moved). Together with the signed source
+    # archive this is what keeps a release rebuildable without upstream (TODO.md, delivery roadmap,
+    # item 6); the configure takes the mirror through -DJLLAMA_GIT_REPOSITORY. LLAMA_MIRROR_TOKEN
+    # is a token with contents:write on the fork, kept with the release secrets; the job fails
+    # without it rather than skipping, so a release never silently goes unmirrored.
+    environment: maven-central
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Resolve pinned llama.cpp tag from CMakeLists.txt
+        id: tag
+        shell: bash
+        run: |
+          # The same rule as build-webui: JLLAMA_GIT_TAG is the number, JLLAMA_GIT_COMMIT the commit
+          # it names; the checkout takes the commit when it is set.
+          TAG=$(grep -oE '^set\(JLLAMA_GIT_TAG[[:space:]]+b[0-9]+\)' llama/CMakeLists.txt | grep -oE 'b[0-9]+' | head -1)
+          if [ -z "$TAG" ]; then
+            echo "could not resolve llama.cpp JLLAMA_GIT_TAG (b<nnnn>) from CMakeLists.txt" >&2
+            exit 1
+          fi
+          COMMIT=$(grep -oE '^set\(JLLAMA_GIT_COMMIT[[:space:]]+"[0-9a-f]{40}"\)' llama/CMakeLists.txt | grep -oE '[0-9a-f]{40}' | head -1 || true)
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "ref=${COMMIT:-$TAG}" >> "$GITHUB_OUTPUT"
+          echo "Pinned llama.cpp: $TAG${COMMIT:+ (commit $COMMIT)}"
+      - name: Checkout llama.cpp at the pinned commit (full history: the push needs it)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ggml-org/llama.cpp
+          ref: ${{ steps.tag.outputs.ref }}
+          path: llama-src
+          fetch-depth: 0
+      - name: Push the commit as jllama/<tag> to the mirror
+        shell: bash
+        env:
+          LLAMA_MIRROR_TOKEN: ${{ secrets.LLAMA_MIRROR_TOKEN }}
+        run: bash .github/mirror-llama-source.sh llama-src bernardladenthin/llama.cpp

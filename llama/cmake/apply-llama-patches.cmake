@@ -28,8 +28,13 @@
 #     context) aborts the configure with a clear message, so a stale patch can never be silently
 #     dropped from a release build.
 #   * A source tree that is not a git work tree (e.g. supplied via
-#     `-DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<path>`) has no clean/dirty oracle and no HEAD, so it
-#     falls back to the legacy per-patch reverse-check path, with the caveat described above.
+#     `-DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<path>`) has no clean/dirty oracle and no HEAD. When it
+#     carries the stamp -- the archived source tree of a release
+#     (llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz, written by publish.yml's archive-llama-source
+#     job after patching, .git removed) -- the stamp is the oracle: it must name exactly the patches
+#     on disk, with their hashes, and then nothing is applied; another patch set fails loudly.
+#     Without a stamp it falls back to the legacy per-patch reverse-check path, with the caveat
+#     described above.
 #
 # Invoked as:
 #   cmake -DPATCH_DIR=<repo>/patches -DLLAMA_SRC=<fetched-src> -P cmake/apply-llama-patches.cmake
@@ -88,6 +93,42 @@ execute_process(
     ERROR_QUIET)
 
 if(NOT head_rc EQUAL 0)
+    # An archived source tree -- the release asset llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz,
+    # which publish.yml's archive-llama-source job writes from a patched checkout with its .git
+    # removed -- carries this stamp, and the stamp is its only oracle: no HEAD, no clean/dirty
+    # state, and the per-patch reverse check below cannot answer for it either (0001's region is
+    # rewritten by 0006/0007, so 0001 always reverse-checks as "not applied" and the forward apply
+    # then aborts). So: every patch line of the stamp names a patch on disk with the same hash and
+    # the counts agree => the tree is exactly the patched tree the stamp describes, nothing to do.
+    # A stamp from another patch set (a patch edited or added since the archive was written) is a
+    # mismatch, reported as such rather than silently papered over with the legacy path.
+    if(EXISTS "${stamp_file}")
+        file(STRINGS "${stamp_file}" stamp_patch_lines REGEX "^[^ ]+\\.(patch|diff) [0-9a-f]+$")
+        set(stamp_matches TRUE)
+        list(LENGTH stamp_patch_lines stamp_n)
+        list(LENGTH patch_files disk_n)
+        if(NOT stamp_n EQUAL disk_n)
+            set(stamp_matches FALSE)
+        endif()
+        foreach(patch IN LISTS patch_files)
+            get_filename_component(patch_name "${patch}" NAME)
+            file(SHA256 "${patch}" patch_hash)
+            list(FIND stamp_patch_lines "${patch_name} ${patch_hash}" idx)
+            if(idx EQUAL -1)
+                set(stamp_matches FALSE)
+            endif()
+        endforeach()
+        if(stamp_matches)
+            message(STATUS "apply-llama-patches: ${LLAMA_SRC} is an archived (non-git) tree whose stamp "
+                           "names exactly the ${disk_n} patch(es) on disk — already applied, nothing to do")
+            return()
+        endif()
+        message(FATAL_ERROR
+            "apply-llama-patches: ${LLAMA_SRC} is not a git work tree, and its stamp ${stamp_file} "
+            "describes another patch set than ${PATCH_DIR} (${stamp_n} patch line(s) in the stamp, "
+            "${disk_n} on disk, or a hash differs). An archived source tree is patched once, when "
+            "the archive is written; build this patch set from a fresh fetch instead.")
+    endif()
     message(STATUS "apply-llama-patches: ${LLAMA_SRC} is not a git work tree — "
                    "using per-patch detection (a reconfigure over a patched tree may fail)")
     foreach(patch IN LISTS patch_files)

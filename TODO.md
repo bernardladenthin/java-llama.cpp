@@ -90,26 +90,20 @@ exported-symbols list on macOS keeping every statically linked symbol local, and
 
 ### 5. Layer A: upstream's C API shipped next to `jllama` (B.A)
 
-- [ ] In the `JLLAMA_BACKEND_DL` block `llama` and `mtmd` are built shared (unversioned SONAME like
-      ggml, `$ORIGIN`, listed in `jllama-files.txt`; on Windows `llama.dll`/`mtmd.dll` in
-      `jllama-extras.txt` because `jllama.dll` imports them); `llama-common` stays static;
-      `nativedeps.py` allowlists and `merge-native-artifacts.sh` follow; the AAR copies `**/*.so` as
-      before. macOS and s390x stay static (a later step).
-- [ ] `src/test/c/test_c_abi.c` -- plain C, links `llama` shared, `ggml_backend_load_all_from_path`
-      on the directory, `llama_backend_init`, `llama_print_system_info`, loads `stories260K.gguf`
-      when present -- as the first `ctest` in the modular build jobs (today `BUILD_TESTING` is refused
-      there because `jllama_test` needs the static CPU backend; this program does not).
+(Landed 2026-10-15: `llama` and `mtmd` are shared libraries next to `libjllama` in every
+`JLLAMA_BACKEND_DL` build, `llama-common` static inside it, `c_abi` -- a plain-C program over the
+shared `llama` -- the first `ctest` of the modular jobs; CLAUDE.md "Modular natives". Still open:
+macOS and s390x stay static, the C program loads a model only where `JLLAMA_C_ABI_MODEL` is set --
+no CI job sets it yet, so the model-backed half of that test is unmeasured.)
 
 ### 6. Source archive and mirror -- independence from upstream's repository
 
-- [ ] A job packs `_deps/llama.cpp-src` after the patches are applied as
-      `llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz` (+ `.asc`) and attaches it to the release;
-      `test-cpp-linux-x86_64` builds from that archive via `FETCHCONTENT_SOURCE_DIR_LLAMA.CPP`, so the
-      policy "no release asset CI has not run" holds without an exemption.
-- [ ] `-DJLLAMA_GIT_REPOSITORY` selects a mirror (default upstream); a mirror job pushes every pinned
-      upstream commit to `bernardladenthin/llama.cpp` as tag `jllama/b<nnnn>` (needs a push token in
-      the `maven-central` environment -- owner supplies it; the job is written and fails loud without
-      it). Patches stay files in this repo, never fork commits.
+(Landed 2026-10-15: `archive-llama-source` + `test-source-archive` + the signed
+`llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz` asset, `mirror-llama-source` after a release,
+`JLLAMA_GIT_REPOSITORY`; CLAUDE.md "Source archive and mirror". **Owner: create the
+`LLAMA_MIRROR_TOKEN` secret (contents:write on `bernardladenthin/llama.cpp`) in the `maven-central`
+environment before the next release -- the mirror job fails loud without it.** The first real run
+of both jobs is still pending.)
 
 ### 7. Layer B: the `jllama_*` C API (B.2 spike, then B.3 slice by slice)
 

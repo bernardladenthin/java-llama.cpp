@@ -16,9 +16,11 @@ artifact, classifier `<backend>-<os>-<arch>`, each holding exactly one directory
 `natives.csv`):
 
 - **8 library jars**, one per platform (`cpu-*` for Linux x86-64 / aarch64 / s390x, Android aarch64 /
-  x86-64, Windows x86-64 / aarch64; `metal-macos-aarch64`): `libjllama` with llama.cpp, mtmd and the
+  x86-64, Windows x86-64 / aarch64; `metal-macos-aarch64`): `libjllama` with llama-common and the
   server linked in, plus -- on the modular platforms (`JLLAMA_BACKEND_DL`, see "Modular natives") --
-  ggml's shared libraries, `ggml-rpc` and the CPU backend modules. Exactly one is loaded, the one of
+  `libllama` and `libmtmd` as shared libraries of their own (upstream's C API, layer A), ggml's
+  shared libraries, `ggml-rpc` and the CPU backend modules (on the static platforms llama and mtmd
+  are inside `libjllama`). Exactly one is loaded, the one of
   the running platform; `LlamaLoader.LIBRARY_BACKENDS` (`metal`, then `cpu`) names the directory.
 - **15 GPU module jars** (`cuda13`, `rocm`, `sycl`, `vulkan`, `opencl`, `openvino` per OS/arch,
   `LlamaLoader.MODULE_BACKENDS`): each holds **one** ggml backend module (`libggml-cuda.so`,
@@ -193,11 +195,23 @@ them), aarch64 plain ARMv8 -- and the GPU jars were complete libraries with the 
 in, tried one after the other (`JLLAMA_CPU_VARIANTS`, the two-stage predecessor of this; the
 measurements behind the Windows step are in `docs/handover/local-agent-report-b11538-windows.md`).
 
-- **Only ggml becomes shared.** `FetchContent_MakeAvailable` is pointed at a non-existent
-  `SOURCE_SUBDIR`, so it only fetches and patches; ggml is then added first with
-  `BUILD_SHARED_LIBS ON` and llama.cpp afterwards with it `OFF` (llama.cpp skips its own
-  `add_subdirectory(ggml)` when a `ggml` target exists; a module-only build never adds llama.cpp).
-  llama, mtmd and llama-common stay static in `libjllama.so`. **Every ggml default llama.cpp's own
+- **ggml, llama and mtmd become shared; llama-common stays static.** `FetchContent_MakeAvailable`
+  is pointed at a non-existent `SOURCE_SUBDIR`, so it only fetches and patches; ggml is then added
+  first with `BUILD_SHARED_LIBS ON` (llama.cpp skips its own `add_subdirectory(ggml)` when a `ggml`
+  target exists; a module-only build never adds llama.cpp). **Layer A of the delivery roadmap
+  (TODO.md)** then adds llama.cpp's root with `BUILD_SHARED_LIBS ON` and `LLAMA_BUILD_COMMON OFF`
+  -- `src/` gives `libllama.so`, upstream's own C API (`llama.h`) from the patched source, exactly
+  the file upstream's release zips ship -- and afterwards `vendor/cpp-httplib` plus `common/` with
+  it `OFF` again, because upstream's `common/CMakeLists.txt` follows `BUILD_SHARED_LIBS` like
+  `src/` does and llama-common is a C++ library (no stable ABI, `WINDOWS_EXPORT_ALL_SYMBOLS` when
+  shared) whose only consumer here is the server code compiled into `jllama`. `common/` reads the
+  build-info values (`b<number>-<hash>`, compiler, target) and the version pair from the root's
+  directory scope, which is not visible from ours, so the configure sets them itself from the
+  fetched tree (or from the archived tree's patch stamp, see "Source archive"). `mtmd` is added in
+  its own block as before, shared in this build (`libmtmd.so`, `mtmd.h`). Both are unversioned like
+  ggml and get the `$ORIGIN` run path; the configure refuses a `llama`/`mtmd` that came out static or
+  a `llama-common`/`cpp-httplib` that came out shared (one more file to ship). On the static
+  platforms (macOS, s390x) all of it stays inside `libjllama`. **Every ggml default llama.cpp's own
   CMakeLists changes before its `add_subdirectory(ggml)` is repeated** -- `GGML_LLAMAFILE_DEFAULT`
   and `GGML_CUDA_GRAPHS_DEFAULT` at b11639 -- because adding ggml first skips that block; re-check with
   `grep -n _DEFAULT CMakeLists.txt` at the new tag on every bump. The second one was missing once:
@@ -206,13 +220,14 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   has no equivalent, lost nothing). `ggml` and `ggml-base` are built **unversioned** (`VERSION` /
   `SOVERSION` cleared: the loader extracts plain files, so file name, SONAME and `DT_NEEDED` must
   agree).
-- **The library directory holds 18 files on Linux, Android and Windows x86-64**: `libjllama.so`,
-  `libggml.so`, `libggml-base.so`, 14 `libggml-cpu-<level>.so` (`x64`, `sse42`, `sandybridge`,
-  `ivybridge`, `piledriver`, `haswell`, `skylakex`, `cannonlake`, `cascadelake`, `cooperlake`,
-  `icelake`, `zen4`, `alderlake`, `sapphirerapids`) and `libggml-rpc.so`; **12 on Linux aarch64**
-  (8 modules, `armv8.0_1` to `armv9.2_2`: dotprod, fp16, SVE, i8mm, SVE2, SME); **11 on Android
-  aarch64** (ggml's own Android list of 7, `android_armv8.0_1` to `android_armv9.2_2`); **5 on
-  Windows arm64** (one `ggml-cpu.dll`) -- ELF with run path `$ORIGIN` only, **except on Android,
+- **The library directory holds 20 files on Linux, Android and Windows x86-64**: `libjllama.so`,
+  `libllama.so`, `libmtmd.so`, `libggml.so`, `libggml-base.so`, 14 `libggml-cpu-<level>.so` (`x64`,
+  `sse42`, `sandybridge`, `ivybridge`, `piledriver`, `haswell`, `skylakex`, `cannonlake`,
+  `cascadelake`, `cooperlake`, `icelake`, `zen4`, `alderlake`, `sapphirerapids`) and
+  `libggml-rpc.so`; **14 on Linux aarch64** (8 modules, `armv8.0_1` to `armv9.2_2`: dotprod, fp16,
+  SVE, i8mm, SVE2, SME); **13 on Android aarch64** (ggml's own Android list of 7, `android_armv8.0_1`
+  to `android_armv9.2_2`); **7 on Windows arm64** (one `ggml-cpu.dll`) -- ELF with run path
+  `$ORIGIN` only, **except on Android,
   where the libraries carry no run path at all**: CMake's Android platform drops the flag
   (`Modules/Platform/Android.cmake`, "Android reportedly ignores RPATH"; dockcross's toolchain file
   sets `CMAKE_SYSTEM_NAME Android`), so `INSTALL_RPATH "$ORIGIN"` writes nothing there, and none is
@@ -227,8 +242,9 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   `GetModuleHandleExW` + `GetModuleFileNameW`, handed over as **UTF-8** -- a path with an umlaut loaded
   nothing as ANSI, and no error was logged): ggml's default searches next to the executable, which
   here is `java`. That call also picks up the GPU modules the loader put there.
-- **Windows specifics.** There is no `$ORIGIN`, so the two libraries `jllama.dll` links (`ggml-base.dll`,
-  `ggml.dll`) are left out of `jllama-files.txt` and named in `jllama-extras.txt` instead, which
+- **Windows specifics.** There is no `$ORIGIN`, so the four libraries `jllama.dll` links
+  (`ggml-base.dll`, `ggml.dll`, `llama.dll`, `mtmd.dll`, in that dependency order) are left out of
+  `jllama-files.txt` and named in `jllama-extras.txt` instead, which
   `LlamaLoader` loads by full path **before** `jllama.dll` (otherwise Windows resolves the import from
   `java.exe`'s directory or `PATH`, where a foreign llama.cpp install can answer); CMake writes that
   file itself, byte-identical to what `merge-native-artifacts.sh` derives, so a local build is
@@ -287,8 +303,15 @@ measurements behind the Windows step are in `docs/handover/local-agent-report-b1
   meet at **2.28**: x86-64 rises from 2.17, aarch64 falls from ~2.39. `verify-native-deps.py` reads
   every library's version-needs table and holds both directories (and CUDA) to `GLIBC_2.28`; the
   modules themselves reference `GLIBC_2.27` at most (measured in the image).
-- **No `ctest` in a modular build job**: `jllama_test` calls the CPU/RPC backends directly, so the
-  option refuses `BUILD_TESTING`; `test-cpp-linux-x86_64`, `test-cpp-linux-aarch64`,
+- **One `ctest` in a modular build job, `c_abi`, and no `jllama_test`**: `jllama_test` calls the
+  CPU/RPC backends directly, so the option refuses `BUILD_TESTING`; what a library-jar build does
+  run (`JLLAMA_C_ABI_TEST`, on by default, not when cross-compiling) is `src/test/c/test_c_abi.c`
+  -- plain C11, linked against the shared `llama` and `ggml-base` only, no JNI, no C++: it calls
+  `ggml_backend_load_all_from_path` on the natives directory, `llama_backend_init`, requires at
+  least one device (the CPU module must have loaded), prints `llama_print_system_info`, and loads a
+  model when `JLLAMA_C_ABI_MODEL` names one. `build.sh`/`build.bat` run `ctest -R '^c_abi$'` after
+  every build that registered it, so the first thing proven about a library jar is that upstream's
+  C API in it works without a JVM (layer A). `test-cpp-linux-x86_64`, `test-cpp-linux-aarch64`,
   `test-cpp-windows-x86_64` and `test-cpp-windows-arm64` build the default static library with the
   tests, each with the compiler of the shipped build. The Java suite (`test-java-linux-x86_64`,
   `test-java-windows-x86_64`, the langchain4j integration job through `-Dnet.ladenthin.llama.lib.path`,
@@ -445,7 +468,9 @@ new job:**
 > them -- the packaging check and the Java suite against the real artifact.**
 
 Today that means 2 jobs build a shipped artifact **and** run `ctest` (`build-linux-s390x`,
-`build-macos-arm64-metal-15` -- the two static platforms) and 7 only test
+`build-macos-arm64-metal-15` -- the two static platforms; every modular library-jar job additionally
+runs the one plain-C test `c_abi` against the shared `llama` it ships, see "Modular natives") and 7
+only test
 (`test-cpp-linux-x86_64`, `test-cpp-linux-aarch64`, `test-cpp-windows-x86_64`,
 `test-cpp-windows-arm64` -- forced, see below -- plus `build-windows-x86_64-msvc`, the MSVC
 toolchain build that ships no jar since the modular natives but still runs `ctest` and the Java
@@ -1428,6 +1453,45 @@ The same class cost a wrong answer once before, when a drop-check was run agains
 exist yet: `git show` returned an empty file, the grep found nothing, and "upstream has not fixed it"
 was read out of a file that was never read. **A drop-check that cannot distinguish "no match" from
 "nothing examined" has not been run.**
+
+## Source archive and mirror: a release stays rebuildable without upstream
+
+Every natives jar is compiled from the pinned upstream commit plus `llama/patches/`, a tree that
+used to exist only transiently in each build job's `_deps/`. Two jobs of `publish.yml` keep it
+(TODO.md, delivery roadmap, item 6):
+
+- **`archive-llama-source`** (`.github/archive-llama-source.sh`): a full checkout of
+  `ggml-org/llama.cpp` at the pinned commit (`JLLAMA_GIT_COMMIT`, else the tag; the commit count is
+  checked against the number as the configure does), the applier run exactly as every build runs it
+  (`cmake -P llama/cmake/apply-llama-patches.cmake`), `verify-patches-applied.sh` over the result,
+  `.git` dropped, and the tree packed **reproducibly** (sorted, the commit's time as every mtime, no
+  owner, `gzip -n`; measured: two packs of the same inputs hash the same) as
+  `llama.cpp-b<nnnn>-jllama-<version>-src.tar.gz`, artifact `llama-cpp-source`. The tree keeps the
+  applier's stamp `.jllama-patches-applied` (the commit it was patched at + every patch's hash).
+- **`test-source-archive`** (gates both publish jobs): unpacks the archive and builds the static
+  library with the tests from it through `-DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<dir>`, then `ctest`.
+  **FetchContent skips population entirely for an overridden source directory -- no download and no
+  `PATCH_COMMAND`** (measured in `FetchContent.cmake`: "no population is required"), so the applier
+  never runs there; the stamp is what proves the patches are in, and the job runs
+  `verify-patches-applied.sh <dir>` against it before building. The applier itself also understands
+  such a tree now: a non-git tree whose stamp names exactly the patches on disk with their hashes is
+  "already applied", another patch set is a loud error (before, the legacy per-patch reverse check
+  aborted on `0001`, whose region `0006`/`0007` rewrite). The two build-info writers read the commit
+  from the stamp when `.git` is absent (`jllama_archived_llama_commit` in `llama/CMakeLists.txt`), so
+  `llama_build_info()` and `jllama-build.txt` of an archive build name `b<nnnn>-<commit>` rather than
+  `unknown`.
+- The publish jobs sign the archive with the release key (`gpg --detach-sign --armor`, the key
+  `setup-java` imported, the same passphrase name as maven-gpg) and collect it next to the Maven
+  artifacts; the attestation covers `*.tar.gz`, and the attach jobs' unsigned-asset check counts it.
+  A consumer rebuilds a release with `cmake -B build -DFETCHCONTENT_SOURCE_DIR_LLAMA.CPP=<unpacked>`.
+- **`mirror-llama-source`** (after a successful `publish-release`, exempt from the release gate like
+  the attach jobs; `.github/mirror-llama-source.sh`): pushes the pristine pinned commit to the fork
+  `bernardladenthin/llama.cpp` as the tag `jllama/b<nnnn>` -- idempotent, and a tag that already
+  names another commit fails rather than being moved. It needs `LLAMA_MIRROR_TOKEN` (contents:write
+  on the fork) in the `maven-central` environment and **fails without it** rather than skipping. The
+  configure's `JLLAMA_GIT_REPOSITORY` cache variable (default upstream) is where the mirror is
+  selected. The patches stay files in this repository, never fork commits: the review surface is the
+  patch file.
 
 ## RPC backend: `--rpc` client and the in-JVM `RpcServer`
 
