@@ -107,18 +107,22 @@ of both jobs is still pending.)
 
 ### 7. Layer B: the `jllama_*` C API (B.2 spike, then B.3 slice by slice)
 
-- [ ] Spike: `src/main/cpp/jllama_api.{h,cpp}` (`extern "C"`, opaque handle, JSON strings in and out,
-      task ids for streaming, C callbacks with `user_data`, `int` error codes + `jllama_last_error`)
-      with `jllama_api_version`, `jllama_build_info`, `jllama_model_load`/`_free`,
-      `jllama_chat_completions`, the streaming trio, `jllama_set_log_callback`, `jllama_string_free`;
-      the matching JNI entry points call it; `test_c_api.cpp` (gtest) plus a plain-C `test_c_abi`
-      compile of the header; `restore-models` in the four `test-cpp-*` jobs so the test runs over
-      `stories260K.gguf` where models exist.
-- [ ] The rest, engine by engine: embeddings/rerank/tokenize -> server (`NativeServer`, attach,
-      router) -> RPC server -> TTS -> quantizer -> trainer. JNI stays the thin shell; the Java API does
-      not change.
-- [ ] Contract: `docs/c-api.md`, the C API's SemVer tied to the Java version
-      (`jllama_api_version()`), the header shipped in every natives directory.
+(The spike landed 2026-10-15: `src/main/cpp/jllama_api.{h,cpp}` over `jllama_engine.{hpp,cpp}`
+with `jllama_api_version`, `jllama_build_info`, `jllama_last_error`, `jllama_string_free`,
+`jllama_model_load`/`_free`, `jllama_chat_completions`, the streaming trio, `jllama_task_release`,
+`jllama_set_log_callback`; the eight matching JNI entry points call it; `test_c_api.cpp` (gtest,
+hermetic over a tiny random GGUF the test writes, so no `restore-models` was needed) and the plain-C
+`c_abi` compile of the header; the header ships in every natives directory; `docs/c-api.md`;
+CLAUDE.md "The C API". The version is the library's (`jllama_api_version()` returns the pom
+version), which closes the contract bullet.)
+
+- [ ] The rest, engine by engine: completions/infill -> embeddings/rerank -> tokenize/detokenize ->
+      metrics, slots, LoRA, parallel -> server (`NativeServer`, attach, router) -> RPC server -> TTS
+      -> quantizer -> trainer. JNI stays the thin shell; the Java API does not change. Each slice:
+      an engine function, a `jllama_*` function, a `test_c_api.cpp` case, the JNI shell.
+- [ ] An import library for Windows consumers (`jllama.lib`, from the DLL's exports at package
+      time) or a documented `LoadLibrary`/`GetProcAddress` recipe -- today only the latter.
+- [ ] Java 22+ over the C API without JNI (a separate module, Panama/FFM; the core stays Java 8).
 
 ### 8. Release builds without the shared compiler cache (C.3)
 

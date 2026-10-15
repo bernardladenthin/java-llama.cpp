@@ -878,6 +878,8 @@ endif()
 
 add_library(jllama SHARED
     src/main/cpp/jllama.cpp
+    src/main/cpp/jllama_engine.cpp
+    src/main/cpp/jllama_api.cpp
     src/main/cpp/tts_engine.cpp
     src/main/cpp/train_engine.cpp
     src/main/cpp/rpc_bridge.cpp
@@ -1045,6 +1047,17 @@ target_include_directories(jllama PRIVATE
 # Note: the WebUI ui.h include dir (generated webui-generated/ or the empty stub
 # src/main/cpp/webui_stub) is added by the "WebUI assets" conditional above.
 target_link_libraries(jllama PRIVATE llama-common mtmd llama cpp-httplib)
+
+# The C API (src/main/cpp/jllama_api.h, layer B of the delivery roadmap, TODO.md item 7): JLLAMA_BUILD
+# selects dllexport on Windows (the ELF/Mach-O export lists above already let jllama_* through);
+# JLLAMA_VERSION_STRING is what jllama_api_version() returns -- the net.ladenthin:llama version this
+# build belongs to, resolved by cmake/jllama-build-info.cmake from the pom (or -DJLLAMA_VERSION=).
+# The header ships in every library directory, next to upstream's llama.h/mtmd.h/ggml.h of layer A:
+# named in jllama-files.txt so the loader extracts it next to the library and never loads it (the
+# static platforms get a jllama-files.txt for that one entry; without the list the merge step would
+# derive the header into jllama-extras.txt and LlamaLoader would System.load a header).
+target_compile_definitions(jllama PRIVATE JLLAMA_BUILD JLLAMA_VERSION_STRING="${JLLAMA_VERSION_RESOLVED}")
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/src/main/cpp/jllama_api.h DESTINATION ${JLLAMA_DIR})
 target_compile_features(jllama PRIVATE cxx_std_11)
 
 target_compile_definitions(jllama PRIVATE
@@ -1118,7 +1131,7 @@ if(JLLAMA_BACKEND_DL)
         set(JLLAMA_UPSTREAM_SHARED llama mtmd)
     endif()
     set_target_properties(jllama ${JLLAMA_UPSTREAM_SHARED} ${JLLAMA_GGML_TARGETS} PROPERTIES BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
-    set(JLLAMA_FILES_CONTENT "# Written by llama/CMakeLists.txt (JLLAMA_BACKEND_DL): extracted, not loaded\n")
+    set(JLLAMA_FILES_CONTENT "# Written by llama/CMakeLists.txt (JLLAMA_BACKEND_DL): extracted, not loaded\njllama_api.h\n")
     foreach(t ${JLLAMA_UPSTREAM_SHARED} ${JLLAMA_GGML_TARGETS})
         # On WINDOWS the two libraries jllama LINKS (ggml, ggml-base) must be left out of this list,
         # which puts them into jllama-extras.txt instead (merge-native-artifacts.sh derives that from
@@ -1142,6 +1155,12 @@ if(JLLAMA_BACKEND_DL)
     # merge-native-artifacts.sh reads them on Linux -- it strips a CR itself now, but the extras
     # file below is meant to be byte-identical to what that script writes, which is LF.
     file(GENERATE OUTPUT ${JLLAMA_DIR}/jllama-files.txt CONTENT "${JLLAMA_FILES_CONTENT}" NEWLINE_STYLE LF)
+else()
+    # The static build (macOS, s390x, a plain local build) ships one library and the C API header;
+    # the list exists so the header is extracted and not loaded (see the C API block above).
+    file(WRITE ${JLLAMA_DIR}/jllama-files.txt "# Written by llama/CMakeLists.txt (static): extracted, not loaded\njllama_api.h\n")
+endif()
+if(JLLAMA_BACKEND_DL)
     if(OS_NAME STREQUAL "Windows")
         # The counterpart of the two names left out above: in CI merge-native-artifacts.sh derives
         # jllama-extras.txt as "every file next to the library that jllama-files.txt does not name,
@@ -1194,9 +1213,10 @@ endif()
 
 #################### C++ unit tests ####################
 
-# The plain-C consumer of layer A: a modular build (JLLAMA_BACKEND_DL, not module-only) builds
+# The plain-C consumer of both layers: a modular build (JLLAMA_BACKEND_DL, not module-only) builds
 # src/test/c/test_c_abi.c against the shared llama and ggml-base libraries it just put next to
-# libjllama and registers it as the ctest `c_abi` -- the first and only test of the modular build
+# libjllama (layer A) and against libjllama itself (layer B: jllama_api.h must compile as C and the
+# jllama_* symbols must be exported) and registers it as the ctest `c_abi` -- the first and only test of the modular build
 # jobs, which refuse BUILD_TESTING (jllama_test needs the CPU backend statically). build.sh and
 # build.bat run `ctest -R c_abi` right after the build. Off when cross-compiling (the Android jobs
 # cannot run the executable). Also useful locally: `ctest --test-dir build -R c_abi -V`.
@@ -1205,7 +1225,8 @@ if(JLLAMA_BACKEND_DL AND NOT JLLAMA_MODULE_ONLY AND JLLAMA_C_ABI_TEST AND NOT CM
     enable_language(C)
     add_executable(jllama_c_abi src/test/c/test_c_abi.c)
     target_compile_features(jllama_c_abi PRIVATE c_std_11)
-    target_link_libraries(jllama_c_abi PRIVATE llama ggml-base)
+    target_link_libraries(jllama_c_abi PRIVATE jllama llama ggml-base)
+    target_include_directories(jllama_c_abi PRIVATE src/main/cpp)
     # The executable lives in the build tree and must resolve libllama/libggml* from the natives
     # directory: a run path pointing there on ELF, PATH for the test on Windows (where the
     # libraries are found through the loaded-module list and PATH, never the executable's rpath).
@@ -1284,6 +1305,9 @@ if(BUILD_TESTING)
     )
 
     add_executable(jllama_test
+        src/test/cpp/test_c_api.cpp
+        src/main/cpp/jllama_engine.cpp
+        src/main/cpp/jllama_api.cpp
         src/test/cpp/test_utils.cpp
         src/test/cpp/test_server.cpp
         src/test/cpp/test_jni_helpers.cpp
@@ -1352,6 +1376,11 @@ if(BUILD_TESTING)
 
     target_compile_definitions(jllama_test PRIVATE
         SERVER_VERBOSE=$<BOOL:${LLAMA_VERBOSE}>
+        # test_c_api.cpp drives the C API compiled into this binary (jllama_api.cpp above), so the
+        # same two definitions as the library: JLLAMA_BUILD (dllexport is harmless in an executable)
+        # and the version jllama_api_version() reports.
+        JLLAMA_BUILD
+        JLLAMA_VERSION_STRING="${JLLAMA_VERSION_RESOLVED}"
     )
 
     # gtest_discover_tests runs the freshly built jllama_test executable at build

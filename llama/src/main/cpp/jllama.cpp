@@ -18,6 +18,8 @@
 #include "server-chat.h"
 #include "utils.hpp"
 #include "jni_helpers.hpp"
+#include "jllama_engine.hpp"
+#include "jllama_api.h"
 #include "rpc_support.hpp"
 #include "log_helpers.hpp"
 #include "tts_engine.h"
@@ -67,18 +69,9 @@ std::string parse_jstring(JNIEnv *env, jstring java_string);
 
 namespace {
 
-// Sentinel value used by llama.cpp (since b7433) to indicate that n_parallel
-// should be resolved automatically by the host application. Introduced in:
-// common_params_parser_init() for LLAMA_EXAMPLE_SERVER in common/arg.cpp.
-static constexpr int N_PARALLEL_AUTO = -1;
+// N_PARALLEL_AUTO / N_PARALLEL_DEFAULT moved to jllama_engine.cpp with the load.
 
-// Default n_parallel for the embedded Java library. Unlike the standalone
-// llama.cpp server (which resolves auto to 4 for multi-client throughput),
-// the Java bindings run in-process with a single caller, so 1 slot is the
-// appropriate default and preserves pre-b7433 behaviour.
-static constexpr int N_PARALLEL_DEFAULT = 1;
-
-// jllama_context is defined in jni_helpers.hpp.
+// jllama_context is defined in jllama_context.hpp (via jni_helpers.hpp).
 
 JavaVM *g_vm = nullptr;
 
@@ -274,157 +267,58 @@ static void throw_by_exception_type(JNIEnv *env, const std::exception &e) {
     return true;
 }
 
+// The model-side helpers every entry point below shares live in the engine (jllama_engine.hpp):
+// wake_server / wake_and_get_meta (leave the idle-sleep state before reading the model),
+// populate_completion_task, wake_and_post. They are the same functions the C API runs.
+using jllama::engine::populate_completion_task;
+using jllama::engine::wake_and_get_meta;
+using jllama::engine::wake_and_post;
+using jllama::engine::wake_server;
+
 /**
- * Wake the server from the idle-sleep state and re-sync the state this layer caches from the model.
- *
- * Upstream's `handle_sleeping_state(true)` calls `destroy()`, which frees the model and context and
- * sets `ctx_tgt`/`model_tgt` to nullptr; resuming calls `load_model()` again, producing a *new*
- * model. Two consequences for this layer, and both crashed or corrupted before this helper existed:
- *
- *  1. `server_context::get_meta()` dereferences `ctx_tgt`/`model_tgt`, so calling it while asleep is
- *     a null dereference. Upstream's header says as much of the sibling accessor: "get the
- *     underlaying llama_context, can return nullptr if sleeping". This crashed the JVM with SIGSEGV
- *     at `llama_context::get_model()` on all six CI platforms the first time a request followed an
- *     idle window.
- *  2. `jctx->vocab` is captured once after the initial load. The reload replaces the model, so the
- *     cached pointer dangles -- use-after-free on every tokenize/detokenize/rerank path. (The field's
- *     comment used to say "valid for the lifetime of this context"; that holds only while idle sleep
- *     is off, which is the default.)
- *
- * `wake_and_post()` below is NOT sufficient for either: every dispatch site reads `get_meta()` and
- * tokenizes *before* it posts, so the wake has to happen earlier than the post. Upstream sidesteps
- * the whole question by caching meta once after load (`server_routes::update_meta`) and serving
- * cached `/props` and `/models` while asleep; this layer reads live state per request, so it must
- * wake first and then refresh.
- *
- * Call this at the top of every entry point that touches the model. It is a no-op when sleeping is
- * off (the default, `-1`), and in vocab-only mode, which owns its own model and never has a server.
- *
- * The temporary reader exists only to reach `queue_tasks` -- `server_context` exposes the queue no
- * other way. It is cheap: the constructor stores two references and an int, and the destructor's
- * `stop()` is a no-op while `id_tasks` is empty.
- *
- * Teardown ordering: a caller parked in `wait_until_no_sleep()` when the queue terminates is never
- * released (see `wake_and_post` below). That is safe only because every caller of this helper runs
- * inside a `jllama_context_guard`, and `Java_..._delete` waits for `users == 0` before `terminate()`.
- * Do not call this from the teardown path.
+ * Throws `e` as the Java exception the engine's error contract maps it to: jllama_invalid_request
+ * is an InvalidRequestException (400), everything else a LlamaException.
  */
-static void wake_server(jllama_context *jctx) {
-    if (jctx->vocab_only) {
-        return; // no server_context in vocab-only mode; the model is owned directly and never sleeps
-    }
-    server_response_reader rd = jctx->server.get_response_reader();
-    rd.queue_tasks.wait_until_no_sleep();
-    // Re-read the vocab: a sleep/resume cycle replaced the model this pointer came from.
-    jctx->vocab = llama_model_get_vocab(llama_get_model(jctx->server.get_llama_context()));
-}
-
-/** Wake the server (see {@link wake_server}) and return its metadata, read after the wake. */
-[[nodiscard]] static server_context_meta wake_and_get_meta(jllama_context *jctx) {
-    wake_server(jctx);
-    return jctx->server.get_meta();
+static void throw_engine_error(JNIEnv *env, const std::exception &e) {
+    const bool invalid = dynamic_cast<const jllama_invalid_request *>(&e) != nullptr;
+    env->ThrowNew(invalid ? c_llama_invalid_request : c_llama_error, e.what());
 }
 
 /**
- * Parse the OAI chat-completion body through oaicompat_chat_params_parse and
- * write the result into `out`, preserving decoded media in `files` and the chat
- * session (prompt, parser state, sampling additions; llama.cpp b11531, #30210) in
- * `session`. The session must reach the task (`apply_chat_session`) and the
- * reader (`post_tasks`), which the two dispatchers below do. Returns true on
- * success; on failure throws and returns false.
+ * Throws the Java exception a failed C API call maps to (jllama_last_error() carries the message).
+ */
+static void throw_api_status(JNIEnv *env, jllama_status status) {
+    env->ThrowNew(status == JLLAMA_STATUS_INVALID_REQUEST ? c_llama_invalid_request : c_llama_error,
+                  jllama_last_error());
+}
+
+/**
+ * Parse the OAI chat-completion body through the engine (oaicompat_chat_params_parse) and write the
+ * result into `out`, preserving decoded media in `files` and the chat session in `session`.
+ * Returns true on success; on failure throws and returns false.
  */
 [[nodiscard]] static bool parse_oai_chat_params(JNIEnv *env, jllama_context *jctx, json &body, json &out,
                                                 std::vector<raw_buffer> &files, common_chat_session &session) {
     try {
-        auto meta = wake_and_get_meta(jctx);
-        out = oaicompat_chat_params_parse(jctx->vocab, body, meta.chat_params, files, session);
+        out = jllama::engine::parse_oai_chat_params(jctx, body, files, session);
         return true;
     } catch (const std::exception &e) {
-        throw_invalid_request(env, e);
+        throw_engine_error(env, e);
         return false;
     }
-}
-
-// Tokenise the prompt in `data` and fill task.tokens + task.params.
-// Callers must wrap this in try/catch (params_from_json_cmpl can throw).
-static void populate_completion_task(server_task &task, jllama_context *jctx,
-                                     const std::vector<llama_logit_bias> &logit_bias_eog, const json &data,
-                                     bool has_mtmd, std::vector<raw_buffer> files = {}) {
-    if (!configure_multimodal_task_impl(task, has_mtmd, data, std::move(files))) {
-        auto tokenized_prompts =
-            tokenize_input_prompts(jctx->vocab, nullptr, data.at("prompt"), true, true, mtmd_helper_init_opt_default());
-        if (!tokenized_prompts.empty()) {
-            task.tokens = std::move(tokenized_prompts[0]);
-        }
-    }
-    task.params = server_schema::eval_llama_cmpl_schema(jctx->vocab, jctx->params, logit_bias_eog, data);
-    configure_task_slot_impl(task, data);
-}
-
-// Wake the queue before posting, then post.
-//
-// With ModelParameters.setSleepIdleSeconds(> 0) the queue enters a sleeping state after the
-// configured idle period, and server_queue::post() does NOT leave it: post() only calls
-// condition_tasks.notify_one(), while the sleeping wait predicate is
-// `(!running || req_stop_sleeping)`. The loop wakes, re-tests, and goes straight back to
-// sleep with the task still queued. Only wait_until_no_sleep() sets req_stop_sleeping.
-//
-// Upstream does this wake for the caller: server_res_generator's constructor calls
-// queue_tasks.wait_until_no_sleep() for every route built with create_response(). Exactly
-// four routes opt out via create_response(true) -- health, metrics, props and models -- and
-// each answers from cache instead of waiting. This layer builds its readers with
-// server_context::get_response_reader(), the CLI-facing accessor, which performs no wake --
-// so the wake has to happen here or not at all.
-//
-// Used at every post site in this file. Sleeping is off by default (-1), in which case
-// wait_until_no_sleep() sees a non-sleeping queue and returns immediately.
-//
-// Ordering invariant this depends on: wait_until_no_sleep() blocks until the worker loop clears
-// `sleeping`, and upstream's loop leaves that flag SET when it exits on !running -- it breaks out
-// of the sleep block before the `sleeping = false; notify_all();` pair. So a caller parked here
-// when the queue is terminated is never released. It is safe only because every entry point holds
-// a jllama_context_guard user reference and Java_..._delete waits for users == 0 BEFORE calling
-// terminate(), so the loop is always alive to service this wait. Do not reorder that teardown to
-// terminate first.
-static void wake_and_post(server_response_reader &rd, server_task &&task, bool front = false) {
-    rd.queue_tasks.wait_until_no_sleep();
-    rd.post_task(std::move(task), front);
-}
-
-// The chat session (if any) is what the reader builds its task_result_state from -- the
-// parser that turns generated text into content, reasoning and tool calls. A default session
-// is the non-chat case (content only).
-static void wake_and_post(server_response_reader &rd, std::vector<server_task> &&tasks,
-                          const common_chat_session &session = {}) {
-    rd.queue_tasks.wait_until_no_sleep();
-    rd.post_tasks(std::move(tasks), session);
 }
 
 [[nodiscard]] static jint dispatch_streaming_completion(JNIEnv *env, jllama_context *jctx, const json &data,
                                                         server_task_type task_type, task_response_type res_type,
                                                         std::vector<raw_buffer> files = {},
                                                         const common_chat_session &session = {}) {
-    server_context *ctx_server = &jctx->server;
-    auto meta = wake_and_get_meta(jctx);
-    auto *rd = new server_response_reader(ctx_server->get_response_reader());
-    int tid = rd->get_new_id();
     try {
-        server_task task(task_type);
-        task.id = tid;
-        populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
-        task.apply_chat_session(session);
-        task.params.res_type = res_type;
-        std::vector<server_task> tasks;
-        tasks.push_back(std::move(task));
-        wake_and_post(*rd, std::move(tasks), session);
+        return static_cast<jint>(
+            jllama::engine::streaming_request(jctx, data, task_type, res_type, std::move(files), session));
     } catch (const std::exception &e) {
-        delete rd;
-        throw_invalid_request(env, e);
+        throw_engine_error(env, e);
         return 0;
     }
-    std::lock_guard<std::mutex> lk(jctx->readers_mutex);
-    jctx->readers[tid].reset(rd);
-    return static_cast<jint>(tid);
 }
 
 /**
@@ -438,26 +332,13 @@ static void wake_and_post(server_response_reader &rd, std::vector<server_task> &
                                                           server_task_type task_type, task_response_type res_type,
                                                           std::vector<raw_buffer> files = {},
                                                           const common_chat_session &session = {}) {
-    server_context *ctx_server = &jctx->server;
-    auto meta = wake_and_get_meta(jctx);
-    auto rd = ctx_server->get_response_reader();
-    server_task task(task_type);
-    task.id = rd.get_new_id();
     try {
-        populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
+        auto results = jllama::engine::blocking_completion(jctx, data, task_type, res_type, std::move(files), session);
+        return results_to_jstring(env, results);
     } catch (const std::exception &e) {
-        throw_invalid_request(env, e);
+        throw_engine_error(env, e);
         return nullptr;
     }
-    task.apply_chat_session(session);
-    task.params.res_type = res_type;
-    std::vector<server_task> tasks;
-    tasks.push_back(std::move(task));
-    wake_and_post(rd, std::move(tasks), session);
-    auto br = rd.wait_for_all([jctx] { return jctx->closing.load(); });
-    if (!batch_ok_or_throw(env, br))
-        return nullptr;
-    return results_to_jstring(env, br.results);
 }
 
 /**
@@ -775,6 +656,12 @@ void log_callback_trampoline(ggml_log_level level, const char *text, void *user_
         }
         g_log_cv.notify_all();
     }
+}
+
+// The C API's log callback shape over the JNI trampoline above (jllama_set_log_callback takes an
+// int level; the values are ggml_log_level's).
+void jni_log_sink(int level, const char *text, void *user_data) {
+    log_callback_trampoline(static_cast<ggml_log_level>(level), text, user_data);
 }
 } // namespace
 
@@ -1122,7 +1009,7 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) try {
     }
 
     // Detach the sink first (this drains the queue through it), then drop the ref it calls into.
-    common_log_set_callback(common_log_main(), nullptr, nullptr);
+    jllama_set_log_callback(nullptr, nullptr);
     if (o_log_callback != nullptr) {
         env->DeleteGlobalRef(o_log_callback);
     }
@@ -1149,12 +1036,11 @@ bool jni_load_progress_trampoline(float progress, void *user_data) {
 }
 } // namespace
 
-// Shared implementation of loadModel and loadModelWithProgress. When `progress` is
-// non-null, installs a load-progress trampoline; otherwise behaves identically to
-// the no-callback path.
+// Shared implementation of loadModel and loadModelWithProgress: the argv crosses into the C API
+// (jllama_model_load), which runs the load the engine owns; a Java LoadProgressCallback becomes the
+// C progress callback through jni_load_progress_trampoline. The handle the C API returns is the
+// jllama_context the Java field holds.
 static void load_model_impl(JNIEnv *env, jobject obj, jobjectArray jparams, jobject progress) {
-    common_params params;
-
     const jsize argc = env->GetArrayLength(jparams);
     char **argv = parse_string_array(env, jparams, argc);
     if (argv == nullptr) {
@@ -1162,140 +1048,31 @@ static void load_model_impl(JNIEnv *env, jobject obj, jobjectArray jparams, jobj
         return;
     }
 
-    // Strip --vocab-only before common_params_parse (not a common_params flag).
-    bool vocab_only = false;
-    std::vector<char *> filtered_argv = strip_flag_from_argv(argv, static_cast<int>(argc), "--vocab-only", &vocab_only);
-    // Register the `--rpc` servers up front (a clear error for an unreachable one) and keep RPC
-    // devices another model registered in this JVM out of this load -- see rpc_support.hpp.
-    std::vector<std::string> rpc_argv;
-    try {
-        rpc_argv = jllama::rpc::prepare_argv(std::vector<std::string>(filtered_argv.begin(), filtered_argv.end()));
-    } catch (const std::invalid_argument &e) {
-        free_string_array(argv, argc);
-        env->ThrowNew(c_llama_error, e.what());
-        return;
-    }
-    free_string_array(argv, argc);
-    std::vector<char *> parse_argv;
-    parse_argv.reserve(rpc_argv.size());
-    for (auto &arg : rpc_argv) {
-        parse_argv.push_back(const_cast<char *>(arg.c_str()));
-    }
-    const auto parsed_params =
-        common_params_parse(static_cast<int>(parse_argv.size()), parse_argv.data(), params, LLAMA_EXAMPLE_SERVER);
-    if (!parsed_params) {
-        env->ThrowNew(c_llama_error, "Failed to parse model parameters");
-        return;
-    }
-
-    common_init();
-
-    auto *jctx = new jllama_context();
-    jctx->vocab_only = vocab_only;
-    jctx->params = params;
-
-    auto fail_load = [&](const char *msg) {
-        if (jctx->vocab_only_model) {
-            llama_model_free(jctx->vocab_only_model);
-        }
-        delete jctx;
-        env->ThrowNew(c_llama_error, msg);
-    };
-
-    // Vocab-only mode: load just the model vocab, skip inference setup.
-    if (vocab_only) {
-        SRV_INF("loading tokenizer from '%s'\n", params.model.path.c_str());
-        llama_model_params mparams = llama_model_default_params();
-        mparams.vocab_only = true;
-        jctx->vocab_only_model = llama_model_load_from_file(params.model.path.c_str(), mparams);
-        if (!jctx->vocab_only_model) {
-            fail_load("could not load tokenizer from given file path");
-            return;
-        }
-        jctx->vocab = llama_model_get_vocab(jctx->vocab_only_model);
-        env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(jctx));
-        return;
-    }
-
-    SRV_INF("loading model '%s'\n", params.model.path.c_str());
-
-    llama_numa_init(params.numa);
-
-    common_params_print_info(params);
-
-    // Resolve the auto sentinel before loading the model.
-    if (params.n_parallel <= N_PARALLEL_AUTO) {
-        params.n_parallel = N_PARALLEL_DEFAULT;
-        jctx->params.n_parallel = N_PARALLEL_DEFAULT;
-    }
-
-    LOG_INF("%s: loading model\n", __func__);
-
-    // Install the load-progress trampoline if the caller supplied a callback.
     load_progress_ud progress_ud{};
+    jllama_load_progress_fn progress_fn = nullptr;
     if (progress != nullptr) {
         jclass cb_cls = env->GetObjectClass(progress);
         progress_ud.env = env;
         progress_ud.callback = progress;
         progress_ud.on_progress = env->GetMethodID(cb_cls, "onProgress", "(F)Z");
         if (progress_ud.on_progress == nullptr) {
-            fail_load("LoadProgressCallback.onProgress(float) not found");
+            free_string_array(argv, argc);
+            env->ThrowNew(c_llama_error, "LoadProgressCallback.onProgress(float) not found");
             return;
         }
-        params.load_progress_callback = jni_load_progress_trampoline;
-        params.load_progress_callback_user_data = &progress_ud;
+        progress_fn = jni_load_progress_trampoline;
     }
 
-    // Before load_model(), as upstream's llama_server() does -- see jllama_context::routes. It keeps a
-    // reference to jctx->params, which lives as long as it does.
-    jctx->routes = std::make_unique<server_routes>(jctx->params, jctx->server);
-
-    if (!jctx->server.load_model(params)) {
-        fail_load("could not load model from given file path");
+    jllama_model *model = nullptr;
+    const jllama_status status = jllama_model_load(static_cast<int>(argc), argv, progress_fn,
+                                                   progress != nullptr ? &progress_ud : nullptr, &model);
+    free_string_array(argv, argc);
+    if (status != JLLAMA_STATUS_OK) {
+        // An unreachable --rpc server and a refused argv are both LlamaException here, as before.
+        env->ThrowNew(c_llama_error, jllama_last_error());
         return;
     }
-
-    jctx->vocab = llama_model_get_vocab(llama_get_model(jctx->server.get_llama_context()));
-    // The handlers read the model's metadata from this copy; taken once, as upstream does after a load.
-    jctx->routes->update_meta(jctx->server);
-
-    LOG_INF("%s: model loaded\n", __func__);
-
-    {
-        // Direct get_meta() is correct here and must NOT go through wake_and_get_meta(): this runs on
-        // the load path, where the model is freshly loaded and the server cannot be asleep.
-        auto meta = jctx->server.get_meta();
-        LOG_INF("%s: chat template, chat_template: %s, example_format: '%s'\n", __func__,
-                common_chat_templates_source(meta.chat_params.tmpls.get()).c_str(),
-                common_chat_format_example(meta.chat_params.tmpls.get(), jctx->params.use_jinja,
-                                           jctx->params.default_template_kwargs)
-                    .c_str());
-    }
-
-    jctx->worker = std::thread([jctx]() {
-        JNIEnv *tenv;
-        jint res = g_vm->GetEnv((void **)&tenv, JNI_VERSION_1_6);
-        bool attached = false;
-        if (res == JNI_EDETACHED) {
-            res = g_vm->AttachCurrentThread((void **)&tenv, nullptr);
-            if (res != JNI_OK) {
-                jctx->worker_ready.store(true);
-                return;
-            }
-            attached = true;
-        }
-        jctx->worker_ready.store(true);
-        jctx->server.start_loop();
-        if (attached) {
-            g_vm->DetachCurrentThread();
-        }
-    });
-
-    while (!jctx->worker_ready.load()) {
-        std::this_thread::yield();
-    }
-
-    env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(jctx));
+    env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(model));
 }
 
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_loadModel(JNIEnv *env, jobject obj, jobjectArray jparams) {
@@ -1413,7 +1190,7 @@ JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestCompletion(JNI
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_releaseTask(JNIEnv *env, jobject obj, jint id_task) {
     return jni_guard_impl(env, c_llama_error, [&]() -> void {
         REQUIRE_SERVER_CONTEXT();
-        erase_reader(jctx, id_task);
+        jllama_task_release(reinterpret_cast<jllama_model *>(jctx), static_cast<int>(id_task));
     });
 }
 
@@ -1471,61 +1248,26 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_receiveCompletionJ
     });
 }
 
-// Streaming OpenAI chat: poll one step of a chat.completion.chunk stream.
-// Returns {"data": <chunk-object-or-array>, "stop": <bool>} — `data` is exactly
-// what the streaming result's to_json() produced (a single chunk object for a
-// partial token, or a JSON array of chunks for the final delta + usage). The
-// uniform envelope avoids injecting a "stop" key into an array. Skips the
-// header-only nullptr sentinels (upstream b9437+) and releases the reader on stop.
+// Streaming OpenAI chat: poll one step of a chat.completion.chunk stream through the C API.
+// Returns {"data": <chunk-object-or-array>, "stop": <bool>} -- `data` is exactly what the streaming
+// result's to_json() produced (a single chunk object for a partial token, or a JSON array of chunks
+// for the final delta + usage). The uniform envelope avoids injecting a "stop" key into an array.
+// Header-only sentinels (upstream b9437+) are skipped and the reader released on stop, inside.
 JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_receiveChatCompletionChunk(JNIEnv *env, jobject obj,
                                                                                          jint id_task) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jstring {
         REQUIRE_SERVER_CONTEXT(nullptr);
-
-        // Copy the shared_ptr out under the lock so the reader stays alive across next() below,
-        // which runs without the lock and may race a concurrent erase_reader()/close().
-        std::shared_ptr<server_response_reader> rd;
-        {
-            std::lock_guard<std::mutex> lk(jctx->readers_mutex);
-            auto it = jctx->readers.find(id_task);
-            if (it == jctx->readers.end()) {
-                env->ThrowNew(c_llama_error, "Task not found");
-                return nullptr;
-            }
-            rd = it->second;
-        }
-
-        json payload;
+        char *envelope = nullptr;
         bool stop = false;
-        try {
-            while (true) {
-                server_task_result_ptr result = rd->next([jctx] { return jctx->closing.load(); });
-
-                if (!result_ok_or_throw(env, result)) {
-                    erase_reader(jctx, id_task);
-                    return nullptr;
-                }
-
-                json chunk = result->to_json();
-                if (chunk.is_null()) {
-                    continue;
-                }
-                payload = std::move(chunk);
-                stop = result->is_stop();
-                if (stop) {
-                    erase_reader(jctx, id_task);
-                }
-                break;
-            }
-        } catch (const std::exception &e) {
-            // A throwing to_json() must surface as a LlamaException, not abort the JVM. The task is
-            // over for the Java caller, so release its reader entry like the other error paths.
-            erase_reader(jctx, id_task);
-            env->ThrowNew(c_llama_error, e.what());
+        const jllama_status status = jllama_chat_completions_stream_receive(
+            reinterpret_cast<jllama_model *>(jctx), static_cast<int>(id_task), &envelope, &stop);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
             return nullptr;
         }
-
-        return json_to_jstring(env, wrap_stream_chunk(std::move(payload), stop));
+        jstring result = utf8_to_jstring(env, envelope);
+        jllama_string_free(envelope);
+        return result;
     });
 }
 
@@ -1693,19 +1435,17 @@ JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaModel_handleChatCompleti
                                                                                     jstring jparams) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jstring {
         REQUIRE_SERVER_CONTEXT(nullptr);
-
-        json body;
-        if (!parse_json_params(env, jparams, body)) {
+        const std::string body = parse_jstring(env, jparams);
+        char *response = nullptr;
+        const jllama_status status =
+            jllama_chat_completions(reinterpret_cast<jllama_model *>(jctx), body.c_str(), &response);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
             return nullptr;
         }
-        json data;
-        std::vector<raw_buffer> files;
-        common_chat_session session;
-        if (!parse_oai_chat_params(env, jctx, body, data, files, session))
-            return nullptr;
-
-        return dispatch_blocking_completion(env, jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CHAT,
-                                            std::move(files), session);
+        jstring result = utf8_to_jstring(env, response);
+        jllama_string_free(response);
+        return result;
     });
 }
 
@@ -1730,28 +1470,23 @@ JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestChatCompletion
     });
 }
 
-// Streaming OpenAI chat with OAI-formatted chunks. Mirrors requestChatCompletion
-// but sets TASK_RESPONSE_TYPE_OAI_CHAT so each polled result formats as an
-// OpenAI chat.completion.chunk (including streamed delta.tool_calls). The params
-// must carry "stream": true so the upstream formatter emits chunk deltas; poll
-// the returned task id with receiveChatCompletionChunk.
+// Streaming OpenAI chat with OAI-formatted chunks, through the C API: each polled result formats as
+// an OpenAI chat.completion.chunk (including streamed delta.tool_calls). The params must carry
+// "stream": true so the upstream formatter emits chunk deltas; poll the returned task id with
+// receiveChatCompletionChunk.
 JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestChatCompletionStream(JNIEnv *env, jobject obj,
                                                                                        jstring jparams) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jint {
         REQUIRE_SERVER_CONTEXT(0);
-
-        json body;
-        if (!parse_json_params(env, jparams, body)) {
+        const std::string body = parse_jstring(env, jparams);
+        int task_id = 0;
+        const jllama_status status =
+            jllama_chat_completions_stream_request(reinterpret_cast<jllama_model *>(jctx), body.c_str(), &task_id);
+        if (status != JLLAMA_STATUS_OK) {
+            throw_api_status(env, status);
             return 0;
         }
-        json data;
-        std::vector<raw_buffer> files;
-        common_chat_session session;
-        if (!parse_oai_chat_params(env, jctx, body, data, files, session))
-            return 0;
-
-        return dispatch_streaming_completion(env, jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CHAT,
-                                             std::move(files), session);
+        return static_cast<jint>(task_id);
     });
 }
 
@@ -1808,55 +1543,17 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_delete(JNIEnv *env, j
             env->SetLongField(obj, f_model_pointer, 0);
         }
 
-        // Signal teardown to any in-flight reader. The streaming / blocking should_stop lambdas
-        // observe this and make next()/wait_for_all() return within one poll (~1s), so the
-        // in-flight JNI call unwinds and releases its user reference — otherwise the reader would
-        // poll forever (the worker only stops the task queue, not the results queue) and close()
-        // would hang.
-        jctx->closing.store(true, std::memory_order_release);
-        if (!jctx->vocab_only) {
-            // Cancel any pending streaming readers before stopping the server.
-            std::lock_guard<std::mutex> lk(jctx->readers_mutex);
-            jctx->readers.clear();
-        }
-
-        // Wait for every in-flight JNI call (an entry point still inside its jllama_context_guard)
-        // to release its user reference BEFORE tearing anything down — a concurrent call could
-        // otherwise still be using the worker, the server_context, or the vocab-only model while
-        // they are being stopped/freed (use-after-free). New calls cannot start (the handle is
-        // already nulled above), and the closing flag bounds this wait to ~1s.
-        {
-            std::unique_lock<std::mutex> lk(jctx->m);
-            jctx->cv.wait(lk, [&] { return jctx->users.load() == 0; });
-        }
-
-        if (!jctx->vocab_only) {
-            while (!jctx->worker_ready.load()) {
-                std::this_thread::yield();
-            }
-            // Signal the background thread to stop. Call twice with a brief sleep
-            // to close the race where the thread signalled ready but start_loop()
-            // hasn't yet set its internal running flag.
-            jctx->server.terminate();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            jctx->server.terminate();
-            if (jctx->worker.joinable()) {
-                jctx->worker.join();
-            }
-        }
-
-        if (jctx->vocab_only_model) {
-            llama_model_free(jctx->vocab_only_model);
-        }
-
-        delete jctx;
+        // The rest -- closing flag, cancelling the readers, waiting for every in-flight call to
+        // release its user reference, stopping the worker, freeing the model -- is the C API's
+        // jllama_model_free, the same teardown a C caller gets.
+        jllama_model_free(reinterpret_cast<jllama_model *>(jctx));
     });
 }
 
 JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_cancelCompletion(JNIEnv *env, jobject obj, jint id_task) {
     return jni_guard_impl(env, c_llama_error, [&]() -> void {
         REQUIRE_SERVER_CONTEXT();
-        erase_reader(jctx, id_task);
+        jllama_task_release(reinterpret_cast<jllama_model *>(jctx), static_cast<int>(id_task));
     });
 }
 
@@ -1873,11 +1570,12 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_setLogger(JNIEnv *env
         // without touching the sink. So the logger survives the load whichever order the caller
         // chose, and it sees the slot/srv lines llama_log_set() never carried.
         //
-        // Step 1, outside the logger mutex: detach the current sink. This pauses common_log's
-        // worker, which first drains every queued entry through the OLD callback (so a caller that
-        // sets null gets a synchronous flush) and then joins. The worker needs g_log_mutex to read
-        // the callback, so holding it here would deadlock the join.
-        common_log_set_callback(common_log_main(), nullptr, nullptr);
+        // Step 1, outside the logger mutex: detach the current sink (jllama_set_log_callback(null)
+        // -> the engine's set_log_sink). This pauses common_log's worker, which first drains every
+        // queued entry through the OLD callback (so a caller that sets null gets a synchronous
+        // flush) and then joins. The worker needs g_log_mutex to read the callback, so holding it
+        // here would deadlock the join.
+        jllama_set_log_callback(nullptr, nullptr);
 
         {
             // Step 2: swap the Java-side state. No new trampoline can start now (the sink is off);
@@ -1929,12 +1627,12 @@ JNIEXPORT void JNICALL Java_net_ladenthin_llama_LlamaModel_setLogger(JNIEnv *env
             }
         }
 
-        // Step 3: install the sink (the trampoline handles JSON formatting internally) and make sure
-        // llama/ggml lines feed common_log even before the first model load runs common_init().
-        // A null callback leaves the sink detached: common_log prints to the console again.
+        // Step 3: install the sink through the C API (the JNI trampoline handles JSON formatting
+        // internally; the engine routes llama/ggml lines into common_log even before the first model
+        // load runs common_init()). A null callback leaves the sink detached: common_log prints to
+        // the console again.
         if (jcallback != nullptr) {
-            common_log_set_callback(common_log_main(), log_callback_trampoline, nullptr);
-            llama_log_set(common_log_default_callback, nullptr);
+            jllama_set_log_callback(jni_log_sink, nullptr);
         }
     });
 }

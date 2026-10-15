@@ -468,6 +468,14 @@ stderr at start. `net.ladenthin.llama.backend` has no effect on a directory (ggm
 that lies in it); the loader says so when it is set. Nothing is extracted and nothing is written:
 the directory may be read-only.
 
+**The directory is also a C library.** On the modular platforms (Linux, Windows, Android) it holds
+upstream's own `libllama` / `libmtmd` / `libggml*` as shared libraries built from this project's
+patched source -- the same files and symbols as upstream's release zips, usable with upstream's
+`llama.h` / `mtmd.h` / `ggml.h` -- and on every platform `libjllama` exports this project's own
+**C API** (`jllama_api.h`, shipped in the directory): the chat completions, streaming and logging
+`LlamaModel` offers, callable from C, Rust, Python or Java 22+ without a JVM. See
+[docs/c-api.md](docs/c-api.md).
+
 The CI smoke of every desktop platform runs this path on the published jars (unpacked into a
 directory, started with `lib.path` and no natives jar on the classpath), so a release cannot ship
 with the directory mode broken on a platform.

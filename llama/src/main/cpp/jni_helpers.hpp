@@ -9,11 +9,11 @@
 // Two layers live here:
 //
 //   Layer A — JNI handle management:
-//     jllama_context struct, get_jllama_context_impl,
+//     get_jllama_context_impl, acquire_jllama_context_impl (the Java-handle side of the
+//     user-reference protocol whose JNI-free half is jllama_context.hpp),
 //     require_json_field_impl, jint_array_to_tokens_impl
 //
 //   Layer B — JNI + server orchestration:
-//     configure_multimodal_task_impl, configure_task_slot_impl,
 //     utf8_to_jstring_impl, json_to_jstring_impl, results_to_jstring_impl,
 //     embedding_to_jfloat_array_impl, tokens_to_jint_array_impl
 //
@@ -25,87 +25,20 @@
 // including translation unit BEFORE this header.
 
 #include "jni.h"
+// The JNI-free half of layer A -- jllama_context, erase_reader, the user-reference release and
+// its guard -- lives in jllama_context.hpp, and the task helpers that used to sit in layer B here
+// (configure_multimodal_task_impl, configure_task_slot_impl) in jllama_engine.hpp, both shared with
+// the C API (jllama_api.cpp) and the engine (jllama_engine.cpp); only what reads a Java object
+// stays here.
+#include "jllama_engine.hpp"
 
-#include <atomic>
-#include <condition_variable>
-#include <map>
-#include <memory>
-#include <mutex>
 #include <string>
-#include <thread>
 #include <type_traits>
 #include <vector>
-
-// Forward declarations.
-struct server_context;
-struct server_response_reader;
 
 // ===========================================================================
 // Layer A — JNI handle management
 // ===========================================================================
-
-// ---------------------------------------------------------------------------
-// jllama_context
-//
-// Owns a server_context (value member, pimpl inside) and the background
-// worker thread.  Stored as the Java-side `ctx` (jlong) pointer.
-// ---------------------------------------------------------------------------
-struct jllama_context {
-    server_context server; // value member (pimpl inside)
-    // The upstream HTTP route handlers over `server`, for endpoints this layer forwards to upstream
-    // instead of re-implementing them (`handleSystemOne` -> `post_systemone`). Constructed before
-    // `server.load_model()`, as upstream does: its constructor registers a sleeping-state callback,
-    // and upstream relies on that callback running before the server's own, which frees the model.
-    // Declared after `server`, so it is destroyed first. Null in vocab-only mode.
-    std::unique_ptr<server_routes> routes;
-    std::thread worker;
-    bool vocab_only = false;
-    std::atomic<bool> worker_ready{false};
-
-    // Cached after load_model() — valid for the lifetime of this context.
-    const llama_vocab *vocab = nullptr;
-    // Non-null only in vocab-only mode (bypasses server_context entirely).
-    llama_model *vocab_only_model = nullptr;
-
-    // Saved copy of common_params used to load the model.
-    // Required by server_schema::eval_llama_cmpl_schema which takes common_params&.
-    common_params params;
-
-    // Per-streaming-task response readers, keyed by task id.
-    // Guarded by readers_mutex.
-    std::mutex readers_mutex;
-    // shared_ptr (not unique_ptr): the streaming receive paths copy the reader out under
-    // readers_mutex and then call next() *without* the lock, so a concurrent close()/erase
-    // that removes the map entry must not free a reader still in use — the receiver's copy
-    // keeps it alive until next() returns.
-    std::map<int, std::shared_ptr<server_response_reader>> readers;
-
-    // In-flight JNI call reference count, for safe teardown. close() waits for this to reach 0
-    // before tearing down the worker/models and deleting the context, so a concurrent
-    // inference/receive call can never dereference freed state (close()-vs-inference
-    // use-after-free, close()-during-streaming hang). acquire_jllama_context_impl increments
-    // it; the jllama_context_guard (set up by REQUIRE_SERVER_CONTEXT) decrements it on scope
-    // exit.
-    std::atomic<int> users{0};
-    // Set by delete() (teardown) so any in-flight reader parked in next()/wait_for_all()
-    // observes a stop signal and unwinds instead of polling forever (which would otherwise
-    // keep `users` > 0 and hang close()). The streaming/blocking should_stop lambdas read this.
-    std::atomic<bool> closing{false};
-    // Serializes the "last user released" notification (paired with cv). The users
-    // decrement in release_jllama_context_impl happens UNDER this lock so delete()'s
-    // cv.wait cannot observe users==0 and free m/cv before the releaser finishes
-    // touching them (otherwise a use-after-free on the condvar/mutex themselves).
-    std::mutex m;
-    std::condition_variable cv;
-};
-
-// Removes the streaming reader entry for `id_task` under the readers_mutex.
-// No-op if the id is not in the map. Used to release the JNI side of a
-// completed, cancelled, or failed streaming task.
-inline void erase_reader(jllama_context *jctx, int id_task) {
-    std::lock_guard<std::mutex> lk(jctx->readers_mutex);
-    jctx->readers.erase(id_task);
-}
 
 // Guard: throw and return false if the model was loaded without embedding
 // support enabled. Used by every JNI entry point that produces embeddings.
@@ -163,27 +96,6 @@ extern std::mutex g_ctx_mutex;
     jctx->users.fetch_add(1, std::memory_order_relaxed);
     return jctx;
 }
-
-inline void release_jllama_context_impl(jllama_context *jctx) {
-    if (jctx == nullptr) {
-        return;
-    }
-    // Decrement under jctx->m so delete()'s cv.wait (which holds jctx->m while checking the
-    // predicate) cannot observe users==0 and free m/cv before this releaser has finished
-    // notifying — that would be a use-after-free on the condvar/mutex themselves.
-    std::lock_guard<std::mutex> lk(jctx->m);
-    // fetch_sub returns the previous value; when it was 1 we just dropped the last reference.
-    if (jctx->users.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-        jctx->cv.notify_all();
-    }
-}
-
-// RAII guard: releases the jllama_context user reference at scope exit, including
-// on early return. REQUIRE_SERVER_CONTEXT uses this so every entry point is covered.
-struct jllama_context_guard {
-    jllama_context *ptr;
-    ~jllama_context_guard() { release_jllama_context_impl(ptr); }
-};
 
 // ---------------------------------------------------------------------------
 // require_json_field_impl
@@ -277,40 +189,6 @@ template <typename Fn> auto jni_guard_impl(JNIEnv *env, jclass exception_class, 
 // json_helpers.hpp provides get_result_error_message, results_to_json, and
 // the other pure JSON transforms used by the functions below.
 #include "json_helpers.hpp"
-
-// ---------------------------------------------------------------------------
-// configure_multimodal_task_impl
-//
-// Upstream keeps mtmd_context private inside server_context. Its CLI task
-// path exists specifically for callers that have a formatted prompt plus raw
-// media but cannot access that context directly. Attach those inputs to the
-// task so server_context::tokenize_cli_input() invokes process_mtmd_prompt()
-// on the worker thread. Returns false for a text-only request so callers can
-// retain their normal eager-tokenization path.
-// ---------------------------------------------------------------------------
-[[nodiscard]] inline bool configure_multimodal_task_impl(server_task &task, bool has_mtmd, const json &data,
-                                                         std::vector<raw_buffer> files) {
-    if (files.empty()) {
-        return false;
-    }
-    if (!has_mtmd) {
-        throw std::invalid_argument("Image input requires a loaded multimodal projector (--mmproj)");
-    }
-    const auto &prompt = data.at("prompt");
-    if (!prompt.is_string()) {
-        throw std::invalid_argument("Multimodal chat prompt must be a string");
-    }
-    task.cli = true;
-    task.cli_prompt = prompt.get<std::string>();
-    task.cli_files = std::move(files);
-    return true;
-}
-
-// Match server_routes::handle_completions_impl(): slot selection is task
-// metadata, not part of task_params, so eval_llama_cmpl_schema() does not set it.
-inline void configure_task_slot_impl(server_task &task, const json &data) {
-    task.id_slot = json_value(data, "id_slot", -1);
-}
 
 // ---------------------------------------------------------------------------
 // utf8_to_jstring_impl

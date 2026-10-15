@@ -1493,6 +1493,58 @@ used to exist only transiently in each build job's `_deps/`. Two jobs of `publis
   selected. The patches stay files in this repository, never fork commits: the review surface is the
   patch file.
 
+## The C API: `jllama_api.h` over the engine (layer B)
+
+[`docs/c-api.md`](docs/c-api.md) is the consumer-facing page; this is the layout. Three files
+carry the one implementation behind both call paths into `libjllama`:
+
+- **`src/main/cpp/jllama_context.hpp`** -- `jllama_context` (the handle both paths hold: the Java
+  field's jlong, the C API's opaque `jllama_model *`), `erase_reader`, the user-reference release
+  and `jllama_context_guard`, and `acquire_jllama_context(jllama_context *)` for a handle already
+  known to be live. No JNI in it; `jni_helpers.hpp` includes it and adds the Java-field half
+  (`acquire_jllama_context_impl`, under `g_ctx_mutex`).
+- **`src/main/cpp/jllama_engine.{hpp,cpp}`** (`namespace jllama::engine`) -- the C++ over
+  `server_context`: `load` (argv -> params, `--vocab-only`, the `--rpc` guard, `common_init`, the
+  worker thread -- a plain thread now, nothing on it calls into a host), `free` (closing flag, the
+  readers cleared, wait for `users == 0`, terminate, join, delete), `wake_server` /
+  `wake_and_get_meta`, `parse_oai_chat_params`, `populate_completion_task`, `wake_and_post`,
+  `blocking_completion`, `streaming_request`, `stream_next`, `task_release`, the three chat
+  operations over JSON text, `set_log_sink` (the swap mutex lives here). Errors are exceptions:
+  `jllama_invalid_request` (400), `jllama_interrupted` (a wait cut by `free`), `std::runtime_error`.
+- **`src/main/cpp/jllama_api.{h,cpp}`** -- the `extern "C"` shell: `jllama_status` codes, a
+  thread-local `jllama_last_error()`, malloc'd strings (`jllama_string_free`), every call inside the
+  user-reference guard, `JLLAMA_API` export macro (`JLLAMA_BUILD` -> dllexport; the ELF/Mach-O
+  export lists already let `jllama_*` through), `jllama_api_version()` =
+  `JLLAMA_VERSION_STRING`, the pom version `cmake/jllama-build-info.cmake` resolves
+  (`JLLAMA_VERSION_RESOLVED`).
+
+**`jllama.cpp` is the shell for Java.** The migrated entry points (`loadModel*`, `delete`,
+`handleChatCompletions`, `requestChatCompletionStream`, `receiveChatCompletionChunk`,
+`releaseTask`, `cancelCompletion`, `setLogger`) call the C API and map a status with
+`throw_api_status` (`INVALID_REQUEST` -> `InvalidRequestException`, else `LlamaException`); the
+not-yet-migrated ones call the engine's helpers directly through `using` declarations and
+`throw_engine_error`. `REQUIRE_SERVER_CONTEXT` stays on every entry point: it reads the handle from
+the Java field under `g_ctx_mutex`, which is what makes `close()` safe against a racing call; the
+C API acquires a second, nested user reference on the raw pointer. **A new native method of
+`LlamaModel` is written as an engine function plus a `jllama_*` function plus a JNI shell, in that
+order** -- the Java side never gets logic the C side lacks again.
+
+**The header ships in every library directory**, named in `jllama-files.txt` so the loader extracts
+it next to the library and never loads it (the static platforms get a one-line `jllama-files.txt`
+for exactly that; without the list the merge step derives every unlisted file into
+`jllama-extras.txt`, which `LlamaLoader` `System.load`s). `verify-native-deps.py` looks at library
+suffixes only, and the merge step's "nothing else" rule applies to module directories only.
+
+**Tests.** `src/test/cpp/test_c_api.cpp` drives the C API compiled into `jllama_test`
+(`jllama_engine.cpp` + `jllama_api.cpp` are in its source list, with the same two definitions) over
+a tiny random llama-architecture GGUF it writes itself -- hermetic, so it runs in every `C++ Tests`
+job without `restore-models`; the output of a random model is noise, the contract is what is
+asserted. `test_c_abi.c` (the modular jobs' `c_abi`) links the shipped `libjllama` and resolves
+`jllama_api_version` / `jllama_build_info` through its exports, holding the build info's number to the
+`llama.cpp=` line of the directory's `jllama-build.txt` (`llama_build_info()` itself is llama-common,
+static and hidden inside `libjllama`, so a plain-C consumer cannot compare against it). And every model-backed Java test of
+the migrated entry points runs through the C API.
+
 ## RPC backend: `--rpc` client and the in-JVM `RpcServer`
 
 llama.cpp's RPC backend (`ggml-rpc`) is compiled into **every library jar** with `GGML_RPC=ON` forced
@@ -2147,7 +2199,7 @@ If the local check passes (`BUILD SUCCESS`), the `mvn package` job in
   - The `server` package is a dedicated top layer in the ArchUnit `layeredArchitecture` rule (the only layer allowed to access the root `Api`); `noInternalJdkImports` carries an explicit exception for the supported `com.sun.net.httpserver` (the exported `jdk.httpserver` module, which `module-info.java` `requires`). See README "OpenAI-compatible HTTP server".
 
 **Native layer** (`src/main/cpp/`):
-- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp. ~1,900 lines; 35 native methods (31 `LlamaModel` + 3 `TextToSpeech` + 1 `LlamaQuantizer`) plus `JNI_OnLoad`/`JNI_OnUnload`.
+- `jllama.cpp` — JNI implementation bridging Java calls to llama.cpp. 35 native methods (31 `LlamaModel` + 3 `TextToSpeech` + 1 `LlamaQuantizer`) plus `JNI_OnLoad`/`JNI_OnUnload`; since the C API (see "The C API" below) a shell over `jllama_engine.cpp` / `jllama_api.cpp`, where the model logic lives.
 - `utils.hpp` — Helper utilities (format helpers, argv stripping, token-piece serialisation).
 - `json_helpers.hpp` — Pure JSON transformation helpers (no JNI, no llama state). Independently unit-testable.
 - `jni_helpers.hpp` — JNI bridge helpers (handle management + server orchestration). Includes `json_helpers.hpp`.
@@ -2532,9 +2584,10 @@ ctest --test-dir build --output-on-failure -R "ResultsToJson"
 | `src/test/cpp/test_wire_contracts.cpp` | 6 | **The same contract for the two quieter surfaces.** `RequestField` against `server_schema::make_llama_cmpl_schema(...)` (5 tests) and `TrainingField` against `jllama_train::config_keys()` (1 test). Both receivers *silently ignore* an unknown key — the schema skips it, `train_engine.cpp` reads with `j.value(key, default)` and falls back — so a dead field produces no error anywhere and every string-mapping test keeps passing. `OAI_LAYER`-declared keys (consumed by `oaicompat_*_params_parse` before the schema) are exempt from the schema check, and are checked **both** ways: still unknown to the schema (the inverted check), and read by at least one upstream reader-shaped site (the configure-time sweep — this is what caught `chat_template`, a key a public builder wrote and nothing read). See [`docs/history/parameter-wire-surface.md`](docs/history/parameter-wire-surface.md). |
 | `src/test/cpp/test_rpc.cpp` | 28 | **The runnable guard for `patches/0015` and for `rpc_support.hpp`.** The device-selection rules (pure, literal inputs: `--rpc` endpoints accumulate across repeated options, an explicit `--device`/`-dev` is never overridden, stale RPC devices are replaced by the local GPUs chosen the way llama.cpp's default does — duplicates by device id dropped, iGPUs only without a discrete GPU, `none` on a CPU-only host). Then the **real** ggml-rpc client and server over loopback, no model: a `mul_mat` graph computed on the RPC backend equals the local CPU result; `ggml_backend_rpc_stop_server()` ends the server, frees the port and disconnects a client that is still connected; an unreachable or malformed endpoint is `nullptr`/`std::invalid_argument` instead of an abort; a registered server that went away is re-checked on the next registration; its device reports 0/0 memory instead of aborting; and a stale server is kept out of a later load that did not ask for it. The loopback server picks a free port from a range so parallel jobs do not collide, and serves the **CPU** by name — a served GPU that lacks an op aborts the server (see the RPC section). Also: server devices chosen by name (case-insensitive, deduplicated), an unknown name listing the available devices, and a registered RPC device refused; the mmproj device pinned the way clip would choose it minus the stale server; and `exclude_stale_devices()`, the params-level guard for TTS and the trainer. |
 
+| `src/test/cpp/test_c_api.cpp` | 9 | **The C API (`jllama_api.h`, layer B) without a JVM.** Writes a tiny random two-layer llama GGUF with the GPT-2 byte tokenizer (the public `gguf` API, like `test_kolibri1.cpp`), loads it through `jllama_model_load` and drives the shipped contract: version and build info, null-argument refusal with a message, a missing model failing to load, the load-progress callback (reported, and a `false` return aborts the load), a chat completion that is an OpenAI `chat.completion` object, an invalid request answered as the caller's fault (`JLLAMA_STATUS_INVALID_REQUEST`), streaming until `stop` with the task released afterwards ("Task not found" on the next receive), a released task gone, and the log callback seeing the server's lines with a null set flushing synchronously. Hermetic, so it runs in every `C++ Tests` job without `restore-models`; the output of a random model is noise, the contract is what is asserted. Two things the fixture does on purpose: the output rows of every non-ASCII and special token are scaled to almost nothing, because a byte above 0x7F is an incomplete UTF-8 piece the server holds back rather than streams (a random model that emits only those sends no partial chunk at all), and the task id is checked `>= 0` -- the server numbers its tasks from zero. Three model-free cases (`CApiStatic`) run before any load. |
 | `src/test/cpp/test_native_server_shutdown.cpp` | 3 | **The runnable guard for the shutdown-handler guard in `patches/0006`/`0007`.** Runs the real `llama_server()` in router mode over an empty `--models-dir` on an ephemeral loopback port (no model, no worker) and stops it the way `native_server.cpp` does. Pins a clean stop (exit code 0), that `llama_server_request_shutdown()` **after** the server returned is a no-op (the deterministic form of the CI `SIGSEGV` — it crashed every run before the fix), and that requests hammered from another thread while the server tears down are safe (5 rounds). Compiled on non-Android only, like `server.cpp` itself. |
 
-**Current total: 601 tests (all passing).**
+**Current total: 610 tests (all passing).**
 
 #### Upstream source location (in CMake build tree)
 

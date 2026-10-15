@@ -182,6 +182,9 @@ function(jllama_write_build_info)
     if(NOT jllama_version MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+(-SNAPSHOT)?$")
         message(FATAL_ERROR "jllama-build-info: '${jllama_version}' is not a net.ladenthin:llama version (x.y.z or x.y.z-SNAPSHOT); set -DJLLAMA_VERSION=")
     endif()
+    # What jllama_api_version() reports (src/main/cpp/jllama_api.cpp): the C API is versioned with
+    # the library, so the caller's CMakeLists compiles this into jllama and jllama_test.
+    set(JLLAMA_VERSION_RESOLVED "${jllama_version}" PARENT_SCOPE)
     jllama_git_commit(jllama_commit "${CMAKE_CURRENT_SOURCE_DIR}")
     if(jllama_commit STREQUAL "unknown" AND DEFINED ENV{GITHUB_SHA})
         set(jllama_commit "$ENV{GITHUB_SHA}")
