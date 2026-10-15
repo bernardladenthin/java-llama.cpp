@@ -132,11 +132,7 @@ the Windows library jars next to the header; `docs/c-api.md` shows the link line
 Windows machine in this session -- the first Publish run's `merge-native-artifacts.sh` ("names
 '<f>', which the build did not produce") is where a wrong import-library name would show.)
 
-- [ ] Java 22+ over the C API without JNI (a separate module, Panama/FFM; the core stays Java 8).
-      Waits on a toolchain decision: CI builds with the JDK of `.java-version` (21), where the FFM
-      API is still a preview (final in 22), and a published artifact must not depend on
-      `--enable-preview`; the module needs its own JDK 22+ in CI (Maven toolchains or a second
-      `setup-java`) and a Java 22 floor of its own, both the owner's call.
+(Java 22+ over the C API without JNI is item 10 below -- decided 2026-10-15 as a module of its own.)
 
 ### 8. Release builds without the shared compiler cache (C.3)
 
@@ -148,14 +144,49 @@ and the `Install sccache` steps are skipped; snapshots and PR builds keep the ca
       natives hashes -- if yes, a reproducibility job is the cheaper permanent check and the tag
       rule above can go back to the cache.
 
-### 9. Deferred by the owner until everything above runs: OS and jar signatures (C.4, C.5)
+### 9. The 6.0.0 release (decided 2026-10-15: 6.0.0, not 5.2.0)
 
-Authenticode over every Windows DLL (SignPath Foundation is free for OSS and has a GitHub action;
-Azure Trusted Signing and an OV certificate are the alternatives -- see "Code-sign the Windows
-DLLs" below for the identity-validation gate), a `verify-native-deps.py` check that every PE is
-signed, Developer ID on the macOS dylib with `smoke-native-macos.sh` checking the identity, and
-`jarsigner` only on a consumer's request (fat jars break it). Stays open here; nothing above
-depends on it.
+The next release carries every breaking change since 5.1.0 (the natives split, the logging binding,
+the port, the floors, the renamed and removed builder methods -- the list in "The release: 6.0.0"
+under "Open -- jllama-specific", which stays the detailed reference), so semantic versioning says
+**6.0.0**, and the owner decided so on 2026-10-15. What this item does, in order:
+
+- [ ] `main` moves to `6.0.0-SNAPSHOT` (`mvn versions:set` for the five reactor poms, then the
+      hand-maintained places CLAUDE.md "Version bump" lists; `check-natives.py` holds the ones it sees).
+- [ ] CHANGELOG `[Unreleased]` gets an **"Upgrading from 5.1"** section at its top, one place for
+      someone who reads nothing else; the bullets below it stay as the record.
+- [ ] The release itself is the owner's: the `v6.0.0` tag after a green Publish run, then the
+      `main` bump to the next `-SNAPSHOT` (`../workspace/workflows/release-process.md`).
+
+### 10. Layer B for Java 22+: `llama-ffm`, the C API without JNI (decided 2026-10-15)
+
+A reactor module of its own, `net.ladenthin:llama-ffm`, Java floor 22 (the FFM API is final
+there), hand-written `java.lang.foreign` bindings over `jllama_api.h` -- every `jllama_*` function
+a `MethodHandle`, JSON strings in and out, the callbacks as upcall stubs -- behind a small public
+API (`FfmLlamaModel`, `FfmNativeServer`, `FfmRpcServer`, `FfmTextToSpeech`). It loads the natives
+through the core's `LlamaLoader` (same jars, same `lib.path`, same build check) and finds the
+symbols with `SymbolLookup.loaderLookup()`, so there is no second loading path. The core stays
+Java 8; CI builds the module with a JDK 25 toolchain next to the `.java-version` JDK
+(`maven-toolchains-plugin`, a second `setup-java` step in its test job and in the publish jobs).
+Not for Android (no FFM there).
+
+- [ ] The module, its model-free and model-backed tests, the `test-java-llama-ffm` job gating both
+      publish jobs, `versions.POMS` in the four repositories, README / CLAUDE.md / `docs/c-api.md`.
+
+### 11. Deferred by the owner until everything above runs: the Windows code signature (C.4, C.5)
+
+**Decided 2026-10-15: Azure Trusted Signing, Windows only.** Authenticode over every DLL of every
+Windows natives jar, signed in the `package` job with jsign over GitHub OIDC (no long-lived secret),
+`signed=yes` in `jllama-build.txt` afterwards, and a `verify-native-deps.py` check that every PE of
+a release carries a signature; `jarsigner` only on a consumer's request (fat jars break it). The
+code side is prepared inert -- without the Azure secrets the step is skipped and a snapshot ships
+`signed=no` -- and switched on after the first green Publish run, per the owner's order. **The
+macOS half is dropped by the owner's decision** (no Apple Developer Program): the dylib stays
+ad-hoc signed by the linker, verified by `smoke-natives-macos`, with the `.asc` and the Sigstore
+attestation as its provenance. **Owner, now, because it takes weeks:** Microsoft's identity
+validation for Trusted Signing (see "Code-sign the Windows DLLs" below for the gate), then the
+account, the certificate profile and the federated credential for this repository's
+`maven-central` environment.
 
 ## Where the modular natives stand
 
@@ -426,7 +457,7 @@ Kept as a list because each entry names the machine it needs -- the harness is
 
 ## Open — jllama-specific
 
-### The release: 5.2.0 or 6.0.0, with an "Upgrading from 5.1" section (owner's decision)
+### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 
 **Nothing has been published since 5.1.0 on 2026-08-29.** `pom.xml` is `5.2.0-SNAPSHOT`, and
 `CHANGELOG.md`'s `[Unreleased]` holds six weeks of work no consumer can get from Central: the modular
@@ -444,8 +475,8 @@ from 5.1 would look:
   `NativeServer` on port 9931 (llama.cpp's new default) while `OpenAiServerConfig` stays on 8080
   (open item below); the floors Windows 10, macOS 15 and glibc 2.28.
 
-Semantic versioning says that is **6.0.0**, not 5.2.0; the decision is the owner's, and so is the
-timing. What the release needs either way, in order:
+Semantic versioning says that is **6.0.0**, not 5.2.0, and the owner decided so on 2026-10-15; the
+timing of the tag stays the owner's. What the release needs, in order:
 
 1. **Round 0 green through `package` and the smokes** -- the modular natives have never passed the
    stages that assemble and launch the published jars (top of this file); a release before that
@@ -937,7 +968,7 @@ round-trips — see CLAUDE.md "Two server modes"). **Owner priority: the native-
   Responses client) at a running server, since round-trips confirm wire shapes but not each client's
   parser.
 
-### Code-sign the Windows DLLs (Azure Trusted Signing, owner's decision -- it costs money)
+### Code-sign the Windows DLLs (Azure Trusted Signing -- decided 2026-10-15, roadmap item 11)
 
 **What.** Microsoft's **Azure Trusted Signing** (formerly Azure Code Signing) signs Windows PE files
 from CI without a hardware token, on a monthly subscription -- the **Basic** tier is in the ~10
@@ -975,7 +1006,8 @@ re-writing jars and re-checking them, which is strictly worse.
 and a separate problem**: a Developer ID certificate (Apple Developer Program, ~99 USD/year) plus
 notarisation, and the dylib is already ad-hoc signed by the linker -- which is what
 `smoke-natives-macos` verifies with `codesign --verify --strict` after a corrupt dylib shipped in
-three releases. Do not bundle the two decisions; the Windows one is cheap and self-contained.
+three releases. The two decisions were not bundled, and the macOS one is **no** (2026-10-15): the
+dylib ships ad-hoc signed, with the `.asc` and the Sigstore attestation as its provenance.
 
 ### License compliance gate (owner's decision)
 
