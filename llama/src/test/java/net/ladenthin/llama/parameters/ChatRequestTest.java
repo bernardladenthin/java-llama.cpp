@@ -227,5 +227,25 @@ class ChatRequestTest {
         void buildToolsJsonEmptyWhenNoTools() {
             assertThat(ChatRequest.empty().buildToolsJson().isPresent(), is(false));
         }
+
+        @Test
+        void buildToolsJsonEmbedsAValidSchemaAsAnObject() {
+            String json = ChatRequest.empty()
+                    .appendTool(new ToolDefinition("f", "d", "{\"type\":\"object\"}"))
+                    .buildToolsJson()
+                    .orElseThrow(IllegalStateException::new);
+            assertThat(json, containsString("\"parameters\":{\"type\":\"object\"}"));
+        }
+
+        @Test
+        void buildToolsJsonDoesNotSilentlyTruncateASchemaWithTrailingContent() {
+            // A schema string holding more than one JSON value is not a schema; keeping only the first
+            // value would send a different schema than the caller wrote, without any error.
+            String json = ChatRequest.empty()
+                    .appendTool(new ToolDefinition("f", "d", "{\"type\":\"object\"} {\"required\":[\"x\"]}"))
+                    .buildToolsJson()
+                    .orElseThrow(IllegalStateException::new);
+            assertThat(json, not(containsString("\"parameters\":{\"type\":\"object\"}")));
+        }
     }
 }
