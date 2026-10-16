@@ -15,6 +15,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.hamcrest.Matchers.startsWith;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -1070,10 +1071,28 @@ public class ModelParametersExtendedTest {
     // -------------------------------------------------------------------------
 
     @Test
-    public void testSetRopeScalingAllValues() {
-        for (RopeScalingType type : RopeScalingType.values()) {
+    public void testSetRopeScalingAllValuesTheParserAccepts() {
+        // llama.cpp's --rope-scaling accepts exactly none, linear and yarn (common/arg.cpp) and throws
+        // "invalid value" for anything else, which makes the model fail to load.
+        for (RopeScalingType type :
+                new RopeScalingType[] {RopeScalingType.NONE, RopeScalingType.LINEAR, RopeScalingType.YARN2}) {
             ModelParameters p = new ModelParameters().setRopeScaling(type);
             assertThat(p.parameters.get("--rope-scaling"), is(type.getArgValue()));
+        }
+    }
+
+    @Test
+    public void testSetRopeScalingUnspecifiedLeavesTheModelDefault() {
+        ModelParameters p = new ModelParameters()
+                .setRopeScaling(RopeScalingType.LINEAR)
+                .setRopeScaling(RopeScalingType.UNSPECIFIED);
+        assertThat(p.parameters.containsKey("--rope-scaling"), is(false));
+    }
+
+    @Test
+    public void testSetRopeScalingRejectsValuesTheParserDoesNotAccept() {
+        for (RopeScalingType type : new RopeScalingType[] {RopeScalingType.LONGROPE, RopeScalingType.MAX_VALUE}) {
+            assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setRopeScaling(type));
         }
     }
 

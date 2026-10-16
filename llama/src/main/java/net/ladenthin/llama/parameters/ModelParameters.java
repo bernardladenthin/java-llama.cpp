@@ -659,11 +659,24 @@ public final class ModelParameters extends CliParameters {
 
     /**
      * Set RoPE frequency scaling method (default: linear unless specified by the model).
+     * {@link RopeScalingType#UNSPECIFIED} removes the option, leaving the model's own choice.
+     * llama.cpp's {@code --rope-scaling} accepts only {@code none}, {@code linear} and {@code yarn};
+     * {@link RopeScalingType#LONGROPE} and {@link RopeScalingType#MAX_VALUE} exist in its C API but not
+     * on its command line, and passed through they would make the model fail to load.
      *
      * @param type the RoPE frequency scaling method
      * @return this builder
+     * @throws IllegalArgumentException for {@link RopeScalingType#LONGROPE} or {@link RopeScalingType#MAX_VALUE}
      */
     public ModelParameters setRopeScaling(RopeScalingType type) {
+        if (type == RopeScalingType.UNSPECIFIED) {
+            removeOption(ModelOption.ROPE_SCALING);
+            return this;
+        }
+        if (type == RopeScalingType.LONGROPE || type == RopeScalingType.MAX_VALUE) {
+            throw new IllegalArgumentException("--rope-scaling accepts none, linear or yarn; " + type + " (\""
+                    + type.getArgValue() + "\") is rejected by llama.cpp's argument parser");
+        }
         return putEnum(ModelOption.ROPE_SCALING, type);
     }
 

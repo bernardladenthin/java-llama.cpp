@@ -353,8 +353,10 @@ public class WireNameRegistryTest {
             } else if (type == String.class) {
                 args[i] = sampleString(shape);
             } else if (type.isEnum() && CliArg.class.isAssignableFrom(type)) {
+                // The last constant first; each further shape steps one back, so a setter that
+                // rejects a constant llama.cpp does not accept (setRopeScaling) is still reached.
                 Object[] values = type.getEnumConstants();
-                args[i] = values[values.length - 1];
+                args[i] = values[values.length - 1 - (shape % values.length)];
             } else if (java.util.Map.class.isAssignableFrom(type)) {
                 args[i] = sampleMap(shape);
             } else if (java.util.Collection.class.isAssignableFrom(type)) {
