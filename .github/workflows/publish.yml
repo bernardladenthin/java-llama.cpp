@@ -2904,16 +2904,28 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Windows code signature (CLAUDE.md, "Code signing of the Windows DLLs"; TODO.md, delivery
-  # roadmap, item 11). Only on a dispatch with `sign_windows`: Authenticode over every DLL of
-  # every Windows natives artifact with SSL.com eSigner through jsign, then the artifacts are
-  # re-uploaded under their own names (`overwrite: true`), so `package` and the publish jobs
-  # merge signed DLLs, the Windows smoke rows run the signed sets and the jars carry them.
+  # roadmap, item 11). Signing happens only on a dispatch with `sign_windows`: Authenticode over
+  # every DLL of every Windows natives artifact with SSL.com eSigner through jsign, then the
+  # artifacts are re-uploaded under their own names (`overwrite: true`), so `package` and the
+  # publish jobs merge signed DLLs, the Windows smoke rows run the signed sets and the jars carry
+  # them.
   #
   # A job of its own, not steps in `package`: the eSigner secrets live in the maven-central
   # environment (the GPG key's), and `package` runs on every pull request, where that
   # environment's rules must not apply. The TOTP secret lets whoever holds it sign in the owner's
-  # name, so it is handed to exactly one job, which runs only on the explicit switch and only
-  # where the environment allows. The job waits for every job that reads a Windows natives
+  # name, so it is handed to exactly one job, which signs only on the explicit switch and only
+  # where the environment allows.
+  #
+  # The job itself runs on EVERY run and is never skipped -- without the switch it does nothing
+  # (every step but the first is gated on SIGN_WINDOWS) and takes the unprotected environment
+  # `unsigned`, which holds no secrets. It cannot be `if:`-skipped: GitHub applies a skip "to all
+  # jobs in the dependency chain from the point of failure or skip onwards", through every job in
+  # between whatever its own condition says, so a skipped sign job skipped the smoke sets, the
+  # report and both publish jobs behind `package` even though `package` itself tolerated the
+  # skip and ran green (run 38870889665 attempt 2, the first run to reach `package` after the
+  # job existed). The environment name is an expression for that reason: `maven-central` only
+  # when signing, so its protection rules never apply to a pull request.
+  # The job waits for every job that reads a Windows natives
   # artifact (the Windows Java test job downloads natives-cpu-windows-x86-64): `overwrite`
   # deletes the artifact for a moment, and a download in that moment would fail.
   # check-natives.py holds the upload steps to the Windows rows of natives.csv and the `needs`
@@ -2922,26 +2934,32 @@ jobs:
   sign-windows-natives:
     name: Sign the Windows DLLs (SSL.com eSigner)
     needs: [build-windows-x86_64, build-windows-arm64, build-windows-x86_64-cuda, build-windows-x86_64-vulkan, build-windows-x86_64-opencl, build-windows-x86_64-rocm, build-windows-x86_64-sycl, build-windows-arm64-opencl, build-windows-arm64-vulkan, build-windows-x86_64-openvino, test-java-windows-x86_64]
-    if: github.event_name == 'workflow_dispatch' && inputs.sign_windows
     runs-on: ubuntu-latest
-    environment: maven-central
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_windows && 'maven-central' || 'unsigned' }}
     permissions:
       contents: read
     steps:
+      - name: Nothing to sign (no sign_windows switch) -- the build artifacts stay as uploaded
+        if: env.SIGN_WINDOWS != 'true'
+        run: echo "sign_windows is off; the Windows natives artifacts are re-used unsigned (jllama-build.txt says signed=no)."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: env.SIGN_WINDOWS == 'true'
         with:
           persist-credentials: false
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        if: env.SIGN_WINDOWS == 'true'
         with:
           distribution: 'temurin'
           java-version-file: .java-version
       # Unmerged, one directory per artifact (Windows/<arch>/<backend>/ inside), the layout the
       # build jobs uploaded and merge-native-artifacts.sh expects back.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        if: env.SIGN_WINDOWS == 'true'
         with:
           pattern: "natives-*-windows-*"
           path: ${{ github.workspace }}/native-artifacts/
       - name: Sign every Windows DLL and mark the directories signed=yes
+        if: env.SIGN_WINDOWS == 'true'
         env:
           ES_USERNAME: ${{ secrets.ES_USERNAME }}
           ES_PASSWORD: ${{ secrets.ES_PASSWORD }}
@@ -2952,63 +2970,74 @@ jobs:
       # Every DLL of every directory carries a signature now, read from the file (the attribute
       # certificate table), before anything is re-uploaded.
       - name: Verify the signatures
+        if: env.SIGN_WINDOWS == 'true'
         run: python3 .github/verify-native-deps.py --require-signed "${{ github.workspace }}/native-artifacts"
       # One upload per artifact, same name, same layout; overwrite replaces the build job's.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-cpu-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-cpu-windows-x86-64/
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-cpu-windows-aarch64
           path: ${{ github.workspace }}/native-artifacts/natives-cpu-windows-aarch64/
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-cuda13-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-cuda13-windows-x86-64/
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-vulkan-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-vulkan-windows-x86-64/
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-opencl-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-opencl-windows-x86-64/
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-rocm-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-rocm-windows-x86-64/
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-sycl-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-sycl-windows-x86-64/
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-opencl-windows-aarch64
           path: ${{ github.workspace }}/native-artifacts/natives-opencl-windows-aarch64/
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-vulkan-windows-aarch64
           path: ${{ github.workspace }}/native-artifacts/natives-vulkan-windows-aarch64/
           overwrite: true
           if-no-files-found: error
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: env.SIGN_WINDOWS == 'true'
         with:
           name: natives-openvino-windows-x86-64
           path: ${{ github.workspace }}/native-artifacts/natives-openvino-windows-x86-64/
@@ -3054,14 +3083,12 @@ jobs:
       - test-java-macos-arm64-metal-15
       - test-java-windows-x86_64
       - test-java-windows-x86_64-msvc
+      # sign-windows-natives runs on every run (a no-op without the `sign_windows` switch), so the
+      # default condition is right here: a sign job that ran and failed -- wrong secrets, the
+      # environment refusing the branch -- skips this job, because the signature was asked for.
+      # It must never be a skipped job: a skip propagates down the whole dependency chain past
+      # any `if:` in between (see the comment on that job).
       - sign-windows-natives
-    # sign-windows-natives is skipped on every run without the `sign_windows` switch, and a skipped
-    # `needs` entry skips the dependents unless the condition says otherwise: run on success of
-    # everything else, never after a failure or a cancellation (every other entry is an
-    # unconditional job, so "not failed, not cancelled" is "succeeded" for them). A sign job that
-    # ran and failed -- wrong secrets, the environment refusing the branch -- skips this job: the
-    # signature was asked for.
-    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-latest
     # id-token + attestations: the build-provenance attestation below (Sigstore) signs a statement
     # that these exact files came out of this workflow at this commit; contents stays read.
