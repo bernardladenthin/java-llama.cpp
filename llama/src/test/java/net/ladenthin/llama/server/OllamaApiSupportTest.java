@@ -90,6 +90,24 @@ public class OllamaApiSupportTest {
     }
 
     @Test
+    public void toOpenAiChatRequestTurnsOllamaImagesIntoImageUrlParts() throws IOException {
+        // Ollama sends images as a "images" array of bare base64 strings next to "content"; the
+        // OpenAI surface only reads image_url content parts, so the images must be converted or
+        // the model answers without them (while /api/show advertises "vision").
+        String png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+        JsonNode openAi = OllamaApiSupport.toOpenAiChatRequest(read("{\"messages\":[{\"role\":\"user\","
+                + "\"content\":\"what is this?\",\"images\":[\"" + png + "\"]}]}"));
+        JsonNode message = openAi.path("messages").get(0);
+        JsonNode content = message.path("content");
+        assertThat(content.isArray(), is(true));
+        assertThat(content.get(0).path("type").asText(), is("text"));
+        assertThat(content.get(0).path("text").asText(), is("what is this?"));
+        assertThat(content.get(1).path("type").asText(), is("image_url"));
+        assertThat(content.get(1).path("image_url").path("url").asText(), is("data:image/png;base64," + png));
+        assertThat(message.has("images"), is(false));
+    }
+
+    @Test
     public void toOpenAiChatRequestMapsFormatJsonToResponseFormat() throws IOException {
         JsonNode openAi = OllamaApiSupport.toOpenAiChatRequest(
                 read("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"format\":\"json\"}"));
