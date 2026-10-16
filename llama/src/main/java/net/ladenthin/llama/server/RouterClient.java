@@ -201,7 +201,10 @@ public final class RouterClient {
      *     failed (exit code included), or the timeout elapses
      */
     public RouterModel awaitModelLoaded(String modelId, long timeoutMillis) throws IOException, InterruptedException {
-        long deadline = System.currentTimeMillis() + timeoutMillis;
+        long now = System.currentTimeMillis();
+        // Saturate instead of overflowing: Long.MAX_VALUE ("as long as it takes") would otherwise wrap
+        // into a deadline in the past and time out before the first poll.
+        long deadline = timeoutMillis > Long.MAX_VALUE - now ? Long.MAX_VALUE : now + timeoutMillis;
         RouterModel last = null;
         while (System.currentTimeMillis() < deadline) {
             Optional<RouterModel> model = findModel(modelId);

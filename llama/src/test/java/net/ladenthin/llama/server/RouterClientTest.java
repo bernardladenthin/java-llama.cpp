@@ -186,6 +186,17 @@ public class RouterClientTest {
     }
 
     @Test
+    public void awaitModelLoaded_longMaxValueTimeoutStillPolls() throws Exception {
+        // "wait as long as it takes": currentTimeMillis() + Long.MAX_VALUE must not overflow into a
+        // deadline in the past, which would skip polling and report a timeout for a loaded model.
+        modelsBody.set("{\"data\":[" + entry("qwen", "loaded") + "]}");
+
+        RouterModel loaded = client.awaitModelLoaded("qwen", Long.MAX_VALUE);
+
+        assertThat(loaded.getStatus(), is(RouterModel.Status.LOADED));
+    }
+
+    @Test
     public void awaitModelLoaded_failsFastOnFailedWorker() {
         modelsBody.set("{\"data\":[{\"id\":\"qwen\","
                 + "\"status\":{\"value\":\"unloaded\",\"failed\":true,\"exit_code\":137}}]}");
