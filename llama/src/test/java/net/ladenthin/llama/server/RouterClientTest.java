@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.MalformedURLException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -194,6 +195,19 @@ public class RouterClientTest {
         RouterModel loaded = client.awaitModelLoaded("qwen", Long.MAX_VALUE);
 
         assertThat(loaded.getStatus(), is(RouterModel.Status.LOADED));
+    }
+
+    @Test
+    public void ipv6LiteralHostIsBracketedInTheRequestUrl() {
+        // A router started with --host ::1 is reached as http://[::1]:port. An unbracketed literal is
+        // not a valid authority: "http://::1:1/models" fails as a MalformedURLException before any
+        // connection is attempted. Port 1 has nothing listening, so the bracketed URL fails to connect
+        // instead (or, on a host without IPv6, to create the socket) -- an IOException of another kind.
+        RouterClient ipv6 = new RouterClient("::1", 1);
+
+        IOException e = assertThrows(IOException.class, ipv6::listModels);
+
+        assertThat(e instanceof MalformedURLException, is(false));
     }
 
     @Test
