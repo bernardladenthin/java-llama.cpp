@@ -259,6 +259,10 @@ public class LlamaLoader {
      */
     static final Duration STALE_EXTRACTION_AGE = Duration.ofMinutes(10);
 
+    /** File-name endings of what the flat layout before 6.0.0 extracted (see {@link #isFlatLayoutLibraryName}). */
+    private static final List<String> FLAT_LAYOUT_SUFFIXES =
+            Collections.unmodifiableList(Arrays.asList(".so", ".dll", ".dylib", ".jnilib", ".metal"));
+
     /** Shader source a non-embedding Metal build ships next to its library. */
     private static final String METAL_SOURCE_FILE = "ggml-metal.metal";
 
@@ -329,8 +333,8 @@ public class LlamaLoader {
     }
 
     /**
-     * Whether {@link #cleanup(Set)} removes {@code path}: a {@link #shouldCleanPath named} temp entry
-     * that is not a per-build extraction directory (the pre-6.0.0 flat layout), or an extraction
+     * Whether {@link #cleanup(Set)} removes {@code path}: a {@link #shouldCleanPath named} regular file
+     * with a {@link #isFlatLayoutLibraryName library name} (the pre-6.0.0 flat layout), or an extraction
      * directory of a build not in {@code keep} whose last modification is more than
      * {@link #STALE_EXTRACTION_AGE} before {@code now}. A directory whose modification time cannot be
      * read is left alone.
@@ -347,7 +351,10 @@ public class LlamaLoader {
         Path fileNamePath = path.getFileName();
         String name = fileNamePath == null ? "" : fileNamePath.toString();
         if (!name.startsWith(BACKEND_TEMP_DIR_PREFIX) || !Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
-            return true;
+            // The old flat layout extracted single library files. The temp directory is shared with
+            // everything else on the machine, so only a regular file named like a native library goes:
+            // a llama.cpp checkout or a downloaded model carries the same prefix and is not ours.
+            return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && isFlatLayoutLibraryName(name);
         }
         if (keep.contains(name)) {
             return false;
@@ -360,6 +367,22 @@ public class LlamaLoader {
         } catch (IOException e) {
             return false;
         }
+    }
+
+    /**
+     * Whether a temp-directory file name is one the layout before 6.0.0 extracted: a native library
+     * ({@code .so}, {@code .dll}, {@code .dylib}, {@code .jnilib}) or the Metal shader source.
+     *
+     * @param name the file name, already known to carry a {@link #shouldCleanPath cleanup prefix}
+     * @return whether the file is an extracted library of the old layout
+     */
+    static boolean isFlatLayoutLibraryName(String name) {
+        for (String suffix : FLAT_LAYOUT_SUFFIXES) {
+            if (name.endsWith(suffix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
