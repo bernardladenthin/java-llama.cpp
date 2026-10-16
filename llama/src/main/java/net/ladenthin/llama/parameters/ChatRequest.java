@@ -4,7 +4,9 @@
 
 package net.ladenthin.llama.parameters;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
@@ -77,6 +79,12 @@ import org.jspecify.annotations.Nullable;
 public final class ChatRequest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    // Reads a tool's parameter schema. FAIL_ON_TRAILING_TOKENS makes a string holding more than one
+    // JSON value take the fallback below instead of being truncated to its first value without a
+    // word -- the same reason JsonParameters reads with it.
+    private static final ObjectReader SCHEMA_READER =
+            MAPPER.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private static final ParameterJsonSerializer MESSAGE_SERIALIZER = new ParameterJsonSerializer();
 
     /**
@@ -339,7 +347,7 @@ public final class ChatRequest {
             fn.put("name", t.getName());
             fn.put("description", t.getDescription());
             try {
-                fn.set("parameters", MAPPER.readTree(t.getParametersSchemaJson()));
+                fn.set("parameters", SCHEMA_READER.readTree(t.getParametersSchemaJson()));
             } catch (IOException e) {
                 fn.put("parameters", t.getParametersSchemaJson());
             }
