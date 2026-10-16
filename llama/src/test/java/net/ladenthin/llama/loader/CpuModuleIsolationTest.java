@@ -7,6 +7,7 @@ package net.ladenthin.llama.loader;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URL;
@@ -49,9 +50,15 @@ import org.junit.jupiter.api.io.TempDir;
  * its runtime, because a module that cannot even be loaded is a different and cheaper failure to
  * find, and because its per-module table records which levels a given CPU accepts at all.
  *
- * <p>So each module gets a directory of its own holding the library, {@code ggml}, {@code ggml-base},
- * {@code ggml-rpc} and that single module, and a JVM of its own -- which also exercises the
- * one-module layout a platform without a variant list ships (Windows arm64). A module whose
+ * <p>So each module gets a directory of its own holding the library, everything the real directory's
+ * {@code jllama-extras.txt} and {@code jllama-files.txt} name except the other CPU modules (so
+ * {@code ggml}, {@code ggml-base}, {@code ggml-rpc}, and since the shared upstream libraries also
+ * {@code llama} and {@code mtmd}, which {@code jllama} imports), and that single module -- with the
+ * two lists rewritten for exactly that content -- and a JVM of its own, which also exercises the
+ * one-module layout a platform without a variant list ships (Windows arm64). The set is read from
+ * the lists rather than written down here on purpose: a fixed list went stale the moment
+ * {@code llama.dll} and {@code mtmd.dll} became files of their own, and every Windows probe then
+ * died with "Can't find dependent libraries" (run 38814976429). A module whose
  * instruction set the CPU lacks must <em>decline</em>, i.e. register no CPU backend, and must not
  * crash: loading a DLL executes none of its kernels, ggml's score function only reads CPUID.
  *
@@ -73,16 +80,41 @@ public class CpuModuleIsolationTest {
     /** Separator of the manifest {@code Class-Path} entries. */
     private static final java.util.regex.Pattern WHITESPACE = java.util.regex.Pattern.compile("[ \\t\\r\\n]+");
 
-    /** Files a module directory needs besides the module itself; absent ones are skipped. */
-    private static final List<String> SUPPORT = List.of(
-            System.mapLibraryName("jllama"),
-            libraryName("ggml"),
-            libraryName("ggml-base"),
-            libraryName("ggml-rpc"),
-            "jllama-build.txt");
+    /** Files a module directory needs besides the module itself and the lists; absent ones are skipped. */
+    private static final List<String> SUPPORT = List.of(System.mapLibraryName("jllama"), "jllama-build.txt");
+
+    /** The stem every CPU module name carries. */
+    private static final String MODULE_STEM = "ggml-cpu";
+
+    /** The one-module file name of a platform without a variant list ({@code ggml-cpu.dll}). */
+    private static final String SINGLE_MODULE = System.mapLibraryName(MODULE_STEM);
+
+    /** Where the stem ends inside {@link #SINGLE_MODULE} ({@code lib} precedes it on ELF and Mach-O). */
+    private static final int STEM_END = SINGLE_MODULE.indexOf(MODULE_STEM) + MODULE_STEM.length();
+
+    /** The platform's prefix of a levelled module name ({@code libggml-cpu-} on ELF, {@code ggml-cpu-} on Windows). */
+    private static final String MODULE_FILE_PREFIX = SINGLE_MODULE.substring(0, STEM_END) + "-";
+
+    /** The platform's library suffix ({@code .so}, {@code .dll}, {@code .dylib}). */
+    private static final String MODULE_FILE_SUFFIX = SINGLE_MODULE.substring(STEM_END);
 
     private static String libraryName(String stem) {
         return System.mapLibraryName(stem);
+    }
+
+    /**
+     * Whether a file of the natives directory is a CPU module.
+     *
+     * <p>Platform-aware on purpose: the first version matched {@code ggml-cpu-} literally, which is
+     * the Windows spelling only -- on Linux and macOS the files are {@code libggml-cpu-<level>.so}
+     * / {@code .dylib}, so the test found no modules there and skipped itself.
+     *
+     * @param fileName a file name of the natives directory
+     * @return true for {@code ggml-cpu-<level>} and for the single {@code ggml-cpu} module
+     */
+    static boolean isCpuModule(String fileName) {
+        return fileName.equals(SINGLE_MODULE)
+                || (fileName.startsWith(MODULE_FILE_PREFIX) && fileName.endsWith(MODULE_FILE_SUFFIX));
     }
 
     @Test
@@ -185,45 +217,66 @@ public class CpuModuleIsolationTest {
 
     private static List<Path> modulesIn(Path backendDir) throws IOException {
         try (Stream<Path> files = Files.list(backendDir)) {
-            return files.filter(p -> p.getFileName().toString().startsWith(MODULE_PREFIX))
+            return files.filter(p -> isCpuModule(p.getFileName().toString()))
                     .sorted()
                     .collect(Collectors.toList());
         }
     }
 
-    /** A natives root holding only {@code module} beside the library, with matching file lists. */
+    /**
+     * A natives root holding only {@code module} beside the library, with matching file lists.
+     *
+     * <p>The support files are whatever the real directory's two lists name, minus the other CPU
+     * modules: {@code jllama-extras.txt} is copied as it is (the files {@code LlamaLoader} loads by
+     * full path before the library, in dependency order -- on Windows {@code ggml-base}, {@code ggml},
+     * {@code llama}, {@code mtmd}), and {@code jllama-files.txt} is rewritten to its non-module
+     * entries plus this one module. A listed file that is not there is skipped, exactly as the
+     * loader reports it rather than fails on it.
+     */
     private static Path stageSingleModule(Path tempDir, Path backendDir, Path module) throws IOException {
         String moduleName = module.getFileName().toString();
         Path root = tempDir.resolve(moduleName.replace('.', '_'));
         Path target = root.resolve(
                 "net/ladenthin/llama/" + OSInfo.getNativeLibFolderPathForCurrentOS() + "/" + backendDir.getFileName());
         Files.createDirectories(target);
-        for (String name : SUPPORT) {
+
+        List<String> preloaded = listedFiles(backendDir, LlamaLoader.BACKEND_EXTRAS_FILE);
+        List<String> extracted = new ArrayList<>();
+        extracted.add("# CpuModuleIsolationTest: this module only");
+        for (String name : listedFiles(backendDir, LlamaLoader.BACKEND_FILES_FILE)) {
+            if (!isCpuModule(name)) {
+                extracted.add(name);
+            }
+        }
+        extracted.add(moduleName);
+
+        List<String> support = new ArrayList<>(SUPPORT);
+        support.addAll(preloaded);
+        support.addAll(extracted.subList(1, extracted.size() - 1));
+        for (String name : support) {
             Path source = backendDir.resolve(name);
-            if (Files.exists(source)) {
+            if (Files.exists(source) && !Files.exists(target.resolve(name))) {
                 Files.copy(source, target.resolve(name));
             }
         }
         Files.copy(module, target.resolve(moduleName));
 
-        List<String> extracted = new ArrayList<>();
-        extracted.add("# CpuModuleIsolationTest: this module only");
-        extracted.add(moduleName);
-        if (Files.exists(target.resolve(libraryName("ggml-rpc")))) {
-            extracted.add(libraryName("ggml-rpc"));
-        }
-        Files.write(target.resolve("jllama-files.txt"), extracted, StandardCharsets.UTF_8);
-
-        List<String> preloaded = new ArrayList<>();
-        for (String stem : List.of("ggml-base", "ggml")) {
-            if (Files.exists(target.resolve(libraryName(stem)))) {
-                preloaded.add(libraryName(stem));
-            }
-        }
+        Files.write(target.resolve(LlamaLoader.BACKEND_FILES_FILE), extracted, StandardCharsets.UTF_8);
         if (!preloaded.isEmpty()) {
-            Files.write(target.resolve("jllama-extras.txt"), preloaded, StandardCharsets.UTF_8);
+            Files.write(target.resolve(LlamaLoader.BACKEND_EXTRAS_FILE), preloaded, StandardCharsets.UTF_8);
         }
         return root;
+    }
+
+    /** The names a list file of the real directory carries, in order; empty when there is no such list. */
+    private static List<String> listedFiles(Path backendDir, String listFile) throws IOException {
+        Path file = backendDir.resolve(listFile);
+        if (!Files.isRegularFile(file)) {
+            return List.of();
+        }
+        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            return LlamaLoader.parseExtras(reader);
+        }
     }
 
     /** Forks a JVM whose classpath carries {@code root} instead of the real natives directory. */

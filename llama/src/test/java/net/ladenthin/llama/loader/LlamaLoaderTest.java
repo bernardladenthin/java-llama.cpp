@@ -850,8 +850,9 @@ public class LlamaLoaderTest {
         String lib = System.mapLibraryName("jllama");
         String module = System.mapLibraryName("ggml-cpu-x64");
         Path dir = nativesDirectory(tempDir, null, module + "\n", "llama.cpp=b11639\nbackend=cpu\n", lib);
-        String previous = System.getProperty(LlamaSystemProperties.PREFIX + ".backend");
-        System.setProperty(LlamaSystemProperties.PREFIX + ".backend", "vulkan");
+        String backendProp = LlamaSystemProperties.PREFIX + ".backend";
+        String previous = System.getProperty(backendProp);
+        System.setProperty(backendProp, "vulkan");
         try {
             String err = captureStderr(() -> assertTrue(LlamaLoader.loadFromDirectory(dir, "lib.path", path -> true)));
             assertTrue(err.contains("names 1 file(s) that are not there"), err);
@@ -859,9 +860,9 @@ public class LlamaLoaderTest {
             assertTrue(err.contains(".backend=vulkan has no effect on a natives directory"), err);
         } finally {
             if (previous == null) {
-                System.clearProperty(LlamaSystemProperties.PREFIX + ".backend");
+                System.clearProperty(backendProp);
             } else {
-                System.setProperty(LlamaSystemProperties.PREFIX + ".backend", previous);
+                System.setProperty(backendProp, previous);
             }
         }
     }
