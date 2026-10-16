@@ -692,6 +692,21 @@ public class LlamaLoaderTest {
     }
 
     @Test
+    public void staleExtractionLeavesForeignEntriesWithAMatchingPrefixAlone(@TempDir Path dir) throws IOException {
+        // The temp directory is shared with everything else on the machine. A llama.cpp checkout or a
+        // model downloaded there carries the same prefixes as the old flat layout, but is neither a
+        // library nor ours: cleanup() deleted both, the checkout recursively, on every start.
+        Path checkout = Files.createDirectory(dir.resolve("llama.cpp"));
+        Files.write(checkout.resolve("README.md"), new byte[] {1});
+        Path models = Files.createDirectory(dir.resolve("ggml-models"));
+        Path model = Files.write(dir.resolve("llama-2-7b.Q4_K_M.gguf"), new byte[] {1});
+        Instant now = Instant.now();
+        assertFalse(LlamaLoader.isStaleExtraction(checkout, Collections.<String>emptySet(), now));
+        assertFalse(LlamaLoader.isStaleExtraction(models, Collections.<String>emptySet(), now));
+        assertFalse(LlamaLoader.isStaleExtraction(model, Collections.<String>emptySet(), now));
+    }
+
+    @Test
     public void extractionDirectoriesOfThisClasspathNameTheLibraryWithItsModules() {
         String archProp = LlamaSystemProperties.PREFIX + ".osinfo.architecture";
         String backendProp = LlamaSystemProperties.PREFIX + ".backend";
