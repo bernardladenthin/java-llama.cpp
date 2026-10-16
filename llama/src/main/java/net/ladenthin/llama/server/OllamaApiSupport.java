@@ -163,6 +163,26 @@ final class OllamaApiSupport {
 
     private static ObjectNode toOpenAiMessage(JsonNode ollamaMessage) {
         ObjectNode message = ollamaMessage.deepCopy();
+        // Ollama carries images as an "images" array of bare base64 strings beside "content"; the
+        // OpenAI parser reads only image_url content parts, so without this the images were dropped
+        // and a vision model answered as if none had been sent.
+        JsonNode images = message.remove("images");
+        if (images != null && images.isArray() && images.size() > 0) {
+            ArrayNode parts = OBJECT_MAPPER.createArrayNode();
+            JsonNode content = message.path("content");
+            if (content.isTextual() && !content.asText().isEmpty()) {
+                parts.addObject().put("type", "text").put("text", content.asText());
+            }
+            for (JsonNode image : images) {
+                if (image.isTextual()) {
+                    parts.addObject()
+                            .put("type", "image_url")
+                            .putObject("image_url")
+                            .put("url", toImageDataUrl(image.asText()));
+                }
+            }
+            message.set("content", parts);
+        }
         JsonNode toolCalls = message.path("tool_calls");
         if (toolCalls.isArray()) {
             for (JsonNode toolCall : toolCalls) {
@@ -173,6 +193,29 @@ final class OllamaApiSupport {
             }
         }
         return message;
+    }
+
+    /**
+     * Turns an Ollama image (bare base64, or already a data URL) into the data URL an OpenAI
+     * {@code image_url} part carries. The MIME type is read from the encoded magic bytes; llama.cpp
+     * decodes by content and only requires the {@code data:image/...;base64,} shape, so an unknown
+     * format falls back to {@code image/png}.
+     */
+    private static String toImageDataUrl(String image) {
+        if (image.startsWith("data:")) {
+            return image;
+        }
+        String mimeType;
+        if (image.startsWith("/9j/")) {
+            mimeType = "image/jpeg";
+        } else if (image.startsWith("R0lGOD")) {
+            mimeType = "image/gif";
+        } else if (image.startsWith("UklGR")) {
+            mimeType = "image/webp";
+        } else {
+            mimeType = "image/png";
+        }
+        return "data:" + mimeType + ";base64," + image;
     }
 
     private static void copyNumber(JsonNode from, String fromKey, ObjectNode to, String toKey) {
