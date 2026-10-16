@@ -247,7 +247,7 @@ public final class RouterClient {
     private String request(String method, String path, @Nullable String body) throws IOException {
         // URI.create(...).toURL() instead of the URL(String) constructor: the latter is
         // deprecated (no validation/encoding) — flagged by CodeQL; this form is Java-8-safe.
-        URL url = URI.create("http://" + host + ":" + port + path).toURL();
+        URL url = URI.create("http://" + urlHost(host) + ":" + port + path).toURL();
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         try {
             connection.setRequestMethod(method);
@@ -273,6 +273,17 @@ public final class RouterClient {
         } finally {
             connection.disconnect();
         }
+    }
+
+    /**
+     * Returns {@code host} as it goes into a URL authority: an IPv6 literal is bracketed
+     * ({@code ::1} -> {@code [::1]}), anything else is unchanged.
+     *
+     * @param host the configured host name or address
+     * @return the host part of the request URL
+     */
+    private static String urlHost(String host) {
+        return host.indexOf(':') >= 0 && !host.startsWith("[") ? "[" + host + "]" : host;
     }
 
     @Override
