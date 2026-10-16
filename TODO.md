@@ -216,9 +216,13 @@ only under that environment's rules -- never a step of `package`, which runs on 
 *(The code side landed 2026-10-15: `.github/sign-windows-natives.sh` (jsign 7.2 pinned by SHA-256,
 `--storetype ESIGNER`, every `Windows/*/*/*.dll`, `signed=yes` afterwards; measured with a real DLL
 and dummy credentials: the options are accepted and the run fails at SSL.com's authentication), the
-job `sign-windows-natives` (environment `maven-central`, re-uploads the ten Windows artifacts with
-`overwrite: true`, `check-natives.py` holds the uploads to the Windows rows of `natives.csv`),
-`package` waiting for it with a skip-tolerant `if`, `--require-signed` in `package` and both publish
+job `sign-windows-natives` (environment `maven-central` only when signing, else the unprotected
+`unsigned`; re-uploads the ten Windows artifacts with `overwrite: true`, `check-natives.py` holds
+the uploads to the Windows rows of `natives.csv`), `package` waiting for it -- the job runs on every
+run and is never `if:`-skipped, because GitHub applies a skip to the whole dependency chain behind
+the skipped job past any condition in between, which is how run 38870889665 (attempt 2) ended
+"success" with every job behind `package` skipped; `check-natives.py` refuses a job-level `if:` on
+it now --, `--require-signed` in `package` and both publish
 jobs whenever `SIGN_WINDOWS` is on, `pe_signed()` + `signature_violations()` in
 `verify-native-deps.py` with unit tests; CLAUDE.md "Code signing of the Windows DLLs", README.
 Unexercised until the certificate exists.)*

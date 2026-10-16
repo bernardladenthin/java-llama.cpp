@@ -42,8 +42,9 @@ env:
   # dispatch input, for snapshot and release alike -- the pipeline is the same at that point, and
   # a release is `publish_to_central` + `sign_windows` both on. Never on a push or a pull request,
   # as nothing publishes from those either. What the switch does: the sign-windows-natives job
-  # runs (the maven-central environment's eSigner secrets), and package / the publish jobs require
-  # every Windows DLL of the merged tree to be signed.
+  # signs (it runs on every run, but only with the switch does it take the maven-central
+  # environment and its eSigner secrets), and package / the publish jobs require every Windows DLL
+  # of the merged tree to be signed.
   SIGN_WINDOWS: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_windows }}
   SCCACHE_WEBDAV_ENDPOINT: https://cache.depot.dev
   # The CI model set is .github/models.csv (URLs, and the model cache key is its hash). The Java

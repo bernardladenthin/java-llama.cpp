@@ -47,6 +47,8 @@ KINDS = ("library", "module")
 SMOKE_EXCLUDED_OSES = ("Linux-Android",)
 # The job that re-uploads the Windows natives artifacts Authenticode-signed (CLAUDE.md, "Code signing").
 SIGN_JOB = "sign-windows-natives"
+# A job-level key sits at the four-space indent of the job body (`    if:`); a step's `if:` is deeper.
+JOB_CONDITION = re.compile(r"^    if:")
 SMOKE_EXCLUDED_TREES = ("Linux/s390x",)
 
 # `package` uploads each smoke set alone, as llama-smoke-<target>, for the smoke jobs; a matrix row
@@ -245,7 +247,14 @@ def check_signing(natives, jobs, uploads):
     or reads one of them -- `overwrite` deletes the artifact for a moment, so a build or test job still
     reading it would race (the Windows Java test job reads natives-cpu-windows-x86-64 through the
     reusable workflow's input). A Windows row without its step would ship that jar unsigned on a
-    signed run, which `--require-signed` in `package` then reports late."""
+    signed run, which `--require-signed` in `package` then reports late.
+
+    And the job carries no job-level `if:`: it must run on every run (a no-op without the switch,
+    gated step by step) rather than be skipped, because GitHub applies a skip to every job in the
+    dependency chain behind the skipped one, past any condition of the jobs in between -- the first
+    form was `if:`-skipped without the switch, `package` tolerated that with `!cancelled()` and ran
+    green, and the smoke sets, the report and both publish jobs behind `package` were skipped with
+    the run concluding "success" (run 38870889665, attempt 2)."""
     windows = [r["classifier"] for r in natives if tree(r).split("/")[0] == "Windows"]
     sign = jobs.get(SIGN_JOB)
     if sign is None:
@@ -253,6 +262,10 @@ def check_signing(natives, jobs, uploads):
     signed = {c for c, uploaders in uploads.items() if SIGN_JOB in uploaders}
     failures = [f"publish.yml {SIGN_JOB} re-uploads (one per Windows row): missing {c}"
                 for c in sorted(set(windows) - signed)]
+    if any(JOB_CONDITION.match(line) for line in sign.lines):
+        failures.append(f"publish.yml {SIGN_JOB} carries a job-level `if:` -- the job must run on every run "
+                        f"(a no-op without the switch), never be skipped: a skipped job skips every job behind "
+                        f"`package` in the dependency chain, past any condition in between")
     failures += [f"publish.yml {SIGN_JOB} re-uploads natives-{c}, which is not a Windows row -- it would replace "
                  f"the build artifact of another platform with an unsigned copy"
                  for c in sorted(signed - set(windows))]

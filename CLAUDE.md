@@ -3173,8 +3173,9 @@ certificate and the secrets exist.
   is on -- so a signed run cannot let an unsigned DLL into a jar, and a run without the switch is
   not blocked. Unit tests in `test_nativedeps.py` (`SignatureTest`, a synthetic PE with and without
   the security directory). `check-natives.py` holds the job itself (`natives.check_signing`): one
-  `overwrite: true` upload per Windows row of `natives.csv`, and the job waits for every job that
-  uploads one of them.
+  `overwrite: true` upload per Windows row of `natives.csv`, the job waits for every job that
+  uploads one of them, and it carries no job-level `if:` (the chain rule above; a step-level gate
+  is what it uses).
 - **What the owner does, in order** (TODO.md item 11 and "Code-sign the Windows DLLs" carry the
   details and the prices): delete the Azure Trusted Signing account; SSL.com's IV validation; the IV
   code-signing certificate enrolled in eSigner; the TOTP secret and the credential id from the
