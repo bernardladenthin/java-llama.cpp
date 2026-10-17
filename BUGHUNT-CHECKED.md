@@ -122,3 +122,11 @@ Ergebnisse: `kein Fund`, `widerlegt` (Verdacht geprüft, Code korrekt), `unsiche
 - `llama/src/main/java/net/ladenthin/llama/args/LazyMode.java` · `d5225f0` · 2026-10-17 · kein Fund — off/auto/on entsprechen `--lazy-mode`.
 - `llama/src/main/java/net/ladenthin/llama/args/FlashAttn.java` · `310dcc5` · 2026-10-17 · kein Fund — on/off/auto entsprechen `--flash-attn`.
 - `llama/src/main/java/net/ladenthin/llama/args/DraftSampling.java` · `9c1a37f` · 2026-10-17 · kein Fund — greedy/probabilistic entsprechen der Draft-Sampling-Option in `common/arg.cpp`.
+- `llama/src/main/java/net/ladenthin/llama/value/Pair.java` · `a209738` · 2026-10-17 · kein Fund — Unveränderlicher Träger, `equals`/`hashCode` über beide Felder.
+- `llama-ffm/src/main/java/net/ladenthin/llama/ffm/SlotOp.java` · `f6fdfd1` · 2026-10-17 · kein Fund — Codes 1/2/3 stimmen mit `jllama_slot_op` in `jllama_api.h` überein.
+- `llama/src/main/java/net/ladenthin/llama/args/Optimizer.java` · `5d3e2a1` · 2026-10-17 · kein Fund — 0/1 entsprechen `GGML_OPT_OPTIMIZER_TYPE_ADAMW`/`SGD` (b11639, `ggml-opt.h`), die `train_engine.cpp` direkt übergibt.
+- `llama/src/main/java/net/ladenthin/llama/args/ContinuationMode.java` · `b01f540` · 2026-10-17 · kein Fund — Zwei Feldnamen der Antwort, als Wert durchgereicht.
+- `llama/src/main/java/net/ladenthin/llama/exception/ModelUnavailableException.java` · `9eebb86` · 2026-10-17 · kein Fund — Unterklasse von `LlamaException`, nur Konstruktoren; F56 sorgt dafür, dass `OfflineModelGuard` sie auch bei nicht darstellbaren Pfaden wirft.
+- `llama/src/main/java/net/ladenthin/llama/exception/LlamaException.java` · `5af534c` · 2026-10-17 · kein Fund — Basisklasse, nur Konstruktoren.
+- `llama/src/main/java/net/ladenthin/llama/exception/InvalidRequestException.java` · `971de14` · 2026-10-17 · kein Fund — Unterklasse von `LlamaException` für upstream-400; Zuordnung in `jllama.cpp`/`JllamaNative.check`.
+- `llama/src/main/java/net/ladenthin/llama/value/LogLevel.java` · `6662b54` · 2026-10-17 · kein Fund — Vier Stufen, Abbildung der ggml-Stufen liegt im JNI-Code (außerhalb des Ziels).
