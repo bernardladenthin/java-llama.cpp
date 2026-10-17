@@ -7,6 +7,7 @@ package net.ladenthin.llama.parameters;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.nio.file.Path;
+import java.util.Objects;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.ToString;
@@ -93,6 +94,7 @@ public final class TrainingParameters {
      * @return a compact JSON string
      */
     public String toJson() {
+        validate();
         ObjectNode node = MAPPER.createObjectNode();
         node.put(TrainingField.MODEL_PATH.getKey(), modelPath.toString());
         if (trainingText != null) {
@@ -114,5 +116,22 @@ public final class TrainingParameters {
         node.put(TrainingField.N_BATCH.getKey(), nBatch);
         node.put(TrainingField.N_UBATCH.getKey(), nUbatch);
         return node.toString();
+    }
+
+    // The native trainer reads the JSON with defaults and checks none of these: epochs below 1 wrote the
+    // untouched model as a successful run, both corpora set silently dropped trainingText, and a
+    // validation split outside [0, 1) left no training data.
+    private void validate() {
+        Objects.requireNonNull(modelPath, "modelPath");
+        Objects.requireNonNull(outputPath, "outputPath");
+        if ((trainingText == null) == (trainingFile == null)) {
+            throw new IllegalArgumentException("exactly one of trainingText and trainingFile must be set");
+        }
+        if (epochs < 1) {
+            throw new IllegalArgumentException("epochs must be at least 1, was " + epochs);
+        }
+        if (!(valSplit >= 0f && valSplit < 1f)) {
+            throw new IllegalArgumentException("valSplit must be in [0, 1), was " + valSplit);
+        }
     }
 }

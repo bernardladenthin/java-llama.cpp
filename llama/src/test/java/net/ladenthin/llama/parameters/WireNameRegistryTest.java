@@ -274,13 +274,19 @@ public class WireNameRegistryTest {
      */
     @Test
     public void everyTrainingFieldIsWrittenByAFullyPopulatedConfiguration() {
+        // exactly one corpus per configuration, so the two corpus keys come from two of them
         String json = TrainingParameters.builder()
-                .modelPath(java.nio.file.Paths.get("base.gguf"))
-                .trainingText("corpus")
-                .trainingFile(java.nio.file.Paths.get("corpus.txt"))
-                .outputPath(java.nio.file.Paths.get("out.gguf"))
-                .build()
-                .toJson();
+                        .modelPath(java.nio.file.Paths.get("base.gguf"))
+                        .trainingText("corpus")
+                        .outputPath(java.nio.file.Paths.get("out.gguf"))
+                        .build()
+                        .toJson()
+                + TrainingParameters.builder()
+                        .modelPath(java.nio.file.Paths.get("base.gguf"))
+                        .trainingFile(java.nio.file.Paths.get("corpus.txt"))
+                        .outputPath(java.nio.file.Paths.get("out.gguf"))
+                        .build()
+                        .toJson();
 
         Set<String> missing = new TreeSet<>();
         for (TrainingField field : TrainingField.values()) {

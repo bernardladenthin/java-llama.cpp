@@ -5,7 +5,9 @@
 package net.ladenthin.llama.parameters;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -96,5 +98,58 @@ class TrainingParametersTest {
         assertThat(node.get("decay_epochs").floatValue(), is(3.0f));
         assertThat(node.get("weight_decay").floatValue(), is(0.01f));
         assertThat(node.get("val_split").floatValue(), is(0.2f));
+    }
+
+    private static TrainingParameters.TrainingParametersBuilder valid() {
+        return TrainingParameters.builder()
+                .modelPath(Paths.get("base.gguf"))
+                .trainingText("hello world")
+                .outputPath(Paths.get("tuned.gguf"));
+    }
+
+    /** epochs below 1 would train nothing and write the untouched model, a silent success. */
+    @Test
+    void lessThanOneEpochIsRejected() {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class, () -> valid().epochs(0).build().toJson());
+        assertThat(e.getMessage(), containsString("epochs"));
+    }
+
+    /** A held-out fraction outside [0, 1) leaves no training data, or a negative split. */
+    @Test
+    void validationSplitOutsideZeroToOneIsRejected() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> valid().valSplit(1f).build().toJson());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> valid().valSplit(-0.1f).build().toJson());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> valid().valSplit(Float.NaN).build().toJson());
+    }
+
+    /** Exactly one corpus: with both set the native layer silently ignored trainingText. */
+    @Test
+    void bothOrNoCorpusIsRejected() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> valid().trainingFile(Paths.get("corpus.txt")).build().toJson());
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> valid().trainingText(null).build().toJson());
+    }
+
+    /** A missing path names the field instead of failing with a bare NullPointerException. */
+    @Test
+    void missingPathsNameTheField() {
+        NullPointerException model = assertThrows(
+                NullPointerException.class,
+                () -> valid().modelPath(null).build().toJson());
+        assertThat(model.getMessage(), is("modelPath"));
+        NullPointerException output = assertThrows(
+                NullPointerException.class,
+                () -> valid().outputPath(null).build().toJson());
+        assertThat(output.getMessage(), is("outputPath"));
     }
 }
