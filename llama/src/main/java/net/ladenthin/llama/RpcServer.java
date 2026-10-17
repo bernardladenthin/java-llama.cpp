@@ -66,6 +66,9 @@ public final class RpcServer implements AutoCloseable {
     /** How long {@link #close()} waits for the server thread to end. */
     static final long STOP_TIMEOUT_MILLIS = 30_000L;
 
+    /** How long a failed start waits for the server thread before it repeats the stop. */
+    static final long STOP_RETRY_MILLIS = 100L;
+
     private static final Logger LOGGER = LoggerFactory.getLogger(RpcServer.class);
 
     private static final AtomicBoolean ACTIVE = new AtomicBoolean();
@@ -244,7 +247,7 @@ public final class RpcServer implements AutoCloseable {
             thread.setDaemon(true);
             thread.start();
             if (!awaitListening(thread, backend, startTimeoutMillis)) {
-                joinQuietly(thread, STOP_TIMEOUT_MILLIS);
+                stopAndJoin(thread, backend, STOP_TIMEOUT_MILLIS);
                 Throwable cause = failure.get();
                 throw new LlamaException("RPC server could not listen on " + endpoint
                         + (cause == null ? " (is the port already in use?)" : ": " + cause.getMessage()));
@@ -509,9 +512,34 @@ public final class RpcServer implements AutoCloseable {
                 break;
             }
         }
-        // still binding after the timeout, or interrupted: make sure the thread does not outlive us
-        backend.stop();
+        // still binding after the timeout, or interrupted: the caller stops the thread
         return false;
+    }
+
+    /**
+     * Stops a server thread that did not come up and waits for it to end. The stop is repeated while
+     * the thread lives: the native server clears its stop flag when it binds the socket, so a stop that
+     * arrives before the bind (a slow device initialization, an interrupted start) is lost, and the
+     * server would go on listening after the start has failed and released the single-instance slot.
+     * An interrupt of the calling thread does not cut the wait short; it is restored afterwards.
+     */
+    private static void stopAndJoin(Thread thread, Backend backend, long timeoutMillis) {
+        boolean interrupted = Thread.interrupted();
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+        try {
+            while (thread.isAlive() && System.nanoTime() < deadline) {
+                backend.stop();
+                try {
+                    thread.join(STOP_RETRY_MILLIS);
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     private static void joinQuietly(Thread thread, long millis) {
