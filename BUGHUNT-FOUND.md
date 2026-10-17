@@ -37,6 +37,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F53](#f53) — niedrig — *gefixt*
 - [F54](#f54) — niedrig — *gefixt*
 - [F55](#f55) — niedrig — *gefixt*
+- [F56](#f56) — niedrig — *gefixt*
 
 ## Funde
 
@@ -300,6 +301,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: a string containing "\"parameters\":\"\"" but: was "[{"type":"function","function":{"name":"f","description":"d","parameters":null}}]"“), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ChatRequestTest` 25/25, `ToolCallingAgentTest` 6/6, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ed6236d`
+
+### F56 – java-llama.cpp: nicht darstellbarer Offline-Modellpfad ergibt `InvalidPathException` statt `ModelUnavailableException`
+- **Zeit:** 2026-10-17 22:10 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/loader/OfflineModelGuard.java:62` (`check`)
+- **Schwere:** niedrig
+- **Beschreibung:** Die Javadoc verspricht eine `ModelUnavailableException`, wenn `--offline` gesetzt ist und die konfigurierte lokale Modelldatei fehlt. Ein Pfad, den das Dateisystem nicht darstellen kann (NUL-Zeichen; unter Windows auch `?`, `*`, `<` …), ließ `Paths.get` eine `InvalidPathException` werfen – eine untypisierte `IllegalArgumentException`, noch bevor der native Lader erreicht wird. Ein solcher Pfad kann keine Datei bezeichnen, ist also genau der Fall „Datei fehlt“.
+- **Fix:** `localFileExists` behandelt eine `InvalidPathException` als „existiert nicht“.
+- **Reproduktion:** `LlamaModelOfflineTest#check_offlineAndUnrepresentablePath_throwsModelUnavailable`
+- **Rot-Grün-Nachweis:** ohne Fix rot („expected: <ModelUnavailableException> but was: <java.nio.file.InvalidPathException>“, Nul character not allowed), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `LlamaModelOfflineTest` 9/9, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** java-llama.cpp `4f610bd`
 
 ## Offene Verdachte ohne Fund-ID
 
