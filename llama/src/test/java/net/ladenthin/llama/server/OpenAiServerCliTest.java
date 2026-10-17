@@ -273,6 +273,19 @@ public class OpenAiServerCliTest {
     }
 
     @Test
+    public void smallContextSizeSplitsTheWholeWindowBetweenInputAndOutput() {
+        // Below twice the output default the output budget is ctx/2. The input budget must be the rest
+        // of the window, not ctx minus the 2048 default: with -c 2048 that advertised a single input
+        // token, and clients that size their prompt from it (Copilot's maxInputTokens) send none.
+        for (int ctx : new int[] {1024, 2048, 3000}) {
+            OpenAiServerConfig config = OpenAiServerCli.parse("-m", "m.gguf", "-c", String.valueOf(ctx))
+                    .toServerConfig();
+            assertThat(config.getMaxOutputTokens(), is(ctx / 2));
+            assertThat(config.getMaxInputTokens() + config.getMaxOutputTokens(), is(ctx));
+        }
+    }
+
+    @Test
     public void modelParametersIncludeModelPath() {
         String json =
                 OpenAiServerCli.parse("-m", "models/m.gguf").toModelParameters().toString();

@@ -713,9 +713,12 @@ public final class OpenAiServerCli {
                 builder.apiKey(apiKey);
             }
             if (ctxSize > 0) {
-                builder.maxOutputTokens(
-                        Math.min(OpenAiServerConfig.DEFAULT_MAX_OUTPUT_TOKENS, Math.max(1, ctxSize / 2)));
-                builder.maxInputTokens(Math.max(1, ctxSize - OpenAiServerConfig.DEFAULT_MAX_OUTPUT_TOKENS));
+                final int maxOutputTokens =
+                        Math.min(OpenAiServerConfig.DEFAULT_MAX_OUTPUT_TOKENS, Math.max(1, ctxSize / 2));
+                builder.maxOutputTokens(maxOutputTokens);
+                // The rest of the window, not ctx minus the output default: below twice that default
+                // the output budget is ctx/2, and the subtraction of the default left 1 input token.
+                builder.maxInputTokens(Math.max(1, ctxSize - maxOutputTokens));
             }
             return builder.build();
         }
