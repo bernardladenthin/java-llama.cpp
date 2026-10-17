@@ -40,6 +40,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F56](#f56) — niedrig — *gefixt*
 - [F57](#f57) — niedrig — *nur beschrieben* (Entscheidung des Nutzers)
 - [F59](#f59) — niedrig — *nur beschrieben* (CI-Bedarf: JDK 22+)
+- [F60](#f60) — niedrig — *gefixt*
 
 ## Funde
 
@@ -339,6 +340,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **CI-Bedarf:** Test im Job `test-java-llama-ffm` (z. B. paketinterne Naht für die beiden Method-Handles, `isRunning` im Latch festhalten, `close()` parallel, Erwartung: `close()` wartet).
 - **Status:** nur beschrieben
 - **Commit:** —
+
+<a id="f60"></a>
+### F60 – java-llama.cpp: Textblöcke einer Anthropic-Nachricht werden ohne Trenner zusammengeklebt
+- **Zeit:** 2026-10-17 22:05 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java:145` (`appendOpenAiMessages`, Fall `text`)
+- **Schwere:** niedrig
+- **Beschreibung:** `/v1/messages` übersetzt eine Nachricht mit mehreren `text`-Blöcken in einen OpenAI-String, hängte die Blöcke aber ohne Trenner aneinander. Anthropic-Clients teilen einen Zug regelmäßig in mehrere Blöcke (Hinweisblock, dann der eigentliche Text); an der Nahtstelle verschmolzen Wörter (`first` + `second` → `firstsecond`). llama.cpps eigenes `/v1/messages` behält die Blöcke als Content-Parts und verbindet sie beim Rendern mit einem Zeilenumbruch (`concat_content_parts` in `common/chat.cpp`, b11639). Der Bildpfad derselben Methode reicht bereits Parts weiter und war nicht betroffen; die System-Blöcke verbindet upstream ebenfalls ohne Trenner, sie bleiben unverändert.
+- **Fix:** Vor jedem weiteren Textblock ein `\n`, wie upstream.
+- **Reproduktion:** `AnthropicApiSupportTest#requestJoinsTheTextBlocksOfOneMessageWithANewline`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "first\nsecond" but: was "firstsecond"“, 14 Tests, 1 Fehlschlag), mit Fix grün 14/14; Gegenprobe per `git stash` rot, nach `stash pop` grün. `AnthropicStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** java-llama.cpp `76a3370`
 
 ## Offene Verdachte ohne Fund-ID
 
