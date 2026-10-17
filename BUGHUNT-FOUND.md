@@ -23,7 +23,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F13](#f13) — mittel — *gefixt*
 - [F16](#f16) — mittel — *nur beschrieben*
 - [F17](#f17) — mittel — *gefixt*
-- [F18](#f18) — mittel — *nur beschrieben*
+- [F18](#f18) — mittel — *gefixt*
 - [F24](#f24) — mittel — *gefixt*
 - [F25](#f25) — mittel — *gefixt*
 - [F26](#f26) — mittel — *gefixt*
@@ -136,9 +136,10 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Schwere:** mittel
 - **Beschreibung:** `close()` las `handle`, prüfte auf 0 und setzte es danach auf 0 – ohne Synchronisation. Zwei gleichzeitige `close()` (Shutdown-Hook + try-with-resources, oder in `NativeServer.main` der Hook und der `finally`-Block, wenn der Worker genau beim Ctrl-C selbst endet) kamen beide durch und riefen `stopNativeServer(h)` doppelt: zweimal `join()` und zweimal `delete` desselben `native_server` → JVM-Absturz. Ebenso konnte `isRunning()` einen Handle abfragen, den ein paralleles `close()` gerade freigab (Use-after-free). Der Kommentar in `main` („the finally and the hook both firing is safe“) gilt nur nacheinander.
 - **Fix:** privates `lifecycleLock` serialisiert `start`, `isRunning` und `close` (keine `synchronized`-Methoden, SpotBugs USO_UNSAFE_METHOD_SYNCHRONIZATION). `spotbugs:check` grün, `NativeServerSmokeTest` + `LlamaArchitectureTest` grün.
-- **Reproduktion:** kein committeter Test – ein künstlicher Handle würde mit vorhandener nativer Bibliothek (CI) die JVM abstürzen lassen. Probe ohne native Bibliothek: `/home/user/BUGHUNT-2026-10-17-F18-probe.java` (zwei Threads, Barriere, `close()` auf per Reflection gesetztem Handle, zählt `UnsatisfiedLinkError` = „hat den nativen Stop erreicht“): vorher **4 / 20 000** Durchläufe doppelt, nachher **0 / 20 000**.
-- **Status:** nur beschrieben (Code geändert in `c1e5dcd`, aber ohne roten Regressionstest; die Probe ist kein Beweis im Sinne des Rot-Grün-Zyklus)
-- **Commit:** java-llama.cpp `c1e5dcd`
+- **Reproduktion:** `NativeServerLifecycleTest` über die neue paketinterne Naht `NativeServer.Backend` (ein Fake statt der JNI-Aufrufe, damit kein erfundener Handle libjllama erreicht): `close_whileIsRunningIsInsideTheNativeCall_stopsOnlyAfterItReturned`, `close_whileStartIsStillStarting_stopsTheServerOnceItStarted`, `close_calledTwice_stopsTheHandleOnce`. Der Fake hält `isRunning` bzw. `start` im „nativen“ Aufruf fest, dadurch sind beide Race-Fenster deterministisch. (Die alte Probe `/home/user/BUGHUNT-2026-10-17-F18-probe.java`: vorher 4 / 20 000 doppelte Stopps, nachher 0 / 20 000.)
+- **Rot-Grün-Nachweis:** Gegen den Lebenszyklus vor `c1e5dcd` (ohne `lifecycleLock`, Naht beibehalten) **rot**, 2 von 3: „the handle was stopped while isRunning() still used it – Expected: is <false> but: was <true>“ und „close() returned while the server was still starting, so it kept running – Expected: is <1> but: was <0>“. Mit Fix **grün** 3/3 (skipped 0), dreimal hintereinander, ebenso `NativeServerSmokeTest` 10/10, `NativeServerWorkerCommandTest` 5/5, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün. Das doppelte `close()` aus zwei Threads selbst ist mit der Naht nicht steuerbar (das Fenster liegt zwischen Lesen und Nullsetzen des Feldes); `close_calledTwice_stopsTheHandleOnce` deckt nur den sequentiellen Fall ab.
+- **Status:** gefixt (Fix `c1e5dcd`; roter Regressionstest nachgereicht, bis dahin „nur beschrieben“, siehe `209ee6c`)
+- **Commit:** java-llama.cpp `c1e5dcd` (Fix), Test und Naht im nächsten Commit nach `209ee6c`
 
 <a id="f24"></a>
 ### F24 – java-llama.cpp: `OpenAiServerCli` bewirbt bei kleinem `-c` fast kein Eingabebudget (`-c 2048` → 1 Token)

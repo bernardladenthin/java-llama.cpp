@@ -89,6 +89,72 @@ public final class NativeServer implements AutoCloseable {
      */
     private static final int DEFAULT_PORT = 9931;
 
+    /**
+     * The native calls behind {@link NativeServer}'s lifecycle. The JNI methods themselves stay in
+     * this class (their symbol names are bound to it); this seam exists so the lifecycle's locking
+     * can be tested with a fake that cannot crash the JVM on a made-up handle.
+     */
+    interface Backend {
+        /**
+         * Starts the classic server.
+         *
+         * @param args the llama-server argument vector
+         * @return the native handle
+         */
+        long start(String[] args);
+
+        /**
+         * Starts the attach-mode server over a loaded model.
+         *
+         * @param model the model to serve
+         * @param args  the HTTP-side argument vector
+         * @return the native handle
+         */
+        long startAttached(LlamaModel model, String[] args);
+
+        /**
+         * Stops the server and frees the handle.
+         *
+         * @param handle a handle returned by a start method
+         */
+        void stop(long handle);
+
+        /**
+         * Reports whether the server's worker is still running.
+         *
+         * @param handle a handle returned by a start method
+         * @return whether the worker is running
+         */
+        boolean isRunning(long handle);
+    }
+
+    /** The real backend: loads libjllama lazily, then calls the JNI methods of this class. */
+    private static final Backend NATIVE_BACKEND = new Backend() {
+        @Override
+        public long start(String[] args) {
+            // Load libjllama lazily here (not in a static initializer) so construction, argument
+            // parsing and close() stay usable — and unit-testable — without the native library.
+            LlamaLoader.initialize();
+            return startNativeServer(args);
+        }
+
+        @Override
+        public long startAttached(LlamaModel model, String[] args) {
+            LlamaLoader.initialize();
+            return startAttachedNativeServer(model, args);
+        }
+
+        @Override
+        public void stop(long handle) {
+            stopNativeServer(handle);
+        }
+
+        @Override
+        public boolean isRunning(long handle) {
+            return isRunningNative(handle);
+        }
+    };
+
     /** The llama-server argument vector, forwarded verbatim to the native entry point. */
     private final String[] args;
 
@@ -107,6 +173,10 @@ public final class NativeServer implements AutoCloseable {
     @ToString.Exclude
     private final Object lifecycleLock = new Object();
 
+    /** The native entry points; a test replaces them to drive the lifecycle without libjllama. */
+    @ToString.Exclude
+    private final Backend backend;
+
     /**
      * Creates a native-server bridge for the given llama-server arguments.
      *
@@ -118,12 +188,23 @@ public final class NativeServer implements AutoCloseable {
      *             elements
      */
     public NativeServer(String... args) {
+        this(NATIVE_BACKEND, args);
+    }
+
+    /**
+     * Creates a classic-lifecycle server over the given backend (tests use a fake one).
+     *
+     * @param backend the native entry points
+     * @param args    the llama-server command-line arguments
+     */
+    NativeServer(Backend backend, String... args) {
         Objects.requireNonNull(args, "args");
         for (final String arg : args) {
             Objects.requireNonNull(arg, "args element");
         }
         this.args = args.clone();
         this.attachedModel = null;
+        this.backend = backend;
     }
 
     /**
@@ -164,6 +245,7 @@ public final class NativeServer implements AutoCloseable {
         }
         this.args = args.clone();
         this.attachedModel = model;
+        this.backend = NATIVE_BACKEND;
     }
 
     /**
@@ -185,12 +267,7 @@ public final class NativeServer implements AutoCloseable {
                         "another NativeServer is already running in this process (only one is supported)");
             }
             try {
-                // Load libjllama lazily here (not in a static initializer) so construction, argument
-                // parsing and close() stay usable — and unit-testable — without the native library.
-                LlamaLoader.initialize();
-                handle = attachedModel != null
-                        ? startAttachedNativeServer(attachedModel, args)
-                        : startNativeServer(args);
+                handle = attachedModel != null ? backend.startAttached(attachedModel, args) : backend.start(args);
             } catch (final RuntimeException | Error e) {
                 RUNNING.set(false);
                 throw e;
@@ -210,7 +287,7 @@ public final class NativeServer implements AutoCloseable {
     public boolean isRunning() {
         synchronized (lifecycleLock) {
             final long h = handle;
-            return h != 0 && isRunningNative(h);
+            return h != 0 && backend.isRunning(h);
         }
     }
 
@@ -289,7 +366,7 @@ public final class NativeServer implements AutoCloseable {
             }
             handle = 0;
             try {
-                stopNativeServer(h);
+                backend.stop(h);
             } finally {
                 RUNNING.set(false);
             }
