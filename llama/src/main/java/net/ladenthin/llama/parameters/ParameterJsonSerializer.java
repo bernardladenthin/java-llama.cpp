@@ -17,6 +17,7 @@ import net.ladenthin.llama.args.Sampler;
 import net.ladenthin.llama.value.ChatMessage;
 import net.ladenthin.llama.value.ContentPart;
 import net.ladenthin.llama.value.Pair;
+import net.ladenthin.llama.value.ToolCall;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -145,6 +146,20 @@ public class ParameterJsonSerializer {
                 msg.set("content", parts);
             } else {
                 msg.put("content", message.getContent());
+            }
+            // Tool-calling round trips: without these the model sees a tool turn it cannot pair with
+            // the call it made (and InferenceParameters.withMessages dropped them, unlike ChatRequest).
+            message.getToolCallId().ifPresent(id -> msg.put("tool_call_id", id));
+            if (!message.getToolCalls().isEmpty()) {
+                ArrayNode toolCalls = msg.putArray("tool_calls");
+                for (ToolCall call : message.getToolCalls()) {
+                    ObjectNode entry = toolCalls.addObject();
+                    entry.put("id", call.getId());
+                    entry.put("type", "function");
+                    ObjectNode function = entry.putObject("function");
+                    function.put("name", call.getName());
+                    function.put("arguments", call.getArgumentsJson());
+                }
             }
             arr.add(msg);
         }
