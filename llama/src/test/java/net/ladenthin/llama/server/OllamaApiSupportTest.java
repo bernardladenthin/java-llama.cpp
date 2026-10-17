@@ -165,6 +165,19 @@ public class OllamaApiSupportTest {
     }
 
     @Test
+    public void toOllamaChatResponseTurnsEmptyToolCallArgumentsIntoAnEmptyObject() throws IOException {
+        // a parameterless call can come back with "arguments": "" -- Ollama expects an object
+        String openAi = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,"
+                + "\"tool_calls\":[{\"id\":\"c1\",\"type\":\"function\","
+                + "\"function\":{\"name\":\"get_time\",\"arguments\":\"\"}}]}}]}";
+        JsonNode out = read(OllamaApiSupport.toOllamaChatResponse(openAi, "m"));
+        JsonNode arguments =
+                out.path("message").path("tool_calls").get(0).path("function").path("arguments");
+        assertThat(arguments.isObject(), is(true));
+        assertThat(arguments.size(), is(0));
+    }
+
+    @Test
     public void toOllamaContentLineEmitsDeltaAndSkipsEmpty() throws IOException {
         String line = OllamaApiSupport.toOllamaContentLine("{\"choices\":[{\"delta\":{\"content\":\"he\"}}]}", "m");
         assertThat(line.endsWith("\n"), is(true));

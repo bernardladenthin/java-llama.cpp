@@ -342,10 +342,14 @@ final class OllamaApiSupport {
         }
         if (arguments.isTextual()) {
             try {
-                return OBJECT_MAPPER.readTree(arguments.asText());
+                // readTree("") returns a MissingNode, which serializes as null, rather than throwing;
+                // a parameterless call's empty arguments must still reach Ollama as an object.
+                JsonNode parsed = OBJECT_MAPPER.readTree(arguments.asText());
+                if (parsed.isObject() || parsed.isArray()) {
+                    return parsed;
+                }
             } catch (IOException e) {
                 // Fall through to an empty object on unparseable arguments.
-                return OBJECT_MAPPER.createObjectNode();
             }
         }
         return OBJECT_MAPPER.createObjectNode();

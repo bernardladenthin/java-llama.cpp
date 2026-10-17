@@ -31,6 +31,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F29](#f29) — mittel — *gefixt*
 - [F30](#f30) — mittel — *gefixt*
 - [F36](#f36) — mittel — *gefixt*
+- [F37](#f37) — niedrig — *gefixt*
 
 ## Funde
 
@@ -222,6 +223,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Naht zuerst verhaltensneutral; dagegen rot 1/3 („a result that arrived after cancel() revived the iterator – Expected: is <false> but: was <true>“). Mit Fix grün 3/3 (skipped 0); Gegenprobe mit dem Stand ohne Fix rot, wiederhergestellt grün. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `f4407bb`
+
+<a id="f37"></a>
+### F37 – java-llama.cpp: Ollama-Tool-Call mit leeren Argumenten kommt als `"arguments": null` statt `{}` an
+- **Zeit:** 2026-10-17 17:00 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:345` (`parseArgumentsToObject`, genutzt von `toOllamaToolCalls` für `/api/chat` gestreamt und blockierend)
+- **Schwere:** niedrig
+- **Beschreibung:** Ollama erwartet `tool_calls[].function.arguments` als Objekt. Die Umwandlung aus dem OpenAI-String parste mit `readTree` und fiel nur bei einer `IOException` auf `{}` zurück (so der Kommentar). `readTree("")` wirft aber nicht, sondern liefert einen `MissingNode`, der als `null` serialisiert wird; ebenso ergab ein skalarer Text (`"5"`) einen Skalar. Ein parameterloser Aufruf, für den llama.cpp `"arguments": ""` liefert (oder dessen gestreamte Deltas keine Argumente enthalten, `ToolCallDeltaAccumulator` setzt dann `""`), kam bei Ollama-Clients als `"arguments": null` an. Fix: alles, was nicht zu einem Objekt oder Array parst, wird `{}`.
+- **Reproduktion:** `OllamaApiSupportTest#toOllamaChatResponseTurnsEmptyToolCallArgumentsIntoAnEmptyObject` (Jackson-Verhalten vorab per Probe bestätigt: `readTree("")` → `MissingNode` → `"arguments":null`)
+- **Rot-Grün-Nachweis:** ohne Fix rot 1/21 („Expected: is <true> but: was <false>“: kein Objekt), mit Fix grün 21/21 (skipped 0); Gegenprobe per `git stash` rot, nach `stash pop` grün. `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** siehe Git-Log („Send empty Ollama tool-call arguments as an empty object“)
 
 ## Offene Verdachte ohne Fund-ID
 
