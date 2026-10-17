@@ -272,7 +272,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ChatStreamChunkParserTest#feed_emptyOrBlankEnvelope_reportsStop_andEmitsNothing` (`""`, `"   "`, `"\n"`)
 - **Rot-Grün-Nachweis:** ohne Fix rot („envelope '' Expected: is <true> but: was <false>“), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ChatStreamChunkParserTest` 7/7, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** –
+- **Commit:** java-llama.cpp `27d6477`
 
 ## Offene Verdachte ohne Fund-ID
 
