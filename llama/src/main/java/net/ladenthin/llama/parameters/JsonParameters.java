@@ -170,15 +170,25 @@ abstract class JsonParameters {
      *     value so a large or hostile fragment cannot flood a log through the message
      */
     private static JsonNode parseOrThrow(String key, String value) {
+        final JsonNode node;
         try {
-            return STRICT_JSON_READER.readTree(value);
+            node = STRICT_JSON_READER.readTree(value);
         } catch (Exception e) {
-            String excerpt = value.length() > REJECTED_VALUE_EXCERPT
-                    ? value.substring(0, REJECTED_VALUE_EXCERPT) + "..."
-                    : value;
-            throw new IllegalArgumentException(
-                    key + " must be exactly one well-formed JSON value, but was: " + excerpt, e);
+            throw rejected(key, value, e);
         }
+        // For empty or blank input readTree returns a MissingNode instead of throwing; it would be
+        // rendered as "key":null, a value the caller never wrote.
+        if (node.isMissingNode()) {
+            throw rejected(key, value, null);
+        }
+        return node;
+    }
+
+    private static IllegalArgumentException rejected(String key, String value, @Nullable Exception cause) {
+        String excerpt =
+                value.length() > REJECTED_VALUE_EXCERPT ? value.substring(0, REJECTED_VALUE_EXCERPT) + "..." : value;
+        return new IllegalArgumentException(
+                key + " must be exactly one well-formed JSON value, but was: " + excerpt, cause);
     }
 
     /**

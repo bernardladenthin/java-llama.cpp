@@ -207,6 +207,19 @@ public class JsonParametersTest {
                 () -> new TestBuilder().withRawPublic(RequestField.JSON_SCHEMA, "1, \"x\": 2"));
     }
 
+    /**
+     * An empty or blank value is no JSON value at all. Jackson's readTree returns a MissingNode for
+     * it rather than throwing, which used to slip past the check and render as {@code "key":null},
+     * so withJsonSchema("") silently sent no schema.
+     */
+    @Test
+    public void withRaw_rejectsEmptyAndBlankValues() {
+        assertThrows(
+                IllegalArgumentException.class, () -> new TestBuilder().withRawPublic(RequestField.JSON_SCHEMA, ""));
+        assertThrows(
+                IllegalArgumentException.class, () -> new TestBuilder().withRawPublic(RequestField.JSON_SCHEMA, "  "));
+    }
+
     @Test
     public void withRaw_rejectsMalformedJson() {
         assertThrows(

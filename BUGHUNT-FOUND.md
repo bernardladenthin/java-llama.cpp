@@ -32,6 +32,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F30](#f30) — mittel — *gefixt*
 - [F36](#f36) — mittel — *gefixt*
 - [F37](#f37) — niedrig — *gefixt*
+- [F38](#f38) — mittel — *gefixt*
 
 ## Funde
 
@@ -234,6 +235,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot 1/21 („Expected: is <true> but: was <false>“: kein Objekt), mit Fix grün 21/21 (skipped 0); Gegenprobe per `git stash` rot, nach `stash pop` grün. `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `6590af2`
+
+<a id="f38"></a>
+### F38 – java-llama.cpp: `JsonParameters` nimmt einen leeren oder nur aus Leerzeichen bestehenden Wert still an und sendet `"key":null`
+- **Zeit:** 2026-10-17 17:10 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/JsonParameters.java:181` (`parseOrThrow`)
+- **Schwere:** mittel
+- **Beschreibung:** `JsonParameters` garantiert laut CLAUDE.md, dass jeder gespeicherte Wert genau ein wohlgeformter JSON-Wert ist, geprüft beim Schreiben. Die Prüfung verließ sich darauf, dass `readTree` bei ungültiger Eingabe wirft. Für eine leere oder nur aus Leerzeichen bestehende Eingabe wirft auch der strikte Reader (`FAIL_ON_TRAILING_TOKENS`) nicht, sondern liefert einen `MissingNode` (per Probe bestätigt), der im Request als `"key":null` landete. `withJsonSchema("")`, `withResponseFormat("")`, `withToolsJson("")` usw. wurden so still angenommen, und die Generierung lief zum Beispiel ohne das Schema, das der Aufrufer zu setzen glaubte. Gefunden über die Erkenntnis aus F37 (`readTree("")` → `MissingNode`).
+- **Fix:** `parseOrThrow` weist einen `MissingNode` mit derselben `IllegalArgumentException` ab wie jeden anderen ungültigen Wert; die Meldung baut ein gemeinsamer Helfer `rejected(...)`.
+- **Reproduktion:** `JsonParametersTest#withRaw_rejectsEmptyAndBlankValues`
+- **Rot-Grün-Nachweis:** ohne Fix rot 1/25 („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix grün 25/25 (skipped 0); Gegenprobe per `git stash` rot, nach `stash pop` grün. Paket `parameters` plus Server-Mapping- und HTTP-Tests: 775 Tests, 0 Fehler. PIT auf `JsonParameters` (Schwelle 100): alle Mutanten getötet. `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** siehe Git-Log („Reject an empty JSON parameter value instead of sending null“)
 
 ## Offene Verdachte ohne Fund-ID
 
