@@ -164,6 +164,18 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void toAnthropicResponseTurnsEmptyToolCallArgumentsIntoAnEmptyInputObject() throws IOException {
+        // a parameterless call can come back with "arguments": "" -- tool_use.input must be an object
+        String openAi = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,"
+                + "\"tool_calls\":[{\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"get_time\","
+                + "\"arguments\":\"\"}}]},\"finish_reason\":\"tool_calls\"}]}";
+        JsonNode out = read(AnthropicApiSupport.toAnthropicResponse(openAi, "m"));
+        JsonNode input = out.path("content").get(0).path("input");
+        assertThat(input.isObject(), is(true));
+        assertThat(input.size(), is(0));
+    }
+
+    @Test
     public void stopReasonMapping() {
         assertThat(AnthropicApiSupport.anthropicStopReason("stop"), is("end_turn"));
         assertThat(AnthropicApiSupport.anthropicStopReason("length"), is("max_tokens"));
