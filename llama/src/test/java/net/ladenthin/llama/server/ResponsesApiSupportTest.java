@@ -5,7 +5,10 @@
 package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.both;
+import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -37,6 +40,22 @@ public class ResponsesApiSupportTest {
                 + "{\"type\":\"input_text\",\"text\":\"second\"}]}]}"));
 
         assertThat(openAi.path("messages").path(0).path("content").asText(), is("first\nsecond"));
+    }
+
+    /**
+     * {@code created_at} is the Unix time the response was created, as in the Responses API and in
+     * llama.cpp's own {@code /v1/responses} ({@code to_json_oaicompat_resp}). It was the constant
+     * {@code 0}, so clients showed every response as created on 1 January 1970.
+     */
+    @Test
+    public void responseCarriesTheCurrentUnixTimeAsCreatedAt() throws IOException {
+        long before = System.currentTimeMillis() / 1000L;
+
+        JsonNode response = read(ResponsesApiSupport.toResponsesResponse("{}", "m", "resp_1"));
+
+        long createdAt = response.path("created_at").asLong();
+        long after = System.currentTimeMillis() / 1000L;
+        assertThat(createdAt, both(greaterThanOrEqualTo(before)).and(lessThanOrEqualTo(after)));
     }
 
     @Test

@@ -283,7 +283,7 @@ final class ResponsesApiSupport {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
         root.put("id", responseId);
         root.put("object", "response");
-        root.put("created_at", 0);
+        root.put("created_at", System.currentTimeMillis() / 1000L);
         root.put("status", status);
         root.put("model", model);
         return root;
