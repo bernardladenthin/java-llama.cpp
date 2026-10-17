@@ -64,6 +64,17 @@ public class ChatStreamChunkParserTest {
         assertThat(chunks, is(empty()));
     }
 
+    /** Jackson parses an empty or blank text to MissingNode instead of throwing; it is still unparseable. */
+    @Test
+    public void feed_emptyOrBlankEnvelope_reportsStop_andEmitsNothing() {
+        for (String envelope : new String[] {"", "   ", "\n"}) {
+            List<String> chunks = new ArrayList<>();
+            boolean stopped = parser.feed(envelope, chunks::add);
+            assertThat("envelope '" + envelope + "'", stopped, is(true));
+            assertThat(chunks, is(empty()));
+        }
+    }
+
     @Test
     public void feed_nullData_emitsNothing() {
         List<String> chunks = new ArrayList<>();

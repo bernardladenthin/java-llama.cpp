@@ -34,6 +34,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F37](#f37) — niedrig — *gefixt*
 - [F38](#f38) — mittel — *gefixt*
 - [F39](#f39) — niedrig — *gefixt*
+- [F53](#f53) — niedrig — *gefixt*
 
 ## Funde
 
@@ -260,6 +261,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Durchsicht der übrigen `readTree`-Aufrufer (2026-10-17):** 35 Aufrufe in 24 Dateien. Betroffen waren nur F37 (Ollama), F38 (`JsonParameters`) und F39. Die übrigen lesen Antworten des eigenen Servers (Completion-/Chat-/Stream-Parser, Rerank, LoRA, Router) und greifen danach über `path(...)` zu, was auf einem `MissingNode` sicher leere/Default-Werte liefert; `ChatRequest.buildToolsJson` liest ein Tool-Schema, das ein leerer String zu `null` macht (bereits als F05-Umfeld bekannt), `StreamingChunkAssembler` wirft bei unparsebarem Chunk bewusst.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `6effd44`
+
+<a id="f53"></a>
+### F53 – java-llama.cpp: leerer Streaming-Umschlag beendet den Chat-Stream nicht
+- **Zeit:** 2026-10-17 21:00 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/json/ChatStreamChunkParser.java:58` (`feed`)
+- **Schwere:** niedrig
+- **Beschreibung:** Die Javadoc verspricht: „An unparseable envelope is treated as end-of-stream (returns true) so a polling loop cannot spin forever on malformed input.“ Für Nicht-JSON stimmt das (`IOException` → `true`), für einen leeren oder nur aus Leerraum bestehenden Umschlag nicht: `readTree` liefert dann `MissingNode` statt zu werfen (dieselbe Falle wie F37–F39), `path("stop")` ergibt `false`, und `LlamaModel`s Pollschleife (`chatStreamParser.feed` bei Zeile 823) läse weiter.
+- **Fix:** Nach dem Parsen gilt auch `root.isMissingNode()` als Streamende.
+- **Reproduktion:** `ChatStreamChunkParserTest#feed_emptyOrBlankEnvelope_reportsStop_andEmitsNothing` (`""`, `"   "`, `"\n"`)
+- **Rot-Grün-Nachweis:** ohne Fix rot („envelope '' Expected: is <true> but: was <false>“), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ChatStreamChunkParserTest` 7/7, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** –
 
 ## Offene Verdachte ohne Fund-ID
 
