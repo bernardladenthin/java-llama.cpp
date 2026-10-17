@@ -46,6 +46,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F63](#f63) — niedrig — *gefixt*
 - [F64](#f64) — mittel — *gefixt*
 - [F65](#f65) — niedrig — *gefixt*
+- [F67](#f67) — niedrig — *nur beschrieben* (CI-Bedarf: Modell + LoRA-Adapter)
 
 ## Funde
 
@@ -420,6 +421,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot (Antwort `access-control-allow-headers: content-type, authorization`, 45 Tests, 1 Fehlschlag), mit Fix grün 45/45; Gegenprobe per `git stash` rot, nach `stash pop` grün. `OllamaApiSupportTest` 22/22, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `f782c7a`
+
+<a id="f67"></a>
+### F67 – java-llama.cpp: `setLoraAdapters` verspricht ein Leeren der KV-Caches, das upstream auf diesem Weg nicht macht
+- **Zeit:** 2026-10-17 23:40 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/LlamaModel.java:1124` (Javadoc `setLoraAdapters`), ebenso `README.md:833`
+- **Schwere:** niedrig (Dokumentation; das Verhalten selbst ist upstreams)
+- **Beschreibung:** Javadoc und README sagen: „The native side clears affected KV caches when the effective adapter set changes.“ `setLoraAdapters` geht über `jllama_set_lora_adapters` → `engine::set_lora_adapters` → `SERVER_TASK_TYPE_SET_LORA`; upstream (`server-context.cpp`, b11639) setzt dort nur `params_base.lora_adapters = construct_lora_list(...)`. Eine spätere Anfrage ohne eigene `lora`-Angabe übernimmt in `launch_slot_with_task` im `else`-Zweig `slot.lora = params_base.lora_adapters`, **ohne** `slot.prompt.clear()` – den Cache leert upstream nur im Zweig für LoRA pro Anfrage (`lora_should_clear_cache`). Eine Anfrage, deren Prompt-Präfix noch im Slot liegt, rechnet also mit KV-Einträgen weiter, die unter den alten Adapter-Skalen entstanden sind, und liefert stillschweigend eine Mischung aus altem und neuem Adapter. Wer sich auf die Javadoc verlässt, rechnet damit nicht.
+- **Fix:** keiner (Nutzerregel: kein Fix ohne roten Test). Möglich wäre, die Doku zu korrigieren (Hinweis auf `eraseSlot`/`cache_prompt=false` nach einem Wechsel) oder in `engine::set_lora_adapters` nach dem Task die Slots zu leeren (C++, außerhalb des Ziels).
+- **Reproduktion:** keine lauffähige: es braucht ein Modell und einen dazu passenden LoRA-Adapter (nicht in `models.csv`), und in dieser Sandbox gibt es keine native Bibliothek und kein `gguf-py`. Ein Test würde denselben Prompt vor und nach `setLoraAdapter(0, 0f)` mit Greedy-Sampling schicken und mit einem frisch geladenen Modell ohne Adapter vergleichen.
+- **CI-Bedarf:** ein kleines Modell mit LoRA-Adapter im Modellsatz (oder ein zur Laufzeit erzeugtes Zufallsmodell samt Adapter, wie `test_c_api.cpp` es für das Modell macht).
+- **Status:** nur beschrieben
+- **Commit:** –
 
 ## Offene Verdachte ohne Fund-ID
 
