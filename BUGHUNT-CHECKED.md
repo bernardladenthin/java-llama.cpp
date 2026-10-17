@@ -102,3 +102,6 @@ Ergebnisse: `kein Fund`, `widerlegt` (Verdacht geprüft, Code korrekt), `unsiche
 - `llama/src/main/java/net/ladenthin/llama/value/ChatResponse.java` · `7b68d5f` · 2026-10-17 · kein Fund — `choices` null → leere Liste; `getFirstMessage`/`getFirstContent` behandeln leere Antworten.
 - `llama/src/main/java/net/ladenthin/llama/value/LlamaOutput.java` · `e928537` · 2026-10-17 · kein Fund — reiner Träger, `toString` gibt den Text wie dokumentiert.
 - `llama/src/main/java/net/ladenthin/llama/value/StopReason.java` · `cb51433` · 2026-10-17 · kein Fund — Namen gegen `stop_type_to_str` (b11639, `server-task.cpp`) abgeglichen: `eos`/`word`/`limit`, `none` und Unbekanntes → `NONE`.
+- `llama/src/main/java/net/ladenthin/llama/value/ToolCall.java` · `acce5a3` · 2026-10-17 · kein Fund — unveränderlicher Träger (id, name, Argumente als JSON-Text); `equals`/`hashCode` über alle drei Felder.
+- `llama/src/main/java/net/ladenthin/llama/value/ToolDefinition.java` · `1b8732b` · 2026-10-17 · kein Fund — unveränderlicher Träger; das Schema bleibt Text, die Prüfung leerer/ungültiger Schemata liegt in `ChatRequest.buildToolsJson` (F55).
+- `llama/src/main/java/net/ladenthin/llama/value/SessionCheckpoint.java` · `15a5811` · 2026-10-17 · kein Fund — Runden werden kopiert und unveränderlich gespeichert, `Pair` ist unveränderlich; `toString` nennt Pfad und Rundenzahl.
