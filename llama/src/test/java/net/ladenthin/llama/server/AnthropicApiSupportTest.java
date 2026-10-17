@@ -26,6 +26,26 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void requestTurnsImageBlocksIntoImageUrlParts() throws IOException {
+        // Anthropic clients send images as {type:image, source:{type:base64, media_type, data}}. The
+        // OpenAI parser reads images only from image_url parts, so dropping the block left a vision
+        // model answering as if no image had been sent.
+        String anthropic = "{\"messages\":[{\"role\":\"user\",\"content\":["
+                + "{\"type\":\"text\",\"text\":\"what is this?\"},"
+                + "{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\","
+                + "\"data\":\"iVBORw0K\"}}]}]}";
+        JsonNode content = AnthropicApiSupport.toOpenAiChatRequest(read(anthropic))
+                .path("messages")
+                .get(0)
+                .path("content");
+        assertThat(content.isArray(), is(true));
+        assertThat(content.get(0).path("type").asText(), is("text"));
+        assertThat(content.get(0).path("text").asText(), is("what is this?"));
+        assertThat(content.get(1).path("type").asText(), is("image_url"));
+        assertThat(content.get(1).path("image_url").path("url").asText(), is("data:image/png;base64,iVBORw0K"));
+    }
+
+    @Test
     public void isStreamingDefaultsFalse() throws IOException {
         assertThat(AnthropicApiSupport.isStreaming(read("{}")), is(false));
         assertThat(AnthropicApiSupport.isStreaming(read("{\"stream\":true}")), is(true));
