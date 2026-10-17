@@ -238,6 +238,17 @@ class ChatRequestTest {
         }
 
         @Test
+        void buildToolsJsonKeepsAnEmptySchemaAsTheStringFallbackInsteadOfNull() {
+            // Jackson parses an empty or blank text to MissingNode, which an ObjectNode writes as null; an
+            // empty schema is no schema, so it takes the same string fallback as any other unparseable one.
+            String json = ChatRequest.empty()
+                    .appendTool(new ToolDefinition("f", "d", ""))
+                    .buildToolsJson()
+                    .orElseThrow(IllegalStateException::new);
+            assertThat(json, containsString("\"parameters\":\"\""));
+        }
+
+        @Test
         void buildToolsJsonDoesNotSilentlyTruncateASchemaWithTrailingContent() {
             // A schema string holding more than one JSON value is not a schema; keeping only the first
             // value would send a different schema than the caller wrote, without any error.

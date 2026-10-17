@@ -5,6 +5,7 @@
 package net.ladenthin.llama.parameters;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -326,7 +327,13 @@ public final class ChatRequest {
             fn.put("name", t.getName());
             fn.put("description", t.getDescription());
             try {
-                fn.set("parameters", SCHEMA_READER.readTree(t.getParametersSchemaJson()));
+                JsonNode schema = SCHEMA_READER.readTree(t.getParametersSchemaJson());
+                // An empty or blank schema is no JSON either, but Jackson returns MissingNode (written as null).
+                if (schema.isMissingNode()) {
+                    fn.put("parameters", t.getParametersSchemaJson());
+                } else {
+                    fn.set("parameters", schema);
+                }
             } catch (IOException e) {
                 fn.put("parameters", t.getParametersSchemaJson());
             }

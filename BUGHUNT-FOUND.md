@@ -36,6 +36,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F39](#f39) — niedrig — *gefixt*
 - [F53](#f53) — niedrig — *gefixt*
 - [F54](#f54) — niedrig — *gefixt*
+- [F55](#f55) — niedrig — *gefixt*
 
 ## Funde
 
@@ -287,7 +288,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `37303d0`
 
+<a id="f55"></a>
+### F55 – java-llama.cpp: leeres Tool-Parameterschema wird zu `"parameters": null`
+- **Zeit:** 2026-10-17 21:30 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/ChatRequest.java:329` (`buildToolsJson`)
+- **Schwere:** niedrig
+- **Beschreibung:** Aus der `readTree`-Durchsicht nach F53/F54. Ein nicht parsbares Parameterschema eines `ToolDefinition` wird bewusst als String weitergereicht (Test `buildToolsJsonDoesNotSilentlyTruncateASchemaWithTrailingContent`), damit es auffällt statt still verändert zu werden. Ein leeres oder nur aus Leerraum bestehendes Schema ergab dagegen `MissingNode` und damit `"parameters": null` – das Werkzeug ginge ohne Schema an die native Seite.
+- **Fix:** `MissingNode` nimmt denselben String-Rückfall wie jedes andere nicht parsbare Schema.
+- **Reproduktion:** `ChatRequestTest#buildToolsJsonKeepsAnEmptySchemaAsTheStringFallbackInsteadOfNull`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: a string containing "\"parameters\":\"\"" but: was "[{"type":"function","function":{"name":"f","description":"d","parameters":null}}]"“), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ChatRequestTest` 25/25, `ToolCallingAgentTest` 6/6, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** –
+
 ## Offene Verdachte ohne Fund-ID
 
-- **`ChatRequest.buildToolsJson` mit leerem Parameterschema (2026-10-17, readTree-Durchsicht nach F53):** ein `ToolDefinition` mit `parametersSchemaJson = ""` ergibt `"parameters": null` (`MissingNode` als Kind), während ein nicht parsbares Schema als String eingetragen wird. Kandidat für die nächste Runde. Unschädlich in derselben Durchsicht: `OpenAiCompatServer.readBody` (danach `isObject()`), `OpenAiServerCli.parseChatTemplateKwargs` (`isObject()`), langchain4j `JsonSchemaElementSerializer.rawNode` (Cast-Fehler wird zu `IllegalArgumentException`), `ToolCallDeltaAccumulator` (ignoriert Unparsbares wie dokumentiert), die `*ResponseParser` (Ersatzwerte über `path`/`isArray`); langchain4j `StreamingChunkAssembler.accept` wirft bei `""` nicht die dokumentierte `UncheckedIOException`, die native Seite liefert aber nie leere Chunks.
 - *(unsicher/niedrig, nur beschrieben, 06:38 UTC)* java-llama.cpp `llama-ffm/.../ffm/JllamaNative.java` `takeStrings`: Bei `count == 0` kehrt die Methode vor dem `try` zurück und gibt das Array nicht frei, das `jllama_rpc_server_devices` auch für 0 Einträge per `calloc(max(n,1))` anlegt (8 Byte Leck je Aufruf). `rpc::server_devices()` fällt aber immer auf das CPU-Gerät zurück, leer wird die Liste nur ohne registriertes CPU-Backend (kaputte Installation) – praktisch unerreichbar. Fix wäre: bei Nicht-NULL-Zeiger immer `STRINGS_FREE` aufrufen. Nicht ohne native Bibliothek + JDK-22-Toolchain testbar, daher kein Commit. Alle übrigen Freigabe-Funktionen (`takeBytesAsString` → `jllama_string_free` laut Header) stimmen mit `jllama_api.h` überein. **Blocker (Stand 2026-10-17):** Der Rot-Grün-Zyklus braucht ein JDK 22+ (Toolchain des Moduls) und ist in dieser Sandbox nicht herstellbar: GitHub-Releases (Adoptium) und api.adoptium.net sind über den Proxy gesperrt. Vorschlag für den Test: `takeStrings` mit der Freigabefunktion als Parameter (paketintern), Aufruf mit Nicht-NULL-Zeiger und Anzahl 0, Erwartung genau ein Freigabeaufruf; läuft dann im CI-Job `test-java-llama-ffm`.
