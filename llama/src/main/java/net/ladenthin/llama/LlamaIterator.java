@@ -33,7 +33,7 @@ public final class LlamaIterator implements Iterator<LlamaOutput>, AutoCloseable
     // Reference back to the owning LlamaModel — dumping it would recursively render
     // the entire native model state and produce log spam.
     @ToString.Exclude
-    private final LlamaModel model;
+    private final TaskSource model;
 
     private final int taskId;
     private final CompletionResponseParser completionParser = new CompletionResponseParser();
@@ -47,6 +47,17 @@ public final class LlamaIterator implements Iterator<LlamaOutput>, AutoCloseable
     }
 
     LlamaIterator(LlamaModel model, InferenceParameters parameters, boolean chat) {
+        this(TaskSource.of(model), parameters, chat);
+    }
+
+    /**
+     * Creates an iterator over the given task source (tests use a fake one).
+     *
+     * @param model      the native task operations
+     * @param parameters the inference parameters
+     * @param chat       whether to start a chat completion instead of a raw completion
+     */
+    LlamaIterator(TaskSource model, InferenceParameters parameters, boolean chat) {
         this.model = model;
         // Pin the stream flag on a local derivation so the caller's parameters object
         // is not mutated — InferenceParameters is immutable and withStream returns a
@@ -71,8 +82,10 @@ public final class LlamaIterator implements Iterator<LlamaOutput>, AutoCloseable
         }
         String json = model.receiveCompletionJson(taskId);
         LlamaOutput output = completionParser.parse(json);
-        hasNext = !output.stop;
+        // hasNext only ever goes from true to false. Writing !output.stop here would revive an
+        // iterator that cancel() ended from another thread while this call waited for the result.
         if (output.stop) {
+            hasNext = false;
             model.releaseTask(taskId);
         }
         return output;
@@ -110,6 +123,86 @@ public final class LlamaIterator implements Iterator<LlamaOutput>, AutoCloseable
     public void close() {
         if (hasNext) {
             cancel();
+        }
+    }
+
+    /**
+     * The native task operations this iterator drives. They are package-private natives of
+     * {@link LlamaModel}; this seam exists so the iterator's handling of a concurrent
+     * {@link #cancel()} can be tested without a loaded model.
+     */
+    interface TaskSource {
+        /**
+         * Starts a streamed raw completion.
+         *
+         * @param json the request body
+         * @return the task id
+         */
+        int requestCompletion(String json);
+
+        /**
+         * Starts a streamed chat completion.
+         *
+         * @param json the request body
+         * @return the task id
+         */
+        int requestChatCompletion(String json);
+
+        /**
+         * Waits for the next result of the task.
+         *
+         * @param taskId the task
+         * @return the result as JSON
+         */
+        String receiveCompletionJson(int taskId);
+
+        /**
+         * Releases a task that has finished.
+         *
+         * @param taskId the task
+         */
+        void releaseTask(int taskId);
+
+        /**
+         * Releases a task that has not finished.
+         *
+         * @param taskId the task
+         */
+        void cancelCompletion(int taskId);
+
+        /**
+         * The task operations of a loaded model.
+         *
+         * @param model the model
+         * @return its task operations
+         */
+        static TaskSource of(LlamaModel model) {
+            return new TaskSource() {
+                @Override
+                public int requestCompletion(String json) {
+                    return model.requestCompletion(json);
+                }
+
+                @Override
+                public int requestChatCompletion(String json) {
+                    return model.requestChatCompletion(json);
+                }
+
+                @Override
+                public String receiveCompletionJson(int taskId) {
+                    return model.receiveCompletionJson(taskId);
+                }
+
+                @Override
+                public void releaseTask(int taskId) {
+                    model.releaseTask(taskId);
+                }
+
+                @Override
+                public void cancelCompletion(int taskId) {
+                    model.cancelCompletion(taskId);
+                }
+            };
         }
     }
 }

@@ -30,6 +30,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F28](#f28) — mittel — *gefixt*
 - [F29](#f29) — mittel — *gefixt*
 - [F30](#f30) — mittel — *gefixt*
+- [F36](#f36) — mittel — *gefixt*
 
 ## Funde
 
@@ -209,6 +210,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `RpcServerLifecycleTest#aStopThatArrivesBeforeTheBindDoesNotLeaveTheServerRunning` (Fake-Backend, das wie der native Server das Stopp-Flag beim Binden zurücksetzt; ohne Fix rot nach 31 s, mit Fix 15/15 grün)
 - **Status:** gefixt
 - **Commit:** 32d465d
+
+<a id="f36"></a>
+### F36 – java-llama.cpp: `LlamaIterator` wird nach `cancel()` aus einem zweiten Thread durch ein spät eintreffendes Ergebnis wiederbelebt
+- **Zeit:** 2026-10-17 16:40 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/LlamaIterator.java:85` (`next`)
+- **Schwere:** mittel
+- **Beschreibung:** `next()` setzte nach jedem Ergebnis `hasNext = !output.stop`. Ruft ein anderer Thread `cancel()` auf, während `next()` in `receiveCompletionJson` auf das nächste Ergebnis wartet (das Feld ist genau dafür `volatile`, und die Slot-Arbeit läuft nach `cancel()` weiter), dann überschreibt das danach eintreffende Nicht-Stopp-Ergebnis das `false` von `cancel()` wieder mit `true`. Das Iterator „lebt“ wieder, `hasNext()` meldet weitere Tokens, und der nächste `next()` scheitert mit „Task not found“, weil `cancel()` den Reader schon freigegeben hat – entgegen dem Javadoc („the iterator stops yielding tokens immediately“). Betrifft `generate`/`generateChat` und jede `LlamaIterable`, die aus einem zweiten Thread abgebrochen wird.
+- **Fix:** `hasNext` geht nur noch von `true` nach `false`; `next()` schreibt `false` nur beim Stopp-Ergebnis und nie `true`. Für den Test bekommt der Iterator eine paketinterne Naht `LlamaIterator.TaskSource` (die fünf Task-Aufrufe, Adapter `TaskSource.of(LlamaModel)`); die JNI-Methoden bleiben in `LlamaModel`.
+- **Reproduktion:** `LlamaIteratorCancelTest#cancel_whileNextWaitsForAResultOnAnotherThread_iteratorStaysFinished` (der Fake hält `receiveCompletionJson` fest, bis `cancel()` gelaufen ist), dazu `#next_untilTheStopResult_releasesTheTaskOnceAndEnds`, `#close_beforeTheStopResult_cancelsTheTaskOnce`
+- **Rot-Grün-Nachweis:** Naht zuerst verhaltensneutral; dagegen rot 1/3 („a result that arrived after cancel() revived the iterator – Expected: is <false> but: was <true>“). Mit Fix grün 3/3 (skipped 0); Gegenprobe mit dem Stand ohne Fix rot, wiederhergestellt grün. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** siehe Git-Log („Keep a cancelled LlamaIterator finished“)
 
 ## Offene Verdachte ohne Fund-ID
 
