@@ -298,7 +298,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ChatRequestTest#buildToolsJsonKeepsAnEmptySchemaAsTheStringFallbackInsteadOfNull`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: a string containing "\"parameters\":\"\"" but: was "[{"type":"function","function":{"name":"f","description":"d","parameters":null}}]"“), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ChatRequestTest` 25/25, `ToolCallingAgentTest` 6/6, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** –
+- **Commit:** java-llama.cpp `ed6236d`
 
 ## Offene Verdachte ohne Fund-ID
 
