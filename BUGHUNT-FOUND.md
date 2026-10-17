@@ -43,6 +43,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F60](#f60) — niedrig — *gefixt*
 - [F61](#f61) — niedrig — *gefixt*
 - [F62](#f62) — niedrig — *nur beschrieben* (Entscheidung des Nutzers)
+- [F63](#f63) — niedrig — *gefixt*
 
 ## Funde
 
@@ -378,6 +379,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** keiner (kein Fix ohne Entscheidung).
 - **Status:** nur beschrieben
 - **Commit:** —
+
+<a id="f63"></a>
+### F63 – java-llama.cpp: Responses-API-Objekte tragen `created_at: 0`
+- **Zeit:** 2026-10-17 22:25 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java:286` (`newResponseShell`)
+- **Schwere:** niedrig
+- **Beschreibung:** `created_at` ist in der Responses-API und in llama.cpps eigenem `/v1/responses` (`to_json_oaicompat_resp`, b11639: `{"created_at", t}`) die Unix-Zeit der Erstellung. Die Schale, aus der jede Antwort und jedes Stream-Ereignis von `/v1/responses` entsteht, setzte die Konstante `0`; Clients zeigten jede Antwort als am 1. Januar 1970 erstellt. Die übrigen Oberflächen des Servers (`LlamaModelBackend`, Ollama) verwenden die aktuelle Zeit.
+- **Fix:** `System.currentTimeMillis() / 1000L`.
+- **Reproduktion:** `ResponsesApiSupportTest#responseCarriesTheCurrentUnixTimeAsCreatedAt`
+- **Rot-Grün-Nachweis:** ohne Fix rot („a value equal to or greater than <1792275470L> <0L> was less than <1792275470L>“, 12 Tests, 1 Fehlschlag), mit Fix grün 12/12; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ResponsesStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** java-llama.cpp `aba327e`
 
 ## Offene Verdachte ohne Fund-ID
 
