@@ -130,3 +130,11 @@ Ergebnisse: `kein Fund`, `widerlegt` (Verdacht geprüft, Code korrekt), `unsiche
 - `llama/src/main/java/net/ladenthin/llama/exception/LlamaException.java` · `5af534c` · 2026-10-17 · kein Fund — Basisklasse, nur Konstruktoren.
 - `llama/src/main/java/net/ladenthin/llama/exception/InvalidRequestException.java` · `971de14` · 2026-10-17 · kein Fund — Unterklasse von `LlamaException` für upstream-400; Zuordnung in `jllama.cpp`/`JllamaNative.check`.
 - `llama/src/main/java/net/ladenthin/llama/value/LogLevel.java` · `6662b54` · 2026-10-17 · kein Fund — Vier Stufen, Abbildung der ggml-Stufen liegt im JNI-Code (außerhalb des Ziels).
+- `llama/src/main/java/net/ladenthin/llama/server/ChunkSink.java` · `02cb145` · 2026-10-17 · kein Fund — Funktionale Schnittstelle, `IOException` signalisiert einen getrennten Client.
+- `llama/src/main/java/net/ladenthin/llama/callback/ToolHandler.java` · `9546b9a` · 2026-10-17 · kein Fund — Funktionale Schnittstelle für Werkzeugaufrufe.
+- `llama/src/main/java/net/ladenthin/llama/callback/LoadProgressCallback.java` · `8eae161` · 2026-10-17 · kein Fund — `false` bricht das Laden ab (siehe Patch 0002 / C-API).
+- `llama/src/main/java/net/ladenthin/llama/value/LlamaCppVersion.java` · `519fc3a` · 2026-10-17 · kein Fund — `b11639` stimmt mit `JLLAMA_GIT_TAG` in `llama/CMakeLists.txt` überein.
+- `llama/src/main/java/net/ladenthin/llama/parameters/RequestContract.java` · `b216881` · 2026-10-17 · kein Fund — Zwei Vertragsarten der Request-Registry.
+- `llama/src/main/java/net/ladenthin/llama/args/LogFormat.java` · `f3f742b` · 2026-10-17 · kein Fund — Zwei Formate.
+- `llama/src/main/java/net/ladenthin/llama/args/CliContract.java` · `a288676` · 2026-10-17 · kein Fund — Zwei Vertragsarten der CLI-Registry.
+- `llama/src/main/java/net/ladenthin/llama/args/CliArg.java` · `8516cfd` · 2026-10-17 · kein Fund — Schnittstelle für Enum-Werte auf der Kommandozeile.
