@@ -57,6 +57,10 @@ public class ChatStreamChunkParser {
         } catch (IOException e) {
             return true;
         }
+        // An empty or blank envelope is unparseable too, but Jackson returns MissingNode for it.
+        if (root.isMissingNode()) {
+            return true;
+        }
         JsonNode data = root.path("data");
         if (data.isArray()) {
             for (JsonNode element : data) {
