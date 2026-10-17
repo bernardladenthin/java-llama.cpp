@@ -47,6 +47,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F64](#f64) — mittel — *gefixt*
 - [F65](#f65) — niedrig — *gefixt*
 - [F67](#f67) — niedrig — *nur beschrieben* (CI-Bedarf: Modell + LoRA-Adapter)
+- [F68](#f68) — niedrig — *gefixt*
 
 ## Funde
 
@@ -434,8 +435,21 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** nur beschrieben
 - **Commit:** –
 
+<a id="f68"></a>
+### F68 – java-llama.cpp: `RouterClient.awaitModelLoaded` läuft bei einem schlafenden Modell in den Timeout
+- **Zeit:** 2026-10-17 23:55 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/RouterClient.java` (`awaitModelLoaded`)
+- **Schwere:** niedrig
+- **Beschreibung:** Mit `--sleep-idle-seconds` schläft ein geladener Worker im Leerlauf und wacht bei der nächsten Anfrage auf; `GET /models` meldet ihn dann als `sleeping`. Upstreams eigenes Warten auf ein Modell (`server_models`, `server-models.cpp:1501`/`1550`, b11639) behandelt `sleeping` ausdrücklich wie `loaded` („child is sleeping but still running; new request will wake it up“). `awaitModelLoaded` nahm nur `LOADED` an: wer ein bereits geladenes, aber leerlaufendes Modell abwartete, bekam nach der vollen Wartezeit `IllegalStateException` („did not reach LOADED … last status: sleeping“), obwohl das Modell bereit war.
+- **Fix:** `SLEEPING` zählt wie `LOADED` als bereit; Javadoc und README-Kommentar angepasst.
+- **Reproduktion:** `RouterClientTest#awaitModelLoaded_sleepingModelIsReady` (Stub-Server liefert `sleeping`)
+- **Rot-Grün-Nachweis:** ohne Fix rot (`IllegalStateException: Model 'qwen' did not reach LOADED within 2000 ms (last status: qwen [sleeping])`), mit Fix grün, `RouterClientTest` 19/19; Gegenprobe per `git stash` rot, nach `stash pop` grün. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** java-llama.cpp `352057b`
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(unsicher/niedrig, nur beschrieben, 06:38 UTC)* java-llama.cpp `llama-ffm/.../ffm/JllamaNative.java` `takeStrings`: Bei `count == 0` kehrt die Methode vor dem `try` zurück und gibt das Array nicht frei, das `jllama_rpc_server_devices` auch für 0 Einträge per `calloc(max(n,1))` anlegt (8 Byte Leck je Aufruf). `rpc::server_devices()` fällt aber immer auf das CPU-Gerät zurück, leer wird die Liste nur ohne registriertes CPU-Backend (kaputte Installation) – praktisch unerreichbar. Fix wäre: bei Nicht-NULL-Zeiger immer `STRINGS_FREE` aufrufen. Nicht ohne native Bibliothek + JDK-22-Toolchain testbar, daher kein Commit. Alle übrigen Freigabe-Funktionen (`takeBytesAsString` → `jllama_string_free` laut Header) stimmen mit `jllama_api.h` überein. **Blocker (Stand 2026-10-17):** Der Rot-Grün-Zyklus braucht ein JDK 22+ (Toolchain des Moduls) und ist in dieser Sandbox nicht herstellbar: GitHub-Releases (Adoptium) und api.adoptium.net sind über den Proxy gesperrt. Vorschlag für den Test: `takeStrings` mit der Freigabefunktion als Parameter (paketintern), Aufruf mit Nicht-NULL-Zeiger und Anzahl 0, Erwartung genau ein Freigabeaufruf; läuft dann im CI-Job `test-java-llama-ffm`.
 - *(niedrig, unsicher, nur beschrieben, 2026-10-17)* java-llama.cpp `server/OllamaApiSupport`: `done_reason` ist zwischen den Pfaden uneinheitlich. Nicht gestreamtes `/api/chat` reicht OpenAIs `finish_reason` durch (`stop`, `length`, aber auch `tool_calls`, das Ollama selbst nicht kennt – es meldet bei Werkzeugaufrufen `stop`). Gestreamtes `/api/chat` (`toOllamaDoneLine`) und beide `/api/generate`-Formen melden immer `stop`, auch wenn `num_predict` die Antwort abgeschnitten hat. Ein Client, der über `done_reason == "length"` Abschneiden erkennt, sieht es im Streaming nie. Ob das relevant ist, hängt vom Client ab; Vorschlag: `tool_calls` → `stop` abbilden und den `finish_reason` des letzten Stream-Chunks an `toOllamaDoneLine` durchreichen. Kein Fix ohne Entscheidung.
 - *(Designabweichung, Entscheidung des Nutzers, 2026-10-17)* `OpenAiCompatServer`: Jede Streaming-Route sendet `200` + SSE-Header, **bevor** das Backend läuft. Eine abgelehnte Streaming-Anfrage (leere `messages`, Prompt über der Kontextgröße, `InvalidRequestException`) kommt deshalb als `200` mit einem `error`-Datenereignis an, während dieselbe Anfrage ohne `stream` `400` liefert. Upstream (`server-context.cpp:4906`, b11639) holt vor dem Streamen das erste Ergebnis und antwortet bei einem Fehler mit dessen Status (`res->error`). Bewusst festgeschrieben in `OpenAiCompatServerHttpTest#nativeRejectionOfAStreamedChatCompletionIsAnInvalidRequestEvent` („the headers are out before the backend runs“); Clients, die nur den Status prüfen, sehen eine leere Antwort. Eine Angleichung hieße, die Header erst mit dem ersten Chunk zu senden (Umbau aller fünf Streaming-Routen), daher kein stiller Fix.
+- *(niedrig, nur beschrieben, 2026-10-17)* `RouterClient.findModel`/`awaitModelLoaded` vergleichen nur `id`. Upstream löst Modellnamen auch über Aliase auf (`--alias` im Preset, `server_models::get_meta`, `server-models.cpp:1084`) und listet sie unter `aliases`; `awaitModelLoaded("<alias>")` meldet deshalb „Router does not list model“, obwohl der Router das Modell unter diesem Namen lädt und bedient. `RouterModel` liest `aliases` nicht ein; ein Fix bräuchte das Feld (API-Erweiterung), daher hier nur notiert.
