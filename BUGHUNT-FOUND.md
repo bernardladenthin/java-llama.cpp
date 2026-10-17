@@ -221,7 +221,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `LlamaIteratorCancelTest#cancel_whileNextWaitsForAResultOnAnotherThread_iteratorStaysFinished` (der Fake hält `receiveCompletionJson` fest, bis `cancel()` gelaufen ist), dazu `#next_untilTheStopResult_releasesTheTaskOnceAndEnds`, `#close_beforeTheStopResult_cancelsTheTaskOnce`
 - **Rot-Grün-Nachweis:** Naht zuerst verhaltensneutral; dagegen rot 1/3 („a result that arrived after cancel() revived the iterator – Expected: is <false> but: was <true>“). Mit Fix grün 3/3 (skipped 0); Gegenprobe mit dem Stand ohne Fix rot, wiederhergestellt grün. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** siehe Git-Log („Keep a cancelled LlamaIterator finished“)
+- **Commit:** java-llama.cpp `f4407bb`
 
 ## Offene Verdachte ohne Fund-ID
 
