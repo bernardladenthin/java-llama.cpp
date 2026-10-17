@@ -38,6 +38,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F54](#f54) — niedrig — *gefixt*
 - [F55](#f55) — niedrig — *gefixt*
 - [F56](#f56) — niedrig — *gefixt*
+- [F57](#f57) — niedrig — *nur beschrieben* (Entscheidung des Nutzers)
 
 ## Funde
 
@@ -312,6 +313,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („expected: <ModelUnavailableException> but was: <java.nio.file.InvalidPathException>“, Nul character not allowed), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `LlamaModelOfflineTest` 9/9, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `4f610bd`
+
+<a id="f57"></a>
+### F57 – java-llama.cpp: `ServerMetrics.getCumulativeUsage()` liefert ein `Usage` gegen dessen eigenen Vertrag
+- **Zeit:** 2026-10-17 21:05 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/value/ServerMetrics.java:203` (`getCumulativeUsage`)
+- **Schwere:** niedrig
+- **Beschreibung:** `Usage.getPromptTokens()` ist dokumentiert als „logical prompt token count, including cached tokens“, `getCachedTokens()` als dessen gecachte Teilmenge. `getCumulativeUsage()` füllt `promptTokens` aber mit `n_prompt_tokens_processed_total` (nur ausgewertete Tokens, ohne Cache-Treffer) und `cachedTokens` mit 0. Die Javadoc der Methode sagt das zwar, begründet es aber mit „upstream does not currently expose a cumulative logical or cached prompt total“ – das stimmt nicht mehr: `n_prompt_tokens_cached_total` kommt seit der `getMetrics()`-Zusammenführung mit und hat einen eigenen Getter (`getCumulativeCachedPromptTokens`). Ein Aufrufer, der `Usage` wie bei einer Chat-Antwort liest (`getPromptTokens()` gesamt, `getProcessedPromptTokens()` ausgewertet), bekommt hier zu kleine Gesamtzahlen.
+- **Fix (Vorschlag, nicht umgesetzt):** `new Usage(processed + cached, predicted, cached)`; dann stimmen `getPromptTokens()`, `getCachedTokens()` und `getProcessedPromptTokens()` mit dem `Usage`-Vertrag überein. Das ändert dokumentiertes Verhalten (und `ServerMetricsTest`), daher Entscheidung des Nutzers. `getWindowUsage()` ist nicht betroffen: für das Fenster sendet upstream keinen Cache-Zähler.
+- **Reproduktion:** ein Test mit `n_prompt_tokens_processed_total=10`, `n_prompt_tokens_cached_total=4` erwartet `getPromptTokens()==14` und `getCachedTokens()==4` – heute 10 und 0. Nicht geschrieben, solange die Richtung offen ist.
+- **Rot-Grün-Nachweis:** keiner (kein Fix ohne Entscheidung).
+- **Status:** nur beschrieben
+- **Commit:** —
 
 ## Offene Verdachte ohne Fund-ID
 
