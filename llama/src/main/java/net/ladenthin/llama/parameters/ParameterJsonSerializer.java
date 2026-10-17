@@ -199,7 +199,7 @@ public class ParameterJsonSerializer {
         for (Map.Entry<Integer, Float> entry : biases.entrySet()) {
             ArrayNode pair = OBJECT_MAPPER.createArrayNode();
             pair.add(entry.getKey());
-            pair.add(entry.getValue());
+            addBias(pair, entry.getValue());
             arr.add(pair);
         }
         return arr;
@@ -217,10 +217,30 @@ public class ParameterJsonSerializer {
         for (Map.Entry<String, Float> entry : biases.entrySet()) {
             ArrayNode pair = OBJECT_MAPPER.createArrayNode();
             pair.add(entry.getKey());
-            pair.add(entry.getValue());
+            addBias(pair, entry.getValue());
             arr.add(pair);
         }
         return arr;
+    }
+
+    /**
+     * Appends one bias value in a form llama.cpp's {@code logit_bias} parser accepts: a number, or
+     * {@code false} for negative infinity (a ban). JSON has no infinity, and Jackson writes a
+     * non-finite float as a string, which that parser skips -- a {@code -Infinity} bias then
+     * silently did nothing.
+     *
+     * @param pair the {@code [token, bias]} pair to append to
+     * @param bias the bias value
+     * @throws IllegalArgumentException if {@code bias} is NaN or positive infinity
+     */
+    private static void addBias(ArrayNode pair, float bias) {
+        if (bias == Float.NEGATIVE_INFINITY) {
+            pair.add(false);
+        } else if (Float.isFinite(bias)) {
+            pair.add(bias);
+        } else {
+            throw new IllegalArgumentException("logit bias must be finite or negative infinity, got " + bias);
+        }
     }
 
     /**
