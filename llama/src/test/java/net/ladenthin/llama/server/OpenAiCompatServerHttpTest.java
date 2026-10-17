@@ -10,6 +10,10 @@ import static org.hamcrest.Matchers.is;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
 import org.junit.jupiter.api.Test;
@@ -467,6 +471,37 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
             Response response = options(server.getPort(), "/v1/chat/completions");
             assertThat(response.code, is(204));
             assertThat(response.corsAllowOrigin, is("*"));
+        }
+    }
+
+    /**
+     * A preflight must allow the headers the browser asks for. The server authenticates Anthropic clients
+     * with {@code x-api-key}, and browser SDKs also send {@code anthropic-version} and {@code x-stainless-*}
+     * headers; with only {@code Content-Type, Authorization} allowed, the browser refused to send such a
+     * request at all. The preflight is written over a raw socket because {@code HttpURLConnection}
+     * silently drops the restricted {@code Access-Control-Request-Headers} header.
+     */
+    @Test
+    public void optionsPreflightAllowsTheRequestedHeaders() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start();
+                Socket socket = new Socket("127.0.0.1", server.getPort())) {
+            OutputStream out = socket.getOutputStream();
+            out.write(("OPTIONS /v1/messages HTTP/1.1\r\n"
+                            + "Host: 127.0.0.1\r\n"
+                            + "Origin: https://app.example\r\n"
+                            + "Access-Control-Request-Method: POST\r\n"
+                            + "Access-Control-Request-Headers: content-type, x-api-key, anthropic-version, x-stainless-os\r\n"
+                            + "Connection: close\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+            InputStream in = socket.getInputStream();
+            String response =
+                    new String(in.readAllBytes(), StandardCharsets.ISO_8859_1).toLowerCase(java.util.Locale.ROOT);
+
+            assertThat(
+                    response,
+                    containsString(
+                            "access-control-allow-headers: content-type, x-api-key, anthropic-version, x-stainless-os"));
         }
     }
 

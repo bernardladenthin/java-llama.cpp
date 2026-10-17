@@ -144,6 +144,10 @@ public final class OpenAiCompatServer implements AutoCloseable {
     /** Header the Anthropic Messages API authenticates with. */
     private static final String API_KEY_HEADER = "x-api-key";
 
+    /** Headers a preflight allows when the browser names none: the ones the routes read. */
+    private static final String DEFAULT_CORS_ALLOW_HEADERS =
+            "Content-Type, Authorization, x-api-key, anthropic-version";
+
     private static final String ERROR_TYPE_REQUEST = "invalid_request_error";
     private static final String ERROR_TYPE_SERVER = "server_error";
     private static final String HEALTH_BODY = "{\"status\":\"ok\"}";
@@ -258,7 +262,8 @@ public final class OpenAiCompatServer implements AutoCloseable {
     /**
      * Build a CORS filter that stamps {@code Access-Control-Allow-Origin} on every response and answers
      * {@code OPTIONS} preflights with {@code 204} + the allowed methods/headers — so browser- and
-     * webview-based clients (which preflight an {@code Authorization} header) are not blocked.
+     * webview-based clients (which preflight {@code Authorization}, {@code x-api-key} and their SDK's own
+     * headers) are not blocked.
      */
     private static Filter buildCorsFilter(String allowOrigin) {
         return new Filter() {
@@ -267,7 +272,16 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 exchange.getResponseHeaders().set("Access-Control-Allow-Origin", allowOrigin);
                 if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
                     exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-                    exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+                    // Allow what the browser asks for: browser SDKs send their own headers (Anthropic's
+                    // x-api-key and anthropic-version, the x-stainless-* family), and a preflight that
+                    // lists fewer makes the browser drop the request. The origin still gates access.
+                    String requested = exchange.getRequestHeaders().getFirst("Access-Control-Request-Headers");
+                    exchange.getResponseHeaders()
+                            .set(
+                                    "Access-Control-Allow-Headers",
+                                    requested != null && !requested.trim().isEmpty()
+                                            ? requested
+                                            : DEFAULT_CORS_ALLOW_HEADERS);
                     exchange.getResponseHeaders().set("Access-Control-Max-Age", "86400");
                     exchange.sendResponseHeaders(204, -1);
                     exchange.close();
