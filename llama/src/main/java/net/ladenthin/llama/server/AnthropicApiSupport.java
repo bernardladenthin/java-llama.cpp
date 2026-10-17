@@ -133,6 +133,10 @@ final class AnthropicApiSupport {
         }
 
         StringBuilder text = new StringBuilder();
+        // OpenAI content parts in block order; only used when the message carries an image, since the
+        // OpenAI parser reads images from image_url parts alone.
+        ArrayNode parts = OBJECT_MAPPER.createArrayNode();
+        boolean hadImage = false;
         ArrayNode toolCalls = OBJECT_MAPPER.createArrayNode();
         boolean hadToolResult = false;
         for (JsonNode block : content) {
@@ -140,6 +144,19 @@ final class AnthropicApiSupport {
             switch (type) {
                 case "text":
                     text.append(block.path("text").asText(""));
+                    parts.addObject()
+                            .put("type", "text")
+                            .put("text", block.path("text").asText(""));
+                    break;
+                case "image":
+                    String url = imageUrl(block.path("source"));
+                    if (url != null) {
+                        parts.addObject()
+                                .put("type", "image_url")
+                                .putObject("image_url")
+                                .put("url", url);
+                        hadImage = true;
+                    }
                     break;
                 case "tool_use":
                     // Assistant tool call: Anthropic input (object) -> OpenAI arguments (JSON string).
@@ -162,7 +179,14 @@ final class AnthropicApiSupport {
                     break;
             }
         }
-        if (text.length() > 0 || toolCalls.size() > 0) {
+        if (hadImage) {
+            ObjectNode message = out.addObject();
+            message.put("role", role);
+            message.set("content", parts);
+            if (toolCalls.size() > 0) {
+                message.set("tool_calls", toolCalls);
+            }
+        } else if (text.length() > 0 || toolCalls.size() > 0) {
             ObjectNode message = out.addObject();
             message.put("role", role);
             if (toolCalls.size() > 0 && text.length() == 0) {
@@ -180,6 +204,22 @@ final class AnthropicApiSupport {
             message.put("role", role);
             message.put("content", "");
         }
+    }
+
+    /**
+     * The OpenAI {@code image_url} URL for an Anthropic image {@code source}: a data URL for a base64
+     * source, the URL itself for a url source, {@code null} for anything else.
+     */
+    private static @org.jspecify.annotations.Nullable String imageUrl(JsonNode source) {
+        String sourceType = source.path("type").asText("");
+        if ("base64".equals(sourceType) && source.path("data").isTextual()) {
+            return "data:" + source.path("media_type").asText("image/png") + ";base64,"
+                    + source.path("data").asText();
+        }
+        if ("url".equals(sourceType) && source.path("url").isTextual()) {
+            return source.path("url").asText();
+        }
+        return null;
     }
 
     private static String toolResultText(JsonNode content) {
