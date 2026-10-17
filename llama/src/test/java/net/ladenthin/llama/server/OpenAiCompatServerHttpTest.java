@@ -495,6 +495,43 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     @Test
+    public void anthropicApiKeyHeaderAndLowercaseBearerSchemeAreAccepted() throws IOException {
+        // The Anthropic Messages surface is authenticated the Anthropic way, with an x-api-key header
+        // (what Anthropic SDKs send), and the Authorization scheme name is case-insensitive (RFC 7235).
+        // Accepting only "Bearer <key>" answered 401 to every Anthropic client of a server with a key.
+        OpenAiServerConfig cfg = OpenAiServerConfig.builder()
+                .host("127.0.0.1")
+                .port(0)
+                .apiKey("secret")
+                .build();
+        String messages = "{\"model\":\"test-model\",\"max_tokens\":16,"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), cfg).start()) {
+            int port = server.getPort();
+            assertThat(postWithHeader(port, "/v1/messages", messages, "x-api-key", "secret"), is(200));
+            assertThat(postWithHeader(port, "/v1/messages", messages, "x-api-key", "wrong"), is(401));
+            assertThat(
+                    postWithHeader(port, "/v1/chat/completions", CHAT_BODY, "Authorization", "bearer secret"), is(200));
+        }
+    }
+
+    private static int postWithHeader(int port, String path, String body, String header, String value)
+            throws IOException {
+        java.net.HttpURLConnection conn =
+                (java.net.HttpURLConnection) new java.net.URL("http://127.0.0.1:" + port + path).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty(header, value);
+        try (java.io.OutputStream os = conn.getOutputStream()) {
+            os.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        int code = conn.getResponseCode();
+        conn.disconnect();
+        return code;
+    }
+
+    @Test
     public void healthEndpointIsUnauthenticated() throws IOException {
         OpenAiServerConfig cfg = OpenAiServerConfig.builder()
                 .host("127.0.0.1")

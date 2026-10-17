@@ -140,6 +140,10 @@ public final class OpenAiCompatServer implements AutoCloseable {
     private static final String CONTENT_TYPE_JSON = "application/json; charset=utf-8";
     private static final String CONTENT_TYPE_SSE = "text/event-stream; charset=utf-8";
     private static final String BEARER_PREFIX = "Bearer ";
+
+    /** Header the Anthropic Messages API authenticates with. */
+    private static final String API_KEY_HEADER = "x-api-key";
+
     private static final String ERROR_TYPE_REQUEST = "invalid_request_error";
     private static final String ERROR_TYPE_SERVER = "server_error";
     private static final String HEALTH_BODY = "{\"status\":\"ok\"}";
@@ -884,13 +888,20 @@ public final class OpenAiCompatServer implements AutoCloseable {
         if (expected == null) {
             return true;
         }
+        byte[] expectedBytes = expected.getBytes(StandardCharsets.UTF_8);
+        // Anthropic clients (the /v1/messages surface) authenticate with x-api-key, not a bearer token.
+        String apiKeyHeader = exchange.getRequestHeaders().getFirst(API_KEY_HEADER);
+        if (apiKeyHeader != null
+                && MessageDigest.isEqual(expectedBytes, apiKeyHeader.getBytes(StandardCharsets.UTF_8))) {
+            return true;
+        }
         String header = exchange.getRequestHeaders().getFirst("Authorization");
-        if (header == null || !header.startsWith(BEARER_PREFIX)) {
+        // The scheme name is case-insensitive (RFC 7235), so "bearer <key>" is the same credential.
+        if (header == null || !header.regionMatches(true, 0, BEARER_PREFIX, 0, BEARER_PREFIX.length())) {
             return false;
         }
         // Constant-time comparison so response timing does not leak how many leading bytes
         // of the bearer token matched.
-        byte[] expectedBytes = expected.getBytes(StandardCharsets.UTF_8);
         byte[] presentedBytes = header.substring(BEARER_PREFIX.length()).getBytes(StandardCharsets.UTF_8);
         return MessageDigest.isEqual(expectedBytes, presentedBytes);
     }
