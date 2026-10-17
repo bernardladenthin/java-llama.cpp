@@ -5,6 +5,7 @@
 package net.ladenthin.llama.loader;
 
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Paths;
 import net.ladenthin.llama.args.ModelFlag;
 import net.ladenthin.llama.exception.ModelUnavailableException;
@@ -59,10 +60,26 @@ public final class OfflineModelGuard {
             return;
         }
         String model = parameters.getModel();
-        if (model != null && !model.isEmpty() && !Files.exists(Paths.get(model))) {
+        if (model != null && !model.isEmpty() && !localFileExists(model)) {
             throw new ModelUnavailableException(
                     "Model unavailable: --offline is set but the configured model file does not "
                             + "exist (no download attempted): " + model);
+        }
+    }
+
+    /**
+     * Whether {@code model} names an existing file. A path the file system cannot represent (a NUL
+     * character, or a character Windows forbids) cannot name a file, so it counts as missing instead
+     * of escaping as an {@link InvalidPathException}.
+     *
+     * @param model the configured local model path
+     * @return {@code true} if the file exists
+     */
+    private static boolean localFileExists(String model) {
+        try {
+            return Files.exists(Paths.get(model));
+        } catch (InvalidPathException e) {
+            return false;
         }
     }
 }
