@@ -188,6 +188,10 @@ final class ResponsesApiSupport {
             StringBuilder sb = new StringBuilder();
             for (JsonNode part : content) {
                 if (part.path("text").isTextual()) {
+                    // Joined with a newline, as llama.cpp's concat_content_parts joins text parts.
+                    if (sb.length() > 0) {
+                        sb.append('\n');
+                    }
                     sb.append(part.path("text").asText());
                 }
             }

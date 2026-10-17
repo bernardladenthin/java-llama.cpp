@@ -24,6 +24,21 @@ public class ResponsesApiSupportTest {
         return MAPPER.readTree(json);
     }
 
+    /**
+     * The text parts of one input item must stay separate words. llama.cpp's own {@code /v1/responses}
+     * keeps them as content parts, which are joined with a newline ({@code concat_content_parts} in
+     * {@code common/chat.cpp}); concatenated without a separator, {@code "first"} and {@code "second"}
+     * reached the model as {@code "firstsecond"}.
+     */
+    @Test
+    public void requestJoinsTheTextPartsOfOneInputItemWithANewline() throws IOException {
+        JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":[{\"type\":\"message\","
+                + "\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"first\"},"
+                + "{\"type\":\"input_text\",\"text\":\"second\"}]}]}"));
+
+        assertThat(openAi.path("messages").path(0).path("content").asText(), is("first\nsecond"));
+    }
+
     @Test
     public void isStreamingDefaultsFalse() throws IOException {
         assertThat(ResponsesApiSupport.isStreaming(read("{}")), is(false));
