@@ -44,6 +44,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F61](#f61) — niedrig — *gefixt*
 - [F62](#f62) — niedrig — *nur beschrieben* (Entscheidung des Nutzers)
 - [F63](#f63) — niedrig — *gefixt*
+- [F64](#f64) — mittel — *gefixt*
 
 ## Funde
 
@@ -391,6 +392,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („a value equal to or greater than <1792275470L> <0L> was less than <1792275470L>“, 12 Tests, 1 Fehlschlag), mit Fix grün 12/12; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ResponsesStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `aba327e`
+
+<a id="f64"></a>
+### F64 – java-llama.cpp: Ollama-Werkzeugaufrufe im Verlauf ohne `type` – llama.cpp lehnt die Anfrage ab
+- **Zeit:** 2026-10-17 22:35 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:186` (`toOpenAiMessage`)
+- **Schwere:** mittel
+- **Beschreibung:** Ollama schickt die Werkzeugaufrufe einer Assistenten-Runde als `{"function": {"name", "arguments"}}` ohne `type`. Die Übersetzung nach OpenAI wandelte nur die Argumente in einen String und ließ `type` weg. llama.cpps OpenAI-Nachrichtenparser verlangt ihn aber für jeden Werkzeugaufruf (`throw std::invalid_argument("Missing tool call type: …")` in `common/chat.cpp`, b11639). Jede `/api/chat`-Anfrage, die einen früheren Werkzeugaufruf im Verlauf mitschickt – also jede zweite Runde eines Gesprächs mit Werkzeugen –, scheiterte deshalb mit 400, bevor sie das Modell erreichte. Der bestehende Test zur Argumentumwandlung prüfte genau diese Form, aber nur die Argumente.
+- **Fix:** Fehlt `type`, wird `"function"` gesetzt (der einzige Typ, den upstream annimmt).
+- **Reproduktion:** `OllamaApiSupportTest#toOpenAiChatRequestAddsTheFunctionTypeToAssistantToolCalls`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "function" but: was """, 22 Tests, 1 Fehlschlag), mit Fix grün 22/22; Gegenprobe per `git stash` rot, nach `stash pop` grün. `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **CI-Bedarf:** der Ende-zu-Ende-Beweis (die 400 von upstream) braucht ein Modell; der modellgebundene `OpenAiCompatServerIntegrationTest` lief hier übersprungen.
+- **Status:** gefixt
+- **Commit:** java-llama.cpp `f4c3ed6`
 
 ## Offene Verdachte ohne Fund-ID
 
