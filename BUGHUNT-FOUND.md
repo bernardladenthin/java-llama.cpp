@@ -35,6 +35,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F38](#f38) — mittel — *gefixt*
 - [F39](#f39) — niedrig — *gefixt*
 - [F53](#f53) — niedrig — *gefixt*
+- [F54](#f54) — niedrig — *gefixt*
 
 ## Funde
 
@@ -274,6 +275,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `27d6477`
 
+<a id="f54"></a>
+### F54 – java-llama.cpp: leerer Wert in `chat_template_kwargs` wird zu `null` statt zum Text
+- **Zeit:** 2026-10-17 21:15 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/ParameterJsonSerializer.java:316` (`buildRawValueObject`)
+- **Schwere:** niedrig
+- **Beschreibung:** Erneute `readTree`-Durchsicht nach F53, jede Fundstelle mit `""` durchgespielt. Die Javadoc verspricht: „If a value cannot be parsed as JSON, it is stored as a JSON string literal.“ Für `"not json"` stimmt das, für einen leeren oder nur aus Leerraum bestehenden Wert nicht: `readTree` liefert `MissingNode`, und ein `MissingNode` als Kind eines `ObjectNode` wird als `null` geschrieben (in der Sandbox geprüft). `ModelParameters.setChatTemplateKwargs` und `InferenceParameters.withChatTemplateKwargs` gaben so `{"x":null}` an die Jinja-Vorlage weiter statt `{"x":""}`.
+- **Fix:** `MissingNode` wird wie ein Parsefehler behandelt und der Text unverändert als String eingetragen.
+- **Reproduktion:** `ParameterJsonSerializerTest#testBuildRawValueObject_emptyOrBlankValueFallsBackToString`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "{"empty":"","blank":"   "}" but: was "{"empty":null,"blank":null}"“), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ParameterJsonSerializerTest` 35/35, `ModelParametersTest` 92/92, `InferenceParametersTest` 106/106, `WireNameRegistryTest` 8/8, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** –
+
 ## Offene Verdachte ohne Fund-ID
 
+- **`ChatRequest.buildToolsJson` mit leerem Parameterschema (2026-10-17, readTree-Durchsicht nach F53):** ein `ToolDefinition` mit `parametersSchemaJson = ""` ergibt `"parameters": null` (`MissingNode` als Kind), während ein nicht parsbares Schema als String eingetragen wird. Kandidat für die nächste Runde. Unschädlich in derselben Durchsicht: `OpenAiCompatServer.readBody` (danach `isObject()`), `OpenAiServerCli.parseChatTemplateKwargs` (`isObject()`), langchain4j `JsonSchemaElementSerializer.rawNode` (Cast-Fehler wird zu `IllegalArgumentException`), `ToolCallDeltaAccumulator` (ignoriert Unparsbares wie dokumentiert), die `*ResponseParser` (Ersatzwerte über `path`/`isArray`); langchain4j `StreamingChunkAssembler.accept` wirft bei `""` nicht die dokumentierte `UncheckedIOException`, die native Seite liefert aber nie leere Chunks.
 - *(unsicher/niedrig, nur beschrieben, 06:38 UTC)* java-llama.cpp `llama-ffm/.../ffm/JllamaNative.java` `takeStrings`: Bei `count == 0` kehrt die Methode vor dem `try` zurück und gibt das Array nicht frei, das `jllama_rpc_server_devices` auch für 0 Einträge per `calloc(max(n,1))` anlegt (8 Byte Leck je Aufruf). `rpc::server_devices()` fällt aber immer auf das CPU-Gerät zurück, leer wird die Liste nur ohne registriertes CPU-Backend (kaputte Installation) – praktisch unerreichbar. Fix wäre: bei Nicht-NULL-Zeiger immer `STRINGS_FREE` aufrufen. Nicht ohne native Bibliothek + JDK-22-Toolchain testbar, daher kein Commit. Alle übrigen Freigabe-Funktionen (`takeBytesAsString` → `jllama_string_free` laut Header) stimmen mit `jllama_api.h` überein. **Blocker (Stand 2026-10-17):** Der Rot-Grün-Zyklus braucht ein JDK 22+ (Toolchain des Moduls) und ist in dieser Sandbox nicht herstellbar: GitHub-Releases (Adoptium) und api.adoptium.net sind über den Proxy gesperrt. Vorschlag für den Test: `takeStrings` mit der Freigabefunktion als Parameter (paketintern), Aufruf mit Nicht-NULL-Zeiger und Anzahl 0, Erwartung genau ein Freigabeaufruf; läuft dann im CI-Job `test-java-llama-ffm`.
