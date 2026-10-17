@@ -246,7 +246,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `JsonParametersTest#withRaw_rejectsEmptyAndBlankValues`
 - **Rot-Grün-Nachweis:** ohne Fix rot 1/25 („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix grün 25/25 (skipped 0); Gegenprobe per `git stash` rot, nach `stash pop` grün. Paket `parameters` plus Server-Mapping- und HTTP-Tests: 775 Tests, 0 Fehler. PIT auf `JsonParameters` (Schwelle 100): alle Mutanten getötet. `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** siehe Git-Log („Reject an empty JSON parameter value instead of sending null“)
+- **Commit:** java-llama.cpp `41b5ad3`
 
 ## Offene Verdachte ohne Fund-ID
 
