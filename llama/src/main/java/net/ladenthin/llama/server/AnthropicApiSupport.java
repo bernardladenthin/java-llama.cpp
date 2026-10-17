@@ -143,6 +143,10 @@ final class AnthropicApiSupport {
             String type = block.path("type").asText("");
             switch (type) {
                 case "text":
+                    // Joined with a newline, as llama.cpp's concat_content_parts joins text parts.
+                    if (text.length() > 0) {
+                        text.append('\n');
+                    }
                     text.append(block.path("text").asText(""));
                     parts.addObject()
                             .put("type", "text")

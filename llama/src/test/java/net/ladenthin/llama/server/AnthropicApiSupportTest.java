@@ -45,6 +45,21 @@ public class AnthropicApiSupportTest {
         assertThat(content.get(1).path("image_url").path("url").asText(), is("data:image/png;base64,iVBORw0K"));
     }
 
+    /**
+     * Separate text blocks of one message must stay separate words. Anthropic clients split a turn into
+     * several blocks (a reminder block, then the user's own text); llama.cpp's own {@code /v1/messages}
+     * keeps them as content parts and joins them with a newline ({@code concat_content_parts} in
+     * {@code common/chat.cpp}). Concatenated without a separator, {@code "first"} and {@code "second"}
+     * reached the model as {@code "firstsecond"}.
+     */
+    @Test
+    public void requestJoinsTheTextBlocksOfOneMessageWithANewline() throws IOException {
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":[{\"role\":\"user\","
+                + "\"content\":[{\"type\":\"text\",\"text\":\"first\"},{\"type\":\"text\",\"text\":\"second\"}]}]}"));
+
+        assertThat(openAi.path("messages").path(0).path("content").asText(), is("first\nsecond"));
+    }
+
     @Test
     public void isStreamingDefaultsFalse() throws IOException {
         assertThat(AnthropicApiSupport.isStreaming(read("{}")), is(false));
