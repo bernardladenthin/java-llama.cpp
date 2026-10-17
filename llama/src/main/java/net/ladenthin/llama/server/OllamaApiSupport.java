@@ -186,6 +186,10 @@ final class OllamaApiSupport {
         JsonNode toolCalls = message.path("tool_calls");
         if (toolCalls.isArray()) {
             for (JsonNode toolCall : toolCalls) {
+                // Ollama's tool calls carry no type; llama.cpp rejects a tool call without one.
+                if (toolCall.isObject() && !toolCall.has("type")) {
+                    ((ObjectNode) toolCall).put("type", "function");
+                }
                 JsonNode arguments = toolCall.path("function").path("arguments");
                 if (arguments.isObject() || arguments.isArray()) {
                     ((ObjectNode) toolCall.path("function")).put("arguments", arguments.toString());

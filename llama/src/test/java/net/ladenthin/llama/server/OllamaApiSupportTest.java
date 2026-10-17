@@ -72,6 +72,28 @@ public class OllamaApiSupportTest {
         assertThat(openAi.path("max_tokens").asInt(), is(64));
     }
 
+    /**
+     * Ollama's assistant tool calls carry no {@code type}; llama.cpp's OpenAI message parser rejects a
+     * tool call without one ({@code "Missing tool call type"} in {@code common/chat.cpp}), so a chat
+     * that replays an earlier tool call in its history failed with a 400 before reaching the model.
+     */
+    @Test
+    public void toOpenAiChatRequestAddsTheFunctionTypeToAssistantToolCalls() throws IOException {
+        JsonNode openAi = OllamaApiSupport.toOpenAiChatRequest(
+                read(
+                        "{\"messages\":["
+                                + "{\"role\":\"assistant\",\"tool_calls\":[{\"function\":{\"name\":\"f\",\"arguments\":{\"a\":1}}}]}]}"));
+
+        assertThat(
+                openAi.path("messages")
+                        .get(0)
+                        .path("tool_calls")
+                        .get(0)
+                        .path("type")
+                        .asText(),
+                is("function"));
+    }
+
     @Test
     public void toOpenAiChatRequestStringifiesAssistantToolCallArguments() throws IOException {
         JsonNode openAi = OllamaApiSupport.toOpenAiChatRequest(
