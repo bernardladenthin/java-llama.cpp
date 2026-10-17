@@ -125,7 +125,8 @@ public final class TrainingParameters {
         Objects.requireNonNull(modelPath, "modelPath");
         Objects.requireNonNull(outputPath, "outputPath");
         if ((trainingText == null) == (trainingFile == null)) {
-            throw new IllegalArgumentException("exactly one of trainingText and trainingFile must be set");
+            throw new IllegalArgumentException("exactly one of trainingText and trainingFile must be set, got "
+                    + (trainingText == null ? "neither" : "both, trainingFile " + trainingFile));
         }
         if (epochs < 1) {
             throw new IllegalArgumentException("epochs must be at least 1, was " + epochs);
