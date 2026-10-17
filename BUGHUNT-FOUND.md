@@ -356,6 +356,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "first\nsecond" but: was "firstsecond"“, 14 Tests, 1 Fehlschlag), mit Fix grün 14/14; Gegenprobe per `git stash` rot, nach `stash pop` grün. `AnthropicStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `76a3370`
+- **Präzisierung (2026-10-17, 22:45 UTC):** Upstream verbindet Text-Parts nur dann mit `\n`, wenn die Chat-Vorlage ausschließlich String-Inhalt annimmt (`messages_inp_normalizer`, Zweig `only_string`, in `common/chat.cpp`); eine Vorlage mit typisiertem Inhalt bekommt die Parts als Array und rendert sie selbst, unter Umständen ohne Trenner. Die Übersetzung reicht aber keine Parts weiter, sondern einen fertigen String – sie muss sich also für einen Trenner entscheiden, und `\n` ist der, den upstream wählt, wenn es selbst verbindet. Der Fix bleibt damit sinnvoll; die frühere Aussage „upstream verbindet mit Zeilenumbruch“ galt nur für String-Vorlagen. Alternative für den Nutzer: Text-Blöcke wie Bilder als Content-Parts weiterreichen und die Entscheidung der Vorlage überlassen.
 
 <a id="f61"></a>
 ### F61 – java-llama.cpp: Textteile eines Responses-Eingabeelements werden ohne Trenner zusammengeklebt
@@ -368,6 +369,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "first\nsecond" but: was "firstsecond"“, 11 Tests, 1 Fehlschlag), mit Fix grün 11/11; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ResponsesStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `745fed5`
+- **Präzisierung (2026-10-17, 22:45 UTC):** Upstream verbindet Text-Parts nur dann mit `\n`, wenn die Chat-Vorlage ausschließlich String-Inhalt annimmt (`messages_inp_normalizer`, Zweig `only_string`, in `common/chat.cpp`); eine Vorlage mit typisiertem Inhalt bekommt die Parts als Array und rendert sie selbst, unter Umständen ohne Trenner. Die Übersetzung reicht aber keine Parts weiter, sondern einen fertigen String – sie muss sich also für einen Trenner entscheiden, und `\n` ist der, den upstream wählt, wenn es selbst verbindet. Der Fix bleibt damit sinnvoll; die frühere Aussage „upstream verbindet mit Zeilenumbruch“ galt nur für String-Vorlagen. Alternative für den Nutzer: Text-Blöcke wie Bilder als Content-Parts weiterreichen und die Entscheidung der Vorlage überlassen.
 
 <a id="f62"></a>
 ### F62 – java-llama.cpp: LangChain4j-Adapter klebt mehrere `TextContent` ohne Trenner zusammen
