@@ -41,6 +41,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F57](#f57) — niedrig — *nur beschrieben* (Entscheidung des Nutzers)
 - [F59](#f59) — niedrig — *nur beschrieben* (CI-Bedarf: JDK 22+)
 - [F60](#f60) — niedrig — *gefixt*
+- [F61](#f61) — niedrig — *gefixt*
 
 ## Funde
 
@@ -352,6 +353,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "first\nsecond" but: was "firstsecond"“, 14 Tests, 1 Fehlschlag), mit Fix grün 14/14; Gegenprobe per `git stash` rot, nach `stash pop` grün. `AnthropicStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `76a3370`
+
+<a id="f61"></a>
+### F61 – java-llama.cpp: Textteile eines Responses-Eingabeelements werden ohne Trenner zusammengeklebt
+- **Zeit:** 2026-10-17 22:15 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java:183` (`inputContentText`)
+- **Schwere:** niedrig
+- **Beschreibung:** Musterdurchsicht nach F60. `/v1/responses` verband die `input_text`-Teile eines Eingabeelements ohne Trenner, sodass an der Naht Wörter verschmolzen (`first` + `second` → `firstsecond`). Upstreams `server_chat_convert_responses_to_chatcmpl` (b11639, `server-chat.cpp`) behält die Teile als Content-Parts, die `concat_content_parts` in `common/chat.cpp` mit einem Zeilenumbruch verbindet. Der Bildpfad (`inputContentWithImages`) reicht bereits Parts weiter und war nicht betroffen.
+- **Fix:** Vor jedem weiteren Textteil ein `\n`, wie upstream und wie F60.
+- **Reproduktion:** `ResponsesApiSupportTest#requestJoinsTheTextPartsOfOneInputItemWithANewline`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "first\nsecond" but: was "firstsecond"“, 11 Tests, 1 Fehlschlag), mit Fix grün 11/11; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ResponsesStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** java-llama.cpp `745fed5`
 
 ## Offene Verdachte ohne Fund-ID
 
