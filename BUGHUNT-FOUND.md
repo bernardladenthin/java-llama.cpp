@@ -42,6 +42,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F59](#f59) — niedrig — *nur beschrieben* (CI-Bedarf: JDK 22+)
 - [F60](#f60) — niedrig — *gefixt*
 - [F61](#f61) — niedrig — *gefixt*
+- [F62](#f62) — niedrig — *nur beschrieben* (Entscheidung des Nutzers)
 
 ## Funde
 
@@ -365,6 +366,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "first\nsecond" but: was "firstsecond"“, 11 Tests, 1 Fehlschlag), mit Fix grün 11/11; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ResponsesStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `745fed5`
+
+<a id="f62"></a>
+### F62 – java-llama.cpp: LangChain4j-Adapter klebt mehrere `TextContent` ohne Trenner zusammen
+- **Zeit:** 2026-10-17 22:20 UTC
+- **Datei:** `llama-langchain4j/src/main/java/net/ladenthin/llama/langchain4j/LangChain4jMapping.java:261` (`toJllamaUserMessage`)
+- **Schwere:** niedrig
+- **Beschreibung:** Musterdurchsicht nach F60/F61. Eine `UserMessage` aus mehreren `TextContent` ohne Medien wird zu einem String ohne Trenner (`"Hello"` + `"world"` → `"Helloworld"`). Enthält dieselbe Nachricht zusätzlich ein Bild, bleiben die Teile Content-Parts, die llama.cpp mit `\n` verbindet (`concat_content_parts`) – ein Bild ändert also, wie die Texte zusammenkommen. Anders als bei F60/F61 gibt es kein upstream-Gegenstück als Maßstab, und der Test `LangChain4jMappingTest#flattensMultiTextUserMessageToText` schreibt das heutige Verhalten mit `"Hello "` (Leerzeichen am Ende) fest.
+- **Fix (Vorschlag, nicht umgesetzt):** wie F60/F61 mit `\n` verbinden (oder die Teile als Parts weiterreichen); dabei den festschreibenden Test anpassen. Entscheidung des Nutzers, weil der Test das Verhalten bewusst zu wählen scheint.
+- **Reproduktion:** `UserMessage.from(TextContent.from("Hello"), TextContent.from("world"))` → `getContent()` = `"Helloworld"`.
+- **Rot-Grün-Nachweis:** keiner (kein Fix ohne Entscheidung).
+- **Status:** nur beschrieben
+- **Commit:** —
 
 ## Offene Verdachte ohne Fund-ID
 
