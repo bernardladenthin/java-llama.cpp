@@ -48,6 +48,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F65](#f65) — niedrig — *gefixt*
 - [F67](#f67) — niedrig — *nur beschrieben* (CI-Bedarf: Modell + LoRA-Adapter)
 - [F68](#f68) — niedrig — *gefixt*
+- [F69](#f69) — niedrig — *nur beschrieben* (CI-Bedarf: modellgestützter Test)
 
 ## Funde
 
@@ -446,6 +447,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot (`IllegalStateException: Model 'qwen' did not reach LOADED within 2000 ms (last status: qwen [sleeping])`), mit Fix grün, `RouterClientTest` 19/19; Gegenprobe per `git stash` rot, nach `stash pop` grün. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `352057b`
+
+<a id="f69"></a>
+### F69 – java-llama.cpp: `withNPredict` dokumentiert `-2 = until context filled`, der Server lehnt `-2` ab
+- **Zeit:** 2026-10-18 00:05 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/InferenceParameters.java:197` (Javadoc `withNPredict`)
+- **Schwere:** niedrig (Dokumentation; der Aufrufer bekommt eine Ausnahme, kein stilles Fehlverhalten)
+- **Beschreibung:** Die Javadoc nennt für den Anfragewert `n_predict` „-1 = infinity, -2 = until context filled“. Upstream (`tools/server/server-schema.cpp:44`, b11639) deklariert das Feld mit `set_hard_limits(-1, INT32_MAX)`, und `is_hard_limit` heißt laut `server-schema.h:52` „throw error if the value is invalid“: `withNPredict(-2)` endet also in einer 400 bzw. `InvalidRequestException`, statt bis zum Kontextende zu generieren. `-2` gibt es nur für die Startoption `-n` (`ModelParameters.setNPredict`, dort korrekt dokumentiert), nicht pro Anfrage.
+- **Fix:** keiner (Nutzerregel: kein Fix ohne roten Test; der Test braucht ein geladenes Modell). Möglich: Javadoc auf „-1 = unbegrenzt, 0 = nur Prompt auswerten“ (upstreams `set_desc`) korrigieren oder `-2` in Java mit klarer Meldung abweisen.
+- **Reproduktion:** keine lauffähige hier (kein Modell, keine native Bibliothek). Ein Test in einer modellgestützten Klasse: `model.complete(InferenceParameters.empty().withPrompt("x").withNPredict(-2))` → `InvalidRequestException` mit `n_predict` in der Meldung.
+- **CI-Bedarf:** ein modellgestützter Java-Test (jedes Modell aus `models.csv` genügt).
+- **Status:** nur beschrieben
+- **Commit:** –
 
 ## Offene Verdachte ohne Fund-ID
 
