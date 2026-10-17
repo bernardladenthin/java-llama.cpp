@@ -23,7 +23,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F13](#f13) — mittel — *gefixt*
 - [F16](#f16) — mittel — *nur beschrieben*
 - [F17](#f17) — mittel — *gefixt*
-- [F18](#f18) — mittel — *gefixt*
+- [F18](#f18) — mittel — *nur beschrieben*
 - [F24](#f24) — mittel — *gefixt*
 - [F25](#f25) — mittel — *gefixt*
 - [F26](#f26) — mittel — *gefixt*
@@ -137,7 +137,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Beschreibung:** `close()` las `handle`, prüfte auf 0 und setzte es danach auf 0 – ohne Synchronisation. Zwei gleichzeitige `close()` (Shutdown-Hook + try-with-resources, oder in `NativeServer.main` der Hook und der `finally`-Block, wenn der Worker genau beim Ctrl-C selbst endet) kamen beide durch und riefen `stopNativeServer(h)` doppelt: zweimal `join()` und zweimal `delete` desselben `native_server` → JVM-Absturz. Ebenso konnte `isRunning()` einen Handle abfragen, den ein paralleles `close()` gerade freigab (Use-after-free). Der Kommentar in `main` („the finally and the hook both firing is safe“) gilt nur nacheinander.
 - **Fix:** privates `lifecycleLock` serialisiert `start`, `isRunning` und `close` (keine `synchronized`-Methoden, SpotBugs USO_UNSAFE_METHOD_SYNCHRONIZATION). `spotbugs:check` grün, `NativeServerSmokeTest` + `LlamaArchitectureTest` grün.
 - **Reproduktion:** kein committeter Test – ein künstlicher Handle würde mit vorhandener nativer Bibliothek (CI) die JVM abstürzen lassen. Probe ohne native Bibliothek: `/home/user/BUGHUNT-2026-10-17-F18-probe.java` (zwei Threads, Barriere, `close()` auf per Reflection gesetztem Handle, zählt `UnsatisfiedLinkError` = „hat den nativen Stop erreicht“): vorher **4 / 20 000** Durchläufe doppelt, nachher **0 / 20 000**.
-- **Status:** gefixt (nur Probe, kein Regressionstest)
+- **Status:** nur beschrieben (Code geändert in `c1e5dcd`, aber ohne roten Regressionstest; die Probe ist kein Beweis im Sinne des Rot-Grün-Zyklus)
 - **Commit:** java-llama.cpp `c1e5dcd`
 
 <a id="f24"></a>
