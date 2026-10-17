@@ -232,6 +232,18 @@ public class RouterClientTest {
     }
 
     @Test
+    public void awaitModelLoaded_sleepingModelIsReady() throws Exception {
+        // With --sleep-idle-seconds a loaded worker goes to sleep when idle and wakes on the next
+        // request; upstream's own wait for a model (server_models, b11639) treats "sleeping" like
+        // "loaded" for exactly that reason. Awaiting such a model ran into the timeout instead.
+        modelsBody.set("{\"data\":[" + entry("qwen", "sleeping") + "]}");
+
+        RouterModel model = client.awaitModelLoaded("qwen", 2_000L);
+
+        assertThat(model.getStatus(), is(RouterModel.Status.SLEEPING));
+    }
+
+    @Test
     public void awaitModelLoaded_timesOutWithLastStatusInMessage() {
         modelsBody.set("{\"data\":[" + entry("qwen", "loading") + "]}");
 

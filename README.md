@@ -1170,7 +1170,7 @@ embedded router above or any external `llama-server` router):
 RouterClient client = new RouterClient(8080);
 List<RouterModel> models = client.listModels();          // GET /models, typed status per entry
 client.loadModel("Qwen3-0.6B-Q4_K_M");                   // POST /models/load (non-blocking)
-client.awaitModelLoaded("Qwen3-0.6B-Q4_K_M", 240_000L);  // poll until LOADED; fails fast if the
+client.awaitModelLoaded("Qwen3-0.6B-Q4_K_M", 240_000L);  // poll until LOADED (or SLEEPING); fails fast if the
                                                          // worker died (exit code in the message)
 client.unloadModel("Qwen3-0.6B-Q4_K_M");                 // POST /models/unload
 ```
