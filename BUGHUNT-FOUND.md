@@ -259,7 +259,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot 1/13 („Expected: is <true> but: was <false>“), mit Fix grün 13/13 (skipped 0); Gegenprobe per `git stash` rot, danach grün. `AnthropicStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Durchsicht der übrigen `readTree`-Aufrufer (2026-10-17):** 35 Aufrufe in 24 Dateien. Betroffen waren nur F37 (Ollama), F38 (`JsonParameters`) und F39. Die übrigen lesen Antworten des eigenen Servers (Completion-/Chat-/Stream-Parser, Rerank, LoRA, Router) und greifen danach über `path(...)` zu, was auf einem `MissingNode` sicher leere/Default-Werte liefert; `ChatRequest.buildToolsJson` liest ein Tool-Schema, das ein leerer String zu `null` macht (bereits als F05-Umfeld bekannt), `StreamingChunkAssembler` wirft bei unparsebarem Chunk bewusst.
 - **Status:** gefixt
-- **Commit:** siehe Git-Log („Send empty Anthropic tool_use input as an empty object“)
+- **Commit:** java-llama.cpp `6effd44`
 
 ## Offene Verdachte ohne Fund-ID
 
