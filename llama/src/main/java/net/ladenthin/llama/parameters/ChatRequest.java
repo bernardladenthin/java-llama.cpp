@@ -18,7 +18,6 @@ import java.util.function.UnaryOperator;
 import lombok.EqualsAndHashCode;
 import lombok.ToString;
 import net.ladenthin.llama.value.ChatMessage;
-import net.ladenthin.llama.value.ToolCall;
 import net.ladenthin.llama.value.ToolDefinition;
 import org.jspecify.annotations.Nullable;
 
@@ -309,27 +308,7 @@ public final class ChatRequest {
      * @return the JSON array as a string
      */
     public String buildMessagesJson() {
-        ArrayNode arr = MESSAGE_SERIALIZER.buildMessages(messages);
-        for (int i = 0; i < messages.size(); i++) {
-            ChatMessage m = messages.get(i);
-            ObjectNode obj = (ObjectNode) arr.get(i);
-            m.getToolCallId().ifPresent(id -> obj.put("tool_call_id", id));
-            if (!m.getToolCalls().isEmpty()) {
-                ArrayNode tc = MAPPER.createArrayNode();
-                for (ToolCall call : m.getToolCalls()) {
-                    ObjectNode entry = MAPPER.createObjectNode();
-                    entry.put("id", call.getId());
-                    entry.put("type", "function");
-                    ObjectNode fn = MAPPER.createObjectNode();
-                    fn.put("name", call.getName());
-                    fn.put("arguments", call.getArgumentsJson());
-                    entry.set("function", fn);
-                    tc.add(entry);
-                }
-                obj.set("tool_calls", tc);
-            }
-        }
-        return arr.toString();
+        return MESSAGE_SERIALIZER.buildMessages(messages).toString();
     }
 
     /**

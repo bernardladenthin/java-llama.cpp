@@ -603,6 +603,21 @@ public class InferenceParametersTest {
     // -------------------------------------------------------------------------
 
     @Test
+    public void withChatMessagesKeepsToolCallsAndToolCallIds() {
+        // ChatMessage.assistantToolCalls / toolResult carry the fields a tool-calling round trip needs.
+        // ChatRequest added them itself, but the shared serializer behind withMessages(List<ChatMessage>)
+        // wrote only role and content, so the model saw a tool turn it could not pair with its call.
+        List<net.ladenthin.llama.value.ChatMessage> messages = Arrays.asList(
+                net.ladenthin.llama.value.ChatMessage.assistantToolCalls(
+                        "", Collections.singletonList(new net.ladenthin.llama.value.ToolCall("call_1", "f", "{}"))),
+                net.ladenthin.llama.value.ChatMessage.toolResult("call_1", "42"));
+        String value =
+                InferenceParameters.empty().withMessages(messages).parameters.get("messages");
+        assertThat(value, containsString("\"tool_calls\""));
+        assertThat(value, containsString("\"tool_call_id\":\"call_1\""));
+    }
+
+    @Test
     public void testSetMessagesWithSystemAndUserMessages() {
         List<Pair<String, String>> messages = Collections.singletonList(new Pair<>("user", "Hi"));
         InferenceParameters params = new InferenceParameters("").withMessages("System msg", messages);
