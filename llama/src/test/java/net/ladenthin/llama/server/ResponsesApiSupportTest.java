@@ -72,6 +72,22 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void requestTurnsInputImagePartsIntoImageUrlParts() throws IOException {
+        String responses = "{\"input\":[{\"type\":\"message\",\"role\":\"user\",\"content\":["
+                + "{\"type\":\"input_text\",\"text\":\"what is this?\"},"
+                + "{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,iVBORw0K\"}]}]}";
+        JsonNode content = ResponsesApiSupport.toOpenAiChatRequest(read(responses))
+                .path("messages")
+                .get(0)
+                .path("content");
+        assertThat(content.isArray(), is(true));
+        assertThat(content.get(0).path("type").asText(), is("text"));
+        assertThat(content.get(0).path("text").asText(), is("what is this?"));
+        assertThat(content.get(1).path("type").asText(), is("image_url"));
+        assertThat(content.get(1).path("image_url").path("url").asText(), is("data:image/png;base64,iVBORw0K"));
+    }
+
+    @Test
     public void requestWithoutInstructionsHasNoSystemMessage() throws IOException {
         JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":\"hi\"}"));
         // First (and only) message is the user input — no leading system message.

@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Pure translators between the OpenAI Responses API ({@code POST /v1/responses}) and the internal OpenAI
@@ -134,10 +135,49 @@ final class ResponsesApiSupport {
                 default:
                     ObjectNode message = messages.addObject();
                     message.put("role", item.path("role").asText("user"));
-                    message.put("content", inputContentText(item.path("content")));
+                    JsonNode imageContent = inputContentWithImages(item.path("content"));
+                    if (imageContent != null) {
+                        message.set("content", imageContent);
+                    } else {
+                        message.put("content", inputContentText(item.path("content")));
+                    }
                     break;
             }
         }
+    }
+
+    /**
+     * The OpenAI content-part array for a Responses content array that carries {@code input_image}
+     * parts, or {@code null} when it carries none. The OpenAI parser reads images only from
+     * {@code image_url} parts, so flattening such a message to its text dropped the image and a
+     * vision model answered as if none had been sent.
+     */
+    private static @Nullable ArrayNode inputContentWithImages(JsonNode content) {
+        if (!content.isArray()) {
+            return null;
+        }
+        ArrayNode parts = OBJECT_MAPPER.createArrayNode();
+        boolean hasImage = false;
+        for (JsonNode part : content) {
+            if ("input_image".equals(part.path("type").asText(""))) {
+                JsonNode imageUrl = part.path("image_url");
+                String url = imageUrl.isTextual()
+                        ? imageUrl.asText()
+                        : imageUrl.path("url").asText("");
+                if (!url.isEmpty()) {
+                    parts.addObject()
+                            .put("type", "image_url")
+                            .putObject("image_url")
+                            .put("url", url);
+                    hasImage = true;
+                }
+            } else if (part.path("text").isTextual()) {
+                parts.addObject()
+                        .put("type", "text")
+                        .put("text", part.path("text").asText());
+            }
+        }
+        return hasImage ? parts : null;
     }
 
     private static String inputContentText(JsonNode content) {
