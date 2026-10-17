@@ -33,6 +33,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F36](#f36) — mittel — *gefixt*
 - [F37](#f37) — niedrig — *gefixt*
 - [F38](#f38) — mittel — *gefixt*
+- [F39](#f39) — niedrig — *gefixt*
 
 ## Funde
 
@@ -247,6 +248,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot 1/25 („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix grün 25/25 (skipped 0); Gegenprobe per `git stash` rot, nach `stash pop` grün. Paket `parameters` plus Server-Mapping- und HTTP-Tests: 775 Tests, 0 Fehler. PIT auf `JsonParameters` (Schwelle 100): alle Mutanten getötet. `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `41b5ad3`
+
+<a id="f39"></a>
+### F39 – java-llama.cpp: Anthropic-`tool_use` mit leeren Argumenten bekommt `"input": null` statt `{}`
+- **Zeit:** 2026-10-17 17:15 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java:331` (`parseToObject`, genutzt für `tool_use.input` in `toAnthropicResponse`)
+- **Schwere:** niedrig
+- **Beschreibung:** Dasselbe Muster wie F37, gefunden in der `readTree`-Durchsicht nach F37: Die blockierende Antwort von `POST /v1/messages` wandelte die OpenAI-Argumente per `readTree` in `tool_use.input` und fiel nur bei einer `IOException` auf `{}` zurück. Für `"arguments": ""` (parameterloser Aufruf) entstand ein `MissingNode`, also `"input": null`; Anthropic verlangt dort ein Objekt, Clients wie das Anthropic-SDK lesen `input` als Dict. Fix: nur Objekt/Array durchreichen, sonst `{}`.
+- **Reproduktion:** `AnthropicApiSupportTest#toAnthropicResponseTurnsEmptyToolCallArgumentsIntoAnEmptyInputObject`
+- **Rot-Grün-Nachweis:** ohne Fix rot 1/13 („Expected: is <true> but: was <false>“), mit Fix grün 13/13 (skipped 0); Gegenprobe per `git stash` rot, danach grün. `AnthropicStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Durchsicht der übrigen `readTree`-Aufrufer (2026-10-17):** 35 Aufrufe in 24 Dateien. Betroffen waren nur F37 (Ollama), F38 (`JsonParameters`) und F39. Die übrigen lesen Antworten des eigenen Servers (Completion-/Chat-/Stream-Parser, Rerank, LoRA, Router) und greifen danach über `path(...)` zu, was auf einem `MissingNode` sicher leere/Default-Werte liefert; `ChatRequest.buildToolsJson` liest ein Tool-Schema, das ein leerer String zu `null` macht (bereits als F05-Umfeld bekannt), `StreamingChunkAssembler` wirft bei unparsebarem Chunk bewusst.
+- **Status:** gefixt
+- **Commit:** siehe Git-Log („Send empty Anthropic tool_use input as an empty object“)
 
 ## Offene Verdachte ohne Fund-ID
 

@@ -328,9 +328,14 @@ final class AnthropicApiSupport {
         }
         if (arguments.isTextual()) {
             try {
-                return OBJECT_MAPPER.readTree(arguments.asText());
+                // readTree("") returns a MissingNode, which serializes as null, rather than throwing;
+                // a parameterless call's empty arguments must still become an input object.
+                JsonNode parsed = OBJECT_MAPPER.readTree(arguments.asText());
+                if (parsed.isObject() || parsed.isArray()) {
+                    return parsed;
+                }
             } catch (IOException e) {
-                return OBJECT_MAPPER.createObjectNode();
+                // fall through to an empty object
             }
         }
         return OBJECT_MAPPER.createObjectNode();
