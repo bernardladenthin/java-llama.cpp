@@ -39,6 +39,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F55](#f55) — niedrig — *gefixt*
 - [F56](#f56) — niedrig — *gefixt*
 - [F57](#f57) — niedrig — *nur beschrieben* (Entscheidung des Nutzers)
+- [F59](#f59) — niedrig — *nur beschrieben* (CI-Bedarf: JDK 22+)
 
 ## Funde
 
@@ -323,6 +324,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix (Vorschlag, nicht umgesetzt):** `new Usage(processed + cached, predicted, cached)`; dann stimmen `getPromptTokens()`, `getCachedTokens()` und `getProcessedPromptTokens()` mit dem `Usage`-Vertrag überein. Das ändert dokumentiertes Verhalten (und `ServerMetricsTest`), daher Entscheidung des Nutzers. `getWindowUsage()` ist nicht betroffen: für das Fenster sendet upstream keinen Cache-Zähler.
 - **Reproduktion:** ein Test mit `n_prompt_tokens_processed_total=10`, `n_prompt_tokens_cached_total=4` erwartet `getPromptTokens()==14` und `getCachedTokens()==4` – heute 10 und 0. Nicht geschrieben, solange die Richtung offen ist.
 - **Rot-Grün-Nachweis:** keiner (kein Fix ohne Entscheidung).
+- **Status:** nur beschrieben
+- **Commit:** —
+
+<a id="f59"></a>
+### F59 – java-llama.cpp: `FfmNativeServer.isRunning()` kann nach einem parallelen `close()` freigegebenen Speicher lesen
+- **Zeit:** 2026-10-17 21:25 UTC
+- **Datei:** `llama-ffm/src/main/java/net/ladenthin/llama/ffm/FfmNativeServer.java` (`isRunning`, `close`)
+- **Schwere:** niedrig
+- **Beschreibung:** `isRunning()` prüft `closed` und ruft dann `jllama_server_is_running(handle)`. `close()` setzt `closed` und ruft `jllama_server_stop`, das laut `jllama_api.h` den Handle freigibt. Läuft `close()` (etwa aus einem Shutdown-Hook) zwischen der Prüfung und dem nativen Aufruf eines anderen Threads, liest `jllama_server_is_running` einen freigegebenen `jllama_server` – undefiniertes Verhalten im nativen Code, schlimmstenfalls ein JVM-Absturz. Der JNI-Zwilling `server.NativeServer` hält genau deshalb `isRunning()` und `close()` unter einem gemeinsamen `lifecycleLock`; die FFM-Klasse dokumentiert keine Einschränkung. (`FfmLlamaModel` hat dasselbe Muster, schreibt aber ausdrücklich, dass `close()` keinen neuen Aufruf überholen darf – dort ein dokumentierter Vertrag, kein Fund.)
+- **Fix (Vorschlag, nicht umgesetzt):** ein privates Lock-Objekt um den Rumpf von `isRunning()` und `close()`, wie in `NativeServer`; `close()` blockiert ohnehin bis zum Ende des Workers.
+- **Reproduktion:** nicht geschrieben – braucht einen Fake hinter den Method-Handles oder eine echte Bibliothek mit JDK 22+.
+- **Rot-Grün-Nachweis:** keiner; in dieser Sandbox gibt es kein JDK 22+ (siehe Erkenntnisse).
+- **CI-Bedarf:** Test im Job `test-java-llama-ffm` (z. B. paketinterne Naht für die beiden Method-Handles, `isRunning` im Latch festhalten, `close()` parallel, Erwartung: `close()` wartet).
 - **Status:** nur beschrieben
 - **Commit:** —
 
