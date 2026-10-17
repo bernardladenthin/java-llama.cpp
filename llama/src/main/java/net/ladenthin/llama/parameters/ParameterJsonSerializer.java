@@ -314,7 +314,12 @@ public class ParameterJsonSerializer {
         for (Map.Entry<String, String> entry : map.entrySet()) {
             try {
                 JsonNode val = OBJECT_MAPPER.readTree(entry.getValue());
-                node.set(entry.getKey(), val);
+                // An empty or blank value is no JSON either, but Jackson returns MissingNode (written as null).
+                if (val.isMissingNode()) {
+                    node.put(entry.getKey(), entry.getValue());
+                } else {
+                    node.set(entry.getKey(), val);
+                }
             } catch (IOException e) {
                 node.put(entry.getKey(), entry.getValue());
             }

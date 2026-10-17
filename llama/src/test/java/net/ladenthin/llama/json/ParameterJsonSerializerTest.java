@@ -325,6 +325,16 @@ public class ParameterJsonSerializerTest {
         assertThat(node.path("key").asText(), is("not-valid-json{{{"));
     }
 
+    /** Jackson parses an empty or blank text to MissingNode, which would be written as null. */
+    @Test
+    public void testBuildRawValueObject_emptyOrBlankValueFallsBackToString() {
+        Map<String, String> map = new LinkedHashMap<>();
+        map.put("empty", "");
+        map.put("blank", "   ");
+        ObjectNode node = serializer.buildRawValueObject(map);
+        assertThat(node.toString(), is("{\"empty\":\"\",\"blank\":\"   \"}"));
+    }
+
     @Test
     public void testBuildRawValueObject_roundtripsAsJson() throws Exception {
         Map<String, String> map = new LinkedHashMap<>();
