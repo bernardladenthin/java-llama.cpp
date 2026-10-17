@@ -187,6 +187,52 @@ public class RpcServerLifecycleTest {
     }
 
     @Test
+    public void aStopThatArrivesBeforeTheBindDoesNotLeaveTheServerRunning() throws Exception {
+        // like the native server: binding the socket clears the stop flag, so an early stop is lost
+        CountDownLatch bind = new CountDownLatch(1);
+        CountDownLatch ended = new CountDownLatch(1);
+        WorkingBackend slowBind = new WorkingBackend() {
+            volatile boolean stop;
+
+            @Override
+            public void serve(String host, int port, int threads, @Nullable String cacheDir, String devices) {
+                try {
+                    bind.await();
+                    stop = false;
+                    listening = true;
+                    while (!stop) {
+                        Thread.sleep(5);
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    listening = false;
+                    ended.countDown();
+                }
+            }
+
+            @Override
+            public void stop() {
+                super.stop();
+                stop = true;
+            }
+        };
+        Thread binder = new Thread(() -> {
+            try {
+                Thread.sleep(300);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            bind.countDown();
+        });
+        binder.start();
+        assertThrows(LlamaException.class, () -> RpcServer.start(ENDPOINT, 1, null, NO_DEVICES, slowBind, 100));
+        binder.join();
+        assertThat("the server thread ended", ended.await(1, TimeUnit.SECONDS), is(true));
+        assertSlotIsFree();
+    }
+
+    @Test
     public void theCacheDirectoryIsCreatedAndPassedOn() throws Exception {
         Path cache = tempDir.resolve("a").resolve("b");
         WorkingBackend backend = new WorkingBackend();
