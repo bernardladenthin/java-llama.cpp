@@ -103,6 +103,10 @@ public final class NativeServer implements AutoCloseable {
     /** Native handle (pointer) while running, or {@code 0} when not started / stopped. */
     private volatile long handle;
 
+    /** Serializes {@link #start()}, {@link #isRunning()} and {@link #close()} over {@link #handle}. */
+    @ToString.Exclude
+    private final Object lifecycleLock = new Object();
+
     /**
      * Creates a native-server bridge for the given llama-server arguments.
      *
@@ -172,23 +176,27 @@ public final class NativeServer implements AutoCloseable {
      *                               {@code NativeServer} is already running in this process
      */
     public NativeServer start() {
-        if (handle != 0) {
-            throw new IllegalStateException("NativeServer already started");
+        synchronized (lifecycleLock) {
+            if (handle != 0) {
+                throw new IllegalStateException("NativeServer already started");
+            }
+            if (!RUNNING.compareAndSet(false, true)) {
+                throw new IllegalStateException(
+                        "another NativeServer is already running in this process (only one is supported)");
+            }
+            try {
+                // Load libjllama lazily here (not in a static initializer) so construction, argument
+                // parsing and close() stay usable — and unit-testable — without the native library.
+                LlamaLoader.initialize();
+                handle = attachedModel != null
+                        ? startAttachedNativeServer(attachedModel, args)
+                        : startNativeServer(args);
+            } catch (final RuntimeException | Error e) {
+                RUNNING.set(false);
+                throw e;
+            }
+            return this;
         }
-        if (!RUNNING.compareAndSet(false, true)) {
-            throw new IllegalStateException(
-                    "another NativeServer is already running in this process (only one is supported)");
-        }
-        try {
-            // Load libjllama lazily here (not in a static initializer) so construction, argument
-            // parsing and close() stay usable — and unit-testable — without the native library.
-            LlamaLoader.initialize();
-            handle = attachedModel != null ? startAttachedNativeServer(attachedModel, args) : startNativeServer(args);
-        } catch (final RuntimeException | Error e) {
-            RUNNING.set(false);
-            throw e;
-        }
-        return this;
     }
 
     /**
@@ -200,8 +208,10 @@ public final class NativeServer implements AutoCloseable {
      * @return {@code true} if the server has been started and its worker has not yet exited
      */
     public boolean isRunning() {
-        final long h = handle;
-        return h != 0 && isRunningNative(h);
+        synchronized (lifecycleLock) {
+            final long h = handle;
+            return h != 0 && isRunningNative(h);
+        }
     }
 
     /**
@@ -265,19 +275,24 @@ public final class NativeServer implements AutoCloseable {
     /**
      * Stops the native server if it is running and releases the native handle. Blocks until the
      * server has fully shut down. Safe to call more than once and from try-with-resources even if
-     * {@link #start()} was never called (no-op then).
+     * {@link #start()} was never called (no-op then). Serialized with {@link #start()} and
+     * {@link #isRunning()}: the native stop frees the handle, so two concurrent calls (a shutdown
+     * hook and a try-with-resources, say) must not both pass the zero check, and a concurrent
+     * {@link #isRunning()} must not query a handle that is being freed.
      */
     @Override
     public void close() {
-        final long h = handle;
-        if (h == 0) {
-            return;
-        }
-        handle = 0;
-        try {
-            stopNativeServer(h);
-        } finally {
-            RUNNING.set(false);
+        synchronized (lifecycleLock) {
+            final long h = handle;
+            if (h == 0) {
+                return;
+            }
+            handle = 0;
+            try {
+                stopNativeServer(h);
+            } finally {
+                RUNNING.set(false);
+            }
         }
     }
 
