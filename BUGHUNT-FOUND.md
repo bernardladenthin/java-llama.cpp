@@ -45,6 +45,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F62](#f62) — niedrig — *nur beschrieben* (Entscheidung des Nutzers)
 - [F63](#f63) — niedrig — *gefixt*
 - [F64](#f64) — mittel — *gefixt*
+- [F65](#f65) — niedrig — *gefixt*
 
 ## Funde
 
@@ -407,6 +408,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **CI-Bedarf:** der Ende-zu-Ende-Beweis (die 400 von upstream) braucht ein Modell; der modellgebundene `OpenAiCompatServerIntegrationTest` lief hier übersprungen.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `f4c3ed6`
+
+<a id="f65"></a>
+### F65 – java-llama.cpp: CORS-Preflight erlaubt nur `Content-Type, Authorization` – Browser-SDKs werden abgewiesen
+- **Zeit:** 2026-10-17 23:10 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`buildCorsFilter`)
+- **Schwere:** niedrig
+- **Beschreibung:** Bei gesetztem `corsAllowOrigin` beantwortete der Filter jeden Preflight mit `Access-Control-Allow-Headers: Content-Type, Authorization`. Der Server liest aber selbst `x-api-key` (F25) und bedient `/v1/messages`, dessen Browser-Clients `x-api-key`, `anthropic-version` und die `x-stainless-*`-Header der offiziellen SDKs schicken. Fehlt ein angefragter Header in der Antwort, verwirft der Browser die eigentliche Anfrage – ein im Browser laufender Anthropic-Client erreichte den Server also nie, obwohl CORS eingeschaltet war.
+- **Fix:** Der Filter spiegelt die `Access-Control-Request-Headers` des Preflights (der Origin bleibt das Tor); ohne angefragte Header gilt `Content-Type, Authorization, x-api-key, anthropic-version`.
+- **Reproduktion:** `OpenAiCompatServerHttpTest#optionsPreflightAllowsTheRequestedHeaders` (roher Socket, `OPTIONS /v1/messages` mit `content-type, x-api-key, anthropic-version, x-stainless-os`)
+- **Rot-Grün-Nachweis:** ohne Fix rot (Antwort `access-control-allow-headers: content-type, authorization`, 45 Tests, 1 Fehlschlag), mit Fix grün 45/45; Gegenprobe per `git stash` rot, nach `stash pop` grün. `OllamaApiSupportTest` 22/22, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** java-llama.cpp `f782c7a`
 
 ## Offene Verdachte ohne Fund-ID
 
