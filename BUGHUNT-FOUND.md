@@ -99,6 +99,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F128](#f128) — mittel — *gefixt*
 - [F133](#f133) — niedrig — *gefixt*
 - [F134](#f134) — mittel — *gefixt*
+- [F137](#f137) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1121,6 +1122,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot – alle fünf Wither-Tests (z. B. „Expected: not map containing ["grammar"->ANYTHING] but: was <{grammar="x"}>“) und der Basistest („expected: not same but was: <TestBuilder{keys=[grammar], values=redacted}>“); mit Fix `InferenceParametersTest` 111/111 und `JsonParametersTest` 26/26 (skipped 0), Gegenprobe per `git stash` wieder rot. PIT auf `JsonParameters`: 18/18 getötet. `LlamaArchitectureTest` 13/13, `WireNameRegistryTest` 8/8, `OpenAiRequestMapperTest` 31/31; `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `f35e7f2`
+
+<a id="f137"></a>
+### F137 – java-llama.cpp: `Session.fork` prüft eine negative Ziel-Slot-ID erst nach Sichern und Wiederherstellen
+- **Zeit:** 2026-10-18 22:30 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/Session.java:250` (`fork`)
+- **Schwere:** niedrig
+- **Beschreibung:** `fork(newSlotId, filepath)` prüft vor den Modellaufrufen nur `newSlotId == slotId`. Eine negative ID erreicht `model.saveSlot(slotId, filepath)` (schreibt die Datei) und `model.restoreSlot(newSlotId, filepath)`, das im nativen Teil an der ungültigen ID scheitert – der Aufrufer bekommt eine `LlamaException` statt der `IllegalArgumentException`, die der Konstruktor für genau diesen Wert wirft, und eine geschriebene Scratch-Datei. Die Konstruktorprüfung („Validate here, not per request“) kommt erst danach zum Zug. Die Javadoc nannte als `IllegalArgumentException`-Fall nur die gleiche ID.
+- **Fix:** `fork` weist eine negative ID vor jedem Modellaufruf mit derselben Meldung wie der Konstruktor ab; Javadoc ergänzt.
+- **Reproduktion:** `SessionTest#forkToANegativeSlotIdRejectedBeforeTheModelIsTouched` (mit `null`-Modell: jeder Modellaufruf zeigt sich als `NullPointerException`)
+- **Rot-Grün-Nachweis:** ohne Fix rot („Unexpected exception type thrown, expected: <java.lang.IllegalArgumentException> but was: <java.lang.NullPointerException>“), mit Fix 3/3 (skipped 0), Gegenprobe per `git stash` rot, danach wieder grün. `SessionStateTest` 13/13, `LlamaArchitectureTest` 13/13; `spotless:apply` und `spotbugs:check` grün. Den nativen Pfad (Datei geschrieben, `LlamaException` aus `restoreSlot`) habe ich nicht laufen lassen: keine native Bibliothek und kein Modell in dieser Umgebung.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

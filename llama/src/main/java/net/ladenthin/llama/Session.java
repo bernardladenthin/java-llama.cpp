@@ -244,10 +244,15 @@ public final class Session implements AutoCloseable {
      * @param newSlotId the slot the forked session is bound to (must differ from this session's)
      * @param filepath scratch file used to transfer the slot KV state
      * @return the forked session, positioned at this session's current state
-     * @throws IllegalArgumentException if {@code newSlotId} equals this session's slot id
+     * @throws IllegalArgumentException if {@code newSlotId} is negative or equals this session's slot id
      * @throws IllegalStateException if a stream is in progress
      */
     public Session fork(int newSlotId, String filepath) {
+        // Before any model call: the constructor below would reject it too, but only after the slot
+        // was saved to filepath and restored into the invalid id.
+        if (newSlotId < 0) {
+            throw new IllegalArgumentException("slotId must be non-negative, was " + newSlotId);
+        }
         if (newSlotId == slotId) {
             throw new IllegalArgumentException(
                     "fork target slot must differ from the session's own slot " + slotId + ", was " + newSlotId);

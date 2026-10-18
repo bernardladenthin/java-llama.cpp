@@ -28,4 +28,12 @@ public class SessionTest {
     public void negativeSlotIdRejectedOnCustomizerConstructor() {
         assertThrows(IllegalArgumentException.class, () -> new Session(null, -7, null, p -> p));
     }
+
+    @Test
+    public void forkToANegativeSlotIdRejectedBeforeTheModelIsTouched() {
+        // A null model: any model call (saving the slot first) would surface as a NullPointerException.
+        Session session = new Session(null, 0, null);
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> session.fork(-1, "fork.bin"));
+        assertThat(ex.getMessage(), containsString("slotId must be non-negative"));
+    }
 }
