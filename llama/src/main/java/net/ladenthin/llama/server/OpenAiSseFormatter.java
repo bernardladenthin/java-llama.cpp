@@ -138,6 +138,8 @@ final class OpenAiSseFormatter {
         ObjectNode model = OBJECT_MAPPER.createObjectNode();
         model.put("id", modelId);
         model.put("object", "model");
+        // Required by the OpenAI model object; upstream's get_res_model_info sends the current time.
+        model.put("created", System.currentTimeMillis() / 1000L);
         model.put("owned_by", "llama.cpp");
         if (ftype != null && !ftype.isEmpty()) {
             model.put("ftype", ftype);

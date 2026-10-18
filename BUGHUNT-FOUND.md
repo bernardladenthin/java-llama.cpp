@@ -88,6 +88,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F109](#f109) — niedrig — *gefixt*
 - [F111](#f111) — niedrig — *gefixt*
 - [F112](#f112) — mittel — *gefixt*
+- [F113](#f113) — niedrig — *gefixt*
 
 ## Funde
 
@@ -958,6 +959,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Offen (nicht geändert):** upstream bietet `/v1/messages/count_tokens` und die `input_tokens`-Routen tatsächlich an; sie hier nachzubauen bräuchte eine Tokenzählung über das Backend (`OpenAiBackend` hat keine) – ein API-Zusatz.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `609b53e`
+
+### F113 – java-llama.cpp: `/v1/models` lässt das Pflichtfeld `created` weg
+- **Zeit:** 2026-10-18 10:05 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiSseFormatter.java:142` (`modelsJson`)
+- **Schwere:** niedrig
+- **Beschreibung:** Das OpenAI-Modellobjekt hat vier Pflichtfelder (`id`, `object`, `created`, `owned_by`); `modelsJson` setzte `created` nicht. Streng typisierte Clients lesen die Liste dann nicht ein (etwa Rusts `async-openai`, dessen `Model` `created: u32` verlangt, oder Clients, die ihre Modelle mit dem OpenAI-Schema validieren). upstreams `get_res_model_info` (`server-context.cpp:5078`, b11639) setzt `created` auf die aktuelle Unix-Zeit.
+- **Fix:** `created` wird mit der aktuellen Unix-Zeit in Sekunden gesetzt, wie upstream.
+- **Reproduktion:** `OpenAiSseFormatterTest#modelsJsonCarriesTheRequiredCreatedTimestampLikeUpstream`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <true> but: was <false>“ für `isIntegralNumber`), mit Fix grün (15/15 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 49/49, `OaiRerankSupportTest` 13/13, `AnthropicApiSupportTest` 22/22, `ResponsesApiSupportTest` 51/51, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 28/28, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
