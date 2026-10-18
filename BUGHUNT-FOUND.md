@@ -87,6 +87,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F108](#f108) — niedrig — *gefixt*
 - [F109](#f109) — niedrig — *gefixt*
 - [F111](#f111) — niedrig — *gefixt*
+- [F112](#f112) — mittel — *gefixt*
 
 ## Funde
 
@@ -945,6 +946,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** gegen den Stand mit der neutralen Naht rot, jeder Teil für sich (3 Fehlschläge: „Unexpected exception thrown: … 'documents' must be a non-empty array“, „Expected: is <true> but: was <false>“, „Expected: is "b" but: was ""“), mit Fix grün (13/13 der Klasse, skipped 0). Die `git stash`-Gegenprobe ging hier nicht (ohne Naht kompiliert der Test nicht; der danach gelesene Bericht war der alte) und wurde durch den Lauf gegen den Naht-Stand ersetzt. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 22/22, `ResponsesApiSupportTest` 51/51, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 28/28, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `2831610`
+
+### F112 – java-llama.cpp: Unterpfade einer Route laufen durch deren Handler (`/v1/messages/count_tokens` erzeugt eine ganze Antwort)
+- **Zeit:** 2026-10-18 09:50 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java:271` (`register`, `exactPath` neu)
+- **Schwere:** mittel
+- **Beschreibung:** Gefunden beim Abgleich mit upstreams Routenliste (`tools/server/server.cpp`, b11639). `com.sun.net.httpserver` ordnet eine Anfrage dem Kontext mit dem **längsten Präfix** zu, nicht dem exakten Pfad, und kein Handler prüfte den Pfad nach. Damit beantwortete jede Route auch alle Pfade, die mit ihr beginnen: `POST /v1/messages/count_tokens` (Claude Code zählt dort Token vor dem Senden) lief als vollständige Nachricht – eine Generierung bis zu 4096 Token (F96) statt eines Fehlers; ebenso upstreams `/v1/chat/completions/input_tokens` und `/v1/responses/input_tokens`, und `/v1/modelsXYZ` lieferte die Modellliste. upstream ordnet exakt zu.
+- **Fix:** `register` umhüllt jeden Handler außer dem Sammel-Kontext `/` mit `exactPath`: nur der Pfad selbst (und mit einem abschließenden Schrägstrich) erreicht den Handler, jeder andere bekommt 404. `/v1/reranking`, das nur über das Präfix von `/v1/rerank` erreichbar war, ist jetzt eigens registriert wie bei upstream.
+- **Reproduktion:** `OpenAiCompatServerHttpTest#aSubPathOfARouteIsNotHandledByTheRoute`; `#upstreamsRerankingAliasStillAnswers` schützt den Alias und den abschließenden Schrägstrich (ohne Fix grün)
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <404> but: was <200>“), mit Fix grün (49/49 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1, Bericht vor dem Lauf gelöscht), nach `pop` grün. Alle 25 Testklassen des Pakets `server` grün, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün. Der Agent (`llama-atmosphere-agent`) ruft keine Unterpfade auf.
+- **Offen (nicht geändert):** upstream bietet `/v1/messages/count_tokens` und die `input_tokens`-Routen tatsächlich an; sie hier nachzubauen bräuchte eine Tokenzählung über das Backend (`OpenAiBackend` hat keine) – ein API-Zusatz.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

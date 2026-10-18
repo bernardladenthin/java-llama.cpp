@@ -247,6 +247,25 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     @Test
+    public void aSubPathOfARouteIsNotHandledByTheRoute() throws IOException {
+        // The JDK server matches contexts by prefix, so /v1/messages/count_tokens (Claude Code counts
+        // tokens there) ran a whole generation through the /v1/messages handler instead of a 404.
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
+            String body = "{\"model\":\"m\",\"max_tokens\":16,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+            assertThat(post(server.getPort(), "/v1/messages/count_tokens", body, "").code, is(404));
+        }
+    }
+
+    @Test
+    public void upstreamsRerankingAliasStillAnswers() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
+            String body = "{\"query\":\"q\",\"documents\":[\"a\"]}";
+            assertThat(post(server.getPort(), "/v1/reranking", body, "").code, is(200));
+            assertThat(post(server.getPort(), "/v1/chat/completions/", CHAT_BODY, "").code, is(200));
+        }
+    }
+
+    @Test
     public void anthropicMessagesNonStreamingReturnsMessage() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
             String body = "{\"model\":\"test-model\",\"max_tokens\":16,"

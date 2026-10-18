@@ -209,6 +209,7 @@ public final class OpenAiCompatServer implements AutoCloseable {
         register(PATH_RERANK, this::handleRerank);
         register("/rerank", this::handleRerank);
         register("/reranking", this::handleRerank);
+        register("/v1/reranking", this::handleRerank);
         register(PATH_INFILL, this::handleInfill);
         register("/v1/infill", this::handleInfill);
         register(PATH_MESSAGES, this::handleAnthropicMessages);
@@ -257,7 +258,25 @@ public final class OpenAiCompatServer implements AutoCloseable {
      * cross-cutting CORS/preflight wiring applies uniformly to every route (including the catch-all).
      */
     private void register(String path, HttpHandler handler) {
-        http.createContext(path, handler).getFilters().add(corsFilter);
+        http.createContext(path, "/".equals(path) ? handler : exactPath(path, handler))
+                .getFilters()
+                .add(corsFilter);
+    }
+
+    /**
+     * Let {@code handler} answer only {@code path} itself (and {@code path} with one trailing slash). The
+     * JDK server matches a context by prefix, so without this {@code /v1/messages/count_tokens} ran a whole
+     * generation through the {@code /v1/messages} handler; upstream routes match exactly.
+     */
+    private HttpHandler exactPath(String path, HttpHandler handler) {
+        return exchange -> {
+            String requested = exchange.getRequestURI().getPath();
+            if (path.equals(requested) || (path + "/").equals(requested)) {
+                handler.handle(exchange);
+            } else {
+                handleNotFound(exchange);
+            }
+        };
     }
 
     /**
