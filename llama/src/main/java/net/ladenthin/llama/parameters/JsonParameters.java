@@ -233,18 +233,25 @@ abstract class JsonParameters {
 
     /**
      * Conditionally store a JSON-encoded string under {@code key}: when {@code text}
-     * is {@code null} the call is a no-op (returns {@code this}); otherwise the value
-     * is JSON-encoded and a new instance is returned.
+     * is {@code null} an earlier value is removed (and {@code this} returned when there is
+     * none); otherwise the value is JSON-encoded and a new instance is returned.
      *
      * @param field the field to set
      * @param text  the optional input; {@code null} means "leave the parameter unset"
      * @param <T>  the concrete subtype of this parameter set
-     * @return {@code this} if {@code text} is null, otherwise a new instance with the entry set
+     * @return {@code this} if {@code text} is null and the field is unset, otherwise a new
+     *     instance with the entry set or removed
      */
     @SuppressWarnings({"unchecked", "TypeParameterUnusedInFormals"})
     protected final <T extends JsonParameters> T withOptionalJson(RequestField field, @Nullable String text) {
         if (text == null) {
-            return (T) this;
+            // the withers built on this document "null clears": an earlier value must not survive
+            if (!parameters.containsKey(field.getKey())) {
+                return (T) this;
+            }
+            Map<String, String> next = new HashMap<>(parameters);
+            next.remove(field.getKey());
+            return withParameters(Collections.unmodifiableMap(next));
         }
         return withPut(field, serializer.toJsonString(text));
     }

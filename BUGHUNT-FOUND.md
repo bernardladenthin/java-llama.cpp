@@ -98,6 +98,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F125](#f125) — niedrig — *gefixt*
 - [F128](#f128) — mittel — *gefixt*
 - [F133](#f133) — niedrig — *gefixt*
+- [F134](#f134) — mittel — *gefixt*
 
 ## Funde
 
@@ -1108,6 +1109,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: not map containing ["--pooling"->ANYTHING] but: was <{--fit=on, --pooling=mean}>“, die übrigen 92 Tests der Klasse grün), mit Fix 93/93 (skipped 0), Gegenprobe per `git stash` rot, danach wieder grün. `LlamaArchitectureTest` 13/13, `WireNameRegistryTest` 8/8, `ModelParametersExtendedTest` 148/148; `spotless:check` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `7231e71`
+
+<a id="f134"></a>
+### F134 – java-llama.cpp: fünf `InferenceParameters`-Wither „`null` clears“ behalten den alten Wert
+- **Zeit:** 2026-10-18 21:05 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/JsonParameters.java:245` (`withOptionalJson`), Aufrufer `InferenceParameters.withPrompt`/`withInputPrefix`/`withInputSuffix`/`withGrammar`/`withToolChoice`
+- **Schwere:** mittel
+- **Beschreibung:** Die fünf Wither dokumentieren `null` als „clears“ (bei `withPrompt`: „clears any prior prompt“). Alle gehen über `withOptionalJson`, das bei `null` nur `this` zurückgibt. Ein früher gesetzter Wert bleibt also im Request: `withGrammar(g).withGrammar(null)` schickt die Grammatik weiter mit, die Generierung bleibt eingeschränkt, ebenso `tool_choice` oder ein Infill-Präfix. Der vorhandene Test `testToJsonStringNull` setzt `null` nur auf ein frisches Objekt und sieht das nicht.
+- **Fix:** `withOptionalJson(field, null)` entfernt einen vorhandenen Eintrag (neue Instanz, Original unverändert) und gibt nur dann `this` zurück, wenn der Eintrag fehlt; Javadoc angepasst.
+- **Reproduktion:** `InferenceParametersTest#test{Prompt,InputPrefix,InputSuffix,Grammar,ToolChoice}NullClearsAnEarlierValue`, `JsonParametersTest#withOptionalJson_nullRemovesAnEarlierValue`
+- **Rot-Grün-Nachweis:** ohne Fix rot – alle fünf Wither-Tests (z. B. „Expected: not map containing ["grammar"->ANYTHING] but: was <{grammar="x"}>“) und der Basistest („expected: not same but was: <TestBuilder{keys=[grammar], values=redacted}>“); mit Fix `InferenceParametersTest` 111/111 und `JsonParametersTest` 26/26 (skipped 0), Gegenprobe per `git stash` wieder rot. PIT auf `JsonParameters`: 18/18 getötet. `LlamaArchitectureTest` 13/13, `WireNameRegistryTest` 8/8, `OpenAiRequestMapperTest` 31/31; `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

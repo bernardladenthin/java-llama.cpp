@@ -746,6 +746,40 @@ public class InferenceParametersTest {
     }
 
     @Test
+    public void testPromptNullClearsAnEarlierValue() {
+        InferenceParameters params = InferenceParameters.empty().withPrompt("x").withPrompt(null);
+        assertThat(params.parameters, not(hasKey("prompt")));
+    }
+
+    @Test
+    public void testInputPrefixNullClearsAnEarlierValue() {
+        InferenceParameters params =
+                InferenceParameters.empty().withInputPrefix("x").withInputPrefix(null);
+        assertThat(params.parameters, not(hasKey("input_prefix")));
+    }
+
+    @Test
+    public void testInputSuffixNullClearsAnEarlierValue() {
+        InferenceParameters params =
+                InferenceParameters.empty().withInputSuffix("x").withInputSuffix(null);
+        assertThat(params.parameters, not(hasKey("input_suffix")));
+    }
+
+    @Test
+    public void testGrammarNullClearsAnEarlierValue() {
+        InferenceParameters params =
+                InferenceParameters.empty().withGrammar("x").withGrammar(null);
+        assertThat(params.parameters, not(hasKey("grammar")));
+    }
+
+    @Test
+    public void testToolChoiceNullClearsAnEarlierValue() {
+        InferenceParameters params =
+                InferenceParameters.empty().withToolChoice("x").withToolChoice(null);
+        assertThat(params.parameters, not(hasKey("tool_choice")));
+    }
+
+    @Test
     public void testToJsonStringNull() {
         // toJsonString(null) returns null — only used internally but verify via grammar
         InferenceParameters params = new InferenceParameters("");

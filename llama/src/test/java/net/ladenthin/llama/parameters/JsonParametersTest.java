@@ -5,6 +5,7 @@
 package net.ladenthin.llama.parameters;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -134,6 +135,15 @@ public class JsonParametersTest {
         TestBuilder original = new TestBuilder();
         TestBuilder derived = original.withOptionalJsonPublic(RequestField.GRAMMAR, null);
         assertSame(original, derived, "null input must short-circuit to this");
+    }
+
+    @Test
+    public void withOptionalJson_nullRemovesAnEarlierValue() {
+        TestBuilder original = new TestBuilder().withOptionalJsonPublic(RequestField.GRAMMAR, "abc");
+        TestBuilder derived = original.withOptionalJsonPublic(RequestField.GRAMMAR, null);
+        assertNotSame(original, derived);
+        assertFalse(derived.parameters.containsKey("grammar"), "null must remove the earlier value");
+        assertEquals("\"abc\"", original.parameters.get("grammar"), "the original must stay unchanged");
     }
 
     @Test
