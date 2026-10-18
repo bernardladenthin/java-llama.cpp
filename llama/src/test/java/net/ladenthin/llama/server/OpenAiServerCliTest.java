@@ -286,6 +286,16 @@ public class OpenAiServerCliTest {
     }
 
     @Test
+    public void parallelSlotsShareTheContextSoTheBudgetIsPerSlot() {
+        // With an explicit --parallel N (and no unified KV cache, which llama.cpp enables only when the
+        // slot count is "auto") every slot gets n_ctx / N, and upstream's /props reports that per-slot
+        // size. Advertising the whole -c made clients size prompts for 8192 tokens a request cannot hold.
+        OpenAiServerConfig config = OpenAiServerCli.parse("-m", "m.gguf", "-c", "8192", "--parallel", "4")
+                .toServerConfig();
+        assertThat(config.getMaxInputTokens() + config.getMaxOutputTokens(), is(2048));
+    }
+
+    @Test
     public void modelParametersIncludeModelPath() {
         String json =
                 OpenAiServerCli.parse("-m", "models/m.gguf").toModelParameters().toString();

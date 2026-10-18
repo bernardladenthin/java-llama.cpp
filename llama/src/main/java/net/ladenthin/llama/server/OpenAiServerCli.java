@@ -673,7 +673,8 @@ public final class OpenAiServerCli {
 
         /**
          * Build the {@link OpenAiServerConfig} describing the server side of these options. When a
-         * context size is given, the advertised input/output token budgets are derived from it.
+         * context size is given, the advertised input/output token budgets are derived from it (per slot
+         * when {@code --parallel} is greater than one).
          *
          * @return the server configuration
          */
@@ -713,12 +714,15 @@ public final class OpenAiServerCli {
                 builder.apiKey(apiKey);
             }
             if (ctxSize > 0) {
+                // An explicit --parallel N splits the context: llama.cpp unifies the KV cache only when
+                // the slot count is "auto", so each request gets n_ctx / N (what upstream's /props reports).
+                final int slotCtx = parallel > 1 ? Math.max(1, ctxSize / parallel) : ctxSize;
                 final int maxOutputTokens =
-                        Math.min(OpenAiServerConfig.DEFAULT_MAX_OUTPUT_TOKENS, Math.max(1, ctxSize / 2));
+                        Math.min(OpenAiServerConfig.DEFAULT_MAX_OUTPUT_TOKENS, Math.max(1, slotCtx / 2));
                 builder.maxOutputTokens(maxOutputTokens);
                 // The rest of the window, not ctx minus the output default: below twice that default
                 // the output budget is ctx/2, and the subtraction of the default left 1 input token.
-                builder.maxInputTokens(Math.max(1, ctxSize - maxOutputTokens));
+                builder.maxInputTokens(Math.max(1, slotCtx - maxOutputTokens));
             }
             return builder.build();
         }
