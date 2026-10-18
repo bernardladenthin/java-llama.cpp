@@ -177,9 +177,8 @@ public class OllamaApiSupportTest {
     }
 
     @Test
-    public void chatCarriesTheThinkingInBothDirectionsLikeOllama() throws IOException {
-        // Ollama puts a model's thinking into message.thinking, in the blocking answer and in each
-        // streamed line; clients send it back in the history, where llama.cpp reads reasoning_content.
+    public void blockingChatAnswerCarriesTheThinkingLikeOllama() throws IOException {
+        // Ollama puts a model's thinking into message.thinking.
         JsonNode blocking = read(OllamaApiSupport.toOllamaChatResponse(
                 "{\"choices\":[{\"message\":{"
                         + "\"role\":\"assistant\",\"content\":\"42\",\"reasoning_content\":\"6 times 7\"},"
@@ -187,12 +186,20 @@ public class OllamaApiSupportTest {
                 "m"));
         assertThat(blocking.path("message").path("thinking").asText(), is("6 times 7"));
         assertThat(blocking.path("message").path("content").asText(), is("42"));
+    }
 
+    @Test
+    public void streamedThinkingDeltaBecomesAThinkingLineLikeOllama() throws IOException {
+        // A chunk carrying only reasoning is a line of its own in Ollama's stream, not dropped.
         String line = OllamaApiSupport.toOllamaContentLine(
                 "{\"choices\":[{\"delta\":{\"reasoning_content\":\"6 ti\"}}]}", "m");
         assertThat(
                 line == null ? "" : read(line).path("message").path("thinking").asText(), is("6 ti"));
+    }
 
+    @Test
+    public void historyThinkingBecomesReasoningContent() throws IOException {
+        // Clients send the thinking back in the history; llama.cpp's chat parser reads reasoning_content.
         JsonNode history = OllamaApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"messages\":["
                 + "{\"role\":\"user\",\"content\":\"q\"},"
                 + "{\"role\":\"assistant\",\"content\":\"42\",\"thinking\":\"6 times 7\"}]}"));
