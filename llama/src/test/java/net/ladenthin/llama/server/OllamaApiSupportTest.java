@@ -177,6 +177,30 @@ public class OllamaApiSupportTest {
     }
 
     @Test
+    public void chatCarriesTheThinkingInBothDirectionsLikeOllama() throws IOException {
+        // Ollama puts a model's thinking into message.thinking, in the blocking answer and in each
+        // streamed line; clients send it back in the history, where llama.cpp reads reasoning_content.
+        JsonNode blocking = read(OllamaApiSupport.toOllamaChatResponse(
+                "{\"choices\":[{\"message\":{"
+                        + "\"role\":\"assistant\",\"content\":\"42\",\"reasoning_content\":\"6 times 7\"},"
+                        + "\"finish_reason\":\"stop\"}]}",
+                "m"));
+        assertThat(blocking.path("message").path("thinking").asText(), is("6 times 7"));
+        assertThat(blocking.path("message").path("content").asText(), is("42"));
+
+        String line = OllamaApiSupport.toOllamaContentLine(
+                "{\"choices\":[{\"delta\":{\"reasoning_content\":\"6 ti\"}}]}", "m");
+        assertThat(
+                line == null ? "" : read(line).path("message").path("thinking").asText(), is("6 ti"));
+
+        JsonNode history = OllamaApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"messages\":["
+                + "{\"role\":\"user\",\"content\":\"q\"},"
+                + "{\"role\":\"assistant\",\"content\":\"42\",\"thinking\":\"6 times 7\"}]}"));
+        assertThat(history.path("messages").path(1).path("reasoning_content").asText(), is("6 times 7"));
+        assertThat(history.path("messages").path(1).has("thinking"), is(false));
+    }
+
+    @Test
     public void toOllamaChatResponseExtractsContentAndCountsAndDone() throws IOException {
         String openAi = "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"hello\"},"
                 + "\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":3}}";

@@ -192,6 +192,12 @@ final class OllamaApiSupport {
             }
             message.set("content", parts);
         }
+        // Ollama returns a model's thinking as message.thinking and clients send it back; llama.cpp's
+        // chat parser reads it as reasoning_content.
+        JsonNode thinking = message.remove("thinking");
+        if (thinking != null && thinking.isTextual() && !thinking.asText().isEmpty()) {
+            message.put("reasoning_content", thinking.asText());
+        }
         JsonNode toolCalls = message.path("tool_calls");
         if (toolCalls.isArray()) {
             for (JsonNode toolCall : toolCalls) {
@@ -258,6 +264,10 @@ final class OllamaApiSupport {
             JsonNode choice = completion.path("choices").path(0);
             JsonNode openAiMessage = choice.path("message");
             message.put("content", openAiMessage.path("content").asText(""));
+            String reasoning = openAiMessage.path("reasoning_content").asText("");
+            if (!reasoning.isEmpty()) {
+                message.put("thinking", reasoning);
+            }
             ArrayNode ollamaToolCalls = toOllamaToolCalls(openAiMessage.path("tool_calls"));
             if (ollamaToolCalls.size() > 0) {
                 message.set("tool_calls", ollamaToolCalls);
@@ -280,8 +290,9 @@ final class OllamaApiSupport {
     }
 
     /**
-     * Translate one streamed OpenAI chunk into an Ollama NDJSON content line, or return {@code null} when
-     * the chunk carries no assistant text to emit (role-only, finish-only or usage-only chunks).
+     * Translate one streamed OpenAI chunk into an Ollama NDJSON content line (reasoning deltas as
+     * {@code message.thinking}, as Ollama streams them), or return {@code null} when the chunk carries
+     * neither assistant text nor thinking (role-only, finish-only or usage-only chunks).
      *
      * @param openAiChunkJson one OpenAI {@code chat.completion.chunk}
      * @param model the model id to echo
@@ -290,8 +301,10 @@ final class OllamaApiSupport {
     static @Nullable String toOllamaContentLine(String openAiChunkJson, String model) {
         try {
             JsonNode chunk = OBJECT_MAPPER.readTree(openAiChunkJson);
-            JsonNode content = chunk.path("choices").path(0).path("delta").path("content");
-            if (!content.isTextual() || content.asText().isEmpty()) {
+            JsonNode delta = chunk.path("choices").path(0).path("delta");
+            String content = delta.path("content").asText("");
+            String thinking = delta.path("reasoning_content").asText("");
+            if (content.isEmpty() && thinking.isEmpty()) {
                 return null;
             }
             ObjectNode root = OBJECT_MAPPER.createObjectNode();
@@ -299,7 +312,10 @@ final class OllamaApiSupport {
             root.put("created_at", nowIso());
             ObjectNode message = root.putObject("message");
             message.put("role", "assistant");
-            message.put("content", content.asText());
+            message.put("content", content);
+            if (!thinking.isEmpty()) {
+                message.put("thinking", thinking);
+            }
             root.put("done", false);
             return root.toString() + "\n";
         } catch (IOException e) {
