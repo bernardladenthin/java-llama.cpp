@@ -1133,7 +1133,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `SessionTest#forkToANegativeSlotIdRejectedBeforeTheModelIsTouched` (mit `null`-Modell: jeder Modellaufruf zeigt sich als `NullPointerException`)
 - **Rot-Grün-Nachweis:** ohne Fix rot („Unexpected exception type thrown, expected: <java.lang.IllegalArgumentException> but was: <java.lang.NullPointerException>“), mit Fix 3/3 (skipped 0), Gegenprobe per `git stash` rot, danach wieder grün. `SessionStateTest` 13/13, `LlamaArchitectureTest` 13/13; `spotless:apply` und `spotbugs:check` grün. Den nativen Pfad (Datei geschrieben, `LlamaException` aus `restoreSlot`) habe ich nicht laufen lassen: keine native Bibliothek und kein Modell in dieser Umgebung.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `965b540`
 
 ## Offene Verdachte ohne Fund-ID
 
