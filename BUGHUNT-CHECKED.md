@@ -210,3 +210,5 @@ Ergebnisse: `kein Fund`, `widerlegt` (Verdacht geprüft, Code korrekt), `unsiche
 - `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java` · `f10f4c6` · 2026-10-18 · Fund F95 — llama.cpp-Sampling-Felder (`min_p`, `repeat_penalty`, `grammar`, `n_predict` …) verworfen; Feldmenge gegen `server-schema.cpp` gehalten
 - `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java` · `7376c4a` · 2026-10-18 · Fund F96 — `max_tokens`-Vorgabe 4096 und `chat_template_kwargs` wie upstreams `convert_anthropic_to_oai`
 - `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` · `6f86c26` · 2026-10-18 · Fund F97 — `message.thinking` ⇄ `reasoning_content` in Antwort, Stream und Verlauf
+- `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` · `77913cb` · 2026-10-18 · Fund F98 — `streamOllamaChat` ohne Usage-Chunk
+- `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` · `7e6c0b0` · 2026-10-18 · Fund F98, F97 — Tokenzahlen in der Abschlusszeile, `usageOf`

@@ -332,6 +332,19 @@ final class OllamaApiSupport {
      * @return the final Ollama NDJSON line (with trailing newline)
      */
     static String toOllamaDoneLine(String model, ToolCallDeltaAccumulator accumulator) {
+        return toOllamaDoneLine(model, accumulator, null);
+    }
+
+    /**
+     * Build the terminating Ollama NDJSON line ({@code "done":true}) with the token counts of the
+     * stream's usage chunk, as the blocking answer reports them.
+     *
+     * @param model the model id to echo
+     * @param accumulator the tool-call accumulator fed with the stream's chunks
+     * @param usage the OpenAI {@code usage} object of the stream's trailing chunk, or {@code null}
+     * @return the final Ollama NDJSON line (with trailing newline)
+     */
+    static String toOllamaDoneLine(String model, ToolCallDeltaAccumulator accumulator, @Nullable JsonNode usage) {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
         root.put("model", model);
         root.put("created_at", nowIso());
@@ -344,9 +357,29 @@ final class OllamaApiSupport {
                 message.set("tool_calls", ollamaToolCalls);
             }
         }
+        if (usage != null && usage.isObject()) {
+            root.put("prompt_eval_count", usage.path("prompt_tokens").asLong(0));
+            root.put("eval_count", usage.path("completion_tokens").asLong(0));
+        }
         root.put("done", true);
         root.put("done_reason", "stop");
         return root.toString() + "\n";
+    }
+
+    /**
+     * Read the {@code usage} object of a streamed OpenAI chunk (the trailing chunk the stream emits for
+     * {@code stream_options.include_usage}).
+     *
+     * @param openAiChunkJson one OpenAI {@code chat.completion.chunk}
+     * @return the usage object, or {@code null} when the chunk carries none or does not parse
+     */
+    static @Nullable JsonNode usageOf(String openAiChunkJson) {
+        try {
+            JsonNode usage = OBJECT_MAPPER.readTree(openAiChunkJson).path("usage");
+            return usage.isObject() ? usage : null;
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     /** Convert OpenAI tool calls (arguments = JSON string) to Ollama tool calls (arguments = object). */

@@ -232,6 +232,21 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     @Test
+    public void ollamaChatStreamingDoneLineCarriesTheTokenCountsLikeTheBlockingAnswer() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
+            // The blocking /api/chat reports prompt_eval_count/eval_count; clients compute tokens/s from
+            // the done line of the stream, which needs the native stream's usage chunk.
+            String body = "{\"model\":\"test-model\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+            Response response = post(server.getPort(), "/api/chat", body, "");
+            String[] lines = response.body.trim().split("\n");
+            JsonNode done = new com.fasterxml.jackson.databind.ObjectMapper().readTree(lines[lines.length - 1]);
+            assertThat(done.path("done").asBoolean(false), is(true));
+            assertThat(done.path("prompt_eval_count").asInt(-1), is(12));
+            assertThat(done.path("eval_count").asInt(-1), is(3));
+        }
+    }
+
+    @Test
     public void anthropicMessagesNonStreamingReturnsMessage() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
             String body = "{\"model\":\"test-model\",\"max_tokens\":16,"

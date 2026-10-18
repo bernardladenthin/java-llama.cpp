@@ -27,6 +27,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import org.jspecify.annotations.Nullable;
@@ -536,16 +537,23 @@ public final class OpenAiCompatServer implements AutoCloseable {
         exchange.getResponseHeaders().set("Cache-Control", "no-cache");
         exchange.sendResponseHeaders(HTTP_OK, 0);
         final ToolCallDeltaAccumulator accumulator = new ToolCallDeltaAccumulator();
+        // The done line reports the token counts, as the blocking answer does; they arrive in the
+        // stream's usage chunk.
+        final AtomicReference<JsonNode> usage = new AtomicReference<>();
         try (ResponseStream out = new ResponseStream(exchange.getResponseBody())) {
             try {
-                backend.stream(openAiRequest, chunkJson -> {
+                backend.stream(withUsageChunk(openAiRequest), chunkJson -> {
                     accumulator.accept(chunkJson);
+                    JsonNode chunkUsage = OllamaApiSupport.usageOf(chunkJson);
+                    if (chunkUsage != null) {
+                        usage.set(chunkUsage);
+                    }
                     String line = OllamaApiSupport.toOllamaContentLine(chunkJson, model);
                     if (line != null) {
                         out.writeStrict(line);
                     }
                 });
-                out.writeStrict(OllamaApiSupport.toOllamaDoneLine(model, accumulator));
+                out.writeStrict(OllamaApiSupport.toOllamaDoneLine(model, accumulator, usage.get()));
             } catch (IllegalArgumentException | InvalidRequestException e) {
                 out.writeQuietly(ollamaError(message(e)) + "\n");
             } catch (IOException e) {
