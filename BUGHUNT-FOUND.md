@@ -72,6 +72,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F91](#f91) — niedrig — *gefixt*
 - [F92](#f92) — niedrig — *gefixt*
 - [F93](#f93) — niedrig — *gefixt*
+- [F94](#f94) — niedrig — *gefixt*
 
 ## Funde
 
@@ -764,6 +765,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **CI-Bedarf:** Der Integrationsjob `test-java-llama-langchain4j-integration` läuft mit Modell; ein Ende-zu-Ende-Nachweis der Zählung im Stream wäre dort möglich, ist aber nicht Voraussetzung.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `cde7159`
+
+### F94 – java-llama.cpp: Textteile einer LangChain4j-Nutzernachricht werden ohne Trenner zusammengeklebt
+- **Zeit:** 2026-10-18 04:55 UTC
+- **Datei:** `llama-langchain4j/src/main/java/net/ladenthin/llama/langchain4j/LangChain4jMapping.java:287` (`toJllamaUserMessage`)
+- **Schwere:** niedrig
+- **Beschreibung:** Musterdurchsicht nach F60/F61 im LangChain4j-Adapter. Eine `UserMessage` mit mehreren `TextContent`-Teilen und ohne Medien wurde zu einem String verbunden, aber ohne Trenner: `first` + `second` → `firstsecond`. LangChain4j-Werkzeuge (RAG-Kontext plus Frage, Vorlagen) teilen Nutzerzüge regelmäßig so auf. upstream verbindet Textteile für Vorlagen ohne typisierten Inhalt mit `\n` (`concat_content_parts`, `common/chat.cpp`, b11639); der Adapter reicht keine Parts weiter, sondern muss selbst einen Trenner wählen. Der bestehende Test `flattensMultiTextUserMessageToText` schrieb das Verhalten nur mit einem Leerzeichen am Ende des ersten Teils fest, das den Fehler verdeckte.
+- **Fix:** Verbinden mit `StringJoiner("\n")`, wie bei F60 (Anthropic) und F61 (Responses). Der festschreibende Test erwartet jetzt `"Hello \nworld"`.
+- **Reproduktion:** `LangChain4jMappingTest#joinsTextPartsWithANewlineLikeUpstream`, dazu `#flattensMultiTextUserMessageToText`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "first\nsecond" but: was "firstsecond"“, ebenso der angepasste Test), mit Fix grün (23/23 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2 Fehlschläge), nach `pop` grün; alle Modultests grün (Integrationstests ohne Modell übersprungen). Spotless/SpotBugs sind im Modul nicht deklariert (siehe F92).
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

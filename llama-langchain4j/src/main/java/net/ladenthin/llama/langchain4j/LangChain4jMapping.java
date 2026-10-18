@@ -31,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
+import java.util.StringJoiner;
 import net.ladenthin.llama.json.RerankResponseParser;
 import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.value.ContentPart;
@@ -281,10 +282,11 @@ final class LangChain4jMapping {
             return new net.ladenthin.llama.value.ChatMessage("user", message.singleText());
         }
         if (!hasNonTextContent(message)) {
-            // Multiple text parts, no media: keep the flat-string form (no array-content needed).
-            StringBuilder text = new StringBuilder();
+            // Multiple text parts, no media: keep the flat-string form (no array-content needed),
+            // joined with a newline as upstream's concat_content_parts does.
+            StringJoiner text = new StringJoiner("\n");
             for (Content content : message.contents()) {
-                text.append(((TextContent) content).text());
+                text.add(((TextContent) content).text());
             }
             return new net.ladenthin.llama.value.ChatMessage("user", text.toString());
         }

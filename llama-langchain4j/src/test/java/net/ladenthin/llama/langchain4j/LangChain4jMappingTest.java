@@ -77,9 +77,23 @@ class LangChain4jMappingTest {
         ChatMessage mapped = LangChain4jMapping.toJllamaRequest(request).getMessages().get(0);
 
         assertThat(mapped.getRole(), is("user"));
-        assertThat(mapped.getContent(), is("Hello world"));
+        assertThat(mapped.getContent(), is("Hello \nworld"));
         // Text-only content needs no multimodal array form.
         assertThat(mapped.hasParts(), is(false));
+    }
+
+    @Test
+    void joinsTextPartsWithANewlineLikeUpstream() {
+        ChatRequest request =
+                ChatRequest.builder()
+                        .messages(UserMessage.from(TextContent.from("first"), TextContent.from("second")))
+                        .build();
+
+        ChatMessage mapped = LangChain4jMapping.toJllamaRequest(request).getMessages().get(0);
+
+        // Upstream's concat_content_parts joins text parts with a newline; without a separator the
+        // words at the seam merge ("firstsecond").
+        assertThat(mapped.getContent(), is("first\nsecond"));
     }
 
     @Test
