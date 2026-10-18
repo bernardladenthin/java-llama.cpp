@@ -35,6 +35,9 @@ import net.ladenthin.llama.parameters.InferenceParameters;
  */
 final class OpenAiRequestMapper {
 
+    /** Upstream's {@code n_probs} for a chat request with {@code logprobs} but no {@code top_logprobs}. */
+    private static final int DEFAULT_TOP_LOGPROBS = 20;
+
     /** Completion parameters OpenAI defines that upstream rejects ({@code oaicompat_completion_params_parse}). */
     private static final List<String> UNSUPPORTED_COMPLETION_PARAMS =
             Collections.unmodifiableList(Arrays.asList("best_of", "suffix"));
@@ -63,6 +66,12 @@ final class OpenAiRequestMapper {
 
         params = applyCommonFields(params, request);
         params = applyReasoningControls(params, request);
+
+        // Chat logprobs, as upstream's oaicompat_chat_params_parse maps them (the legacy completions
+        // "logprobs" is an integer and means something else, so this stays on the chat path).
+        if (request.path("logprobs").asBoolean(false)) {
+            params = params.withNProbs(request.path("top_logprobs").asInt(DEFAULT_TOP_LOGPROBS));
+        }
 
         // Tools are chat-only.
         JsonNode tools = request.path("tools");

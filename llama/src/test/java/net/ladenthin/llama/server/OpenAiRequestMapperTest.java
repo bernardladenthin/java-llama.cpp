@@ -172,6 +172,28 @@ public class OpenAiRequestMapperTest {
         assertThat(out.path("n_predict").asInt(), is(128));
     }
 
+    // Upstream's oaicompat_chat_params_parse (server-common.cpp, b11639) turns logprobs=true into
+    // n_probs = top_logprobs, 20 when top_logprobs is absent; the native layer then reports them.
+
+    @Test
+    public void logprobsWithTopLogprobsBecomesNProbs() throws IOException {
+        JsonNode out = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," + "\"logprobs\":true,\"top_logprobs\":3}");
+        assertThat(out.path("n_probs").asInt(-1), is(3));
+    }
+
+    @Test
+    public void logprobsWithoutTopLogprobsDefaultsToTwentyLikeUpstream() throws IOException {
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":true}");
+        assertThat(out.path("n_probs").asInt(-1), is(20));
+    }
+
+    @Test
+    public void logprobsFalseLeavesNProbsUnset() throws IOException {
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":false}");
+        assertThat(out.has("n_probs"), is(false));
+    }
+
     @Test
     public void maxCompletionTokensPreferredOverMaxTokens() throws IOException {
         JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
