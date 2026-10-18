@@ -7,6 +7,7 @@ package net.ladenthin.llama.server;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -193,6 +194,17 @@ public class RouterClientTest {
         modelsBody.set("{\"data\":[" + entry("qwen", "loaded") + "]}");
 
         RouterModel loaded = client.awaitModelLoaded("qwen", Long.MAX_VALUE);
+
+        assertThat(loaded.getStatus(), is(RouterModel.Status.LOADED));
+    }
+
+    @Test
+    public void awaitModelLoaded_zeroTimeoutStillPollsOnce() throws Exception {
+        // A timeout of 0 asks "is it loaded now?"; the deadline is already reached before the first
+        // poll, which skipped polling and reported a timeout ("last status: null") for a loaded model.
+        modelsBody.set("{\"data\":[" + entry("qwen", "loaded") + "]}");
+
+        RouterModel loaded = assertDoesNotThrow(() -> client.awaitModelLoaded("qwen", 0L));
 
         assertThat(loaded.getStatus(), is(RouterModel.Status.LOADED));
     }

@@ -101,6 +101,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F134](#f134) — mittel — *gefixt*
 - [F137](#f137) — niedrig — *gefixt*
 - [F138](#f138) — niedrig — *gefixt*
+- [F143](#f143) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1147,6 +1148,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix 7/7 (skipped 0), Gegenprobe per `git stash` rot, danach wieder grün. `OpenAiCompatServerHttpTest` 54/54, `OpenAiServerCliTest` 45/45, `LlamaArchitectureTest` 13/13; `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `6a13092`
+
+<a id="f143"></a>
+### F143 – java-llama.cpp: `RouterClient.awaitModelLoaded(id, 0)` meldet für ein geladenes Modell einen Timeout, ohne abzufragen
+- **Zeit:** 2026-10-19 01:05 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/RouterClient.java:210` (`awaitModelLoaded`)
+- **Schwere:** niedrig
+- **Beschreibung:** Die Schleife `while (System.currentTimeMillis() < deadline)` prüft die Frist vor der ersten Abfrage. Mit `timeoutMillis` 0 (die naheliegende Frage „ist es jetzt geladen?“) oder einer Frist, die vor der ersten Abfrage abläuft, wird `GET /models` nie gefragt: der Aufruf wirft „did not reach LOADED within 0 ms (last status: null)“ für ein geladenes Modell, und auch die dokumentierten Sofort-Fehler (Modell nicht gelistet, Worker gescheitert) treten nie ein. Dieselbe Klasse wie der schon behobene Überlauf bei `Long.MAX_VALUE` (Test `awaitModelLoaded_longMaxValueTimeoutStillPolls`: „would skip polling and report a timeout for a loaded model“).
+- **Fix:** Die Methode fragt mindestens einmal ab und prüft die Frist erst nach einer Abfrage, vor der Pause.
+- **Reproduktion:** `RouterClientTest#awaitModelLoaded_zeroTimeoutStillPollsOnce`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Unexpected exception thrown: java.lang.IllegalStateException: Model 'qwen' did not reach LOADED within 0 ms (last status: null)“), mit Fix 20/20 (skipped 0, die Timeout- und Sofort-Fehler-Tests unverändert grün), Gegenprobe per `git stash` rot, danach wieder grün. `LlamaArchitectureTest` 13/13; `spotless:check` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

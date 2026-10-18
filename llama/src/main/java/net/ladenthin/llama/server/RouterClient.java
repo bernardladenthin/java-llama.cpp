@@ -207,7 +207,9 @@ public final class RouterClient {
         // into a deadline in the past and time out before the first poll.
         long deadline = timeoutMillis > Long.MAX_VALUE - now ? Long.MAX_VALUE : now + timeoutMillis;
         RouterModel last = null;
-        while (System.currentTimeMillis() < deadline) {
+        // Polls at least once, then until the deadline: a timeout of 0 (or one that elapses before the
+        // first poll) would otherwise report a timeout for a model that is already loaded.
+        while (true) {
             Optional<RouterModel> model = findModel(modelId);
             if (!model.isPresent()) {
                 throw new IllegalStateException("Router does not list model '" + modelId
@@ -224,6 +226,9 @@ public final class RouterClient {
             // upstream's own wait for a model treats it as ready too.
             if (last.getStatus() == RouterModel.Status.LOADED || last.getStatus() == RouterModel.Status.SLEEPING) {
                 return last;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                break;
             }
             // Interruptible pause between polls; a latch that is never counted down is the
             // project's Thread.sleep-free wait primitive (see LlamaArchitectureTest#noThreadSleep).
