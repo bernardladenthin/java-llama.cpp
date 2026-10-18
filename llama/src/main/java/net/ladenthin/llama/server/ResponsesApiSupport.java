@@ -134,8 +134,12 @@ final class ResponsesApiSupport {
             // The Responses API uses the same tool_choice + parallel_tool_calls fields as chat; forward
             // them so the shared chat core honors them. The mapper consumes the string form of
             // tool_choice ("auto"/"none"/"required"), which is what we forward here.
-            if (request.path("tool_choice").isTextual()) {
-                openAi.put("tool_choice", request.path("tool_choice").asText());
+            JsonNode toolChoice = request.path("tool_choice");
+            if (toolChoice.isTextual()) {
+                openAi.put("tool_choice", toolChoice.asText());
+            } else if ("function".equals(toolChoice.path("type").asText(""))) {
+                // {"type":"function","name":...}: the chat side knows only strings, "required" is closest.
+                openAi.put("tool_choice", "required");
             }
             if (request.path("parallel_tool_calls").isBoolean()) {
                 openAi.put(

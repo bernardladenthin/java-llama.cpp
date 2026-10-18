@@ -85,6 +85,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F106](#f106) — niedrig — *gefixt*
 - [F107](#f107) — niedrig — *gefixt*
 - [F108](#f108) — niedrig — *gefixt*
+- [F109](#f109) — niedrig — *gefixt*
 
 ## Funde
 
@@ -920,6 +921,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot (2 Fehlschläge: „Expected: is "json_schema" but: was ""“, „Expected: is "json_object" but: was ""“), mit Fix grün (50/50 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 22/22, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün (eine erste Fassung mit einem Array-Literal meldete `SACM_STATIC_ARRAY_CREATED_IN_METHOD`, jetzt eine Konstante).
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `941357f`
+
+### F109 – java-llama.cpp: `tool_choice`, das eine Funktion benennt, läuft als `auto`
+- **Zeit:** 2026-10-18 09:00 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java:74`, `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`toOpenAiChatRequest`, Werkzeugblock)
+- **Schwere:** niedrig
+- **Beschreibung:** Musterdurchsicht nach F107. OpenAI-Chat benennt ein Werkzeug mit `tool_choice` `{"type":"function","function":{"name":"f"}}`, die Responses-API mit `{"type":"function","name":"f"}`. Mapper und Responses-Übersetzung nahmen nur die Textform; ein Objekt ging verloren, die Anfrage lief als `auto`, das Modell durfte antworten, ohne das verlangte Werkzeug aufzurufen. upstream liest `tool_choice` nur als Zeichenkette (`json_value(body, "tool_choice", "auto")`, `server-common.cpp:1282`, b11639; `common_chat_tool_choice_parse_oaicompat` kennt `auto`/`none`/`required`) und fällt bei einem Objekt ebenso auf `auto` zurück. Die Anthropic-Übersetzung bildet ihr `{"type":"tool"}` schon auf `required` ab.
+- **Fix:** Ein Objekt mit `type` `function` wird auf beiden Wegen zu `required`, dem nächsten Wert, den llama.cpp kennt (mit einem einzigen Werkzeug genau das verlangte).
+- **Reproduktion:** `OpenAiRequestMapperTest#toolChoiceNamingAFunctionRequiresAToolCall`, `ResponsesApiSupportTest#toolChoiceNamingAFunctionRequiresAToolCall`
+- **Rot-Grün-Nachweis:** ohne Fix rot, je Weg für sich (2 Fehlschläge, je „Expected: is "required" but: was ""“), mit Fix grün (28/28 und 51/51, skipped 0); Gegenprobe per `git stash` beider Produktionsdateien rot (1 + 1), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 22/22, `ResponsesStreamTranslatorTest` 5/5, `OllamaApiSupportTest` 32/32, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

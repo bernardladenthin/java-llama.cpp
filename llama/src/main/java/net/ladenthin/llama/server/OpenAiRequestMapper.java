@@ -71,6 +71,10 @@ final class OpenAiRequestMapper {
             JsonNode toolChoice = request.path("tool_choice");
             if (toolChoice.isTextual()) {
                 params = params.withToolChoice(toolChoice.asText());
+            } else if ("function".equals(toolChoice.path("type").asText(""))) {
+                // A named function: llama.cpp's chat parser reads tool_choice only as a string and would
+                // fall back to "auto"; "required" is the closest it allows.
+                params = params.withToolChoice("required");
             }
             JsonNode parallelToolCalls = request.path("parallel_tool_calls");
             if (parallelToolCalls.isBoolean()) {

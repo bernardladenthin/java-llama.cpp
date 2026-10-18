@@ -254,6 +254,15 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void toolChoiceNamingAFunctionRequiresAToolCall() throws IOException {
+        // Responses names a tool as {"type":"function","name":...}; the chat side only knows strings.
+        JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
+                + "\"tools\":[{\"type\":\"function\",\"name\":\"f\",\"parameters\":{\"type\":\"object\"}}],"
+                + "\"tool_choice\":{\"type\":\"function\",\"name\":\"f\"}}"));
+        assertThat(openAi.path("tool_choice").asText(), is("required"));
+    }
+
+    @Test
     public void previousResponseIdIsRejectedLikeUpstream() throws IOException {
         // There is no response store: answering a turn that continues by previous_response_id without
         // its history would silently answer something else. upstream rejects it with a 400.

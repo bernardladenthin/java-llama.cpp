@@ -194,6 +194,17 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void toolChoiceNamingAFunctionRequiresAToolCall() throws IOException {
+        // {"type":"function","function":{"name":...}} asks for that tool; llama.cpp's chat parser reads
+        // tool_choice only as a string and fell back to "auto". "required" is the closest it allows, as
+        // for Anthropic's {"type":"tool"}.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                + "\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"f\"}}}");
+        assertThat(out.path("tool_choice").asText(), is("required"));
+    }
+
+    @Test
     public void parallelToolCallsForwarded() throws IOException {
         JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
                 + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"a\"}}],"
