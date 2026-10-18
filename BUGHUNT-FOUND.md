@@ -930,6 +930,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** Ein Objekt mit `type` `function` wird auf beiden Wegen zu `required`, dem nächsten Wert, den llama.cpp kennt (mit einem einzigen Werkzeug genau das verlangte).
 - **Reproduktion:** `OpenAiRequestMapperTest#toolChoiceNamingAFunctionRequiresAToolCall`, `ResponsesApiSupportTest#toolChoiceNamingAFunctionRequiresAToolCall`
 - **Rot-Grün-Nachweis:** ohne Fix rot, je Weg für sich (2 Fehlschläge, je „Expected: is "required" but: was ""“), mit Fix grün (28/28 und 51/51, skipped 0); Gegenprobe per `git stash` beider Produktionsdateien rot (1 + 1), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 22/22, `ResponsesStreamTranslatorTest` 5/5, `OllamaApiSupportTest` 32/32, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Nachtrag (2026-10-18, nur beschrieben):** Zwei Kommentare neben dem Fix sind nicht nachgezogen: die Klassen-Javadoc von `OpenAiRequestMapper` nennt `tool_choice` unter den Feldern, die „verbatim as raw JSON“ weitergehen (galt schon vorher nur für die Textform), und der Kommentar über dem Werkzeugblock in `ResponsesApiSupport.toOpenAiChatRequest` beschreibt nur die Textform. Reine Doku-Abweichung, nach der Nutzerregel ohne Test nicht nachträglich geändert; Vorschlag: `tool_choice` aus der Verbatim-Aufzählung nehmen und „ein benanntes Werkzeug wird zu `required`“ ergänzen.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b7151fc`
 
