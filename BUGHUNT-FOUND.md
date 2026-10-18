@@ -358,6 +358,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ed6236d`
 
+<a id="f56"></a>
 ### F56 – java-llama.cpp: nicht darstellbarer Offline-Modellpfad ergibt `InvalidPathException` statt `ModelUnavailableException`
 - **Zeit:** 2026-10-17 22:10 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/loader/OfflineModelGuard.java:62` (`check`)
@@ -764,6 +765,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `04d4cdb`
 
+<a id="f92"></a>
 ### F92 – java-llama.cpp: blockierende LangChain4j-Antwort verliert den Denkinhalt
 - **Zeit:** 2026-10-18 05:10 UTC
 - **Datei:** `llama-langchain4j/src/main/java/net/ladenthin/llama/langchain4j/LangChain4jMapping.java:206` (`toAiMessage`)
@@ -775,6 +777,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `6caa722`
 
+<a id="f93"></a>
 ### F93 – java-llama.cpp: gestreamte LangChain4j-Antwort hat nie eine Token-Nutzung
 - **Zeit:** 2026-10-18 04:45 UTC
 - **Datei:** `llama-langchain4j/src/main/java/net/ladenthin/llama/langchain4j/LangChain4jMapping.java:105` (`toStreamingParameters`)
@@ -787,6 +790,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `cde7159`
 
+<a id="f94"></a>
 ### F94 – java-llama.cpp: Textteile einer LangChain4j-Nutzernachricht werden ohne Trenner zusammengeklebt
 - **Zeit:** 2026-10-18 04:55 UTC
 - **Datei:** `llama-langchain4j/src/main/java/net/ladenthin/llama/langchain4j/LangChain4jMapping.java:287` (`toJllamaUserMessage`)
@@ -798,6 +802,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ee99d85`
 
+<a id="f95"></a>
 ### F95 – java-llama.cpp: gestreamtes `/v1/completions` und der Chat-Pfad verwerfen llama.cpps Sampling-Felder
 - **Zeit:** 2026-10-18 05:30 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java:200` (`applyLlamaCppSampling`, neu; `readMaxTokens`)
@@ -809,6 +814,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `8ce9ffc`
 
+<a id="f96"></a>
 ### F96 – java-llama.cpp: Anthropic-Anfrage ohne `max_tokens` läuft unbegrenzt, `chat_template_kwargs` geht verloren
 - **Zeit:** 2026-10-18 05:45 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java:111` (`toOpenAiChatRequest`)
@@ -820,6 +826,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `d29e084`
 
+<a id="f97"></a>
 ### F97 – java-llama.cpp: Ollama-`/api/chat` verliert den Denkinhalt in beide Richtungen
 - **Zeit:** 2026-10-18 06:00 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:267` (`toOllamaChatResponse`, `toOllamaContentLine`, `toOpenAiMessage`)
@@ -831,6 +838,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `9eab6e0`
 
+<a id="f98"></a>
 ### F98 – java-llama.cpp: gestreamtes Ollama-`/api/chat` meldet keine Tokenzahlen
 - **Zeit:** 2026-10-18 06:15 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java:545` (`streamOllamaChat`), `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (`toOllamaDoneLine`, `usageOf`)
@@ -842,6 +850,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `0cd9f8a`
 
+<a id="f99"></a>
 ### F99 – java-llama.cpp: blockierende Responses-Antwort trägt ein leeres `message`-Item neben Werkzeugaufrufen
 - **Zeit:** 2026-10-18 06:30 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java:378` (`toResponsesResponse`)
@@ -853,6 +862,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `9d0a021`
 
+<a id="f102"></a>
 ### F102 – java-llama.cpp: Chat-Anfrage mit `id_slot: -1` wird mit 400 abgewiesen
 - **Zeit:** 2026-10-18 07:20 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java:133` (`applyCommonFields`)
@@ -864,6 +874,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ded2762`
 
+<a id="f103"></a>
 ### F103 – java-llama.cpp: `max_tokens: 0` generiert unbegrenzt statt nur den Cache zu füllen
 - **Zeit:** 2026-10-18 07:35 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java:164` (`applyCommonFields`)
@@ -875,6 +886,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `bcbafbc`
 
+<a id="f104"></a>
 ### F104 – java-llama.cpp: Ollama-Routen verwerfen `repeat_penalty`, `min_p` und weitere Optionen; `num_predict: -2` wird abgewiesen
 - **Zeit:** 2026-10-18 07:50 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:246` (`copyLlamaCppOptions`, `copyNumPredict`, neu; Aufrufe in `toOpenAiChatRequest`, `toOpenAiCompletionRequest`, `toInfillRequest`)
@@ -886,6 +898,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `0eba89d`
 
+<a id="f105"></a>
 ### F105 – java-llama.cpp: Responses-Anfrage mit `previous_response_id` wird ohne Verlauf beantwortet
 - **Zeit:** 2026-10-18 08:05 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java:56` (`toOpenAiChatRequest`)
@@ -897,6 +910,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b9bfb45`
 
+<a id="f106"></a>
 ### F106 – java-llama.cpp: Responses-Anfrage verliert `top_k`, `seed`, `stop` und llama.cpps Erweiterungen
 - **Zeit:** 2026-10-18 08:20 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java:146` (`toOpenAiChatRequest`, `CHAT_PASSTHROUGH_FIELDS` neu)
@@ -908,6 +922,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `87635b2`
 
+<a id="f107"></a>
 ### F107 – java-llama.cpp: Anthropic-`tool_choice` `none` läuft als `auto`
 - **Zeit:** 2026-10-18 08:30 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java:348` (`toOpenAiToolChoice`)
@@ -919,6 +934,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b85eed8`
 
+<a id="f108"></a>
 ### F108 – java-llama.cpp: Responses-`text.format` (strukturierte Ausgabe) wird ignoriert
 - **Zeit:** 2026-10-18 08:45 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java:177` (`appendResponseFormat`, neu; Aufruf in `toOpenAiChatRequest`)
@@ -930,6 +946,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `941357f`
 
+<a id="f109"></a>
 ### F109 – java-llama.cpp: `tool_choice`, das eine Funktion benennt, läuft als `auto`
 - **Zeit:** 2026-10-18 09:00 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java:74`, `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`toOpenAiChatRequest`, Werkzeugblock)
@@ -942,6 +959,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b7151fc`
 
+<a id="f111"></a>
 ### F111 – java-llama.cpp: Rerank im TEI-Format (`texts`) wird mit 400 abgewiesen
 - **Zeit:** 2026-10-18 09:30 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OaiRerankSupport.java:113` (`readDocuments`, `toResponse`/`toTeiResponse` neu), `llama/src/main/java/net/ladenthin/llama/server/LlamaModelBackend.java` (`rerank`)
@@ -953,6 +971,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `2831610`
 
+<a id="f112"></a>
 ### F112 – java-llama.cpp: Unterpfade einer Route laufen durch deren Handler (`/v1/messages/count_tokens` erzeugt eine ganze Antwort)
 - **Zeit:** 2026-10-18 09:50 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java:271` (`register`, `exactPath` neu)
@@ -965,6 +984,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `609b53e`
 
+<a id="f113"></a>
 ### F113 – java-llama.cpp: `/v1/models` lässt das Pflichtfeld `created` weg
 - **Zeit:** 2026-10-18 10:05 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiSseFormatter.java:142` (`modelsJson`)
@@ -976,6 +996,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `9c165a8`
 
+<a id="f114"></a>
 ### F114 – java-llama.cpp: `/api/version` meldet 0.1.0, VS Code Copilots Ollama-Anbieter lehnt den Server ab
 - **Zeit:** 2026-10-18 10:20 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:36` (`OLLAMA_VERSION`)
@@ -987,6 +1008,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `fbffef0`
 
+<a id="f115"></a>
 ### F115 – java-llama.cpp: `/api/show` verschweigt Continue die Kontextlänge
 - **Zeit:** 2026-10-18 10:35 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:89` (`showJson`)
@@ -998,6 +1020,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `4d45be1`
 
+<a id="f116"></a>
 ### F116 – java-llama.cpp: Ollama-Werkzeugergebnisse verlieren den Werkzeugnamen
 - **Zeit:** 2026-10-18 10:45 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:208` (`toOpenAiMessage`)
@@ -1009,6 +1032,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `a5e86bf`
 
+<a id="f117"></a>
 ### F117 – java-llama.cpp: Gestreamte Responses-Fehler erreichen Responses-Clients nicht
 - **Zeit:** 2026-10-18 11:20 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java:782` (`streamResponses`), `ResponsesStreamTranslator.java`
@@ -1020,6 +1044,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `011f5c3`
 
+<a id="f118"></a>
 ### F118 – java-llama.cpp: Anthropic-Serverfehler heißen `invalid_request_error`
 - **Zeit:** 2026-10-18 11:45 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java:718` (`anthropicError`)
