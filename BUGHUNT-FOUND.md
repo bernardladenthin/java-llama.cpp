@@ -797,8 +797,8 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Schwere:** niedrig
 - **Beschreibung:** Aus dem offenen Verdacht „Anthropic-Rest nach F76“. upstreams `convert_anthropic_to_oai` (`server-chat.cpp:585`, b11639) setzt `max_tokens` 4096, wenn die Anfrage keines trägt, und reicht `chat_template_kwargs` durch. `/v1/messages` übernahm `max_tokens` nur, wenn vorhanden, eine Anfrage ohne generierte also, bis der Kontext voll war; und `chat_template_kwargs` (etwa Qwen3s `enable_thinking`) wurde verworfen, obwohl der nachgeschaltete `OpenAiRequestMapper` es seit F77 liest.
 - **Fix:** Ohne Zahl in `max_tokens` wird `DEFAULT_MAX_TOKENS` (4096) gesetzt; ein Objekt in `chat_template_kwargs` wird kopiert.
-- **Reproduktion:** `AnthropicApiSupportTest#requestDefaultsMaxTokensAndPassesTemplateKwargsLikeUpstream`
-- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <4096> but: was <0>“; die zweite Assertion zu `chat_template_kwargs` ist dahinter, ohne Fix fehlt das Feld ganz), mit Fix grün (20/20 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 46/46, `AnthropicStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 25/25, `ResponsesApiSupportTest` 18/18, `OllamaApiSupportTest` 24/24, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Reproduktion:** `AnthropicApiSupportTest#requestWithoutMaxTokensIsCappedLikeUpstream`, `#requestPassesChatTemplateKwargsLikeUpstream` (zunächst ein Sammeltest, nach der Regel „ein Test je Richtung“ aufgeteilt)
+- **Rot-Grün-Nachweis:** gegen die Produktionsdatei vor `d29e084` rot, jeder Teil für sich (2 Fehlschläge: „Expected: is <4096> but: was <0>“, „Expected: is <true> but: was <false>“ für `chat_template_kwargs`), mit Fix grün (21/21 der Klasse, skipped 0). `OpenAiCompatServerHttpTest` 46/46, `AnthropicStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 25/25, `ResponsesApiSupportTest` 18/18, `OllamaApiSupportTest` 24/24, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `d29e084`
 
