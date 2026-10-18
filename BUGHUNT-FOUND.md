@@ -78,6 +78,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F97](#f97) — niedrig — *gefixt*
 - [F98](#f98) — niedrig — *gefixt*
 - [F99](#f99) — niedrig — *gefixt*
+- [F102](#f102) — niedrig — *gefixt*
 
 ## Funde
 
@@ -836,6 +837,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot (2 Fehlschläge: „Expected: is <1> but: was <2>“, „Expected: is "function_call" but: was "message"“), mit Fix grün (19/19 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `OllamaApiSupportTest` 27/27, `OpenAiRequestMapperTest` 25/25, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `9d0a021`
+
+### F102 – java-llama.cpp: Chat-Anfrage mit `id_slot: -1` wird mit 400 abgewiesen
+- **Zeit:** 2026-10-18 07:20 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java:133` (`applyCommonFields`)
+- **Schwere:** niedrig
+- **Beschreibung:** upstream liest `id_slot` mit dem Standardwert `-1` („beliebiger Slot“, `server-context.cpp:4845`, b11639). Der Mapper reichte jeden ganzzahligen Wert an `InferenceParameters.withSlotId` weiter, das negative Werte mit `IllegalArgumentException` ablehnt; der Server macht daraus 400. Ein Client, der den llama.cpp-Standard ausdrücklich mitschickt, scheiterte so auf beiden Chat-Pfaden und beim gestreamten `/v1/completions`, während das nicht gestreamte `/v1/completions` (wörtlich an upstream durchgereicht) dieselbe Anfrage annahm.
+- **Fix:** Ein negativer `id_slot` wird nicht gesetzt, das entspricht upstreams Standard. `withSlotId` bleibt streng (ein Java-Aufrufer pinnt bewusst einen Slot).
+- **Reproduktion:** `OpenAiRequestMapperTest#slotMinusOneMeansAnySlotLikeUpstream`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Unexpected exception thrown: java.lang.IllegalArgumentException: slotId must be non-negative but was -1“, als Assertion über `assertDoesNotThrow`), mit Fix grün (26/26 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 19/19, `OllamaApiSupportTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

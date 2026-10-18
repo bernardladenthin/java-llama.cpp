@@ -213,3 +213,4 @@ Ergebnisse: `kein Fund`, `widerlegt` (Verdacht geprüft, Code korrekt), `unsiche
 - `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` · `77913cb` · 2026-10-18 · Fund F98 — `streamOllamaChat` ohne Usage-Chunk
 - `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` · `7e6c0b0` · 2026-10-18 · Fund F98, F97 — Tokenzahlen in der Abschlusszeile, `usageOf`
 - `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` · `2358a6a` · 2026-10-18 · Fund F99 — blockierende `output`-Liste gegen upstreams `to_json_oaicompat_resp` und den eigenen Stream gehalten (Reasoning-, Message-, `function_call`-Items, Usage gleich)
+- `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java` · `69becc1` · 2026-10-18 · Fund F102 — Setter-Prüfungen gegen upstreams Grenzen gehalten: `id_slot` -1 ist upstreams Standard; `n_cache_reuse` (0..), `repeat_last_n`/`dry_penalty_last_n` (0..) decken sich mit dem Schema

@@ -128,8 +128,9 @@ final class OpenAiRequestMapper {
         if (cacheReuse.isIntegralNumber()) {
             params = params.withCacheReuse(cacheReuse.asInt());
         }
+        // upstream's default -1 means "any slot"; leaving the field unset is the same request.
         JsonNode slotId = request.path("id_slot");
-        if (slotId.isIntegralNumber()) {
+        if (slotId.isIntegralNumber() && slotId.asInt() >= 0) {
             params = params.withSlotId(slotId.asInt());
         }
 

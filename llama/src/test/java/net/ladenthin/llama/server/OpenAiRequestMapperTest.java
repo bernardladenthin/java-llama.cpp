@@ -7,6 +7,7 @@ package net.ladenthin.llama.server;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.closeTo;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -243,6 +244,15 @@ public class OpenAiRequestMapperTest {
         assertThat(out.path("cache_prompt").asBoolean(), is(false));
         assertThat(out.path("n_cache_reuse").asInt(), is(128));
         assertThat(out.path("id_slot").asInt(), is(2));
+    }
+
+    @Test
+    public void slotMinusOneMeansAnySlotLikeUpstream() throws IOException {
+        // upstream reads id_slot with -1 as its default ("any slot"); a client echoing that default must
+        // not get a 400 here, which the non-streamed /v1/completions (forwarded verbatim) never gives.
+        JsonNode request = MAPPER.readTree("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"id_slot\":-1}");
+        InferenceParameters params = assertDoesNotThrow(() -> mapper.toInferenceParameters(request));
+        assertThat(MAPPER.readTree(params.toJson()).path("id_slot").asInt(-1), is(-1));
     }
 
     @Test
