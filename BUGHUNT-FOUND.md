@@ -1107,7 +1107,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ModelParametersTest#testSetPoolingTypeUnspecifiedRemovesAnEarlierPoolingType`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: not map containing ["--pooling"->ANYTHING] but: was <{--fit=on, --pooling=mean}>“, die übrigen 92 Tests der Klasse grün), mit Fix 93/93 (skipped 0), Gegenprobe per `git stash` rot, danach wieder grün. `LlamaArchitectureTest` 13/13, `WireNameRegistryTest` 8/8, `ModelParametersExtendedTest` 148/148; `spotless:check` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `7231e71`
 
 ## Offene Verdachte ohne Fund-ID
 
