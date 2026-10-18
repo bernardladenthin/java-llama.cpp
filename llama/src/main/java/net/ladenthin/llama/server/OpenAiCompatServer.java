@@ -698,7 +698,14 @@ public final class OpenAiCompatServer implements AutoCloseable {
             if (request == null) {
                 return;
             }
-            JsonNode openAiRequest = ResponsesApiSupport.toOpenAiChatRequest(request);
+            final JsonNode openAiRequest;
+            try {
+                openAiRequest = ResponsesApiSupport.toOpenAiChatRequest(request);
+            } catch (IllegalArgumentException e) {
+                // A request the translation rejects (e.g. an input_file part), answered like upstream.
+                sendError(exchange, HTTP_BAD_REQUEST, ERROR_TYPE_REQUEST, message(e));
+                return;
+            }
             String model = request.path("model").asText(config.getModelId());
             String responseId = "resp_" + Long.toHexString(System.nanoTime());
             if (ResponsesApiSupport.isStreaming(request)) {

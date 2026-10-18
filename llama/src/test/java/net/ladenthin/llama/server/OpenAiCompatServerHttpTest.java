@@ -272,6 +272,20 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     @Test
+    public void responsesWithAnInputFileIsRejectedLikeUpstream() throws IOException {
+        // Upstream answers an input_file part with 400 ("not supported"); dropping it silently let the
+        // model answer as if the attached file had never been sent.
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
+            String body = "{\"model\":\"test-model\",\"input\":[{\"type\":\"message\",\"role\":\"user\","
+                    + "\"content\":[{\"type\":\"input_text\",\"text\":\"summarize\"},"
+                    + "{\"type\":\"input_file\",\"file_id\":\"file-1\"}]}]}";
+            Response response = post(server.getPort(), "/v1/responses", body, "");
+            assertThat(response.code, is(400));
+            assertThat(response.body, containsString("input_file"));
+        }
+    }
+
+    @Test
     public void responsesStreamingEmitsEventSequence() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
             String body = "{\"model\":\"test-model\",\"stream\":true,\"input\":\"hi\"}";

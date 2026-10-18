@@ -143,6 +143,7 @@ final class ResponsesApiSupport {
                     break;
                 case "message":
                 default:
+                    rejectInputFiles(item.path("content"));
                     ObjectNode message = messages.addObject();
                     message.put("role", item.path("role").asText("user"));
                     JsonNode imageContent = inputContentWithImages(item.path("content"));
@@ -230,6 +231,22 @@ final class ResponsesApiSupport {
             }
         }
         return parts;
+    }
+
+    /**
+     * Rejects an {@code input_file} content part the way upstream's {@code convert_responses_to_chatcmpl}
+     * does (400, "not supported"); dropping it let the model answer as if the file had not been sent.
+     */
+    private static void rejectInputFiles(JsonNode content) {
+        if (!content.isArray()) {
+            return;
+        }
+        for (JsonNode part : content) {
+            if ("input_file".equals(part.path("type").asText(""))) {
+                throw new IllegalArgumentException("'input_file' is not supported by llamacpp at this moment (file "
+                        + part.path("file_id").asText(part.path("filename").asText("")) + ")");
+            }
+        }
     }
 
     /**
