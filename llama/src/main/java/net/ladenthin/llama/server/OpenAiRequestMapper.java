@@ -11,6 +11,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
 import net.ladenthin.llama.parameters.InferenceParameters;
 
 /**
@@ -21,7 +22,9 @@ import net.ladenthin.llama.parameters.InferenceParameters;
  * <em>verbatim</em> as raw JSON so the full OpenAI shape (assistant {@code tool_calls},
  * {@code role:"tool"} results with {@code tool_call_id}, and vision {@code image_url} content parts)
  * round-trips untouched into the native chat-template parser. Sampling fields are translated to the
- * matching {@code InferenceParameters.with*} setter, and so are the reasoning controls upstream's chat
+ * matching {@code InferenceParameters.with*} setter, as are the llama.cpp sampling extensions upstream's
+ * request schema reads ({@code min_p}, {@code repeat_penalty}, {@code grammar}, ...) and the reasoning
+ * controls upstream's chat
  * parser reads ({@code chat_template_kwargs}, {@code reasoning_effort}, the reasoning budget); unknown
  * fields are ignored.
  *
@@ -165,6 +168,8 @@ final class OpenAiRequestMapper {
             params = params.withStopStrings(stops);
         }
 
+        params = applyLlamaCppSampling(params, request);
+
         // Forward stream_options verbatim (e.g. {"include_usage":true}) so the native server emits the
         // trailing usage chunk the OpenAI streaming protocol — and the Copilot custom endpoint — expect.
         JsonNode streamOptions = request.path("stream_options");
@@ -183,13 +188,88 @@ final class OpenAiRequestMapper {
     }
 
     /**
-     * Read the output-token cap, preferring the newer {@code max_completion_tokens} over the legacy
-     * {@code max_tokens}.
+     * Apply the llama.cpp sampling extensions upstream's request schema ({@code server-schema.cpp},
+     * b11639) reads next to the OpenAI fields. The non-streamed {@code /v1/completions} forwards the body
+     * to that schema, so without them the streamed form of the same request would sample differently.
+     * {@code json_schema} applies only without a {@code grammar}, as upstream decides.
+     *
+     * @param params the parameters to extend
+     * @param request the parsed request object
+     * @return a new instance with the recognised extensions applied
+     */
+    private InferenceParameters applyLlamaCppSampling(InferenceParameters params, JsonNode request) {
+        params = withFloat(params, request, "min_p", InferenceParameters::withMinP);
+        params = withFloat(params, request, "typical_p", InferenceParameters::withTypicalP);
+        params = withFloat(params, request, "repeat_penalty", InferenceParameters::withRepeatPenalty);
+        params = withFloat(params, request, "top_n_sigma", InferenceParameters::withTopNSigma);
+        params = withFloat(params, request, "xtc_probability", InferenceParameters::withXtcProbability);
+        params = withFloat(params, request, "xtc_threshold", InferenceParameters::withXtcThreshold);
+        params = withFloat(params, request, "dynatemp_range", InferenceParameters::withDynamicTemperatureRange);
+        params = withFloat(params, request, "dynatemp_exponent", InferenceParameters::withDynamicTemperatureExponent);
+        params = withInt(params, request, "repeat_last_n", InferenceParameters::withRepeatLastN);
+        params = withInt(params, request, "min_keep", InferenceParameters::withMinKeep);
+        params = withInt(params, request, "n_keep", InferenceParameters::withNKeep);
+        JsonNode ignoreEos = request.path("ignore_eos");
+        if (ignoreEos.isBoolean()) {
+            params = params.withIgnoreEos(ignoreEos.asBoolean());
+        }
+        JsonNode grammar = request.path("grammar");
+        if (grammar.isTextual()) {
+            return params.withGrammar(grammar.asText());
+        }
+        JsonNode jsonSchema = request.path("json_schema");
+        return jsonSchema.isObject() ? params.withJsonSchema(jsonSchema.toString()) : params;
+    }
+
+    /**
+     * Apply {@code setter} with the request's number {@code field}, if it is one.
+     *
+     * @param params the parameters to extend
+     * @param request the parsed request object
+     * @param field the request field
+     * @param setter the matching setter
+     * @return the extended parameters, or {@code params} when the field is absent or not a number
+     */
+    private static InferenceParameters withFloat(
+            InferenceParameters params,
+            JsonNode request,
+            String field,
+            BiFunction<InferenceParameters, Float, InferenceParameters> setter) {
+        JsonNode value = request.path(field);
+        return value.isNumber() ? setter.apply(params, (float) value.asDouble()) : params;
+    }
+
+    /**
+     * Apply {@code setter} with the request's integer {@code field}, if it is one.
+     *
+     * @param params the parameters to extend
+     * @param request the parsed request object
+     * @param field the request field
+     * @param setter the matching setter
+     * @return the extended parameters, or {@code params} when the field is absent or not an integer
+     */
+    private static InferenceParameters withInt(
+            InferenceParameters params,
+            JsonNode request,
+            String field,
+            BiFunction<InferenceParameters, Integer, InferenceParameters> setter) {
+        JsonNode value = request.path(field);
+        return value.isIntegralNumber() ? setter.apply(params, value.asInt()) : params;
+    }
+
+    /**
+     * Read the output-token cap: upstream's {@code n_predict}, else the newer {@code
+     * max_completion_tokens}, else the legacy {@code max_tokens} (upstream reads the latter two as
+     * aliases of the first).
      *
      * @param request the parsed OpenAI request object
-     * @return the requested cap, or {@code -1} when neither field is a number
+     * @return the requested cap, or {@code -1} when none of the fields is a number
      */
     private int readMaxTokens(JsonNode request) {
+        JsonNode nPredict = request.path("n_predict");
+        if (nPredict.isNumber()) {
+            return nPredict.asInt();
+        }
         JsonNode maxCompletion = request.path("max_completion_tokens");
         if (maxCompletion.isNumber()) {
             return maxCompletion.asInt();

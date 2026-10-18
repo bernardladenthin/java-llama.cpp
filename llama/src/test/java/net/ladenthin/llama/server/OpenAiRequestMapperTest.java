@@ -246,6 +246,55 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void llamaCppSamplingExtensionsReachTheStreamedCompletion() throws IOException {
+        // The non-streamed /v1/completions forwards the body to upstream's schema, which reads these
+        // fields; the streamed path maps the body here and must not answer the same request with
+        // other sampling.
+        JsonNode out = MAPPER.readTree(mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\","
+                        + "\"min_p\":0.05,\"typical_p\":0.9,\"repeat_penalty\":1.1,\"repeat_last_n\":32,"
+                        + "\"top_n_sigma\":1.5,\"xtc_probability\":0.3,\"xtc_threshold\":0.2,"
+                        + "\"dynatemp_range\":0.4,\"dynatemp_exponent\":1.2,\"min_keep\":2,\"n_keep\":8,"
+                        + "\"ignore_eos\":true,\"grammar\":\"root ::= \\\"a\\\"\"}"))
+                .toJson());
+        assertThat(out.path("min_p").asDouble(), is(closeTo(0.05, 1e-4)));
+        assertThat(out.path("typical_p").asDouble(), is(closeTo(0.9, 1e-4)));
+        assertThat(out.path("repeat_penalty").asDouble(), is(closeTo(1.1, 1e-4)));
+        assertThat(out.path("repeat_last_n").asInt(), is(32));
+        assertThat(out.path("top_n_sigma").asDouble(), is(closeTo(1.5, 1e-4)));
+        assertThat(out.path("xtc_probability").asDouble(), is(closeTo(0.3, 1e-4)));
+        assertThat(out.path("xtc_threshold").asDouble(), is(closeTo(0.2, 1e-4)));
+        assertThat(out.path("dynatemp_range").asDouble(), is(closeTo(0.4, 1e-4)));
+        assertThat(out.path("dynatemp_exponent").asDouble(), is(closeTo(1.2, 1e-4)));
+        assertThat(out.path("min_keep").asInt(), is(2));
+        assertThat(out.path("n_keep").asInt(), is(8));
+        assertThat(out.path("ignore_eos").asBoolean(false), is(true));
+        assertThat(out.path("grammar").asText(), is("root ::= \"a\""));
+    }
+
+    @Test
+    public void nPredictWinsOverMaxTokensLikeUpstream() throws IOException {
+        // upstream reads n_predict with max_completion_tokens and max_tokens as aliases, n_predict first.
+        JsonNode out = MAPPER.readTree(
+                mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"max_tokens\":50,\"n_predict\":7}"))
+                        .toJson());
+        assertThat(out.path("n_predict").asInt(), is(7));
+    }
+
+    @Test
+    public void jsonSchemaReachesTheStreamedCompletionUnlessAGrammarIsGiven() throws IOException {
+        JsonNode schema = MAPPER.readTree(mapper.toCompletionParameters(
+                        MAPPER.readTree("{\"prompt\":\"p\",\"json_schema\":{\"type\":\"object\"}}"))
+                .toJson());
+        assertThat(schema.path("json_schema").path("type").asText(), is("object"));
+        // upstream applies json_schema only without a grammar.
+        JsonNode both = MAPPER.readTree(mapper.toCompletionParameters(MAPPER.readTree(
+                        "{\"prompt\":\"p\",\"grammar\":\"root ::= \\\"a\\\"\",\"json_schema\":{\"type\":\"object\"}}"))
+                .toJson());
+        assertThat(both.has("json_schema"), is(false));
+        assertThat(both.path("grammar").asText(), is("root ::= \"a\""));
+    }
+
+    @Test
     public void unknownFieldsIgnored() throws IOException {
         JsonNode out = mapAndSerialize(
                 "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," + "\"some_future_field\":true,\"n\":3}");
