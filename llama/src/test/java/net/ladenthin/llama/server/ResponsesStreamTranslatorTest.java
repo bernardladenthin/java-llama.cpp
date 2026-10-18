@@ -56,6 +56,27 @@ public class ResponsesStreamTranslatorTest {
     }
 
     @Test
+    public void reasoningDeltasStreamAsAReasoningItemLikeUpstream() {
+        // Upstream's to_json_oaicompat_resp_stream opens a reasoning output item, streams
+        // response.reasoning_text.delta and puts the item first in the completed output.
+        ResponsesStreamTranslator translator = new ResponsesStreamTranslator("m", "resp_1");
+        String first = translator.onChunk("{\"choices\":[{\"delta\":{\"reasoning_content\":\"6 times 7\"}}]}");
+        translator.onChunk("{\"choices\":[{\"delta\":{\"content\":\"42\"}}]}");
+        String end = translator.end();
+
+        assertThat(first, containsString("event: response.output_item.added"));
+        assertThat(first, containsString("\"type\":\"reasoning\""));
+        assertThat(first, containsString("event: response.reasoning_text.delta"));
+        assertThat(first, containsString("\"delta\":\"6 times 7\""));
+        String completed = end.substring(end.indexOf("event: response.completed"));
+        assertThat(
+                completed.indexOf("\"type\":\"reasoning\"") >= 0
+                        && completed.indexOf("\"type\":\"reasoning\"") < completed.indexOf("\"type\":\"message\""),
+                is(true));
+        assertThat(completed, containsString("\"type\":\"reasoning_text\",\"text\":\"6 times 7\""));
+    }
+
+    @Test
     public void toolCallsBecomeFunctionCallItemsBeforeCompleted() {
         ResponsesStreamTranslator translator = new ResponsesStreamTranslator("m", "resp_1");
         translator.onChunk("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\","

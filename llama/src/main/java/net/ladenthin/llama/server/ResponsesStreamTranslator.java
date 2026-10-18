@@ -10,10 +10,13 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import lombok.ToString;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Stateful translator that turns the OpenAI streaming chat chunks into the OpenAI Responses SSE event
- * sequence: {@code response.created} → (for a text message) {@code response.output_item.added} +
+ * sequence: {@code response.created} → (for {@code reasoning_content}) a {@code reasoning} item with
+ * {@code response.reasoning_text.delta}* + {@code response.reasoning_text.done} → (for a text message)
+ * {@code response.output_item.added} +
  * {@code response.content_part.added} + {@code response.output_text.delta}* +
  * {@code response.output_text.done} + {@code response.content_part.done} +
  * {@code response.output_item.done} → (per tool call) a {@code function_call} item with
@@ -32,10 +35,14 @@ final class ResponsesStreamTranslator {
     private final String model;
     private final String responseId;
     private final String messageItemId;
+    private final String reasoningItemId;
     private final ToolCallDeltaAccumulator accumulator = new ToolCallDeltaAccumulator();
     private final StringBuilder text = new StringBuilder();
+    private final StringBuilder reasoning = new StringBuilder();
 
     private int sequence;
+    private boolean reasoningOpen;
+    private int reasoningOutputIndex = -1;
     private boolean messageOpen;
     private int nextOutputIndex;
     private int messageOutputIndex = -1;
@@ -47,6 +54,7 @@ final class ResponsesStreamTranslator {
         this.model = model;
         this.responseId = responseId;
         this.messageItemId = "msg_" + responseId;
+        this.reasoningItemId = "rs_" + responseId;
     }
 
     /**
@@ -74,7 +82,21 @@ final class ResponsesStreamTranslator {
             JsonNode chunk = OBJECT_MAPPER.readTree(openAiChunkJson);
             accumulator.accept(chunk);
             captureUsage(chunk.path("usage"));
-            JsonNode content = chunk.path("choices").path(0).path("delta").path("content");
+            // Reasoning streams as a reasoning output item, as in upstream's to_json_oaicompat_resp_stream.
+            JsonNode deltaNode = chunk.path("choices").path(0).path("delta");
+            JsonNode reasoningDelta = deltaNode.path("reasoning_content");
+            String reasoningText = reasoningDelta.isTextual() ? reasoningDelta.asText() : "";
+            if (!reasoningText.isEmpty()) {
+                if (!reasoningOpen) {
+                    reasoningOutputIndex = nextOutputIndex++;
+                    out.append(outputItemAdded(reasoningOutputIndex, reasoningItem("in_progress", null)));
+                    reasoningOpen = true;
+                }
+                reasoning.append(reasoningText);
+                out.append(deltaEvent(
+                        "response.reasoning_text.delta", reasoningItemId, reasoningOutputIndex, reasoningText));
+            }
+            JsonNode content = deltaNode.path("content");
             if (content.isTextual() && !content.asText().isEmpty()) {
                 if (!messageOpen) {
                     messageOutputIndex = nextOutputIndex++;
@@ -84,12 +106,7 @@ final class ResponsesStreamTranslator {
                 }
                 String delta = content.asText();
                 text.append(delta);
-                ObjectNode data = ResponsesApiSupport.dataObject();
-                data.put("item_id", messageItemId);
-                data.put("output_index", messageOutputIndex);
-                data.put("content_index", 0);
-                data.put("delta", delta);
-                out.append(ResponsesApiSupport.sseEvent("response.output_text.delta", sequence++, data));
+                out.append(deltaEvent("response.output_text.delta", messageItemId, messageOutputIndex, delta));
             }
         } catch (IOException e) {
             // A malformed chunk produces no events.
@@ -106,6 +123,19 @@ final class ResponsesStreamTranslator {
     String end() {
         StringBuilder out = new StringBuilder();
         ArrayNode output = OBJECT_MAPPER.createArrayNode();
+
+        if (reasoningOpen) {
+            ObjectNode reasoningDone = ResponsesApiSupport.dataObject();
+            reasoningDone.put("item_id", reasoningItemId);
+            reasoningDone.put("output_index", reasoningOutputIndex);
+            reasoningDone.put("content_index", 0);
+            reasoningDone.put("text", reasoning.toString());
+            out.append(ResponsesApiSupport.sseEvent("response.reasoning_text.done", sequence++, reasoningDone));
+
+            ObjectNode item = reasoningItem("completed", reasoning.toString());
+            output.add(item);
+            out.append(outputItemDone(reasoningOutputIndex, item));
+        }
 
         if (messageOpen) {
             ObjectNode textDone = ResponsesApiSupport.dataObject();
@@ -163,6 +193,33 @@ final class ResponsesStreamTranslator {
         inputTokens = usage.path("prompt_tokens").asLong(0);
         outputTokens = usage.path("completion_tokens").asLong(0);
         cachedTokens = usage.path("prompt_tokens_details").path("cached_tokens").asLong(0);
+    }
+
+    /** A {@code *.delta} event appending {@code delta} to content part 0 of the item {@code itemId}. */
+    private String deltaEvent(String event, String itemId, int outputIndex, String delta) {
+        ObjectNode data = ResponsesApiSupport.dataObject();
+        data.put("item_id", itemId);
+        data.put("output_index", outputIndex);
+        data.put("content_index", 0);
+        data.put("delta", delta);
+        return ResponsesApiSupport.sseEvent(event, sequence++, data);
+    }
+
+    /** A reasoning output item; {@code reasoningText} {@code null} gives the empty in-progress shell. */
+    private ObjectNode reasoningItem(String status, @Nullable String reasoningText) {
+        ObjectNode item = OBJECT_MAPPER.createObjectNode();
+        item.put("type", "reasoning");
+        item.put("id", reasoningItemId);
+        item.putArray("summary");
+        ArrayNode content = item.putArray("content");
+        if (reasoningText != null) {
+            ObjectNode part = content.addObject();
+            part.put("type", "reasoning_text");
+            part.put("text", reasoningText);
+        }
+        item.put("encrypted_content", "");
+        item.put("status", status);
+        return item;
     }
 
     private ObjectNode messageItemShell() {
