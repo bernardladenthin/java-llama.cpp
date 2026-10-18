@@ -580,7 +580,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiRequestMapperTest#completionParamsUpstreamRejectsAreRejectedOnTheStreamedPathToo`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix grün (22/22 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `OpenAiCompatServerHttpTest` 45/45, die drei Übersetzer-Tests, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `7545586`
 
 ## Offene Verdachte ohne Fund-ID
 
