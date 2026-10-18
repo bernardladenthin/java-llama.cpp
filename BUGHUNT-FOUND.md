@@ -84,6 +84,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F105](#f105) — mittel — *gefixt*
 - [F106](#f106) — niedrig — *gefixt*
 - [F107](#f107) — niedrig — *gefixt*
+- [F108](#f108) — niedrig — *gefixt*
 
 ## Funde
 
@@ -908,6 +909,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "none" but: was ""“), mit Fix grün (22/22 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `AnthropicStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `ResponsesApiSupportTest` 47/47, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b85eed8`
+
+### F108 – java-llama.cpp: Responses-`text.format` (strukturierte Ausgabe) wird ignoriert
+- **Zeit:** 2026-10-18 08:45 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java:177` (`appendResponseFormat`, neu; Aufruf in `toOpenAiChatRequest`)
+- **Schwere:** niedrig
+- **Beschreibung:** Die Responses-API trägt strukturierte Ausgabe in `text.format` (`{"type":"json_schema","name","schema","strict"}` bzw. `{"type":"json_object"}`), die Chat-API in `response_format` mit dem Schema unter `json_schema`. `/v1/responses` übersetzte das nicht; ein Client, der ein Schema verlangte, bekam freien Text ohne Grammatik. upstreams `convert_responses_to_chatcmpl` (b11639) kopiert `text` unverändert in die Chat-Anfrage, wo der Chat-Parser es nicht liest – dieselbe Lücke. Der Chat-Mapper reicht `response_format` an die native Seite weiter, die Übersetzung reicht also.
+- **Fix:** `json_schema` wird zu `response_format` mit `name`, `description`, `schema` und `strict` unter `json_schema`; `json_object` wird übernommen; `text` braucht nichts. Ein vom Client zusätzlich gesetztes `response_format` (seit F106 durchgereicht) hat Vorrang.
+- **Reproduktion:** `ResponsesApiSupportTest#textFormatJsonSchemaBecomesTheChatResponseFormat`, `#textFormatJsonObjectBecomesTheChatResponseFormat`; `#textFormatTextLeavesTheResponseFormatOut` schützt den `text`-Fall (ohne Fix grün)
+- **Rot-Grün-Nachweis:** ohne Fix rot (2 Fehlschläge: „Expected: is "json_schema" but: was ""“, „Expected: is "json_object" but: was ""“), mit Fix grün (50/50 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 22/22, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün (eine erste Fassung mit einem Array-Literal meldete `SACM_STATIC_ARRAY_CREATED_IN_METHOD`, jetzt eine Konstante).
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

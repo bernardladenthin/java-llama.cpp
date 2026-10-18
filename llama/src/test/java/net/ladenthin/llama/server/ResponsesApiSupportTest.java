@@ -225,6 +225,35 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void textFormatJsonSchemaBecomesTheChatResponseFormat() throws IOException {
+        // Responses carries structured output in text.format, chat in response_format with the schema
+        // nested under json_schema; without the translation the schema was ignored.
+        JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
+                + "\"text\":{\"format\":{\"type\":\"json_schema\",\"name\":\"answer\",\"strict\":true,"
+                + "\"schema\":{\"type\":\"object\"}}}}"));
+        JsonNode responseFormat = openAi.path("response_format");
+        assertThat(responseFormat.path("type").asText(), is("json_schema"));
+        assertThat(responseFormat.path("json_schema").path("name").asText(), is("answer"));
+        assertThat(
+                responseFormat.path("json_schema").path("schema").path("type").asText(), is("object"));
+        assertThat(responseFormat.path("json_schema").path("strict").asBoolean(false), is(true));
+    }
+
+    @Test
+    public void textFormatJsonObjectBecomesTheChatResponseFormat() throws IOException {
+        JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(
+                read("{\"model\":\"m\",\"input\":\"hi\",\"text\":{\"format\":{\"type\":\"json_object\"}}}"));
+        assertThat(openAi.path("response_format").path("type").asText(), is("json_object"));
+    }
+
+    @Test
+    public void textFormatTextLeavesTheResponseFormatOut() throws IOException {
+        JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(
+                read("{\"model\":\"m\",\"input\":\"hi\",\"text\":{\"format\":{\"type\":\"text\"}}}"));
+        assertThat(openAi.has("response_format"), is(false));
+    }
+
+    @Test
     public void previousResponseIdIsRejectedLikeUpstream() throws IOException {
         // There is no response store: answering a turn that continues by previous_response_id without
         // its history would silently answer something else. upstream rejects it with a 400.

@@ -34,6 +34,10 @@ final class ResponsesApiSupport {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /** The keys of a Responses {@code json_schema} format that chat nests under {@code json_schema}. */
+    private static final List<String> JSON_SCHEMA_FORMAT_FIELDS =
+            Collections.unmodifiableList(Arrays.asList("name", "description", "schema", "strict"));
+
     /**
      * Request fields handed on to the chat request unchanged. Upstream's {@code
      * convert_responses_to_chatcmpl} copies the whole body; these are the ones the shared chat mapper
@@ -149,6 +153,9 @@ final class ResponsesApiSupport {
                 openAi.set(field, value.deepCopy());
             }
         }
+        if (!openAi.has("response_format")) {
+            appendResponseFormat(openAi, request.path("text").path("format"));
+        }
         // Upstream's converter maps reasoning.effort to the chat field reasoning_effort ("none" turns
         // the model's thinking off); the other reasoning settings have no chat equivalent there either.
         if (request.path("reasoning").path("effort").isTextual()) {
@@ -156,6 +163,32 @@ final class ResponsesApiSupport {
                     "reasoning_effort", request.path("reasoning").path("effort").asText());
         }
         return openAi;
+    }
+
+    /**
+     * Translate Responses' structured-output setting {@code text.format} into chat's {@code
+     * response_format}: {@code json_schema} keeps its name, schema, strict flag and description, now
+     * nested under {@code json_schema}; {@code json_object} carries over; {@code text} needs nothing.
+     * Upstream's converter copies {@code text} unchanged, where the chat parser does not read it.
+     *
+     * @param openAi the chat request being built
+     * @param format the request's {@code text.format}
+     */
+    private static void appendResponseFormat(ObjectNode openAi, JsonNode format) {
+        String type = format.path("type").asText("");
+        if ("json_object".equals(type)) {
+            openAi.putObject("response_format").put("type", "json_object");
+        } else if ("json_schema".equals(type)) {
+            ObjectNode responseFormat = openAi.putObject("response_format");
+            responseFormat.put("type", "json_schema");
+            ObjectNode jsonSchema = responseFormat.putObject("json_schema");
+            for (String key : JSON_SCHEMA_FORMAT_FIELDS) {
+                JsonNode value = format.path(key);
+                if (!value.isMissingNode() && !value.isNull()) {
+                    jsonSchema.set(key, value.deepCopy());
+                }
+            }
+        }
     }
 
     private static void appendInput(ArrayNode messages, JsonNode input) {

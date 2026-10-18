@@ -219,3 +219,4 @@ Ergebnisse: `kein Fund`, `widerlegt` (Verdacht geprüft, Code korrekt), `unsiche
 - `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` · `886b3cb` · 2026-10-18 · Fund F105 — `previous_response_id` abgewiesen; Feldmenge gegen upstreams Kopie des ganzen Körpers gehalten (Verdacht notiert)
 - `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` · `1724b42` · 2026-10-18 · Fund F106 — Felder, die der Chat-Mapper liest, werden durchgereicht
 - `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java` · `6ae6dd6` · 2026-10-18 · Fund F107 — Anthropic-Feldmenge und `tool_choice` gegen upstreams `convert_anthropic_to_oai` gehalten (Feldmenge gleich seit F96)
+- `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` · `e44a70b` · 2026-10-18 · Fund F108 — `text.format` → `response_format`
