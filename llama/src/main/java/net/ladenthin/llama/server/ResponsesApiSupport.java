@@ -375,17 +375,20 @@ final class ResponsesApiSupport {
                 reasoningItem.put("encrypted_content", "");
                 reasoningItem.put("status", "completed");
             }
+            // As upstream (and the streamed form): a message item only when there is text.
             String text = message.path("content").asText("");
-            ObjectNode messageItem = output.addObject();
-            messageItem.put("type", "message");
-            messageItem.put("id", "msg_" + responseId);
-            messageItem.put("status", "completed");
-            messageItem.put("role", "assistant");
-            ArrayNode content = messageItem.putArray("content");
-            ObjectNode textPart = content.addObject();
-            textPart.put("type", "output_text");
-            textPart.put("text", text);
-            textPart.putArray("annotations");
+            if (!text.isEmpty()) {
+                ObjectNode messageItem = output.addObject();
+                messageItem.put("type", "message");
+                messageItem.put("id", "msg_" + responseId);
+                messageItem.put("status", "completed");
+                messageItem.put("role", "assistant");
+                ArrayNode content = messageItem.putArray("content");
+                ObjectNode textPart = content.addObject();
+                textPart.put("type", "output_text");
+                textPart.put("text", text);
+                textPart.putArray("annotations");
+            }
             JsonNode toolCalls = message.path("tool_calls");
             if (toolCalls.isArray()) {
                 for (JsonNode toolCall : toolCalls) {

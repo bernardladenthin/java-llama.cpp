@@ -165,6 +165,20 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void toolCallOnlyResponseHasNoEmptyMessageItemLikeUpstreamAndTheStream() throws IOException {
+        // upstream's to_json_oaicompat_resp adds a message item only when there is text, and the
+        // streamed form (ResponsesStreamTranslator) opens one only on the first text delta; an empty
+        // message beside the function calls made the blocking answer differ from both.
+        String openAi = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"\","
+                + "\"tool_calls\":[{\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"f\","
+                + "\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}";
+        JsonNode output = read(ResponsesApiSupport.toResponsesResponse(openAi, "m", "resp_1"))
+                .path("output");
+        assertThat(output.size(), is(1));
+        assertThat(output.get(0).path("type").asText(), is("function_call"));
+    }
+
+    @Test
     public void responseCarriesTheCurrentUnixTimeAsCreatedAt() throws IOException {
         long before = System.currentTimeMillis() / 1000L;
 
@@ -288,8 +302,8 @@ public class ResponsesApiSupportTest {
                 + "\"tool_calls\":[{\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"f\","
                 + "\"arguments\":\"{\\\"a\\\":1}\"}}]},\"finish_reason\":\"tool_calls\"}]}";
         JsonNode out = read(ResponsesApiSupport.toResponsesResponse(openAi, "m", "resp_1"));
-        // output[0] is the (empty) message, output[1] is the function_call item.
-        JsonNode functionCall = out.path("output").get(1);
+        // The function_call item is the only output item: upstream adds a message item only for text.
+        JsonNode functionCall = out.path("output").get(0);
         assertThat(functionCall.path("type").asText(), is("function_call"));
         assertThat(functionCall.path("call_id").asText(), is("c1"));
         assertThat(functionCall.path("name").asText(), is("f"));

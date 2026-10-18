@@ -77,6 +77,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F96](#f96) — niedrig — *gefixt*
 - [F97](#f97) — niedrig — *gefixt*
 - [F98](#f98) — niedrig — *gefixt*
+- [F99](#f99) — niedrig — *gefixt*
 
 ## Funde
 
@@ -824,6 +825,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <12> but: was <-1>“), mit Fix grün (47/47 der Klasse, skipped 0); Gegenprobe per `git stash` beider Produktionsdateien rot (1), nach `pop` grün. `OllamaApiSupportTest` 27/27, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 18/18, `OpenAiRequestMapperTest` 25/25, `AnthropicStreamTranslatorTest` 5/5, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `0cd9f8a`
+
+### F99 – java-llama.cpp: blockierende Responses-Antwort trägt ein leeres `message`-Item neben Werkzeugaufrufen
+- **Zeit:** 2026-10-18 06:30 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java:378` (`toResponsesResponse`)
+- **Schwere:** niedrig
+- **Beschreibung:** Vergleich blockierender und gestreamter Pfad (Erkenntnis aus F92). `toResponsesResponse` legte immer ein `message`-Item an, auch mit leerem Text; bei einer Runde, die nur Werkzeuge aufruft, stand so ein leeres `output_text` vor den `function_call`-Items. upstreams `to_json_oaicompat_resp` (`server-task.cpp`, b11639) legt das Item nur bei nicht leerem Text an, und unser eigener Stream (`ResponsesStreamTranslator`) öffnet es erst mit dem ersten Text-Delta. Dieselbe Anfrage ergab also blockierend eine andere `output`-Liste als gestreamt; ein Client, der das leere Item zurückschickt, erzeugt im nächsten Zug eine leere Assistenten-Nachricht im Verlauf. Der Test `responseEmitsFunctionCallItemsForToolCalls` schrieb das leere Item fest („output[0] is the (empty) message“).
+- **Fix:** Das `message`-Item wird nur bei nicht leerem Text angelegt; der festschreibende Test erwartet den `function_call` jetzt an Stelle 0.
+- **Reproduktion:** `ResponsesApiSupportTest#toolCallOnlyResponseHasNoEmptyMessageItemLikeUpstreamAndTheStream`, dazu `#responseEmitsFunctionCallItemsForToolCalls`
+- **Rot-Grün-Nachweis:** ohne Fix rot (2 Fehlschläge: „Expected: is <1> but: was <2>“, „Expected: is "function_call" but: was "message"“), mit Fix grün (19/19 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `OllamaApiSupportTest` 27/27, `OpenAiRequestMapperTest` 25/25, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
