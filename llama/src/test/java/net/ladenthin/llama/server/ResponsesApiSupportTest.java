@@ -69,14 +69,14 @@ public class ResponsesApiSupportTest {
                 assertThat(message.path("content").asText(), is("q"));
             }
         }
-        assertThat(messages.size(), is(5));
+        assertThat(messages.size(), is(4));
         assertThat(messages.path(1).path("role").asText(), is("assistant"));
         assertThat(messages.path(1).path("reasoning_content").asText(), is("plan"));
         assertThat(messages.path(1).path("tool_calls").size(), is(1));
         assertThat(messages.path(2).path("role").asText(), is("tool"));
         assertThat(messages.path(3).path("role").asText(), is("assistant"));
         assertThat(messages.path(3).path("reasoning_content").asText(), is("more"));
-        assertThat(messages.path(4).path("content").asText(), is("42"));
+        assertThat(messages.path(3).path("content").asText(), is("42"));
     }
 
     @Test
@@ -118,6 +118,24 @@ public class ResponsesApiSupportTest {
         assertThat(messages.path(1).path("tool_calls").path(1).path("id").asText(), is("c2"));
         assertThat(messages.path(2).path("role").asText(), is("tool"));
         assertThat(messages.path(3).path("role").asText(), is("tool"));
+    }
+
+    @Test
+    public void anAssistantMessageJoinsThePrecedingAssistantTurnLikeUpstream() throws IOException {
+        // Each earlier turn comes back as a reasoning item followed by the assistant's message item;
+        // upstream's convert_responses_to_chatcmpl merges the message into the preceding assistant
+        // message (merge_prev), so the template sees one turn with reasoning and answer.
+        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                        + "{\"type\":\"message\",\"role\":\"user\",\"content\":\"q\"},"
+                        + "{\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"plan\"}]},"
+                        + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"42\"}]},"
+                        + "{\"type\":\"message\",\"role\":\"user\",\"content\":\"and?\"}]}"))
+                .path("messages");
+        assertThat(messages.size(), is(3));
+        assertThat(messages.path(1).path("role").asText(), is("assistant"));
+        assertThat(messages.path(1).path("reasoning_content").asText(), is("plan"));
+        assertThat(messages.path(1).path("content").asText(), is("42"));
+        assertThat(messages.path(2).path("content").asText(), is("and?"));
     }
 
     @Test

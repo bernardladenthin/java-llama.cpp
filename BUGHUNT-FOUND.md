@@ -69,6 +69,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F88](#f88) — mittel — *gefixt*
 - [F89](#f89) — niedrig — *gefixt*
 - [F90](#f90) — mittel — *gefixt*
+- [F91](#f91) — niedrig — *gefixt*
 
 ## Funde
 
@@ -726,6 +727,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **CI-Bedarf:** dass der Cache danach tatsächlich trifft (`cached_tokens` > 0 in der zweiten Runde), zeigt nur ein modellgestützter Lauf.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `7d08a0c`
+
+<a id="f91"></a>
+### F91 – java-llama.cpp: Responses-Verlauf spaltet jede Assistenten-Runde in Denk- und Antwortnachricht
+- **Zeit:** 2026-10-18 04:40 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java:257` (`joinContent`, `lastAssistant`, neu; Aufruf im `message`-Zweig von `appendInput`)
+- **Schwere:** niedrig
+- **Beschreibung:** Ein Responses-Client gibt jede frühere Runde als `reasoning`-Item und danach als `message`-Item mit `role: assistant` zurück. Seit F85 wird das reasoning-Item zu einer Assistenten-Nachricht mit `reasoning_content`; das folgende `message`-Item legte dann eine **zweite** Assistenten-Nachricht mit der Antwort an. Die Vorlage sah jede Runde als zwei aufeinanderfolgende Assistenten-Runden, eine ohne Antwort und eine ohne Denkinhalt. upstreams `convert_responses_to_chatcmpl` (`server-chat.cpp:150`, b11639) führt ein Assistenten-`message`-Item mit der vorherigen Assistenten-Nachricht zusammen (`merge_prev`), wie bei Werkzeugaufrufen (F87). Gefunden beim Lesen des upstream-Umsetzers von oben bis unten (Regel aus F90).
+- **Fix:** Folgt ein Assistenten-`message`-Item auf eine Assistenten-Nachricht, wird sein Inhalt angehängt: ein leerer oder `null`-Inhalt ersetzt, zwei Texte mit Zeilenumbruch verbunden (wie `concat_content_parts`), sonst Teil-Arrays zusammengefügt.
+- **Reproduktion:** `ResponsesApiSupportTest#anAssistantMessageJoinsThePrecedingAssistantTurnLikeUpstream`; der F85-Test erwartet seine abschließende Antwort jetzt in der Nachricht mit dem zweiten Denktext.
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <3> but: was <4>“, ebenso der angepasste F85-Test), mit Fix grün (18/18 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2 Fehlschläge), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 46/46, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

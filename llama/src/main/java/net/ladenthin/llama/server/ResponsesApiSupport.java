@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import java.io.IOException;
 import org.jspecify.annotations.Nullable;
 
@@ -144,13 +145,17 @@ final class ResponsesApiSupport {
                 case "message":
                 default:
                     rejectInputFiles(item.path("content"));
-                    ObjectNode message = messages.addObject();
-                    message.put("role", item.path("role").asText("user"));
+                    String role = item.path("role").asText("user");
                     JsonNode imageContent = inputContentWithImages(item.path("content"));
-                    if (imageContent != null) {
-                        message.set("content", imageContent);
+                    JsonNode content =
+                            imageContent != null ? imageContent : new TextNode(inputContentText(item.path("content")));
+                    ObjectNode previous = "assistant".equals(role) ? lastAssistant(messages) : null;
+                    if (previous != null) {
+                        previous.set("content", joinContent(previous.path("content"), content));
                     } else {
-                        message.put("content", inputContentText(item.path("content")));
+                        ObjectNode message = messages.addObject();
+                        message.put("role", role);
+                        message.set("content", content);
                     }
                     break;
             }
@@ -228,6 +233,42 @@ final class ResponsesApiSupport {
                         .put("type", "image_url")
                         .putObject("image_url")
                         .put("url", part.path("image_url").asText());
+            }
+        }
+        return parts;
+    }
+
+    /** The last message if it is an assistant message, else {@code null} (upstream's {@code merge_prev}). */
+    private static @Nullable ObjectNode lastAssistant(ArrayNode messages) {
+        int size = messages.size();
+        JsonNode last = size > 0 ? messages.get(size - 1) : null;
+        return last instanceof ObjectNode
+                        && "assistant".equals(last.path("role").asText(""))
+                ? (ObjectNode) last
+                : null;
+    }
+
+    /**
+     * The content of an assistant message after an assistant message item joined it, as upstream's
+     * {@code convert_responses_to_chatcmpl} appends the item's content to the preceding assistant
+     * message: an empty or {@code null} content is replaced, two texts are joined with a newline (as
+     * {@code concat_content_parts} joins text parts), otherwise the parts are concatenated.
+     */
+    private static JsonNode joinContent(JsonNode previous, JsonNode added) {
+        if (previous.isNull()
+                || previous.isMissingNode()
+                || (previous.isTextual() && previous.asText().isEmpty())) {
+            return added;
+        }
+        if (previous.isTextual() && added.isTextual()) {
+            return added.asText().isEmpty() ? previous : new TextNode(previous.asText() + "\n" + added.asText());
+        }
+        ArrayNode parts = OBJECT_MAPPER.createArrayNode();
+        for (JsonNode node : new JsonNode[] {previous, added}) {
+            if (node.isArray()) {
+                parts.addAll((ArrayNode) node);
+            } else if (node.isTextual() && !node.asText().isEmpty()) {
+                parts.addObject().put("type", "text").put("text", node.asText());
             }
         }
         return parts;
