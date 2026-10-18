@@ -489,7 +489,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** keine lauffähige: es braucht ein Modell und einen dazu passenden LoRA-Adapter (nicht in `models.csv`), und in dieser Sandbox gibt es keine native Bibliothek und kein `gguf-py`. Ein Test würde denselben Prompt vor und nach `setLoraAdapter(0, 0f)` mit Greedy-Sampling schicken und mit einem frisch geladenen Modell ohne Adapter vergleichen.
 - **CI-Bedarf:** ein kleines Modell mit LoRA-Adapter im Modellsatz (oder ein zur Laufzeit erzeugtes Zufallsmodell samt Adapter, wie `test_c_api.cpp` es für das Modell macht) – nur, falls das Verhalten geändert werden soll.
 - **Status:** gefixt (Dokumentation)
-- **Commit:** (folgt)
+- **Commit:** a977a1e
 
 <a id="f68"></a>
 ### F68 – java-llama.cpp: `RouterClient.awaitModelLoaded` läuft bei einem schlafenden Modell in den Timeout
@@ -513,7 +513,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** keine lauffähige hier (kein Modell, keine native Bibliothek). Ein Test in einer modellgestützten Klasse: `model.complete(InferenceParameters.empty().withPrompt("x").withNPredict(-2))` → `InvalidRequestException` mit `n_predict` in der Meldung.
 - **CI-Bedarf:** ein modellgestützter Java-Test (jedes Modell aus `models.csv` genügt), falls `-2` zusätzlich in Java abgewiesen werden soll.
 - **Status:** gefixt (Dokumentation)
-- **Commit:** (folgt)
+- **Commit:** a977a1e
 
 <a id="f70"></a>
 ### F70 – java-llama.cpp: `OpenAiServerCli` bewirbt mit `--parallel N` das ganze `-c` statt des Kontexts je Slot
@@ -1171,7 +1171,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** Dokumentation korrigiert (ohne Test, Nutzerregel): Javadoc nennt nur noch `-1 = infinity` und erklärt, dass `-2` eine Einstellung des Completion-Tools ist und hier nach dem ersten Token stoppt. **Offen, Entscheidung des Nutzers:** `-2` in `ModelParameters.setPredict` mit `IllegalArgumentException` abweisen – modellfrei testbar, ändert aber das Verhalten eines öffentlichen Setters.
 - **CI-Bedarf:** Messung mit einem Modell aus `models.csv`: `new ModelParameters().setPredict(-2)` laden, eine Anfrage ohne `n_predict`, Anzahl der erzeugten Tokens (erwartet nach Quelltext: 1).
 - **Status:** Doku gefixt, Verhalten offen
-- **Commit:** (folgt)
+- **Commit:** a977a1e
 
 ## Offene Verdachte ohne Fund-ID
 
