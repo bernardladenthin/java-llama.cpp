@@ -48,6 +48,30 @@ public class ResponsesApiSupportTest {
      * {@code 0}, so clients showed every response as created on 1 January 1970.
      */
     @Test
+    public void reasoningInputItemsBecomeAssistantReasoningNotUserTextLikeUpstream() throws IOException {
+        // A reasoning item carries no role; read as a message it became a user turn holding the model's
+        // own earlier reasoning. Upstream's convert_responses_to_chatcmpl attaches it as
+        // reasoning_content to the preceding assistant message, or to a new assistant message.
+        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                        + "{\"type\":\"message\",\"role\":\"user\",\"content\":\"q\"},"
+                        + "{\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"plan\"}]},"
+                        + "{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"f\",\"arguments\":\"{}\"},"
+                        + "{\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"more\"}]},"
+                        + "{\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"x\"}]}"))
+                .path("messages");
+        for (JsonNode message : messages) {
+            if ("user".equals(message.path("role").asText())) {
+                assertThat(message.path("content").asText(), is("q"));
+            }
+        }
+        assertThat(messages.get(1).path("role").asText(), is("assistant"));
+        assertThat(messages.get(1).path("reasoning_content").asText(), is("plan"));
+        assertThat(messages.get(2).path("role").asText(), is("assistant"));
+        assertThat(messages.get(2).path("reasoning_content").asText(), is("more"));
+        assertThat(messages.size(), is(3));
+    }
+
+    @Test
     public void requestMapsTheReasoningEffortLikeUpstream() throws IOException {
         // Upstream's Responses converter maps reasoning.effort to reasoning_effort, which the chat
         // parser reads ("none" switches the model's thinking off).

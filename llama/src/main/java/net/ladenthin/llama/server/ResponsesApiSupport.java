@@ -137,6 +137,9 @@ final class ResponsesApiSupport {
                     toolMessage.put("tool_call_id", item.path("call_id").asText(""));
                     toolMessage.put("content", item.path("output").asText(""));
                     break;
+                case "reasoning":
+                    appendReasoningItem(messages, item);
+                    break;
                 case "message":
                 default:
                     ObjectNode message = messages.addObject();
@@ -184,6 +187,31 @@ final class ResponsesApiSupport {
             }
         }
         return hasImage ? parts : null;
+    }
+
+    /**
+     * A {@code reasoning} input item (an earlier answer's reasoning, sent back by the client) becomes
+     * {@code reasoning_content} of the preceding assistant message, or of a new one, as in upstream's
+     * {@code convert_responses_to_chatcmpl}. The item has no role, so reading it as a message made the
+     * model's own reasoning a user turn. An item without readable text (only {@code summary} or
+     * {@code encrypted_content}) is skipped; upstream rejects it.
+     */
+    private static void appendReasoningItem(ArrayNode messages, JsonNode item) {
+        JsonNode text = item.path("content").path(0).path("text");
+        if (!text.isTextual()) {
+            return;
+        }
+        String reasoning = text.asText();
+        int size = messages.size();
+        JsonNode last = size > 0 ? messages.get(size - 1) : null;
+        if (last instanceof ObjectNode && "assistant".equals(last.path("role").asText(""))) {
+            ((ObjectNode) last).put("reasoning_content", reasoning);
+            return;
+        }
+        ObjectNode assistant = messages.addObject();
+        assistant.put("role", "assistant");
+        assistant.put("content", "");
+        assistant.put("reasoning_content", reasoning);
     }
 
     private static String inputContentText(JsonNode content) {
