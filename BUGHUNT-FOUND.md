@@ -49,6 +49,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F67](#f67) — niedrig — *nur beschrieben* (CI-Bedarf: Modell + LoRA-Adapter)
 - [F68](#f68) — niedrig — *gefixt*
 - [F69](#f69) — niedrig — *nur beschrieben* (CI-Bedarf: modellgestützter Test)
+- [F70](#f70) — mittel — *gefixt*
 
 ## Funde
 
@@ -459,6 +460,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **CI-Bedarf:** ein modellgestützter Java-Test (jedes Modell aus `models.csv` genügt).
 - **Status:** nur beschrieben
 - **Commit:** –
+
+<a id="f70"></a>
+### F70 – java-llama.cpp: `OpenAiServerCli` bewirbt mit `--parallel N` das ganze `-c` statt des Kontexts je Slot
+- **Zeit:** 2026-10-18 00:15 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiServerCli.java` (`Options.toServerConfig`)
+- **Schwere:** mittel
+- **Beschreibung:** Aus `-c` leitet die CLI die beworbenen Budgets ab: `maxInputTokens`/`maxOutputTokens` (die Copilot & Co. zum Zuschneiden des Prompts nutzen) und daraus die Kontextlänge in `/api/show` und `/props`. Bei expliziter `--parallel N` vereinheitlicht llama.cpp den KV-Cache nicht (`-kvu`: „default: enabled if number of slots is auto“, `common/arg.cpp`, b11639), jeder Slot und damit jede Anfrage bekommt `n_ctx / N`, und upstreams eigenes `/props` meldet genau diese Slot-Größe (`slot_n_ctx`, `server-context.cpp:5083`). Mit `-c 8192 --parallel 4` warb der Server aber 8192 Token: Clients füllten Prompts auf das Vierfache dessen, was eine Anfrage fassen kann, und liefen in „exceeds the available context size“.
+- **Fix:** Bei `parallel > 1` wird das Fenster je Slot (`ctx / parallel`) als Grundlage der Budgets genommen; ohne `--parallel` (Slotzahl „auto“, vereinheitlichter Cache) bleibt es das ganze `-c`.
+- **Reproduktion:** `OpenAiServerCliTest#parallelSlotsShareTheContextSoTheBudgetIsPerSlot`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <2048> but: was <8192>“), mit Fix grün, `OpenAiServerCliTest` 39/39; Gegenprobe per `git stash` rot, nach `stash pop` grün. `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** java-llama.cpp `c1eaa50`
 
 ## Offene Verdachte ohne Fund-ID
 
