@@ -159,8 +159,9 @@ final class OpenAiRequestMapper {
             params = params.withFrequencyPenalty((float) frequencyPenalty.asDouble());
         }
 
+        // 0 is a valid cap upstream (evaluate the prompt into the cache, generate nothing); -1 is its default.
         int maxTokens = readMaxTokens(request);
-        if (maxTokens > 0) {
+        if (maxTokens >= 0) {
             params = params.withNPredict(maxTokens);
         }
 

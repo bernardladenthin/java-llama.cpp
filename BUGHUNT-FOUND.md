@@ -79,6 +79,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F98](#f98) — niedrig — *gefixt*
 - [F99](#f99) — niedrig — *gefixt*
 - [F102](#f102) — niedrig — *gefixt*
+- [F103](#f103) — niedrig — *gefixt*
 
 ## Funde
 
@@ -848,6 +849,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Unexpected exception thrown: java.lang.IllegalArgumentException: slotId must be non-negative but was -1“, als Assertion über `assertDoesNotThrow`), mit Fix grün (26/26 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 19/19, `OllamaApiSupportTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ded2762`
+
+### F103 – java-llama.cpp: `max_tokens: 0` generiert unbegrenzt statt nur den Cache zu füllen
+- **Zeit:** 2026-10-18 07:35 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java:164` (`applyCommonFields`)
+- **Schwere:** niedrig
+- **Beschreibung:** Musterdurchsicht nach F102 (Werte, die der Mapper anders behandelt als upstream). upstreams Schema (`server-schema.cpp`, `n_predict` mit den Aliasen `max_completion_tokens`/`max_tokens`, Grenzen -1..INT32_MAX, b11639): „When 0, no tokens will be generated but the prompt is evaluated into the cache“. Der Mapper übernahm die Obergrenze nur bei `> 0`; ein Client, der mit `0` den Cache vorwärmt, bekam auf den gemappten Wegen (beide Chat-Pfade, gestreamtes `/v1/completions`, und damit Anthropic/Responses/Ollama) eine Generierung ohne Obergrenze bis zum Kontextende, das wörtlich durchgereichte `/v1/completions` dagegen keine.
+- **Fix:** Die Obergrenze wird bei `>= 0` gesetzt; `-1` bzw. kein Feld lässt upstreams Standard (unbegrenzt).
+- **Reproduktion:** `OpenAiRequestMapperTest#zeroTokenCapOnlyWarmsTheCacheLikeUpstream`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <0> but: was <-1>“), mit Fix grün (27/27 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 19/19, `OllamaApiSupportTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

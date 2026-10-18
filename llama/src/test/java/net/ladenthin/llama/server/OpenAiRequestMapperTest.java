@@ -256,6 +256,16 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void zeroTokenCapOnlyWarmsTheCacheLikeUpstream() throws IOException {
+        // upstream: "When 0, no tokens will be generated but the prompt is evaluated into the cache". Dropping
+        // a 0 made the mapped routes generate without a cap, unlike the verbatim /v1/completions.
+        JsonNode out =
+                MAPPER.readTree(mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"max_tokens\":0}"))
+                        .toJson());
+        assertThat(out.path("n_predict").asInt(-1), is(0));
+    }
+
+    @Test
     public void llamaCppSamplingExtensionsReachTheStreamedCompletion() throws IOException {
         // The non-streamed /v1/completions forwards the body to upstream's schema, which reads these
         // fields; the streamed path maps the body here and must not answer the same request with
