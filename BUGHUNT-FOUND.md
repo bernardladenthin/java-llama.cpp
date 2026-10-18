@@ -787,7 +787,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiRequestMapperTest#llamaCppSamplingExtensionsReachTheStreamedCompletion`, `#nPredictWinsOverMaxTokensLikeUpstream`, `#jsonSchemaReachesTheStreamedCompletionUnlessAGrammarIsGiven`
 - **Rot-Grün-Nachweis:** ohne Fix rot (3 Fehlschläge: „Expected: is a numeric value within <1.0E-4> of <0.05> but: <0.0>“, „Expected: is <7> but: was <50>“, „Expected: is "object" but: was ""“), mit Fix grün (25/25 der Klasse, skipped 0); Gegenprobe per `git stash` rot (3), nach `pop` grün. `OpenAiCompatServerHttpTest` 46/46, `AnthropicApiSupportTest` 19/19, `ResponsesApiSupportTest` 18/18, `OllamaApiSupportTest` 24/24, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün (eine erste Fassung mit allen Feldern in einer Methode meldete `CE_CLASS_ENVY`, eine Map-Tabelle `DMC_DUBIOUS_MAP_COLLECTION`; jetzt je Feld ein Aufruf über `withFloat`/`withInt`).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `8ce9ffc`
 
 ## Offene Verdachte ohne Fund-ID
 
