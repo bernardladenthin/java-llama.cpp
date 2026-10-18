@@ -1159,7 +1159,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `RouterClientTest#awaitModelLoaded_zeroTimeoutStillPollsOnce`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Unexpected exception thrown: java.lang.IllegalStateException: Model 'qwen' did not reach LOADED within 0 ms (last status: null)“), mit Fix 20/20 (skipped 0, die Timeout- und Sofort-Fehler-Tests unverändert grün), Gegenprobe per `git stash` rot, danach wieder grün. `LlamaArchitectureTest` 13/13; `spotless:check` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `058153f`
 
 ## Offene Verdachte ohne Fund-ID
 
