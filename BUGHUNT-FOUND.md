@@ -90,6 +90,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F112](#f112) — mittel — *gefixt*
 - [F113](#f113) — niedrig — *gefixt*
 - [F114](#f114) — mittel — *gefixt*
+- [F115](#f115) — niedrig — *gefixt*
 
 ## Funde
 
@@ -983,6 +984,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `fbffef0`
 
+### F115 – java-llama.cpp: `/api/show` verschweigt Continue die Kontextlänge
+- **Zeit:** 2026-10-18 10:35 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:89` (`showJson`)
+- **Schwere:** niedrig
+- **Beschreibung:** Fortsetzung von F114 (Quelltext der genannten Clients lesen). Continues Ollama-Anbieter (`continuedev/continue`, `core/llm/llms/Ollama.ts`) liest die Kontextlänge eines Modells ausschließlich aus dem Text `parameters` von `/api/show` (Zeilen `<Schlüssel> <Wert>`, Ollamas Modelfile-Form, `num_ctx`), nicht aus `model_info`. `showJson` lieferte `parameters: ""`; Continue rechnete daher mit seiner eigenen Vorgabe statt mit dem Fenster des Servers – bei einem kleineren `-c` schickt es zu lange Prompts, bei einem größeren nutzt es das Fenster nicht.
+- **Fix:** `parameters` trägt `num_ctx <Kontextlänge>` (dieselbe Zahl wie `model_info["llama.context_length"]`).
+- **Reproduktion:** `OllamaApiSupportTest#showParametersCarryTheContextLengthWhereContinueReadsIt` (mit Continues regulärem Ausdruck)
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "4096" but: was null“), mit Fix grün (34/34 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. Breite Liste wie F114 grün, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(unsicher/niedrig, nur beschrieben, 06:38 UTC)* java-llama.cpp `llama-ffm/.../ffm/JllamaNative.java` `takeStrings`: Bei `count == 0` kehrt die Methode vor dem `try` zurück und gibt das Array nicht frei, das `jllama_rpc_server_devices` auch für 0 Einträge per `calloc(max(n,1))` anlegt (8 Byte Leck je Aufruf). `rpc::server_devices()` fällt aber immer auf das CPU-Gerät zurück, leer wird die Liste nur ohne registriertes CPU-Backend (kaputte Installation) – praktisch unerreichbar. Fix wäre: bei Nicht-NULL-Zeiger immer `STRINGS_FREE` aufrufen. Nicht ohne native Bibliothek + JDK-22-Toolchain testbar, daher kein Commit. Alle übrigen Freigabe-Funktionen (`takeBytesAsString` → `jllama_string_free` laut Header) stimmen mit `jllama_api.h` überein. **Blocker (Stand 2026-10-17):** Der Rot-Grün-Zyklus braucht ein JDK 22+ (Toolchain des Moduls) und ist in dieser Sandbox nicht herstellbar: GitHub-Releases (Adoptium) und api.adoptium.net sind über den Proxy gesperrt. Vorschlag für den Test: `takeStrings` mit der Freigabefunktion als Parameter (paketintern), Aufruf mit Nicht-NULL-Zeiger und Anzahl 0, Erwartung genau ein Freigabeaufruf; läuft dann im CI-Job `test-java-llama-ffm`.
@@ -1000,3 +1012,4 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - *(niedrig, nur beschrieben, 2026-10-18)* Responses-`refusal`-Teile in Assistenten-Nachrichten des Verlaufs verwirft `ResponsesApiSupport` (der Teil hat `refusal`, kein `text`). Upstream übersetzt sie zu einem Teil vom Typ `refusal`, den sein eigener Chat-Parser dann mit 400 abweist (`common/chat.cpp:373`, nur `text`/`media_marker`). Beides ist unbefriedigend; als Text zu übernehmen wäre die nützlichste Lesart. Entscheidung des Nutzers.
 - *(niedrig, nur beschrieben, 2026-10-18)* Anthropic `stop_sequence` ist bei uns immer `null`; upstreams `to_json_anthropic` (`server-task.cpp:778`) setzt das getroffene Stoppwort (bei `stop_reason` `end_turn`). Die OpenAI-Antwort, aus der `/v1/messages` übersetzt, trägt das Stoppwort nicht; ein Fix bräuchte es aus der nativen Antwort (`stopping_word` der Nicht-OAI-Form). Sonst stimmen blockierender und gestreamter Pfad überein (Usage mit `cache_read_input_tokens`, `stop_reason`-Abbildung).
 - *(erledigt durch F106, 2026-10-18)* Responses-Felder: upstreams `convert_responses_to_chatcmpl` kopiert den **ganzen** Körper in die Chat-Anfrage (`chatcmpl_body = response_body`, nur `input`/`instructions`/`max_output_tokens` umbenannt bzw. entfernt), sodass `top_k`, `seed`, `chat_template_kwargs`, `min_p`, `repeat_penalty` & Co. ankommen. `ResponsesApiSupport.toOpenAiChatRequest` übernimmt nur `temperature`, `top_p`, `max_output_tokens` und `reasoning.effort`; der Rest geht still verloren (Muster F74/F104). Nächste Runde: die Felder, die der Mapper liest (F95), aus der Responses-Anfrage übernehmen und je Feld einen Test schreiben.
+- *(niedrig, nur beschrieben, Entscheidung des Nutzers, 2026-10-18)* Continue entscheidet die FIM-Fähigkeit eines Ollama-Modells daran, ob das `template` aus `/api/show` die Variable `.Suffix` enthält (`Ollama.ts`, „There is no API to get the model's FIM capabilities“). `showJson` liefert `template: ""`, meldet aber `insert` unter `capabilities` und bedient `suffix` in `/api/generate`; Continue nutzt daher für Autovervollständigung seine eigenen Prompt-Vorlagen statt des FIM-Wegs. Ein Platzhalter-Template mit `{{ .Suffix }}` würde das ändern, wäre aber eine erfundene Vorlage, und der Server weiß nicht, ob das Modell FIM-Token hat. Kein Fix ohne Entscheidung.

@@ -85,7 +85,8 @@ final class OllamaApiSupport {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
         root.put("license", "");
         root.put("modelfile", "");
-        root.put("parameters", "");
+        // Ollama's "<key> <value>" lines; Continue's Ollama provider reads the context length only from here.
+        root.put("parameters", "num_ctx " + contextLength);
         root.put("template", "");
         ObjectNode details = root.putObject("details");
         details.put("family", "llama");

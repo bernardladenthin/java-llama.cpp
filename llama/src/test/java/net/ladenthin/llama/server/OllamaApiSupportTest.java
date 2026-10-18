@@ -229,6 +229,24 @@ public class OllamaApiSupportTest {
     }
 
     @Test
+    public void showParametersCarryTheContextLengthWhereContinueReadsIt() throws IOException {
+        // Continue's Ollama provider (core/llm/llms/Ollama.ts) reads the context length only from the
+        // "parameters" text, one "<key> <value>" line each, matched by ^(\S+)\s+((?:".*")|\S+)$.
+        String parameters = read(OllamaApiSupport.showJson("m", 4096, false))
+                .path("parameters")
+                .asText();
+        java.util.regex.Pattern line = java.util.regex.Pattern.compile("^(\\S+)\\s+((?:\".*\")|\\S+)$");
+        String numCtx = null;
+        for (String l : parameters.split("\n")) {
+            java.util.regex.Matcher m = line.matcher(l);
+            if (m.matches() && "num_ctx".equals(m.group(1))) {
+                numCtx = m.group(2);
+            }
+        }
+        assertThat(numCtx, is("4096"));
+    }
+
+    @Test
     public void versionPassesCopilotsMinimumOllamaVersion() throws IOException {
         // VS Code Copilot's Ollama provider (ollamaProvider.ts, MINIMUM_OLLAMA_VERSION) refuses a server
         // below 0.6.4, comparing the dot-separated parts numerically; "0.1.0" failed it before any request.
