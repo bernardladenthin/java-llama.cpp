@@ -944,7 +944,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OaiRerankSupportTest#readDocumentsAcceptsTheTeiTexts`, `#teiRequestGetsTheTeiArrayWithScoreLikeUpstream`, `#teiReturnTextAddsTheDocumentText`
 - **Rot-Grün-Nachweis:** gegen den Stand mit der neutralen Naht rot, jeder Teil für sich (3 Fehlschläge: „Unexpected exception thrown: … 'documents' must be a non-empty array“, „Expected: is <true> but: was <false>“, „Expected: is "b" but: was ""“), mit Fix grün (13/13 der Klasse, skipped 0). Die `git stash`-Gegenprobe ging hier nicht (ohne Naht kompiliert der Test nicht; der danach gelesene Bericht war der alte) und wurde durch den Lauf gegen den Naht-Stand ersetzt. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 22/22, `ResponsesApiSupportTest` 51/51, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 28/28, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `2831610`
 
 ## Offene Verdachte ohne Fund-ID
 
