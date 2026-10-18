@@ -66,6 +66,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F85](#f85) — mittel — *gefixt*
 - [F86](#f86) — mittel — *gefixt*
 - [F87](#f87) — niedrig — *gefixt*
+- [F88](#f88) — mittel — *gefixt*
 
 ## Funde
 
@@ -687,6 +688,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `77a6903`
 
+<a id="f88"></a>
+### F88 – java-llama.cpp: Anthropic-`tool_result` verwirft Bilder
+- **Zeit:** 2026-10-18 04:10 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java:257` (`toolResultContent`, neu; Aufruf in `appendOpenAiMessages`)
+- **Schwere:** mittel
+- **Beschreibung:** Werkzeuge liefern ihr Ergebnis als `tool_result` mit Inhaltsblöcken, darunter Bilder (ein Screenshot, eine Bilddatei, die ein Agent wie Claude Code liest). `toolResultText` übernahm nur die Textblöcke; das Bild erreichte das Modell nie, ein Vision-Modell antwortete, als hätte das Werkzeug keins geliefert. upstreams `convert_anthropic_to_oai` (`server-chat.cpp:453`–`512`, b11639) macht aus einem Ergebnis mit Bildern Inhaltsteile `text`/`image_url` der `role: tool`-Nachricht und lässt nur ein reines Text-Ergebnis als String. Das Anthropic-Gegenstück zu F86, gefunden in der Durchsicht der Typ-Weichen gegen upstreams Liste.
+- **Fix:** `toolResultContent` gibt bei einem Bild die Teile in Blockreihenfolge zurück (`text` und `image_url` über das vorhandene `imageUrl`), sonst wie bisher den Text.
+- **Reproduktion:** `AnthropicApiSupportTest#toolResultImagesReachTheToolMessageLikeUpstream`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "cat.png" but: was ""“ – der Inhalt war ein String), mit Fix grün (18/18 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `AnthropicStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün (nach `new TextNode(...)` statt `textNode(...)`, AI_ANNOTATION_ISSUES_NEEDS_NULLABLE).
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(unsicher/niedrig, nur beschrieben, 06:38 UTC)* java-llama.cpp `llama-ffm/.../ffm/JllamaNative.java` `takeStrings`: Bei `count == 0` kehrt die Methode vor dem `try` zurück und gibt das Array nicht frei, das `jllama_rpc_server_devices` auch für 0 Einträge per `calloc(max(n,1))` anlegt (8 Byte Leck je Aufruf). `rpc::server_devices()` fällt aber immer auf das CPU-Gerät zurück, leer wird die Liste nur ohne registriertes CPU-Backend (kaputte Installation) – praktisch unerreichbar. Fix wäre: bei Nicht-NULL-Zeiger immer `STRINGS_FREE` aufrufen. Nicht ohne native Bibliothek + JDK-22-Toolchain testbar, daher kein Commit. Alle übrigen Freigabe-Funktionen (`takeBytesAsString` → `jllama_string_free` laut Header) stimmen mit `jllama_api.h` überein. **Blocker (Stand 2026-10-17):** Der Rot-Grün-Zyklus braucht ein JDK 22+ (Toolchain des Moduls) und ist in dieser Sandbox nicht herstellbar: GitHub-Releases (Adoptium) und api.adoptium.net sind über den Proxy gesperrt. Vorschlag für den Test: `takeStrings` mit der Freigabefunktion als Parameter (paketintern), Aufruf mit Nicht-NULL-Zeiger und Anzahl 0, Erwartung genau ein Freigabeaufruf; läuft dann im CI-Job `test-java-llama-ffm`.
@@ -701,3 +714,4 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - *(niedrig, nur beschrieben, 2026-10-18)* `/props` (`OpenAiSseFormatter.propsJson`) meldet `total_slots` fest als 1; upstream (`get_res_props`, `server-context.cpp:5141`) meldet `params.n_parallel`. Mit `--parallel 4` sieht ein Client einen Slot, obwohl vier Anfragen gleichzeitig laufen können. Die Slotzahl kennt nur `OpenAiServerCli`, nicht `OpenAiServerConfig`; ein Fix bräuchte ein neues Konfigurationsfeld. Kein bekannter Client richtet sich danach, deshalb nur notiert.
 - *(niedrig, nur beschrieben, 2026-10-18)* Ollama-Antworten tragen den Denkinhalt nicht: Ollama legt ihn in `message.thinking` ab (blockierend und je Stream-Zeile), `OllamaApiSupport` übernimmt aus OpenAIs Antwort nur `content` und `tool_calls`, `reasoning_content` geht verloren. Ein Client mit `think: true` sieht keine Gedanken. Eine Ergänzung der Antwortform, kein Fehlverhalten der Anfrage; daher nur notiert.
 - *(mittel, nur beschrieben, 2026-10-18)* Gestreamtes `/v1/completions` verliert weiter alle Felder außerhalb von `applyCommonFields`, die der nicht gestreamte Weg durchreicht und upstream liest: `n_predict`, `min_p`, `repeat_penalty`, `grammar`, `json_schema`, `logit_bias`, `n_probs`/`logprobs` und weitere. Dieselbe Anfrage erzeugt gestreamt also andere Ausgaben. Ein Fix bräuchte einen Streaming-Einstieg mit rohem JSON (die Natives `requestCompletion`/`receiveCompletionJson` sind paketintern in `net.ladenthin.llama`, `LlamaModelBackend` liegt in `server`) – ein Umbau der API, daher zur Entscheidung des Nutzers. Dasselbe gilt in kleinerem Maß für den Chat-Pfad (blockierend und gestreamt), der seit F77 die Reasoning-Steuerungen übernimmt, aber z. B. `min_p`, `repeat_penalty`, `logprobs` und `n_predict` weiter verwirft.
+- *(niedrig, nur beschrieben, 2026-10-18, nächstes Ziel)* Responses-Inhaltsteile gegen upstreams Liste (`convert_responses_to_chatcmpl`, `server-chat.cpp:71`–`140`): upstream kennt `input_file` (Datei als Teil) und `refusal` (Assistenten-Ablehnung als Text); `ResponsesApiSupport.inputContentText`/`inputContentWithImages` übernehmen nur Teile mit `text` und `input_image`, ein `refusal` mit Feld `refusal` statt `text` ginge so verloren.

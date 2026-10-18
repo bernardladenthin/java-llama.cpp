@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 import java.io.IOException;
 
 /**
@@ -190,7 +191,7 @@ final class AnthropicApiSupport {
                     ObjectNode toolMessage = out.addObject();
                     toolMessage.put("role", "tool");
                     toolMessage.put("tool_call_id", block.path("tool_use_id").asText(""));
-                    toolMessage.put("content", toolResultText(block.path("content")));
+                    toolMessage.set("content", toolResultContent(block.path("content")));
                     hadToolResult = true;
                     break;
                 default:
@@ -246,6 +247,39 @@ final class AnthropicApiSupport {
             return source.path("url").asText();
         }
         return null;
+    }
+
+    /**
+     * The content of the tool message for a {@code tool_result}: its text, or, when it carries an image,
+     * text and {@code image_url} parts in block order, as upstream's {@code convert_anthropic_to_oai}
+     * does. Flattening to text alone dropped an image a tool returned (a screenshot, an image file).
+     */
+    private static JsonNode toolResultContent(JsonNode content) {
+        if (content.isArray()) {
+            ArrayNode parts = OBJECT_MAPPER.createArrayNode();
+            boolean hadImage = false;
+            for (JsonNode block : content) {
+                String type = block.path("type").asText("");
+                if ("text".equals(type)) {
+                    parts.addObject()
+                            .put("type", "text")
+                            .put("text", block.path("text").asText(""));
+                } else if ("image".equals(type)) {
+                    String url = imageUrl(block.path("source"));
+                    if (url != null) {
+                        parts.addObject()
+                                .put("type", "image_url")
+                                .putObject("image_url")
+                                .put("url", url);
+                        hadImage = true;
+                    }
+                }
+            }
+            if (hadImage) {
+                return parts;
+            }
+        }
+        return new TextNode(toolResultText(content));
     }
 
     private static String toolResultText(JsonNode content) {

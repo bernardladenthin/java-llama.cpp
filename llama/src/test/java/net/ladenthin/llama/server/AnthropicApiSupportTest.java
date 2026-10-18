@@ -79,6 +79,27 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void toolResultImagesReachTheToolMessageLikeUpstream() throws IOException {
+        // A tool that returns an image (a screenshot, an image file read by an agent) sends it as an
+        // image block inside tool_result; upstream's convert_anthropic_to_oai keeps text and image as
+        // content parts of the tool message.
+        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(
+                        read(
+                                "{\"messages\":["
+                                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"read\",\"input\":{}}]},"
+                                        + "{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"t1\",\"content\":["
+                                        + "{\"type\":\"text\",\"text\":\"cat.png\"},"
+                                        + "{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"AA==\"}}]}]}]}"))
+                .path("messages");
+        JsonNode tool = messages.path(1);
+        assertThat(tool.path("role").asText(), is("tool"));
+        assertThat(tool.path("content").path(0).path("text").asText(), is("cat.png"));
+        assertThat(tool.path("content").path(1).path("type").asText(), is("image_url"));
+        assertThat(
+                tool.path("content").path(1).path("image_url").path("url").asText(), is("data:image/png;base64,AA=="));
+    }
+
+    @Test
     public void requestMapsAnEnabledThinkingBudgetLikeUpstream() throws IOException {
         // Upstream's convert_anthropic_to_oai turns thinking.budget_tokens into thinking_budget_tokens,
         // which the chat parser hands to the sampler as the reasoning budget.
