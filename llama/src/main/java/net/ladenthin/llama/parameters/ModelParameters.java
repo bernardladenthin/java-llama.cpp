@@ -644,16 +644,19 @@ public final class ModelParameters extends CliParameters {
     /**
      * Set pooling type for embeddings (default: model default if unspecified).
      * When {@link net.ladenthin.llama.args.PoolingType#UNSPECIFIED} is passed, the parameter is not forwarded
-     * to the native layer, leaving the model to use its built-in default pooling strategy.
+     * to the native layer (a pooling type set before is removed), leaving the model to use its built-in default
+     * pooling strategy.
      *
      * @param type the pooling type for embeddings
      * @return this builder
      */
     public ModelParameters setPoolingType(PoolingType type) {
-        if (type != PoolingType.UNSPECIFIED) {
-            // Don't set if unspecified, as it will use the model's default pooling type
-            putString(ModelOption.POOLING, type.getArgValue());
+        if (type == PoolingType.UNSPECIFIED) {
+            // unspecified has no CLI string: the model's default pooling type applies
+            removeOption(ModelOption.POOLING);
+            return this;
         }
+        putString(ModelOption.POOLING, type.getArgValue());
         return this;
     }
 

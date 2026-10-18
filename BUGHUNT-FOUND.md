@@ -97,6 +97,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F123](#f123) — niedrig — *gefixt*
 - [F125](#f125) — niedrig — *gefixt*
 - [F128](#f128) — mittel — *gefixt*
+- [F133](#f133) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1095,6 +1096,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **CI-Bedarf:** `JllamaToolCallingIntegrationTest#streamedRequiredToolCallComesBackAsToolExecutionRequest` (Job `test-java-llama-langchain4j-integration`, kein Release-Gate) im nächsten Lauf ansehen: ob er vor dem Fix rot war, hängt davon ab, ob das CI-Modell den Namen allein in einem Fragment sendet.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `4d599fa`
+
+<a id="f133"></a>
+### F133 – java-llama.cpp: `setPoolingType(UNSPECIFIED)` lässt ein vorher gesetztes `--pooling` stehen
+- **Zeit:** 2026-10-18 20:40 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/ModelParameters.java:652` (`setPoolingType`)
+- **Schwere:** niedrig
+- **Beschreibung:** Die Javadoc sagt, mit `UNSPECIFIED` werde der Parameter nicht weitergegeben und das Modell nutze seine eigene Pooling-Strategie. Der Code überspringt bei `UNSPECIFIED` nur das Setzen; ein vorher gesetzter Typ bleibt in der Map, `setPoolingType(MEAN).setPoolingType(UNSPECIFIED)` lädt das Modell also mit `--pooling mean`. `setRopeScaling(UNSPECIFIED)` entfernt die Option seit F13 – dessen Eintrag nennt `setPoolingType` als Vorbild, das es nicht war.
+- **Fix:** `UNSPECIFIED` ruft `removeOption(ModelOption.POOLING)`, wie `setRopeScaling`; Javadoc um den Satz zum Entfernen ergänzt.
+- **Reproduktion:** `ModelParametersTest#testSetPoolingTypeUnspecifiedRemovesAnEarlierPoolingType`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: not map containing ["--pooling"->ANYTHING] but: was <{--fit=on, --pooling=mean}>“, die übrigen 92 Tests der Klasse grün), mit Fix 93/93 (skipped 0), Gegenprobe per `git stash` rot, danach wieder grün. `LlamaArchitectureTest` 13/13, `WireNameRegistryTest` 8/8, `ModelParametersExtendedTest` 148/148; `spotless:check` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

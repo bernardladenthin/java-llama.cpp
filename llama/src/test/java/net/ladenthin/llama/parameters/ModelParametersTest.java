@@ -320,6 +320,14 @@ public class ModelParametersTest {
     }
 
     @Test
+    public void testSetPoolingTypeUnspecifiedRemovesAnEarlierPoolingType() {
+        // UNSPECIFIED must leave the model's own pooling, also after another type was set before
+        ModelParameters p =
+                new ModelParameters().setPoolingType(PoolingType.MEAN).setPoolingType(PoolingType.UNSPECIFIED);
+        assertThat(p.parameters, not(hasKey(ModelOption.POOLING.getCliOption())));
+    }
+
+    @Test
     public void testSetRopeScaling() {
         ModelParameters p = new ModelParameters().setRopeScaling(RopeScalingType.YARN2);
         assertThat(p.parameters.get("--rope-scaling"), is("yarn"));
