@@ -1067,7 +1067,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiRequestMapperTest#logprobsWithTopLogprobsBecomesNProbs`, `#logprobsWithoutTopLogprobsDefaultsToTwentyLikeUpstream` (dazu als Schutz `#logprobsFalseLeavesNProbsUnset`)
 - **Rot-Grün-Nachweis:** ohne Fix beide rot („Expected: is <3> but: was <-1>“ bzw. „Expected: is <20> but: was <-1>“), mit Fix grün (31/31 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. Breite Liste wie F117 grün, `spotless:apply` und `spotbugs:check` grün. Der erste Grün-Lauf scheiterte am Compiler (`NotJavadoc`: Konstante zwischen fremde Javadoc und Deklaration eingefügt, wie bei F108) und meldete trotzdem den alten roten Bericht – das Prüfskript löscht den Bericht jetzt auch vor dem Grün-Lauf.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `3e86360`
 
 ## Offene Verdachte ohne Fund-ID
 
