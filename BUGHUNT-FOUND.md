@@ -620,7 +620,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#responseCarriesTheReasoningAsAReasoningItemFirstLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <2> but: was <1>“), mit Fix grün (14/14 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `ResponsesStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `070dbce`
 
 ## Offene Verdachte ohne Fund-ID
 
