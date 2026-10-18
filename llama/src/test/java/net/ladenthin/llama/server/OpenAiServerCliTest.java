@@ -12,6 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import net.ladenthin.llama.args.CacheType;
 import net.ladenthin.llama.value.RpcEndpoint;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Unit tests for {@link OpenAiServerCli}: parsing of long/short/alias flags, defaults, model-id
@@ -227,6 +229,27 @@ public class OpenAiServerCliTest {
         IllegalArgumentException ex = assertThrows(
                 IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", "--port", "abc"));
         assertThat(ex.getMessage(), containsString("expects an integer"));
+    }
+
+    /**
+     * A port outside the TCP range is a usage error like a non-numeric one. Accepted here, it only
+     * fails when the server binds, which happens after the model has loaded, and as a stack trace.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"-1", "65536", "70000"})
+    public void portOutsideTheTcpRangeThrows(String port) {
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", "--port", port));
+        assertThat(ex.getMessage(), containsString("--port expects a port in 0..65535"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 1, 65535})
+    public void portAtTheEndsOfTheTcpRangeIsAccepted(int port) {
+        assertThat(
+                OpenAiServerCli.parse("-m", "m.gguf", "--port", Integer.toString(port))
+                        .getPort(),
+                is(port));
     }
 
     @Test

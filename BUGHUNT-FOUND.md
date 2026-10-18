@@ -95,6 +95,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F117](#f117) — mittel — *gefixt*
 - [F118](#f118) — niedrig — *gefixt*
 - [F123](#f123) — niedrig — *gefixt*
+- [F125](#f125) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1068,6 +1069,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix beide rot („Expected: is <3> but: was <-1>“ bzw. „Expected: is <20> but: was <-1>“), mit Fix grün (31/31 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. Breite Liste wie F117 grün, `spotless:apply` und `spotbugs:check` grün. Der erste Grün-Lauf scheiterte am Compiler (`NotJavadoc`: Konstante zwischen fremde Javadoc und Deklaration eingefügt, wie bei F108) und meldete trotzdem den alten roten Bericht – das Prüfskript löscht den Bericht jetzt auch vor dem Grün-Lauf.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `3e86360`
+
+<a id="f125"></a>
+### F125 – java-llama.cpp: `OpenAiServerCli` nimmt einen Port außerhalb von 0..65535 an; der Fehler kommt erst nach dem Modell-Laden
+- **Zeit:** 2026-10-18 15:40 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiServerCli.java:72` (`parse`, `--port`), Aufrufer `OpenAiCompatServer.main`
+- **Schwere:** niedrig
+- **Beschreibung:** `--port`/`-p` lief nur durch `Integer.parseInt`. `-p 70000` oder `-p -1` wurde angenommen; `OpenAiCompatServer.main` lud dann zuerst das Modell (bei großen GGUFs Minuten) und scheiterte erst beim Binden in `new InetSocketAddress` mit „port out of range“ als nicht gefangener `IllegalArgumentException` samt Stacktrace. Die Javadoc von `main` verspricht für Usage-Fehler eine Meldung auf stderr und Rückkehr; ein nicht numerischer Port wird schon so behandelt, ein numerischer außerhalb des TCP-Bereichs nicht.
+- **Fix:** `portValue` prüft 0..65535 (0 bleibt erlaubt: freier Port) und wirft den üblichen Usage-Fehler.
+- **Reproduktion:** `OpenAiServerCliTest#portOutsideTheTcpRangeThrows` (`-1`, `65536`, `70000`), Grenzen in `#portAtTheEndsOfTheTcpRangeIsAccepted` (0, 1, 65535)
+- **Rot-Grün-Nachweis:** ohne Fix rot in allen drei Fällen („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix grün (45/45 der Klasse, skipped 0); Gegenprobe per `git stash` rot (3), nach `pop` grün. Breite Liste: `OpenAiCompatServerHttpTest` 54/54, `ServerLauncherTest` 7/7, `LlamaArchitectureTest` 13/13; `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

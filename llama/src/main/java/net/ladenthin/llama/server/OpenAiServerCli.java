@@ -104,7 +104,7 @@ public final class OpenAiServerCli {
                     break;
                 case "-p":
                 case "--port":
-                    port = intValue(args, ++i, arg);
+                    port = portValue(args, ++i, arg);
                     break;
                 case "-c":
                 case "--ctx-size":
@@ -275,6 +275,24 @@ public final class OpenAiServerCli {
         } catch (IllegalArgumentException e) {
             throw error("Invalid value for " + flag + ": " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Reads a TCP port. {@code 0} stays allowed (the system picks a free port, which
+     * {@code getPort()} of the started server reports); anything outside {@code 0..65535} is a usage
+     * error here, not a failure of the bind that only follows the model load.
+     *
+     * @param args the command line
+     * @param valueIndex the index of the value
+     * @param flag the flag the value belongs to, for the message
+     * @return the port
+     */
+    private static int portValue(String[] args, int valueIndex, String flag) {
+        final int port = intValue(args, valueIndex, flag);
+        if (port < 0 || port > 65535) {
+            throw error(flag + " expects a port in 0..65535, got: " + port);
+        }
+        return port;
     }
 
     private static int intValue(String[] args, int valueIndex, String flag) {
