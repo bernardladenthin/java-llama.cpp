@@ -57,6 +57,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F76](#f76) — mittel — *gefixt*
 - [F77](#f77) — mittel — *gefixt*
 - [F78](#f78) — mittel — *gefixt*
+- [F79](#f79) — niedrig — *gefixt*
 
 ## Funde
 
@@ -569,6 +570,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `d252f84`
 
+<a id="f79"></a>
+### F79 – java-llama.cpp: gestreamtes `/v1/completions` ignoriert `suffix`, `best_of` und `echo`, die der nicht gestreamte Weg abweist
+- **Zeit:** 2026-10-18 02:40 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java:89` (`toCompletionParameters`)
+- **Schwere:** niedrig
+- **Beschreibung:** Nicht gestreamt geht `/v1/completions` unverändert an `handleCompletionsOai`, also an upstreams `oaicompat_completion_params_parse` (`server-common.cpp:1082`, b11639), das `echo: true` („Only no echo is supported“) sowie `suffix` und `best_of` („Unsupported param: …“) mit 400 abweist. Gestreamt baut `toCompletionParameters` die Anfrage aus einer Teilmenge und überging diese Felder still. Ein gestreamter FIM-Request mit `suffix` lieferte so eine bloße Fortsetzung des Präfixes, die über den Suffix hinausläuft und ihn im Editor dupliziert, statt eines Fehlers; dieselbe Anfrage verhielt sich gestreamt und nicht gestreamt verschieden.
+- **Fix:** `toCompletionParameters` weist `echo: true`, `suffix` und `best_of` mit upstreams Meldungen ab (`IllegalArgumentException`, vom Server als Anfragefehler gemeldet).
+- **Reproduktion:** `OpenAiRequestMapperTest#completionParamsUpstreamRejectsAreRejectedOnTheStreamedPathToo`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix grün (22/22 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `OpenAiCompatServerHttpTest` 45/45, die drei Übersetzer-Tests, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(unsicher/niedrig, nur beschrieben, 06:38 UTC)* java-llama.cpp `llama-ffm/.../ffm/JllamaNative.java` `takeStrings`: Bei `count == 0` kehrt die Methode vor dem `try` zurück und gibt das Array nicht frei, das `jllama_rpc_server_devices` auch für 0 Einträge per `calloc(max(n,1))` anlegt (8 Byte Leck je Aufruf). `rpc::server_devices()` fällt aber immer auf das CPU-Gerät zurück, leer wird die Liste nur ohne registriertes CPU-Backend (kaputte Installation) – praktisch unerreichbar. Fix wäre: bei Nicht-NULL-Zeiger immer `STRINGS_FREE` aufrufen. Nicht ohne native Bibliothek + JDK-22-Toolchain testbar, daher kein Commit. Alle übrigen Freigabe-Funktionen (`takeBytesAsString` → `jllama_string_free` laut Header) stimmen mit `jllama_api.h` überein. **Blocker (Stand 2026-10-17):** Der Rot-Grün-Zyklus braucht ein JDK 22+ (Toolchain des Moduls) und ist in dieser Sandbox nicht herstellbar: GitHub-Releases (Adoptium) und api.adoptium.net sind über den Proxy gesperrt. Vorschlag für den Test: `takeStrings` mit der Freigabefunktion als Parameter (paketintern), Aufruf mit Nicht-NULL-Zeiger und Anzahl 0, Erwartung genau ein Freigabeaufruf; läuft dann im CI-Job `test-java-llama-ffm`.
@@ -582,3 +595,4 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - *(niedrig, nur beschrieben, 2026-10-18)* Anthropic-Rest nach F76: upstreams `convert_anthropic_to_oai` setzt `max_tokens` 4096, wenn es fehlt (bei uns unbegrenzt; das Protokoll verlangt das Feld, Clients senden es), und reicht `chat_template_kwargs` durch, das wir verwerfen.
 - *(niedrig, nur beschrieben, 2026-10-18)* `/props` (`OpenAiSseFormatter.propsJson`) meldet `total_slots` fest als 1; upstream (`get_res_props`, `server-context.cpp:5141`) meldet `params.n_parallel`. Mit `--parallel 4` sieht ein Client einen Slot, obwohl vier Anfragen gleichzeitig laufen können. Die Slotzahl kennt nur `OpenAiServerCli`, nicht `OpenAiServerConfig`; ein Fix bräuchte ein neues Konfigurationsfeld. Kein bekannter Client richtet sich danach, deshalb nur notiert.
 - *(niedrig, nur beschrieben, 2026-10-18)* Ollama-Antworten tragen den Denkinhalt nicht: Ollama legt ihn in `message.thinking` ab (blockierend und je Stream-Zeile), `OllamaApiSupport` übernimmt aus OpenAIs Antwort nur `content` und `tool_calls`, `reasoning_content` geht verloren. Ein Client mit `think: true` sieht keine Gedanken. Eine Ergänzung der Antwortform, kein Fehlverhalten der Anfrage; daher nur notiert.
+- *(mittel, nur beschrieben, 2026-10-18)* Gestreamtes `/v1/completions` verliert weiter alle Felder außerhalb von `applyCommonFields`, die der nicht gestreamte Weg durchreicht und upstream liest: `n_predict`, `min_p`, `repeat_penalty`, `grammar`, `json_schema`, `logit_bias`, `n_probs`/`logprobs` und weitere. Dieselbe Anfrage erzeugt gestreamt also andere Ausgaben. Ein Fix bräuchte einen Streaming-Einstieg mit rohem JSON (die Natives `requestCompletion`/`receiveCompletionJson` sind paketintern in `net.ladenthin.llama`, `LlamaModelBackend` liegt in `server`) – ein Umbau der API, daher zur Entscheidung des Nutzers. Dasselbe gilt in kleinerem Maß für den Chat-Pfad (blockierend und gestreamt), der seit F77 die Reasoning-Steuerungen übernimmt, aber z. B. `min_p`, `repeat_penalty`, `logprobs` und `n_predict` weiter verwirft.

@@ -32,6 +32,29 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void completionParamsUpstreamRejectsAreRejectedOnTheStreamedPathToo() throws IOException {
+        // Upstream's oaicompat_completion_params_parse answers 400 for suffix, best_of and echo=true, and
+        // the non-streamed /v1/completions forwards the body to it; the streamed path maps the body here
+        // and must not silently drop them (a streamed FIM request with suffix continued the prefix).
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapper.toCompletionParameters(
+                        MAPPER.readTree("{\"prompt\":\"def f(\",\"suffix\":\"return x\"}")));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"best_of\":2}")));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"echo\":true}")));
+        assertThat(
+                MAPPER.readTree(mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"echo\":false}"))
+                                .toJson())
+                        .path("prompt")
+                        .asText(),
+                is("p"));
+    }
+
+    @Test
     public void chatTemplateKwargsAreForwarded() throws IOException {
         // Qwen3 clients switch thinking off with chat_template_kwargs; upstream's chat parser merges the
         // request's kwargs into the template variables.
