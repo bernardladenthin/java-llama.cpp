@@ -292,6 +292,15 @@ final class AnthropicApiSupport {
             JsonNode completion = OBJECT_MAPPER.readTree(openAiCompletionJson);
             JsonNode choice = completion.path("choices").path(0);
             JsonNode message = choice.path("message");
+            // As upstream's to_json_anthropic: the reasoning comes first as a thinking block, with an
+            // empty signature (a local model has nothing to sign).
+            String reasoning = message.path("reasoning_content").asText("");
+            if (!reasoning.isEmpty()) {
+                ObjectNode thinkingBlock = content.addObject();
+                thinkingBlock.put("type", "thinking");
+                thinkingBlock.put("thinking", reasoning);
+                thinkingBlock.put("signature", "");
+            }
             String text = message.path("content").asText("");
             if (!text.isEmpty()) {
                 ObjectNode textBlock = content.addObject();

@@ -46,6 +46,23 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void responseCarriesTheReasoningAsAThinkingBlockFirstLikeUpstream() throws IOException {
+        // Upstream's to_json_anthropic puts the reasoning first, as {"type":"thinking","thinking":...,
+        // "signature":""}; a client that enabled thinking (F76) otherwise never sees it.
+        JsonNode response = read(AnthropicApiSupport.toAnthropicResponse(
+                "{\"choices\":[{\"message\":{\"content\":\"42\",\"reasoning_content\":\"6 times 7\"},"
+                        + "\"finish_reason\":\"stop\"}]}",
+                "m"));
+        JsonNode content = response.path("content");
+        assertThat(content.size(), is(2));
+        assertThat(content.get(0).path("type").asText(), is("thinking"));
+        assertThat(content.get(0).path("thinking").asText(), is("6 times 7"));
+        assertThat(content.get(0).path("signature").isTextual(), is(true));
+        assertThat(content.get(1).path("type").asText(), is("text"));
+        assertThat(content.get(1).path("text").asText(), is("42"));
+    }
+
+    @Test
     public void requestMapsAnEnabledThinkingBudgetLikeUpstream() throws IOException {
         // Upstream's convert_anthropic_to_oai turns thinking.budget_tokens into thinking_budget_tokens,
         // which the chat parser hands to the sampler as the reasoning budget.
