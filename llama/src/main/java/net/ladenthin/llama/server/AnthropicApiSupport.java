@@ -38,6 +38,9 @@ final class AnthropicApiSupport {
     /** Length of the {@code cch} stamp upstream overwrites. */
     private static final int BILLING_STAMP_LENGTH = 5;
 
+    /** Output cap of a request without {@code max_tokens} (upstream's default). */
+    private static final int DEFAULT_MAX_TOKENS = 4096;
+
     /** Reasoning budget of an enabled {@code thinking} block without {@code budget_tokens} (upstream's default). */
     private static final int DEFAULT_THINKING_BUDGET_TOKENS = 10_000;
 
@@ -103,12 +106,23 @@ final class AnthropicApiSupport {
             }
         }
 
-        copyNumber(request, "max_tokens", openAi, "max_tokens");
+        // As upstream's convert_anthropic_to_oai: the protocol requires max_tokens, a request without
+        // it is capped at upstream's default instead of generating until the context is full.
+        if (request.path("max_tokens").isNumber()) {
+            copyNumber(request, "max_tokens", openAi, "max_tokens");
+        } else {
+            openAi.put("max_tokens", DEFAULT_MAX_TOKENS);
+        }
         copyNumber(request, "temperature", openAi, "temperature");
         copyNumber(request, "top_p", openAi, "top_p");
         copyNumber(request, "top_k", openAi, "top_k");
         if (request.path("stop_sequences").isArray()) {
             openAi.set("stop", request.path("stop_sequences").deepCopy());
+        }
+        // Passed through like upstream; the chat mapper hands it to the template.
+        JsonNode templateKwargs = request.path("chat_template_kwargs");
+        if (templateKwargs.isObject()) {
+            openAi.set("chat_template_kwargs", templateKwargs.deepCopy());
         }
         // As upstream's convert_anthropic_to_oai: an enabled thinking block becomes the reasoning budget
         // the chat parser hands to the sampler, with upstream's default when budget_tokens is absent.

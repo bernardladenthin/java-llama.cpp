@@ -151,6 +151,18 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void requestDefaultsMaxTokensAndPassesTemplateKwargsLikeUpstream() throws IOException {
+        // upstream's convert_anthropic_to_oai caps a request without max_tokens at 4096 instead of
+        // generating until the context is full, and passes chat_template_kwargs through (e.g. Qwen3's
+        // enable_thinking), which the shared chat mapper reads.
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":[{\"role\":\"user\","
+                + "\"content\":\"hi\"}],\"chat_template_kwargs\":{\"enable_thinking\":false}}"));
+        assertThat(openAi.path("max_tokens").asInt(), is(4096));
+        assertThat(openAi.path("chat_template_kwargs").path("enable_thinking").isBoolean(), is(true));
+        assertThat(openAi.path("chat_template_kwargs").path("enable_thinking").asBoolean(true), is(false));
+    }
+
+    @Test
     public void isStreamingDefaultsFalse() throws IOException {
         assertThat(AnthropicApiSupport.isStreaming(read("{}")), is(false));
         assertThat(AnthropicApiSupport.isStreaming(read("{\"stream\":true}")), is(true));
