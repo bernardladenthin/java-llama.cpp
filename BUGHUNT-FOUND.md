@@ -554,7 +554,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix alle fünf rot (u. a. „Expected: is <512> but: was <0>“, „Expected: is "low" but: was ""“, „Expected: is <1024> but: was <0>“), mit Fix 21/21 der Klasse grün, skipped 0; Gegenprobe per `git stash` wieder 5 rot, nach `pop` grün. `AnthropicApiSupportTest` 15/15, `ResponsesApiSupportTest` 13/13, `OllamaApiSupportTest` 23/23, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **CI-Bedarf:** ein modellgestützter Lauf (`OpenAiCompatServerIntegrationTest` mit dem Reasoning-Modell) würde zeigen, dass `reasoning_effort: "none"` den Denkblock wirklich unterdrückt; hier gibt es kein Modell.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `60c2b9f`
 
 ## Offene Verdachte ohne Fund-ID
 
