@@ -233,6 +233,19 @@ final class ResponsesApiSupport {
         try {
             JsonNode completion = OBJECT_MAPPER.readTree(openAiCompletionJson);
             JsonNode message = completion.path("choices").path(0).path("message");
+            // As upstream's to_json_oaicompat_resp: the reasoning comes first, as a reasoning item.
+            String reasoning = message.path("reasoning_content").asText("");
+            if (!reasoning.isEmpty()) {
+                ObjectNode reasoningItem = output.addObject();
+                reasoningItem.put("type", "reasoning");
+                reasoningItem.put("id", "rs_" + responseId);
+                reasoningItem.putArray("summary");
+                ObjectNode reasoningText = reasoningItem.putArray("content").addObject();
+                reasoningText.put("type", "reasoning_text");
+                reasoningText.put("text", reasoning);
+                reasoningItem.put("encrypted_content", "");
+                reasoningItem.put("status", "completed");
+            }
             String text = message.path("content").asText("");
             ObjectNode messageItem = output.addObject();
             messageItem.put("type", "message");

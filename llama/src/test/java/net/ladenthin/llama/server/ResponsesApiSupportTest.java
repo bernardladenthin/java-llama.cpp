@@ -57,6 +57,23 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void responseCarriesTheReasoningAsAReasoningItemFirstLikeUpstream() throws IOException {
+        // Upstream's to_json_oaicompat_resp emits the reasoning as the first output item,
+        // {"type":"reasoning","content":[{"type":"reasoning_text","text":...}],"summary":[]}.
+        JsonNode output = read(ResponsesApiSupport.toResponsesResponse(
+                        "{\"choices\":[{\"message\":{\"content\":\"42\",\"reasoning_content\":\"6 times 7\"}}]}",
+                        "m",
+                        "resp_1"))
+                .path("output");
+        assertThat(output.size(), is(2));
+        assertThat(output.get(0).path("type").asText(), is("reasoning"));
+        assertThat(output.get(0).path("content").get(0).path("type").asText(), is("reasoning_text"));
+        assertThat(output.get(0).path("content").get(0).path("text").asText(), is("6 times 7"));
+        assertThat(output.get(0).path("summary").isArray(), is(true));
+        assertThat(output.get(1).path("type").asText(), is("message"));
+    }
+
+    @Test
     public void responseCarriesTheCurrentUnixTimeAsCreatedAt() throws IOException {
         long before = System.currentTimeMillis() / 1000L;
 
