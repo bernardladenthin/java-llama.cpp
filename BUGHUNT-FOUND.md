@@ -1029,7 +1029,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiCompatServerHttpTest#aFailedAnthropicMessageIsAnApiError`, `#aFailedStreamedAnthropicMessageIsAnApiError` (dazu als Schutz `#aRejectedStreamedAnthropicMessageStaysAnInvalidRequestError`)
 - **Rot-Grün-Nachweis:** ohne Fix beide rot („Expected: a string containing "\"error\":{\"type\":\"api_error\"" but: was "{"type":"error","error":{"type":"invalid_request_error","message":"decoding failed"}}"“), mit Fix grün (54/54 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. Breite Liste wie F117 grün, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `ccba21a`
 
 ## Offene Verdachte ohne Fund-ID
 
