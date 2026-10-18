@@ -835,7 +835,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#toolCallOnlyResponseHasNoEmptyMessageItemLikeUpstreamAndTheStream`, dazu `#responseEmitsFunctionCallItemsForToolCalls`
 - **Rot-Grün-Nachweis:** ohne Fix rot (2 Fehlschläge: „Expected: is <1> but: was <2>“, „Expected: is "function_call" but: was "message"“), mit Fix grün (19/19 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `OllamaApiSupportTest` 27/27, `OpenAiRequestMapperTest` 25/25, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `9d0a021`
 
 ## Offene Verdachte ohne Fund-ID
 
