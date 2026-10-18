@@ -1080,7 +1080,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiServerCliTest#portOutsideTheTcpRangeThrows` (`-1`, `65536`, `70000`), Grenzen in `#portAtTheEndsOfTheTcpRangeIsAccepted` (0, 1, 65535)
 - **Rot-Grün-Nachweis:** ohne Fix rot in allen drei Fällen („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix grün (45/45 der Klasse, skipped 0); Gegenprobe per `git stash` rot (3), nach `pop` grün. Breite Liste: `OpenAiCompatServerHttpTest` 54/54, `ServerLauncherTest` 7/7, `LlamaArchitectureTest` 13/13; `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `ba26cdc`
 
 ## Offene Verdachte ohne Fund-ID
 
