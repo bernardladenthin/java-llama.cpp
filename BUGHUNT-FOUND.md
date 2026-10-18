@@ -1005,7 +1005,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#toolResultNameBecomesTheNameLlamaCppReads`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "get_weather" but: was ""“), mit Fix grün (35/35 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. Breite Liste wie F114 grün, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `a5e86bf`
 
 ## Offene Verdachte ohne Fund-ID
 
