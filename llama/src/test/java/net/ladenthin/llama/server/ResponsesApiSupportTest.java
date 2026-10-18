@@ -72,6 +72,26 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void functionCallOutputArrayKeepsItsPartsLikeUpstream() throws IOException {
+        // A tool result may be an array of input_text / input_image parts; upstream's
+        // convert_responses_to_chatcmpl turns them into text / image_url parts of the tool message.
+        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                        + "{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"f\",\"arguments\":\"{}\"},"
+                        + "{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":["
+                        + "{\"type\":\"input_text\",\"text\":\"sunny\"},"
+                        + "{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,AA==\"}]}]}"))
+                .path("messages");
+        JsonNode tool = messages.get(1);
+        assertThat(tool.path("role").asText(), is("tool"));
+        assertThat(tool.path("tool_call_id").asText(), is("c1"));
+        assertThat(tool.path("content").path(0).path("type").asText(), is("text"));
+        assertThat(tool.path("content").path(0).path("text").asText(), is("sunny"));
+        assertThat(tool.path("content").path(1).path("type").asText(), is("image_url"));
+        assertThat(
+                tool.path("content").path(1).path("image_url").path("url").asText(), is("data:image/png;base64,AA=="));
+    }
+
+    @Test
     public void requestMapsTheReasoningEffortLikeUpstream() throws IOException {
         // Upstream's Responses converter maps reasoning.effort to reasoning_effort, which the chat
         // parser reads ("none" switches the model's thinking off).

@@ -135,7 +135,12 @@ final class ResponsesApiSupport {
                     ObjectNode toolMessage = messages.addObject();
                     toolMessage.put("role", "tool");
                     toolMessage.put("tool_call_id", item.path("call_id").asText(""));
-                    toolMessage.put("content", item.path("output").asText(""));
+                    JsonNode output = item.path("output");
+                    if (output.isArray()) {
+                        toolMessage.set("content", toolOutputParts(output));
+                    } else {
+                        toolMessage.put("content", output.asText(""));
+                    }
                     break;
                 case "reasoning":
                     appendReasoningItem(messages, item);
@@ -187,6 +192,30 @@ final class ResponsesApiSupport {
             }
         }
         return hasImage ? parts : null;
+    }
+
+    /**
+     * The content parts of a {@code function_call_output} whose {@code output} is an array: {@code
+     * input_text} becomes a {@code text} part, {@code input_image} an {@code image_url} part, as in
+     * upstream's {@code convert_responses_to_chatcmpl}. Reading such an output as text gave the tool
+     * message an empty content. Other part types are skipped (upstream rejects them).
+     */
+    private static ArrayNode toolOutputParts(JsonNode output) {
+        ArrayNode parts = OBJECT_MAPPER.createArrayNode();
+        for (JsonNode part : output) {
+            String type = part.path("type").asText("");
+            if ("input_text".equals(type)) {
+                parts.addObject()
+                        .put("type", "text")
+                        .put("text", part.path("text").asText(""));
+            } else if ("input_image".equals(type) && part.path("image_url").isTextual()) {
+                parts.addObject()
+                        .put("type", "image_url")
+                        .putObject("image_url")
+                        .put("url", part.path("image_url").asText());
+            }
+        }
+        return parts;
     }
 
     /**
