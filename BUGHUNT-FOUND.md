@@ -811,7 +811,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#chatCarriesTheThinkingInBothDirectionsLikeOllama`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "6 times 7" but: was ""“, erste von drei Richtungen; die Stream- und die Verlaufs-Assertion folgen dahinter), mit Fix grün (25/25 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 46/46, `AnthropicApiSupportTest` 20/20, `ResponsesApiSupportTest` 18/18, `OpenAiRequestMapperTest` 25/25, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `9eab6e0`
 
 ## Offene Verdachte ohne Fund-ID
 
