@@ -119,11 +119,7 @@ final class ResponsesApiSupport {
             String type = item.path("type").asText("message");
             switch (type) {
                 case "function_call":
-                    ObjectNode assistant = messages.addObject();
-                    assistant.put("role", "assistant");
-                    assistant.putNull("content");
-                    ArrayNode toolCalls = assistant.putArray("tool_calls");
-                    ObjectNode toolCall = toolCalls.addObject();
+                    ObjectNode toolCall = assistantToolCalls(messages).addObject();
                     toolCall.put(
                             "id", item.path("call_id").asText(item.path("id").asText("")));
                     toolCall.put("type", "function");
@@ -192,6 +188,24 @@ final class ResponsesApiSupport {
             }
         }
         return hasImage ? parts : null;
+    }
+
+    /**
+     * The {@code tool_calls} array a {@code function_call} item joins: the preceding assistant message's
+     * (created if it has none), as upstream's {@code convert_responses_to_chatcmpl} merges parallel calls
+     * into one assistant turn, else a new assistant message with {@code null} content.
+     */
+    private static ArrayNode assistantToolCalls(ArrayNode messages) {
+        int size = messages.size();
+        JsonNode last = size > 0 ? messages.get(size - 1) : null;
+        if (last instanceof ObjectNode && "assistant".equals(last.path("role").asText(""))) {
+            JsonNode existing = last.path("tool_calls");
+            return existing instanceof ArrayNode ? (ArrayNode) existing : ((ObjectNode) last).putArray("tool_calls");
+        }
+        ObjectNode assistant = messages.addObject();
+        assistant.put("role", "assistant");
+        assistant.putNull("content");
+        return assistant.putArray("tool_calls");
     }
 
     /**

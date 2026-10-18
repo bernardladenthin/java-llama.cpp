@@ -51,24 +51,32 @@ public class ResponsesApiSupportTest {
     public void reasoningInputItemsBecomeAssistantReasoningNotUserTextLikeUpstream() throws IOException {
         // A reasoning item carries no role; read as a message it became a user turn holding the model's
         // own earlier reasoning. Upstream's convert_responses_to_chatcmpl attaches it as
-        // reasoning_content to the preceding assistant message, or to a new assistant message.
-        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
-                        + "{\"type\":\"message\",\"role\":\"user\",\"content\":\"q\"},"
-                        + "{\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"plan\"}]},"
-                        + "{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"f\",\"arguments\":\"{}\"},"
-                        + "{\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"more\"}]},"
-                        + "{\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"x\"}]}"))
+        // reasoning_content to the preceding assistant message, or to a new assistant message. The
+        // sequence is a tool loop as a Responses client sends it back.
+        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(
+                        read(
+                                "{\"input\":["
+                                        + "{\"type\":\"message\",\"role\":\"user\",\"content\":\"q\"},"
+                                        + "{\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"plan\"}]},"
+                                        + "{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"f\",\"arguments\":\"{}\"},"
+                                        + "{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":\"r\"},"
+                                        + "{\"type\":\"reasoning\",\"summary\":[],\"content\":[{\"type\":\"reasoning_text\",\"text\":\"more\"}]},"
+                                        + "{\"type\":\"reasoning\",\"summary\":[],\"encrypted_content\":\"x\"},"
+                                        + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"42\"}]}]}"))
                 .path("messages");
         for (JsonNode message : messages) {
             if ("user".equals(message.path("role").asText())) {
                 assertThat(message.path("content").asText(), is("q"));
             }
         }
-        assertThat(messages.get(1).path("role").asText(), is("assistant"));
-        assertThat(messages.get(1).path("reasoning_content").asText(), is("plan"));
-        assertThat(messages.get(2).path("role").asText(), is("assistant"));
-        assertThat(messages.get(2).path("reasoning_content").asText(), is("more"));
-        assertThat(messages.size(), is(3));
+        assertThat(messages.size(), is(5));
+        assertThat(messages.path(1).path("role").asText(), is("assistant"));
+        assertThat(messages.path(1).path("reasoning_content").asText(), is("plan"));
+        assertThat(messages.path(1).path("tool_calls").size(), is(1));
+        assertThat(messages.path(2).path("role").asText(), is("tool"));
+        assertThat(messages.path(3).path("role").asText(), is("assistant"));
+        assertThat(messages.path(3).path("reasoning_content").asText(), is("more"));
+        assertThat(messages.path(4).path("content").asText(), is("42"));
     }
 
     @Test
@@ -89,6 +97,27 @@ public class ResponsesApiSupportTest {
         assertThat(tool.path("content").path(1).path("type").asText(), is("image_url"));
         assertThat(
                 tool.path("content").path(1).path("image_url").path("url").asText(), is("data:image/png;base64,AA=="));
+    }
+
+    @Test
+    public void consecutiveFunctionCallsJoinThePrecedingAssistantMessageLikeUpstream() throws IOException {
+        // Parallel tool calls follow the assistant's text as separate items; upstream's
+        // convert_responses_to_chatcmpl appends each to the preceding assistant message (merge_prev),
+        // so the template sees one assistant turn with two tool calls.
+        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                        + "{\"type\":\"message\",\"role\":\"user\",\"content\":\"weather?\"},"
+                        + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"checking\"}]},"
+                        + "{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"f\",\"arguments\":\"{}\"},"
+                        + "{\"type\":\"function_call\",\"call_id\":\"c2\",\"name\":\"g\",\"arguments\":\"{}\"},"
+                        + "{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":\"a\"},"
+                        + "{\"type\":\"function_call_output\",\"call_id\":\"c2\",\"output\":\"b\"}]}"))
+                .path("messages");
+        assertThat(messages.size(), is(4));
+        assertThat(messages.path(1).path("content").asText(), is("checking"));
+        assertThat(messages.path(1).path("tool_calls").size(), is(2));
+        assertThat(messages.path(1).path("tool_calls").path(1).path("id").asText(), is("c2"));
+        assertThat(messages.path(2).path("role").asText(), is("tool"));
+        assertThat(messages.path(3).path("role").asText(), is("tool"));
     }
 
     @Test
