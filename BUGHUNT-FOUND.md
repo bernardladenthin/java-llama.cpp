@@ -659,7 +659,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#reasoningInputItemsBecomeAssistantReasoningNotUserTextLikeUpstream` (neue Assistenten-Nachricht nach einem Nutzer, Zusammenführung mit einem `function_call`, verschlüsseltes Item übersprungen)
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "q" but: was "plan"“ – der Denktext als Benutzernachricht), mit Fix grün (15/15 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün (nach Herausziehen zweier doppelter Aufrufe, PRMC).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `7a8b262`
 
 ## Offene Verdachte ohne Fund-ID
 
