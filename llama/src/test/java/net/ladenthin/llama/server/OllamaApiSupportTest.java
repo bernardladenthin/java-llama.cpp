@@ -78,6 +78,21 @@ public class OllamaApiSupportTest {
      * that replays an earlier tool call in its history failed with a 400 before reaching the model.
      */
     @Test
+    public void toOpenAiChatRequestHonoursThinkLikeOllama() throws IOException {
+        // Ollama clients switch a model's thinking off with "think": false and pick a level with a
+        // string (gpt-oss); the chat mapper turns reasoning_effort into the template switch upstream reads.
+        OpenAiRequestMapper mapper = new OpenAiRequestMapper();
+        JsonNode off = read(mapper.toInferenceParameters(OllamaApiSupport.toOpenAiChatRequest(
+                        read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"think\":false}")))
+                .toJson());
+        assertThat(off.path("chat_template_kwargs").path("enable_thinking").asBoolean(true), is(false));
+        JsonNode low = read(mapper.toInferenceParameters(OllamaApiSupport.toOpenAiChatRequest(
+                        read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"think\":\"low\"}")))
+                .toJson());
+        assertThat(low.path("chat_template_kwargs").path("reasoning_effort").asText(), is("low"));
+    }
+
+    @Test
     public void toOpenAiChatRequestAddsTheFunctionTypeToAssistantToolCalls() throws IOException {
         JsonNode openAi = OllamaApiSupport.toOpenAiChatRequest(
                 read(

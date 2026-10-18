@@ -138,6 +138,15 @@ final class OllamaApiSupport {
             openAi.set("tools", tools.deepCopy());
         }
 
+        // Ollama's "think": false switches a model's thinking off, a string picks a level (gpt-oss);
+        // true leaves the template's default. The chat mapper applies reasoning_effort as upstream does.
+        JsonNode think = ollamaRequest.path("think");
+        if (think.isBoolean() && !think.asBoolean()) {
+            openAi.put("reasoning_effort", "none");
+        } else if (think.isTextual() && !think.asText().isEmpty()) {
+            openAi.put("reasoning_effort", think.asText());
+        }
+
         // Ollama nests sampling under "options"; map the common knobs onto OpenAI top-level fields.
         JsonNode options = ollamaRequest.path("options");
         copyNumber(options, "temperature", openAi, "temperature");

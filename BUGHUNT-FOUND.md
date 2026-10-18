@@ -56,6 +56,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F75](#f75) — mittel — *gefixt*
 - [F76](#f76) — mittel — *gefixt*
 - [F77](#f77) — mittel — *gefixt*
+- [F78](#f78) — mittel — *gefixt*
 
 ## Funde
 
@@ -556,6 +557,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `60c2b9f`
 
+<a id="f78"></a>
+### F78 – java-llama.cpp: Ollama-`/api/chat` ignoriert `think` – `"think": false` schaltet das Denken nicht ab
+- **Zeit:** 2026-10-18 02:30 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:143` (`toOpenAiChatRequest`)
+- **Schwere:** mittel
+- **Beschreibung:** Ollamas Chat-API steuert das Denken eines Modells mit dem Top-Level-Feld `think`: `false` schaltet es ab, `true` an, ein String wählt bei gpt-oss eine Stufe (`"low"`, `"medium"`, `"high"`). `OllamaApiSupport.toOpenAiChatRequest` las das Feld nicht. Ein Ollama-Client, der für schnelle Antworten `think: false` schickt (Open WebUI, ollama-python), bekam trotzdem einen vollen Denkblock samt seiner Token und Latenz. Gefunden in der Musterdurchsicht nach F77.
+- **Fix:** `think: false` wird zu `reasoning_effort: "none"`, ein nicht leerer String zu `reasoning_effort: <Stufe>`; `true` bleibt bei der Vorgabe der Vorlage. Der Chat-Mapper wendet `reasoning_effort` seit F77 nach upstreams Regeln an (`enable_thinking: false` bzw. Template-Variable).
+- **Reproduktion:** `OllamaApiSupportTest#toOpenAiChatRequestHonoursThinkLikeOllama` (Kette Übersetzer → `OpenAiRequestMapper` → `InferenceParameters.toJson()`)
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <false> but: was <true>“ – `enable_thinking` fehlte), mit Fix grün (24/24 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `OpenAiRequestMapperTest` 21/21, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(unsicher/niedrig, nur beschrieben, 06:38 UTC)* java-llama.cpp `llama-ffm/.../ffm/JllamaNative.java` `takeStrings`: Bei `count == 0` kehrt die Methode vor dem `try` zurück und gibt das Array nicht frei, das `jllama_rpc_server_devices` auch für 0 Einträge per `calloc(max(n,1))` anlegt (8 Byte Leck je Aufruf). `rpc::server_devices()` fällt aber immer auf das CPU-Gerät zurück, leer wird die Liste nur ohne registriertes CPU-Backend (kaputte Installation) – praktisch unerreichbar. Fix wäre: bei Nicht-NULL-Zeiger immer `STRINGS_FREE` aufrufen. Nicht ohne native Bibliothek + JDK-22-Toolchain testbar, daher kein Commit. Alle übrigen Freigabe-Funktionen (`takeBytesAsString` → `jllama_string_free` laut Header) stimmen mit `jllama_api.h` überein. **Blocker (Stand 2026-10-17):** Der Rot-Grün-Zyklus braucht ein JDK 22+ (Toolchain des Moduls) und ist in dieser Sandbox nicht herstellbar: GitHub-Releases (Adoptium) und api.adoptium.net sind über den Proxy gesperrt. Vorschlag für den Test: `takeStrings` mit der Freigabefunktion als Parameter (paketintern), Aufruf mit Nicht-NULL-Zeiger und Anzahl 0, Erwartung genau ein Freigabeaufruf; läuft dann im CI-Job `test-java-llama-ffm`.
@@ -568,3 +581,4 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - *(niedrig, nur beschrieben, 2026-10-18)* Rerank gegen upstream: `OaiRerankSupport.toOaiResponse` liefert bei `top_n: 0` alle Ergebnisse, upstream (`format_response_rerank`, `elements.resize(min(top_n, size))`) keines; ein negatives `top_n` ergibt bei uns ebenfalls alle. Und `usage` (`prompt_tokens`/`total_tokens` aus `tokens_evaluated`) fehlt in unserer Antwort ganz, upstream setzt es immer. Kein Absturz und keine falsche Rangfolge, daher nur notiert; `top_n: 0` als „alle“ ist eine vertretbare Lesart, die Abweichung sollte aber bewusst entschieden werden.
 - *(niedrig, nur beschrieben, 2026-10-18)* Anthropic-Rest nach F76: upstreams `convert_anthropic_to_oai` setzt `max_tokens` 4096, wenn es fehlt (bei uns unbegrenzt; das Protokoll verlangt das Feld, Clients senden es), und reicht `chat_template_kwargs` durch, das wir verwerfen.
 - *(niedrig, nur beschrieben, 2026-10-18)* `/props` (`OpenAiSseFormatter.propsJson`) meldet `total_slots` fest als 1; upstream (`get_res_props`, `server-context.cpp:5141`) meldet `params.n_parallel`. Mit `--parallel 4` sieht ein Client einen Slot, obwohl vier Anfragen gleichzeitig laufen können. Die Slotzahl kennt nur `OpenAiServerCli`, nicht `OpenAiServerConfig`; ein Fix bräuchte ein neues Konfigurationsfeld. Kein bekannter Client richtet sich danach, deshalb nur notiert.
+- *(niedrig, nur beschrieben, 2026-10-18)* Ollama-Antworten tragen den Denkinhalt nicht: Ollama legt ihn in `message.thinking` ab (blockierend und je Stream-Zeile), `OllamaApiSupport` übernimmt aus OpenAIs Antwort nur `content` und `tool_calls`, `reasoning_content` geht verloren. Ein Client mit `think: true` sieht keine Gedanken. Eine Ergänzung der Antwortform, kein Fehlverhalten der Anfrage; daher nur notiert.
