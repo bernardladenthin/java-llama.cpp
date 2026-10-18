@@ -919,7 +919,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#textFormatJsonSchemaBecomesTheChatResponseFormat`, `#textFormatJsonObjectBecomesTheChatResponseFormat`; `#textFormatTextLeavesTheResponseFormatOut` schützt den `text`-Fall (ohne Fix grün)
 - **Rot-Grün-Nachweis:** ohne Fix rot (2 Fehlschläge: „Expected: is "json_schema" but: was ""“, „Expected: is "json_object" but: was ""“), mit Fix grün (50/50 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 22/22, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün (eine erste Fassung mit einem Array-Literal meldete `SACM_STATIC_ARRAY_CREATED_IN_METHOD`, jetzt eine Konstante).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `941357f`
 
 ## Offene Verdachte ohne Fund-ID
 
