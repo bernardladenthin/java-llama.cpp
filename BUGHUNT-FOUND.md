@@ -93,6 +93,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F115](#f115) — niedrig — *gefixt*
 - [F116](#f116) — niedrig — *gefixt*
 - [F117](#f117) — mittel — *gefixt*
+- [F118](#f118) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1018,6 +1019,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix beide rot („Expected: a string containing "event: response.failed" but: was "event: response.created …"“), mit Fix grün (51/51 der Klasse, skipped 0); Gegenprobe per `git stash` beider Produktionsdateien rot (2), nach `pop` grün. Breite Liste (Server-Tests inkl. `ResponsesStreamTranslatorTest`, `LlamaArchitectureTest`) grün, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `011f5c3`
+
+### F118 – java-llama.cpp: Anthropic-Serverfehler heißen `invalid_request_error`
+- **Zeit:** 2026-10-18 11:45 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java:718` (`anthropicError`)
+- **Schwere:** niedrig
+- **Beschreibung:** `anthropicError` setzte den Fehlertyp immer auf `invalid_request_error`, auch für eine Antwort mit HTTP 500 und für das `error`-Ereignis eines gestreamten `/v1/messages`, das an einem Inferenzfehler scheiterte. Anthropics Fehlertypen trennen die Schuld: `invalid_request_error` ist der Fehler des Clients (400), `api_error` ein unerwarteter Serverfehler (500). Ein Client (Claude Code), der nach dem Typ entscheidet, ob ein Wiederholen lohnt, hielt einen Serverfehler für eine fehlerhafte eigene Anfrage – im Stream kommt der Status 200 ohnehin vor dem Fehler, dort trägt nur der Typ die Unterscheidung.
+- **Fix:** `anthropicError(message, type)`; die Ablehnungszweige (`IllegalArgumentException`/`InvalidRequestException`) behalten `invalid_request_error`, die Fehlerzweige melden `api_error`.
+- **Reproduktion:** `OpenAiCompatServerHttpTest#aFailedAnthropicMessageIsAnApiError`, `#aFailedStreamedAnthropicMessageIsAnApiError` (dazu als Schutz `#aRejectedStreamedAnthropicMessageStaysAnInvalidRequestError`)
+- **Rot-Grün-Nachweis:** ohne Fix beide rot („Expected: a string containing "\"error\":{\"type\":\"api_error\"" but: was "{"type":"error","error":{"type":"invalid_request_error","message":"decoding failed"}}"“), mit Fix grün (54/54 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. Breite Liste wie F117 grün, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

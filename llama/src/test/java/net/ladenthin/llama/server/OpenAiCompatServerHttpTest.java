@@ -515,6 +515,45 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    // Anthropic's error types: invalid_request_error is the client's fault (400), api_error an
+    // unexpected server error (500). A 500 that calls itself invalid_request_error contradicts its status.
+
+    @Test
+    public void aFailedAnthropicMessageIsAnApiError() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FailingBackend(), config()).start()) {
+            String body = "{\"model\":\"test-model\",\"max_tokens\":8,"
+                    + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+            Response response = post(server.getPort(), "/v1/messages", body, "");
+            assertThat(response.code, is(500));
+            assertThat(response.body, containsString("\"error\":{\"type\":\"api_error\""));
+        }
+    }
+
+    @Test
+    public void aFailedStreamedAnthropicMessageIsAnApiError() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new StreamFailingBackend(), config()).start()) {
+            String body = "{\"model\":\"test-model\",\"stream\":true,\"max_tokens\":8,"
+                    + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+            String events = post(server.getPort(), "/v1/messages", body, "").body;
+            assertThat(events, containsString("event: error"));
+            assertThat(
+                    events.substring(events.indexOf("event: error")),
+                    containsString("\"error\":{\"type\":\"api_error\""));
+        }
+    }
+
+    @Test
+    public void aRejectedStreamedAnthropicMessageStaysAnInvalidRequestError() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new RejectingBackend(), config()).start()) {
+            String body = "{\"model\":\"test-model\",\"stream\":true,\"max_tokens\":8,"
+                    + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+            String events = post(server.getPort(), "/v1/messages", body, "").body;
+            assertThat(
+                    events.substring(events.indexOf("event: error")),
+                    containsString("\"error\":{\"type\":\"invalid_request_error\""));
+        }
+    }
+
     @Test
     public void getOnChatCompletionsReturns405() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {

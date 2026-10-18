@@ -151,6 +151,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
 
     private static final String ERROR_TYPE_REQUEST = "invalid_request_error";
     private static final String ERROR_TYPE_SERVER = "server_error";
+    /** Anthropic's error type for a request that is the client's fault (HTTP 400). */
+    private static final String ANTHROPIC_ERROR_REQUEST = "invalid_request_error";
+    /** Anthropic's error type for an unexpected server-side failure (HTTP 500). */
+    private static final String ANTHROPIC_ERROR_SERVER = "api_error";
+
     private static final String HEALTH_BODY = "{\"status\":\"ok\"}";
 
     private final OpenAiServerConfig config;
@@ -647,11 +652,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 try {
                     body = backend.complete(openAiRequest);
                 } catch (IllegalArgumentException | InvalidRequestException e) {
-                    sendJson(exchange, HTTP_BAD_REQUEST, anthropicError(message(e)));
+                    sendJson(exchange, HTTP_BAD_REQUEST, anthropicError(message(e), ANTHROPIC_ERROR_REQUEST));
                     return;
                 } catch (IOException | RuntimeException e) {
                     LOG.warn("anthropic messages failed", e);
-                    sendJson(exchange, HTTP_SERVER_ERROR, anthropicError(message(e)));
+                    sendJson(exchange, HTTP_SERVER_ERROR, anthropicError(message(e), ANTHROPIC_ERROR_SERVER));
                     return;
                 }
                 sendJson(exchange, HTTP_OK, AnthropicApiSupport.toAnthropicResponse(body, model));
@@ -685,12 +690,14 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 });
                 out.writeStrict(translator.end());
             } catch (IllegalArgumentException | InvalidRequestException e) {
-                out.writeQuietly(AnthropicApiSupport.sseEvent("error", anthropicError(message(e))));
+                out.writeQuietly(
+                        AnthropicApiSupport.sseEvent("error", anthropicError(message(e), ANTHROPIC_ERROR_REQUEST)));
             } catch (IOException e) {
                 LOG.debug("anthropic client disconnected during stream", e);
             } catch (RuntimeException e) {
                 LOG.warn("anthropic streaming failed", e);
-                out.writeQuietly(AnthropicApiSupport.sseEvent("error", anthropicError(message(e))));
+                out.writeQuietly(
+                        AnthropicApiSupport.sseEvent("error", anthropicError(message(e), ANTHROPIC_ERROR_SERVER)));
             } finally {
                 if (heartbeat != null) {
                     heartbeat.cancel(false);
@@ -708,11 +715,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
         return copy;
     }
 
-    private static String anthropicError(String message) {
+    private static String anthropicError(String message, String type) {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
         root.put("type", "error");
         ObjectNode error = root.putObject("error");
-        error.put("type", "invalid_request_error");
+        error.put("type", type);
         error.put("message", message);
         return root.toString();
     }
