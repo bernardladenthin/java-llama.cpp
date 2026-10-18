@@ -957,7 +957,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <404> but: was <200>“), mit Fix grün (49/49 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1, Bericht vor dem Lauf gelöscht), nach `pop` grün. Alle 25 Testklassen des Pakets `server` grün, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün. Der Agent (`llama-atmosphere-agent`) ruft keine Unterpfade auf.
 - **Offen (nicht geändert):** upstream bietet `/v1/messages/count_tokens` und die `input_tokens`-Routen tatsächlich an; sie hier nachzubauen bräuchte eine Tokenzählung über das Backend (`OpenAiBackend` hat keine) – ein API-Zusatz.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `609b53e`
 
 ## Offene Verdachte ohne Fund-ID
 
