@@ -511,7 +511,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#generateWithSuffixKeepsTheSamplingOptionsOfAPlainGenerate`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "\n\n" but: was ""“), mit Fix grün (23/23 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `367592f`
 
 ## Offene Verdachte ohne Fund-ID
 
