@@ -711,7 +711,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiCompatServerHttpTest#responsesWithAnInputFileIsRejectedLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <400> but: was <200>“), mit Fix grün (46/46 der Klasse, skipped 0); Gegenprobe per `git stash` beider Dateien rot, nach `pop` grün. `ResponsesApiSupportTest` 17/17, `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `3280821`
 
 ## Offene Verdachte ohne Fund-ID
 
