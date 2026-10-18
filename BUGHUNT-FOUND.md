@@ -1017,7 +1017,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiCompatServerHttpTest#rejectedStreamedResponseEndsWithAResponseFailedEvent`, `#failedStreamedResponseEndsWithAResponseFailedEvent`
 - **Rot-Grün-Nachweis:** ohne Fix beide rot („Expected: a string containing "event: response.failed" but: was "event: response.created …"“), mit Fix grün (51/51 der Klasse, skipped 0); Gegenprobe per `git stash` beider Produktionsdateien rot (2), nach `pop` grün. Breite Liste (Server-Tests inkl. `ResponsesStreamTranslatorTest`, `LlamaArchitectureTest`) grün, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `011f5c3`
 
 ## Offene Verdachte ohne Fund-ID
 
