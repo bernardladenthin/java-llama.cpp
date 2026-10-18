@@ -507,6 +507,85 @@ Kept as a list because each entry names the machine it needs -- the harness is
 
 ## Open — jllama-specific
 
+### Open points from the bug hunt of 2026-10-16 … 19 (details: `BUGHUNT-FOUND.md`)
+
+Everything the bug hunt left open, so nothing is lost when the session ends. The ledger entry
+named in each item holds the analysis, the upstream references (b11639) and the reproduction;
+delete an item here when it is done.
+
+**Waiting for the owner's decision** (findings with a proposed fix):
+
+- **F57** `ServerMetrics.getCumulativeUsage()` returns a `Usage` that breaks `Usage`'s own contract.
+  Proposal: `new Usage(processed + cached, predicted, cached)`; changes documented behaviour and
+  `ServerMetricsTest`.
+- **F62** The LangChain4j adapter concatenates several `TextContent` without a separator. Proposal:
+  join with `\n` as F60/F61 do (or pass them on as parts); the test that pins today's output changes.
+- **F158** `ModelParameters.setPredict(-2)`: documentation fixed; behaviour open. Proposal: reject
+  `-2` with an `IllegalArgumentException` (model-free test possible), since the server stops every
+  request after its first token with it.
+
+**CI runs** (the owner runs these together):
+
+- **F59** `FfmNativeServer.isRunning()` may read freed memory after a concurrent `close()`. Proposed
+  fix: a private lock around `isRunning()` and `close()`, as in `NativeServer`; the red test needs the
+  JDK 22+ job `test-java-llama-ffm` (no JDK 22 in the sandbox). Same job for the open suspicion on
+  `JllamaNative.takeStrings` below.
+- **F158** measure: load with `setPredict(-2)`, one request without `n_predict`, count the generated
+  tokens (expected from the source: 1).
+- Model-backed confirmations of fixed findings, none a precondition: **F64** (upstream's 400 for an
+  Ollama tool call without `type`, `OpenAiCompatServerIntegrationTest`), **F71** (fine-tuning text with
+  an emoji, `LlamaTrainerIntegrationTest` with `stories260K.gguf`), **F77** (`reasoning_effort: "none"`
+  really suppresses the thinking block), **F90** (`cached_tokens` > 0 in the second round),
+  **F93** (token usage of a streamed LangChain4j answer), **F128**
+  (`JllamaToolCallingIntegrationTest#streamedRequiredToolCallComesBackAsToolExecutionRequest` in
+  `test-java-llama-langchain4j-integration`, not a release gate: look at it in the next run).
+- Only if the behaviour is to change: **F67** (clear the slots in `engine::set_lora_adapters`; needs a
+  model with a LoRA adapter) and **F69** (reject `withNPredict(-2)` in Java; any model).
+
+**Open suspicions without a finding id** (each needs the owner's decision or a model to decide):
+
+1. `llama-ffm` `JllamaNative.takeStrings` leaks the array for `count == 0` (8 bytes per call;
+   practically unreachable). Fix: always call `STRINGS_FREE` for a non-NULL pointer; test in
+   `test-java-llama-ffm`.
+2. Ollama `done_reason`: `tool_calls` is passed through (Ollama reports `stop`), the streamed paths
+   always report `stop` even when cut off by `num_predict`, and the streamed final line has no
+   `prompt_eval_count`/`eval_count` (`withUsageChunk` not requested).
+3. `OpenAiCompatServer` sends `200` + SSE headers before the backend runs, so a rejected streaming
+   request arrives as `200` with an `error` event; upstream answers with the error status. Pinned by
+   `OpenAiCompatServerHttpTest#nativeRejectionOfAStreamedChatCompletionIsAnInvalidRequestEvent`;
+   changing it means sending the headers with the first chunk on all five streaming routes.
+4. `RouterClient.findModel`/`awaitModelLoaded` compare `id` only; a model reached by an alias is
+   reported as not listed (`RouterModel` would need `aliases`).
+5. `OpenAiCompatServer.main` without `-c` advertises 8192 + 2048 tokens whatever the model's window
+   is; the loaded model's slot `n_ctx` could be read instead (needs a model).
+6. JNI shells throw with `ThrowNew(cls, jllama_last_error())` / `NewStringUTF`, which expect Modified
+   UTF-8; a message with a 4-byte character or raw invalid bytes is mangled (Android CheckJNI
+   aborts). Fix in C++: build the message with `utf8_to_jstring_impl` and `Throw` the object.
+7. Empty tool-call arguments in the history: upstream parses `arguments` with `json::parse` for
+   templates with object arguments, so `""` fails the whole request. `""` can arise on the Java side
+   (`ChatResponseParser`, the delta accumulators, `ResponsesApiSupport.java:126`,
+   `AnthropicApiSupport.java:172`). Cheap guard: write `"{}"` for empty arguments in
+   `ParameterJsonSerializer.buildMessages`. Whether a model really emits `""` needs a model.
+8. Rerank: `top_n: 0` (and negative) returns all results, upstream none; `usage` is missing.
+9. `/props` reports `total_slots` as 1 instead of `n_parallel` (needs a config field).
+10. Request fields still dropped (partly fixed by F95/F123): `logit_bias`, `n_probs`, and `n`
+    (alias of `n_cmpl` upstream; Java has no `RequestField` for it, a request with `n: 3` silently
+    gets one answer). The streamed `/v1/completions` needs a raw-JSON streaming entry point to keep
+    the remaining fields.
+11. Responses `refusal` parts of assistant messages in the history are dropped; upstream turns them
+    into a part its own parser rejects with 400. Taking them as text is the most useful reading.
+12. Anthropic `stop_sequence` is always `null`; upstream sets the matched stop word.
+13. Continue decides FIM support from `.Suffix` in `/api/show`'s `template`; ours is `""`. A
+    placeholder template would be invented.
+14. Streamed `/v1/completions` ends without `usage` (upstream puts it on the last chunk); and a
+    `prompt` given as an array is rejected with 400 when streamed, accepted when not.
+15. `completeBatch`/`completeBatchWithStats`/`chatBatch` run on the common `ForkJoinPool`
+    (`availableProcessors() - 1`), so fewer requests run at once than `setParallel` allows; the
+    Javadoc says otherwise. Fix: submit all on the caller's thread, then receive. Also:
+    `rerank(String, String...)` collapses equal documents in its `HashMap`.
+16. Ollama `/api/generate` ignores `raw` and `system`: without `raw: true` Ollama applies the chat
+    template, ours always completes raw.
+
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 
 **Nothing has been published since 5.1.0 on 2026-08-29.** `pom.xml` is `6.0.0-SNAPSHOT`, and
