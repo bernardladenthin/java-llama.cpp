@@ -738,7 +738,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#anAssistantMessageJoinsThePrecedingAssistantTurnLikeUpstream`; der F85-Test erwartet seine abschließende Antwort jetzt in der Nachricht mit dem zweiten Denktext.
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <3> but: was <4>“, ebenso der angepasste F85-Test), mit Fix grün (18/18 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2 Fehlschläge), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 46/46, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `04d4cdb`
 
 ## Offene Verdachte ohne Fund-ID
 
