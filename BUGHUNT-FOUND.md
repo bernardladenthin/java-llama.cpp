@@ -823,7 +823,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiCompatServerHttpTest#ollamaChatStreamingDoneLineCarriesTheTokenCountsLikeTheBlockingAnswer` (das `FakeBackend` sendet den Usage-Chunk wie upstream nur bei `include_usage`)
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <12> but: was <-1>“), mit Fix grün (47/47 der Klasse, skipped 0); Gegenprobe per `git stash` beider Produktionsdateien rot (1), nach `pop` grün. `OllamaApiSupportTest` 27/27, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 18/18, `OpenAiRequestMapperTest` 25/25, `AnthropicStreamTranslatorTest` 5/5, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `0cd9f8a`
 
 ## Offene Verdachte ohne Fund-ID
 
