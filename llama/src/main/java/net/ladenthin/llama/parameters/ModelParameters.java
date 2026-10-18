@@ -199,9 +199,14 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
-     * Set the number of tokens to predict (default: -1 = infinity, -2 = until context filled).
+     * Set the number of tokens to predict per request when the request does not set its own
+     * (default: -1 = infinity).
      *
-     * @param nPredict the maximum number of tokens to predict (-1 = infinity, -2 = until context filled)
+     * <p>{@code -2} ("until context filled") is a setting of llama.cpp's completion tool, not of the
+     * server this library runs. There a slot counts only {@code -1} as unlimited, so with {@code -2}
+     * a request stops after its first token.
+     *
+     * @param nPredict the maximum number of tokens to predict (-1 = infinity)
      * @return this builder
      */
     public ModelParameters setPredict(int nPredict) {

@@ -830,8 +830,10 @@ try (LlamaModel model = new LlamaModel(modelParams)) {
 ```
 
 Per the upstream contract, a scale update lists the adapters to keep active — any adapter missing
-from the map is set to scale `0` (disabled). The native side clears affected KV caches when the
-effective adapter set changes.
+from the map is set to scale `0` (disabled). The KV caches are **not** cleared on this path (upstream's
+`POST /lora-adapters` only replaces the scales): a later request whose prompt prefix is still cached in
+a slot reuses KV entries computed under the previous scales. After a change, clear the slots with
+`eraseSlot(id)` or send such requests with `withCachePrompt(false)`.
 
 ### Text-to-Speech
 

@@ -194,7 +194,8 @@ public final class InferenceParameters extends JsonParameters {
 
     /**
      * Returns a new request with the number of tokens to predict replaced
-     * (default: -1, -1 = infinity, -2 = until context filled).
+     * (default: -1 = the model's {@code --predict} setting, which itself defaults to unlimited). The
+     * server accepts {@code -1} and above; {@code -2} is rejected as an invalid request.
      *
      * @param nPredict tokens to predict
      * @return a new instance; this instance is unchanged

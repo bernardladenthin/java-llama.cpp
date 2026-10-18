@@ -1120,8 +1120,13 @@ public class LlamaModel implements AutoCloseable {
      * Set the scales of the loaded LoRA adapters at runtime, without reloading the model.
      * Mirrors the upstream {@code POST /lora-adapters} contract: adapters present in
      * {@code scales} get the given scale, <b>all other adapters are set to {@code 0}
-     * (disabled)</b>. Ids not corresponding to a loaded adapter are ignored. The native side
-     * clears affected KV caches when the effective adapter set changes.
+     * (disabled)</b>. Ids not corresponding to a loaded adapter are ignored.
+     *
+     * <p>The KV caches are <b>not</b> cleared on this path (upstream's {@code POST /lora-adapters}
+     * only replaces the scales). A later request whose prompt prefix is still cached in a slot
+     * reuses KV entries computed under the previous scales and silently mixes old and new adapter.
+     * After a change, clear the slots with {@link #eraseSlot(int)} or send such requests with
+     * {@code withCachePrompt(false)}.
      *
      * @param scales adapter id (see {@link net.ladenthin.llama.value.LoraAdapter#getId()}) to
      *        new scale; an empty map disables every adapter
