@@ -871,7 +871,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#chatCopiesTheLlamaCppSamplingOptions`, `#generateCopiesTheLlamaCppSamplingOptions`, `#infillCopiesTheLlamaCppSamplingOptions`, `#numPredictMinusTwoFillsTheContextAsUpstreamsMinusOne`; `#repeatLastNMinusOneIsLeftToTheServerDefault` schützt die Ausnahme (ohne Fix grün, weil gar nichts kopiert wurde)
 - **Rot-Grün-Nachweis:** ohne Fix rot (4 Fehlschläge: dreimal „Expected: is <0.05> but: was <0.0>“, einmal „Expected: is <-1> but: was <-2>“), mit Fix grün (32/32 der Klasse, skipped 0); Gegenprobe per `git stash` rot (4), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 19/19, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `0eba89d`
 
 ## Offene Verdachte ohne Fund-ID
 
