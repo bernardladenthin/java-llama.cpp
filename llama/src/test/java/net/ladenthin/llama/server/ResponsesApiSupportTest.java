@@ -6,9 +6,11 @@ package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.both;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.lessThanOrEqualTo;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -176,6 +178,17 @@ public class ResponsesApiSupportTest {
                 .path("output");
         assertThat(output.size(), is(1));
         assertThat(output.get(0).path("type").asText(), is("function_call"));
+    }
+
+    @Test
+    public void previousResponseIdIsRejectedLikeUpstream() throws IOException {
+        // There is no response store: answering a turn that continues by previous_response_id without
+        // its history would silently answer something else. upstream rejects it with a 400.
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> ResponsesApiSupport.toOpenAiChatRequest(
+                        read("{\"model\":\"m\",\"input\":\"and then?\",\"previous_response_id\":\"resp_1\"}")));
+        assertThat(e.getMessage(), containsString("previous_response_id"));
     }
 
     @Test

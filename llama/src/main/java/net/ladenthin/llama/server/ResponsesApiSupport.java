@@ -48,8 +48,16 @@ final class ResponsesApiSupport {
      *
      * @param request the parsed Responses request
      * @return an OpenAI {@code /v1/chat/completions} request object
+     * @throws IllegalArgumentException if the request continues an earlier response by {@code previous_response_id}
      */
     static ObjectNode toOpenAiChatRequest(JsonNode request) {
+        // As upstream's convert_responses_to_chatcmpl: there is no response store, so a turn that refers
+        // to an earlier one by id would be answered without its history.
+        String previousResponseId = request.path("previous_response_id").asText("");
+        if (!previousResponseId.isEmpty()) {
+            throw new IllegalArgumentException("llama.cpp does not support 'previous_response_id' (got "
+                    + previousResponseId + "); send the earlier turns in 'input' instead");
+        }
         ObjectNode openAi = OBJECT_MAPPER.createObjectNode();
         if (request.path("model").isTextual()) {
             openAi.put("model", request.path("model").asText());
