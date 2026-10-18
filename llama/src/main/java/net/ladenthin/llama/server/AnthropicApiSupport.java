@@ -430,6 +430,42 @@ final class AnthropicApiSupport {
         return sseEvent("content_block_delta", data.toString());
     }
 
+    /** {@code content_block_start} event opening an empty {@code thinking} block at {@code index}. */
+    static String thinkingBlockStartEvent(int index) {
+        ObjectNode data = OBJECT_MAPPER.createObjectNode();
+        data.put("type", "content_block_start");
+        data.put("index", index);
+        ObjectNode block = data.putObject("content_block");
+        block.put("type", "thinking");
+        block.put("thinking", "");
+        return sseEvent("content_block_start", data.toString());
+    }
+
+    /** {@code content_block_delta} event appending reasoning text to the thinking block at {@code index}. */
+    static String thinkingDeltaEvent(int index, String thinking) {
+        ObjectNode data = OBJECT_MAPPER.createObjectNode();
+        data.put("type", "content_block_delta");
+        data.put("index", index);
+        ObjectNode delta = data.putObject("delta");
+        delta.put("type", "thinking_delta");
+        delta.put("thinking", thinking);
+        return sseEvent("content_block_delta", data.toString());
+    }
+
+    /**
+     * {@code content_block_delta} event carrying the (empty) signature the protocol requires before a
+     * thinking block closes; a local model has nothing to sign, as in upstream's stream.
+     */
+    static String signatureDeltaEvent(int index) {
+        ObjectNode data = OBJECT_MAPPER.createObjectNode();
+        data.put("type", "content_block_delta");
+        data.put("index", index);
+        ObjectNode delta = data.putObject("delta");
+        delta.put("type", "signature_delta");
+        delta.put("signature", "");
+        return sseEvent("content_block_delta", data.toString());
+    }
+
     /** {@code content_block_start} event opening a {@code tool_use} block at {@code index}. */
     static String toolUseBlockStartEvent(int index, String id, String name) {
         ObjectNode data = OBJECT_MAPPER.createObjectNode();

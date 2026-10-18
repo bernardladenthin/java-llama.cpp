@@ -11,7 +11,8 @@ import lombok.ToString;
 
 /**
  * Stateful translator that turns the OpenAI streaming chat chunks into the Anthropic Messages SSE event
- * sequence: {@code message_start} → (a {@code text} content block with {@code content_block_start} +
+ * sequence: {@code message_start} → (a {@code thinking} block for {@code reasoning_content}, closed with an
+ * empty {@code signature_delta}) → (a {@code text} content block with {@code content_block_start} +
  * {@code content_block_delta}s + {@code content_block_stop}) → one {@code tool_use} block per tool call
  * (start + {@code input_json_delta} + stop) → {@code message_delta} (stop reason) → {@code message_stop}.
  *
@@ -28,6 +29,8 @@ final class AnthropicStreamTranslator {
     private final String model;
     private final ToolCallDeltaAccumulator accumulator = new ToolCallDeltaAccumulator();
 
+    private boolean thinkingBlockOpen;
+    private int thinkingBlockIndex = -1;
     private boolean textBlockOpen;
     private int textBlockIndex = -1;
     private int nextIndex;
@@ -73,8 +76,19 @@ final class AnthropicStreamTranslator {
                 outputTokens = usage.path("completion_tokens").asLong(0);
             }
             JsonNode choice = chunk.path("choices").path(0);
+            // Reasoning streams as a thinking block, as in upstream's to_json_anthropic_stream.
+            JsonNode reasoning = choice.path("delta").path("reasoning_content");
+            if (reasoning.isTextual() && !reasoning.asText().isEmpty()) {
+                if (!thinkingBlockOpen) {
+                    thinkingBlockIndex = nextIndex++;
+                    out.append(AnthropicApiSupport.thinkingBlockStartEvent(thinkingBlockIndex));
+                    thinkingBlockOpen = true;
+                }
+                out.append(AnthropicApiSupport.thinkingDeltaEvent(thinkingBlockIndex, reasoning.asText()));
+            }
             JsonNode content = choice.path("delta").path("content");
             if (content.isTextual() && !content.asText().isEmpty()) {
+                closeThinkingBlock(out);
                 if (!textBlockOpen) {
                     textBlockIndex = nextIndex++;
                     out.append(AnthropicApiSupport.textBlockStartEvent(textBlockIndex));
@@ -99,6 +113,7 @@ final class AnthropicStreamTranslator {
      */
     String end() {
         StringBuilder out = new StringBuilder();
+        closeThinkingBlock(out);
         if (textBlockOpen) {
             out.append(AnthropicApiSupport.blockStopEvent(textBlockIndex));
             textBlockOpen = false;
@@ -118,5 +133,14 @@ final class AnthropicStreamTranslator {
                 AnthropicApiSupport.anthropicStopReason(finishReason), inputTokens, outputTokens, cachedTokens));
         out.append(AnthropicApiSupport.messageStopEvent());
         return out.toString();
+    }
+
+    /** Close an open thinking block: the empty signature the protocol requires, then the block stop. */
+    private void closeThinkingBlock(StringBuilder out) {
+        if (thinkingBlockOpen) {
+            out.append(AnthropicApiSupport.signatureDeltaEvent(thinkingBlockIndex));
+            out.append(AnthropicApiSupport.blockStopEvent(thinkingBlockIndex));
+            thinkingBlockOpen = false;
+        }
     }
 }

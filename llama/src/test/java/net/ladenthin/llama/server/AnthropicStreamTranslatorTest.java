@@ -52,6 +52,26 @@ public class AnthropicStreamTranslatorTest {
     }
 
     @Test
+    public void reasoningDeltasStreamAsAThinkingBlockClosedWithASignatureBeforeTheText() {
+        // Upstream's to_json_anthropic_stream streams reasoning_content as a thinking block
+        // (thinking_delta) and closes it with an empty signature_delta, which the protocol requires.
+        AnthropicStreamTranslator translator = new AnthropicStreamTranslator("msg_1", "m");
+        String first = translator.onChunk("{\"choices\":[{\"delta\":{\"reasoning_content\":\"6 times\"}}]}");
+        String second = translator.onChunk("{\"choices\":[{\"delta\":{\"reasoning_content\":\" 7\"}}]}");
+        String text = translator.onChunk("{\"choices\":[{\"delta\":{\"content\":\"42\"}}]}");
+        String events = first + second + text + translator.end();
+
+        assertThat(first, containsString("\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}"));
+        assertThat(first, containsString("\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"6 times\"}"));
+        assertThat(second, containsString("\"thinking\":\" 7\""));
+        int signature = events.indexOf("\"type\":\"signature_delta\"");
+        int thinkingStop = events.indexOf("\"type\":\"content_block_stop\",\"index\":0");
+        int textStart = events.indexOf("\"content_block\":{\"type\":\"text\"");
+        assertThat(signature >= 0 && signature < thinkingStop && thinkingStop < textStart, is(true));
+        assertThat(events, containsString("\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"42\"}"));
+    }
+
+    @Test
     public void accumulatedToolCallsBecomeToolUseBlocksAtEnd() {
         AnthropicStreamTranslator translator = new AnthropicStreamTranslator("msg_1", "m");
         translator.onChunk("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\","
