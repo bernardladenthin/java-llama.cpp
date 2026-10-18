@@ -71,6 +71,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F90](#f90) — mittel — *gefixt*
 - [F91](#f91) — niedrig — *gefixt*
 - [F92](#f92) — niedrig — *gefixt*
+- [F93](#f93) — niedrig — *gefixt*
 
 ## Funde
 
@@ -751,6 +752,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "6 times 7"“), mit Fix grün (21/21 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün; alle Modultests grün (Integrationstests ohne Modell übersprungen). Das Modul deklariert weder Spotless noch SpotBugs (weder eigene noch Eltern-POM), diese Gates entfallen hier.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `6caa722`
+
+### F93 – java-llama.cpp: gestreamte LangChain4j-Antwort hat nie eine Token-Nutzung
+- **Zeit:** 2026-10-18 04:45 UTC
+- **Datei:** `llama-langchain4j/src/main/java/net/ladenthin/llama/langchain4j/LangChain4jMapping.java:105` (`toStreamingParameters`)
+- **Schwere:** niedrig
+- **Beschreibung:** `StreamingChunkAssembler` übernimmt die Token-Nutzung aus dem abschließenden `usage`-Chunk. upstream (`server_task_result_cmpl_final::to_json_oaicompat_chat_stream`, `server-task.cpp:494`, b11639) sendet diesen Chunk aber nur bei `stream_options.include_usage`, und `toStreamingParameters` setzte das nie. Die gestreamte `ChatResponse` von `JllamaStreamingChatModel` hatte daher immer `tokenUsage() == null`, die blockierende dagegen die echte Zählung. Die Modul-README verspricht beides („both the blocking and the streamed final response carry the model's real finish reason and token usage“). Gefunden über den Vergleich blockierender und gestreamter Pfad (Erkenntnis aus F92).
+- **Fix:** `toStreamingParameters` setzt `stream_options` `{"include_usage":true}` vor dem Customizer (der es weiterhin überschreiben kann). `ChatStreamChunkParser` reicht den Usage-Chunk des Endschritts bereits einzeln weiter, der Assembler liest ihn.
+- **Reproduktion:** `LangChain4jMappingTest#streamingParametersRequestTheUsageChunk`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <true> but: was <false>“), mit Fix grün (22/22 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1 Fehlschlag), nach `pop` grün; alle Modultests grün (`StreamingChunkAssemblerTest` 7/7, `JsonSchemaElementSerializerTest` 8/8, Integrationstests ohne Modell übersprungen). Spotless/SpotBugs sind im Modul nicht deklariert (siehe F92).
+- **CI-Bedarf:** Der Integrationsjob `test-java-llama-langchain4j-integration` läuft mit Modell; ein Ende-zu-Ende-Nachweis der Zählung im Stream wäre dort möglich, ist aber nicht Voraussetzung.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

@@ -83,6 +83,20 @@ class LangChain4jMappingTest {
     }
 
     @Test
+    void streamingParametersRequestTheUsageChunk() throws Exception {
+        ChatRequest request =
+                ChatRequest.builder().messages(UserMessage.from("hi")).build();
+
+        String json = LangChain4jMapping.toStreamingParameters(request).toJson();
+
+        // Upstream emits the trailing usage chunk only for stream_options.include_usage; without it
+        // the streamed response never carries token usage, unlike the blocking one.
+        com.fasterxml.jackson.databind.JsonNode node =
+                new com.fasterxml.jackson.databind.ObjectMapper().readTree(json);
+        assertThat(node.path("stream_options").path("include_usage").asBoolean(false), is(true));
+    }
+
+    @Test
     void appliesSamplingParametersToInferenceJson() {
         ChatRequest request =
                 ChatRequest.builder()

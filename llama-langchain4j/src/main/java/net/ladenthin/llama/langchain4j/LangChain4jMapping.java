@@ -56,6 +56,9 @@ final class LangChain4jMapping {
     /** OAI {@code response_format} payload selecting plain JSON-object mode (no schema). */
     static final String JSON_OBJECT_RESPONSE_FORMAT = "{\"type\":\"json_object\"}";
 
+    /** OAI {@code stream_options} payload asking the native stream for its trailing usage chunk. */
+    static final String INCLUDE_USAGE_STREAM_OPTIONS = "{\"include_usage\":true}";
+
     /** Reads the reasoning of a blocking answer from its raw JSON. */
     private static final net.ladenthin.llama.json.ChatResponseParser CHAT_RESPONSE_PARSER =
             new net.ladenthin.llama.json.ChatResponseParser();
@@ -96,8 +99,11 @@ final class LangChain4jMapping {
      */
     static InferenceParameters toStreamingParameters(ChatRequest request) {
         net.ladenthin.llama.parameters.ChatRequest jllama = toJllamaRequest(request);
-        InferenceParameters params =
-                InferenceParameters.empty().withMessagesJson(jllama.buildMessagesJson());
+        // The native stream carries a usage chunk only when asked for; without it the streamed
+        // final response would lack the token usage the blocking one has.
+        InferenceParameters params = InferenceParameters.empty()
+                .withMessagesJson(jllama.buildMessagesJson())
+                .withStreamOptions(INCLUDE_USAGE_STREAM_OPTIONS);
         java.util.Optional<String> toolsJson = jllama.buildToolsJson();
         if (toolsJson.isPresent()) {
             params = params.withToolsJson(toolsJson.get());
