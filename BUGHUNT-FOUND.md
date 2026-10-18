@@ -70,6 +70,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F89](#f89) — niedrig — *gefixt*
 - [F90](#f90) — mittel — *gefixt*
 - [F91](#f91) — niedrig — *gefixt*
+- [F92](#f92) — niedrig — *gefixt*
 
 ## Funde
 
@@ -739,6 +740,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <3> but: was <4>“, ebenso der angepasste F85-Test), mit Fix grün (18/18 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2 Fehlschläge), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 46/46, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `04d4cdb`
+
+### F92 – java-llama.cpp: blockierende LangChain4j-Antwort verliert den Denkinhalt
+- **Zeit:** 2026-10-18 05:10 UTC
+- **Datei:** `llama-langchain4j/src/main/java/net/ladenthin/llama/langchain4j/LangChain4jMapping.java:206` (`toAiMessage`)
+- **Schwere:** niedrig
+- **Beschreibung:** `JllamaChatModel` (blockierend) baute die `AiMessage` nur aus Text und Werkzeugaufrufen; der `reasoning_content` der nativen Antwort ging verloren, `AiMessage.thinking()` war immer `null`. Der Streaming-Pfad (`StreamingChunkAssembler`) setzt ihn, und die Modul-README sagt, Reasoning erscheine als `AiMessage.thinking()`. Ein Wechsel von `JllamaStreamingChatModel` zu `JllamaChatModel` ließ den Denkinhalt also stillschweigend verschwinden.
+- **Fix:** `toAiMessage` liest den Denkinhalt mit `ChatResponseParser.extractChoiceReasoningContent` aus dem rohen JSON und setzt ihn in beiden Zweigen (mit und ohne Werkzeugaufrufe), wenn er nicht leer ist.
+- **Reproduktion:** `LangChain4jMappingTest#blockingResponseCarriesTheThinkingLikeTheStreamedOne`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "6 times 7"“), mit Fix grün (21/21 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün; alle Modultests grün (Integrationstests ohne Modell übersprungen). Das Modul deklariert weder Spotless noch SpotBugs (weder eigene noch Eltern-POM), diese Gates entfallen hier.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

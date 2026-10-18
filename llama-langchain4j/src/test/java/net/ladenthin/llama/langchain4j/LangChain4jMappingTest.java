@@ -264,6 +264,21 @@ class LangChain4jMappingTest {
     }
 
     @Test
+    void blockingResponseCarriesTheThinkingLikeTheStreamedOne() {
+        // The streamed final response sets AiMessage.thinking() from reasoning_content; the blocking
+        // one must carry the same reasoning, which the native answer holds in the raw JSON.
+        net.ladenthin.llama.value.ChatResponse response = new net.ladenthin.llama.json.ChatResponseParser()
+                .parseResponse("{\"id\":\"id-1\",\"choices\":[{\"index\":0,\"finish_reason\":\"stop\","
+                        + "\"message\":{\"role\":\"assistant\",\"content\":\"42\",\"reasoning_content\":\"6 times 7\"}}]}");
+
+        dev.langchain4j.model.chat.response.ChatResponse mapped =
+                LangChain4jMapping.toLangChainResponse(response);
+
+        assertThat(mapped.aiMessage().text(), is("42"));
+        assertThat(mapped.aiMessage().thinking(), is("6 times 7"));
+    }
+
+    @Test
     void toolCallResponseBecomesAiMessageWithToolExecutionRequests() {
         ChatMessage assistant = ChatMessage.assistantToolCalls(
                 "", Arrays.asList(new ToolCall("call_1", "get_weather", "{\"city\":\"Berlin\"}")));

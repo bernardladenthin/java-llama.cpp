@@ -56,6 +56,10 @@ final class LangChain4jMapping {
     /** OAI {@code response_format} payload selecting plain JSON-object mode (no schema). */
     static final String JSON_OBJECT_RESPONSE_FORMAT = "{\"type\":\"json_object\"}";
 
+    /** Reads the reasoning of a blocking answer from its raw JSON. */
+    private static final net.ladenthin.llama.json.ChatResponseParser CHAT_RESPONSE_PARSER =
+            new net.ladenthin.llama.json.ChatResponseParser();
+
     private LangChain4jMapping() {}
 
     /**
@@ -202,8 +206,17 @@ final class LangChain4jMapping {
     private static AiMessage toAiMessage(net.ladenthin.llama.value.ChatResponse response) {
         net.ladenthin.llama.value.ChatMessage first =
                 response.getFirstMessage().orElse(null);
+        // The reasoning is not part of the typed message; read it from the native answer, as the
+        // streamed path does from the reasoning_content deltas.
+        String thinking = CHAT_RESPONSE_PARSER.extractChoiceReasoningContent(response.getRawJson());
         if (first == null || first.getToolCalls().isEmpty()) {
-            return AiMessage.from(response.getFirstContent());
+            if (thinking.isEmpty()) {
+                return AiMessage.from(response.getFirstContent());
+            }
+            return AiMessage.builder()
+                    .text(response.getFirstContent())
+                    .thinking(thinking)
+                    .build();
         }
         List<ToolExecutionRequest> requests = new ArrayList<>(first.getToolCalls().size());
         for (ToolCall call : first.getToolCalls()) {
@@ -217,6 +230,9 @@ final class LangChain4jMapping {
         String text = first.getContent();
         if (text != null && !text.isEmpty()) {
             builder.text(text);
+        }
+        if (!thinking.isEmpty()) {
+            builder.thinking(thinking);
         }
         return builder.build();
     }
