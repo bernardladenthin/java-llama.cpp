@@ -646,7 +646,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `AnthropicApiSupportTest#requestKeepsThinkingBlocksOfTheHistoryAsReasoningContentLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "6 times 7" but: was ""“), mit Fix grün (17/17 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `AnthropicStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `fb226b3`
 
 ## Offene Verdachte ohne Fund-ID
 
