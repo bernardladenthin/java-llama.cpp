@@ -6,6 +6,7 @@ package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -96,6 +97,36 @@ public class OaiRerankSupportTest {
         assertThat(out.path("results").get(1).path("index").asInt(), is(2)); // 0.5
         // Empty model id is omitted.
         assertThat(out.has("model"), is(false));
+    }
+
+    @Test
+    public void readDocumentsAcceptsTheTeiTexts() throws IOException {
+        // Hugging Face text-embeddings-inference sends "texts"; upstream reads it when "documents" is absent.
+        JsonNode request = read("{\"query\":\"q\",\"texts\":[\"a\",\"b\"]}");
+        String[] documents = assertDoesNotThrow(() -> OaiRerankSupport.readDocuments(request));
+        assertThat(documents.length, is(2));
+        assertThat(documents[1], is("b"));
+    }
+
+    @Test
+    public void teiRequestGetsTheTeiArrayWithScoreLikeUpstream() throws IOException {
+        // upstream answers a request with "texts" as a bare array of {index, score}, best first.
+        JsonNode out = read(OaiRerankSupport.toResponse(
+                read("{\"query\":\"q\",\"texts\":[\"a\",\"b\"]}"),
+                "[{\"document\":\"a\",\"index\":0,\"score\":0.1},{\"document\":\"b\",\"index\":1,\"score\":0.9}]",
+                "m"));
+        assertThat(out.isArray(), is(true));
+        assertThat(out.path(0).path("index").asInt(), is(1));
+        assertThat(out.path(0).path("score").asDouble(), is(0.9));
+    }
+
+    @Test
+    public void teiReturnTextAddsTheDocumentText() throws IOException {
+        JsonNode out = read(OaiRerankSupport.toResponse(
+                read("{\"query\":\"q\",\"texts\":[\"a\",\"b\"],\"return_text\":true}"),
+                "[{\"document\":\"a\",\"index\":0,\"score\":0.1},{\"document\":\"b\",\"index\":1,\"score\":0.9}]",
+                "m"));
+        assertThat(out.path(0).path("text").asText(), is("b"));
     }
 
     @Test

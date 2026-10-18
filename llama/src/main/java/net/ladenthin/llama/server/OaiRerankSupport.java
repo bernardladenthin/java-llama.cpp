@@ -53,9 +53,10 @@ final class OaiRerankSupport {
      * @throws IllegalArgumentException if {@code documents} is absent, empty, or holds an unsupported entry
      */
     static String[] readDocuments(JsonNode request) {
-        JsonNode documents = request.path("documents");
+        // Hugging Face text-embeddings-inference names them "texts"; upstream reads it when "documents" is absent.
+        JsonNode documents = request.has("documents") ? request.path("documents") : request.path("texts");
         if (!documents.isArray() || documents.size() == 0) {
-            throw new IllegalArgumentException("'documents' must be a non-empty array");
+            throw new IllegalArgumentException("'documents' (or TEI's 'texts') must be a non-empty array");
         }
         List<String> out = new ArrayList<>(documents.size());
         for (JsonNode document : documents) {
@@ -79,6 +80,63 @@ final class OaiRerankSupport {
     static int readTopN(JsonNode request) {
         JsonNode topN = request.path("top_n");
         return topN.isInt() ? topN.asInt() : -1;
+    }
+
+    /**
+     * Shape the native rerank array as the response the request's format expects.
+     *
+     * @param request the parsed rerank request
+     * @param nativeArrayJson the native {@code [{document,index,score}]} array as JSON
+     * @param model the model id to echo (omitted when empty)
+     * @return the rerank response JSON
+     */
+    static String toResponse(JsonNode request, String nativeArrayJson, String model) {
+        if (request.has("texts")) {
+            return toTeiResponse(
+                    nativeArrayJson,
+                    readTopN(request),
+                    request.path("return_text").asBoolean(false));
+        }
+        return toOaiResponse(nativeArrayJson, model, readTopN(request));
+    }
+
+    /**
+     * Reshape the native rerank array into the text-embeddings-inference response, as upstream does for a
+     * request with {@code texts}: a bare array of {@code {index, score}}, best first, with the document as
+     * {@code text} when {@code return_text} is set.
+     *
+     * @param nativeArrayJson the native {@code [{document,index,score}]} array as JSON
+     * @param topN keep only the top-N highest-scoring entries, or {@code <= 0} to keep all
+     * @param returnText whether to include each document's text
+     * @return the TEI rerank response JSON
+     */
+    static String toTeiResponse(String nativeArrayJson, int topN, boolean returnText) {
+        final List<ObjectNode> entries = new ArrayList<>();
+        try {
+            JsonNode arr = OBJECT_MAPPER.readTree(nativeArrayJson);
+            if (arr.isArray()) {
+                for (JsonNode entry : arr) {
+                    ObjectNode result = OBJECT_MAPPER.createObjectNode();
+                    result.put("index", entry.path("index").asInt());
+                    result.put("score", entry.path("score").asDouble());
+                    if (returnText) {
+                        result.put("text", entry.path("document").asText(""));
+                    }
+                    entries.add(result);
+                }
+            }
+        } catch (IOException e) {
+            // The native call already succeeded; an unexpected body just yields an empty array.
+            entries.clear();
+        }
+        entries.sort((a, b) ->
+                Double.compare(b.path("score").asDouble(), a.path("score").asDouble()));
+        final ArrayNode results = OBJECT_MAPPER.createArrayNode();
+        final int limit = topN > 0 ? Math.min(topN, entries.size()) : entries.size();
+        for (int i = 0; i < limit; i++) {
+            results.add(entries.get(i));
+        }
+        return results.toString();
     }
 
     /**

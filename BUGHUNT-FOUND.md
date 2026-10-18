@@ -86,6 +86,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F107](#f107) — niedrig — *gefixt*
 - [F108](#f108) — niedrig — *gefixt*
 - [F109](#f109) — niedrig — *gefixt*
+- [F111](#f111) — niedrig — *gefixt*
 
 ## Funde
 
@@ -933,6 +934,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Nachtrag (2026-10-18, nur beschrieben):** Zwei Kommentare neben dem Fix sind nicht nachgezogen: die Klassen-Javadoc von `OpenAiRequestMapper` nennt `tool_choice` unter den Feldern, die „verbatim as raw JSON“ weitergehen (galt schon vorher nur für die Textform), und der Kommentar über dem Werkzeugblock in `ResponsesApiSupport.toOpenAiChatRequest` beschreibt nur die Textform. Reine Doku-Abweichung, nach der Nutzerregel ohne Test nicht nachträglich geändert; Vorschlag: `tool_choice` aus der Verbatim-Aufzählung nehmen und „ein benanntes Werkzeug wird zu `required`“ ergänzen.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b7151fc`
+
+### F111 – java-llama.cpp: Rerank im TEI-Format (`texts`) wird mit 400 abgewiesen
+- **Zeit:** 2026-10-18 09:30 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OaiRerankSupport.java:113` (`readDocuments`, `toResponse`/`toTeiResponse` neu), `llama/src/main/java/net/ladenthin/llama/server/LlamaModelBackend.java` (`rerank`)
+- **Schwere:** niedrig
+- **Beschreibung:** upstreams `/rerank` (`server-context.cpp:5705`, b11639) unterstützt neben dem Jina/Cohere-Format auch Hugging Faces text-embeddings-inference: eine Anfrage mit `texts` statt `documents` wird angenommen und als bloßes Array `[{index, score}]` beantwortet, bestes zuerst, mit `text` bei `return_text` (`format_response_rerank`, `server-common.cpp:1535`). Der Server hier registriert `/rerank` ebenfalls, verlangte aber `documents` und antwortete TEI-Clients (etwa LangChains `HuggingFaceTEI`-Reranker oder Werkzeuge, die TEI als Reranker ansprechen) mit 400.
+- **Fix:** `readDocuments` liest `texts`, wenn `documents` fehlt; `toResponse` wählt das Antwortformat nach der Anfrage, `toTeiResponse` liefert das TEI-Array (Text aus dem `document` der nativen Antwort). Die Naht `toResponse` wurde zuerst verhaltensneutral eingezogen (delegiert an `toOaiResponse`), das Rot ist gegen diesen Stand gezeigt.
+- **Reproduktion:** `OaiRerankSupportTest#readDocumentsAcceptsTheTeiTexts`, `#teiRequestGetsTheTeiArrayWithScoreLikeUpstream`, `#teiReturnTextAddsTheDocumentText`
+- **Rot-Grün-Nachweis:** gegen den Stand mit der neutralen Naht rot, jeder Teil für sich (3 Fehlschläge: „Unexpected exception thrown: … 'documents' must be a non-empty array“, „Expected: is <true> but: was <false>“, „Expected: is "b" but: was ""“), mit Fix grün (13/13 der Klasse, skipped 0). Die `git stash`-Gegenprobe ging hier nicht (ohne Naht kompiliert der Test nicht; der danach gelesene Bericht war der alte) und wurde durch den Lauf gegen den Naht-Stand ersetzt. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 22/22, `ResponsesApiSupportTest` 51/51, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 28/28, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
