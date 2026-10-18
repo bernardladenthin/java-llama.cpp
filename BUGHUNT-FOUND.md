@@ -1094,7 +1094,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix beide rot („Unexpected exception thrown: java.lang.IllegalArgumentException: partialArguments cannot be null or empty“ bzw. „… name cannot be null or blank“), mit Fix grün (2/2, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. Ganzes Modul grün (`StreamingChunkAssemblerTest` 9/9, `LangChain4jMappingTest` 23/23, `JsonSchemaElementSerializerTest` 8/8, `TestModelPathsTest` 8/8; die Integrationstests überspringen sich ohne Modell wie zuvor). Das Modul hat weder Spotless noch SpotBugs.
 - **CI-Bedarf:** `JllamaToolCallingIntegrationTest#streamedRequiredToolCallComesBackAsToolExecutionRequest` (Job `test-java-llama-langchain4j-integration`, kein Release-Gate) im nächsten Lauf ansehen: ob er vor dem Fix rot war, hängt davon ab, ob das CI-Modell den Namen allein in einem Fragment sendet.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `4d599fa`
 
 ## Offene Verdachte ohne Fund-ID
 
