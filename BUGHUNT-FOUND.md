@@ -763,7 +763,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <true> but: was <false>“), mit Fix grün (22/22 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1 Fehlschlag), nach `pop` grün; alle Modultests grün (`StreamingChunkAssemblerTest` 7/7, `JsonSchemaElementSerializerTest` 8/8, Integrationstests ohne Modell übersprungen). Spotless/SpotBugs sind im Modul nicht deklariert (siehe F92).
 - **CI-Bedarf:** Der Integrationsjob `test-java-llama-langchain4j-integration` läuft mit Modell; ein Ende-zu-Ende-Nachweis der Zählung im Stream wäre dort möglich, ist aber nicht Voraussetzung.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `cde7159`
 
 ## Offene Verdachte ohne Fund-ID
 
