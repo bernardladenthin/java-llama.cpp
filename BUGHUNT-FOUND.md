@@ -775,7 +775,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `LangChain4jMappingTest#joinsTextPartsWithANewlineLikeUpstream`, dazu `#flattensMultiTextUserMessageToText`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "first\nsecond" but: was "firstsecond"“, ebenso der angepasste Test), mit Fix grün (23/23 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2 Fehlschläge), nach `pop` grün; alle Modultests grün (Integrationstests ohne Modell übersprungen). Spotless/SpotBugs sind im Modul nicht deklariert (siehe F92).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `ee99d85`
 
 ## Offene Verdachte ohne Fund-ID
 
