@@ -303,10 +303,16 @@ public final class OpenAiServerConfig {
         /**
          * Sets the Server-Sent-Events heartbeat interval.
          *
-         * @param heartbeatMillis the heartbeat interval in milliseconds
+         * @param heartbeatMillis the heartbeat interval in milliseconds; must be positive
          * @return this builder
+         * @throws IllegalArgumentException if {@code heartbeatMillis} is not positive
          */
         public Builder heartbeatMillis(long heartbeatMillis) {
+            // the interval is a scheduleAtFixedRate period; a non-positive one would make every
+            // streaming request fail with an IllegalArgumentException reported as the client's error
+            if (heartbeatMillis <= 0L) {
+                throw new IllegalArgumentException("heartbeatMillis must be positive, was " + heartbeatMillis);
+            }
             this.heartbeatMillis = heartbeatMillis;
             return this;
         }

@@ -8,6 +8,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.not;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import org.junit.jupiter.api.Test;
 
@@ -81,5 +82,17 @@ public class OpenAiServerConfigTest {
         assertThat(config.getModelId(), is("local-qwen"));
         assertThat(config.getMaxInputTokens(), is(6144));
         assertThat(config.getMaxOutputTokens(), is(2048));
+    }
+
+    /**
+     * The interval is a {@code scheduleAtFixedRate} period, which must be positive. Accepted, a zero
+     * made every streaming request fail with an {@code invalid_request_error} naming
+     * {@code IllegalArgumentException} and no {@code [DONE]}, which blames the client for a server setting.
+     */
+    @Test
+    public void heartbeatIntervalOfZeroIsRejected() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> OpenAiServerConfig.builder().heartbeatMillis(0L));
     }
 }

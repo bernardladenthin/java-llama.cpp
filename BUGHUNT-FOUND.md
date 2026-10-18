@@ -100,6 +100,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F133](#f133) — niedrig — *gefixt*
 - [F134](#f134) — mittel — *gefixt*
 - [F137](#f137) — niedrig — *gefixt*
+- [F138](#f138) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1134,6 +1135,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Unexpected exception type thrown, expected: <java.lang.IllegalArgumentException> but was: <java.lang.NullPointerException>“), mit Fix 3/3 (skipped 0), Gegenprobe per `git stash` rot, danach wieder grün. `SessionStateTest` 13/13, `LlamaArchitectureTest` 13/13; `spotless:apply` und `spotbugs:check` grün. Den nativen Pfad (Datei geschrieben, `LlamaException` aus `restoreSlot`) habe ich nicht laufen lassen: keine native Bibliothek und kein Modell in dieser Umgebung.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `965b540`
+
+<a id="f138"></a>
+### F138 – java-llama.cpp: `OpenAiServerConfig.heartbeatMillis(0)` lässt jeden Streaming-Request als Client-Fehler scheitern
+- **Zeit:** 2026-10-18 22:55 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiServerConfig.java` (`Builder.heartbeatMillis`), Verbraucher `OpenAiCompatServer` (vier `scheduleAtFixedRate(…, getHeartbeatMillis(), getHeartbeatMillis(), …)`)
+- **Schwere:** niedrig
+- **Beschreibung:** Der Builder nimmt jeden Wert. Das Intervall ist die Periode von `scheduleAtFixedRate`, die bei ≤ 0 `IllegalArgumentException` wirft; der Streaming-Handler fängt genau diese Klasse als Fehler der Anfrage. Mit `heartbeatMillis(0)` – naheliegend als „kein Heartbeat“ – antwortet daher jeder Streaming-Request mit HTTP 200 und nur `data: {"error":{"message":"IllegalArgumentException","type":"invalid_request_error",…}}`, ohne `[DONE]` (gemessen mit dem modellfreien Testserver); nicht gestreamte Anfragen gehen. Der Fehler sieht nach einem Client-Fehler aus und nennt die Einstellung nicht.
+- **Fix:** `heartbeatMillis` weist einen nicht positiven Wert beim Konfigurieren mit `IllegalArgumentException` ab, Javadoc ergänzt.
+- **Reproduktion:** `OpenAiServerConfigTest#heartbeatIntervalOfZeroIsRejected`; das Laufzeitsymptom zeigte eine nicht übernommene Probe in `OpenAiCompatServerHttpTest` (Streaming-Chat gegen `FakeBackend` mit `heartbeatMillis(0)`).
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix 7/7 (skipped 0), Gegenprobe per `git stash` rot, danach wieder grün. `OpenAiCompatServerHttpTest` 54/54, `OpenAiServerCliTest` 45/45, `LlamaArchitectureTest` 13/13; `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
