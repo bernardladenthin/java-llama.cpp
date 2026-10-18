@@ -45,6 +45,16 @@ public class AnthropicApiSupportTest {
         assertThat(content.get(1).path("image_url").path("url").asText(), is("data:image/png;base64,iVBORw0K"));
     }
 
+    @Test
+    public void requestMapsAnEnabledThinkingBudgetLikeUpstream() throws IOException {
+        // Upstream's convert_anthropic_to_oai turns thinking.budget_tokens into thinking_budget_tokens,
+        // which the chat parser hands to the sampler as the reasoning budget.
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":64,"
+                + "\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":1024},"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("thinking_budget_tokens").asInt(), is(1024));
+    }
+
     /**
      * Separate text blocks of one message must stay separate words. Anthropic clients split a turn into
      * several blocks (a reminder block, then the user's own text); llama.cpp's own {@code /v1/messages}

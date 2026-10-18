@@ -31,6 +31,9 @@ final class AnthropicApiSupport {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /** Reasoning budget of an enabled {@code thinking} block without {@code budget_tokens} (upstream's default). */
+    private static final int DEFAULT_THINKING_BUDGET_TOKENS = 10_000;
+
     private AnthropicApiSupport() {}
 
     /**
@@ -99,6 +102,12 @@ final class AnthropicApiSupport {
         copyNumber(request, "top_k", openAi, "top_k");
         if (request.path("stop_sequences").isArray()) {
             openAi.set("stop", request.path("stop_sequences").deepCopy());
+        }
+        // As upstream's convert_anthropic_to_oai: an enabled thinking block becomes the reasoning budget
+        // the chat parser hands to the sampler, with upstream's default when budget_tokens is absent.
+        JsonNode thinking = request.path("thinking");
+        if ("enabled".equals(thinking.path("type").asText(""))) {
+            openAi.put("thinking_budget_tokens", thinking.path("budget_tokens").asInt(DEFAULT_THINKING_BUDGET_TOKENS));
         }
         return openAi;
     }
