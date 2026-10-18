@@ -63,6 +63,22 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void requestKeepsThinkingBlocksOfTheHistoryAsReasoningContentLikeUpstream() throws IOException {
+        // Upstream's convert_anthropic_to_oai collects an assistant turn's thinking blocks into
+        // reasoning_content, which the chat parser hands to templates that render earlier reasoning.
+        JsonNode messages = AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":["
+                        + "{\"role\":\"user\",\"content\":\"q\"},"
+                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"6 times 7\","
+                        + "\"signature\":\"\"},{\"type\":\"text\",\"text\":\"42\"}]},"
+                        + "{\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"only\"}]}]}"))
+                .path("messages");
+        assertThat(messages.get(1).path("reasoning_content").asText(), is("6 times 7"));
+        assertThat(messages.get(1).path("content").asText(), is("42"));
+        assertThat(messages.get(2).path("reasoning_content").asText(), is("only"));
+        assertThat(messages.get(2).path("content").asText(), is(""));
+    }
+
+    @Test
     public void requestMapsAnEnabledThinkingBudgetLikeUpstream() throws IOException {
         // Upstream's convert_anthropic_to_oai turns thinking.budget_tokens into thinking_budget_tokens,
         // which the chat parser hands to the sampler as the reasoning budget.

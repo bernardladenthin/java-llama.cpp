@@ -148,6 +148,8 @@ final class AnthropicApiSupport {
         boolean hadImage = false;
         ArrayNode toolCalls = OBJECT_MAPPER.createArrayNode();
         boolean hadToolResult = false;
+        // Thinking blocks of earlier turns, collected as reasoning_content like upstream's converter.
+        StringBuilder reasoning = new StringBuilder();
         for (JsonNode block : content) {
             String type = block.path("type").asText("");
             switch (type) {
@@ -160,6 +162,9 @@ final class AnthropicApiSupport {
                     parts.addObject()
                             .put("type", "text")
                             .put("text", block.path("text").asText(""));
+                    break;
+                case "thinking":
+                    reasoning.append(block.path("thinking").asText(""));
                     break;
                 case "image":
                     String url = imageUrl(block.path("source"));
@@ -199,7 +204,8 @@ final class AnthropicApiSupport {
             if (toolCalls.size() > 0) {
                 message.set("tool_calls", toolCalls);
             }
-        } else if (text.length() > 0 || toolCalls.size() > 0) {
+            putReasoning(message, reasoning);
+        } else if (text.length() > 0 || toolCalls.size() > 0 || reasoning.length() > 0) {
             ObjectNode message = out.addObject();
             message.put("role", role);
             if (toolCalls.size() > 0 && text.length() == 0) {
@@ -210,12 +216,19 @@ final class AnthropicApiSupport {
             if (toolCalls.size() > 0) {
                 message.set("tool_calls", toolCalls);
             }
+            putReasoning(message, reasoning);
         } else if (!hadToolResult) {
             // Genuinely empty/plain content (no text, no tool calls, no tool_result) — keep a slot.
             // A content array of only tool_result blocks emits no extra message (they became tool messages).
             ObjectNode message = out.addObject();
             message.put("role", role);
             message.put("content", "");
+        }
+    }
+
+    private static void putReasoning(ObjectNode message, CharSequence reasoning) {
+        if (reasoning.length() > 0) {
+            message.put("reasoning_content", reasoning.toString());
         }
     }
 
