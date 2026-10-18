@@ -237,6 +237,18 @@ public class OllamaApiSupportTest {
     }
 
     @Test
+    public void generateWithSuffixKeepsTheSamplingOptionsOfAPlainGenerate() throws IOException {
+        // FIM clients stop a completion with options.stop; upstream's /infill reads stop, top_p, top_k
+        // and seed through the same completion schema as /completions.
+        JsonNode infill = OllamaApiSupport.toInfillRequest(read("{\"prompt\":\"pre\",\"suffix\":\"suf\","
+                + "\"options\":{\"stop\":[\"\\n\\n\"],\"top_p\":0.9,\"top_k\":40,\"seed\":7}}"));
+        assertThat(infill.path("stop").path(0).asText(), is("\n\n"));
+        assertThat(infill.path("top_p").asDouble(), is(0.9));
+        assertThat(infill.path("top_k").asInt(), is(40));
+        assertThat(infill.path("seed").asInt(), is(7));
+    }
+
+    @Test
     public void generateTextExtractors() {
         assertThat(OllamaApiSupport.extractCompletionText("{\"choices\":[{\"text\":\"hi\"}]}"), is("hi"));
         assertThat(OllamaApiSupport.extractInfillContent("{\"content\":\"world\"}"), is("world"));

@@ -406,7 +406,13 @@ final class OllamaApiSupport {
         infill.put("input_suffix", request.path("suffix").asText(""));
         JsonNode options = request.path("options");
         copyNumber(options, "temperature", infill, "temperature");
+        copyNumber(options, "top_p", infill, "top_p");
+        copyNumber(options, "top_k", infill, "top_k");
+        copyNumber(options, "seed", infill, "seed");
         copyNumber(options, "num_predict", infill, "n_predict");
+        if (options.path("stop").isArray()) {
+            infill.set("stop", options.path("stop").deepCopy());
+        }
         return infill;
     }
 
