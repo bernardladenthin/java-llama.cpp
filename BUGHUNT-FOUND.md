@@ -895,7 +895,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#requestFieldsTheChatMapperReadsPassThroughLikeUpstream` (parametrisiert, ein Fall je Feld, 27 Fälle)
 - **Rot-Grün-Nachweis:** ohne Fix rot, jeder Fall für sich (27 Fehlschläge, z. B. „Expected: is <0.05> but: was <>“), mit Fix grün (47/47 der Klasse, skipped 0); Gegenprobe per `git stash` rot (27), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `87635b2`
 
 ## Offene Verdachte ohne Fund-ID
 
