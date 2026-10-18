@@ -129,6 +129,12 @@ final class StreamingChunkAssembler {
         String argumentsFragment =
                 function.path("arguments").isTextual() ? function.path("arguments").asText() : "";
         tool.arguments.append(argumentsFragment);
+        // PartialToolCall refuses empty arguments and a blank name, and llama.cpp sends both: the
+        // first delta of a call usually carries id and name only, and its incremental parser may
+        // report a call before its name. Such a delta still feeds the assembled call.
+        if (argumentsFragment.isEmpty() || tool.name.isEmpty()) {
+            return;
+        }
         handler.onPartialToolCall(PartialToolCall.builder()
                 .index(index)
                 .id(tool.id)

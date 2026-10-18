@@ -9,6 +9,7 @@ import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import dev.langchain4j.model.chat.response.ChatResponse;
@@ -116,6 +117,47 @@ class StreamingChunkAssemblerTest {
         assertThat(response.finishReason(), is(FinishReason.TOOL_EXECUTION));
         assertThat(response.tokenUsage().inputTokenCount(), is(10));
         assertThat(response.tokenUsage().outputTokenCount(), is(5));
+    }
+
+    /**
+     * llama.cpp's first delta of a tool call usually carries the id and the name only: its diff
+     * writer leaves {@code arguments} out while they are still empty. langchain4j's
+     * {@link PartialToolCall} refuses empty partial arguments, so that delta must not become one.
+     */
+    @Test
+    void toolCallDeltaWithoutArguments_doesNotFailTheStream() {
+        RecordingHandler handler = new RecordingHandler();
+        StreamingChunkAssembler assembler = new StreamingChunkAssembler(handler);
+
+        assertDoesNotThrow(() -> assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\"}}]},"
+                + "\"finish_reason\":null}]}"));
+        assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"function\":{\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}");
+        ChatResponse response = assembler.complete();
+
+        assertThat(response.aiMessage().toolExecutionRequests().get(0).name(), is("get_weather"));
+        assertThat(response.aiMessage().toolExecutionRequests().get(0).arguments(), is("{}"));
+    }
+
+    /**
+     * llama.cpp's incremental parser may discover a tool call before its name ({@code compute_diffs}
+     * allows the name to go from empty to non-empty); {@link PartialToolCall} refuses a blank name.
+     */
+    @Test
+    void toolCallDeltaBeforeItsName_doesNotFailTheStream() {
+        RecordingHandler handler = new RecordingHandler();
+        StreamingChunkAssembler assembler = new StreamingChunkAssembler(handler);
+
+        assertDoesNotThrow(() -> assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"function\":{\"arguments\":\"{\\\"ci\"}}]},\"finish_reason\":null}]}"));
+        assembler.accept("{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,"
+                + "\"id\":\"call_1\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"ty\\\":1}\"}}]},"
+                + "\"finish_reason\":\"tool_calls\"}]}");
+        ChatResponse response = assembler.complete();
+
+        assertThat(response.aiMessage().toolExecutionRequests().get(0).name(), is("get_weather"));
+        assertThat(response.aiMessage().toolExecutionRequests().get(0).arguments(), is("{\"city\":1}"));
     }
 
     @Test

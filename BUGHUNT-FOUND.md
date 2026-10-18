@@ -96,6 +96,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F118](#f118) — niedrig — *gefixt*
 - [F123](#f123) — niedrig — *gefixt*
 - [F125](#f125) — niedrig — *gefixt*
+- [F128](#f128) — mittel — *gefixt*
 
 ## Funde
 
@@ -1081,6 +1082,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot in allen drei Fällen („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix grün (45/45 der Klasse, skipped 0); Gegenprobe per `git stash` rot (3), nach `pop` grün. Breite Liste: `OpenAiCompatServerHttpTest` 54/54, `ServerLauncherTest` 7/7, `LlamaArchitectureTest` 13/13; `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ba26cdc`
+
+<a id="f128"></a>
+### F128 – java-llama.cpp: Gestreamte Werkzeugaufrufe in `llama-langchain4j` brechen am ersten Fragment ohne Argumente oder ohne Namen ab
+- **Zeit:** 2026-10-18 17:00 UTC
+- **Datei:** `llama-langchain4j/src/main/java/net/ladenthin/llama/langchain4j/StreamingChunkAssembler.java:131` (`acceptToolCallFragment`), Aufrufer `JllamaStreamingChatModel.doChat`
+- **Schwere:** mittel
+- **Beschreibung:** Jedes `tool_calls`-Fragment wurde als `PartialToolCall` an den Handler gegeben. langchain4j 1.22.0 baut ihn mit `ensureNotBlank(name)` und `ensureNotEmpty(partialArguments)` (mit `javap -c` am Jar nachgesehen). Upstreams `server_chat_msg_diff_to_json_oaicompat` lässt `arguments` weg, solange der Diff keine hat, und `common_chat_msg_diff::compute_diffs` meldet einen neuen Aufruf mit dem bis dahin geparsten Stand – das erste Fragment trägt typischerweise nur `id` und `name`, und laut Kommentar dort darf der Name anfangs leer sein. Dann warf `PartialToolCall.builder().build()` eine `IllegalArgumentException` aus dem Stream-Callback, `doChat` fing sie und rief `onError`: der ganze gestreamte Werkzeugaufruf schlug fehl. Die vorhandenen Tests schickten nur Fragmente, die schon Argumente trugen.
+- **Fix:** Ein Fragment mit leeren Argumenten oder solange der Name fehlt fließt weiter in den zusammengesetzten Aufruf, wird aber nicht als `PartialToolCall` gemeldet (wie langchain4js eigene OpenAI-Anbindung, die nur nicht leere Argumentstücke meldet).
+- **Reproduktion:** `StreamingChunkAssemblerTest#toolCallDeltaWithoutArguments_doesNotFailTheStream`, `#toolCallDeltaBeforeItsName_doesNotFailTheStream`
+- **Rot-Grün-Nachweis:** ohne Fix beide rot („Unexpected exception thrown: java.lang.IllegalArgumentException: partialArguments cannot be null or empty“ bzw. „… name cannot be null or blank“), mit Fix grün (2/2, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. Ganzes Modul grün (`StreamingChunkAssemblerTest` 9/9, `LangChain4jMappingTest` 23/23, `JsonSchemaElementSerializerTest` 8/8, `TestModelPathsTest` 8/8; die Integrationstests überspringen sich ohne Modell wie zuvor). Das Modul hat weder Spotless noch SpotBugs.
+- **CI-Bedarf:** `JllamaToolCallingIntegrationTest#streamedRequiredToolCallComesBackAsToolExecutionRequest` (Job `test-java-llama-langchain4j-integration`, kein Release-Gate) im nächsten Lauf ansehen: ob er vor dem Fix rot war, hängt davon ab, ob das CI-Modell den Namen allein in einem Fragment sendet.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
