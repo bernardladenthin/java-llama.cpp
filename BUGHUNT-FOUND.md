@@ -931,7 +931,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiRequestMapperTest#toolChoiceNamingAFunctionRequiresAToolCall`, `ResponsesApiSupportTest#toolChoiceNamingAFunctionRequiresAToolCall`
 - **Rot-Grün-Nachweis:** ohne Fix rot, je Weg für sich (2 Fehlschläge, je „Expected: is "required" but: was ""“), mit Fix grün (28/28 und 51/51, skipped 0); Gegenprobe per `git stash` beider Produktionsdateien rot (1 + 1), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 22/22, `ResponsesStreamTranslatorTest` 5/5, `OllamaApiSupportTest` 32/32, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `b7151fc`
 
 ## Offene Verdachte ohne Fund-ID
 
