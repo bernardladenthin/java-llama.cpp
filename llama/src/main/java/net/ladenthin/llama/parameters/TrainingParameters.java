@@ -115,7 +115,25 @@ public final class TrainingParameters {
         node.put(TrainingField.VAL_SPLIT.getKey(), valSplit);
         node.put(TrainingField.N_BATCH.getKey(), nBatch);
         node.put(TrainingField.N_UBATCH.getKey(), nUbatch);
-        return node.toString();
+        return escapeNonAscii(node.toString());
+    }
+
+    // The native trainer takes the JSON through GetStringUTFChars, which yields Modified UTF-8: a
+    // character outside the BMP becomes two 3-byte surrogates, which its JSON parser rejects as
+    // ill-formed UTF-8. Only ASCII is the same in both, so everything else travels as a backslash-u escape
+    // (outside a string literal JSON has no non-ASCII, so escaping every such char is always valid).
+    static String escapeNonAscii(String json) {
+        final int length = json.length();
+        StringBuilder escaped = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            char c = json.charAt(i);
+            if (c < 0x80) {
+                escaped.append(c);
+            } else {
+                escaped.append(String.format(java.util.Locale.ROOT, "\\u%04x", (int) c));
+            }
+        }
+        return escaped.toString();
     }
 
     // The native trainer reads the JSON with defaults and checks none of these: epochs below 1 wrote the

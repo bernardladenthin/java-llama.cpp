@@ -46,6 +46,25 @@ class TrainingParametersTest {
     }
 
     @Test
+    void nonAsciiTextIsEscapedSoTheJsonCrossesJniIntact() throws Exception {
+        // The native trainer takes the JSON through GetStringUTFChars, which yields Modified UTF-8: a
+        // character outside the BMP (an emoji) becomes two 3-byte surrogates, which nlohmann rejects
+        // as "ill-formed UTF-8" -- the whole run failed with "invalid training config". Only ASCII
+        // survives Modified UTF-8 unchanged, so the JSON must carry everything else as \\u escapes.
+        String text = "Grüße \uD83D\uDE00 und 中文";
+        TrainingParameters parameters = TrainingParameters.builder()
+                .modelPath(Paths.get("base.gguf"))
+                .trainingText(text)
+                .outputPath(Paths.get("tuned.gguf"))
+                .build();
+
+        String jsonText = parameters.toJson();
+
+        assertThat(jsonText.chars().filter(c -> c > 0x7F).count(), is(0L));
+        assertThat(MAPPER.readTree(jsonText).get("training_text").asText(), is(text));
+    }
+
+    @Test
     void customValuesSerialize() throws Exception {
         TrainingParameters parameters = TrainingParameters.builder()
                 .modelPath(Paths.get("base.gguf"))
