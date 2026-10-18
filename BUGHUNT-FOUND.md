@@ -80,6 +80,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F99](#f99) — niedrig — *gefixt*
 - [F102](#f102) — niedrig — *gefixt*
 - [F103](#f103) — niedrig — *gefixt*
+- [F104](#f104) — niedrig — *gefixt*
 
 ## Funde
 
@@ -860,6 +861,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <0> but: was <-1>“), mit Fix grün (27/27 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 19/19, `OllamaApiSupportTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `bcbafbc`
+
+### F104 – java-llama.cpp: Ollama-Routen verwerfen `repeat_penalty`, `min_p` und weitere Optionen; `num_predict: -2` wird abgewiesen
+- **Zeit:** 2026-10-18 07:50 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:246` (`copyLlamaCppOptions`, `copyNumPredict`, neu; Aufrufe in `toOpenAiChatRequest`, `toOpenAiCompletionRequest`, `toInfillRequest`)
+- **Schwere:** niedrig
+- **Beschreibung:** Musterdurchsicht nach F102/F103 (Sonderwerte) und F74 (Optionsmengen der Geschwister). Ollama legt die Sampling-Optionen unter `options` mit llama.cpps Namen ab (`repeat_penalty`, `repeat_last_n`, `min_p`, `typical_p`, `presence_penalty`, `frequency_penalty`, `num_keep`), Clients wie Open WebUI setzen sie. Alle drei Ollama-Routen übernahmen nur `temperature`, `top_p`, `top_k`, `seed`, `num_predict` und `stop`; der Rest ging still verloren, obwohl jede Route ihn an upstreams Schema weitergeben kann (`/api/chat` seit F95 über den Mapper, `/api/generate` und FIM wörtlich). Dazu ein Sonderwert: Ollamas `num_predict: -2` („Kontext füllen“) ging unverändert als `max_tokens`/`n_predict` -2 weiter, upstreams harte Grenze beginnt bei -1 – `/api/generate` und FIM antworteten mit einem Fehler.
+- **Fix:** Ein gemeinsamer Helfer kopiert die llama.cpp-benannten Optionen auf allen drei Routen (`num_keep` → `n_keep`); `repeat_last_n: -1` (Ollama: Kontextgröße, upstream: ungültig) bleibt beim Server-Standard; `num_predict` unter -1 wird -1.
+- **Reproduktion:** `OllamaApiSupportTest#chatCopiesTheLlamaCppSamplingOptions`, `#generateCopiesTheLlamaCppSamplingOptions`, `#infillCopiesTheLlamaCppSamplingOptions`, `#numPredictMinusTwoFillsTheContextAsUpstreamsMinusOne`; `#repeatLastNMinusOneIsLeftToTheServerDefault` schützt die Ausnahme (ohne Fix grün, weil gar nichts kopiert wurde)
+- **Rot-Grün-Nachweis:** ohne Fix rot (4 Fehlschläge: dreimal „Expected: is <0.05> but: was <0.0>“, einmal „Expected: is <-1> but: was <-2>“), mit Fix grün (32/32 der Klasse, skipped 0); Gegenprobe per `git stash` rot (4), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 19/19, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

@@ -153,7 +153,8 @@ final class OllamaApiSupport {
         copyNumber(options, "top_p", openAi, "top_p");
         copyNumber(options, "top_k", openAi, "top_k");
         copyNumber(options, "seed", openAi, "seed");
-        copyNumber(options, "num_predict", openAi, "max_tokens");
+        copyNumPredict(options, openAi, "max_tokens");
+        copyLlamaCppOptions(options, openAi);
         if (options.path("stop").isArray()) {
             openAi.set("stop", options.path("stop").deepCopy());
         }
@@ -235,6 +236,37 @@ final class OllamaApiSupport {
             mimeType = "image/png";
         }
         return "data:" + mimeType + ";base64," + image;
+    }
+
+    /**
+     * Copy the sampling options Ollama names as llama.cpp does, which every route hands on to llama.cpp's
+     * request schema (the chat route through the shared mapper). Ollama's {@code repeat_last_n} of
+     * {@code -1} (the context size) is left to the server default: upstream accepts {@code 0} and up only.
+     */
+    private static void copyLlamaCppOptions(JsonNode options, ObjectNode to) {
+        copyNumber(options, "min_p", to, "min_p");
+        copyNumber(options, "typical_p", to, "typical_p");
+        copyNumber(options, "repeat_penalty", to, "repeat_penalty");
+        copyNumber(options, "presence_penalty", to, "presence_penalty");
+        copyNumber(options, "frequency_penalty", to, "frequency_penalty");
+        copyNumber(options, "num_keep", to, "n_keep");
+        JsonNode repeatLastN = options.path("repeat_last_n");
+        if (repeatLastN.isIntegralNumber() && repeatLastN.asInt() >= 0) {
+            to.set("repeat_last_n", repeatLastN);
+        }
+    }
+
+    /**
+     * Copy Ollama's {@code num_predict}; its {@code -2} ("fill the context") becomes upstream's {@code -1},
+     * whose hard limit starts there.
+     */
+    private static void copyNumPredict(JsonNode options, ObjectNode to, String toKey) {
+        JsonNode numPredict = options.path("num_predict");
+        if (numPredict.isIntegralNumber() && numPredict.asInt() < -1) {
+            to.put(toKey, -1);
+        } else {
+            copyNumber(options, "num_predict", to, toKey);
+        }
     }
 
     private static void copyNumber(JsonNode from, String fromKey, ObjectNode to, String toKey) {
@@ -444,7 +476,8 @@ final class OllamaApiSupport {
         copyNumber(options, "top_p", openAi, "top_p");
         copyNumber(options, "top_k", openAi, "top_k");
         copyNumber(options, "seed", openAi, "seed");
-        copyNumber(options, "num_predict", openAi, "max_tokens");
+        copyNumPredict(options, openAi, "max_tokens");
+        copyLlamaCppOptions(options, openAi);
         if (options.path("stop").isArray()) {
             openAi.set("stop", options.path("stop").deepCopy());
         }
@@ -467,7 +500,8 @@ final class OllamaApiSupport {
         copyNumber(options, "top_p", infill, "top_p");
         copyNumber(options, "top_k", infill, "top_k");
         copyNumber(options, "seed", infill, "seed");
-        copyNumber(options, "num_predict", infill, "n_predict");
+        copyNumPredict(options, infill, "n_predict");
+        copyLlamaCppOptions(options, infill);
         if (options.path("stop").isArray()) {
             infill.set("stop", options.path("stop").deepCopy());
         }

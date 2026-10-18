@@ -176,6 +176,58 @@ public class OllamaApiSupportTest {
         assertThat(openAi.path("stop").get(1).asText(), is("END"));
     }
 
+    private static void assertSamplingOptionsCopied(JsonNode out) {
+        assertThat(out.path("min_p").asDouble(), is(0.05));
+        assertThat(out.path("typical_p").asDouble(), is(0.9));
+        assertThat(out.path("repeat_penalty").asDouble(), is(1.1));
+        assertThat(out.path("repeat_last_n").asInt(), is(32));
+        assertThat(out.path("presence_penalty").asDouble(), is(0.2));
+        assertThat(out.path("frequency_penalty").asDouble(), is(0.3));
+        assertThat(out.path("n_keep").asInt(), is(8));
+    }
+
+    @Test
+    public void chatCopiesTheLlamaCppSamplingOptions() throws IOException {
+        // Ollama's options keep llama.cpp's names; Open WebUI and others set repeat_penalty, min_p, ...
+        assertSamplingOptionsCopied(
+                OllamaApiSupport.toOpenAiChatRequest(
+                        read(
+                                "{\"model\":\"m\","
+                                        + "\"messages\":[{\"role\":\"user\",\"content\":\"q\"}],\"options\":{\"min_p\":0.05,\"typical_p\":0.9,\"repeat_penalty\":1.1,\"repeat_last_n\":32,\"presence_penalty\":0.2,\"frequency_penalty\":0.3,\"num_keep\":8}}")));
+    }
+
+    @Test
+    public void generateCopiesTheLlamaCppSamplingOptions() throws IOException {
+        assertSamplingOptionsCopied(
+                OllamaApiSupport.toOpenAiCompletionRequest(
+                        read(
+                                "{\"model\":\"m\",\"prompt\":\"p\",\"options\":{\"min_p\":0.05,\"typical_p\":0.9,\"repeat_penalty\":1.1,\"repeat_last_n\":32,\"presence_penalty\":0.2,\"frequency_penalty\":0.3,\"num_keep\":8}}")));
+    }
+
+    @Test
+    public void infillCopiesTheLlamaCppSamplingOptions() throws IOException {
+        assertSamplingOptionsCopied(
+                OllamaApiSupport.toInfillRequest(
+                        read(
+                                "{\"model\":\"m\",\"prompt\":\"p\",\"suffix\":\"s\",\"options\":{\"min_p\":0.05,\"typical_p\":0.9,\"repeat_penalty\":1.1,\"repeat_last_n\":32,\"presence_penalty\":0.2,\"frequency_penalty\":0.3,\"num_keep\":8}}")));
+    }
+
+    @Test
+    public void numPredictMinusTwoFillsTheContextAsUpstreamsMinusOne() throws IOException {
+        // Ollama's -2 means "fill the context"; upstream's n_predict hard limit starts at -1 and rejects it.
+        JsonNode out = OllamaApiSupport.toOpenAiCompletionRequest(
+                read("{\"model\":\"m\",\"prompt\":\"p\",\"options\":{\"num_predict\":-2}}"));
+        assertThat(out.path("max_tokens").asInt(), is(-1));
+    }
+
+    @Test
+    public void repeatLastNMinusOneIsLeftToTheServerDefault() throws IOException {
+        // Ollama's -1 means "the context size"; upstream's repeat_last_n accepts 0.. only.
+        JsonNode out = OllamaApiSupport.toOpenAiCompletionRequest(
+                read("{\"model\":\"m\",\"prompt\":\"p\",\"options\":{\"repeat_last_n\":-1}}"));
+        assertThat(out.has("repeat_last_n"), is(false));
+    }
+
     @Test
     public void blockingChatAnswerCarriesTheThinkingLikeOllama() throws IOException {
         // Ollama puts a model's thinking into message.thinking.
