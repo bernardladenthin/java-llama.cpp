@@ -100,6 +100,32 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void billingHeaderStampIsNormalizedSoThePrefixCacheHitsLikeUpstream() throws IOException {
+        // Claude Code starts its system prompt with a billing header whose cch stamp changes on every
+        // request; upstream (normalize_anthropic_billing_header, llama.cpp #21793) overwrites the stamp
+        // so the prompt prefix, and with it the KV cache, stays identical across requests.
+        String first = AnthropicApiSupport.toOpenAiChatRequest(read("{\"system\":[{\"type\":\"text\",\"text\":"
+                        + "\"x-anthropic-billing-header: cc_version=2.1.101.e51; cc_entrypoint=cli; cch=a5145;You are Claude Code.\"}],"
+                        + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"))
+                .path("messages")
+                .path(0)
+                .path("content")
+                .asText();
+        String second = AnthropicApiSupport.toOpenAiChatRequest(read("{\"system\":"
+                        + "\"x-anthropic-billing-header: cc_version=2.1.101.e51; cc_entrypoint=cli; cch=0b9c2;You are Claude Code.\","
+                        + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"))
+                .path("messages")
+                .path(0)
+                .path("content")
+                .asText();
+        assertThat(
+                first,
+                is(
+                        "x-anthropic-billing-header: cc_version=2.1.101.e51; cc_entrypoint=cli; cch=fffff;You are Claude Code."));
+        assertThat(second, is(first));
+    }
+
+    @Test
     public void requestMapsAnEnabledThinkingBudgetLikeUpstream() throws IOException {
         // Upstream's convert_anthropic_to_oai turns thinking.budget_tokens into thinking_budget_tokens,
         // which the chat parser hands to the sampler as the reasoning budget.

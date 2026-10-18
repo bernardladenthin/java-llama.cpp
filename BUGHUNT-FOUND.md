@@ -68,6 +68,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F87](#f87) — niedrig — *gefixt*
 - [F88](#f88) — mittel — *gefixt*
 - [F89](#f89) — niedrig — *gefixt*
+- [F90](#f90) — mittel — *gefixt*
 
 ## Funde
 
@@ -712,6 +713,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <400> but: was <200>“), mit Fix grün (46/46 der Klasse, skipped 0); Gegenprobe per `git stash` beider Dateien rot, nach `pop` grün. `ResponsesApiSupportTest` 17/17, `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `3280821`
+
+<a id="f90"></a>
+### F90 – java-llama.cpp: Claude Codes wechselnder `cch`-Stempel im System-Prompt verhindert jeden Prefix-Cache-Treffer
+- **Zeit:** 2026-10-18 04:30 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java:144` (`normalizeBillingHeader`, neu; Aufruf in `systemText`)
+- **Schwere:** mittel (Leistung)
+- **Beschreibung:** Claude Code beginnt seinen System-Prompt mit `x-anthropic-billing-header: cc_version=…; cc_entrypoint=cli; cch=a5145;…`, und der `cch`-Wert ändert sich bei jeder Anfrage. Der Prompt unterscheidet sich damit schon in den ersten Token, und der KV-Präfix-Cache (`cache_prompt`, vom Mapper auf `true` gesetzt) trifft nie: jede Runde einer Agenten-Sitzung rechnete den ganzen, viele Tausend Token langen System-Prompt samt Verlauf neu. upstreams `server_chat_convert_anthropic_to_oai` ruft dafür `normalize_anthropic_billing_header` (`server-chat.cpp:326`, llama.cpp #21793, b11639) und überschreibt die fünf Stempelzeichen mit `fffff`.
+- **Fix:** `normalizeBillingHeader` macht dasselbe wie upstream (nur bei diesem Präfix, nur wenn nach den fünf Zeichen ein `;` folgt), angewendet auf den String- und jeden Text-Block des `system`-Felds.
+- **Reproduktion:** `AnthropicApiSupportTest#billingHeaderStampIsNormalizedSoThePrefixCacheHitsLikeUpstream` (Block- und String-Form, zwei verschiedene Stempel ergeben denselben Text)
+- **Rot-Grün-Nachweis:** ohne Fix rot (Stempel `a5145` unverändert), mit Fix grün (19/19 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `AnthropicStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 46/46, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **CI-Bedarf:** dass der Cache danach tatsächlich trifft (`cached_tokens` > 0 in der zweiten Runde), zeigt nur ein modellgestützter Lauf.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

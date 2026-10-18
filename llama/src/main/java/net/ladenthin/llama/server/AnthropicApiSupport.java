@@ -32,6 +32,12 @@ final class AnthropicApiSupport {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /** First line of Claude Code's system prompt, whose {@code cch} stamp changes per request. */
+    private static final String BILLING_HEADER_PREFIX = "x-anthropic-billing-header:";
+
+    /** Length of the {@code cch} stamp upstream overwrites. */
+    private static final int BILLING_STAMP_LENGTH = 5;
+
     /** Reasoning budget of an enabled {@code thinking} block without {@code budget_tokens} (upstream's default). */
     private static final int DEFAULT_THINKING_BUDGET_TOKENS = 10_000;
 
@@ -115,18 +121,40 @@ final class AnthropicApiSupport {
 
     private static String systemText(JsonNode system) {
         if (system.isTextual()) {
-            return system.asText();
+            return normalizeBillingHeader(system.asText());
         }
         if (system.isArray()) {
             StringBuilder sb = new StringBuilder();
             for (JsonNode block : system) {
                 if (block.path("text").isTextual()) {
-                    sb.append(block.path("text").asText());
+                    sb.append(normalizeBillingHeader(block.path("text").asText()));
                 }
             }
             return sb.toString();
         }
         return "";
+    }
+
+    /**
+     * Overwrites the {@code cch} stamp of Claude Code's {@code x-anthropic-billing-header} system line,
+     * as upstream's {@code normalize_anthropic_billing_header} (llama.cpp #21793) does. The stamp changes
+     * on every request, so leaving it in place made every prompt differ at its start and the KV prefix
+     * cache never hit: each turn re-processed the whole system prompt. Any other text is returned as is.
+     */
+    static String normalizeBillingHeader(String systemText) {
+        if (!systemText.startsWith(BILLING_HEADER_PREFIX)) {
+            return systemText;
+        }
+        int stamp = systemText.indexOf("cch=", BILLING_HEADER_PREFIX.length());
+        if (stamp < 0) {
+            return systemText;
+        }
+        int start = stamp + "cch=".length();
+        int end = start + BILLING_STAMP_LENGTH;
+        if (end >= systemText.length() || systemText.charAt(end) != ';') {
+            return systemText;
+        }
+        return systemText.substring(0, start) + "fffff" + systemText.substring(end);
     }
 
     private static void appendOpenAiMessages(ArrayNode out, JsonNode anthropicMessage) {
