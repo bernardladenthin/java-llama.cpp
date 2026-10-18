@@ -993,7 +993,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#showParametersCarryTheContextLengthWhereContinueReadsIt` (mit Continues regulärem Ausdruck)
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "4096" but: was null“), mit Fix grün (34/34 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. Breite Liste wie F114 grün, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `4d45be1`
 
 ## Offene Verdachte ohne Fund-ID
 
