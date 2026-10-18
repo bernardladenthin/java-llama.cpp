@@ -51,6 +51,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F69](#f69) — niedrig — *nur beschrieben* (CI-Bedarf: modellgestützter Test)
 - [F70](#f70) — mittel — *gefixt*
 - [F71](#f71) — niedrig — *gefixt*
+- [F72](#f72) — niedrig — *gefixt*
 
 ## Funde
 
@@ -486,6 +487,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **CI-Bedarf:** ein Ende-zu-Ende-Beweis bräuchte `LlamaTrainerIntegrationTest` mit einem Emoji im Trainingstext (Modell `stories260K.gguf` liegt in CI vor).
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ca6ccdf`
+
+<a id="f72"></a>
+### F72 – java-llama.cpp: `GgufInspector` liest verschachtelte Arrays rekursiv – `StackOverflowError` statt `IOException`
+- **Zeit:** 2026-10-18 01:05 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/GgufInspector.java` (`readArray`)
+- **Schwere:** niedrig
+- **Beschreibung:** `readArray` liest den Elementtyp und ruft für jedes Element `readValue` – auch für den Typ `ARRAY`, also rekursiv und ohne Tiefengrenze. Upstreams Leser lehnt ein Array mit Elementtyp `ARRAY` dagegen ab (`ggml/src/gguf.cpp:606`, b11639: „key … has invalid GGUF type“), llama.cpp kann eine solche Datei also nicht laden. Folgen: (1) eine präparierte Datei mit tiefer Verschachtelung (12 Byte und ein Stapelrahmen je Ebene) beendet `GgufInspector.read` mit `StackOverflowError`, obwohl die Methode für eine ungültige Datei `IOException` deklariert – wer den Inspektor vor dem Laden als Prüfung nutzt (`catch (IOException)`), fängt das nicht; (2) schon zwei Ebenen meldet der Inspektor als gültige Metadaten.
+- **Fix:** `readArray` wirft bei Elementtyp `ARRAY` eine `IOException` mit dem Typ in der Meldung, wie upstream.
+- **Reproduktion:** `GgufInspectorTest#nestedArrayIsRejectedLikeUpstream` (2 Ebenen) und `#deeplyNestedArraysFailWithIOExceptionNotStackOverflow` (100 000 Ebenen)
+- **Rot-Grün-Nachweis:** ohne Fix rot („expected: <java.io.IOException> but was: <java.lang.StackOverflowError>“ bzw. „Expected java.io.IOException to be thrown, but nothing was thrown“), mit Fix grün, `GgufInspectorTest` 14 (1 übersprungen: der bestehende Test mit echtem Modell); Gegenprobe per `git stash` rot, nach `stash pop` grün. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** java-llama.cpp `79f3ee9`
 
 ## Offene Verdachte ohne Fund-ID
 
