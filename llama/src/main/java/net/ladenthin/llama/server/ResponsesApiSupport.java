@@ -96,6 +96,12 @@ final class ResponsesApiSupport {
         copyNumber(request, "temperature", openAi, "temperature");
         copyNumber(request, "top_p", openAi, "top_p");
         copyNumber(request, "max_output_tokens", openAi, "max_tokens");
+        // Upstream's converter maps reasoning.effort to the chat field reasoning_effort ("none" turns
+        // the model's thinking off); the other reasoning settings have no chat equivalent there either.
+        if (request.path("reasoning").path("effort").isTextual()) {
+            openAi.put(
+                    "reasoning_effort", request.path("reasoning").path("effort").asText());
+        }
         return openAi;
     }
 

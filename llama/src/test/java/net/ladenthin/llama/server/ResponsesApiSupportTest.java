@@ -48,6 +48,15 @@ public class ResponsesApiSupportTest {
      * {@code 0}, so clients showed every response as created on 1 January 1970.
      */
     @Test
+    public void requestMapsTheReasoningEffortLikeUpstream() throws IOException {
+        // Upstream's Responses converter maps reasoning.effort to reasoning_effort, which the chat
+        // parser reads ("none" switches the model's thinking off).
+        JsonNode openAi =
+                ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":\"hi\",\"reasoning\":{\"effort\":\"none\"}}"));
+        assertThat(openAi.path("reasoning_effort").asText(), is("none"));
+    }
+
+    @Test
     public void responseCarriesTheCurrentUnixTimeAsCreatedAt() throws IOException {
         long before = System.currentTimeMillis() / 1000L;
 
