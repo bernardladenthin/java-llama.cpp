@@ -685,7 +685,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#consecutiveFunctionCallsJoinThePrecedingAssistantMessageLikeUpstream`; der F85-Test wurde auf eine realistische Werkzeugschleife umgestellt (Denktext, Aufruf, Ergebnis, Denktext, Antwort), weil seine erste Folge die getrennten Nachrichten der alten Variante voraussetzte.
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <4> but: was <6>“, ebenso der umgestellte F85-Test), mit Fix grün (17/17 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2 Fehlschläge), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `77a6903`
 
 ## Offene Verdachte ohne Fund-ID
 
