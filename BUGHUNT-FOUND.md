@@ -672,7 +672,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#functionCallOutputArrayKeepsItsPartsLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "text" but: was ""“; die erste Fassung des Tests lief über `get(0)` in eine NPE und wurde auf `path(0)` umgestellt, damit der Fehler an der Assertion sichtbar wird), mit Fix grün (16/16 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `28054ba`
 
 ## Offene Verdachte ohne Fund-ID
 
