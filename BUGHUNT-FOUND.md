@@ -50,6 +50,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F68](#f68) — niedrig — *gefixt*
 - [F69](#f69) — niedrig — *nur beschrieben* (CI-Bedarf: modellgestützter Test)
 - [F70](#f70) — mittel — *gefixt*
+- [F71](#f71) — niedrig — *gefixt*
 
 ## Funde
 
@@ -472,6 +473,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <2048> but: was <8192>“), mit Fix grün, `OpenAiServerCliTest` 39/39; Gegenprobe per `git stash` rot, nach `stash pop` grün. `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `c1eaa50`
+
+<a id="f71"></a>
+### F71 – java-llama.cpp: Feintuning scheitert an jedem Zeichen außerhalb der BMP (Emoji) im Trainingstext
+- **Zeit:** 2026-10-18 00:35 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/TrainingParameters.java` (`toJson`), Gegenstück `llama/src/main/cpp/train_engine.cpp:141`
+- **Schwere:** niedrig
+- **Beschreibung:** `LlamaTrainer.finetune` übergibt `TrainingParameters.toJson()`, und die JNI-Schicht liest den String mit `GetStringUTFChars` – Modified UTF-8. Jackson schreibt Nicht-ASCII roh in die JSON, ein Zeichen außerhalb der BMP (Emoji, seltene CJK-Zeichen) kommt deshalb als zwei 3-Byte-Surrogate (CESU-8) beim Parser an. Das vendorte nlohmann am Pin lehnt das ab – gemessen mit `vendor/nlohmann/json.hpp` von b11639: echtes UTF-8 `F0 9F 98 80` wird gelesen, die CESU-8-Form `ED A0 BD ED B8 80` endet in `parse_error.101 … invalid string: ill-formed UTF-8 byte`. Der ganze Lauf scheiterte also mit „invalid training config“, sobald Trainingstext oder ein Pfad ein solches Zeichen enthielt. Die beiden anderen JNI-Stellen, die Text übernehmen (`jllama.cpp:248`, `native_server.cpp:33`), umgehen `GetStringUTFChars` ausdrücklich; nur der Trainer nicht.
+- **Fix:** `toJson` maskiert jedes Zeichen > 0x7F als `\uXXXX` (`escapeNonAscii`): ASCII ist in beiden Kodierungen gleich, und nlohmann setzt die Maskierungen samt Surrogatpaaren wieder zu richtigem UTF-8 zusammen. Bewusst nicht über `ESCAPE_NON_ASCII` am Mapper: `ObjectNode.toString()` nutzt Jacksons eigenen Mapper, und `writeValueAsString` hätte eine geprüfte Ausnahme eingeführt (SpotBugs `EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS`).
+- **Reproduktion:** `TrainingParametersTest#nonAsciiTextIsEscapedSoTheJsonCrossesJniIntact` (nur ASCII in der JSON, Rücklesen ergibt den Originaltext); der native Fehler selbst ist mit dem nlohmann-Probelauf oben belegt.
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <0L> but: was <6L>“ Nicht-ASCII-Zeichen), mit Fix grün, `TrainingParametersTest` 8/8; Gegenprobe per `git stash` rot, nach `stash pop` grün. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **CI-Bedarf:** ein Ende-zu-Ende-Beweis bräuchte `LlamaTrainerIntegrationTest` mit einem Emoji im Trainingstext (Modell `stories260K.gguf` liegt in CI vor).
+- **Status:** gefixt
+- **Commit:** java-llama.cpp `ca6ccdf`
 
 ## Offene Verdachte ohne Fund-ID
 
