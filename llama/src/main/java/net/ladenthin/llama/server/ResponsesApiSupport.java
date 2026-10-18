@@ -10,6 +10,9 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -30,6 +33,41 @@ import org.jspecify.annotations.Nullable;
 final class ResponsesApiSupport {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    /**
+     * Request fields handed on to the chat request unchanged. Upstream's {@code
+     * convert_responses_to_chatcmpl} copies the whole body; these are the ones the shared chat mapper
+     * reads (OpenAI sampling and llama.cpp's extensions). The structural fields ({@code input}, {@code
+     * tools}, {@code tool_choice}) are translated above, not copied.
+     */
+    private static final List<String> CHAT_PASSTHROUGH_FIELDS = Collections.unmodifiableList(Arrays.asList(
+            "top_k",
+            "seed",
+            "presence_penalty",
+            "frequency_penalty",
+            "stop",
+            "chat_template_kwargs",
+            "response_format",
+            "cache_prompt",
+            "n_cache_reuse",
+            "id_slot",
+            "min_p",
+            "typical_p",
+            "repeat_penalty",
+            "repeat_last_n",
+            "top_n_sigma",
+            "xtc_probability",
+            "xtc_threshold",
+            "dynatemp_range",
+            "dynatemp_exponent",
+            "min_keep",
+            "n_keep",
+            "ignore_eos",
+            "grammar",
+            "json_schema",
+            "n_predict",
+            "reasoning_budget_tokens",
+            "thinking_budget_tokens"));
 
     private ResponsesApiSupport() {}
 
@@ -105,6 +143,12 @@ final class ResponsesApiSupport {
         copyNumber(request, "temperature", openAi, "temperature");
         copyNumber(request, "top_p", openAi, "top_p");
         copyNumber(request, "max_output_tokens", openAi, "max_tokens");
+        for (String field : CHAT_PASSTHROUGH_FIELDS) {
+            JsonNode value = request.path(field);
+            if (!value.isMissingNode() && !value.isNull()) {
+                openAi.set(field, value.deepCopy());
+            }
+        }
         // Upstream's converter maps reasoning.effort to the chat field reasoning_effort ("none" turns
         // the model's thinking off); the other reasoning settings have no chat equivalent there either.
         if (request.path("reasoning").path("effort").isTextual()) {

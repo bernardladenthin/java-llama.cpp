@@ -16,6 +16,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 /**
  * Unit tests for {@link ResponsesApiSupport}: the OpenAI Responses &harr; OpenAI chat request/response
@@ -178,6 +180,48 @@ public class ResponsesApiSupportTest {
                 .path("output");
         assertThat(output.size(), is(1));
         assertThat(output.get(0).path("type").asText(), is("function_call"));
+    }
+
+    @ParameterizedTest
+    @CsvSource(
+            delimiter = '|',
+            value = {
+                "top_k|40",
+                "seed|7",
+                "presence_penalty|0.2",
+                "frequency_penalty|0.3",
+                "stop|[\"END\"]",
+                "chat_template_kwargs|{\"enable_thinking\":false}",
+                "response_format|{\"type\":\"json_object\"}",
+                "cache_prompt|false",
+                "n_cache_reuse|64",
+                "id_slot|1",
+                "min_p|0.05",
+                "typical_p|0.9",
+                "repeat_penalty|1.1",
+                "repeat_last_n|32",
+                "top_n_sigma|1.5",
+                "xtc_probability|0.3",
+                "xtc_threshold|0.2",
+                "dynatemp_range|0.4",
+                "dynatemp_exponent|1.2",
+                "min_keep|2",
+                "n_keep|8",
+                "ignore_eos|true",
+                "grammar|\"root ::= x\"",
+                "json_schema|{\"type\":\"object\"}",
+                "n_predict|16",
+                "reasoning_budget_tokens|100",
+                "thinking_budget_tokens|100"
+            })
+    public void requestFieldsTheChatMapperReadsPassThroughLikeUpstream(String field, String json) throws IOException {
+        // upstream's convert_responses_to_chatcmpl copies the whole body into the chat request; the
+        // shared chat mapper reads these fields, so dropping them here changed the sampling silently.
+        JsonNode value = read(json);
+        com.fasterxml.jackson.databind.node.ObjectNode request =
+                (com.fasterxml.jackson.databind.node.ObjectNode) read("{\"model\":\"m\",\"input\":\"hi\"}");
+        request.set(field, value);
+        assertThat(ResponsesApiSupport.toOpenAiChatRequest(request).path(field), is(value));
     }
 
     @Test
