@@ -607,7 +607,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `AnthropicStreamTranslatorTest#reasoningDeltasStreamAsAThinkingBlockClosedWithASignatureBeforeTheText`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: a string containing "\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}" but: was ""“), mit Fix grün (5/5 der Klasse, skipped 0); Gegenprobe per `git stash` beider Dateien rot, nach `pop` grün. `AnthropicApiSupportTest` 16/16, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `d2afd35`
 
 ## Offene Verdachte ohne Fund-ID
 
