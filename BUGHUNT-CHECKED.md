@@ -230,3 +230,4 @@ Ergebnisse: `kein Fund`, `widerlegt` (Verdacht geprüft, Code korrekt), `unsiche
 - `llama/src/main/java/net/ladenthin/llama/server/LlamaModelBackend.java` · `1e88958` · 2026-10-18 · Fund F111 — `rerank` über `OaiRerankSupport.toResponse`
 - `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` · `e38eb7e` · 2026-10-18 · Fund F112 — Routenliste gegen upstreams `server.cpp` gehalten; Kontexte jetzt exakt
 - `llama/src/main/java/net/ladenthin/llama/server/OpenAiSseFormatter.java` · `e5eb40e` · 2026-10-18 · Fund F113 — Modellobjekt gegen OpenAI-Pflichtfelder und upstreams `get_res_model_info` gehalten
+- `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` · `906cf46` · 2026-10-18 · Fund F114 — `/api/version` gegen Copilots Mindestversion gehalten; `/api/tags`- und `/api/show`-Felder wie bisher

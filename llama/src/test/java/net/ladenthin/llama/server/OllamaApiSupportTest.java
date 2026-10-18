@@ -229,6 +229,20 @@ public class OllamaApiSupportTest {
     }
 
     @Test
+    public void versionPassesCopilotsMinimumOllamaVersion() throws IOException {
+        // VS Code Copilot's Ollama provider (ollamaProvider.ts, MINIMUM_OLLAMA_VERSION) refuses a server
+        // below 0.6.4, comparing the dot-separated parts numerically; "0.1.0" failed it before any request.
+        String[] version =
+                read(OllamaApiSupport.versionJson()).path("version").asText().split("\\.");
+        int[] minimum = {0, 6, 4};
+        int cmp = 0;
+        for (int i = 0; i < minimum.length && cmp == 0; i++) {
+            cmp = Integer.compare(i < version.length ? Integer.parseInt(version[i]) : 0, minimum[i]);
+        }
+        assertThat(cmp >= 0, is(true));
+    }
+
+    @Test
     public void blockingChatAnswerCarriesTheThinkingLikeOllama() throws IOException {
         // Ollama puts a model's thinking into message.thinking.
         JsonNode blocking = read(OllamaApiSupport.toOllamaChatResponse(

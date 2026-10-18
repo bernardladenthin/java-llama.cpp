@@ -28,8 +28,12 @@ final class OllamaApiSupport {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    /** Advertised Ollama API version (clients only check that {@code /api/version} responds with one). */
-    static final String OLLAMA_VERSION = "0.1.0";
+    /**
+     * Advertised Ollama API version. Clients gate on it: VS Code Copilot's Ollama provider refuses a server
+     * below 0.6.4. 0.9.0 is the first Ollama with {@code think}, the newest request feature these routes
+     * translate.
+     */
+    static final String OLLAMA_VERSION = "0.9.0";
 
     private OllamaApiSupport() {}
 

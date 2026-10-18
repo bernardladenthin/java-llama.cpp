@@ -89,6 +89,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F111](#f111) — niedrig — *gefixt*
 - [F112](#f112) — mittel — *gefixt*
 - [F113](#f113) — niedrig — *gefixt*
+- [F114](#f114) — mittel — *gefixt*
 
 ## Funde
 
@@ -970,6 +971,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <true> but: was <false>“ für `isIntegralNumber`), mit Fix grün (15/15 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 49/49, `OaiRerankSupportTest` 13/13, `AnthropicApiSupportTest` 22/22, `ResponsesApiSupportTest` 51/51, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 28/28, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `9c165a8`
+
+### F114 – java-llama.cpp: `/api/version` meldet 0.1.0, VS Code Copilots Ollama-Anbieter lehnt den Server ab
+- **Zeit:** 2026-10-18 10:20 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:36` (`OLLAMA_VERSION`)
+- **Schwere:** mittel
+- **Beschreibung:** Die Ollama-Routen sind laut CLAUDE.md und Klassen-Javadoc für Copilots Ollama-Anbieter gedacht (`/api/show` meldet dafür Fähigkeiten und Kontextlänge). Dieser Anbieter (`microsoft/vscode-copilot-chat`, `src/extension/byok/vscode-node/ollamaProvider.ts`) prüft vor jeder Modelloperation `GET /api/version` gegen `MINIMUM_OLLAMA_VERSION = '0.6.4'` (Teile numerisch verglichen, nur `0.0.0` gilt als Entwicklerversion) und bricht sonst mit „Ollama server version … is not supported“ ab. Der Server meldete `0.1.0` – der ganze Copilot-Weg scheiterte an dieser Prüfung. Die Javadoc der Konstante behauptete, Clients prüften nur, dass eine Version kommt.
+- **Fix:** `OLLAMA_VERSION` ist `0.9.0`, die erste Ollama-Version mit `think` (die neueste Anfragefunktion, die die Routen seit F78/F97 übersetzen); die Javadoc nennt jetzt den Grund.
+- **Reproduktion:** `OllamaApiSupportTest#versionPassesCopilotsMinimumOllamaVersion` (Copilots Vergleich nachgebildet)
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <true> but: was <false>“), mit Fix grün (33/33 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 49/49, `OpenAiSseFormatterTest` 15/15, `OaiRerankSupportTest` 13/13, `AnthropicApiSupportTest` 22/22, `ResponsesApiSupportTest` 51/51, `OpenAiRequestMapperTest` 28/28, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
