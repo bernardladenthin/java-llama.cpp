@@ -83,6 +83,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F104](#f104) — niedrig — *gefixt*
 - [F105](#f105) — mittel — *gefixt*
 - [F106](#f106) — niedrig — *gefixt*
+- [F107](#f107) — niedrig — *gefixt*
 
 ## Funde
 
@@ -896,6 +897,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot, jeder Fall für sich (27 Fehlschläge, z. B. „Expected: is <0.05> but: was <>“), mit Fix grün (47/47 der Klasse, skipped 0); Gegenprobe per `git stash` rot (27), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `87635b2`
+
+### F107 – java-llama.cpp: Anthropic-`tool_choice` `none` läuft als `auto`
+- **Zeit:** 2026-10-18 08:30 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java:348` (`toOpenAiToolChoice`)
+- **Schwere:** niedrig
+- **Beschreibung:** Anthropics `tool_choice` `{"type":"none"}` verbietet Werkzeugaufrufe (Clients setzen es, um eine Runde ohne Werkzeug zu erzwingen, etwa für eine Zusammenfassung, während die Werkzeugliste für den Prompt-Cache gleich bleibt). `toOpenAiToolChoice` kannte nur `auto`, `any` und `tool`; `none` ergab kein `tool_choice`, die Anfrage lief als `auto`, und das Modell durfte die mitgeschickten Werkzeuge aufrufen. upstreams `convert_anthropic_to_oai` (b11639) hat dieselbe Lücke; der Chat-Mapper und llama.cpps Chat-Parser verstehen OpenAIs `tool_choice` `none` aber, die Übersetzung kostet eine Zeile. Hier also bewusst über upstream hinaus.
+- **Fix:** `none` wird zu `tool_choice` `none`.
+- **Reproduktion:** `AnthropicApiSupportTest#toolChoiceNoneForbidsToolCalls`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "none" but: was ""“), mit Fix grün (22/22 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `AnthropicStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `ResponsesApiSupportTest` 47/47, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

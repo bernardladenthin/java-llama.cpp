@@ -345,6 +345,10 @@ final class AnthropicApiSupport {
         if ("auto".equals(type)) {
             return "auto";
         }
+        if ("none".equals(type)) {
+            // Forbids tool use; upstream's converter leaves it out and the request runs as "auto".
+            return "none";
+        }
         if ("any".equals(type) || "tool".equals(type)) {
             // OpenAI's textual tool_choice cannot name a specific function; "required" is the closest.
             return "required";

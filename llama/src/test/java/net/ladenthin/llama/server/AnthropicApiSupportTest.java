@@ -240,6 +240,17 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void toolChoiceNoneForbidsToolCalls() throws IOException {
+        // Anthropic's {"type":"none"} forbids tool use; left out, the request ran as "auto" and the model
+        // could still call the tools it was given. OpenAI's equivalent is tool_choice "none".
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(read("{\"max_tokens\":16,"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"tools\":[{\"name\":\"f\",\"input_schema\":{\"type\":\"object\"}}],"
+                + "\"tool_choice\":{\"type\":\"none\"}}"));
+        assertThat(openAi.path("tool_choice").asText(), is("none"));
+    }
+
+    @Test
     public void toolChoiceAnyMapsToRequired() throws IOException {
         JsonNode openAi =
                 AnthropicApiSupport.toOpenAiChatRequest(read("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
