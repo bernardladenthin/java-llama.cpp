@@ -969,7 +969,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiSseFormatterTest#modelsJsonCarriesTheRequiredCreatedTimestampLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <true> but: was <false>“ für `isIntegralNumber`), mit Fix grün (15/15 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 49/49, `OaiRerankSupportTest` 13/13, `AnthropicApiSupportTest` 22/22, `ResponsesApiSupportTest` 51/51, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 28/28, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `9c165a8`
 
 ## Offene Verdachte ohne Fund-ID
 
