@@ -32,6 +32,64 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void chatTemplateKwargsAreForwarded() throws IOException {
+        // Qwen3 clients switch thinking off with chat_template_kwargs; upstream's chat parser merges the
+        // request's kwargs into the template variables.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"chat_template_kwargs\":{\"enable_thinking\":false}}");
+        assertThat(out.path("chat_template_kwargs").path("enable_thinking").isBoolean(), is(true));
+        assertThat(out.path("chat_template_kwargs").path("enable_thinking").asBoolean(), is(false));
+    }
+
+    @Test
+    public void reasoningEffortNoneSwitchesThinkingOffLikeUpstream() throws IOException {
+        JsonNode out = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"none\"}");
+        assertThat(out.path("chat_template_kwargs").path("enable_thinking").isBoolean(), is(true));
+        assertThat(out.path("chat_template_kwargs").path("enable_thinking").asBoolean(), is(false));
+        assertThat(out.path("chat_template_kwargs").has("reasoning_effort"), is(false));
+    }
+
+    @Test
+    public void reasoningEffortLevelBecomesATemplateVariableLikeUpstream() throws IOException {
+        JsonNode out =
+                mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_effort\":\"low\"}");
+        assertThat(out.path("chat_template_kwargs").path("reasoning_effort").asText(), is("low"));
+    }
+
+    @Test
+    public void reasoningBudgetIsForwardedUnderEitherUpstreamName() throws IOException {
+        JsonNode thinking = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"thinking_budget_tokens\":512}");
+        assertThat(thinking.path("reasoning_budget_tokens").asInt(), is(512));
+        JsonNode reasoning = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"reasoning_budget_tokens\":256}");
+        assertThat(reasoning.path("reasoning_budget_tokens").asInt(), is(256));
+    }
+
+    @Test
+    public void anthropicAndResponsesReasoningControlsReachTheInferenceParameters() throws IOException {
+        // The translation layers produce these fields (F75, F76); they only take effect if the chat
+        // mapper carries them on into the request the native side parses.
+        InferenceParameters anthropic = mapper.toInferenceParameters(AnthropicApiSupport.toOpenAiChatRequest(
+                MAPPER.readTree("{\"max_tokens\":64,\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":1024},"
+                        + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}")));
+        assertThat(
+                MAPPER.readTree(anthropic.toJson())
+                        .path("reasoning_budget_tokens")
+                        .asInt(),
+                is(1024));
+        InferenceParameters responses = mapper.toInferenceParameters(ResponsesApiSupport.toOpenAiChatRequest(
+                MAPPER.readTree("{\"input\":\"hi\",\"reasoning\":{\"effort\":\"none\"}}")));
+        assertThat(
+                MAPPER.readTree(responses.toJson())
+                        .path("chat_template_kwargs")
+                        .path("enable_thinking")
+                        .asBoolean(true),
+                is(false));
+    }
+
+    @Test
     public void messagesForwardedVerbatim() throws IOException {
         JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}");
         assertThat(out.path("messages").isArray(), is(true));

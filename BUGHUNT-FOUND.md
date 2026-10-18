@@ -55,6 +55,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F74](#f74) — mittel — *gefixt*
 - [F75](#f75) — mittel — *gefixt*
 - [F76](#f76) — mittel — *gefixt*
+- [F77](#f77) — mittel — *gefixt*
 
 ## Funde
 
@@ -524,6 +525,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** ein textuelles `reasoning.effort` wird als `reasoning_effort` übernommen, wie upstream.
 - **Reproduktion:** `ResponsesApiSupportTest#requestMapsTheReasoningEffortLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "none" but: was ""“), mit Fix grün (13/13 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Nachtrag (2026-10-18):** wirkt erst zusammen mit [F77](#f77): der Chat-Mapper, durch den jede übersetzte Anfrage läuft, verwarf das erzeugte Feld bis dahin.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `485f153`
 
@@ -537,8 +539,22 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `AnthropicApiSupportTest#requestMapsAnEnabledThinkingBudgetLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <1024> but: was <0>“), mit Fix grün (15/15 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `AnthropicStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Nicht übernommen:** upstreams Vorgabe `max_tokens` 4096, wenn es fehlt (bei uns unbegrenzt; das Anthropic-Protokoll verlangt das Feld), und das Durchreichen von `chat_template_kwargs` – beide bleiben als offener Verdacht stehen.
+- **Nachtrag (2026-10-18):** wirkt erst zusammen mit [F77](#f77): der Chat-Mapper, durch den jede übersetzte Anfrage läuft, verwarf das erzeugte Feld bis dahin.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `5117413`
+
+<a id="f77"></a>
+### F77 – java-llama.cpp: `OpenAiRequestMapper` verwirft `chat_template_kwargs`, `reasoning_effort` und das Reasoning-Budget jedes Chat-Requests
+- **Zeit:** 2026-10-18 02:20 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java:222` (`applyReasoningControls`, neu; Aufruf in `toInferenceParameters`)
+- **Schwere:** mittel
+- **Beschreibung:** Jede Chat-Anfrage an `OpenAiCompatServer` – OpenAI direkt sowie Ollama, Anthropic und Responses nach ihrer Übersetzung – läuft durch `OpenAiRequestMapper.toInferenceParameters`, das `InferenceParameters` aus einer festen Feldliste baut. Die Reasoning-Steuerungen, die upstreams Chat-Parser liest (`oaicompat_chat_params_parse`, `server-common.cpp:1403`–`1453`, b11639), fehlten darin: `chat_template_kwargs` (etwa `{"enable_thinking": false}`, mit dem Qwen3-Clients das Denken abschalten), `reasoning_effort` (`"none"` → Denken aus, sonst Template-Variable) und `reasoning_budget_tokens`/`thinking_budget_tokens`. Alle drei wurden still verworfen; `InferenceParameters` hat die passenden Setter (`withChatTemplateKwargs`, `withReasoningBudgetTokens`). Folge: die Fixes F75 (Responses `reasoning.effort`) und F76 (Anthropic `thinking.budget_tokens`) erzeugten das richtige Feld, das danach verloren ging.
+- **Fix:** `applyReasoningControls` übernimmt die Template-Variablen des Requests, setzt bei `reasoning_effort: "none"` `enable_thinking` auf `false` (und entfernt `reasoning_effort`), legt jeden anderen Wert als Template-Variable `reasoning_effort` ab und übernimmt das Budget (`reasoning_budget_tokens`, sonst `thinking_budget_tokens`) – die Regeln von upstreams Parser. Class-Javadoc nachgezogen.
+- **Reproduktion:** `OpenAiRequestMapperTest#chatTemplateKwargsAreForwarded`, `#reasoningEffortNoneSwitchesThinkingOffLikeUpstream`, `#reasoningEffortLevelBecomesATemplateVariableLikeUpstream`, `#reasoningBudgetIsForwardedUnderEitherUpstreamName`, `#anthropicAndResponsesReasoningControlsReachTheInferenceParameters` (die Kette Übersetzer → Mapper)
+- **Rot-Grün-Nachweis:** ohne Fix alle fünf rot (u. a. „Expected: is <512> but: was <0>“, „Expected: is "low" but: was ""“, „Expected: is <1024> but: was <0>“), mit Fix 21/21 der Klasse grün, skipped 0; Gegenprobe per `git stash` wieder 5 rot, nach `pop` grün. `AnthropicApiSupportTest` 15/15, `ResponsesApiSupportTest` 13/13, `OllamaApiSupportTest` 23/23, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **CI-Bedarf:** ein modellgestützter Lauf (`OpenAiCompatServerIntegrationTest` mit dem Reasoning-Modell) würde zeigen, dass `reasoning_effort: "none"` den Denkblock wirklich unterdrückt; hier gibt es kein Modell.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

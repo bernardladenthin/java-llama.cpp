@@ -6,7 +6,9 @@ package net.ladenthin.llama.server;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import net.ladenthin.llama.parameters.InferenceParameters;
 
 /**
@@ -17,7 +19,9 @@ import net.ladenthin.llama.parameters.InferenceParameters;
  * <em>verbatim</em> as raw JSON so the full OpenAI shape (assistant {@code tool_calls},
  * {@code role:"tool"} results with {@code tool_call_id}, and vision {@code image_url} content parts)
  * round-trips untouched into the native chat-template parser. Sampling fields are translated to the
- * matching {@code InferenceParameters.with*} setter; unknown fields are ignored.
+ * matching {@code InferenceParameters.with*} setter, and so are the reasoning controls upstream's chat
+ * parser reads ({@code chat_template_kwargs}, {@code reasoning_effort}, the reasoning budget); unknown
+ * fields are ignored.
  *
  * <p>The {@code stream} flag is intentionally not mapped here — streaming is selected by the caller
  * ({@link net.ladenthin.llama.LlamaModel#chatComplete} forces it off,
@@ -49,6 +53,7 @@ final class OpenAiRequestMapper {
                 .withCachePrompt(true);
 
         params = applyCommonFields(params, request);
+        params = applyReasoningControls(params, request);
 
         // Tools are chat-only.
         JsonNode tools = request.path("tools");
@@ -200,5 +205,47 @@ final class OpenAiRequestMapper {
             }
         }
         return stops.toArray(new String[0]);
+    }
+
+    /**
+     * Apply the reasoning controls that upstream's chat parser ({@code oaicompat_chat_params_parse},
+     * b11639) reads from a chat request: the request's {@code chat_template_kwargs}, {@code
+     * reasoning_effort} ({@code "none"} switches thinking off, any other value becomes the template
+     * variable {@code reasoning_effort}) and the reasoning budget ({@code reasoning_budget_tokens},
+     * else {@code thinking_budget_tokens}). The Anthropic and Responses translations produce the
+     * latter two.
+     *
+     * @param params the parameters built so far
+     * @param request the parsed chat request
+     * @return a new instance with the reasoning controls applied
+     */
+    private InferenceParameters applyReasoningControls(InferenceParameters params, JsonNode request) {
+        Map<String, String> kwargs = new LinkedHashMap<>();
+        JsonNode requestKwargs = request.path("chat_template_kwargs");
+        if (requestKwargs.isObject()) {
+            for (Map.Entry<String, JsonNode> entry : requestKwargs.properties()) {
+                kwargs.put(entry.getKey(), entry.getValue().toString());
+            }
+        }
+        JsonNode effort = request.path("reasoning_effort");
+        if (effort.isTextual()) {
+            if ("none".equals(effort.asText())) {
+                kwargs.remove("reasoning_effort");
+                kwargs.put("enable_thinking", "false");
+            } else if (!effort.asText().isEmpty()) {
+                kwargs.put("reasoning_effort", effort.toString());
+            }
+        }
+        if (!kwargs.isEmpty()) {
+            params = params.withChatTemplateKwargs(kwargs);
+        }
+        JsonNode budget = request.path("reasoning_budget_tokens");
+        if (!budget.isInt()) {
+            budget = request.path("thinking_budget_tokens");
+        }
+        if (budget.isInt()) {
+            params = params.withReasoningBudgetTokens(budget.asInt());
+        }
+        return params;
     }
 }
