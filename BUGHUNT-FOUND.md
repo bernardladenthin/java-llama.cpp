@@ -538,7 +538,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <1024> but: was <0>“), mit Fix grün (15/15 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `AnthropicStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Nicht übernommen:** upstreams Vorgabe `max_tokens` 4096, wenn es fehlt (bei uns unbegrenzt; das Anthropic-Protokoll verlangt das Feld), und das Durchreichen von `chat_template_kwargs` – beide bleiben als offener Verdacht stehen.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `5117413`
 
 ## Offene Verdachte ohne Fund-ID
 
