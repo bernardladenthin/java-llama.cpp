@@ -1146,7 +1146,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiServerConfigTest#heartbeatIntervalOfZeroIsRejected`; das Laufzeitsymptom zeigte eine nicht übernommene Probe in `OpenAiCompatServerHttpTest` (Streaming-Chat gegen `FakeBackend` mit `heartbeatMillis(0)`).
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix 7/7 (skipped 0), Gegenprobe per `git stash` rot, danach wieder grün. `OpenAiCompatServerHttpTest` 54/54, `OpenAiServerCliTest` 45/45, `LlamaArchitectureTest` 13/13; `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `6a13092`
 
 ## Offene Verdachte ohne Fund-ID
 
