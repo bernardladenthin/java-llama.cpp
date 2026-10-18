@@ -799,7 +799,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `AnthropicApiSupportTest#requestDefaultsMaxTokensAndPassesTemplateKwargsLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <4096> but: was <0>“; die zweite Assertion zu `chat_template_kwargs` ist dahinter, ohne Fix fehlt das Feld ganz), mit Fix grün (20/20 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 46/46, `AnthropicStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 25/25, `ResponsesApiSupportTest` 18/18, `OllamaApiSupportTest` 24/24, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `d29e084`
 
 ## Offene Verdachte ohne Fund-ID
 
