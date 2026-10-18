@@ -91,6 +91,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F113](#f113) — niedrig — *gefixt*
 - [F114](#f114) — mittel — *gefixt*
 - [F115](#f115) — niedrig — *gefixt*
+- [F116](#f116) — niedrig — *gefixt*
 
 ## Funde
 
@@ -994,6 +995,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "4096" but: was null“), mit Fix grün (34/34 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. Breite Liste wie F114 grün, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `4d45be1`
+
+### F116 – java-llama.cpp: Ollama-Werkzeugergebnisse verlieren den Werkzeugnamen
+- **Zeit:** 2026-10-18 10:45 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:208` (`toOpenAiMessage`)
+- **Schwere:** niedrig
+- **Beschreibung:** Ollama-Clients (etwa Continues Ollama-Anbieter) schicken Werkzeugergebnisse als `{"role":"tool","content":…,"tool_name":…}`, ohne `tool_call_id`. `toOpenAiMessage` kopierte die Nachricht unverändert; llama.cpps Chat-Parser liest den Namen eines Werkzeugergebnisses aber aus `name` (`common/chat.cpp:426`, b11639) und kennt `tool_name` nicht. Ohne Kennung und ohne Namen konnte die Vorlage nicht sagen, welches Werkzeug geantwortet hat – bei mehreren Aufrufen in einer Runde ordnet das Modell die Ergebnisse nur noch nach der Reihenfolge zu.
+- **Fix:** `tool_name` wird zu `name` (ein vorhandenes `name` hat Vorrang).
+- **Reproduktion:** `OllamaApiSupportTest#toolResultNameBecomesTheNameLlamaCppReads`
+- **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "get_weather" but: was ""“), mit Fix grün (35/35 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. Breite Liste wie F114 grün, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

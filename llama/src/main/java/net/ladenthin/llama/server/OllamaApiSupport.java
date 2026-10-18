@@ -204,6 +204,11 @@ final class OllamaApiSupport {
         if (thinking != null && thinking.isTextual() && !thinking.asText().isEmpty()) {
             message.put("reasoning_content", thinking.asText());
         }
+        // Ollama names the tool of a result "tool_name"; llama.cpp's chat parser reads "name".
+        JsonNode toolName = message.remove("tool_name");
+        if (toolName != null && toolName.isTextual() && !message.has("name")) {
+            message.put("name", toolName.asText());
+        }
         JsonNode toolCalls = message.path("tool_calls");
         if (toolCalls.isArray()) {
             for (JsonNode toolCall : toolCalls) {

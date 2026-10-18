@@ -282,6 +282,18 @@ public class OllamaApiSupportTest {
     }
 
     @Test
+    public void toolResultNameBecomesTheNameLlamaCppReads() throws IOException {
+        // Ollama names the tool of a result "tool_name"; llama.cpp's chat parser reads "name" (chat.cpp:426),
+        // which templates use to say which tool answered.
+        JsonNode openAi = OllamaApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"messages\":["
+                + "{\"role\":\"user\",\"content\":\"q\"},"
+                + "{\"role\":\"tool\",\"content\":\"21 C\",\"tool_name\":\"get_weather\"}]}"));
+        JsonNode toolMessage = openAi.path("messages").path(1);
+        assertThat(toolMessage.path("name").asText(), is("get_weather"));
+        assertThat(toolMessage.has("tool_name"), is(false));
+    }
+
+    @Test
     public void historyThinkingBecomesReasoningContent() throws IOException {
         // Clients send the thinking back in the history; llama.cpp's chat parser reads reasoning_content.
         JsonNode history = OllamaApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"messages\":["
