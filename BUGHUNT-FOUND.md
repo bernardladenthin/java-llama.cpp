@@ -92,6 +92,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F114](#f114) — mittel — *gefixt*
 - [F115](#f115) — niedrig — *gefixt*
 - [F116](#f116) — niedrig — *gefixt*
+- [F117](#f117) — mittel — *gefixt*
 
 ## Funde
 
@@ -1006,6 +1007,17 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "get_weather" but: was ""“), mit Fix grün (35/35 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. Breite Liste wie F114 grün, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `a5e86bf`
+
+### F117 – java-llama.cpp: Gestreamte Responses-Fehler erreichen Responses-Clients nicht
+- **Zeit:** 2026-10-18 11:20 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java:782` (`streamResponses`), `ResponsesStreamTranslator.java`
+- **Schwere:** mittel
+- **Beschreibung:** Scheiterte ein gestreamtes `/v1/responses` (abgelehnte Anfrage, Fehler bei der Inferenz), schrieb der Server nach `response.created` nur `event: error` mit `{"error":{…}}` – ohne `type` im Datenobjekt und ohne `response.failed`. Responses-Clients verteilen nach dem `type` der Daten: Codex (`codex-api/src/sse/responses.rs`, `process_responses_event`) verwirft ein Ereignis ohne `type` beim Parsen und liest die Fehlermeldung nur aus `response.failed` (`responses_error.rs`, `parse_failed_response` → `response.error.message`/`code`); Ergebnis war „stream closed before response.completed“ statt der eigentlichen Meldung, etwa des Kontextüberlaufs.
+- **Fix:** `ResponsesStreamTranslator.failed(message, code)` erzeugt ein `response.failed` mit der Antwort (`status: failed`, `error.code`/`error.message`) und fortlaufender `sequence_number`; `streamResponses` schreibt es in beiden Fehlerzweigen vor das bisherige `error`-Ereignis, das für Clients bleibt, die ein `error`-Objekt auf oberster Ebene auswerten (OpenAIs Python-SDK) und upstreams Form entspricht.
+- **Reproduktion:** `OpenAiCompatServerHttpTest#rejectedStreamedResponseEndsWithAResponseFailedEvent`, `#failedStreamedResponseEndsWithAResponseFailedEvent`
+- **Rot-Grün-Nachweis:** ohne Fix beide rot („Expected: a string containing "event: response.failed" but: was "event: response.created …"“), mit Fix grün (51/51 der Klasse, skipped 0); Gegenprobe per `git stash` beider Produktionsdateien rot (2), nach `pop` grün. Breite Liste (Server-Tests inkl. `ResponsesStreamTranslatorTest`, `LlamaArchitectureTest`) grün, `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

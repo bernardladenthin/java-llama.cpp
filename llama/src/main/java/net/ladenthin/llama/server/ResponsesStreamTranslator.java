@@ -186,6 +186,25 @@ final class ResponsesStreamTranslator {
         return out.toString();
     }
 
+    /**
+     * The terminal {@code response.failed} event for a stream that ended in an error. A Responses client
+     * dispatches on the event {@code type} and reads the failure from {@code response.error}; without
+     * this event it sees a stream that ends before {@code response.completed} and loses the message.
+     *
+     * @param message the error message
+     * @param code the error code
+     * @return the framed SSE event
+     */
+    String failed(String message, String code) {
+        ObjectNode data = ResponsesApiSupport.dataObject();
+        ObjectNode response = ResponsesApiSupport.newResponseShell(model, responseId, "failed");
+        ObjectNode error = response.putObject("error");
+        error.put("code", code);
+        error.put("message", message);
+        data.set("response", response);
+        return ResponsesApiSupport.sseEvent("response.failed", sequence++, data);
+    }
+
     private void captureUsage(JsonNode usage) {
         if (!usage.isObject()) {
             return;

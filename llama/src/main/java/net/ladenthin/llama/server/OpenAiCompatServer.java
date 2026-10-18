@@ -780,13 +780,15 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 });
                 out.writeStrict(translator.end());
             } catch (IllegalArgumentException | InvalidRequestException e) {
-                out.writeQuietly("event: error\ndata: "
+                out.writeQuietly(translator.failed(message(e), ERROR_TYPE_REQUEST)
+                        + "event: error\ndata: "
                         + OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null) + "\n\n");
             } catch (IOException e) {
                 LOG.debug("responses client disconnected during stream", e);
             } catch (RuntimeException e) {
                 LOG.warn("responses streaming failed", e);
-                out.writeQuietly("event: error\ndata: "
+                out.writeQuietly(translator.failed(message(e), ERROR_TYPE_SERVER)
+                        + "event: error\ndata: "
                         + OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null) + "\n\n");
             } finally {
                 if (heartbeat != null) {

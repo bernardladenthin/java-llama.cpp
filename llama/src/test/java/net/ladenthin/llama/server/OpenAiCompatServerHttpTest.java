@@ -463,6 +463,37 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    // A Responses client dispatches on the data's "type" and reads a stream failure from a
+    // response.failed event (Codex: process_responses_event -> parse_failed_response, which reads
+    // response.error.message); without one it reports only "stream closed before response.completed".
+
+    @Test
+    public void rejectedStreamedResponseEndsWithAResponseFailedEvent() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new RejectingBackend(), config()).start()) {
+            String body = "{\"model\":\"test-model\",\"stream\":true,\"input\":\"hi\"}";
+            String events = post(server.getPort(), "/v1/responses", body, "").body;
+            assertThat(events, containsString("event: response.failed"));
+            String failed = events.substring(events.indexOf("event: response.failed"));
+            assertThat(failed, containsString("\"type\":\"response.failed\""));
+            assertThat(failed, containsString("\"status\":\"failed\""));
+            assertThat(failed, containsString("\"code\":\"invalid_request_error\""));
+            assertThat(failed, containsString(RejectingBackend.REASON_FRAGMENT));
+        }
+    }
+
+    @Test
+    public void failedStreamedResponseEndsWithAResponseFailedEvent() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new StreamFailingBackend(), config()).start()) {
+            String body = "{\"model\":\"test-model\",\"stream\":true,\"input\":\"hi\"}";
+            String events = post(server.getPort(), "/v1/responses", body, "").body;
+            assertThat(events, containsString("event: response.failed"));
+            String failed = events.substring(events.indexOf("event: response.failed"));
+            assertThat(failed, containsString("\"status\":\"failed\""));
+            assertThat(failed, containsString("\"code\":\"server_error\""));
+            assertThat(failed, containsString(StreamFailingBackend.REASON));
+        }
+    }
+
     @Test
     public void nativeRejectionOnTheOllamaAndAnthropicSurfacesReturns400() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new RejectingBackend(), config()).start()) {
@@ -736,6 +767,16 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         @Override
         public String complete(JsonNode request) {
             throw new LlamaException("decoding failed");
+        }
+    }
+
+    /** Backend whose streamed generation fails like an inference failure: a plain {@link LlamaException}. */
+    static final class StreamFailingBackend extends FakeBackend {
+        static final String REASON = "decoding failed";
+
+        @Override
+        public void stream(JsonNode request, ChunkSink sink) {
+            throw new LlamaException(REASON);
         }
     }
 
