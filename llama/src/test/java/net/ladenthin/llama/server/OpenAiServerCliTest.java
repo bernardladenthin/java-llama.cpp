@@ -296,6 +296,33 @@ public class OpenAiServerCliTest {
     }
 
     @Test
+    public void loadedSlotContextIsAdvertisedWithoutContextSize() {
+        // Without -c the advertised window was the fixed 8192 + 2048, whatever the model loaded with:
+        // a slot of 2048 tokens was advertised as 10240 (measured at b11639).
+        OpenAiServerConfig config = OpenAiServerCli.parse("-m", "m.gguf").toServerConfig(false, "", 2048);
+        assertThat(config.getMaxOutputTokens(), is(1024));
+        assertThat(config.getMaxInputTokens() + config.getMaxOutputTokens(), is(2048));
+    }
+
+    @Test
+    public void loadedSlotContextWinsOverTheContextSizeArgument() {
+        // -c 16384 with 4 slots would be 4096 per slot, but the load can end with less (llama.cpp's
+        // --fit shrinks the context to the device memory); what the slot holds is what a request gets.
+        OpenAiServerConfig config = OpenAiServerCli.parse("-m", "m.gguf", "-c", "16384", "--parallel", "4")
+                .toServerConfig(false, "", 3000);
+        assertThat(config.getMaxOutputTokens(), is(1500));
+        assertThat(config.getMaxInputTokens(), is(1500));
+    }
+
+    @Test
+    public void unknownSlotContextFallsBackToTheContextSizeArgument() {
+        OpenAiServerConfig config =
+                OpenAiServerCli.parse("-m", "m.gguf", "-c", "8192").toServerConfig(false, "", 0);
+        assertThat(config.getMaxOutputTokens(), is(2048));
+        assertThat(config.getMaxInputTokens(), is(6144));
+    }
+
+    @Test
     public void smallContextSizeSplitsTheWholeWindowBetweenInputAndOutput() {
         // Below twice the output default the output budget is ctx/2. The input budget must be the rest
         // of the window, not ctx minus the 2048 default: with -c 2048 that advertised a single input

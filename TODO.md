@@ -552,8 +552,8 @@ commands, hypotheses and answer fields, is `BUGHUNT-MEASUREMENTS.md` (J1–J9).*
    changing it means sending the headers with the first chunk on all five streaming routes.
 4. `RouterClient.findModel`/`awaitModelLoaded` compare `id` only; a model reached by an alias is
    reported as not listed (`RouterModel` would need `aliases`).
-5. `OpenAiCompatServer.main` without `-c` advertises 8192 + 2048 tokens whatever the model's window
-   is; the loaded model's slot `n_ctx` could be read instead (needs a model).
+5. *Fixed as F165:* `OpenAiCompatServer.main` advertises the loaded model's slot `n_ctx` (measured
+   before: 10240 advertised, 2048 real).
 6. JNI shells throw with `ThrowNew(cls, jllama_last_error())` / `NewStringUTF`, which expect Modified
    UTF-8; a message with a 4-byte character or raw invalid bytes is mangled (Android CheckJNI
    aborts). Fix in C++: build the message with `utf8_to_jstring_impl` and `Throw` the object.

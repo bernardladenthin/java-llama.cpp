@@ -722,6 +722,23 @@ public final class OpenAiServerCli {
          * @return the server configuration
          */
         public OpenAiServerConfig toServerConfig(boolean supportsVision, String modelFtype) {
+            return toServerConfig(supportsVision, modelFtype, 0);
+        }
+
+        /**
+         * Build the server configuration with the context window a slot of the loaded model really
+         * has. Without it the advertised window comes from {@code -c} or, without {@code -c}, from the
+         * fixed defaults (8192 + 2048), whatever the model loaded with: measured at b11639, a model
+         * whose slots hold 2048 tokens was advertised with 10240 in {@code /props} and
+         * {@code /api/show}, and a client sizing its prompt from that sends up to five times too much.
+         *
+         * @param supportsVision whether the loaded model reports usable vision input
+         * @param modelFtype the model's file-type (quantization) label, or {@code ""} if unknown
+         * @param slotContextSize the context size of one slot of the loaded model ({@code n_ctx} of
+         *     its slot metrics), or {@code 0} if unknown
+         * @return the server configuration
+         */
+        public OpenAiServerConfig toServerConfig(boolean supportsVision, String modelFtype, int slotContextSize) {
             final OpenAiServerConfig.Builder builder = OpenAiServerConfig.builder()
                     .host(host)
                     .port(port)
@@ -731,10 +748,17 @@ public final class OpenAiServerCli {
             if (apiKey != null) {
                 builder.apiKey(apiKey);
             }
-            if (ctxSize > 0) {
+            final int slotCtx;
+            if (slotContextSize > 0) {
+                slotCtx = slotContextSize;
+            } else if (ctxSize > 0) {
                 // An explicit --parallel N splits the context: llama.cpp unifies the KV cache only when
                 // the slot count is "auto", so each request gets n_ctx / N (what upstream's /props reports).
-                final int slotCtx = parallel > 1 ? Math.max(1, ctxSize / parallel) : ctxSize;
+                slotCtx = parallel > 1 ? Math.max(1, ctxSize / parallel) : ctxSize;
+            } else {
+                slotCtx = 0;
+            }
+            if (slotCtx > 0) {
                 final int maxOutputTokens =
                         Math.min(OpenAiServerConfig.DEFAULT_MAX_OUTPUT_TOKENS, Math.max(1, slotCtx / 2));
                 builder.maxOutputTokens(maxOutputTokens);

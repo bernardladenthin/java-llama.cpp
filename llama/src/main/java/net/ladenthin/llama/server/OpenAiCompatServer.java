@@ -19,6 +19,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -30,6 +31,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.exception.InvalidRequestException;
+import net.ladenthin.llama.value.SlotMetrics;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -1142,7 +1144,8 @@ public final class OpenAiCompatServer implements AutoCloseable {
                         "jllama-openai-shutdown"));
 
         try (LlamaModel model = new LlamaModel(options.toModelParameters())) {
-            OpenAiServerConfig config = options.toServerConfig(model.supportsVision(), model.getModelFtype());
+            OpenAiServerConfig config =
+                    options.toServerConfig(model.supportsVision(), model.getModelFtype(), slotContextSize(model));
             try (OpenAiCompatServer server = new OpenAiCompatServer(model, config)) {
                 server.start();
                 printReady(config, server.getPort());
@@ -1155,6 +1158,17 @@ public final class OpenAiCompatServer implements AutoCloseable {
         } finally {
             cleanedUp.countDown();
         }
+    }
+
+    /**
+     * The context window one slot of the loaded model has, for the advertised token budgets.
+     *
+     * @param model the loaded model
+     * @return {@code n_ctx} of the first slot, or {@code 0} if the model reports none
+     */
+    private static int slotContextSize(LlamaModel model) {
+        final List<SlotMetrics> slots = model.getMetricsTyped().getSlotMetrics();
+        return slots.isEmpty() ? 0 : slots.get(0).getContextSize();
     }
 
     private static void printReady(OpenAiServerConfig config, int port) {
