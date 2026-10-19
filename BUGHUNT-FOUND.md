@@ -1276,7 +1276,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `RouterClientTest#findModel_matchesByAlias` (Stub-Router, auch `awaitModelLoaded` über den Alias), `RouterModelsResponseParserTest#parsesAliasesAndDefaultsThemToEmpty`, `RouterModelTest#aliasesDefaultToEmptyAndAreKeptUnmodifiable`, `#isNamed_matchesTheIdAndEveryAliasAndNothingElse`.
 - **Rot-Grün-Nachweis:** mit Platzhaltern (`getAliases()` leer, `isNamed` nur Id) rot (4 Tests), mit dem Fix grün (54 Tests, 2 modellgestützte übersprungen); PIT auf `RouterModel` 18/18 getötet; SpotBugs grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `11c7477`
 
 ## Offene Verdachte ohne Fund-ID
 
