@@ -528,8 +528,6 @@ numbered for reference, the numbers stay when an item is done):
   gets one answer). The streamed `/v1/completions` needs a raw-JSON streaming entry point to keep
   the remaining fields.
 - **(12)** Anthropic `stop_sequence` is always `null`; upstream sets the matched stop word.
-- **(13)** Continue decides FIM support from `.Suffix` in `/api/show`'s `template`; ours is `""`. A
-  placeholder template would be invented.
 - **(14)** Streamed `/v1/completions` ends without `usage` (upstream puts it on the last chunk); and a
   `prompt` given as an array is rejected with 400 when streamed, accepted when not.
 - **(16)** Ollama `/api/generate` ignores `raw` and `system`: without `raw: true` Ollama applies the chat

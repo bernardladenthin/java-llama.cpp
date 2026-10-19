@@ -987,6 +987,10 @@ Every route is also reachable **without the `/v1` prefix**, the server answers *
 (llama.vscode, Twinny, Tabby, Continue's `llama.cpp` provider). Note: GitHub Copilot's **inline**
 completions cannot be served by any local endpoint — only its chat/agent surfaces — so use one of
 those autocomplete plugins for ghost text.
+Continue's **Ollama** provider decides FIM support from a `{{ .Suffix }}` in the model's `template`
+(`/api/show`), which this server leaves empty — it does not know the model's prompt format, and an
+invented template would be wrong for most models. Continue then uses its own prompt templates for
+autocomplete; for the model's own FIM tokens point it at `POST /infill` (its `llama.cpp` provider).
 
 **Alternative protocol surfaces.** For clients that don't speak OpenAI Chat Completions, the same model
 is exposed through additional protocols (pure translation over the OpenAI core — no extra inference
