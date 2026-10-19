@@ -1324,7 +1324,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest#ollamaGenerateWithoutRawAppliesTheChatTemplateLikeOllama` (Aufzeichnungs-Backend: Chat-Weg, `system`, Bild, `thinking`, Zählung), `#ollamaGenerateWithRawCompletesTheBarePromptAndIgnoresSystem`; `OpenAiServerCompletionIntegrationTest#ollamaGenerateRawRoundTrip` (Modell, CI).
 - **Rot-Grün-Nachweis:** ohne den Fix rot (`was "completions"`), mit ihm grün (96 Tests); der F178-Test gab nun explizit `raw: true` an, weil er die Completion-Abbildung prüft; SpotBugs grün. Die modellgestützte Variante läuft nur in CI bzw. beim lokalen Agenten.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `75b3767`
 
 ## Offene Verdachte ohne Fund-ID
 
