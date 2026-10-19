@@ -88,6 +88,7 @@ public final class RouterModel {
     private final List<String> inputModalities;
     private final List<String> outputModalities;
     private final int contextLength;
+    private final List<String> aliases;
 
     /**
      * Construct a router model entry.
@@ -157,6 +158,44 @@ public final class RouterModel {
             Collection<String> inputModalities,
             Collection<String> outputModalities,
             int contextLength) {
+        this(
+                id,
+                status,
+                statusValue,
+                failed,
+                exitCode,
+                inputModalities,
+                outputModalities,
+                contextLength,
+                Collections.<String>emptyList());
+    }
+
+    /**
+     * Construct a router model entry with every field the router reports, including the aliases.
+     *
+     * @param id               the model identifier
+     * @param status           the parsed lifecycle status
+     * @param statusValue      the raw {@code status.value} string as emitted by the server
+     * @param failed           whether the router flagged the model's worker as failed
+     * @param exitCode         the failed worker's exit code; {@code 0} when not failed
+     * @param inputModalities  {@code architecture.input_modalities}; empty when the server omits it
+     * @param outputModalities {@code architecture.output_modalities}; empty when the server omits it
+     * @param contextLength    {@code context_length}, the trained context in tokens; {@code 0} when
+     *                         the server omits it
+     * @param aliases          {@code aliases}, the other names the router serves this model under
+     *                         (a preset's {@code --alias}); empty when the server omits it
+     */
+    public RouterModel(
+            String id,
+            Status status,
+            String statusValue,
+            boolean failed,
+            int exitCode,
+            Collection<String> inputModalities,
+            Collection<String> outputModalities,
+            int contextLength,
+            Collection<String> aliases) {
+        this.aliases = Collections.unmodifiableList(new ArrayList<>(aliases));
         this.id = id;
         this.status = status;
         this.statusValue = statusValue;
@@ -251,6 +290,27 @@ public final class RouterModel {
      */
     public int getContextLength() {
         return contextLength;
+    }
+
+    /**
+     * The other names the router serves this model under (a preset's {@code --alias}); a request,
+     * {@code /models/load} and {@code /models/unload} accept any of them in place of the id.
+     *
+     * @return immutable list of aliases, empty when the model has none or the server omits them
+     */
+    public List<String> getAliases() {
+        return aliases;
+    }
+
+    /**
+     * Whether {@code name} names this model: its id or one of its aliases, as the router resolves a
+     * model name ({@code server_models::get_meta}).
+     *
+     * @param name the name to resolve
+     * @return {@code true} if {@code name} is the id or an alias of this model
+     */
+    public boolean isNamed(String name) {
+        return id.equals(name) || aliases.contains(name);
     }
 
     @Override

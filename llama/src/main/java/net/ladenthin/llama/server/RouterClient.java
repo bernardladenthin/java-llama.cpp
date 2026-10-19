@@ -138,15 +138,15 @@ public final class RouterClient {
     }
 
     /**
-     * Look up a single model by identifier.
+     * Look up a single model by identifier or alias, as the router resolves a model name.
      *
-     * @param modelId the model identifier (as listed by {@link #listModels()})
+     * @param modelId the model identifier (as listed by {@link #listModels()}) or one of its aliases
      * @return the entry, or {@link Optional#empty()} when the router does not list it
      * @throws IOException if the request fails or the router answers non-2xx
      */
     public Optional<RouterModel> findModel(String modelId) throws IOException {
         for (RouterModel model : listModels()) {
-            if (model.getId().equals(modelId)) {
+            if (model.isNamed(modelId)) {
                 return Optional.of(model);
             }
         }

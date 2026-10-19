@@ -1201,6 +1201,9 @@ RouterClient client = new RouterClient(8080, System.getenv("LLAMA_API_KEY"));
 > `dedup-cache-models` still loads and still serves by name, but never appears. For those, skip the
 > await and issue the request directly; with autoload the router waits for the worker itself.
 
+`findModel` and `awaitModelLoaded` accept a model's aliases (a preset's `--alias`) as well as its id, as
+the router itself does; `RouterModel.getAliases()` lists them.
+
 ### Distributed inference over RPC
 
 llama.cpp's RPC backend spreads one model over the devices of several machines: every machine

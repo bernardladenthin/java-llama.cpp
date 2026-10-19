@@ -129,6 +129,19 @@ public class RouterClientTest {
     }
 
     @Test
+    public void findModel_matchesByAlias() throws Exception {
+        // The router serves a model under its preset's --alias names too (server_models::get_meta);
+        // awaitModelLoaded("<alias>") reported "not listed" although the router loaded it under that name.
+        modelsBody.set("{\"data\":[{\"id\":\"qwen\",\"aliases\":[\"coder\",\"chat\"],"
+                + "\"status\":{\"value\":\"loaded\"}}]}");
+
+        assertThat(client.findModel("coder").get().getId(), is("qwen"));
+        assertThat(client.findModel("chat").isPresent(), is(true));
+        assertThat(client.findModel("absent").isPresent(), is(false));
+        assertThat(client.awaitModelLoaded("coder", 2_000L).getId(), is("qwen"));
+    }
+
+    @Test
     public void loadModel_postsModelFieldToLoadEndpoint() throws IOException {
         client.loadModel("qwen");
 

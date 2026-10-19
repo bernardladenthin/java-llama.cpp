@@ -523,8 +523,6 @@ numbered for reference, the numbers stay when an item is done):
   request arrives as `200` with an `error` event; upstream answers with the error status. Pinned by
   `OpenAiCompatServerHttpTest#nativeRejectionOfAStreamedChatCompletionIsAnInvalidRequestEvent`;
   changing it means sending the headers with the first chunk on all five streaming routes.
-- **(4)** `RouterClient.findModel`/`awaitModelLoaded` compare `id` only; a model reached by an alias is
-  reported as not listed (`RouterModel` would need `aliases`).
 - **(6)** JNI shells throw with `ThrowNew(cls, jllama_last_error())` / `NewStringUTF`, which expect Modified
   UTF-8; a message with a 4-byte character or raw invalid bytes is mangled (Android CheckJNI
   aborts). Fix in C++: build the message with `utf8_to_jstring_impl` and `Throw` the object.

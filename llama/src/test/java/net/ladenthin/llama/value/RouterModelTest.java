@@ -41,6 +41,37 @@ public class RouterModelTest {
     }
 
     @Test
+    public void aliasesDefaultToEmptyAndAreKeptUnmodifiable() {
+        assertThat(sample().getAliases(), is(empty()));
+        RouterModel aliased = withAliases("coder", "chat");
+        assertThat(aliased.getAliases(), contains("coder", "chat"));
+        assertThrows(
+                UnsupportedOperationException.class, () -> aliased.getAliases().add("x"));
+    }
+
+    @Test
+    public void isNamed_matchesTheIdAndEveryAliasAndNothingElse() {
+        RouterModel aliased = withAliases("coder");
+        assertThat(aliased.isNamed("qwen"), is(true));
+        assertThat(aliased.isNamed("coder"), is(true));
+        assertThat(aliased.isNamed("Coder"), is(false));
+        assertThat(aliased.isNamed("other"), is(false));
+    }
+
+    private static RouterModel withAliases(String... aliases) {
+        return new RouterModel(
+                "qwen",
+                RouterModel.Status.LOADED,
+                "loaded",
+                false,
+                0,
+                Collections.<String>emptyList(),
+                Collections.<String>emptyList(),
+                0,
+                Arrays.asList(aliases));
+    }
+
+    @Test
     public void statusFromValue_mapsEveryUpstreamString() {
         // The exact strings emitted by upstream server_model_status_to_string (server-models.h).
         assertThat(RouterModel.Status.fromValue("downloading"), is(RouterModel.Status.DOWNLOADING));

@@ -42,6 +42,16 @@ public class RouterModelsResponseParserTest {
     }
 
     @Test
+    public void parsesAliasesAndDefaultsThemToEmpty() {
+        String json = "{\"data\":[{\"id\":\"qwen\",\"aliases\":[\"coder\",\"chat\"]},{\"id\":\"llama\"}]}";
+
+        List<RouterModel> models = parser.parse(json);
+
+        assertThat(models.get(0).getAliases(), contains("coder", "chat"));
+        assertThat(models.get(1).getAliases(), is(empty()));
+    }
+
+    @Test
     public void parsesFailedWorkerMarker() {
         String json = "{\"data\":[{\"id\":\"broken\","
                 + "\"status\":{\"value\":\"unloaded\",\"failed\":true,\"exit_code\":1}}]}";
