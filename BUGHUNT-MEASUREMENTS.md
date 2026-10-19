@@ -22,6 +22,11 @@ Auftrag. Hintergrund in `BUGHUNT-FOUND.md` (die Fund-IDs) und `CHANGELOG.md` (�
 - Ergebnis unter **Ergebnis:**, darunter **Folgerung:** (bestätigt der Lauf den Fix, oder was weicht ab).
 - Ein Test, der hier rot wird, ist ein Befund: Ausgabe vollständig eintragen, nicht „reparieren“.
 
+**Eine Ausnahme von der ersten Regel, ausdrücklich beauftragt:** Befund **B3** aus M8 (das
+Agentenmodul baute auf Windows nicht grün) wurde im selben Lauf behoben und mit einem Wächter
+versehen. Alles andere blieb Messung — die drei Befunde **B1** (M6), **B2** (M5) und die beiden
+Nebenbeobachtungen aus M7 sind nur beschrieben, nicht angefasst.
+
 **Gemeinsame Vorbereitung**
 
 ```bash
@@ -43,6 +48,65 @@ gestartet mit `mvn -B -q -f llama/pom.xml test -Dtest=<Klasse>`. Pfade über `Te
 
 ---
 
+## Umgebung aller Läufe (einmal, gilt für M1 … M10)
+
+| | |
+|---|---|
+| CPU | AMD Ryzen 7 5800H with Radeon Graphics, 8 Kerne / 16 Threads |
+| RAM | 63,3 GiB |
+| GPU | NVIDIA GeForce RTX 3070 Laptop (Treiber 32.0.15.8183) + AMD Radeon (iGPU) — **ungenutzt**, siehe unten |
+| OS | Microsoft Windows 11 Pro 10.0.26300 (Build 26300.9711) |
+| JDK (Maven, Kern) | Temurin 21.0.12.1+1 — **nicht** das daneben installierte Oracle 21.0.9, das `mvn compile` laut CLAUDE.md in Error Prone abbricht |
+| JDK (`llama-ffm`) | Temurin 25.0.4.1+1, über einen neu angelegten `~/.m2/toolchains.xml` |
+| Maven | 3.9.11 |
+| C++-Toolchain | MSVC 19.44.35229.0 (`cl.exe`), Ninja Multi-Config, CMake 3.31.6-msvc6 aus VS 2022 Community |
+| Build | statisch mit `-DBUILD_TESTING=ON` (`.github\build.bat`), **ohne** sccache (`USE_CACHE=false`) |
+
+**Der Build ist CPU-only.** Es wurde kein GPU-Modul gebaut, das Natives-Verzeichnis trägt genau
+`Windows/x86_64/cpu/`, und `JNI_OnLoad` meldet in jedem Lauf
+`[jllama] native backend 'cpu' loaded from … with no GPU module`. Alle Läufe daher mit
+`-Dnet.ladenthin.llama.test.ngl=0`; die RTX 3070 ist an keiner Messung beteiligt.
+
+`llama/src/main/natives/net/ladenthin/llama/Windows/x86_64/cpu/jllama-build.txt` des gemessenen Builds:
+
+```
+llama.cpp=b11639
+llama.cpp.commit=a0e6dc7384edb8f5d927155e1d26c10b4a310e6d
+backend=cpu
+kind=library
+classifier=cpu-windows-x86-64
+jllama.version=6.0.0-SNAPSHOT
+jllama.commit=c56982b2823210075dd0bcecf0c042051b91d002
+patches=0001,0002,0003,0006,0007,0008,0014,0015,0016,0017,0018,0019,0020,0021
+patches.sha256=0176a9b12e147b97027b393ca107f559bc9c997f6076b5a94390957bf10106b8
+compiler=MSVC 19.44.35229.0
+toolkit=none
+signed=no
+```
+
+Arbeitsstand also `c56982b2` auf `ccr-90fc5f6a-vs4s0f` (die verlangte Mindesthöhe `13ddf17` ist
+enthalten), Pin b11639, alle 14 Patches angewandt.
+
+**Modelle.** Die elf Zeilen aus `.github/models.csv` lagen bereits vollständig in `models/`; nichts
+wurde nachgeladen. Für M6 kamen `stories15M_MOE-F16.gguf` (73 466 432 B) und
+`moe_shakespeare15M.gguf` (16 364 896 B) von `ggml-org/stories15M_MOE` hinzu, beide mit GGUF-Magic
+`47475546`.
+
+**Vorbereitung.** `mvn -f llama/pom.xml compile` grün; der Build lief 549/549 Schritte durch; danach
+
+```
+100% tests passed, 0 tests failed out of 643
+Total Test time (real) = 150.90 sec
+```
+
+also die vom Auftrag erwarteten **643/643**.
+
+Ein Hinweis zum Ausgangszustand: die vorhandenen Natives waren `llama.cpp=b11538` vom 11.10. und
+damit älter als Pin und Patches `0020`/`0021`. `llama/build` und `llama/src/main/natives` wurden
+deshalb gelöscht und alles frisch gebaut.
+
+---
+
 ## M1 Die neuen und geänderten modellgestützten Tests
 
 **Ziel.** Die Tests, die nur in CI mit Modellen laufen, einmal lokal mit dem echten Modellsatz grün sehen.
@@ -57,9 +121,43 @@ ist `InvalidRequestException`); `OpenAiServerCompletionIntegrationTest#aStreamed
 (F186), `#ollamaGenerateRawRoundTrip` und `#ollamaGenerateNonStreamingRoundTrip` (F179);
 `OpenAiServerRerankIntegrationTest` (F177).
 
-**Ergebnis:**
+**Ergebnis:** Alle sechs Klassen grün, **keine übersprungen**:
 
-**Folgerung:**
+```
+[INFO] Running net.ladenthin.llama.ErrorHandlingTest
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 7.544 s
+[INFO] Running net.ladenthin.llama.LlamaTrainerIntegrationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.793 s
+[INFO] Running net.ladenthin.llama.LlamaTrainerTest
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.021 s
+[INFO] Running net.ladenthin.llama.server.OpenAiCompatServerIntegrationTest
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 6.583 s
+[INFO] Running net.ladenthin.llama.server.OpenAiServerCompletionIntegrationTest
+[INFO] Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 12.78 s
+[INFO] Running net.ladenthin.llama.server.OpenAiServerRerankIntegrationTest
+[INFO] Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.303 s
+[INFO] Tests run: 40, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+```
+
+Weil eine Klasse mit einer `@BeforeAll`-Annahme als `tests="0"` durchläuft und damit unsichtbar
+bliebe (CLAUDE.md, „CI model policy"), sind die namentlich genannten Methoden zusätzlich einzeln aus
+den surefire-XML belegt — jede mit einer eigenen `<testcase>`-Zeile und einer Laufzeit > 0:
+
+```
+name="testNPredictMinusTwoPerRequestIsAnInvalidRequest" classname="net.ladenthin.llama.ErrorHandlingTest" time="0.06"
+name="aStreamedCompletionIsUpstreamsStream" classname="…OpenAiServerCompletionIntegrationTest" time="0.438"
+name="ollamaGenerateRawRoundTrip"           classname="…OpenAiServerCompletionIntegrationTest" time="2.106"
+name="ollamaGenerateNonStreamingRoundTrip"  classname="…OpenAiServerCompletionIntegrationTest" time="2.881"
+testcase name="rerankReturnsScoredResultsCappedByTopN"                       (OpenAiServerRerankIntegrationTest)
+testcase name="aFourByteCharacterInAPathComesBackIntactInTheErrorMessage"    (LlamaTrainerTest)
+testcase name="aFourByteCharacterInTheTrainingTextReachesTheTrainer"         (LlamaTrainerTest)
+testcase name="finetuneWritesAnOutputModel"                                  (LlamaTrainerIntegrationTest)
+```
+
+**Folgerung:** Der Lauf bestätigt die Erwartung. F69, F186, F179 und F177 sind mit dem echten
+Modellsatz auf Windows belegt, und `LlamaTrainerTest` — in CI nur auf Linux — läuft auch hier grün,
+was die erste Hälfte von M7 bereits mit abdeckt.
 
 ---
 
@@ -80,9 +178,88 @@ blockierend (erwartet: beide `400`, Meldung nennt „2 prompts“, F184).
 
 **Hypothese.** (a) gleich, (b) gleiche Zahlen, (c) gleiche Tokens und Werte, (d) wie (a), (e) zweimal 400.
 
-**Ergebnis:**
+**Ergebnis:** Der erste Durchgang bestätigte (a), (d) und (e) sofort, zeigte aber in (b) und (c)
+Abweichungen — die sich als **Prompt-Cache** erklärten: das Paar läuft blockierend zuerst, die
+gestreamte Anfrage trifft denselben Slot warm. Deshalb lief dasselbe Paar ein zweites Mal mit
+`"cache_prompt": false`. Beide Durchgänge unten.
 
-**Folgerung:**
+**(a) Text, mit Prompt-Cache** — identisch, blockierend wie gestreamt (25 Chunks):
+
+```
+  (a) blocking text = [
+  if n == 0:
+    return 0
+  elif n == 1:
+    return]
+  (a) streamed text = [… byte-identisch …]
+  (a) EQUAL=true
+```
+
+**(b) mit Prompt-Cache** — die Zahlen gleich, nur `cached_tokens` unterschiedlich:
+
+```
+  (b) blocking usage   = {"completion_tokens":24,"prompt_tokens":8,"total_tokens":32,"prompt_tokens_details":{"cached_tokens":0}}
+  (b) last-chunk usage = {"completion_tokens":24,"prompt_tokens":8,"total_tokens":32,"prompt_tokens_details":{"cached_tokens":7}}
+  (b) EQUAL=false
+```
+
+**(b) Gegenprobe mit `cache_prompt:false`** — vollständig gleich:
+
+```
+  (b) blocking usage   = {"completion_tokens":24,"prompt_tokens":8,"total_tokens":32,"prompt_tokens_details":{"cached_tokens":0}}
+  (b) last-chunk usage = {"completion_tokens":24,"prompt_tokens":8,"total_tokens":32,"prompt_tokens_details":{"cached_tokens":0}}
+  (b) EQUAL=true
+```
+
+**(c) mit Prompt-Cache** — gleiche Tokens und Ids, Werte minimal verschieden (warme KV-Wiederverwendung
+ändert die Summationsreihenfolge), und im dritten Eintrag kippt der dritte `top_logprobs`-Platz
+(`" #"` gegen `" return"`):
+
+```
+blocking [0] {"id":13,"token":"\n","bytes":[10],"logprob":-0.1300244927406311, …}
+streamed [0] {"id":13,"token":"\n","bytes":[10],"logprob":-0.13420109450817108, …}
+blocking [2] {"id":565,"token":" if", …,"logprob":-0.36814239621162415,"top_logprobs":[… ," #" …]}
+streamed [2] {"id":565,"token":" if", …,"logprob":-0.3986988961696625, "top_logprobs":[… ," return" …]}
+```
+
+**(c) Gegenprobe mit `cache_prompt:false`** — die ersten drei Einträge **zeichengleich**, in beiden
+Prompt-Formen:
+
+```
+=== control text prompt
+  [0] identisch=True   [1] identisch=True   [2] identisch=True
+  alle drei identisch = True
+=== control token-id prompt
+  [0] identisch=True   [1] identisch=True   [2] identisch=True
+  alle drei identisch = True
+```
+
+**(d) Prompt als Token-Ids.** `LlamaModel.encode("def fibonacci(n):")` ergibt
+`[822,18755,265,21566,29898,29876,1125]` (n=7). Derselbe Text wie in (a), `EQUAL=true`, `usage`
+`prompt_tokens: 7`; mit `cache_prompt:false` auch `usage` und Logprobs gleich. Wichtig: die
+gestreamte Anfrage mit Token-Id-Prompt wird **angenommen** — genau das, was F186 reparierte.
+
+**(e) zwei Prompts** — beide Wege `400`, die Meldung nennt die Zahl:
+
+```
+  (e) blocking status=400 body={"error":{"message":"a request takes one prompt, this one has 2 prompts; send them as separate requests","type":"invalid_request_error","code":null}}
+  (e) streamed status=400 body={"error":{"message":"a request takes one prompt, this one has 2 prompts; send them as separate requests","type":"invalid_request_error","code":null}}
+  (e) blocking mentions 2 prompts=true
+  (e) streamed mentions 2 prompts=true
+```
+
+Nebenbeobachtungen: `contentType` ist blockierend `application/json; charset=utf-8` und gestreamt
+`text/event-stream; charset=utf-8`; alle 25 Chunks eines Streams tragen **eine** Id
+(`chatcmpl-…`, 32 Zeichen), 24 davon einen `logprobs.content`-Eintrag, der letzte das `usage` und
+ein textuelles `finish_reason`; `model` ist in beiden Wegen der Modellpfad, weil die Probe kein
+`modelId` setzt, das vom Standard abweicht (dazu M5).
+
+**Folgerung:** Die Hypothese ist bestätigt. (a), (d) und (e) ohne Vorbehalt; (b) und (c) ebenfalls,
+sobald der Prompt-Cache ausgeschaltet ist — die beobachtete Abweichung ist allein Cache-Wirkung und
+kein Unterschied zwischen den beiden Wegen. Der gestreamte Weg liefert damit denselben Text,
+dieselben Zahlen und dieselben Wahrscheinlichkeiten wie der blockierende und nimmt den
+Token-Id-Prompt an. Wer das Paar künftig vergleicht, muss `cache_prompt:false` setzen oder beide
+Seiten gleich warm fahren, sonst vergleicht er den Cache mit.
 
 ---
 
@@ -103,9 +280,52 @@ keinem Ereignis auftaucht.
 
 **Hypothese.** `end_turn` mit `stop_sequence: "5"`, Text endet vor der 5; die beiden Gegenproben wie erwartet.
 
-**Ergebnis:**
+**Ergebnis:** Alle drei Anfragen `200`, blockierend `application/json; charset=utf-8`, gestreamt
+`text/event-stream; charset=utf-8`. Wörtlich:
 
-**Folgerung:**
+**Mit `stop_sequences: ["5"]`** — der Text endet vor der 5:
+
+```
+BLOCKING body={"id":"msg_6dbc1d7e","type":"message","role":"assistant","model":"m",
+ "content":[{"type":"text","text":"1, 2, 3, 4, "}],
+ "usage":{"input_tokens":42,"output_tokens":13,"cache_read_input_tokens":0},
+ "stop_reason":"end_turn","stop_sequence":"5"}
+STREAMED message_delta={"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":"5"},
+ "usage":{"input_tokens":1,"output_tokens":13,"cache_read_input_tokens":41}}
+STREAMED text=[1, 2, 3, 4, ]
+```
+
+**Ohne `stop_sequences`** — die Zählung läuft durch, `stop_sequence` ist `null`:
+
+```
+BLOCKING text=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+BLOCKING stop_reason="end_turn" stop_sequence=null
+STREAMED message_delta={"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},
+ "usage":{"input_tokens":1,"output_tokens":30,"cache_read_input_tokens":41}}
+```
+
+**Mit `max_tokens: 3`**:
+
+```
+BLOCKING text=[1, ]
+BLOCKING stop_reason="max_tokens" stop_sequence=null
+STREAMED message_delta={"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},
+ "usage":{"input_tokens":1,"output_tokens":3,"cache_read_input_tokens":41}}
+```
+
+`__verbose` kommt in **keiner** der sechs Antworten und in keinem Ereignis vor (je `has
+__verbose=false` über den vollständigen Körper bzw. den vollständigen SSE-Strom geprüft, nicht nur
+über einzelne Felder).
+
+**Folgerung:** Die Hypothese ist in allen drei Fällen exakt bestätigt — `end_turn` mit
+`stop_sequence: "5"` und ein Text, der vor dem Stoppwort endet; `null` ohne Stoppwort; `max_tokens`
+mit `null` am Budgetende; blockierend und gestreamt tragen dasselbe Paar. F183 ist mit einem echten
+Stoppwort belegt.
+
+Eine Beobachtung ohne Befundcharakter: das `usage` der gestreamten Anfrage zählt `input_tokens: 1`
+bei `cache_read_input_tokens: 41`, weil die identische Anfrage unmittelbar nach der blockierenden
+läuft und den warmen Prompt-Cache trifft — dieselbe Cache-Wirkung wie in M2(b), nicht ein
+Unterschied der beiden Wege.
 
 ---
 
@@ -119,9 +339,36 @@ Aufzeichnen: HTTP-Status, `Content-Type`, Körper.
 
 **Hypothese.** Überall `400` mit JSON-Körper im Fehlerformat der Route, kein SSE.
 
-**Ergebnis:**
+**Ergebnis:** Prompt 2000 Wörter / 13 789 Zeichen, Modell `AMD-Llama-135m-code.Q2_K.gguf` mit
+`setCtxSize(256)`. **Alle fünf Routen antworten `400` mit JSON, kein SSE** — geprüft wurde nicht nur
+der Status, sondern auch, dass der Körper kein `data: ` und kein `event: ` enthält:
 
-**Folgerung:**
+| Route | Status | `Content-Type` | SSE? |
+|---|---|---|---|
+| `/v1/chat/completions` | 400 | `application/json; charset=utf-8` | nein |
+| `/v1/completions` | 400 | `application/json; charset=utf-8` | nein |
+| `/api/chat` | 400 | `application/json; charset=utf-8` | nein |
+| `/v1/messages` | 400 | `application/json; charset=utf-8` | nein |
+| `/v1/responses` | 400 | `application/json; charset=utf-8` | nein |
+
+Die Körper, je im Fehlerformat der Route:
+
+```
+/v1/chat/completions {"error":{"message":"request (5818 tokens) exceeds the available context size (256 tokens), try increasing it","type":"invalid_request_error","code":null}}
+/v1/completions      {"error":{"message":"request (5791 tokens) exceeds the available context size (256 tokens), try increasing it","type":"invalid_request_error","code":null}}
+/api/chat            {"error":"request (5818 tokens) exceeds the available context size (256 tokens), try increasing it"}
+/v1/messages         {"type":"error","error":{"type":"invalid_request_error","message":"request (5818 tokens) exceeds the available context size (256 tokens), try increasing it"}}
+/v1/responses        {"error":{"message":"request (5818 tokens) exceeds the available context size (256 tokens), try increasing it","type":"invalid_request_error","code":null}}
+```
+
+Gegenprobe, dieselbe Anfrage **ohne** `"stream"` an `/v1/chat/completions`: `400`,
+`application/json; charset=utf-8`, Körper zeichengleich mit der gestreamten Zeile oben.
+
+**Folgerung:** Die Hypothese ist vollständig bestätigt. Der gestreamte Weg verhält sich wie der nicht
+gestreamte — Status, `Content-Type` und Körper sind gleich —, und keine Route schickt ein
+SSE-Vorspiel, bevor sie den Fehler meldet. Dass `/v1/completions` 5791 statt 5818 Tokens nennt, ist
+der fehlende Chat-Template-Rahmen, nicht eine Abweichung. F182 ist mit dem echten Modell auf allen
+fünf Routen belegt.
 
 ---
 
@@ -133,9 +380,76 @@ mit `chatcmpl-`, alle Chunks eines Streams tragen dieselbe, `model` ist überall
 ohne `--model-id` (erwartet: der Dateiname). (c) `NativeServer` mit `--alias my-model` als Gegenprobe gegen
 upstreams eigenen Server im selben Prozess.
 
-**Ergebnis:**
+**Ergebnis:** Je ein echtes Kind-JVM über `ServerLauncher`, Modell `AMD-Llama-135m-code.Q2_K.gguf`,
+`-c 512 -ngl 0`; der Port wird aus der Startmeldung des Kindes gelesen und mit `/health` bestätigt.
 
-**Folgerung:**
+**(a) `--jllama-openai-compat … --model-id my-model`** — wie erwartet:
+
+```
+GET /v1/models  {"object":"list","data":[{"id":"my-model","object":"model","created":1792447453,"owned_by":"llama.cpp","ftype":"Q2_K - Medium"}]}
+blocking id=chatcmpl-14XgXnJnNaDyD6DdDBXV6g5uuEY4N9Q6  startsWith chatcmpl-=true
+blocking model=my-model  == requested=true
+streamed chunks=8 ids=[chatcmpl-1CHN9eEjZyRnHKJdRENc6eBH7pRXQRn7] models=[my-model]
+streamed one id=true  id startsWith chatcmpl-=true
+```
+
+Also: jede `id` beginnt mit `chatcmpl-`, alle acht Chunks eines Streams tragen **eine** Id, und
+`model` ist überall `my-model`.
+
+**(c) `NativeServer --alias my-model`** als Gegenprobe gegen upstreams eigenen Server — deckungsgleich:
+
+```
+GET /v1/models  … "data":[{"id":"my-model","aliases":["my-model"], … }]
+blocking id=chatcmpl-fqJZm8uzg7akXK4lPIOnH9br0hNIYpqY  startsWith chatcmpl-=true
+blocking model=my-model  == requested=true
+streamed chunks=8 ids=[chatcmpl-EWLKYE2i6pFSMWGhlXs5JukSRzbxDHjk] models=[my-model]
+```
+
+**(b) ohne `--model-id` — hier weicht der Lauf ab, und das ist ein Befund.**
+
+**Befund B2: ohne `--model-id` benennen `/v1/models` und die Antworten dasselbe Modell verschieden.**
+
+```
+GET /v1/models  {"object":"list","data":[{"id":"AMD-Llama-135m-code.Q2_K.gguf", … }]}
+blocking model=X:\Privat\OpenSource\github\java-llama.cpp\models\AMD-Llama-135m-code.Q2_K.gguf
+streamed models=[X:\Privat\OpenSource\github\java-llama.cpp\models\AMD-Llama-135m-code.Q2_K.gguf]
+```
+
+`/v1/models` meldet den **Dateinamen** — genau was die Usage-Zeile verspricht („`--model-id <name>`
+Model id reported by /v1/models (default: file name)") und was
+`OpenAiServerCli.ParsedArgs.getModelId()` aus `Paths.get(modelPath).getFileName()` ableitet. Die
+Antworten melden dagegen den **vollen absoluten Pfad**, weil das `model`-Feld der Antwort nicht aus
+der Konfiguration kommt, sondern aus llama.cpps `--alias`, und das wird nur unter einer Bedingung
+gesetzt (`OpenAiServerCli.toModelParameters()`):
+
+```java
+if (modelId != null) {
+    // the answers name the model as llama.cpp knows it; this keeps them equal to /v1/models
+    params.setAlias(modelId);
+}
+```
+
+Der Kommentar nennt die Absicht — Antworten und `/v1/models` gleich halten —, aber der Zweig läuft
+nur, wenn `--model-id` wirklich übergeben wurde. Ohne das Flag bleibt der Alias leer und upstream
+setzt den Modellpfad ein. (c) zeigt, dass `--alias` die eine wirksame Stelle ist: damit stimmen beide
+Flächen. Die `id`-Hälfte von F185 ist davon **nicht** betroffen — `chatcmpl-` und eine Id pro Stream
+gelten in allen drei Fällen.
+
+Wirkung: ein Client, der `/v1/models` liest und das `model`-Feld der Antwort dagegen hält — oder der
+den aus `/v1/models` gelesenen Namen in die nächste Anfrage zurückschreibt —, sieht ohne
+`--model-id` zwei verschiedene Namen. Zusätzlich steht dann ein absoluter lokaler Pfad in jeder
+Antwort, auch in einer über das Netz.
+
+Dieselbe Trennung erklärt eine Beobachtung aus M2: die dortige Probe setzt `modelId("m")` direkt über
+`OpenAiServerConfig` (nicht über die CLI), und die Antworten tragen trotzdem den Modellpfad — weil
+nur die CLI `setAlias` aufruft. Über die eingebettete API ist das Feld also gar nicht einstellbar.
+
+**Folgerung:** (a) und (c) bestätigen F185 vollständig. (b) weicht ab: der Vorgabewert greift nur für
+`/v1/models`, nicht für das `model`-Feld der Antworten, sodass die im Code ausgesprochene Zusage
+„keeps them equal to /v1/models" ohne das Flag nicht gilt. Nicht reparieren war Auftragslage; B2
+gehört in `BUGHUNT-FOUND.md`. Die naheliegende Richtung wäre, den abgeleiteten Dateinamen genauso in
+den Alias zu setzen wie einen übergebenen (und `OpenAiServerConfig.modelId` denselben Weg zu geben),
+damit der Vorgabewert dieselbe Zusage trägt wie das Flag.
 
 ---
 
@@ -155,9 +469,117 @@ Ablauf je Durchgang: frisches Modell ohne Adapter (Referenz A); mit Adapter Skal
 Adaptern die nächste gleich B. Mit der Voreinstellung kann der Host-Speicher-Cache (Javadoc von
 `setLoraAdapters`) abweichen — das ist der offene Rest, genau aufzeichnen.
 
-**Ergebnis:**
+**Ergebnis:** Zuerst ein Befund, der den Ablauf änderte, dann die Messung selbst.
 
-**Folgerung:**
+**Befund B1: `ModelParameters.addLoraScaledAdapter` ist gegen den Pin unbrauchbar.** Der erste
+Versuch, Referenz B über `addLoraScaledAdapter(ADAPTER, 1.0f)` zu laden, scheiterte:
+
+```
+net.ladenthin.llama.exception.LlamaException: Failed to parse model parameters
+	at net.ladenthin.llama.LlamaModel.loadModel(Native Method)
+```
+
+Die Methode rendert `putString(ModelOption.LORA_SCALED, fname + "," + scale)`, also
+`--lora-scaled <FNAME>,<SCALE>`. Upstream liest den Wert aber als `FNAME:SCALE,...` —
+`common/arg.cpp` am Pin:
+
+```
+{"--lora-scaled"}, "FNAME:SCALE,...",
+"path to LoRA adapter with user defined scaling (format: FNAME:SCALE,...)\nnote: use comma-separated values",
+[](common_params & params, const std::string & value) {
+    for (const auto & item : parse_csv_row(value)) {
+        auto parts = string_split<std::string>(item, ':');
+        if (parts.size() != 2) { throw std::invalid_argument("lora-scaled format: FNAME:SCALE"); }
+```
+
+Das Komma ist seit **b7448** der Listentrenner, nicht der Feldtrenner: `487674fbb` („common: fix
+--override-kv to support comma-separated values", upstream #18056, 2025-12-17), später erweitert um
+`07fbe19f1` (b7648, „arg: use CSV escape style for multiple-value args", #18643). Der Pin ist
+b11639, die Methode ist also seit rund 4200 Builds tot. **`addControlVectorScaled` hat dieselbe
+Form** (`fname + "," + scale`) und `--control-vector-scaled` dasselbe upstream-Format, ist also
+gleichermaßen betroffen. `setOverrideKv(String)` übergibt den Wert unverändert, liegt damit beim
+Aufrufer.
+
+Abgedeckt ist das nur von `ModelParametersTest#testAddLoraScaledAdapter`, das genau das falsche
+Format festschreibt:
+
+```java
+ModelParameters p = new ModelParameters().addLoraScaledAdapter("adapter.bin", 0.5f);
+assertThat(p.parameters.get("--lora-scaled"), is("adapter.bin,0.5"));
+```
+
+Das ist die Klasse, die CLAUDE.md für die Wire-Name-Registries beschreibt — ein Test, der die
+String-Abbildung prüft und darum grün bleibt, während das Flag tot ist. Die Registry-Prüfung
+`test_model_flags.cpp` sieht es nicht: sie hält den **Namen** gegen die Optionstabelle des Servers,
+nicht das **Werteformat**.
+
+Alle vier Formen gegen den echten Parser (je ein Kind-JVM über `ServerLauncher` → `NativeServer`,
+der llama-server-argv unverändert weitergibt):
+
+```
+1. --lora-scaled <abs>,1.0   (was addLoraScaledAdapter heute sendet)
+   -> error while handling argument "--lora-scaled": invalid stof argument      Server startet nicht
+2. --lora-scaled <abs>:1.0   (upstream-Format, absoluter Windows-Pfad)
+   -> error while handling argument "--lora-scaled": lora-scaled format: FNAME:SCALE   Server startet nicht
+3. --lora-scaled <rel>:1.0   (upstream-Format, relativer Pfad)
+   -> 0.00.202.912 I srv  llama_server: listening on http://127.0.0.1:64459     angenommen
+4. --lora <abs>              (Gegenprobe, Skala 1.0 per Vorgabe)
+   -> 0.00.202.540 I srv  llama_server: listening on http://127.0.0.1:61766     angenommen
+```
+
+Form 2 ist bemerkenswert: **auch das korrekte Doppelpunkt-Format trägt auf Windows keinen absoluten
+Pfad.** `string_split` trennt an *jedem* Doppelpunkt (`common/common.h`), also ergibt
+`X:\…\a.gguf:1.0` drei Teile und nicht zwei. Eine Korrektur am Projekt von `,` auf `:` würde auf
+Linux greifen, auf Windows mit Laufwerksbuchstaben weiter scheitern — das ist eine
+upstream-Einschränkung, keine Projektentscheidung. (Nebenbei: der Parse-Fehler endet den Prozess mit
+**Exit 0** nach der Usage-Ausgabe.)
+
+Gemessen wurde darum mit `addLoraAdapter(ADAPTER)` (`--lora`, Skala 1.0 per Vorgabe) — genau die
+Skala, die M6 verlangt.
+
+**Die Messung.** Modell `stories15M_MOE-F16.gguf`, Adapter `moe_shakespeare15M.gguf`, Prompt „Look in
+thy glass", 32 Tokens, `temperature 0, top_k 1, seed 42, cache_prompt true, id_slot 0`,
+`setParallel(1)`, Kontext 512. Der Server meldet den Adapter als
+`[{"id":0,"path":"…moe_shakespeare15M.gguf","scale":1.0,…}]`.
+
+| Schritt | `cacheRamMib(0)` | Voreinstellung |
+|---|---|---|
+| A ohne Adapter | `was a little girl. She was only three years old …` | gleich |
+| B Adapter 1.0, kalt | `in love of the eye:\nThat's when when the eye see thy on the sun's shining bright. …` | gleich |
+| B′ Adapter 1.0, warm | = B | = B |
+| C nach `setLoraAdapter(0, 0f)` | **= A** | **= A** |
+| D nach `setLoraAdapter(0, 1f)` | **= B** | **= B** |
+| E Anfrage mit eigenem `lora` Skala 0 | **= A** | **= A** |
+| F nächste Anfrage, Server-Adapter 1.0 | **= B** | **= B** |
+
+Wörtlich aus dem Durchgang mit der Voreinstellung — dem, den der Auftrag als offenen Rest markiert:
+
+```
+  C  (setLoraAdapter(0,0f), warm slot)   = [ was a little girl. She was only three years old …]
+     C == A (expected) : true
+     C == B (defect)   : false
+  D  (setLoraAdapter(0,1f), warm slot)   = [ in love of the eye: …]
+     D == B (expected) : true
+     D == A (defect)   : false
+  E  (request lora scale 0)              = [ was a little girl. …]
+     E == A (expected) : true
+  F  (next request, server adapters 1.0) = [ in love of the eye: …]
+     F == B (expected) : true
+     F == A (defect)   : false
+```
+
+**Folgerung:** Die Messung bestätigt Patch 0021 mit dem echten Adapterpaar, und sie schließt den
+offenen Rest: **der Host-Speicher-Cache weicht nicht ab.** Beide Durchgänge sind Schritt für Schritt
+gleich — ein Adapterwechsel am warmen Slot wird nie aus dem alten Cache beantwortet, in keiner der
+beiden Cache-Einstellungen, auch nicht nach einer Anfrage mit eigenen Adaptern. Der Vorbehalt im
+Javadoc von `setLoraAdapters` lässt sich mit dieser Messung nicht nachstellen.
+
+Was offen bleibt, ist nicht Patch 0021, sondern Befund **B1**: der skalierte Adapterpfad über
+`ModelParameters` lädt am Pin überhaupt kein Modell, und der einzige Test darüber schreibt das
+falsche Format fest. Die Messung musste deshalb auf `--lora` ausweichen — Skala 1.0 ist damit
+belegt, eine **andere** Skala als 1.0 lässt sich über `ModelParameters` derzeit nicht setzen (zur
+Laufzeit geht es weiter, wie C/D/E zeigen). Nicht reparieren war Auftragslage; der Befund gehört in
+`BUGHUNT-FOUND.md`.
 
 ---
 
@@ -171,9 +593,64 @@ die `new LlamaModel(new ModelParameters().setModel("C:/tmp/fehlt-\uD83D\uDE00.gg
 **Hypothese.** Beide Tests grün (nicht übersprungen); die Probe zeigt U+1F600 als einen Codepunkt, nichts
 abgeschnitten.
 
-**Ergebnis:**
+**Ergebnis:** Beide Teile grün.
 
-**Folgerung:**
+**`LlamaTrainerTest` auf Windows** — die beiden Methoden liefen, nicht übersprungen (aus M1):
+
+```
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- in net.ladenthin.llama.LlamaTrainerTest
+testcase name="aFourByteCharacterInAPathComesBackIntactInTheErrorMessage"
+testcase name="aFourByteCharacterInTheTrainingTextReachesTheTrainer"
+```
+
+**Die Probe.** Umgebung des Test-JVM:
+
+```
+os=Windows 11 10.0 | file.encoding=UTF-8 | sun.jnu.encoding=Cp1252 | native.encoding=Cp1252 | java=21.0.12.1+1-LTS
+path asked for=[C:\Users\…\junit-4414633441307162606\fehlt-😀.gguf] codePointCount=72
+Paths.get round trip equal=true
+```
+
+`sun.jnu.encoding` ist also **Cp1252** und kann U+1F600 gar nicht darstellen — der interessante Fall.
+Die Meldung des Trainers, codepunktweise:
+
+```
+### M7 LlamaTrainer.finetune -> net.ladenthin.llama.exception.LlamaException
+  message=[failed to load model for training: C:\…\junit-4414633441307162606\fehlt-😀.gguf]
+  length(chars)=108 codePointCount=107
+  codepoints=… U+0066 U+0065 U+0068 U+006C U+0074 U+002D U+1F600 U+002E U+0067 U+0067 U+0075 U+0066
+  contains U+1F600 as ONE codepoint=true
+  mangled as U+00F0 U+009F U+0098 U+0080=false
+  truncated (ends in ".g" instead of ".gguf")=false
+  replacement char U+FFFD present=false
+  '?' mangling present=false
+  EQUALS expected=true
+```
+
+Die Codepunktfolge endet also auf `f e h l t - U+1F600 . g g u f`: ein Codepunkt für das Emoji,
+`.gguf` vollständig, und die Meldung ist zeichengleich mit dem erwarteten String. Die
+Modified-UTF-8-Verstümmelung, die F181 behob (U+00F0 U+009F U+0098 U+0080 und ein nach `.g`
+abgeschnittener Rest), tritt nicht auf. Dasselbe mit dem 4-Byte-Zeichen im **Trainingstext** statt im
+Pfad: Meldung unverstümmelt, Pfad korrekt.
+
+Zwei Nebenbeobachtungen, beide **kein** Befund:
+
+- `new LlamaModel(…)` mit demselben Pfad wirft `LlamaException: could not load model from given file
+  path` — die Meldung trägt den Pfad **gar nicht**, dieser Eintrittspunkt kann F181 also nicht
+  zeigen. Der Trainer ist die Stelle, an der der Pfad in der Meldung steht.
+- Die **nativen Logzeilen** auf der Konsole zeigen `fehlt-?.gguf`
+  (`gguf_init_from_file: failed to open GGUF file 'C:\…\fehlt-?.gguf'`). Das ist die Codepage der
+  `cmd`-Konsole beim Schreiben von stderr, nicht Datenverlust: die Java-sichtbare Meldung derselben
+  Anfrage trägt U+1F600 unverändert (oben). Wer die Konsole als Beleg nimmt, kommt zum falschen
+  Schluss.
+- `new NativeServer("--model", <emoji-pfad>, "--port", "0").start()` kehrt ohne Ausnahme zurück. Das
+  ist der dokumentierte Vertrag — „Starts the native HTTP server … and returns immediately. The
+  server binds and begins serving `GET /health` before the model finishes loading; poll `/health` for
+  readiness" —, also erwartet und kein Befund.
+
+**Folgerung:** Die Hypothese ist bestätigt. Beide Trainer-Tests laufen auf Windows grün und sind
+nicht übersprungen, und die Probe zeigt U+1F600 als einen Codepunkt bei intaktem Rest, obwohl
+`sun.jnu.encoding=Cp1252` das Zeichen nicht darstellen kann. F181 trägt auf dem Windows-Weg.
 
 ---
 
@@ -185,9 +662,205 @@ verify` gegen den installierten Kern (`mvn -pl llama,llama-platform -am install 
 `AtmosphereToolLoopIntegrationTest` mit dem Tool-Modell (`-Dnet.ladenthin.llama.lib.path=<natives-Verzeichnis>`).
 Dazu ein Zug im Agenten mit einem Prompt über der Kontextgröße (`--ctx-size 256`): was zeigt die Konsole?
 
-**Ergebnis:**
+**Ergebnis:** In drei Teilen — der modellfreie Lauf (mit einem Befund), der Tool-Loop mit dem echten
+Modell, und der Zug über der Kontextgröße.
 
-**Folgerung:**
+**(1) Modellfreier Lauf.** `mvn -f llama-atmosphere-agent/pom.xml -Dllama.version=6.0.0-SNAPSHOT
+-Dllama.natives=none verify` gegen den installierten Kern (`mvn -pl llama,llama-platform -am install
+-DskipTests`, `BUILD SUCCESS`):
+
+```
+[ERROR] Tests run: 276, Failures: 1, Errors: 1, Skipped: 60
+[INFO] BUILD FAILURE
+```
+
+Die 60 übersprungenen sind erwartet und dokumentiert (`ScreenUseCasesTest` 57 + `ReflowResizeTest` 3,
+die sich gegen das veröffentlichte JLine selbst abschalten, siehe `llama-atmosphere-agent/CLAUDE.md`).
+Der `Errors: 1` ist mein Aufruf: `AtmosphereToolLoopIntegrationTest` findet lokal sein GGUF (anders als
+in CIs modellfreiem Job) und läuft dann in `UnsatisfiedLinkError: No native library found`, weil
+`-Dllama.natives=none` keine Natives auf den Klassenpfad legt und ich `lib.path` erst in Teil (2)
+gesetzt habe. Kein Projektfehler, aber eine Folge, die lokal jeden trifft, der den modellfreien Lauf
+mit vorhandenen Modellen fährt.
+
+**Der `Failures: 1` ist ein Befund.**
+
+**Befund B3: `AgentSessionTest.aLoopRunsItsStepsThroughTheFrontEndUntilTheMarker` ist auf Windows
+deterministisch rot.** Drei Läufe, drei Mal dieselbe Zeile:
+
+```
+Lauf 1 : [ERROR] Tests run: 13, Failures: 1, Errors: 0, Skipped: 0
+Lauf 2 : [ERROR] Tests run: 13, Failures: 1, Errors: 0, Skipped: 0
+Lauf 3 : [ERROR] Tests run: 13, Failures: 1, Errors: 0, Skipped: 0
+```
+
+```
+java.lang.AssertionError:
+Expected: a string containing "loop: done after 1 steps"
+     but: was "loop: write a poem
+loop: state in C:\Users\…\AGENT-LOOP.md, max 20 steps, budget 120 min
+── loop step 1/20 ──
+── loop step 2/20 ──
+── loop step 3/20 ──
+loop: no progress for 3 steps (nothing written, no tools used)"
+	at …AgentSessionTest.aLoopRunsItsStepsThroughTheFrontEndUntilTheMarker(AgentSessionTest.java:341)
+```
+
+und unmittelbar davor im Log:
+
+```
+WARN org.atmosphere.ai.llm.OpenAiCompatibleClient - LLM connection error, retrying in 500ms (attempt 1/3): HTTP/1.1 header parser received no bytes
+```
+
+Ursache, mit einer Probe belegt statt erschlossen. Der Test lässt das Skript-Backend
+`"working" + System.lineSeparator() + TaskLoop.SENTINEL` senden, und `ScriptedBackend.quote`
+(`llama-atmosphere-agent/src/test/.../ScriptedBackend.java`) escapt Anführungszeichen, Backslash und
+`\n` — **nicht `\r`**: der `switch` hat Zweige für `'"'`, `'\\'` und `'\n'` und schreibt alles andere
+unverändert durch.
+
+Auf Windows ist `System.lineSeparator()` `\r\n`, der Chunk trägt also ein rohes CR mitten im
+JSON-String. Die Probe zeigt beides nebeneinander:
+
+```
+os=Windows 11  System.lineSeparator() = CRLF
+### as the test builds it: "working" + System.lineSeparator() + SENTINEL
+  text   = working<0D><0A><<TASK_COMPLETE>>
+  chunk  = {… "delta":{"content":"working<0D>\n<<TASK_COMPLETE>>"} …}
+  raw CR in chunk  = 113
+  parses as JSON   = NO: JsonParseException: Illegal unquoted character ((CTRL-CHAR, code 13)): has to be escaped using backslash to be included in string value
+  TaskLoop.isComplete(text) = true
+### with LF only (what Linux gets)
+  text   = working<0A><<TASK_COMPLETE>>
+  chunk  = {… "delta":{"content":"working\n<<TASK_COMPLETE>>"} …}
+  raw CR in chunk  = -1
+  parses as JSON   = yes
+  TaskLoop.isComplete(text) = true
+```
+
+Der Chunk ist also auf Windows **kein gültiges JSON** (RFC 8259 verbietet unescapte Steuerzeichen
+U+0000–U+001F), die SSE-Antwort bricht ab, jeder Loop-Schritt bekommt nichts, und der
+Stillstandswächter beendet den Loop nach drei Schritten. **Die Sentinel-Erkennung ist nicht
+schuld** — `TaskLoop.isComplete` ist für beide Zeilenenden `true`.
+
+Es ist Testcode, kann also nichts an Nutzer ausliefern; die Wirkung ist, dass das Agentenmodul auf
+Windows nicht grün baut. Gesehen wurde es nie, weil die drei Agenten-Jobs nur auf Linux laufen.
+
+**B3 ist auf Weisung in diesem Lauf behoben** — eine Ausnahme von der Regel „nur messen", ausdrücklich
+beauftragt. Zwei Dinge dabei, die beim Messen auffielen:
+
+**Die Lücke war viel größer als das fehlende `\r`.** Beide `quote`-Fassungen in einem
+Einzeldatei-Programm gegen Jackson, auf dieser Maschine:
+
+```
+System.lineSeparator() = CRLF
+VORHER   control chars that are not JSON: 31/32   value altered: 0
+         namely: U+0000 U+0001 … U+000D … U+001F
+         System.lineSeparator() round trip: FAILS: Illegal unquoted character ((CTRL-CHAR, code 13))
+NACHHER  control chars that are not JSON:  0/32   value altered: 0
+         System.lineSeparator() round trip: ok
+```
+
+Von 32 Steuerzeichen erzeugten **31** ungültiges JSON; behandelt war allein `\n`. Der Wert wird in
+keiner Fassung verändert, es ging rein um Gültigkeit.
+
+**Der Fix** setzt die vier benannten Escapes `\r \t \b \f` dazu und — das Tragende — einen
+`default`-Zweig, der alles unter `0x20` als `\uXXXX` schreibt, damit ein Steuerzeichen, das niemand
+aufgelistet hat, die Lücke nicht wieder aufreißen kann. Der Test selbst bleibt unangetastet:
+`System.lineSeparator()` dort ist richtig, weil genau das CRLF überhaupt erst ausübt.
+
+**Wächter: `ScriptedBackendTest`** (neu, 3 Fälle) — jeder Chunk eines Text-Zuges muss als JSON
+parsen (mit `System.lineSeparator()`, CRLF, LF, einzelnem CR); **jedes** der 32 Steuerzeichen
+einzeln, also der `default`-Zweig und nicht die vier benannten Fälle; und der Text muss unverändert
+aus dem Chunk zurückkommen. Ohne so einen Wächter ist der Fehler unsichtbar, weil ein kaputter Chunk
+als abgebrochener Stream ankommt und die rote Zusicherung mehrere Schichten entfernt über die
+*Antwort* spricht.
+
+**Rot/grün im echten Build belegt, nicht nur in der Isolation.** Mit der alten `quote`-Fassung kurz
+zurückgesetzt:
+
+```
+[ERROR] Tests run: 13, Failures: 1, Errors: 0, Skipped: 0 -- in …AgentSessionTest
+[ERROR] Tests run:  3, Failures: 2, Errors: 1, Skipped: 0 -- in …ScriptedBackendTest
+[ERROR]   ScriptedBackendTest.aTextTurnCarryingTheLineSeparatorIsJsonOnEveryPlatform:44 System.lineSeparator(): chunk is not JSON: …
+[ERROR]   ScriptedBackendTest.everyControlCharacterSurvivesAsJson:60 U+0000: chunk is not JSON: …
+[ERROR]   ScriptedBackendTest.theTextComesBackOutOfTheChunkUnchanged:73 » JsonParse Illegal unquoted character ((CTRL-CHAR, code 13))
+```
+
+und mit dem Fix (die Datei danach byte-identisch wiederhergestellt), drei Läufe hintereinander:
+
+```
+Lauf 1/2/3: Tests run: 13, Failures: 0, Errors: 0, Skipped: 0 -- in …AgentSessionTest
+Lauf 1/2/3: Tests run:  3, Failures: 0, Errors: 0, Skipped: 0 -- in …ScriptedBackendTest
+```
+
+Und das ganze Modul, diesmal mit `lib.path`, also ohne den Aufruffehler aus Teil (1):
+
+```
+[INFO] Tests run: 281, Failures: 0, Errors: 0, Skipped: 60
+[INFO] BUILD SUCCESS
+```
+
+Die 60 Auslassungen sind unverändert die dokumentierten JLine-Fälle. `spotless:apply` hatte nichts zu
+ändern. Geprüft wurde außerdem, ob dieselbe Lücke woanders steckt: ein `grep` über alle handgerollten
+JSON-Quote-Helfer im Repository findet nur diese eine Stelle.
+
+**(2) Der Tool-Loop mit dem echten Modell.** Dieselbe Klasse mit
+`-Dnet.ladenthin.llama.lib.path=<natives>` und dem Tool-Modell:
+
+```
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 10.76 s -- in net.ladenthin.llama.atmosphere.AtmosphereToolLoopIntegrationTest
+[INFO] BUILD SUCCESS
+```
+
+mit den Methoden `plainChatStreamsAnAnswer`, `toolCallResultIsFedBackAndAnswered` und
+`multiRoundReadWriteReadLoopChangesTheFile` — nicht übersprungen.
+
+**(3) Der Zug über der Kontextgröße.** Vier Züge über `exec:java` (einmal `--ctx-size 256` wie im
+Auftrag, dazu eine brauchbare Gegenprobe, siehe unten), je `--plain --temperature 0 --ngl 0`:
+
+Zug 1, `--ctx-size 256` mit dem 2000-Wörter-Prompt — die Konsole zeigt:
+
+```
+(context nearly full — compacting first)
+(nothing to compact)
+srv    send_error: task id = 0, error: request (1897 tokens) exceeds the available context size (256 tokens), try increasing it
+srv          stop: cancel task, id_task = 0
+ERROR org.atmosphere.ai.llm.OpenAiCompatibleClient - LLM API error (400): {"error":{"message":"request (1897 tokens) exceeds the available context size (256 tokens), try increasing it","type":"invalid_request_error","code":null}}
+[error] org.atmosphere.ai.AiProviderException$TerminalProviderError: API returned 400: request (1897 tokens) exceeds the available context size (256 tokens), try increasing it
+AGENT_EXIT_OVER=1
+```
+
+Zug 2, `--ctx-size 256` mit dem **kurzen** Prompt, scheitert ebenso (`request (1483 tokens) exceeds
+the available context size (256 tokens)`) — **bei 256 sprengt schon der Systemprompt den Kontext**,
+der im Auftrag vorgeschlagene Wert ist für den Agenten also an sich zu klein und taugt nicht als
+Gegenprobe. Darum zwei weitere:
+
+Zug 3, `--ctx-size 4096`, kurzer Prompt — der Agent antwortet normal:
+
+```
+2 + 2 equals 4.
+AGENT_EXIT_CTRL=0
+```
+
+Zug 4, `--ctx-size 1024`, der 2000-Wörter-Prompt — wieder der Fehler des Zuges:
+
+```
+[error] org.atmosphere.ai.AiProviderException$TerminalProviderError: API returned 400: request (1897 tokens) exceeds the available context size (1024 tokens), try increasing it
+AGENT_EXIT_OVER2=1
+```
+
+**Folgerung:** Teil (3) bestätigt F182 im Agenten: ein Fehler vor dem ersten Chunk erscheint als
+`[error] … API returned 400: …` mit der vollständigen Meldung des Servers und beendet den Prozess mit
+Code 1, statt still zu enden — und Zug 3 zeigt im Gegenzug, dass derselbe Agent mit arbeitsfähigem
+Kontext normal antwortet, der Fehler also am Kontext hängt und nicht am Aufbau. Teil (2) bestätigt
+den Tool-Loop mit dem echten Modell. Teil (1) brachte Befund **B3** — das Agentenmodul baute auf
+Windows nicht grün, weil der Testharnisch 31 von 32 Steuerzeichen unescapt in seine JSON-Chunks
+schrieb —, und B3 ist auf Weisung in diesem Lauf behoben und mit einem Wächter versehen; das Modul
+ist damit auf Windows grün (281 Tests, 0 Fehler, 60 dokumentiert übersprungen).
+
+Zwei Dinge, die **kein** Befund sind: das `â€"` in einer früheren Lesung von
+`(context nearly full — compacting first)` war die Codepage meines Log-Lesens, nicht die Ausgabe des
+Agenten (als UTF-8 gelesen steht dort ein korrektes `—`); und `--ctx-size 256` als Vorschlag im
+Auftrag ist, wie oben, für den Agenten zu klein.
 
 ---
 
@@ -197,9 +870,42 @@ Dazu ein Zug im Agenten mit einem Prompt über der Kontextgröße (`--ctx-size 2
 -Dnet.ladenthin.llama.lib.path=<…/llama/src/main/natives/net/ladenthin/llama/<OS>/<ARCH>/cpu>` — neu ist
 `FfmLlamaModelIntegrationTest#oaiCompletionStreamEndsWithUsage` (F186).
 
-**Ergebnis:**
+**Ergebnis:** Grün, nichts übersprungen. Die Toolchain greift wie vorgesehen — Maven läuft auf
+Temurin 21, das Modul auf Temurin 25:
 
-**Folgerung:**
+```
+[INFO] --- toolchains:3.3.0:toolchain (default) @ llama-ffm ---
+[INFO] Required toolchain: jdk [ version='[22,)' ]
+[INFO] Found matching toolchain for type jdk: JDK[C:\Users\berna\AppData\Local\Programs\jdk-25.0.4.1+1]
+[INFO] Toolchain in maven-compiler-plugin: JDK[…jdk-25.0.4.1+1]
+[INFO] Toolchain in maven-surefire-plugin: JDK[…jdk-25.0.4.1+1]
+```
+
+```
+[INFO] Tests run: 17, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.355 s -- in net.ladenthin.llama.ffm.FfmLlamaModelIntegrationTest
+[INFO] Tests run:  4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.512 s -- in net.ladenthin.llama.ffm.FfmNativeServerTest
+[INFO] Tests run:  9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.036 s -- in net.ladenthin.llama.ffm.JllamaNativeTest
+[INFO] Tests run: 30, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+```
+
+Der neue Test lief, aus dem surefire-XML belegt (eine Selbstabschaltung wäre hier der stille Fall,
+den der CI-Job eigens prüft):
+
+```
+name="oaiCompletionStreamEndsWithUsage" classname="net.ladenthin.llama.ffm.FfmLlamaModelIntegrationTest" time="0.036"
+```
+
+Aufruf: `mvn -f llama-ffm/pom.xml verify
+-Dnet.ladenthin.llama.ffm.model=models/AMD-Llama-135m-code.Q2_K.gguf
+-Dnet.ladenthin.llama.lib.path=llama/src/main/natives/net/ladenthin/llama/Windows/x86_64/cpu`. Der
+relative Modellpfad greift, weil `FfmTestSupport.modelPath()` auf `../models/…` zurückfällt.
+
+**Folgerung:** Der FFM-Weg trägt mit dem echten Modell auf Windows, und F186 ist auch dort belegt:
+`oaiCompletionStreamEndsWithUsage` verlangt `object: "text_completion"` auf jedem Chunk und ein
+`usage.completion_tokens > 0` auf dem letzten. Für diesen Punkt musste ein JDK 22+ her — auf der
+Maschine war keines, also wurde Temurin 25.0.4.1+1 (141 MB) installiert und ein
+`~/.m2/toolchains.xml` mit 21 und 25 angelegt, den es vorher nicht gab.
 
 ---
 
@@ -209,6 +915,61 @@ Dazu ein Zug im Agenten mit einem Prompt über der Kontextgröße (`--ctx-size 2
 `mvn -B -f llama/pom.xml test -Dnet.ladenthin.llama.test.ngl=0` mit dem ganzen Modellsatz, dazu
 `.github/verify-test-counts.sh` wie in CI. Zahlen (run / failures / errors / skipped) eintragen.
 
-**Ergebnis:**
+**Ergebnis:** Beide Hälften grün.
 
-**Folgerung:**
+**`ctest`** gegen den statischen Build mit `-DBUILD_TESTING=ON` — die vom Auftrag erwartete Zahl:
+
+```
+100% tests passed, 0 tests failed out of 643
+Total Test time (real) = 147.01 sec
+```
+
+**Die Java-Suite**, `mvn -f llama/pom.xml test -Dnet.ladenthin.llama.test.ngl=0` mit dem ganzen
+Modellsatz:
+
+```
+[INFO] Tests run: 2151, Failures: 0, Errors: 0, Skipped: 18
+[INFO] BUILD SUCCESS
+[INFO] Total time:  08:48 min
+```
+
+**Die Zählprüfung wie in CI** (`.github/verify-test-counts.sh llama/target/surefire-reports
+--min-executed 1800`):
+
+```
+test counts verified: 2151 test(s) run, 18 skipped, 2133 executed across 139 class(es), none empty (floors: total 0, executed 1800)
+```
+
+| | |
+|---|---:|
+| run | 2151 |
+| failures | 0 |
+| errors | 0 |
+| skipped | 18 |
+| executed (run − skipped) | 2133 |
+| Klassen, keine leer | 139 |
+
+**Eine Falle beim Zählen, die hier zuschlug und protokolliert gehört:** der erste Aufruf meldete
+2158 über 146 Klassen. `mvn test` räumt `target/surefire-reports` nicht auf, also lagen dort noch die
+XML der sieben Wegwerf-Proben aus M2 … M7 — genau 7 Klassen und 7 Tests mehr. Die Zahlen oben sind
+nach dem Entfernen dieser Berichte, bestehen also nur aus dem Gesamtlauf. Wer die Zahl eines
+Gesamtlaufs übernimmt, muss das Verzeichnis vorher leeren oder `clean` fahren.
+
+**Die 18 Auslassungen, einzeln geprüft** — jede ist erklärt und für einen statischen Windows-Build
+erwartet, keine ist eine stumme Klasse (`none empty` oben):
+
+| Anzahl | Tests | Grund |
+|---:|---|---|
+| 8 | `BackendLoadTest` (alle) | `backend fixtures are committed for Linux only` |
+| 2 | `RouterModeIntegrationTest#chatCompletion_isProxiedToWorker`, `#models_listContainsLoadedModel` | `Router worker-relaunch test runs on Linux only` |
+| 2 | `ProcessRunnerTest#returnsStandardOutput`, `#commandThatDoesNotEndInTimeIsKilledAndReported` | `uname` bzw. `sleep` sind POSIX-Kommandos (`assumeFalse(WINDOWS, …)`) |
+| 2 | `CpuModuleIsolationTest#everyCpuModuleLoadsOnItsOwn`, `LlamaLoaderTest#extractionDirectoriesOfThisClasspathNameTheLibraryWithItsModules` | brauchen die **modulare** Auslage aus den Jars; dieser Build ist der statische, den der Loader direkt aus `src/main/natives` lädt |
+| 2 | `SystemOneIntegrationTest#aDecisionModelAnswersEveryQuestionType`, `#aDecisionModelRejectsAnUnknownQuestionType` | das Entscheidungsmodell ist nicht im CI-Satz (CLAUDE.md) |
+| 1 | `AudioInputIntegrationTest#audioInputProducesNonEmptyReply` | Audio-Modell + mmproj sind nicht im CI-Satz (CLAUDE.md) |
+| 1 | `LlamaModelTest#testLogStdout` | `@Disabled` |
+
+**Folgerung:** Der Gesamtlauf bestätigt, dass die Messungen M1 … M9 den Baum nicht hinterlassen
+haben, wie sie ihn gefunden haben wollten: 643/643 in C++ und 2151/0/0/18 in Java, 2133 ausgeführt
+gegen eine Untergrenze von 1800, keine Klasse mit null Einträgen. Die acht Wegwerf-Proben sind
+entfernt; der Arbeitsbaum trägt außer dieser Datei nur den Fix zu Befund **B3** samt seinem Wächter
+(siehe M8).
