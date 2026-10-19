@@ -22,10 +22,14 @@ Auftrag. Hintergrund in `BUGHUNT-FOUND.md` (die Fund-IDs) und `CHANGELOG.md` (�
 - Ergebnis unter **Ergebnis:**, darunter **Folgerung:** (bestätigt der Lauf den Fix, oder was weicht ab).
 - Ein Test, der hier rot wird, ist ein Befund: Ausgabe vollständig eintragen, nicht „reparieren“.
 
-**Eine Ausnahme von der ersten Regel, ausdrücklich beauftragt:** Befund **B3** aus M8 (das
-Agentenmodul baute auf Windows nicht grün) wurde im selben Lauf behoben und mit einem Wächter
-versehen. Alles andere blieb Messung — die drei Befunde **B1** (M6), **B2** (M5) und die beiden
-Nebenbeobachtungen aus M7 sind nur beschrieben, nicht angefasst.
+**Eine Ausnahme von der ersten Regel, ausdrücklich beauftragt:** die Befunde dieses Auftrags wurden
+nach Abschluss der Messungen behoben, jeder mit einem Wächter und jeder end-to-end belegt — **B1**
+(M6, `--lora-scaled` rendert das falsche Werteformat) samt dem dabei gefundenen **B4** (die vier
+`addX`-Methoden ersetzten statt anzuhängen), **B2** (M5, `/v1/models` und die Antworten benennen das
+Modell verschieden) und **B3** (M8, der Testharnisch schreibt unescapte Steuerzeichen in sein JSON).
+Die Messabschnitte selbst stehen unverändert so da, wie sie gemessen wurden; was danach geändert
+wurde, steht jeweils in einem eigenen Unterabschnitt „ist behoben". Nicht angefasst sind die
+Nebenbeobachtungen aus M7 und der eingebettete Weg aus B2 — bei beiden ist begründet, warum.
 
 **Gemeinsame Vorbereitung**
 
@@ -444,12 +448,61 @@ Dieselbe Trennung erklärt eine Beobachtung aus M2: die dortige Probe setzt `mod
 `OpenAiServerConfig` (nicht über die CLI), und die Antworten tragen trotzdem den Modellpfad — weil
 nur die CLI `setAlias` aufruft. Über die eingebettete API ist das Feld also gar nicht einstellbar.
 
-**Folgerung:** (a) und (c) bestätigen F185 vollständig. (b) weicht ab: der Vorgabewert greift nur für
+**Folgerung:** (a) und (c) bestätigen F185 vollständig. (b) wich ab: der Vorgabewert griff nur für
 `/v1/models`, nicht für das `model`-Feld der Antworten, sodass die im Code ausgesprochene Zusage
-„keeps them equal to /v1/models" ohne das Flag nicht gilt. Nicht reparieren war Auftragslage; B2
-gehört in `BUGHUNT-FOUND.md`. Die naheliegende Richtung wäre, den abgeleiteten Dateinamen genauso in
-den Alias zu setzen wie einen übergebenen (und `OpenAiServerConfig.modelId` denselben Weg zu geben),
-damit der Vorgabewert dieselbe Zusage trägt wie das Flag.
+„keeps them equal to /v1/models" ohne das Flag nicht galt.
+
+### B2 ist behoben (auf Weisung, nach der Messung)
+
+**Warum der Pfad überhaupt erschien, nachgelesen statt vermutet.** Upstreams Kette für den Modellnamen
+(`tools/server/server-context.cpp`) ist Alias → `common_params_model::get_name()` → Dateiname, und
+`get_name()` lautet:
+
+```cpp
+std::string get_name() const {
+    if (!hf_repo.empty())     { return hf_repo; }
+    if (!docker_repo.empty()) { return docker_repo; }
+    return path;
+}
+```
+
+Für eine lokale Datei gibt Schritt 2 also den **Pfad** zurück, womit Schritt 3 — upstreams eigener
+Kommentar „fallback: derive model name from file name" — unerreichbar ist. Ohne Alias nennt der Server
+darum den Pfad, auch der von upstream selbst.
+
+**Der Fix** ist eine Zeile in `OpenAiServerCli.toModelParameters()`: der Alias wird **immer** gesetzt,
+aus `getModelId()` statt nur aus einem übergebenen `modelId`. Damit trägt der Vorgabewert dieselbe
+Zusage wie das Flag, und der eine Name, den der Server bewirbt, ist der, den llama.cpp benutzt.
+
+**End-to-end belegt** (Wegwerf-Probe, danach entfernt), derselbe Fall wie (b), ohne `--model-id`:
+
+```
+  expected id (file name)=AMD-Llama-135m-code.Q2_K.gguf
+  GET /v1/models id = AMD-Llama-135m-code.Q2_K.gguf
+  blocking model    = AMD-Llama-135m-code.Q2_K.gguf
+  blocking id       = chatcmpl-rkhNFoYimoN16qjlHGQNTFGFnWhvXRxw
+  streamed models   = [AMD-Llama-135m-code.Q2_K.gguf]
+  AGREE blocking == /v1/models : true
+  AGREE streamed == /v1/models : true
+  id is chatcmpl- and one per stream : true
+  no absolute path in the answer     : true
+```
+
+Vorher nannten dieselben drei Stellen den vollen absoluten Pfad; der lokale Pfad steht jetzt auch
+nicht mehr in jeder Antwort über das Netz.
+
+**Wächter:** `OpenAiServerCliTest.theAdvertisedModelIdBecomesTheModelsAliasWithAndWithoutTheFlag` —
+vorher hieß der Test `anExplicitModelIdBecomesTheModelsAlias` und schrieb das Gegenteil fest (ohne
+Flag *kein* `--alias`); er prüft nun beide Fälle und dass Alias und `getModelId()` derselbe String
+sind.
+
+**Was bewusst offen bleibt: der eingebettete Weg.** `OpenAiCompatServer(model, config)` bekommt ein
+schon geladenes Modell, kann also kein `--alias` mehr setzen — die Beobachtung aus M2 (dort steht der
+Pfad im `model`-Feld, obwohl die Probe `modelId("m")` setzt) gilt weiter. Das ist jetzt im Javadoc von
+`OpenAiServerConfig.getModelId()` gesagt, mit dem Hinweis, dass ein einbettender Aufrufer sein Modell
+mit `ModelParameters.setAlias(…)` laden muss. Das `model`-Feld der Antwort nachträglich umzuschreiben
+wäre die Alternative; sie würde über die Engine etwas anderes behaupten als diese getan hat und würde
+von `NativeServer` im Attach-Modus ohnehin nicht nachvollzogen — daher nicht getan, sondern benannt.
 
 ---
 
@@ -574,12 +627,59 @@ gleich — ein Adapterwechsel am warmen Slot wird nie aus dem alten Cache beantw
 beiden Cache-Einstellungen, auch nicht nach einer Anfrage mit eigenen Adaptern. Der Vorbehalt im
 Javadoc von `setLoraAdapters` lässt sich mit dieser Messung nicht nachstellen.
 
-Was offen bleibt, ist nicht Patch 0021, sondern Befund **B1**: der skalierte Adapterpfad über
-`ModelParameters` lädt am Pin überhaupt kein Modell, und der einzige Test darüber schreibt das
-falsche Format fest. Die Messung musste deshalb auf `--lora` ausweichen — Skala 1.0 ist damit
-belegt, eine **andere** Skala als 1.0 lässt sich über `ModelParameters` derzeit nicht setzen (zur
-Laufzeit geht es weiter, wie C/D/E zeigen). Nicht reparieren war Auftragslage; der Befund gehört in
-`BUGHUNT-FOUND.md`.
+Offen blieb damit nicht Patch 0021, sondern Befund **B1**: der skalierte Adapterpfad über
+`ModelParameters` lud am Pin überhaupt kein Modell, und der einzige Test darüber schrieb das falsche
+Format fest. Die Messung musste deshalb auf `--lora` ausweichen.
+
+### B1 ist behoben (auf Weisung, nach der Messung)
+
+Beim Fixen kam ein weiterer Fehler derselben Familie mit heraus, **B4**: `putString` ist
+`map.put(option, value)` auf einer `LinkedHashMap`, also **überschreibt** ein zweiter
+`addLoraAdapter` / `addLoraScaledAdapter` / `addControlVector` / `addControlVectorScaled` den ersten —
+während alle vier im Javadoc „can be repeated to use multiple adapters" versprechen. Upstream liest
+genau diese Optionen seit #18056 / #18643 als **eine** komma-separierte Liste, Akkumulation ist also
+das, was sie zusammensetzt.
+
+Der Fix, in `llama/src/main/java/net/ladenthin/llama/parameters/`:
+
+- **`CliParameters.appendCsvValue(option, value)`** neu: hängt einen Wert an, statt zu ersetzen, und
+  schreibt ihn als CSV-Feld — in Anführungszeichen mit verdoppelten inneren Anführungszeichen, sobald
+  er ein Komma oder ein Anführungszeichen trägt, weil upstreams `parse_csv_row` ein öffnendes
+  Anführungszeichen nur am Feldanfang erkennt und ein Pfad mit Komma sonst gar nicht übergeben werden
+  kann.
+- **Die vier Methoden** nutzen ihn; die beiden skalierten rendern `FNAME:SCALE` statt `FNAME,SCALE`.
+- **Ein Pfad mit Doppelpunkt wird laut abgelehnt** (`IllegalArgumentException`), statt den Ladevorgang
+  später mit „Failed to parse model parameters" scheitern zu lassen. Die Meldung nennt die Ursache und
+  die zwei Auswege. Das ist die Grenze aus Form 2 oben: sie ist upstreams, nicht unsere, und lässt
+  sich hier nicht wegkorrigieren — ein `,`→`:`-Tausch allein hätte auf Windows weiter nicht geladen.
+
+**End-to-end belegt** mit demselben Adapterpaar (Wegwerf-Probe, danach entfernt):
+
+```
+### B1 absolute path refused: --lora-scaled reads its value as FNAME:SCALE and splits on every colon,
+    so a path containing one cannot be expressed: X:\…\moe_shakespeare15M.gguf
+    -- pass a relative path, or load it unscaled and set the scale after the load
+  rendered argv for the relative path: [, --fit, on, --lora-scaled, ..\models\moe_shakespeare15M.gguf:0.5,second.gguf:0.25]
+  A  (no adapter)                  = [ was a little girl. She was only three years old …]
+  B  (--lora, scale 1.0)           = [ in love of the eye: …]
+  C  (--lora-scaled <rel>:1.0)     = [ in love of the eye: …]
+     adapters: [{"id":0,"path":"..\\models\\moe_shakespeare15M.gguf","scale":1.0,…}]
+     C == B (expected) : true
+  D  (--lora-scaled <rel>:0.0)     = [ was a little girl. …]
+     adapters: [{"id":0,"path":"..\\models\\moe_shakespeare15M.gguf","scale":0.0,…}]
+     D == A (expected, scale carried) : true
+     D == B (defect, scale ignored)   : false
+```
+
+Also: die Option **lädt überhaupt erst** (vorher `LlamaException: Failed to parse model parameters`),
+zwei skalierte Adapter sammeln sich zu einem Wert, und die Skala wirkt — `:1.0` ergibt Referenz B,
+`:0.0` ergibt Referenz A, und der Server meldet die Skala zurück. Damit ist auch das nachgeholt, was
+die Messung nicht konnte: eine **andere** Skala als 1.0 über `ModelParameters`.
+
+**Wächter**, in `ModelParametersTest`: das neue `FNAME:SCALE`-Format (die beiden Tests, die das alte
+festschrieben, sind umgestellt), die Akkumulation aller vier Optionen, das CSV-Quoting eines Pfads mit
+Komma und Anführungszeichen, und die Ablehnung eines Doppelpunkt-Pfads samt der Meldung — mit einem
+relativen Pfad als Gegenprobe im selben Test. 97 Tests der Klasse grün.
 
 ---
 
@@ -968,8 +1068,28 @@ erwartet, keine ist eine stumme Klasse (`none empty` oben):
 | 1 | `AudioInputIntegrationTest#audioInputProducesNonEmptyReply` | Audio-Modell + mmproj sind nicht im CI-Satz (CLAUDE.md) |
 | 1 | `LlamaModelTest#testLogStdout` | `@Disabled` |
 
-**Folgerung:** Der Gesamtlauf bestätigt, dass die Messungen M1 … M9 den Baum nicht hinterlassen
-haben, wie sie ihn gefunden haben wollten: 643/643 in C++ und 2151/0/0/18 in Java, 2133 ausgeführt
-gegen eine Untergrenze von 1800, keine Klasse mit null Einträgen. Die acht Wegwerf-Proben sind
-entfernt; der Arbeitsbaum trägt außer dieser Datei nur den Fix zu Befund **B3** samt seinem Wächter
-(siehe M8).
+**Folgerung:** Der Gesamtlauf bestätigt, dass die Messungen M1 … M9 den Baum so hinterlassen haben,
+wie sie ihn gefunden haben: 643/643 in C++ und 2151/0/0/18 in Java, 2133 ausgeführt gegen eine
+Untergrenze von 1800, keine Klasse mit null Einträgen.
+
+### Nachlauf nach den Fixes
+
+Die Zahlen oben sind der Gesamtlauf **vor** den Behebungen von B1/B2/B4 (B3 war zu diesem Zeitpunkt
+schon drin). Danach wurde alles noch einmal gefahren, jedes Modul gegen den neu installierten Kern:
+
+| Lauf | Ergebnis |
+|---|---|
+| `ctest` (C++, unverändert — die Fixes sind reines Java) | 643/643 |
+| `mvn -f llama/pom.xml clean test` (ganzer Modellsatz) | **2154** / 0 / 0 / 18, 8:43 min |
+| `verify-test-counts.sh … --min-executed 1800` | 2154 run, 18 skipped, **2136 executed**, 139 Klassen, keine leer |
+| `spotbugs:check` wie im `code-style`-Job | `BugInstance size is 0`, `Error size is 0` |
+| `spotless:check` (Kern und Agentenmodul) | grün |
+| `llama-atmosphere-agent` (`verify` mit `lib.path`) | 281 / 0 / 0 / 60 |
+| `llama-ffm` (`verify` mit echtem Modell) | 30 / 0 / 0 / 0 |
+| `llama-langchain4j` (`verify`) | 55 / 0 / 0 / 7 |
+| `llama-kotlin` (`verify`) | 6 / 0 / 0 / 0 |
+
+2154 statt 2151 sind die drei neuen Tests in `ModelParametersTest` (Akkumulation, CSV-Quoting,
+Doppelpunkt-Ablehnung); `ScriptedBackendTest` steckt in den 281 des Agentenmoduls. Die acht
+Wegwerf-Proben der Messung und die zwei des Fix-Nachweises sind entfernt; was im Arbeitsbaum bleibt,
+ist diese Datei plus die Fixes zu B1, B2, B3 und B4 mit ihren Wächtern.

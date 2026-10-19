@@ -91,6 +91,35 @@ abstract class CliParameters {
     }
 
     /**
+     * Append one value to an option llama.cpp reads as a comma-separated list, so that a builder
+     * method documented as repeatable really is.
+     *
+     * <p>The parameter set is a map keyed by the wire string, so {@link #putString} <em>replaces</em>
+     * — which is right for a setter and wrong for an {@code addX}: a second call silently dropped the
+     * first. Upstream takes these options as one comma-separated value (since llama.cpp #18056 /
+     * #18643, which also gave them CSV escaping), so appending is what accumulates.
+     *
+     * <p>The value is written as a CSV field: quoted, with doubled quotes inside, when it contains a
+     * comma or a quote — upstream's {@code parse_csv_row} recognises an opening quote only at the
+     * start of a field, so a path with a comma in it cannot be passed any other way.
+     *
+     * @param option the option to append to
+     * @param value  the single value to append, unescaped
+     * @param <T>    the concrete subtype of this builder
+     * @return this builder
+     */
+    // Self-typing builder idiom — see putScalar above.
+    @SuppressWarnings({"unchecked", "TypeParameterUnusedInFormals"})
+    protected final <T extends CliParameters> T appendCsvValue(ModelOption option, String value) {
+        final String field =
+                value.indexOf(',') < 0 && value.indexOf('"') < 0 ? value : '"' + value.replace("\"", "\"\"") + '"';
+        final String key = option.getCliOption();
+        final String present = parameters.get(key);
+        parameters.put(key, present == null || present.isEmpty() ? field : present + "," + field);
+        return (T) this;
+    }
+
+    /**
      * Enable a valueless flag: the key is stored with a {@code null} value, which
      * {@code toArray()} renders as the flag alone.
      *

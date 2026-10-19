@@ -641,10 +641,15 @@ public final class OpenAiServerCli {
         public ModelParameters toModelParameters() {
             final ModelParameters params =
                     new ModelParameters().setModel(modelPath).setGpuLayers(gpuLayers);
-            if (modelId != null) {
-                // the answers name the model as llama.cpp knows it; this keeps them equal to /v1/models
-                params.setAlias(modelId);
-            }
+            // The answers name the model as llama.cpp knows it, so this keeps them equal to
+            // /v1/models -- and it is set from getModelId() rather than from `modelId`, so the
+            // DEFAULT carries the same promise as the flag. It used to run only when --model-id was
+            // given, and without the flag the two surfaces then disagreed: /v1/models reported the
+            // file name (getModelId()) while every answer reported the full model path, because
+            // upstream's fallback chain for the model name is alias -> common_params_model::get_name()
+            // -> file name, and get_name() returns the PATH for a local file, so the file-name branch
+            // upstream's own comment describes is unreachable. Measured at b11639.
+            params.setAlias(getModelId());
             if (mmprojDevice != null) {
                 params.setMmprojDevice(mmprojDevice);
             }

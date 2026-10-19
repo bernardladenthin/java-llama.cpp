@@ -112,6 +112,14 @@ public final class OpenAiServerConfig {
     /**
      * The advertised model id.
      *
+     * <p>This is what {@code GET /v1/models} (and the Ollama {@code /api/tags} / {@code /api/show})
+     * reports, and the default {@code model} for a request that names none. It does <b>not</b> reach
+     * the {@code model} field of an answer: that comes from llama.cpp, which takes the first
+     * {@code --alias} and falls back to the model path for a local file. For the two to agree, the
+     * model has to be loaded with {@link net.ladenthin.llama.parameters.ModelParameters#setAlias(String)}
+     * set to the same name — which {@link OpenAiServerCli} does for you, and an embedding caller that
+     * loads its own {@code LlamaModel} has to do itself.
+     *
      * @return the model id reported by {@code GET /v1/models}
      */
     public String getModelId() {

@@ -208,18 +208,27 @@ public class OpenAiServerCliTest {
 
     // The answers name the model llama.cpp knows (its alias, else the file); without passing the
     // advertised id on, /v1/models said "x" while every answer said "Llama-3.gguf" (F185).
+    //
+    // The DEFAULT needs it just as much, which this used to assert the opposite of: with no
+    // --model-id no alias was set at all, and llama.cpp's fallback for the model name is
+    // alias -> common_params_model::get_name() -> file name, where get_name() returns the PATH for a
+    // local file -- so /v1/models reported the file name while every answer reported the absolute
+    // path. Measured against b11639 with both servers; the alias is therefore always set, from
+    // getModelId(), which is the one name the server advertises.
     @Test
-    public void anExplicitModelIdBecomesTheModelsAlias() {
-        List<String> argv = Arrays.asList(OpenAiServerCli.parse("-m", "/opt/models/Llama-3.gguf", "--model-id", "x")
-                .toModelParameters()
-                .toArray());
-        assertThat(argv.get(argv.indexOf("--alias") + 1), is("x"));
-        assertThat(
-                Arrays.asList(OpenAiServerCli.parse("-m", "/opt/models/Llama-3.gguf")
-                                .toModelParameters()
-                                .toArray())
-                        .contains("--alias"),
-                is(false));
+    public void theAdvertisedModelIdBecomesTheModelsAliasWithAndWithoutTheFlag() {
+        List<String> explicitId =
+                Arrays.asList(OpenAiServerCli.parse("-m", "/opt/models/Llama-3.gguf", "--model-id", "x")
+                        .toModelParameters()
+                        .toArray());
+        assertThat(explicitId.get(explicitId.indexOf("--alias") + 1), is("x"));
+
+        OpenAiServerCli.Options defaulted = OpenAiServerCli.parse("-m", "/opt/models/Llama-3.gguf");
+        List<String> argv = Arrays.asList(defaulted.toModelParameters().toArray());
+        assertThat(argv.contains("--alias"), is(true));
+        assertThat(argv.get(argv.indexOf("--alias") + 1), is("Llama-3.gguf"));
+        // the alias and /v1/models are the same string, which is the whole point
+        assertThat(argv.get(argv.indexOf("--alias") + 1), is(defaulted.getModelId()));
     }
 
     @Test

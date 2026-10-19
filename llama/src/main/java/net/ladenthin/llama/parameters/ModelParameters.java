@@ -1047,20 +1047,27 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters addLoraAdapter(String fname) {
-        putString(ModelOption.LORA, fname);
-        return this;
+        return appendCsvValue(ModelOption.LORA, fname);
     }
 
     /**
      * Add a LoRA adapter with user-defined scaling (can be repeated to use multiple adapters).
      *
-     * @param fname the file path of the LoRA adapter
+     * <p><b>The file path may not contain a colon, which on Windows means it may not be absolute.</b>
+     * llama.cpp reads this option as {@code FNAME:SCALE,...} and splits each item on <em>every</em>
+     * colon, demanding exactly two parts, so {@code X:\models\a.gguf:1.0} yields three and is
+     * refused. That is upstream's limitation, not a choice here; pass a path relative to the working
+     * directory, or load the adapter with {@link #addLoraAdapter(String)} (scale 1.0) and set the
+     * scale after the load with {@link net.ladenthin.llama.LlamaModel#setLoraAdapter(int, float)},
+     * which takes any path.
+     *
+     * @param fname the file path of the LoRA adapter, without a colon
      * @param scale the user-defined scaling factor
      * @return this builder
+     * @throws IllegalArgumentException if {@code fname} contains a colon
      */
     public ModelParameters addLoraScaledAdapter(String fname, float scale) {
-        putString(ModelOption.LORA_SCALED, fname + "," + scale);
-        return this;
+        return appendCsvValue(ModelOption.LORA_SCALED, scaledField(ModelOption.LORA_SCALED, fname, scale));
     }
 
     /**
@@ -1070,20 +1077,47 @@ public final class ModelParameters extends CliParameters {
      * @return this builder
      */
     public ModelParameters addControlVector(String fname) {
-        putString(ModelOption.CONTROL_VECTOR, fname);
-        return this;
+        return appendCsvValue(ModelOption.CONTROL_VECTOR, fname);
     }
 
     /**
      * Add a control vector with user-defined scaling (can be repeated to add multiple scaled control vectors).
      *
-     * @param fname the file path of the control vector
+     * <p>The file path may not contain a colon — same upstream constraint as
+     * {@link #addLoraScaledAdapter(String, float)}, which explains it.
+     *
+     * @param fname the file path of the control vector, without a colon
      * @param scale the user-defined scaling factor
      * @return this builder
+     * @throws IllegalArgumentException if {@code fname} contains a colon
      */
     public ModelParameters addControlVectorScaled(String fname, float scale) {
-        putString(ModelOption.CONTROL_VECTOR_SCALED, fname + "," + scale);
-        return this;
+        return appendCsvValue(
+                ModelOption.CONTROL_VECTOR_SCALED, scaledField(ModelOption.CONTROL_VECTOR_SCALED, fname, scale));
+    }
+
+    /**
+     * Render one {@code FNAME:SCALE} item, refusing a path the upstream parser cannot split.
+     *
+     * <p>It used to be rendered {@code FNAME,SCALE}. The comma has been the <em>list</em> separator
+     * since llama.cpp #18056 (b7448) while the field separator is a colon, so every value this emitted
+     * was rejected: {@code --lora-scaled <path>,1.0} fails the argv parse with {@code invalid stof
+     * argument} and the model does not load at all. Measured against the real parser at b11639.
+     *
+     * @param option the option the item is for, named in the error message
+     * @param fname  the file path
+     * @param scale  the scaling factor
+     * @return the rendered {@code FNAME:SCALE} item
+     * @throws IllegalArgumentException if {@code fname} contains a colon
+     */
+    private static String scaledField(ModelOption option, String fname, float scale) {
+        if (fname.indexOf(':') >= 0) {
+            throw new IllegalArgumentException(option.getCliOption()
+                    + " reads its value as FNAME:SCALE and splits on every colon, so a path containing one"
+                    + " cannot be expressed: " + fname
+                    + " -- pass a relative path, or load it unscaled and set the scale after the load");
+        }
+        return fname + ":" + scale;
     }
 
     /**
