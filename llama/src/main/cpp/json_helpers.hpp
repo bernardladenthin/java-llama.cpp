@@ -85,7 +85,8 @@
 //
 // Converts a collected vector of rerank task results to a JSON array.
 // Each element contains the original document text (looked up via the
-// result's "index" field), the index, and the relevance score.
+// result's "index" field), the index, the relevance score and the number of
+// tokens evaluated for it (0 when the result does not say).
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline json rerank_results_to_json(const std::vector<server_task_result_ptr> &results,
                                                  const std::vector<std::string> &documents) {
@@ -102,7 +103,12 @@
             throw std::invalid_argument("rerank result index " + std::to_string(index) + " out of range");
         }
         float score = out["score"].get<float>();
-        arr.push_back({{"document", documents[index]}, {"index", index}, {"score", score}});
+        // the evaluated tokens, which the OpenAI-shaped answer sums into usage as upstream does
+        const int tokens_evaluated = out.contains("tokens_evaluated") ? out["tokens_evaluated"].get<int>() : 0;
+        arr.push_back({{"document", documents[index]},
+                       {"index", index},
+                       {"score", score},
+                       {"tokens_evaluated", tokens_evaluated}});
     }
     return arr;
 }

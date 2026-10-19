@@ -137,6 +137,7 @@ final class LlamaModelBackend implements OpenAiBackend {
     public String rerank(JsonNode request) {
         final String query = OaiRerankSupport.readQuery(request);
         final String[] documents = OaiRerankSupport.readDocuments(request);
+        OaiRerankSupport.readTopN(request); // a negative top_n is refused before anything is evaluated
         final String requestModel = request.path("model").asText("");
         final String nativeJson = model.handleRerank(query, documents);
         return OaiRerankSupport.toResponse(request, nativeJson, requestModel);

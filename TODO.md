@@ -526,7 +526,6 @@ numbered for reference, the numbers stay when an item is done):
 - **(6)** JNI shells throw with `ThrowNew(cls, jllama_last_error())` / `NewStringUTF`, which expect Modified
   UTF-8; a message with a 4-byte character or raw invalid bytes is mangled (Android CheckJNI
   aborts). Fix in C++: build the message with `utf8_to_jstring_impl` and `Throw` the object.
-- **(8)** Rerank: `top_n: 0` (and negative) returns all results, upstream none; `usage` is missing.
 - **(10)** Request fields still dropped (partly fixed by F95/F123): `logit_bias`, `n_probs`, and `n`
   (alias of `n_cmpl` upstream; Java has no `RequestField` for it, a request with `n: 3` silently
   gets one answer). The streamed `/v1/completions` needs a raw-JSON streaming entry point to keep

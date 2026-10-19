@@ -570,15 +570,15 @@ public class LlamaModel implements AutoCloseable {
 
     /**
      * Rerank {@code documents} against {@code query} and return the raw native JSON array of results.
-     * Each element carries {@code "document"}, {@code "index"} (the position in the input array) and
-     * {@code "score"}. This is the JSON-in/JSON-out form behind
+     * Each element carries {@code "document"}, {@code "index"} (the position in the input array),
+     * {@code "score"} and {@code "tokens_evaluated"} (the tokens the model evaluated for it). This is the JSON-in/JSON-out form behind
      * {@link #rerank(boolean, String, String...)}; the OpenAI-compatible server reshapes it into the
      * {@code POST /v1/rerank} response. Requires the model loaded in reranking mode
      * ({@link net.ladenthin.llama.parameters.ModelParameters#enableReranking()}).
      *
      * @param query the query string
      * @param documents the documents to score against the query
-     * @return a JSON array of {@code {document, index, score}} objects
+     * @return a JSON array of {@code {document, index, score, tokens_evaluated}} objects
      */
     public native String handleRerank(String query, String... documents);
 

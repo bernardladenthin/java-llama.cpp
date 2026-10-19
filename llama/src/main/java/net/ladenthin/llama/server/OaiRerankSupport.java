@@ -72,14 +72,29 @@ final class OaiRerankSupport {
     }
 
     /**
-     * Read the optional {@code top_n} cap.
+     * Read the optional {@code top_n} cap. {@code 0} keeps no result, as upstream's {@code
+     * format_response_rerank} does ({@code min(top_n, n)} entries).
      *
      * @param request the parsed rerank request
      * @return the requested cap, or {@code -1} when absent or not an integer
+     * @throws IllegalArgumentException if {@code top_n} is negative (upstream resizes its result vector
+     *     to {@code min(top_n, n)}, a huge size for a negative value, and fails inside the server)
      */
     static int readTopN(JsonNode request) {
         JsonNode topN = request.path("top_n");
-        return topN.isInt() ? topN.asInt() : -1;
+        if (!topN.isInt()) {
+            return -1;
+        }
+        final int value = topN.asInt();
+        if (value < 0) {
+            throw new IllegalArgumentException("'top_n' must not be negative but was " + value);
+        }
+        return value;
+    }
+
+    /** The number of entries a {@code top_n} keeps: all for {@code -1} (absent), else at most it. */
+    private static int limit(int topN, int size) {
+        return topN < 0 ? size : Math.min(topN, size);
     }
 
     /**
@@ -106,7 +121,8 @@ final class OaiRerankSupport {
      * {@code text} when {@code return_text} is set.
      *
      * @param nativeArrayJson the native {@code [{document,index,score}]} array as JSON
-     * @param topN keep only the top-N highest-scoring entries, or {@code <= 0} to keep all
+     * @param topN keep only the top-N highest-scoring entries ({@code 0} keeps none), or {@code -1} to
+     *     keep all
      * @param returnText whether to include each document's text
      * @return the TEI rerank response JSON
      */
@@ -132,7 +148,7 @@ final class OaiRerankSupport {
         entries.sort((a, b) ->
                 Double.compare(b.path("score").asDouble(), a.path("score").asDouble()));
         final ArrayNode results = OBJECT_MAPPER.createArrayNode();
-        final int limit = topN > 0 ? Math.min(topN, entries.size()) : entries.size();
+        final int limit = limit(topN, entries.size());
         for (int i = 0; i < limit; i++) {
             results.add(entries.get(i));
         }
@@ -144,11 +160,14 @@ final class OaiRerankSupport {
      *
      * @param nativeArrayJson the native {@code [{document,index,score}]} array as JSON
      * @param model the model id to echo (omitted when empty)
-     * @param topN keep only the top-N highest-scoring entries, or {@code <= 0} to keep all
-     * @return the rerank response JSON with sorted {@code results} and a {@code data} alias
+     * @param topN keep only the top-N highest-scoring entries ({@code 0} keeps none), or {@code -1} to
+     *     keep all
+     * @return the rerank response JSON with sorted {@code results}, a {@code data} alias and the
+     *     {@code usage} of the evaluated tokens
      */
     static String toOaiResponse(String nativeArrayJson, String model, int topN) {
         final List<ObjectNode> entries = new ArrayList<>();
+        long promptTokens = 0;
         try {
             JsonNode arr = OBJECT_MAPPER.readTree(nativeArrayJson);
             if (arr.isArray()) {
@@ -157,17 +176,19 @@ final class OaiRerankSupport {
                     result.put("index", entry.path("index").asInt());
                     result.put("relevance_score", entry.path("score").asDouble());
                     entries.add(result);
+                    promptTokens += entry.path("tokens_evaluated").asLong(0L);
                 }
             }
         } catch (IOException e) {
             // The native call already succeeded; an unexpected body just yields empty results.
             entries.clear();
+            promptTokens = 0;
         }
         entries.sort((a, b) -> Double.compare(
                 b.path("relevance_score").asDouble(), a.path("relevance_score").asDouble()));
 
         final ArrayNode results = OBJECT_MAPPER.createArrayNode();
-        final int limit = topN > 0 ? Math.min(topN, entries.size()) : entries.size();
+        final int limit = limit(topN, entries.size());
         for (int i = 0; i < limit; i++) {
             results.add(entries.get(i));
         }
@@ -177,6 +198,8 @@ final class OaiRerankSupport {
         if (!model.isEmpty()) {
             root.put("model", model);
         }
+        // upstream's usage: every token evaluated for a document is a prompt token
+        root.putObject("usage").put("prompt_tokens", promptTokens).put("total_tokens", promptTokens);
         root.set("results", results);
         root.set("data", results.deepCopy()); // alias for Continue (#6478), independent copy
         return root.toString();

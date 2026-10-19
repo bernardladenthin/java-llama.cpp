@@ -5,6 +5,7 @@
 package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -71,6 +72,41 @@ public class OaiRerankSupportTest {
     public void readTopNReturnsValueOrNegativeOne() throws IOException {
         assertThat(OaiRerankSupport.readTopN(read("{\"top_n\":3}")), is(3));
         assertThat(OaiRerankSupport.readTopN(read("{}")), is(-1));
+        assertThat(OaiRerankSupport.readTopN(read("{\"top_n\":0}")), is(0));
+    }
+
+    @Test
+    public void negativeTopNIsAnInvalidRequest() throws IOException {
+        // Upstream resizes its result vector to min(top_n, n), which for a negative top_n is a huge
+        // size_t: the request fails inside the server rather than as the caller's fault.
+        JsonNode request = read("{\"top_n\":-1}");
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readTopN(request));
+        assertThat(e.getMessage(), containsString("top_n"));
+    }
+
+    @Test
+    public void topNZeroReturnsNoResultsLikeUpstream() throws IOException {
+        // format_response_rerank keeps min(top_n, n) entries, so 0 keeps none; ours kept all.
+        String nativeJson = "[{\"index\":0,\"score\":0.2},{\"index\":1,\"score\":0.9}]";
+        assertThat(
+                read(OaiRerankSupport.toOaiResponse(nativeJson, "", 0))
+                        .path("results")
+                        .size(),
+                is(0));
+        assertThat(read(OaiRerankSupport.toTeiResponse(nativeJson, 0, false)).size(), is(0));
+    }
+
+    @Test
+    public void toOaiResponseCarriesTheUsageOfTheEvaluatedTokens() throws IOException {
+        // Upstream's answer always has usage, prompt_tokens and total_tokens both the sum of the
+        // tokens evaluated per document; ours had none.
+        String nativeJson = "[{\"index\":0,\"score\":0.2,\"tokens_evaluated\":5},"
+                + "{\"index\":1,\"score\":0.9,\"tokens_evaluated\":7}]";
+        JsonNode usage =
+                read(OaiRerankSupport.toOaiResponse(nativeJson, "", -1)).path("usage");
+        assertThat(usage.path("prompt_tokens").asInt(-1), is(12));
+        assertThat(usage.path("total_tokens").asInt(-1), is(12));
     }
 
     @Test
