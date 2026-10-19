@@ -38,7 +38,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F54](#f54) — niedrig — *gefixt*
 - [F55](#f55) — niedrig — *gefixt*
 - [F56](#f56) — niedrig — *gefixt*
-- [F57](#f57) — niedrig — *nur beschrieben* (Entscheidung des Nutzers)
+- [F57](#f57) — niedrig — *gefixt*
 - [F59](#f59) — niedrig — *nur beschrieben* (CI-Bedarf: JDK 22+)
 - [F60](#f60) — niedrig — *gefixt*
 - [F61](#f61) — niedrig — *gefixt*
@@ -385,11 +385,12 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/value/ServerMetrics.java:203` (`getCumulativeUsage`)
 - **Schwere:** niedrig
 - **Beschreibung:** `Usage.getPromptTokens()` ist dokumentiert als „logical prompt token count, including cached tokens“, `getCachedTokens()` als dessen gecachte Teilmenge. `getCumulativeUsage()` füllt `promptTokens` aber mit `n_prompt_tokens_processed_total` (nur ausgewertete Tokens, ohne Cache-Treffer) und `cachedTokens` mit 0. Die Javadoc der Methode sagt das zwar, begründet es aber mit „upstream does not currently expose a cumulative logical or cached prompt total“ – das stimmt nicht mehr: `n_prompt_tokens_cached_total` kommt seit der `getMetrics()`-Zusammenführung mit und hat einen eigenen Getter (`getCumulativeCachedPromptTokens`). Ein Aufrufer, der `Usage` wie bei einer Chat-Antwort liest (`getPromptTokens()` gesamt, `getProcessedPromptTokens()` ausgewertet), bekommt hier zu kleine Gesamtzahlen.
-- **Fix (Vorschlag, nicht umgesetzt):** `new Usage(processed + cached, predicted, cached)`; dann stimmen `getPromptTokens()`, `getCachedTokens()` und `getProcessedPromptTokens()` mit dem `Usage`-Vertrag überein. Das ändert dokumentiertes Verhalten (und `ServerMetricsTest`), daher Entscheidung des Nutzers. `getWindowUsage()` ist nicht betroffen: für das Fenster sendet upstream keinen Cache-Zähler.
-- **Reproduktion:** ein Test mit `n_prompt_tokens_processed_total=10`, `n_prompt_tokens_cached_total=4` erwartet `getPromptTokens()==14` und `getCachedTokens()==4` – heute 10 und 0. Nicht geschrieben, solange die Richtung offen ist.
-- **Rot-Grün-Nachweis:** keiner (kein Fix ohne Entscheidung).
-- **Status:** nur beschrieben
-- **Commit:** —
+- **Historie:** Die Begründung „upstream does not currently expose a cumulative logical or cached prompt total“ steht in der erreichbaren Historie schon vor #494 (2026-10-09, flacher Klon, älter nicht sichtbar); `getCumulativeCachedPromptTokens()` und die Weitergabe von `n_prompt_tokens_cached_total` kamen mit `1eef547` (Bump auf b11538, 2026-10-09) – seitdem ist die Begründung überholt, `getCumulativeUsage()` wurde aber nicht nachgezogen. Bei b11639 nachgeprüft: upstream zählt in `prompt` nur ausgewertete Tokens und die Cache-Treffer getrennt (`server-common.h`, „cached ones are counted separately below“).
+- **Fix:** Entscheidung des Nutzers: `new Usage(processed + cached, predicted, cached)`; Javadoc korrigiert, `getWindowUsage()` dokumentiert, warum dort kein Cache-Anteil steht (upstream führt für das Fenster keinen). CHANGELOG unter „Fixed“ mit dem Hinweis für Aufrufer, die `getPromptTokens()` als „ausgewertet“ gelesen haben.
+- **Tests:** `ServerMetricsTest#cumulativeUsage` (schrieb das alte Verhalten fest, jetzt 800/700/100/1000 aus 100 ausgewerteten + 700 gecachten) und neu `#cumulativeUsage_readsLikeTheUsageOfAChatResponse` (10 + 4 → `new Usage(14, 3, 4)`).
+- **Rot-Grün-Nachweis:** ohne Fix rot (2 von 23), mit Fix grün (23 von 23).
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 <a id="f59"></a>
 ### F59 – java-llama.cpp: `FfmNativeServer.isRunning()` kann nach einem parallelen `close()` freigegebenen Speicher lesen

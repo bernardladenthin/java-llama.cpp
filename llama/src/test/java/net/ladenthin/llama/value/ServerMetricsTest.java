@@ -63,11 +63,24 @@ public class ServerMetricsTest {
     public void cumulativeUsage() throws Exception {
         ServerMetrics m = parse(SAMPLE);
         Usage u = m.getCumulativeUsage();
-        assertEquals(100L, u.getPromptTokens());
+        // Usage's contract: prompt tokens include the cached ones (100 evaluated + 700 from the cache),
+        // the cached ones are their subset, and the evaluated ones are the difference.
+        assertEquals(800L, u.getPromptTokens());
+        assertEquals(700L, u.getCachedTokens());
+        assertEquals(100L, u.getProcessedPromptTokens());
         assertEquals(200L, u.getCompletionTokens());
-        assertEquals(300L, u.getTotalTokens());
+        assertEquals(1000L, u.getTotalTokens());
         assertEquals(100L, m.getCumulativeProcessedPromptTokens());
         assertEquals(200L, m.getCumulativeGeneratedTokens());
+    }
+
+    @Test
+    public void cumulativeUsage_readsLikeTheUsageOfAChatResponse() throws Exception {
+        // The same counts as a response's usage block (prompt_tokens includes
+        // prompt_tokens_details.cached_tokens) must give the same Usage.
+        ServerMetrics m = parse("{\"n_prompt_tokens_processed_total\":10,"
+                + "\"n_prompt_tokens_cached_total\":4,\"n_tokens_predicted_total\":3}");
+        assertEquals(new Usage(14L, 3L, 4L), m.getCumulativeUsage());
     }
 
     @Test

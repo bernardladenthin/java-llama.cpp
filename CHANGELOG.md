@@ -633,6 +633,16 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **`ServerMetrics.getCumulativeUsage()` counts the cached prompt tokens.** It returned
+  `Usage(processed, predicted)`, so `getPromptTokens()` was the evaluated tokens only and
+  `getCachedTokens()` always `0`, against `Usage`'s own contract (prompt tokens include the cached
+  ones, which are their subset). The method's Javadoc gave the reason "upstream exposes no cumulative
+  cached total", which stopped being true when `getMetrics()` started carrying
+  `n_prompt_tokens_cached_total`. Now `getPromptTokens()` is evaluated + cached,
+  `getCachedTokens()` the cached ones and `getProcessedPromptTokens()` the evaluated ones -- read the
+  same way as the `usage` of a response. A caller who read `getPromptTokens()` as "evaluated" reads
+  `getProcessedPromptTokens()` or `getCumulativeProcessedPromptTokens()` now. `getWindowUsage()` is
+  unchanged: upstream keeps no cache count for the window.
 - **The GitHub `snapshot` pre-release and the versioned releases carry what Maven Central carries,
   and the `snapshot` release no longer accumulates.** The collect steps copied `*.jar` / `*.jar.asc`
   and the bare AARs, so every `.pom` with its `.pom.asc` was missing, `llama-platform` (a pom-only

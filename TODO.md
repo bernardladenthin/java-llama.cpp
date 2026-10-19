@@ -515,9 +515,6 @@ delete an item here when it is done.
 
 **Waiting for the owner's decision** (findings with a proposed fix):
 
-- **F57** `ServerMetrics.getCumulativeUsage()` returns a `Usage` that breaks `Usage`'s own contract.
-  Proposal: `new Usage(processed + cached, predicted, cached)`; changes documented behaviour and
-  `ServerMetricsTest`.
 - **F67** confirmed (J9; the measurement brief J1–J9 and its results are `BUGHUNT-MEASUREMENTS.md` in
   commit `b689d7b`, removed since): after `setLoraAdapter(0, 0f)` a slot keeps computing on the prompt cache
   built under scale 1 and answers neither like the adapter nor like the base model; only `eraseSlot(0)`
