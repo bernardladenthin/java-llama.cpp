@@ -31,6 +31,8 @@ Die Messabschnitte selbst stehen unverändert so da, wie sie gemessen wurden; wa
 wurde, steht jeweils in einem eigenen Unterabschnitt „ist behoben". Nicht angefasst sind die
 Nebenbeobachtungen aus M7 und der eingebettete Weg aus B2 — bei beiden ist begründet, warum.
 
+Die vier Befunde stehen mit ihren globalen Fund-IDs in [`BUGHUNT-FOUND.md`](BUGHUNT-FOUND.md): **F187** (B1), **F188** (B4), **F189** (B2) und **F190** (B3).
+
 **Gemeinsame Vorbereitung**
 
 ```bash
@@ -411,7 +413,7 @@ streamed chunks=8 ids=[chatcmpl-EWLKYE2i6pFSMWGhlXs5JukSRzbxDHjk] models=[my-mod
 
 **(b) ohne `--model-id` — hier weicht der Lauf ab, und das ist ein Befund.**
 
-**Befund B2: ohne `--model-id` benennen `/v1/models` und die Antworten dasselbe Modell verschieden.**
+**Befund B2 (Fundbuch: F189): ohne `--model-id` benennen `/v1/models` und die Antworten dasselbe Modell verschieden.**
 
 ```
 GET /v1/models  {"object":"list","data":[{"id":"AMD-Llama-135m-code.Q2_K.gguf", … }]}
@@ -452,7 +454,7 @@ nur die CLI `setAlias` aufruft. Über die eingebettete API ist das Feld also gar
 `/v1/models`, nicht für das `model`-Feld der Antworten, sodass die im Code ausgesprochene Zusage
 „keeps them equal to /v1/models" ohne das Flag nicht galt.
 
-### B2 ist behoben (auf Weisung, nach der Messung)
+### B2 (F189) ist behoben (auf Weisung, nach der Messung)
 
 **Warum der Pfad überhaupt erschien, nachgelesen statt vermutet.** Upstreams Kette für den Modellnamen
 (`tools/server/server-context.cpp`) ist Alias → `common_params_model::get_name()` → Dateiname, und
@@ -524,7 +526,7 @@ Adaptern die nächste gleich B. Mit der Voreinstellung kann der Host-Speicher-Ca
 
 **Ergebnis:** Zuerst ein Befund, der den Ablauf änderte, dann die Messung selbst.
 
-**Befund B1: `ModelParameters.addLoraScaledAdapter` ist gegen den Pin unbrauchbar.** Der erste
+**Befund B1 (Fundbuch: F187): `ModelParameters.addLoraScaledAdapter` ist gegen den Pin unbrauchbar.** Der erste
 Versuch, Referenz B über `addLoraScaledAdapter(ADAPTER, 1.0f)` zu laden, scheiterte:
 
 ```
@@ -631,9 +633,9 @@ Offen blieb damit nicht Patch 0021, sondern Befund **B1**: der skalierte Adapter
 `ModelParameters` lud am Pin überhaupt kein Modell, und der einzige Test darüber schrieb das falsche
 Format fest. Die Messung musste deshalb auf `--lora` ausweichen.
 
-### B1 ist behoben (auf Weisung, nach der Messung)
+### B1 (F187) und B4 (F188) sind behoben (auf Weisung, nach der Messung)
 
-Beim Fixen kam ein weiterer Fehler derselben Familie mit heraus, **B4**: `putString` ist
+Beim Fixen kam ein weiterer Fehler derselben Familie mit heraus, **B4** (Fundbuch: F188): `putString` ist
 `map.put(option, value)` auf einer `LinkedHashMap`, also **überschreibt** ein zweiter
 `addLoraAdapter` / `addLoraScaledAdapter` / `addControlVector` / `addControlVectorScaled` den ersten —
 während alle vier im Javadoc „can be repeated to use multiple adapters" versprechen. Upstream liest
@@ -784,7 +786,7 @@ mit vorhandenen Modellen fährt.
 
 **Der `Failures: 1` ist ein Befund.**
 
-**Befund B3: `AgentSessionTest.aLoopRunsItsStepsThroughTheFrontEndUntilTheMarker` ist auf Windows
+**Befund B3 (Fundbuch: F190): `AgentSessionTest.aLoopRunsItsStepsThroughTheFrontEndUntilTheMarker` ist auf Windows
 deterministisch rot.** Drei Läufe, drei Mal dieselbe Zeile:
 
 ```
@@ -844,7 +846,7 @@ schuld** — `TaskLoop.isComplete` ist für beide Zeilenenden `true`.
 Es ist Testcode, kann also nichts an Nutzer ausliefern; die Wirkung ist, dass das Agentenmodul auf
 Windows nicht grün baut. Gesehen wurde es nie, weil die drei Agenten-Jobs nur auf Linux laufen.
 
-**B3 ist auf Weisung in diesem Lauf behoben** — eine Ausnahme von der Regel „nur messen", ausdrücklich
+**B3 (F190) ist auf Weisung in diesem Lauf behoben** — eine Ausnahme von der Regel „nur messen", ausdrücklich
 beauftragt. Zwei Dinge dabei, die beim Messen auffielen:
 
 **Die Lücke war viel größer als das fehlende `\r`.** Beide `quote`-Fassungen in einem

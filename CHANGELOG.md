@@ -633,6 +633,27 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **A scaled LoRA adapter or control vector loads at all.** `ModelParameters.addLoraScaledAdapter` and
+  `addControlVectorScaled` rendered their value as `FNAME,SCALE`, while llama.cpp has read these options
+  as `FNAME:SCALE,...` since b7448 (#18056): the comma is the list separator, the colon the field
+  separator. Every value they emitted was rejected by the argv parser (`invalid stof argument`), so the
+  model did not load and the caller saw only `Failed to parse model parameters`. They now render
+  `FNAME:SCALE`. One upstream limit comes with it and is refused loudly rather than silently: the parser
+  splits each item on *every* colon and demands exactly two parts, so an absolute Windows path cannot be
+  expressed — `addLoraScaledAdapter` throws `IllegalArgumentException` naming the cause and the two ways
+  out (a relative path, or `addLoraAdapter` plus `LlamaModel.setLoraAdapter` after the load).
+- **The repeatable adapter options accumulate instead of replacing.** `addLoraAdapter`,
+  `addLoraScaledAdapter`, `addControlVector` and `addControlVectorScaled` all say "can be repeated" and
+  all four silently dropped everything but the last call, because the parameter set is keyed by the wire
+  string. They now append to one comma-separated value, as llama.cpp reads these options, and a value
+  carrying a comma or a quote is written as a quoted CSV field.
+- **`/v1/models` and the answers name the model the same without `--model-id` too.** The id was passed on
+  as llama.cpp's `--alias` only when the flag was given; without it `/v1/models` reported the model's file
+  name while every answer and stream chunk reported the full model path, because upstream's fallback for
+  the model name resolves to the path for a local file. `OpenAiCompatServer` now always sets the alias
+  from the advertised id, so the two agree and no local path reaches an answer. An embedding caller that
+  loads its own `LlamaModel` still has to set `ModelParameters.setAlias(…)` itself — the server cannot,
+  the model is already loaded; `OpenAiServerConfig.getModelId()` says so.
 - **A streamed `/v1/completions` is upstream's stream.** `OpenAiCompatServer` built the chunks of a
   streamed completion itself from the Java generator: no `usage` on the last chunk, no probabilities
   (since F180 refused with a pointer to `stream: false`), and a prompt given as a token array refused
