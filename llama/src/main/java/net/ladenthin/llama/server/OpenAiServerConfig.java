@@ -56,6 +56,7 @@ public final class OpenAiServerConfig {
     private final boolean supportsVision;
     private final int maxRequestBodyBytes;
     private final String modelFtype;
+    private final int totalSlots;
 
     private OpenAiServerConfig(Builder builder) {
         this.host = builder.host;
@@ -69,6 +70,7 @@ public final class OpenAiServerConfig {
         this.supportsVision = builder.supportsVision;
         this.maxRequestBodyBytes = builder.maxRequestBodyBytes;
         this.modelFtype = builder.modelFtype;
+        this.totalSlots = builder.totalSlots;
     }
 
     /**
@@ -183,6 +185,16 @@ public final class OpenAiServerConfig {
     }
 
     /**
+     * The number of inference slots of the served model, advertised in {@code GET /props}
+     * ({@code total_slots}) as upstream's server does ({@code n_parallel}).
+     *
+     * @return the slot count, at least {@code 1}
+     */
+    public int getTotalSlots() {
+        return totalSlots;
+    }
+
+    /**
      * Whether bearer-token authentication is enabled (an API key is configured).
      *
      * @return {@code true} if requests must present a matching bearer token
@@ -231,6 +243,7 @@ public final class OpenAiServerConfig {
         private boolean supportsVision;
         private int maxRequestBodyBytes = DEFAULT_MAX_REQUEST_BODY_BYTES;
         private String modelFtype = "";
+        private int totalSlots = 1;
 
         private Builder() {}
 
@@ -348,6 +361,21 @@ public final class OpenAiServerConfig {
          */
         public Builder modelFtype(@Nullable String modelFtype) {
             this.modelFtype = modelFtype == null ? "" : modelFtype;
+            return this;
+        }
+
+        /**
+         * Sets the number of inference slots of the served model, advertised in {@code GET /props}.
+         *
+         * @param totalSlots the slot count, at least {@code 1}
+         * @return this builder
+         * @throws IllegalArgumentException if {@code totalSlots} is less than {@code 1}
+         */
+        public Builder totalSlots(int totalSlots) {
+            if (totalSlots < 1) {
+                throw new IllegalArgumentException("totalSlots must be at least 1 but was " + totalSlots);
+            }
+            this.totalSlots = totalSlots;
             return this;
         }
 

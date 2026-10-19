@@ -739,12 +739,30 @@ public final class OpenAiServerCli {
          * @return the server configuration
          */
         public OpenAiServerConfig toServerConfig(boolean supportsVision, String modelFtype, int slotContextSize) {
+            return toServerConfig(supportsVision, modelFtype, slotContextSize, 0);
+        }
+
+        /**
+         * Build the server configuration with the context window and the slot count the loaded model
+         * really has. The slot count is advertised in {@code GET /props} ({@code total_slots}, upstream's
+         * {@code n_parallel}); without it {@code --parallel} decides, and without that {@code 1}.
+         *
+         * @param supportsVision whether the loaded model reports usable vision input
+         * @param modelFtype the model's file-type (quantization) label, or {@code ""} if unknown
+         * @param slotContextSize the context size of one slot of the loaded model ({@code n_ctx} of
+         *     its slot metrics), or {@code 0} if unknown
+         * @param totalSlots the number of slots of the loaded model, or {@code 0} if unknown
+         * @return the server configuration
+         */
+        public OpenAiServerConfig toServerConfig(
+                boolean supportsVision, String modelFtype, int slotContextSize, int totalSlots) {
             final OpenAiServerConfig.Builder builder = OpenAiServerConfig.builder()
                     .host(host)
                     .port(port)
                     .modelId(getModelId())
                     .supportsVision(supportsVision)
-                    .modelFtype(modelFtype);
+                    .modelFtype(modelFtype)
+                    .totalSlots(totalSlots > 0 ? totalSlots : Math.max(1, parallel));
             if (apiKey != null) {
                 builder.apiKey(apiKey);
             }

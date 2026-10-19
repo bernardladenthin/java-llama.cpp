@@ -315,6 +315,27 @@ public class OpenAiServerCliTest {
     }
 
     @Test
+    public void slotCountOfTheLoadedModelIsAdvertised() {
+        // Without --parallel llama.cpp picks the slot count itself, so the loaded model is the only
+        // source; /props reported a constant 1.
+        assertThat(
+                OpenAiServerCli.parse("-m", "m.gguf")
+                        .toServerConfig(false, "", 0, 4)
+                        .getTotalSlots(),
+                is(4));
+    }
+
+    @Test
+    public void unknownSlotCountFallsBackToTheParallelArgumentAndThenToOne() {
+        assertThat(
+                OpenAiServerCli.parse("-m", "m.gguf", "--parallel", "3")
+                        .toServerConfig()
+                        .getTotalSlots(),
+                is(3));
+        assertThat(OpenAiServerCli.parse("-m", "m.gguf").toServerConfig().getTotalSlots(), is(1));
+    }
+
+    @Test
     public void unknownSlotContextFallsBackToTheContextSizeArgument() {
         OpenAiServerConfig config =
                 OpenAiServerCli.parse("-m", "m.gguf", "-c", "8192").toServerConfig(false, "", 0);

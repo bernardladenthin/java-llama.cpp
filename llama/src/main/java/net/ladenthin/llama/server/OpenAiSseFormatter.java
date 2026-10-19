@@ -197,14 +197,15 @@ final class OpenAiSseFormatter {
      * @param modelId the served model id
      * @param nCtx the advertised context length
      * @param vision whether image input is supported
+     * @param totalSlots the number of inference slots ({@code total_slots}, upstream's {@code n_parallel})
      * @return the props object serialized as JSON
      */
-    static String propsJson(String modelId, int nCtx, boolean vision) {
+    static String propsJson(String modelId, int nCtx, boolean vision, int totalSlots) {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
         ObjectNode defaults = root.putObject("default_generation_settings");
         defaults.put("n_ctx", nCtx);
         defaults.put("model", modelId);
-        root.put("total_slots", 1);
+        root.put("total_slots", totalSlots);
         root.put("model_alias", modelId);
         root.put("chat_template", "");
         ObjectNode modalities = root.putObject("modalities");

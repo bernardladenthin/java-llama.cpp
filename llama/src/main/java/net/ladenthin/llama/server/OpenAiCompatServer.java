@@ -885,7 +885,8 @@ public final class OpenAiCompatServer implements AutoCloseable {
             sendJson(
                     exchange,
                     HTTP_OK,
-                    OpenAiSseFormatter.propsJson(config.getModelId(), contextLength, config.isSupportsVision()));
+                    OpenAiSseFormatter.propsJson(
+                            config.getModelId(), contextLength, config.isSupportsVision(), config.getTotalSlots()));
         } finally {
             exchange.close();
         }
@@ -1144,8 +1145,9 @@ public final class OpenAiCompatServer implements AutoCloseable {
                         "jllama-openai-shutdown"));
 
         try (LlamaModel model = new LlamaModel(options.toModelParameters())) {
-            OpenAiServerConfig config =
-                    options.toServerConfig(model.supportsVision(), model.getModelFtype(), slotContextSize(model));
+            final List<SlotMetrics> slots = model.getMetricsTyped().getSlotMetrics();
+            OpenAiServerConfig config = options.toServerConfig(
+                    model.supportsVision(), model.getModelFtype(), slotContextSize(slots), slots.size());
             try (OpenAiCompatServer server = new OpenAiCompatServer(model, config)) {
                 server.start();
                 printReady(config, server.getPort());
@@ -1163,11 +1165,10 @@ public final class OpenAiCompatServer implements AutoCloseable {
     /**
      * The context window one slot of the loaded model has, for the advertised token budgets.
      *
-     * @param model the loaded model
+     * @param slots the slot metrics of the loaded model
      * @return {@code n_ctx} of the first slot, or {@code 0} if the model reports none
      */
-    private static int slotContextSize(LlamaModel model) {
-        final List<SlotMetrics> slots = model.getMetricsTyped().getSlotMetrics();
+    private static int slotContextSize(List<SlotMetrics> slots) {
         return slots.isEmpty() ? 0 : slots.get(0).getContextSize();
     }
 

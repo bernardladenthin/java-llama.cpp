@@ -95,4 +95,17 @@ public class OpenAiServerConfigTest {
                 IllegalArgumentException.class,
                 () -> OpenAiServerConfig.builder().heartbeatMillis(0L));
     }
+
+    @Test
+    public void totalSlotsDefaultsToOneAndKeepsTheConfiguredCount() {
+        assertThat(OpenAiServerConfig.builder().build().getTotalSlots(), is(1));
+        assertThat(OpenAiServerConfig.builder().totalSlots(4).build().getTotalSlots(), is(4));
+    }
+
+    @Test
+    public void totalSlotsBelowOneIsRejected() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> OpenAiServerConfig.builder().totalSlots(0));
+    }
 }

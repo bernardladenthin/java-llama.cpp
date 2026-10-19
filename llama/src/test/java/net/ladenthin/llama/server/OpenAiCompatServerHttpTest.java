@@ -343,6 +343,23 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     @Test
+    public void propsEndpointReportsTheSlotCountOfTheConfiguration() throws IOException {
+        // total_slots was a constant 1; upstream's /props reports n_parallel, and a client that
+        // spreads its requests over the slots needs the real count.
+        OpenAiServerConfig cfg = OpenAiServerConfig.builder()
+                .host("127.0.0.1")
+                .port(0)
+                .modelId("test-model")
+                .totalSlots(4)
+                .build();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), cfg).start()) {
+            Response response = get(server.getPort(), "/props", "");
+            assertThat(response.code, is(200));
+            assertThat(response.body, containsString("\"total_slots\":4"));
+        }
+    }
+
+    @Test
     public void ollamaGenerateNonStreamingReturnsResponse() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
             String body = "{\"model\":\"test-model\",\"prompt\":\"once upon\",\"stream\":false}";

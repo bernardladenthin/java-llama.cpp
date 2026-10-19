@@ -142,7 +142,8 @@ public class OpenAiSseFormatterTest {
 
     @Test
     public void propsJsonReportsContextLengthAndModalities() throws IOException {
-        JsonNode root = MAPPER.readTree(OpenAiSseFormatter.propsJson("local", 8192, true));
+        JsonNode root = MAPPER.readTree(OpenAiSseFormatter.propsJson("local", 8192, true, 3));
+        assertThat(root.path("total_slots").asInt(), is(3));
         assertThat(root.path("default_generation_settings").path("n_ctx").asInt(), is(8192));
         assertThat(root.path("model_alias").asText(), is("local"));
         assertThat(root.path("modalities").path("vision").asBoolean(), is(true));
