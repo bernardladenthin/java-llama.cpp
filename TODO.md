@@ -524,7 +524,8 @@ delete an item here when it is done.
   `-2` with an `IllegalArgumentException` (model-free test possible), since the server stops every
   request after its first token with it.
 
-**CI runs** (the owner runs these together):
+**CI runs** (the owner runs these together). **The complete measurement brief for an agent, with
+commands, hypotheses and answer fields, is `BUGHUNT-MEASUREMENTS.md` (J1–J9).**
 
 - **F59** `FfmNativeServer.isRunning()` may read freed memory after a concurrent `close()`. Proposed
   fix: a private lock around `isRunning()` and `close()`, as in `NativeServer`; the red test needs the
