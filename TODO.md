@@ -520,9 +520,6 @@ delete an item here when it is done.
   built under scale 1 and answers neither like the adapter nor like the base model; only `eraseSlot(0)`
   restores a fresh model's behaviour. Proposal: clear the slots in `engine::set_lora_adapters` after a
   change.
-- **F69**: the server rejects `withNPredict(-2)` per request with `InvalidRequestException` ("Field
-  'n_predict': Value must be between -1 <= value <= 2147483647", J2a), so a Java-side check would only
-  move the same error earlier.
 
 **Open suspicions without a finding id** (each needs the owner's decision or a model to decide;
 numbered for reference, the numbers stay when an item is done):

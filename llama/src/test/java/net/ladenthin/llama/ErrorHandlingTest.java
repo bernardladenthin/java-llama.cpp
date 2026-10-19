@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import java.io.File;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
+import net.ladenthin.llama.parameters.InferenceParameters;
 import net.ladenthin.llama.parameters.ModelParameters;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -199,6 +200,24 @@ public class ErrorHandlingTest {
             // a missing required field is upstream's `"input_suffix" is required`, a 400
             assertTrue(e.getMessage().contains("input_suffix"), "Error should mention input_suffix");
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // n_predict per request (F69)
+    // -------------------------------------------------------------------------
+
+    @Test
+    public void testNPredictMinusTwoPerRequestIsAnInvalidRequest() {
+        // -2 ("until context filled") exists only for the completion tool's -n option. The server's
+        // request schema declares n_predict with the hard limits [-1, INT32_MAX] (server-schema.cpp,
+        // b11639), so a request with -2 is refused as the caller's fault, with the field named --
+        // what withNPredict's Javadoc promises.
+        InferenceParameters request =
+                InferenceParameters.empty().withPrompt("def f():").withNPredict(-2);
+
+        InvalidRequestException e = assertThrows(InvalidRequestException.class, () -> modelNoEmbed.complete(request));
+
+        assertTrue(e.getMessage().contains("n_predict"), "Error should name n_predict but was: " + e.getMessage());
     }
 
     // -------------------------------------------------------------------------
