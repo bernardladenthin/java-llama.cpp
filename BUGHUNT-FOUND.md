@@ -397,12 +397,12 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Datei:** `llama-ffm/src/main/java/net/ladenthin/llama/ffm/FfmNativeServer.java` (`isRunning`, `close`)
 - **Schwere:** niedrig
 - **Beschreibung:** `isRunning()` prüft `closed` und ruft dann `jllama_server_is_running(handle)`. `close()` setzt `closed` und ruft `jllama_server_stop`, das laut `jllama_api.h` den Handle freigibt. Läuft `close()` (etwa aus einem Shutdown-Hook) zwischen der Prüfung und dem nativen Aufruf eines anderen Threads, liest `jllama_server_is_running` einen freigegebenen `jllama_server` – undefiniertes Verhalten im nativen Code, schlimmstenfalls ein JVM-Absturz. Der JNI-Zwilling `server.NativeServer` hält genau deshalb `isRunning()` und `close()` unter einem gemeinsamen `lifecycleLock`; die FFM-Klasse dokumentiert keine Einschränkung. (`FfmLlamaModel` hat dasselbe Muster, schreibt aber ausdrücklich, dass `close()` keinen neuen Aufruf überholen darf – dort ein dokumentierter Vertrag, kein Fund.)
-- **Fix (Vorschlag, nicht umgesetzt):** ein privates Lock-Objekt um den Rumpf von `isRunning()` und `close()`, wie in `NativeServer`; `close()` blockiert ohnehin bis zum Ende des Workers.
-- **Reproduktion:** nicht geschrieben – braucht einen Fake hinter den Method-Handles oder eine echte Bibliothek mit JDK 22+.
-- **Rot-Grün-Nachweis:** keiner; in dieser Sandbox gibt es kein JDK 22+ (siehe Erkenntnisse).
-- **CI-Bedarf:** Test im Job `test-java-llama-ffm` (z. B. paketinterne Naht für die beiden Method-Handles, `isRunning` im Latch festhalten, `close()` parallel, Erwartung: `close()` wartet).
-- **Status:** nur beschrieben
-- **Commit:** —
+- **Messung (J7, `BUGHUNT-MEASUREMENTS.md`, JDK 25):** mit einer Naht rot – `close()` gab den Handle frei, während `isRunning()` noch im nativen Aufruf war; ohne Naht 862 Mio. Aufrufe in 30 Runden ohne sichtbaren Schaden (das Fenster ist schmal).
+- **Fix:** Entscheidung des Nutzers: das Lock aus `NativeServer`. `isRunning()` und `close()` laufen unter `lifecycleLock`, `closed` ist ein einfaches Feld unter diesem Lock. Die beiden nativen Aufrufe liegen hinter der paketinternen Naht `FfmNativeServer.Backend` (wie `NativeServer.Backend`), statt veränderlicher statischer Method-Handles.
+- **Tests:** `FfmNativeServerTest` (4, ohne Bibliothek): `close()` wartet auf ein `isRunning()` im nativen Aufruf und gibt erst danach frei; `isRunning()` nach `close()` fragt den Handle nicht ab; zweites `close()` ohne Wirkung; `isRunning()` fragt im offenen Zustand.
+- **Rot-Grün-Nachweis:** lokal mit JDK 25 (Temurin 25.0.1, Toolchain): ohne Lock (Naht beibehalten, `AtomicBoolean` wie vorher) rot (1 von 4, `close()` wartete nicht), mit Lock grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 <a id="f60"></a>
 ### F60 – java-llama.cpp: Textblöcke einer Anthropic-Nachricht werden ohne Trenner zusammengeklebt

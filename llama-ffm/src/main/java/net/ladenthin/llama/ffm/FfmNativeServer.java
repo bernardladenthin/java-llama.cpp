@@ -12,7 +12,6 @@ import static net.ladenthin.llama.ffm.JllamaNative.pointerSlot;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicBoolean;
 import net.ladenthin.llama.exception.LlamaException;
 
 /**
@@ -23,11 +22,65 @@ import net.ladenthin.llama.exception.LlamaException;
  */
 public final class FfmNativeServer implements AutoCloseable {
 
+    /** The two native calls on a running server's handle; a seam so the locking is testable without it. */
+    interface Backend {
+
+        /**
+         * Whether the worker behind {@code handle} still runs.
+         *
+         * @param handle the server handle
+         * @return {@code true} while it serves
+         */
+        boolean isRunning(MemorySegment handle);
+
+        /**
+         * Stops the worker, waits for it and frees {@code handle}.
+         *
+         * @param handle the server handle
+         */
+        void stop(MemorySegment handle);
+    }
+
+    /** The real calls into the library. */
+    private static final Backend NATIVE = new Backend() {
+        @Override
+        public boolean isRunning(MemorySegment handle) {
+            return (boolean) invoke(JllamaNative.SERVER_IS_RUNNING, handle);
+        }
+
+        @Override
+        public void stop(MemorySegment handle) {
+            JllamaNative.call(JllamaNative.SERVER_STOP, handle);
+        }
+    };
+
     private final MemorySegment handle;
-    private final AtomicBoolean closed = new AtomicBoolean();
+    private final Backend backend;
+
+    /**
+     * Serializes {@link #isRunning()} and {@link #close()} over {@link #handle}, as in
+     * {@code NativeServer}: the native stop frees the handle, so a query that is inside its native
+     * call when another thread closes would read freed memory (shown with this seam: {@code close()}
+     * returned while {@code isRunning()} was still inside the call).
+     */
+    private final Object lifecycleLock = new Object();
+
+    /** Set by {@link #close()} under {@link #lifecycleLock}. */
+    private boolean closed;
 
     private FfmNativeServer(MemorySegment handle) {
+        this(handle, NATIVE);
+    }
+
+    /**
+     * A server over {@code handle} that calls {@code backend}; for tests.
+     *
+     * @param handle the server handle
+     * @param backend the native calls
+     */
+    FfmNativeServer(MemorySegment handle, Backend backend) {
         this.handle = handle;
+        this.backend = backend;
     }
 
     /**
@@ -88,14 +141,22 @@ public final class FfmNativeServer implements AutoCloseable {
      * @return {@code true} while it serves
      */
     public boolean isRunning() {
-        return !closed.get() && (boolean) invoke(JllamaNative.SERVER_IS_RUNNING, handle);
+        synchronized (lifecycleLock) {
+            return !closed && backend.isRunning(handle);
+        }
     }
 
-    /** Signals shutdown, waits for the worker and releases the handle; a second call is a no-op. */
+    /**
+     * Signals shutdown, waits for the worker and releases the handle; a second call is a no-op. Waits
+     * for an {@link #isRunning()} call in progress, which must not query a handle being freed.
+     */
     @Override
     public void close() {
-        if (closed.compareAndSet(false, true)) {
-            JllamaNative.call(JllamaNative.SERVER_STOP, handle);
+        synchronized (lifecycleLock) {
+            if (!closed) {
+                closed = true;
+                backend.stop(handle);
+            }
         }
     }
 

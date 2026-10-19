@@ -524,10 +524,6 @@ delete an item here when it is done.
 **CI runs** (the owner runs these together). **The complete measurement brief for an agent, with
 commands, hypotheses and answer fields, is `BUGHUNT-MEASUREMENTS.md` (J1–J9).**
 
-- **F59** `FfmNativeServer.isRunning()` may read freed memory after a concurrent `close()`. Proposed
-  fix: a private lock around `isRunning()` and `close()`, as in `NativeServer`; the red test needs the
-  JDK 22+ job `test-java-llama-ffm` (no JDK 22 in the sandbox). Same job for the open suspicion on
-  `JllamaNative.takeStrings` below.
 - Model-backed confirmations of fixed findings, none a precondition: **F64** (upstream's 400 for an
   Ollama tool call without `type`, `OpenAiCompatServerIntegrationTest`), **F71** (fine-tuning text with
   an emoji, `LlamaTrainerIntegrationTest` with `stories260K.gguf`), **F77** (`reasoning_effort: "none"`
