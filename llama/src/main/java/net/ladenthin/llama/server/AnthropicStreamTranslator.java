@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import lombok.ToString;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Stateful translator that turns the OpenAI streaming chat chunks into the Anthropic Messages SSE event
@@ -35,6 +36,7 @@ final class AnthropicStreamTranslator {
     private int textBlockIndex = -1;
     private int nextIndex;
     private String finishReason = "stop";
+    private @Nullable String stopSequence;
     private long inputTokens;
     private long outputTokens;
     private long cachedTokens;
@@ -74,6 +76,10 @@ final class AnthropicStreamTranslator {
                         .asLong(0);
                 inputTokens = Math.max(0L, promptTokens - cachedTokens);
                 outputTokens = usage.path("completion_tokens").asLong(0);
+            }
+            String word = AnthropicApiSupport.stopSequenceOf(chunk);
+            if (word != null) {
+                stopSequence = word;
             }
             JsonNode choice = chunk.path("choices").path(0);
             // Reasoning streams as a thinking block, as in upstream's to_json_anthropic_stream.
@@ -130,7 +136,11 @@ final class AnthropicStreamTranslator {
             }
         }
         out.append(AnthropicApiSupport.messageDeltaEvent(
-                AnthropicApiSupport.anthropicStopReason(finishReason), inputTokens, outputTokens, cachedTokens));
+                AnthropicApiSupport.anthropicStopReason(finishReason),
+                stopSequence,
+                inputTokens,
+                outputTokens,
+                cachedTokens));
         out.append(AnthropicApiSupport.messageStopEvent());
         return out.toString();
     }

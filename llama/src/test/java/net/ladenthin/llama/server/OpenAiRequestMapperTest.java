@@ -72,6 +72,15 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void verboseIsForwarded() throws IOException {
+        // upstream's "verbose" adds __verbose to the answer, which carries the matched stop word (F183)
+        JsonNode chat = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"verbose\":true}");
+        assertThat(chat.path("verbose").asBoolean(false), is(true));
+        JsonNode without = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}");
+        assertThat(without.has("verbose"), is(false));
+    }
+
+    @Test
     public void moreThanOneChoiceIsRefusedBecauseOneAnswerComesBack() throws IOException {
         // Upstream reads "n" as n_cmpl; these paths return one answer, so n > 1 silently gave one.
         assertThrows(

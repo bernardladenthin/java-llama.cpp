@@ -184,6 +184,9 @@ enum RequestField {
     /** Request key {@code typical_p}. */
     TYPICAL_P("typical_p"),
 
+    /** Request key {@code verbose}. */
+    VERBOSE("verbose"),
+
     /** Request key {@code xtc_probability}. */
     XTC_PROBABILITY("xtc_probability"),
 

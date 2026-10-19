@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.TextNode;
 import java.io.IOException;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Pure translators between the Anthropic Messages API ({@code POST /v1/messages}) and the internal
@@ -119,6 +120,9 @@ final class AnthropicApiSupport {
         if (request.path("stop_sequences").isArray()) {
             openAi.set("stop", request.path("stop_sequences").deepCopy());
         }
+        // Upstream answers with the matched stop word as stop_sequence; the OpenAI answer this route
+        // translates from does not carry it, upstream's debug object does (__verbose.stopping_word).
+        openAi.put("verbose", true);
         // Passed through like upstream; the chat mapper hands it to the template.
         JsonNode templateKwargs = request.path("chat_template_kwargs");
         if (templateKwargs.isObject()) {
@@ -381,6 +385,7 @@ final class AnthropicApiSupport {
         root.put("model", model);
         ArrayNode content = root.putArray("content");
         String stopReason = "end_turn";
+        String stopSequence = null;
         ObjectNode usage = root.putObject("usage");
         usage.put("input_tokens", 0);
         usage.put("output_tokens", 0);
@@ -421,11 +426,16 @@ final class AnthropicApiSupport {
                 usage.put("cache_read_input_tokens", cachedTokens);
                 usage.put("output_tokens", openAiUsage.path("completion_tokens").asLong(0));
             }
+            stopSequence = stopSequenceOf(completion);
         } catch (IOException e) {
             stopReason = "end_turn";
         }
         root.put("stop_reason", stopReason);
-        root.putNull("stop_sequence");
+        if (stopSequence != null) {
+            root.put("stop_sequence", stopSequence);
+        } else {
+            root.putNull("stop_sequence");
+        }
         return root.toString();
     }
 
@@ -457,6 +467,19 @@ final class AnthropicApiSupport {
             }
         }
         return OBJECT_MAPPER.createObjectNode();
+    }
+
+    /**
+     * The stop word that ended the answer, as upstream reports it in {@code stop_sequence}: read from the
+     * {@code __verbose} object the translated request asks for, {@code null} when generation ended
+     * otherwise or the object is absent.
+     *
+     * @param openAiAnswer an OpenAI chat answer or stream chunk
+     * @return the matched stop word, or {@code null}
+     */
+    static @Nullable String stopSequenceOf(JsonNode openAiAnswer) {
+        String word = openAiAnswer.path("__verbose").path("stopping_word").asText("");
+        return word.isEmpty() ? null : word;
     }
 
     /** Map an OpenAI finish_reason to an Anthropic stop_reason. */
@@ -596,16 +619,21 @@ final class AnthropicApiSupport {
 
     /** {@code message_delta} event carrying the final stop reason. */
     static String messageDeltaEvent(String stopReason) {
-        return messageDeltaEvent(stopReason, 0, 0, 0);
+        return messageDeltaEvent(stopReason, null, 0, 0, 0);
     }
 
     /** Final message delta carrying token usage collected from the trailing OpenAI usage chunk. */
-    static String messageDeltaEvent(String stopReason, long inputTokens, long outputTokens, long cachedTokens) {
+    static String messageDeltaEvent(
+            String stopReason, @Nullable String stopSequence, long inputTokens, long outputTokens, long cachedTokens) {
         ObjectNode data = OBJECT_MAPPER.createObjectNode();
         data.put("type", "message_delta");
         ObjectNode delta = data.putObject("delta");
         delta.put("stop_reason", stopReason);
-        delta.putNull("stop_sequence");
+        if (stopSequence != null) {
+            delta.put("stop_sequence", stopSequence);
+        } else {
+            delta.putNull("stop_sequence");
+        }
         ObjectNode usage = data.putObject("usage");
         usage.put("input_tokens", inputTokens);
         usage.put("output_tokens", outputTokens);

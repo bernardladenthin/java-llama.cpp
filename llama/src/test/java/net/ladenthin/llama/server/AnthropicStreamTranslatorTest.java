@@ -36,6 +36,27 @@ public class AnthropicStreamTranslatorTest {
     }
 
     @Test
+    public void theMatchedStopWordIsTheStopSequenceOfTheMessageDelta() {
+        // upstream puts __verbose on the first chunk of the final result (F183)
+        AnthropicStreamTranslator translator = new AnthropicStreamTranslator("msg_1", "m");
+        translator.onChunk("{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}");
+        String last = translator.onChunk("{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],"
+                + "\"__verbose\":{\"stopping_word\":\"END\"}}");
+        assertThat(last.contains("__verbose"), is(false));
+        String end = translator.end();
+        assertThat(end, containsString("\"stop_reason\":\"end_turn\""));
+        assertThat(end, containsString("\"stop_sequence\":\"END\""));
+    }
+
+    @Test
+    public void withoutAStopWordTheStopSequenceIsNull() {
+        AnthropicStreamTranslator translator = new AnthropicStreamTranslator("msg_1", "m");
+        translator.onChunk("{\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}],"
+                + "\"__verbose\":{\"stopping_word\":\"\"}}");
+        assertThat(translator.end(), containsString("\"stop_sequence\":null"));
+    }
+
+    @Test
     public void endClosesTextBlockAndEmitsStopReasonAndMessageStop() {
         AnthropicStreamTranslator translator = new AnthropicStreamTranslator("msg_1", "m");
         translator.onChunk("{\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}");

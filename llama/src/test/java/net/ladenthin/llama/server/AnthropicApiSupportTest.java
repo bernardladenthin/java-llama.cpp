@@ -259,6 +259,40 @@ public class AnthropicApiSupportTest {
         assertThat(openAi.path("stop").get(0).asText(), is("X"));
     }
 
+    // Upstream reports the matched stop word as stop_sequence (stop_reason stays end_turn). The OpenAI
+    // answer the route translates from does not carry it, so the translation asks for upstream's
+    // "verbose" answer, whose __verbose.stopping_word does (F183).
+
+    @Test
+    public void theTranslatedRequestAsksForTheStopWord() throws IOException {
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
+                read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stop_sequences\":[\"X\"]}"));
+        assertThat(openAi.path("verbose").asBoolean(false), is(true));
+    }
+
+    @Test
+    public void theMatchedStopWordIsTheStopSequence() throws IOException {
+        JsonNode response = read(AnthropicApiSupport.toAnthropicResponse(
+                "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"a\"},"
+                        + "\"finish_reason\":\"stop\"}],\"__verbose\":{\"stopping_word\":\"X\",\"prompt\":\"p\"}}",
+                "m"));
+        assertThat(response.path("stop_reason").asText(), is("end_turn"));
+        assertThat(response.path("stop_sequence").asText(), is("X"));
+        assertThat("the debug object stays inside", response.has("__verbose"), is(false));
+    }
+
+    @Test
+    public void noMatchedStopWordIsANullStopSequence() throws IOException {
+        JsonNode eos = read(AnthropicApiSupport.toAnthropicResponse(
+                "{\"choices\":[{\"message\":{\"content\":\"a\"},\"finish_reason\":\"stop\"}],"
+                        + "\"__verbose\":{\"stopping_word\":\"\"}}",
+                "m"));
+        assertThat(eos.path("stop_sequence").isNull(), is(true));
+        JsonNode plain = read(AnthropicApiSupport.toAnthropicResponse(
+                "{\"choices\":[{\"message\":{\"content\":\"a\"},\"finish_reason\":\"stop\"}]}", "m"));
+        assertThat(plain.path("stop_sequence").isNull(), is(true));
+    }
+
     @Test
     public void toolChoiceNoneForbidsToolCalls() throws IOException {
         // Anthropic's {"type":"none"} forbids tool use; left out, the request ran as "auto" and the model

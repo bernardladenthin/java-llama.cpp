@@ -890,6 +890,19 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
+     * Returns a new request asking for llama.cpp's debug object ({@code verbose}, default false). When
+     * true, the answer -- the last chunk of a stream -- carries a {@code __verbose} object with the
+     * native result: the formatted prompt, the generation settings, the stop type and the matched stop
+     * word ({@code stopping_word}), among others.
+     *
+     * @param verbose whether to include the {@code __verbose} object
+     * @return a new instance; this instance is unchanged
+     */
+    public InferenceParameters withVerbose(boolean verbose) {
+        return withScalar(RequestField.VERBOSE, verbose);
+    }
+
+    /**
      * Returns a new request toggling raw token-id output ({@code return_tokens}, default false).
      * When true, the response includes the generated token ids alongside the decoded text.
      *

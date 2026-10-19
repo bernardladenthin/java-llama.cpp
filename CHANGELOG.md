@@ -633,6 +633,12 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **`/v1/messages` reports the matched stop word as `stop_sequence`**, blocking and streamed, as
+  upstream does (`stop_reason` stays `end_turn`); it was always `null`. The OpenAI answer the route
+  translates from does not carry the word, so the translated request asks for llama.cpp's `verbose`
+  answer and reads `__verbose.stopping_word`, which never reaches the client. New
+  `InferenceParameters.withVerbose(boolean)` (`RequestField.VERBOSE`), and the OpenAI mapper forwards
+  a client's `verbose`.
 - **A streamed request that fails before its first chunk is answered with the error status.**
   `OpenAiCompatServer` sent `200` and the stream's headers before the engine ran, so a request
   llama.cpp refused at once arrived as `200` with an error event -- on all five streaming routes

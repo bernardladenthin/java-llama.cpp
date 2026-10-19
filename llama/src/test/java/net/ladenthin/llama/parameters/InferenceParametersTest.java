@@ -100,6 +100,7 @@ public class InferenceParametersTest {
         assertThat(
                 InferenceParameters.empty().withTimingsPerToken(true).parameters.get("timings_per_token"), is("true"));
         assertThat(InferenceParameters.empty().withReturnTokens(true).parameters.get("return_tokens"), is("true"));
+        assertThat(InferenceParameters.empty().withVerbose(true).parameters.get("verbose"), is("true"));
     }
 
     @Test

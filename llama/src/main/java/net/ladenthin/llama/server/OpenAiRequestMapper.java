@@ -161,6 +161,10 @@ final class OpenAiRequestMapper {
         if (nProbs.isInt()) {
             params = params.withNProbs(nProbs.asInt());
         }
+        JsonNode verbose = request.path("verbose");
+        if (verbose.isBoolean()) {
+            params = params.withVerbose(verbose.asBoolean());
+        }
         // Preserve llama.cpp extensions when advanced clients opt into them.
         JsonNode cachePrompt = request.path("cache_prompt");
         if (cachePrompt.isBoolean()) {
