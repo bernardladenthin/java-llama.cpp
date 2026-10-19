@@ -46,7 +46,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F63](#f63) — niedrig — *gefixt*
 - [F64](#f64) — mittel — *gefixt*
 - [F65](#f65) — niedrig — *gefixt*
-- [F67](#f67) — niedrig — *gefixt* (Dokumentation)
+- [F67](#f67) — niedrig — *gefixt* (Patch 0021)
 - [F68](#f68) — niedrig — *gefixt*
 - [F69](#f69) — niedrig — *gefixt* (Dokumentation)
 - [F70](#f70) — mittel — *gefixt*
@@ -489,8 +489,12 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** Entscheidung des Nutzers: Dokumentation korrigieren (ohne Test, Nutzerregel für Doku-Korrekturen). Javadoc von `LlamaModel.setLoraAdapters` und README sagen jetzt, dass die KV-Caches auf diesem Weg **nicht** geleert werden, und nennen `eraseSlot(id)` bzw. `withCachePrompt(false)`. Vor der Änderung am Quelltext von b11639 nachgeprüft: `SERVER_TASK_TYPE_SET_LORA` (`server-context.cpp:3077`) setzt nur `params_base.lora_adapters`, `launch_slot_with_task` (`:1868`) übernimmt sie im `else`-Zweig ohne `prompt.clear()`. Das Leeren in `engine::set_lora_adapters` (C++) bleibt als Möglichkeit, ist aber nicht beschlossen.
 - **Reproduktion:** keine lauffähige: es braucht ein Modell und einen dazu passenden LoRA-Adapter (nicht in `models.csv`), und in dieser Sandbox gibt es keine native Bibliothek und kein `gguf-py`. Ein Test würde denselben Prompt vor und nach `setLoraAdapter(0, 0f)` mit Greedy-Sampling schicken und mit einem frisch geladenen Modell ohne Adapter vergleichen.
 - **CI-Bedarf:** ein kleines Modell mit LoRA-Adapter im Modellsatz (oder ein zur Laufzeit erzeugtes Zufallsmodell samt Adapter, wie `test_c_api.cpp` es für das Modell macht) – nur, falls das Verhalten geändert werden soll.
-- **Status:** gefixt (Dokumentation)
+- **Status:** gefixt (zuerst Dokumentation, seit 2026-10-19 Patch 0021, siehe Nachtrag)
 - **Commit:** a977a1e
+- **Nachtrag 2026-10-19 (Verhalten geändert):** J9 hat F67 bestätigt (`b689d7b`: nach `setLoraAdapter(0, 0f)` lieferte der warme Slot „. He saw a picture of a bird …“ statt „ was a little girl …“ wie ein geleerter Slot). Entscheidung des Nutzers: upstream-fähiger Patch `0021` statt eines Leerens in `engine::set_lora_adapters`, weil upstreams eigene HTTP-Route `POST /lora-adapters` denselben Fehler hat. Der `else`-Zweig von `launch_slot_with_task` wendet jetzt dieselbe Regel an wie LoRA pro Anfrage (`lora_should_clear_cache`, aLoRA behält den Cache). Das deckt auch den zweiten Weg ab, den die Durchsicht fand: eine Anfrage mit eigenen Adaptern füllt den Cache, die nächste ohne läuft mit den Server-Adaptern darauf weiter. Nicht abgedeckt, in Javadoc/README genannt: der Host-RAM-Prompt-Cache (`--cache-ram`, standardmäßig an) speichert Slot-Zustände ohne ihre Adapter. Javadoc `setLoraAdapters`, README, CHANGELOG, CLAUDE.md (Patch- und Testtabelle), `docs/patches.md`. Upstream-master bewusst nicht geprüft (Entscheidung des Nutzers: zeigt sich beim nächsten Bump über den Drop-Check).
+- **Tests (Patch):** `src/test/cpp/test_lora_cache.cpp` (4): Zufallsmodell + Zufalls-LoRA auf K, V und FFN-Ausgang, ein Slot, `--cache-ram 0`, greedy; nach Skala 1→0, 0→1 und nach einer Anfrage mit eigenen Adaptern muss der warme Slot wie ein geleerter antworten; ein vierter Fall schließt das leere Bestehen aus (Adapter ändert die Antwort, Wiederholung nutzt den Cache). Das Modellschreiben liegt jetzt in `tiny_llama_gguf.hpp`, gemeinsam mit `test_c_api.cpp`.
+- **Rot-Grün-Nachweis (Patch):** ohne Patch rot (3 von 4; z. B. „mYmq5*mq“ statt „C+oM~kM~“), mit Patch grün (4 von 4, drei Läufe); ganze C++-Suite 633/633; alle 21 Patches wenden sich der Reihe nach sauber auf b11639 an; `check-patches.py` 0 Probleme.
+- **Commit (Patch):** (folgt)
 
 <a id="f68"></a>
 ### F68 – java-llama.cpp: `RouterClient.awaitModelLoaded` läuft bei einem schlafenden Modell in den Timeout

@@ -513,14 +513,6 @@ Everything the bug hunt left open, so nothing is lost when the session ends. The
 named in each item holds the analysis, the upstream references (b11639) and the reproduction;
 delete an item here when it is done.
 
-**Waiting for the owner's decision** (findings with a proposed fix):
-
-- **F67** confirmed (J9; the measurement brief J1–J9 and its results are `BUGHUNT-MEASUREMENTS.md` in
-  commit `b689d7b`, removed since): after `setLoraAdapter(0, 0f)` a slot keeps computing on the prompt cache
-  built under scale 1 and answers neither like the adapter nor like the base model; only `eraseSlot(0)`
-  restores a fresh model's behaviour. Proposal: clear the slots in `engine::set_lora_adapters` after a
-  change.
-
 **Open suspicions without a finding id** (each needs the owner's decision or a model to decide;
 numbered for reference, the numbers stay when an item is done):
 

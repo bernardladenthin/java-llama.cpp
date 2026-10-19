@@ -1075,11 +1075,13 @@ public class LlamaModel implements AutoCloseable {
      * {@code scales} get the given scale, <b>all other adapters are set to {@code 0}
      * (disabled)</b>. Ids not corresponding to a loaded adapter are ignored.
      *
-     * <p>The KV caches are <b>not</b> cleared on this path (upstream's {@code POST /lora-adapters}
-     * only replaces the scales). A later request whose prompt prefix is still cached in a slot
-     * reuses KV entries computed under the previous scales and silently mixes old and new adapter.
-     * After a change, clear the slots with {@link #eraseSlot(int)} or send such requests with
-     * {@code withCachePrompt(false)}.
+     * <p>A slot whose cache was computed under other scales clears it at its next request, so no
+     * answer mixes the old and the new adapters (the rule upstream applies to adapters named per
+     * request; upstream's {@code POST /lora-adapters} path itself does not, which
+     * {@code patches/0021} fixes). One cache does not record the adapters: the host-memory prompt
+     * cache ({@code --cache-ram}, on by default) can load a state saved under other scales into a
+     * slot; disable it with {@link ModelParameters#setCacheRamMib(int) setCacheRamMib(0)} where
+     * adapters change while that matters.
      *
      * @param scales adapter id (see {@link net.ladenthin.llama.value.LoraAdapter#getId()}) to
      *        new scale; an empty map disables every adapter

@@ -13,6 +13,7 @@
 // pinned here is the behaviour LlamaModel has.
 
 #include "jllama_api.h"
+#include "tiny_llama_gguf.hpp"
 
 #include "build-info.h"
 #include "ggml.h"
@@ -41,137 +42,7 @@ namespace {
 
 using nlohmann::json;
 
-constexpr int N_VOCAB = 256; // one GPT-2 byte token per byte
-constexpr int N_EMBD = 32;
-constexpr int N_HEAD = 4;
-constexpr int N_HEAD_KV = 4;
-constexpr int HEAD_DIM = 8;
-constexpr int N_FF = 64;
-constexpr int N_LAYER = 2;
-constexpr int N_CTX_TRAIN = 128;
-
-// The 256 printable code points GPT-2's byte-level BPE maps the bytes to, as UTF-8.
-std::vector<std::string> byte_tokens() {
-    std::vector<int> bs;
-    for (int b = '!'; b <= '~'; ++b)
-        bs.push_back(b);
-    for (int b = 0xA1; b <= 0xAC; ++b)
-        bs.push_back(b);
-    for (int b = 0xAE; b <= 0xFF; ++b)
-        bs.push_back(b);
-    std::vector<int> cs = bs;
-    int extra = 0;
-    for (int b = 0; b < 256; ++b) {
-        if (std::find(bs.begin(), bs.end(), b) == bs.end()) {
-            bs.push_back(b);
-            cs.push_back(256 + extra++);
-        }
-    }
-    std::vector<std::string> tokens(256);
-    for (size_t i = 0; i < bs.size(); ++i) {
-        const int cp = cs[i];
-        std::string s;
-        if (cp < 0x80) {
-            s += (char)cp;
-        } else {
-            s += (char)(0xC0 | (cp >> 6));
-            s += (char)(0x80 | (cp & 0x3F));
-        }
-        tokens[bs[i]] = s;
-    }
-    return tokens;
-}
-
-ggml_tensor *add_random_tensor(gguf_context *g, ggml_context *ctx, std::mt19937 &rng, const std::string &name,
-                               std::initializer_list<int64_t> ne, float scale) {
-    const std::vector<int64_t> d(ne);
-    ggml_tensor *t = d.size() == 1 ? ggml_new_tensor_1d(ctx, GGML_TYPE_F32, d[0])
-                                   : ggml_new_tensor_2d(ctx, GGML_TYPE_F32, d[0], d[1]);
-    std::normal_distribution<float> dist(0.0f, scale);
-    auto *data = (float *)t->data;
-    for (int64_t i = 0; i < ggml_nelements(t); ++i) {
-        data[i] = d.size() == 1 ? 1.0f : dist(rng); // norms are ones, weights small noise
-    }
-    ggml_set_name(t, name.c_str());
-    gguf_add_tensor(g, t);
-    return t;
-}
-
-// Keep the generated tokens printable ASCII (never BOS/EOS): the output rows of every other
-// byte are scaled to almost nothing, so greedy sampling over random logits lands on an ASCII
-// byte with overwhelming probability. That matters for the streaming test -- a byte >= 0x80 is
-// an incomplete UTF-8 sequence, which the server holds back instead of sending as a partial
-// result, and a random model that happens to emit only those streams no partial chunk at all.
-void confine_output_to_ascii(ggml_tensor *output) {
-    auto *data = (float *)output->data;
-    for (int64_t tok = 0; tok < output->ne[1]; ++tok) {
-        const bool printable = tok >= ' ' && tok < 0x7F && tok != '<' && tok != '>';
-        if (!printable) {
-            for (int64_t i = 0; i < output->ne[0]; ++i) {
-                data[tok * output->ne[0] + i] *= 1e-3f;
-            }
-        }
-    }
-}
-
-// A two-layer llama with random weights and the GPT-2 byte tokenizer: enough for the server to
-// load it, apply its fallback chat template and generate tokens.
-std::string write_tiny_llama_gguf() {
-    static std::atomic<int> counter{0};
-    static const unsigned run_id = std::random_device{}();
-    const std::string path = (std::filesystem::temp_directory_path() /
-                              ("jllama-c-api-" + std::to_string(run_id) + "-" + std::to_string(counter++) + ".gguf"))
-                                 .string();
-    std::mt19937 rng(42);
-    gguf_context *g = gguf_init_empty();
-    const std::string a = "llama";
-    gguf_set_val_str(g, "general.architecture", a.c_str());
-    gguf_set_val_u32(g, (a + ".context_length").c_str(), N_CTX_TRAIN);
-    gguf_set_val_u32(g, (a + ".embedding_length").c_str(), N_EMBD);
-    gguf_set_val_u32(g, (a + ".block_count").c_str(), N_LAYER);
-    gguf_set_val_u32(g, (a + ".feed_forward_length").c_str(), N_FF);
-    gguf_set_val_u32(g, (a + ".attention.head_count").c_str(), N_HEAD);
-    gguf_set_val_u32(g, (a + ".attention.head_count_kv").c_str(), N_HEAD_KV);
-    gguf_set_val_f32(g, (a + ".attention.layer_norm_rms_epsilon").c_str(), 1e-5f);
-    gguf_set_val_u32(g, (a + ".rope.dimension_count").c_str(), HEAD_DIM);
-
-    const std::vector<std::string> tokens = byte_tokens();
-    std::vector<const char *> token_ptrs;
-    for (const std::string &s : tokens) {
-        token_ptrs.push_back(s.c_str());
-    }
-    std::vector<int32_t> token_types(N_VOCAB, 1); // LLAMA_TOKEN_TYPE_NORMAL
-    const char *no_merges[] = {"Ġ Ġ"};
-    gguf_set_val_str(g, "tokenizer.ggml.model", "gpt2");
-    gguf_set_val_str(g, "tokenizer.ggml.pre", "default");
-    gguf_set_arr_str(g, "tokenizer.ggml.tokens", token_ptrs.data(), token_ptrs.size());
-    gguf_set_arr_data(g, "tokenizer.ggml.token_type", GGUF_TYPE_INT32, token_types.data(), token_types.size());
-    gguf_set_arr_str(g, "tokenizer.ggml.merges", no_merges, 1);
-    gguf_set_val_u32(g, "tokenizer.ggml.bos_token_id", '<');
-    gguf_set_val_u32(g, "tokenizer.ggml.eos_token_id", '>');
-
-    ggml_init_params ip = {16u * 1024 * 1024, nullptr, false};
-    ggml_context *ctx = ggml_init(ip);
-    add_random_tensor(g, ctx, rng, "token_embd.weight", {N_EMBD, N_VOCAB}, 0.1f);
-    add_random_tensor(g, ctx, rng, "output_norm.weight", {N_EMBD}, 1.0f);
-    confine_output_to_ascii(add_random_tensor(g, ctx, rng, "output.weight", {N_EMBD, N_VOCAB}, 0.1f));
-    for (int il = 0; il < N_LAYER; ++il) {
-        const std::string p = "blk." + std::to_string(il) + ".";
-        add_random_tensor(g, ctx, rng, p + "attn_norm.weight", {N_EMBD}, 1.0f);
-        add_random_tensor(g, ctx, rng, p + "attn_q.weight", {N_EMBD, N_HEAD * HEAD_DIM}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "attn_k.weight", {N_EMBD, N_HEAD_KV * HEAD_DIM}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "attn_v.weight", {N_EMBD, N_HEAD_KV * HEAD_DIM}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "attn_output.weight", {N_HEAD * HEAD_DIM, N_EMBD}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "ffn_norm.weight", {N_EMBD}, 1.0f);
-        add_random_tensor(g, ctx, rng, p + "ffn_gate.weight", {N_EMBD, N_FF}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "ffn_up.weight", {N_EMBD, N_FF}, 0.1f);
-        add_random_tensor(g, ctx, rng, p + "ffn_down.weight", {N_FF, N_EMBD}, 0.1f);
-    }
-    const bool ok = gguf_write_to_file(g, path.c_str(), false);
-    gguf_free(g);
-    ggml_free(ctx);
-    return ok ? path : std::string();
-}
+using namespace jllama_test;
 
 struct Owned {
     char *s = nullptr;

@@ -18,7 +18,7 @@ upstream-shaped, and dropped here the moment upstream carries the fix (the drop-
 in its `jllama-build.txt` (`patches=`) and a hash over the set (`patches.sha256=`), so a consumer can
 match a binary to this page.
 
-**13 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
+**14 patches.** Ids as `jllama-build.txt` lists them under `patches=`.
 
 | Id | Patch | Title | Files | Hunks |
 |---|---|---|---:|---:|
@@ -35,6 +35,7 @@ match a binary to this page.
 | 0018 | [`0018-ggml-amx-free-the-aligned-buffer.patch`](#0018-ggml-amx-free-the-aligned-bufferpatch) | ggml-cpu(amx): free the AMX weight buffer with ggml_aligned_free(), not free() | 1 | 1 |
 | 0019 | [`0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversion.patch`](#0019-ggml-cpu-select-the-neon-fp32-to-fp16-conversionpatch) | ggml-cpu : select the NEON fp32->fp16 conversion | 1 | 2 |
 | 0020 | [`0020-ggml-alloc-validate-leafs-before-reusing-an-allocation.patch`](#0020-ggml-alloc-validate-leafs-before-reusing-an-allocationpatch) | ggml-alloc : validate the leafs before reusing a graph's allocation | 1 | 1 |
+| 0021 | [`0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch`](#0021-server-clear-the-slot-cache-when-the-server-adapters-changepatch) | server : clear a slot's cache when the server's LoRA adapters change | 1 | 1 |
 
 ## 0001-win32-arg-parse-embed-guard.patch
 
@@ -603,4 +604,50 @@ and only the leafs moved (it dies with SIGSEGV without this patch), reserve with
 
 Drop-check on every bump: read ggml_gallocr_needs_realloc() in ggml/src/ggml-alloc.c at the new
 tag -- once it walks graph->leafs itself, drop this patch rather than refreshing it.
+```
+
+## 0021-server-clear-the-slot-cache-when-the-server-adapters-change.patch
+
+**Files (1):** `tools/server/server-context.cpp`
+
+The patch's own header, verbatim:
+
+```text
+server : clear a slot's cache when the server's LoRA adapters change
+
+A slot's prompt cache holds KV entries computed under the LoRA adapters the slot ran with.
+launch_slot_with_task() respects that for a request that names its own adapters: when they differ
+from the slot's, lora_should_clear_cache() decides, and the cache is cleared unless only aLoRA
+adapters are involved. A request that names none takes params_base.lora_adapters in the else
+branch -- without that check. So the cache survives two changes of the adapters it was computed
+with:
+
+  - SET_LORA (POST /lora-adapters, and the embedding API's set-adapters call) replaces
+    params_base.lora_adapters, and the next request on a warm slot reuses its prefix;
+  - a request with its own adapters fills the cache, and the next request without any runs with
+    the server's adapters on top of it.
+
+The slot then goes on with KV entries computed under the old scales and answers like neither the
+old nor the new adapter set, silently. Measured at b11639 with the pair from the server's own LoRA
+test (stories15M_MOE-F16.gguf + moe_shakespeare15M.gguf, greedy, one slot, prompt "Look in thy
+glass"): after setting the adapter's scale from 1 to 0, the warm slot answered ". He saw a picture
+of a bird ..." where the same model with the adapter at 0 on an emptied slot answers " was a little
+girl. She was only three years old ..." -- and erasing the slot was the only way back.
+
+The patch applies the per-request rule in the else branch too: when params_base.lora_adapters
+differ from the slot's, lora_should_clear_cache() decides, the same trace lines are logged, and
+the slot takes the server's adapters. Equal sets keep the cache exactly as before.
+
+Not covered: the host-memory prompt cache (--cache-ram) stores slot states without the adapters
+they were computed with, so a state saved under other adapters can still be loaded into a slot;
+that holds for per-request adapters as much as for these.
+
+The guard is src/test/cpp/test_lora_cache.cpp: a random llama model and a random LoRA adapter on
+K, V and the FFN output, greedy, one slot; after each kind of change the warm slot must answer
+like an emptied one.
+
+Drop-check on every bump: read the else branch of the "process per-request lora adapters" block of
+launch_slot_with_task() in tools/server/server-context.cpp at the new tag -- once it compares
+params_base.lora_adapters with slot.lora and clears the prompt (or SET_LORA clears the slots),
+drop this patch rather than refreshing it.
 ```

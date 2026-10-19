@@ -633,6 +633,14 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **A LoRA adapter change no longer answers from the old cache** (`patches/0021`). After
+  `setLoraAdapter(s)` -- and after a request with its own adapters -- a slot reused the prompt cache it
+  had computed under the previous scales and answered like neither adapter set (measured with
+  llama.cpp's own LoRA test pair: a third, unrelated text until the slot was erased). Upstream clears
+  the cache when a request names its own adapters but not when the server's adapters change; the patch
+  applies the same rule there, which also fixes upstream's `POST /lora-adapters` on the embedded
+  server. `setLoraAdapters`' Javadoc no longer tells callers to erase the slots; it names the one cache
+  that still does not record adapters, the host-memory prompt cache (`setCacheRamMib(0)` disables it).
 - **`ServerMetrics.getCumulativeUsage()` counts the cached prompt tokens.** It returned
   `Usage(processed, predicted)`, so `getPromptTokens()` was the evaluated tokens only and
   `getCachedTokens()` always `0`, against `Usage`'s own contract (prompt tokens include the cached
