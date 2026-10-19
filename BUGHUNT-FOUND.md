@@ -1198,7 +1198,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne den Fix rot (3 von 3), mit ihm grün (186 Tests in den Serializer-, Multimodal-, `InferenceParameters`- und `ChatRequest`-Klassen).
 - **Nicht abgedeckt (offen):** Die Übersetzungen des Servers bauen den Verlauf ohne `buildMessages`: `ResponsesApiSupport.java:218` (`asText("")`) und `AnthropicApiSupport.java:229` (`input` fehlt → `""`) können weiterhin `""` schreiben.
 - **Status:** gefixt (Java-API-Pfad)
-- **Commit:** (folgt)
+- **Commit:** afc40be
 
 ## Offene Verdachte ohne Fund-ID
 
