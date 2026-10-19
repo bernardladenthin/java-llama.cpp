@@ -1240,7 +1240,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesApiSupportTest#functionCallWithoutArgumentsBecomesAnEmptyArgumentsObject` (fehlend, `""`, Leerraum), `AnthropicApiSupportTest#toolUseWithoutInputBecomesAnEmptyArgumentsObject` (fehlend, `null`).
 - **Rot-Grün-Nachweis:** ohne den Fix rot (beide, `was ""`), mit ihm grün (75 Tests der beiden Klassen).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `f1bf93b`
 
 ## Offene Verdachte ohne Fund-ID
 
