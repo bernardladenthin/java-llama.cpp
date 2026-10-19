@@ -1222,7 +1222,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `JllamaNativeTest#takeStringsFreesANonNullArrayEvenWhenItIsEmpty`, `#takeStringsDoesNotFreeANullArray`.
 - **Rot-Grün-Nachweis:** lokal mit JDK 25 (Toolchain) und einem selbst gebauten `libjllama.so` (b11639, statisch): mit der alten Prüfung rot (1 von 9, der neue Test), mit dem Fix grün; `mvn -f llama-ffm/pom.xml verify` grün (29 Tests, 16 modellgestützte übersprungen, kein Modell).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** 8269149
 
 ## Offene Verdachte ohne Fund-ID
 
