@@ -226,7 +226,10 @@ final class AnthropicApiSupport {
                     toolCall.put("type", "function");
                     ObjectNode function = toolCall.putObject("function");
                     function.put("name", block.path("name").asText(""));
-                    function.put("arguments", block.path("input").toString());
+                    // A missing or null input is no arguments; upstream json::parse()s every arguments
+                    // string of the history, so an empty one fails the whole request (F166).
+                    JsonNode input = block.path("input");
+                    function.put("arguments", input.isMissingNode() || input.isNull() ? "{}" : input.toString());
                     break;
                 case "tool_result":
                     // A user-message tool_result becomes a separate OpenAI role:"tool" message.

@@ -226,6 +226,26 @@ public class AnthropicApiSupportTest {
     }
 
     @Test
+    public void toolUseWithoutInputBecomesAnEmptyArgumentsObject() throws IOException {
+        // Upstream parses every function.arguments of the history with json::parse, so an empty string
+        // fails the whole request with 400; a tool call without arguments is "{}" (F166).
+        for (String block : new String[] {
+            "{\"type\":\"tool_use\",\"id\":\"c1\",\"name\":\"now\"}",
+            "{\"type\":\"tool_use\",\"id\":\"c1\",\"name\":\"now\",\"input\":null}"
+        }) {
+            JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
+                    read("{\"messages\":[{\"role\":\"assistant\",\"content\":[" + block + "]}]}"));
+            JsonNode arguments = openAi.path("messages")
+                    .get(0)
+                    .path("tool_calls")
+                    .get(0)
+                    .path("function")
+                    .path("arguments");
+            assertThat(block, arguments.asText(), is("{}"));
+        }
+    }
+
+    @Test
     public void requestConcatenatesSystemBlocksAndMapsStopSequences() throws IOException {
         JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
                 read("{\"system\":[{\"type\":\"text\",\"text\":\"a\"},{\"type\":\"text\",\"text\":\"b\"}],"

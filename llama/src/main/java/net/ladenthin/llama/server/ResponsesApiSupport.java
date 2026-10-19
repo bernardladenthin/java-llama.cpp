@@ -215,7 +215,10 @@ final class ResponsesApiSupport {
                     toolCall.put("type", "function");
                     ObjectNode function = toolCall.putObject("function");
                     function.put("name", item.path("name").asText(""));
-                    function.put("arguments", item.path("arguments").asText(""));
+                    // upstream json::parse()s every arguments string of the history, so an empty one
+                    // fails the whole request; a call without arguments is "{}" (F166)
+                    String arguments = item.path("arguments").asText("");
+                    function.put("arguments", arguments.trim().isEmpty() ? "{}" : arguments);
                     break;
                 case "function_call_output":
                     ObjectNode toolMessage = messages.addObject();

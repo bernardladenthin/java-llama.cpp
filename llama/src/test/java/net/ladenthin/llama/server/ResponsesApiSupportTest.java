@@ -84,6 +84,27 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void functionCallWithoutArgumentsBecomesAnEmptyArgumentsObject() throws IOException {
+        // Upstream parses every function.arguments of the history with json::parse, so an empty string
+        // fails the whole request with 400; a call without arguments is "{}" (F166).
+        for (String arguments : new String[] {"", ",\"arguments\":\"\"", ",\"arguments\":\"  \""}) {
+            JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                            + "{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"now\""
+                            + arguments + "}]}"))
+                    .path("messages");
+            assertThat(
+                    arguments,
+                    messages.path(0)
+                            .path("tool_calls")
+                            .path(0)
+                            .path("function")
+                            .path("arguments")
+                            .asText(),
+                    is("{}"));
+        }
+    }
+
+    @Test
     public void functionCallOutputArrayKeepsItsPartsLikeUpstream() throws IOException {
         // A tool result may be an array of input_text / input_image parts; upstream's
         // convert_responses_to_chatcmpl turns them into text / image_url parts of the tool message.

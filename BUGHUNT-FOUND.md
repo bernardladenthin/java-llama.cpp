@@ -1202,8 +1202,8 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** Entscheidung des Nutzers: leere (auch nur aus Leerraum bestehende) Argumente als `"{}"` schreiben, alles andere unverändert.
 - **Tests:** `ParameterJsonSerializerTest#testBuildMessages_emptyToolCallArguments_areWrittenAsAnEmptyObject` (`""`, `" "`, `"\n"`), `#testBuildMessages_toolCallArguments_arePassedOnVerbatim`.
 - **Rot-Grün-Nachweis:** ohne den Fix rot (3 von 3), mit ihm grün (186 Tests in den Serializer-, Multimodal-, `InferenceParameters`- und `ChatRequest`-Klassen).
-- **Nicht abgedeckt (offen):** Die Übersetzungen des Servers bauen den Verlauf ohne `buildMessages`: `ResponsesApiSupport.java:218` (`asText("")`) und `AnthropicApiSupport.java:229` (`input` fehlt → `""`) können weiterhin `""` schreiben.
-- **Status:** gefixt (Java-API-Pfad)
+- **Nicht abgedeckt (offen):** Die Übersetzungen des Servers bauen den Verlauf ohne `buildMessages`: `ResponsesApiSupport.java:218` (`asText("")`) und `AnthropicApiSupport.java:229` (`input` fehlt → `""`) können weiterhin `""` schreiben. **Nachtrag 2026-10-19:** behoben als F172.
+- **Status:** gefixt (Java-API-Pfad; Server-Übersetzungen als F172)
 - **Commit:** afc40be
 
 ### F167 – java-llama.cpp: `completeBatch`/`chatBatch` laufen auf dem gemeinsamen `ForkJoinPool` und nutzen auf wenigen Kernen nicht alle Slots
@@ -1229,6 +1229,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** lokal mit JDK 25 (Toolchain) und einem selbst gebauten `libjllama.so` (b11639, statisch): mit der alten Prüfung rot (1 von 9, der neue Test), mit dem Fix grün; `mvn -f llama-ffm/pom.xml verify` grün (29 Tests, 16 modellgestützte übersprungen, kein Modell).
 - **Status:** gefixt
 - **Commit:** 8269149
+
+### F172 – java-llama.cpp: Responses- und Anthropic-Übersetzung schreiben leere Tool-Argumente in den Verlauf
+- **Zeit:** 2026-10-19 21:30 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`function_call`), `AnthropicApiSupport.java` (`tool_use`)
+- **Schwere:** niedrig (laut: die Folgeanfrage scheitert mit 400)
+- **Historie:** Rest von F166, dort als „Nicht abgedeckt“ vermerkt: F166 behob den Java-API-Pfad (`buildMessages`), die beiden Übersetzungen bauen den Verlauf selbst.
+- **Beschreibung:** Ein `function_call` ohne `arguments` (Responses) und ein `tool_use` ohne `input` (Anthropic, `MissingNode.toString()` ist `""`; `input: null` ergab `"null"`) landeten als `""` bzw. `"null"` in `function.arguments`. Upstream parst jedes Argument des Verlaufs mit `json::parse` und lehnt `""` mit 400 ab (J4: „attempting to parse an empty input“).
+- **Fix:** Entscheidung des Nutzers: dieselbe Regel wie F166 – leere oder nur aus Leerraum bestehende Argumente (Responses) bzw. fehlender oder `null`-`input` (Anthropic) werden `"{}"`.
+- **Tests:** `ResponsesApiSupportTest#functionCallWithoutArgumentsBecomesAnEmptyArgumentsObject` (fehlend, `""`, Leerraum), `AnthropicApiSupportTest#toolUseWithoutInputBecomesAnEmptyArgumentsObject` (fehlend, `null`).
+- **Rot-Grün-Nachweis:** ohne den Fix rot (beide, `was ""`), mit ihm grün (75 Tests der beiden Klassen).
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
