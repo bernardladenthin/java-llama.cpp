@@ -521,18 +521,20 @@ delete an item here when it is done.
 - **F62** The LangChain4j adapter concatenates several `TextContent` without a separator. Proposal:
   join with `\n` as F60/F61 do (or pass them on as parts); the test that pins today's output changes.
 
-**CI runs** (the owner runs these together). **The complete measurement brief for an agent, with
-commands, hypotheses and answer fields, is `BUGHUNT-MEASUREMENTS.md` (J1–J9).**
+**Measured (`BUGHUNT-MEASUREMENTS.md`, J1–J9) and acted on:** J1/J2 → F158 follow-up (`setPredict`
+below -1 rejected; `0` behaves like `1`), J3 → F165, J4 → F166, J5 → F167, J7 → F59, J8 → suspicion 1.
+J6 confirmed all six fixes with a model (F64, F71, F77, F90, F93, F128); the CI job
+`test-java-llama-langchain4j-integration` already passes `net.ladenthin.llama.langchain4j.tool.model`,
+so F128 runs there too (the property was missing only from the measurement's local command line).
+Still the owner's decision:
 
-- Model-backed confirmations of fixed findings, none a precondition: **F64** (upstream's 400 for an
-  Ollama tool call without `type`, `OpenAiCompatServerIntegrationTest`), **F71** (fine-tuning text with
-  an emoji, `LlamaTrainerIntegrationTest` with `stories260K.gguf`), **F77** (`reasoning_effort: "none"`
-  really suppresses the thinking block), **F90** (`cached_tokens` > 0 in the second round),
-  **F93** (token usage of a streamed LangChain4j answer), **F128**
-  (`JllamaToolCallingIntegrationTest#streamedRequiredToolCallComesBackAsToolExecutionRequest` in
-  `test-java-llama-langchain4j-integration`, not a release gate: look at it in the next run).
-- Only if the behaviour is to change: **F67** (clear the slots in `engine::set_lora_adapters`; needs a
-  model with a LoRA adapter) and **F69** (reject `withNPredict(-2)` in Java; any model).
+- **F67** confirmed (J9): after `setLoraAdapter(0, 0f)` a slot keeps computing on the prompt cache
+  built under scale 1 and answers neither like the adapter nor like the base model; only `eraseSlot(0)`
+  restores a fresh model's behaviour. Proposal: clear the slots in `engine::set_lora_adapters` after a
+  change.
+- **F69**: the server rejects `withNPredict(-2)` per request with `InvalidRequestException` ("Field
+  'n_predict': Value must be between -1 <= value <= 2147483647", J2a), so a Java-side check would only
+  move the same error earlier.
 
 **Open suspicions without a finding id** (each needs the owner's decision or a model to decide):
 
