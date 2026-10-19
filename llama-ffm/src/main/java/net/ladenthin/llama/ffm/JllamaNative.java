@@ -18,6 +18,7 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.invoke.MethodHandle;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.function.BiConsumer;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
@@ -284,9 +285,26 @@ final class JllamaNative {
 
     /** A {@code char ***} plus {@code size_t *} out-pair, released with {@code jllama_strings_free}. */
     static List<String> takeStrings(MemorySegment out, MemorySegment length) {
+        return takeStrings(out, length, (pointer, count) -> invoke(STRINGS_FREE, pointer, count));
+    }
+
+    /**
+     * {@link #takeStrings(MemorySegment, MemorySegment)} with the free function passed in, for tests.
+     *
+     * <p>A non-NULL array is freed even when it is empty: {@code jllama_rpc_server_devices} allocates
+     * one for zero entries too, and returning early for {@code count == 0} leaked it (measured: the
+     * free function was never called).
+     *
+     * @param out the out-parameter holding the array pointer
+     * @param length the out-parameter holding the element count
+     * @param free frees the array with its element count
+     * @return the strings, in order
+     */
+    static List<String> takeStrings(
+            MemorySegment out, MemorySegment length, BiConsumer<MemorySegment, Long> free) {
         MemorySegment pointer = out.get(ADDRESS, 0);
         long count = length.get(JAVA_LONG, 0);
-        if (pointer.equals(MemorySegment.NULL) || count == 0) {
+        if (pointer.equals(MemorySegment.NULL)) {
             return List.of();
         }
         try {
@@ -297,7 +315,7 @@ final class JllamaNative {
             }
             return List.of(strings);
         } finally {
-            invoke(STRINGS_FREE, pointer, count);
+            free.accept(pointer, count);
         }
     }
 

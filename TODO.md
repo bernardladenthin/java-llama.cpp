@@ -522,7 +522,7 @@ delete an item here when it is done.
   join with `\n` as F60/F61 do (or pass them on as parts); the test that pins today's output changes.
 
 **Measured (`BUGHUNT-MEASUREMENTS.md`, J1–J9) and acted on:** J1/J2 → F158 follow-up (`setPredict`
-below -1 rejected; `0` behaves like `1`), J3 → F165, J4 → F166, J5 → F167, J7 → F59, J8 → suspicion 1.
+below -1 rejected; `0` behaves like `1`), J3 → F165, J4 → F166, J5 → F167, J7 → F59, J8 → F168.
 J6 confirmed all six fixes with a model (F64, F71, F77, F90, F93, F128); the CI job
 `test-java-llama-langchain4j-integration` already passes `net.ladenthin.llama.langchain4j.tool.model`,
 so F128 runs there too (the property was missing only from the measurement's local command line).
@@ -538,9 +538,7 @@ Still the owner's decision:
 
 **Open suspicions without a finding id** (each needs the owner's decision or a model to decide):
 
-1. `llama-ffm` `JllamaNative.takeStrings` leaks the array for `count == 0` (8 bytes per call;
-   practically unreachable). Fix: always call `STRINGS_FREE` for a non-NULL pointer; test in
-   `test-java-llama-ffm`.
+1. *Fixed as F168:* `JllamaNative.takeStrings` frees a non-NULL array also when it is empty.
 2. Ollama `done_reason`: `tool_calls` is passed through (Ollama reports `stop`), the streamed paths
    always report `stop` even when cut off by `num_predict`, and the streamed final line has no
    `prompt_eval_count`/`eval_count` (`withUsageChunk` not requested).
