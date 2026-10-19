@@ -197,6 +197,9 @@ public final class InferenceParameters extends JsonParameters {
      * (default: -1 = the model's {@code --predict} setting, which itself defaults to unlimited). The
      * server accepts {@code -1} and above; {@code -2} is rejected as an invalid request.
      *
+     * <p>{@code 0} behaves like {@code 1}: one token is generated (measured at b11639). Upstream's
+     * description of {@code 0} as "only evaluate the prompt" does not hold for the server.
+     *
      * @param nPredict tokens to predict
      * @return a new instance; this instance is unchanged
      */

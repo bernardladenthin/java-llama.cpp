@@ -29,6 +29,8 @@ import net.ladenthin.llama.args.NumaStrategy;
 import net.ladenthin.llama.args.RopeScalingType;
 import net.ladenthin.llama.value.RpcEndpoint;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Extended tests for {@link ModelParameters} covering CLI argument serialization
@@ -83,9 +85,22 @@ public class ModelParametersExtendedTest {
     }
 
     @Test
-    public void testSetPredictFillContext() {
-        ModelParameters p = new ModelParameters().setPredict(-2);
-        assertThat(p.parameters.get("--predict"), is("-2"));
+    public void testSetPredictZero() {
+        ModelParameters p = new ModelParameters().setPredict(0);
+        assertThat(p.parameters.get("--predict"), is("0"));
+    }
+
+    /**
+     * {@code -2} ("until context filled") is a setting of llama.cpp's completion tool. The server
+     * counts only {@code -1} as unlimited, so a model loaded with {@code -2} answered every request
+     * with exactly one token and stop reason "limit", without an error (measured at b11639).
+     */
+    @ParameterizedTest
+    @ValueSource(ints = {-2, -3, Integer.MIN_VALUE})
+    public void testSetPredictBelowMinusOneIsRejected(int nPredict) {
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> new ModelParameters().setPredict(nPredict));
+        assertThat(e.getMessage(), containsString(String.valueOf(nPredict)));
     }
 
     @Test

@@ -1169,9 +1169,11 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Schwere:** niedrig bis mittel (still: keine Fehlermeldung, nur abgeschnittene Antworten)
 - **Beschreibung:** Gefunden beim Nachprüfen von F69. Upstreams `-n` (`common/arg.cpp:1661`, b11639) nennt „-2 = until context filled“ **nur** für `LLAMA_EXAMPLE_COMPLETION`, für den Server lautet die Beschreibung „-1 = infinity“; der Parser übernimmt jeden Wert. Im Server übernimmt ein Slot `params_base.n_predict`, wenn die Anfrage `-1` sendet oder das Feld weglässt (`server-context.cpp:1964`), und `has_budget()` (`:495`) zählt nur `-1` als unbegrenzt: bei `-2` ist `n_remaining()` negativ, und die Grenzprüfung (`:2040`, `n_gen > 0 && !has_budget()`) beendet die Erzeugung nach dem ersten Token mit `STOP_TYPE_LIMIT`. Aus dem Quelltext abgeleitet, **nicht gemessen**.
 - **Fix:** Dokumentation korrigiert (ohne Test, Nutzerregel): Javadoc nennt nur noch `-1 = infinity` und erklärt, dass `-2` eine Einstellung des Completion-Tools ist und hier nach dem ersten Token stoppt. **Offen, Entscheidung des Nutzers:** `-2` in `ModelParameters.setPredict` mit `IllegalArgumentException` abweisen – modellfrei testbar, ändert aber das Verhalten eines öffentlichen Setters.
-- **CI-Bedarf:** Messung mit einem Modell aus `models.csv`: `new ModelParameters().setPredict(-2)` laden, eine Anfrage ohne `n_predict`, Anzahl der erzeugten Tokens (erwartet nach Quelltext: 1).
-- **Status:** Doku gefixt, Verhalten offen
-- **Commit:** a977a1e
+- **Messung (J1, `BUGHUNT-MEASUREMENTS.md`):** bestätigt – `-2`: 1 Token, `stop_type="limit"`; `-1`: 2042 Tokens (bis Kontextende); `16`: 16. Dazu J2: `withNPredict(0)` erzeugt ebenfalls 1 Token, nicht 0.
+- **Nachtrag (Entscheidung des Nutzers nach der Messung):** `setPredict` lehnt Werte unter `-1` mit `IllegalArgumentException` ab; Javadoc von `setPredict` und `withNPredict` sagt „`0` verhält sich wie `1`“. Test `ModelParametersExtendedTest#testSetPredictBelowMinusOneIsRejected` (`-2`, `-3`, `Integer.MIN_VALUE`) ersetzt `testSetPredictFillContext`, dazu `testSetPredictZero`.
+- **Rot-Grün-Nachweis:** ohne die Prüfung rot (3 von 3), mit ihr grün (`ModelParametersExtendedTest`, `ModelParametersTest`, `WireNameRegistryTest`: 252 Tests).
+- **Status:** gefixt
+- **Commit:** a977a1e (Doku), (folgt) (Verhalten)
 
 ## Offene Verdachte ohne Fund-ID
 

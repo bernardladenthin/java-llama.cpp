@@ -204,12 +204,19 @@ public final class ModelParameters extends CliParameters {
      *
      * <p>{@code -2} ("until context filled") is a setting of llama.cpp's completion tool, not of the
      * server this library runs. There a slot counts only {@code -1} as unlimited, so with {@code -2}
-     * a request stops after its first token.
+     * every request stopped after its first token without an error (measured at b11639); it is
+     * rejected here instead. {@code 0} behaves like {@code 1}.
      *
      * @param nPredict the maximum number of tokens to predict (-1 = infinity)
      * @return this builder
+     * @throws IllegalArgumentException if {@code nPredict} is below {@code -1}
      */
     public ModelParameters setPredict(int nPredict) {
+        if (nPredict < -1) {
+            throw new IllegalArgumentException("Invalid predict value: " + nPredict
+                    + " (must be -1 = unlimited or >= 0; -2 is a setting of llama.cpp's completion tool,"
+                    + " the server would stop every request after one token)");
+        }
         return putScalar(ModelOption.PREDICT, nPredict);
     }
 

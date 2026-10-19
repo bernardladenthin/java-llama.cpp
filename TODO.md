@@ -520,9 +520,6 @@ delete an item here when it is done.
   `ServerMetricsTest`.
 - **F62** The LangChain4j adapter concatenates several `TextContent` without a separator. Proposal:
   join with `\n` as F60/F61 do (or pass them on as parts); the test that pins today's output changes.
-- **F158** `ModelParameters.setPredict(-2)`: documentation fixed; behaviour open. Proposal: reject
-  `-2` with an `IllegalArgumentException` (model-free test possible), since the server stops every
-  request after its first token with it.
 
 **CI runs** (the owner runs these together). **The complete measurement brief for an agent, with
 commands, hypotheses and answer fields, is `BUGHUNT-MEASUREMENTS.md` (J1–J9).**
@@ -531,8 +528,6 @@ commands, hypotheses and answer fields, is `BUGHUNT-MEASUREMENTS.md` (J1–J9).*
   fix: a private lock around `isRunning()` and `close()`, as in `NativeServer`; the red test needs the
   JDK 22+ job `test-java-llama-ffm` (no JDK 22 in the sandbox). Same job for the open suspicion on
   `JllamaNative.takeStrings` below.
-- **F158** measure: load with `setPredict(-2)`, one request without `n_predict`, count the generated
-  tokens (expected from the source: 1).
 - Model-backed confirmations of fixed findings, none a precondition: **F64** (upstream's 400 for an
   Ollama tool call without `type`, `OpenAiCompatServerIntegrationTest`), **F71** (fine-tuning text with
   an emoji, `LlamaTrainerIntegrationTest` with `stories260K.gguf`), **F77** (`reasoning_effort: "none"`
