@@ -1336,7 +1336,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiRequestMapperTest#logitBiasAndNProbsAreForwardedOnBothPaths`, `#moreThanOneChoiceIsRefusedBecauseOneAnswerComesBack`, `#probabilitiesOnTheStreamedCompletionAreRefused`, `#unknownFieldsIgnored` (ohne `n`); `InferenceParametersTest#withLogitBiasJson_storesTheValueAndRefusesASecondOne`.
 - **Rot-Grün-Nachweis:** mit Platzhalter-Setter und unverändertem Mapper rot (4 Tests), mit dem Fix grün (327 Tests der Mapper-, Parameter-, Registry- und Server-Klassen); SpotBugs grün.
 - **Status:** gefixt (Wahrscheinlichkeiten im gestreamten `/v1/completions` offen unter (14))
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `3d001d2`
 
 ## Offene Verdachte ohne Fund-ID
 
