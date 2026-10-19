@@ -258,32 +258,14 @@ them to ggml's `if (NOT MSVC)` block). All 14 x86 modules were measured on one G
 and 6 of 8 aarch64 ones on a Graviton 4 -- before that, no module had ever been *chosen* on hardware
 the project could inspect.
 
-**Where it sticks, in the order that matters for a consumer:**
-
-1. **The library jar is not self-contained** (item 1 below). Java runs in containers, and the usual
-   slim base images have no `libgomp`; the jar then fails to load at all. Measured, decided, not yet
-   changed.
-2. **"A module that cannot help is skipped" holds for Vulkan and breaks for the other two**
-   (items 2 and 3): CUDA on an incompatible driver `abort()`s the JVM in *every* configuration,
-   OpenVINO on a CPU-only host takes over and runs 172x slower. The premise the whole additive design
-   rests on is therefore conditional, and that was unknown until a module was actually used.
-3. **Nothing behind `package` has ever run on the modular natives.** `package` was red until the
-   Windows OpenVINO module jar was unblocked, so the smoke-set assembly, `smoke-natives-jars.sh` with
-   all 23 jars on classpath *and* module path, the four `smoke-natives` rows, the macOS smoke, the
-   agent smoke, the bytecode gate and `verify-native-deps.py` over all 23 jars have never executed
-   together. **This is what the next Publish run is for.**
-
-**So the next CI run should be the current `main`, unchanged.** It is the first opportunity to see
-everything behind `package`, and bundling the decided changes into it would confound the result: a red
-run would not say whether the pipeline or the change is at fault. Expect several rounds there -- a
-stage that has never run is unlikely to pass first time -- and note that the `windows-x86-64` smoke
-row draws the same CPU lottery as the Windows test job, so it exercises AMX only when GitHub hands it
-an Intel runner.
-
-**The batch for the run after that**, assembled while the first one runs: `GGML_OPENMP=OFF` plus
-`-static-libstdc++ -static-libgcc` on Linux and s390x with the dependency allowlist inverted, the
-explicit `CMAKE_CUDA_ARCHITECTURES`, the OpenVINO opt-in decision, and the shipped diagnostic entry
-point (item 5). These are independent of each other and each is verifiable in the same run.
+**What stuck after the first runs, and where it went** (kept so it is not re-derived): the library
+jar was not self-contained (`libgomp` missing on slim images) -- Linux builds with `GGML_OPENMP=OFF`
+now and `verify-native-deps.py` holds the absence, while `libstdc++`/`libgcc_s` stay dynamic on
+purpose (CLAUDE.md "Windows natives", the Linux OpenMP paragraph); CUDA aborted the JVM on an old
+driver -- the explicit `CMAKE_CUDA_ARCHITECTURES` fixed it (T4 measured); OpenVINO on a CPU-only host
+took over and ran 172x slower -- it is opt-in (`LlamaLoader.OPT_IN_BACKENDS`); nothing behind
+`package` had ever run -- it has, in the two green runs above; and the shipped diagnostic entry point
+is `net.ladenthin.llama.Diagnose`. The rounds that got there follow.
 
 ### Round 0 found one defect, and it was mine
 
@@ -1582,32 +1564,11 @@ SME**, which Graviton 4 lacks and no current instance provides. EC2 Mac also bil
 minimum** (dedicated host), so it is the expensive way to answer nothing.
 
 
-## Handed over from the modular-natives session (2026-10-11) -- read the first item before merging #507
+## Handed over from the modular-natives session (2026-10-11)
 
 Appended on `local/cpu-module-isolation-test` by the session that shipped the modular natives
-(#504 to #506) and watched their two full runs (38065017595, 38069595101). Nothing above was moved.
-Items `main` already carries through #506 are named, not repeated.
-
-### Before #507 merges: two `0018` patches for the same hunk
-
-`main` (cfc10fd2, #506) carries `llama/patches/0018-ggml-amx-free-the-aligned-buffer.patch`; this
-branch carries `llama/patches/0018-ggml-amx-aligned-free.patch`. Both replace the same line of
-`ggml/src/ggml-cpu/amx/amx.cpp` (main's adds a four-line comment above the call, this one is bare).
-After a merge both files exist, the applier takes them in filename order, the first applies, the
-second no longer finds its `-` line and aborts the configure with "does not apply cleanly" -- every
-native build job red, on every platform. `git merge-tree main HEAD` (2026-10-11) reports a textual
-conflict in `TODO.md` **only**; the two patch files, CLAUDE.md (two `0018` rows in the patch table)
-and CHANGELOG.md (two "Fixed" bullets for the same defect) merge *silently*. Resolve in the merge
-commit: keep exactly one patch file (the comment is the only difference), one patch-table row and
-one CHANGELOG bullet, and keep this branch's `llama/cmake/check-aligned-free-pairing.cmake` guard
-either way (main has none). For the `TODO.md` conflict: take main's wording for the three places
-#506 touched -- a fifth "Modular natives -- follow-ups" item (the Windows ROCm job is the pipeline's
-critical path at 4:15 h and builds uncached), the corrected sccache sentence under "Upstream
-submissions" (the `-Xclang` that sccache 0.18.0 refuses comes from CMake's
-`Platform/Windows-Clang.cmake` runtime-library selection on every plain-clang Windows TU, not only
-from llama.cpp's `-fno-pch-timestamp`; CLAUDE.md "sccache on every Windows Ninja job but one" on
-main has the measurement) and the AMX bullet under "Needs a machine" -- and this branch's structure
-for everything else.
+(#504 to #506) and watched their two full runs (38065017595, 38069595101); merged as #507 with one
+`0018` patch and the `check-aligned-free-pairing.cmake` guard. What is still open from it:
 
 ### Open from that session, recorded nowhere else
 
@@ -1650,17 +1611,6 @@ for everything else.
   every probe "failed" until the fixtures were given a `#!/bin/sh` line. The first run of that probe
   reported all five layouts broken, including the one that demonstrably works in CI -- the harness,
   not the logic.
-- **Everything behind `package` has never run on the modular natives.** Run 38069595101 skipped
-  `package` (it `needs` the Windows clang test job, red with the AMX crash); this branch's run
-  38112603436 reaches it and fails on the Windows OpenVINO module jar (the blocker at the top of
-  this file). Still unexercised after that: the smoke-set assembly (`package-smoke-sets.sh`),
-  `smoke-natives-jars.sh` (classes + all 23 natives jars on the classpath **and** the module path),
-  the bytecode gate and `verify-native-deps.py` over all 23 jars, the four `smoke-natives` rows
-  (loader line naming every module jar of the platform, the HTTPS round, the RPC smoke, the
-  bytecode gate over the set), `smoke-natives-macos`, `smoke-agent-linux`, and the publish jobs
-  attaching the Maven artifacts. Expect further rounds there; the `windows-x86-64` smoke row runs
-  on the same CPU lottery as the Windows test job, so it exercises AMX only when GitHub hands it an
-  Intel runner.
 - **The two server defaults disagree, by design or not -- owner's call.** Upstream #30159 (b11529)
   moved llama-server's default port from 8080 to 9931, which `NativeServer.DEFAULT_PORT` follows
   because it inherits the forwarded argv; `OpenAiServerConfig.DEFAULT_PORT` stayed 8080 as the
