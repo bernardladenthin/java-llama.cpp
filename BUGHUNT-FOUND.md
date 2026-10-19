@@ -42,7 +42,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F59](#f59) — niedrig — *nur beschrieben* (CI-Bedarf: JDK 22+)
 - [F60](#f60) — niedrig — *gefixt*
 - [F61](#f61) — niedrig — *gefixt*
-- [F62](#f62) — niedrig — *nur beschrieben* (Entscheidung des Nutzers)
+- [F62](#f62) — niedrig — *gefixt* (Duplikat von F94)
 - [F63](#f63) — niedrig — *gefixt*
 - [F64](#f64) — mittel — *gefixt*
 - [F65](#f65) — niedrig — *gefixt*
@@ -439,8 +439,8 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix (Vorschlag, nicht umgesetzt):** wie F60/F61 mit `\n` verbinden (oder die Teile als Parts weiterreichen); dabei den festschreibenden Test anpassen. Entscheidung des Nutzers, weil der Test das Verhalten bewusst zu wählen scheint.
 - **Reproduktion:** `UserMessage.from(TextContent.from("Hello"), TextContent.from("world"))` → `getContent()` = `"Helloworld"`.
 - **Rot-Grün-Nachweis:** keiner (kein Fix ohne Entscheidung).
-- **Status:** nur beschrieben
-- **Commit:** —
+- **Status:** gefixt als F94 (Duplikat: derselbe Befund wurde in der Musterdurchsicht nach F60/F61 noch einmal aufgenommen und dort behoben; Nachtrag 2026-10-19)
+- **Commit:** java-llama.cpp `ee99d85` (F94)
 
 <a id="f63"></a>
 ### F63 – java-llama.cpp: Responses-API-Objekte tragen `created_at: 0`

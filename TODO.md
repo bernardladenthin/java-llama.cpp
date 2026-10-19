@@ -518,8 +518,6 @@ delete an item here when it is done.
 - **F57** `ServerMetrics.getCumulativeUsage()` returns a `Usage` that breaks `Usage`'s own contract.
   Proposal: `new Usage(processed + cached, predicted, cached)`; changes documented behaviour and
   `ServerMetricsTest`.
-- **F62** The LangChain4j adapter concatenates several `TextContent` without a separator. Proposal:
-  join with `\n` as F60/F61 do (or pass them on as parts); the test that pins today's output changes.
 - **F67** confirmed (J9; the measurement brief J1–J9 and its results are `BUGHUNT-MEASUREMENTS.md` in
   commit `b689d7b`, removed since): after `setLoraAdapter(0, 0f)` a slot keeps computing on the prompt cache
   built under scale 1 and answers neither like the adapter nor like the base model; only `eraseSlot(0)`
