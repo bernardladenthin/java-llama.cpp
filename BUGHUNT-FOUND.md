@@ -1384,7 +1384,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** C++ `CApi.SeveralPromptsInOneRequestAreRefusedNotDropped` (`test_c_api.cpp`, Zufallsmodell): zwei Prompts auf allen drei Wegen abgelehnt, mit der Anzahl in der Meldung; eine Token-Liste und ein Array mit einem Prompt angenommen.
 - **Rot-Grün-Nachweis:** vor dem Fix rot (alle drei Wege `JLLAMA_STATUS_OK`), danach grün; ganze C++-Suite 641/641.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `c4062bd`
 
 ## Offene Verdachte ohne Fund-ID
 
