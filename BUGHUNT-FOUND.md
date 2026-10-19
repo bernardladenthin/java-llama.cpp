@@ -1360,7 +1360,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest#aRejectionBeforeTheFirstChunkIsA400OnEveryStreamingRoute`, `#aFailureBeforeTheFirstChunkIsA500OnEveryStreamingRoute`, `#aRejectionAfterTheFirstChunkIsAnInvalidRequestEvent`, `#aRejectionAfterAHeartbeatIsAnEvent`; die vier bestehenden Ereignis-Tests (Responses `response.failed`, Anthropic-Fehlertypen) laufen jetzt mit einem Backend, das nach einem Chunk scheitert (`ScriptedStreamBackend`). Im Agenten `AtmosphereWireContractTest#engineFailureBeforeTheFirstChunkFailsTheTurn` (neu) und `#midStreamEngineFailureCompletesSilentlyRatherThanErroring` (jetzt wirklich nach einem Chunk).
 - **Rot-Grün-Nachweis:** vor dem Umbau rot (die beiden Vor-dem-ersten-Chunk-Tests), danach 63/63 in `OpenAiCompatServerHttpTest` und alle Server-Testklassen grün; der Agent gegen den installierten neuen Kern: vorher rot (`API returned 500: model exploded` statt `null`), nach der Aufteilung `verify` grün (278 Tests, 63 übersprungen, modell- oder bildschirmgebunden); SpotBugs grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `395d9d1`
 
 ## Offene Verdachte ohne Fund-ID
 
