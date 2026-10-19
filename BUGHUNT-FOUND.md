@@ -1348,7 +1348,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** C++ `JniUtf8.*` (6 in `test_jni_helpers.cpp`: ASCII bleibt bei `ThrowNew`, 4-Byte-Zeichen und ungültiges Byte erreichen den Konstruktor als Originalbytes, dasselbe für `new_string_utf8_impl` und für `jni_guard_impl`); Java `LlamaTrainerTest#aFourByteCharacterInAPathComesBackIntactInTheErrorMessage` (modellfrei, braucht nur `libjllama`; überspringt, wo die Dateinamen-Kodierung den Pfad nicht darstellen kann) und `#aFourByteCharacterInTheTrainingTextReachesTheTrainer` (hält die Jackson-Maskierung fest, von der die Eingabeseite abhängt).
 - **Rot-Grün-Nachweis:** C++: mit durchreichenden Platzhaltern 4 von 6 rot, mit dem Fix 6 von 6 grün, die ganze Suite 640/640. Java gegen die alte Bibliothek rot (`but: was "…/missing-ð.g"`), gegen die neu gebaute grün; `LlamaLoggerTest`, `NativeLibraryLoadSmokeTest`, `RpcServerTest` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `6f530e9`
 
 ## Offene Verdachte ohne Fund-ID
 
