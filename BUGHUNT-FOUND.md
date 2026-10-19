@@ -1300,7 +1300,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** C++: `RerankResultsToJson.TokensEvaluatedArePassedOnAndDefaultToZero`. Java: `OaiRerankSupportTest#negativeTopNIsAnInvalidRequest`, `#topNZeroReturnsNoResultsLikeUpstream`, `#toOaiResponseCarriesTheUsageOfTheEvaluatedTokens`, `#readTopNReturnsValueOrNegativeOne` (um 0 ergänzt).
 - **Rot-Grün-Nachweis:** C++ ohne den Fix rot (`Which is: -1`), mit ihm grün (9/9 der Suite); Java ohne den Fix rot (3 von 16), mit ihm grün (16/16, mit `OpenAiCompatServerHttpTest` 71); SpotBugs grün. Ende zu Ende mit einem Reranker (CI: `OpenAiServerRerankIntegrationTest`) nicht lokal gelaufen.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `232985f`
 
 ## Offene Verdachte ohne Fund-ID
 
