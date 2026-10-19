@@ -939,4 +939,22 @@ public class InferenceParametersTest {
         assertThat(params.withDryPenaltyLastN(512), is(not(sameInstance(params))));
         assertThat(params.withDrySequenceBreakers("\n"), is(not(sameInstance(params))));
     }
+
+    @Test
+    public void withLogitBiasJson_storesTheValueAndRefusesASecondOne() throws Exception {
+        String json = InferenceParameters.empty()
+                .withLogitBiasJson("{\"15043\":-100}")
+                .toJson();
+        assertThat(
+                new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readTree(json)
+                        .path("logit_bias")
+                        .path("15043")
+                        .asInt(),
+                is(-100));
+        // one JSON value only: a sibling field cannot be injected through the fragment
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> InferenceParameters.empty().withLogitBiasJson("{}, \"n_predict\": 999999"));
+    }
 }

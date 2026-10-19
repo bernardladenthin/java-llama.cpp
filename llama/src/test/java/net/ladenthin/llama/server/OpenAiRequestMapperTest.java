@@ -56,6 +56,46 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void logitBiasAndNProbsAreForwardedOnBothPaths() throws IOException {
+        // Upstream reads logit_bias (OpenAI's object form included) and n_probs from the request; both
+        // mappers dropped them, so a client's banned token was generated anyway.
+        JsonNode chat = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                + "\"logit_bias\":{\"15043\":-100,\"2\":false},\"n_probs\":3}");
+        assertThat(chat.path("logit_bias").path("15043").asInt(), is(-100));
+        assertThat(chat.path("logit_bias").path("2").asBoolean(true), is(false));
+        assertThat(chat.path("n_probs").asInt(), is(3));
+
+        JsonNode completion = MAPPER.readTree(
+                mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"logit_bias\":[[7,1.5]]}"))
+                        .toJson());
+        assertThat(completion.path("logit_bias").path(0).path(1).asDouble(), closeTo(1.5, 1e-9));
+    }
+
+    @Test
+    public void moreThanOneChoiceIsRefusedBecauseOneAnswerComesBack() throws IOException {
+        // Upstream reads "n" as n_cmpl; these paths return one answer, so n > 1 silently gave one.
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"n\":2}"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"n\":3}")));
+        assertDoesNotThrow(() -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"n\":1}"));
+    }
+
+    @Test
+    public void probabilitiesOnTheStreamedCompletionAreRefused() throws IOException {
+        // The streamed /v1/completions builds its chunks from the generated text and carries no
+        // probabilities; asking for them got none, silently. stream:false forwards to upstream, which has them.
+        for (String field : new String[] {"\"logprobs\":2", "\"n_probs\":2"}) {
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\"," + field + "}")));
+            assertThat(field, e.getMessage().contains("stream"), is(true));
+        }
+    }
+
+    @Test
     public void chatTemplateKwargsAreForwarded() throws IOException {
         // Qwen3 clients switch thinking off with chat_template_kwargs; upstream's chat parser merges the
         // request's kwargs into the template variables.
@@ -350,7 +390,8 @@ public class OpenAiRequestMapperTest {
     @Test
     public void unknownFieldsIgnored() throws IOException {
         JsonNode out = mapAndSerialize(
-                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," + "\"some_future_field\":true,\"n\":3}");
+                // "n" is not unknown: more than one answer is refused (moreThanOneChoiceIsRefused...)
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," + "\"some_future_field\":true}");
         assertThat(out.path("messages").isArray(), is(true));
         assertThat(out.has("some_future_field"), is(false));
     }

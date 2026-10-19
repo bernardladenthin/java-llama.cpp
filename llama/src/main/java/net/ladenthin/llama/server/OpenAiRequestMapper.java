@@ -38,6 +38,10 @@ final class OpenAiRequestMapper {
     /** Upstream's {@code n_probs} for a chat request with {@code logprobs} but no {@code top_logprobs}. */
     private static final int DEFAULT_TOP_LOGPROBS = 20;
 
+    /** Completion parameters asking for token probabilities, which the streamed completion cannot carry. */
+    private static final List<String> COMPLETION_PROBABILITY_PARAMS =
+            Collections.unmodifiableList(Arrays.asList("logprobs", "n_probs"));
+
     /** Completion parameters OpenAI defines that upstream rejects ({@code oaicompat_completion_params_parse}). */
     private static final List<String> UNSUPPORTED_COMPLETION_PARAMS =
             Collections.unmodifiableList(Arrays.asList("best_of", "suffix"));
@@ -117,6 +121,15 @@ final class OpenAiRequestMapper {
                 throw new IllegalArgumentException("Unsupported param: " + unsupported);
             }
         }
+        // The streamed completion is built from the generated text and carries no probabilities, so a
+        // request for them would get none; the non-streamed path forwards to upstream, which has them.
+        for (String probabilities : COMPLETION_PROBABILITY_PARAMS) {
+            JsonNode value = request.path(probabilities);
+            if (!value.isMissingNode() && !value.isNull() && !(value.isBoolean() && !value.asBoolean())) {
+                throw new IllegalArgumentException(
+                        "'" + probabilities + "' is not supported with stream: true; use stream: false");
+            }
+        }
         InferenceParameters params =
                 InferenceParameters.empty().withPrompt(prompt.asText()).withCachePrompt(true);
         return applyCommonFields(params, request);
@@ -132,6 +145,22 @@ final class OpenAiRequestMapper {
      * @return a new instance with the recognised fields applied
      */
     private InferenceParameters applyCommonFields(InferenceParameters params, JsonNode request) {
+        // Upstream reads "n" as n_cmpl (several answers); these paths return one, so more is refused
+        // rather than silently answered once.
+        JsonNode choices = request.path("n");
+        if (choices.isNumber() && choices.asInt() > 1) {
+            throw new IllegalArgumentException(
+                    "'n' greater than 1 is not supported (one answer is returned) but was " + choices.asInt());
+        }
+        // logit_bias as upstream's schema reads it: [token, bias] pairs or OpenAI's object form.
+        JsonNode logitBias = request.path("logit_bias");
+        if (logitBias.isObject() || logitBias.isArray()) {
+            params = params.withLogitBiasJson(logitBias.toString());
+        }
+        JsonNode nProbs = request.path("n_probs");
+        if (nProbs.isInt()) {
+            params = params.withNProbs(nProbs.asInt());
+        }
         // Preserve llama.cpp extensions when advanced clients opt into them.
         JsonNode cachePrompt = request.path("cache_prompt");
         if (cachePrompt.isBoolean()) {

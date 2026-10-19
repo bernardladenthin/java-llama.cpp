@@ -460,6 +460,20 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
+     * Returns a new request with the logit bias replaced by a pre-built JSON value, as the request
+     * schema reads it: an array of {@code [token, bias]} pairs or an object mapping a token to its bias
+     * (OpenAI's form, token ids as keys); a token may be an id or a string, a bias of {@code false} bans
+     * it. Overrides prior logit-bias setters.
+     *
+     * @param logitBiasJson exactly one JSON array or object
+     * @return a new instance; this instance is unchanged
+     * @throws IllegalArgumentException if {@code logitBiasJson} is not exactly one JSON value
+     */
+    public InferenceParameters withLogitBiasJson(String logitBiasJson) {
+        return withRaw(RequestField.LOGIT_BIAS, logitBiasJson);
+    }
+
+    /**
      * Returns a new request with the logit bias (token-id form) replaced. Empty input is a
      * no-op (returns {@code this}). This entry overrides any prior logit-bias setter.
      *

@@ -523,13 +523,12 @@ numbered for reference, the numbers stay when an item is done):
 - **(6)** JNI shells throw with `ThrowNew(cls, jllama_last_error())` / `NewStringUTF`, which expect Modified
   UTF-8; a message with a 4-byte character or raw invalid bytes is mangled (Android CheckJNI
   aborts). Fix in C++: build the message with `utf8_to_jstring_impl` and `Throw` the object.
-- **(10)** Request fields still dropped (partly fixed by F95/F123): `logit_bias`, `n_probs`, and `n`
-  (alias of `n_cmpl` upstream; Java has no `RequestField` for it, a request with `n: 3` silently
-  gets one answer). The streamed `/v1/completions` needs a raw-JSON streaming entry point to keep
-  the remaining fields.
 - **(12)** Anthropic `stop_sequence` is always `null`; upstream sets the matched stop word.
 - **(14)** Streamed `/v1/completions` ends without `usage` (upstream puts it on the last chunk); and a
   `prompt` given as an array is rejected with 400 when streamed, accepted when not.
+  Since F180 `logprobs`/`n_probs` are refused on it too (400, pointing to `stream: false`), because
+  its chunks are built from the generated text; streaming through the native completion stream with
+  the raw body would carry them, the remaining fields and `usage`.
 
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 
