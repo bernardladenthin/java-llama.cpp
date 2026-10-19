@@ -402,7 +402,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `FfmNativeServerTest` (4, ohne Bibliothek): `close()` wartet auf ein `isRunning()` im nativen Aufruf und gibt erst danach frei; `isRunning()` nach `close()` fragt den Handle nicht ab; zweites `close()` ohne Wirkung; `isRunning()` fragt im offenen Zustand.
 - **Rot-Grün-Nachweis:** lokal mit JDK 25 (Temurin 25.0.1, Toolchain): ohne Lock (Naht beibehalten, `AtomicBoolean` wie vorher) rot (1 von 4, `close()` wartete nicht), mit Lock grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** c7c883d
 
 <a id="f60"></a>
 ### F60 – java-llama.cpp: Textblöcke einer Anthropic-Nachricht werden ohne Trenner zusammengeklebt
