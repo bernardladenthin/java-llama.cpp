@@ -390,7 +390,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ServerMetricsTest#cumulativeUsage` (schrieb das alte Verhalten fest, jetzt 800/700/100/1000 aus 100 ausgewerteten + 700 gecachten) und neu `#cumulativeUsage_readsLikeTheUsageOfAChatResponse` (10 + 4 → `new Usage(14, 3, 4)`).
 - **Rot-Grün-Nachweis:** ohne Fix rot (2 von 23), mit Fix grün (23 von 23).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `a529c5c`
 
 <a id="f59"></a>
 ### F59 – java-llama.cpp: `FfmNativeServer.isRunning()` kann nach einem parallelen `close()` freigegebenen Speicher lesen
