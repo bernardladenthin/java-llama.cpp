@@ -1312,7 +1312,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest#ollamaChatDoneReasonIsLengthWhenCutOffAndStopForToolCalls` (blockierend und gestreamt, `length`/`tool_calls`/`stop`), `#ollamaGenerateDoneReasonAndCountsFollowTheCompletion` (blockierend und gestreamt), `#ollamaGenerateWithSuffixReadsTheInfillStopType`; `OllamaApiSupportTest#generateTextExtractors` (umgestellt), `#generateWithoutCountsOmitsThemAndToolCallsAreStop`.
 - **Rot-Grün-Nachweis:** ohne den Fix rot (3 HTTP-Tests, `was "stop"`), mit ihm grün (94 Tests der beiden Klassen; Pakete `server`, `json`, `value` 417 grün); SpotBugs grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `6eb8081`
 
 ## Offene Verdachte ohne Fund-ID
 
