@@ -392,19 +392,36 @@ public class OllamaApiSupportTest {
 
     @Test
     public void generateTextExtractors() {
-        assertThat(OllamaApiSupport.extractCompletionText("{\"choices\":[{\"text\":\"hi\"}]}"), is("hi"));
-        assertThat(OllamaApiSupport.extractInfillContent("{\"content\":\"world\"}"), is("world"));
-        // Unexpected bodies yield empty text rather than throwing.
-        assertThat(OllamaApiSupport.extractCompletionText("not json"), is(""));
+        assertThat(OllamaApiSupport.Generated.fromCompletion("{\"choices\":[{\"text\":\"hi\"}]}").text, is("hi"));
+        assertThat(OllamaApiSupport.Generated.fromInfill("{\"content\":\"world\"}").text, is("world"));
+        // Unexpected bodies yield empty text and "stop" rather than throwing.
+        OllamaApiSupport.Generated broken = OllamaApiSupport.Generated.fromCompletion("not json");
+        assertThat(broken.text, is(""));
+        assertThat(broken.doneReason, is("stop"));
+        assertThat(OllamaApiSupport.Generated.fromInfill("not json").doneReason, is("stop"));
+    }
+
+    @Test
+    public void generateWithoutCountsOmitsThemAndToolCallsAreStop() throws IOException {
+        JsonNode out = read(OllamaApiSupport.toOllamaGenerateResponse(
+                OllamaApiSupport.Generated.fromCompletion("{\"choices\":[{\"text\":\"hi\"}]}"), "m"));
+        assertThat(out.has("prompt_eval_count"), is(false));
+        assertThat(out.has("eval_count"), is(false));
+        assertThat(OllamaApiSupport.toOllamaDoneReason("tool_calls"), is("stop"));
+        assertThat(OllamaApiSupport.toOllamaDoneReason(null), is("stop"));
+        assertThat(OllamaApiSupport.finishReasonOf("{\"choices\":[{\"finish_reason\":null}]}"), is((String) null));
+        assertThat(OllamaApiSupport.finishReasonOf("not json"), is((String) null));
     }
 
     @Test
     public void generateResponseAndStreamShapes() throws IOException {
-        JsonNode nonStream = read(OllamaApiSupport.toOllamaGenerateResponse("hello", "m"));
+        JsonNode nonStream = read(OllamaApiSupport.toOllamaGenerateResponse(
+                new OllamaApiSupport.Generated("hello", "stop", -1L, -1L), "m"));
         assertThat(nonStream.path("response").asText(), is("hello"));
         assertThat(nonStream.path("done").asBoolean(), is(true));
 
-        String stream = OllamaApiSupport.toOllamaGenerateStream("hello", "m");
+        String stream =
+                OllamaApiSupport.toOllamaGenerateStream(new OllamaApiSupport.Generated("hello", "stop", -1L, -1L), "m");
         String[] lines = stream.trim().split("\n");
         assertThat(lines.length, is(2));
         JsonNode first = read(lines[0]);

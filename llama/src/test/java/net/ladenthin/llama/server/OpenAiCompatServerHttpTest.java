@@ -28,6 +28,9 @@ import org.junit.jupiter.api.Test;
  */
 public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper READER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private static final String CHAT_BODY = "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
 
     private static OpenAiServerConfig config() {
@@ -243,6 +246,58 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
             assertThat(done.path("done").asBoolean(false), is(true));
             assertThat(done.path("prompt_eval_count").asInt(-1), is(12));
             assertThat(done.path("eval_count").asInt(-1), is(3));
+        }
+    }
+
+    @Test
+    public void ollamaChatDoneReasonIsLengthWhenCutOffAndStopForToolCalls() throws IOException {
+        // Ollama reports "length" for an answer cut off by num_predict and "stop" otherwise, tool calls
+        // included; the blocking path passed OpenAI's "tool_calls" through, the stream said "stop" always.
+        String body = "{\"model\":\"test-model\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]";
+        for (String[] c : new String[][] {{"length", "length"}, {"tool_calls", "stop"}, {"stop", "stop"}}) {
+            try (OpenAiCompatServer server = new OpenAiCompatServer(new FinishReasonBackend(c[0]), config()).start()) {
+                JsonNode blocking =
+                        READER.readTree(post(server.getPort(), "/api/chat", body + ",\"stream\":false}", "").body);
+                assertThat(c[0], blocking.path("done_reason").asText(), is(c[1]));
+                String[] lines = post(server.getPort(), "/api/chat", body + "}", "")
+                        .body
+                        .trim()
+                        .split("\n");
+                JsonNode done = READER.readTree(lines[lines.length - 1]);
+                assertThat(c[0], done.path("done").asBoolean(false), is(true));
+                assertThat(c[0], done.path("done_reason").asText(), is(c[1]));
+            }
+        }
+    }
+
+    @Test
+    public void ollamaGenerateDoneReasonAndCountsFollowTheCompletion() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FinishReasonBackend("length"), config()).start()) {
+            String body = "{\"model\":\"test-model\",\"prompt\":\"once upon\"";
+            JsonNode blocking =
+                    READER.readTree(post(server.getPort(), "/api/generate", body + ",\"stream\":false}", "").body);
+            assertThat(blocking.path("done_reason").asText(), is("length"));
+            assertThat(blocking.path("prompt_eval_count").asInt(-1), is(5));
+            assertThat(blocking.path("eval_count").asInt(-1), is(2));
+            String[] lines = post(server.getPort(), "/api/generate", body + ",\"stream\":true}", "")
+                    .body
+                    .trim()
+                    .split("\n");
+            JsonNode done = READER.readTree(lines[lines.length - 1]);
+            assertThat(done.path("done_reason").asText(), is("length"));
+            assertThat(done.path("eval_count").asInt(-1), is(2));
+        }
+    }
+
+    @Test
+    public void ollamaGenerateWithSuffixReadsTheInfillStopType() throws IOException {
+        // The native infill answer says why it stopped in stop_type: "limit" is Ollama's "length".
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new FinishReasonBackend("length"), config()).start()) {
+            String body = "{\"model\":\"test-model\",\"prompt\":\"def f():\",\"suffix\":\"\",\"stream\":false}";
+            JsonNode blocking = READER.readTree(post(server.getPort(), "/api/generate", body, "").body);
+            assertThat(blocking.path("done_reason").asText(), is("length"));
+            assertThat(blocking.path("prompt_eval_count").asInt(-1), is(4));
+            assertThat(blocking.path("eval_count").asInt(-1), is(1));
         }
     }
 
@@ -785,6 +840,44 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         public String rerank(JsonNode request) {
             return "{\"object\":\"list\",\"results\":[{\"index\":0,\"relevance_score\":0.9}],"
                     + "\"data\":[{\"index\":0,\"relevance_score\":0.9}]}";
+        }
+    }
+
+    /** Backend whose answers end with the given OpenAI finish reason (and a matching infill stop type). */
+    static final class FinishReasonBackend extends FakeBackend {
+        private final String finishReason;
+
+        FinishReasonBackend(String finishReason) {
+            this.finishReason = finishReason;
+        }
+
+        @Override
+        public String complete(JsonNode request) {
+            return "{\"object\":\"chat.completion\",\"choices\":[{\"index\":0,"
+                    + "\"message\":{\"role\":\"assistant\",\"content\":\"hel\"},\"finish_reason\":\""
+                    + finishReason + "\"}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3}}";
+        }
+
+        @Override
+        public void stream(JsonNode request, ChunkSink sink) throws IOException {
+            sink.accept("{\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}");
+            sink.accept("{\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{},\"finish_reason\":\""
+                    + finishReason + "\"}]}");
+            sink.accept("{\"object\":\"chat.completion.chunk\",\"choices\":[],"
+                    + "\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3}}");
+        }
+
+        @Override
+        public String completions(JsonNode request) {
+            return "{\"object\":\"text_completion\",\"choices\":[{\"text\":\"hel\",\"finish_reason\":\"" + finishReason
+                    + "\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}";
+        }
+
+        @Override
+        public String infill(JsonNode request) {
+            return "{\"content\":\" w\",\"stop\":true,\"stop_type\":\""
+                    + ("length".equals(finishReason) ? "limit" : "eos")
+                    + "\",\"tokens_evaluated\":4,\"tokens_predicted\":1}";
         }
     }
 

@@ -516,9 +516,6 @@ delete an item here when it is done.
 **Open suspicions without a finding id** (each needs the owner's decision or a model to decide;
 numbered for reference, the numbers stay when an item is done):
 
-- **(2)** Ollama `done_reason`: `tool_calls` is passed through (Ollama reports `stop`), the streamed paths
-  always report `stop` even when cut off by `num_predict`, and the streamed final line has no
-  `prompt_eval_count`/`eval_count` (`withUsageChunk` not requested).
 - **(3)** `OpenAiCompatServer` sends `200` + SSE headers before the backend runs, so a rejected streaming
   request arrives as `200` with an `error` event; upstream answers with the error status. Pinned by
   `OpenAiCompatServerHttpTest#nativeRejectionOfAStreamedChatCompletionIsAnInvalidRequestEvent`;

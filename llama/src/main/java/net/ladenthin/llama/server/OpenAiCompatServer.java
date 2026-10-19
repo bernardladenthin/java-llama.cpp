@@ -566,6 +566,8 @@ public final class OpenAiCompatServer implements AutoCloseable {
         // The done line reports the token counts, as the blocking answer does; they arrive in the
         // stream's usage chunk.
         final AtomicReference<JsonNode> usage = new AtomicReference<>();
+        // and the done_reason, which the chunk ending the answer carries
+        final AtomicReference<String> finishReason = new AtomicReference<>();
         try (ResponseStream out = new ResponseStream(exchange.getResponseBody())) {
             try {
                 backend.stream(withUsageChunk(openAiRequest), chunkJson -> {
@@ -574,12 +576,16 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     if (chunkUsage != null) {
                         usage.set(chunkUsage);
                     }
+                    String chunkFinishReason = OllamaApiSupport.finishReasonOf(chunkJson);
+                    if (chunkFinishReason != null) {
+                        finishReason.set(chunkFinishReason);
+                    }
                     String line = OllamaApiSupport.toOllamaContentLine(chunkJson, model);
                     if (line != null) {
                         out.writeStrict(line);
                     }
                 });
-                out.writeStrict(OllamaApiSupport.toOllamaDoneLine(model, accumulator, usage.get()));
+                out.writeStrict(OllamaApiSupport.toOllamaDoneLine(model, accumulator, usage.get(), finishReason.get()));
             } catch (IllegalArgumentException | InvalidRequestException e) {
                 out.writeQuietly(ollamaError(message(e)) + "\n");
             } catch (IOException e) {
@@ -600,13 +606,13 @@ public final class OpenAiCompatServer implements AutoCloseable {
             String model = request.path("model").asText(config.getModelId());
             // Generation runs to completion first (there is no streaming raw-completion path), then the
             // text is wrapped — as a single NDJSON content line + done line when stream is requested.
-            final String text;
+            final OllamaApiSupport.Generated generated;
             try {
                 if (OllamaApiSupport.hasSuffix(request)) {
-                    text = OllamaApiSupport.extractInfillContent(
+                    generated = OllamaApiSupport.Generated.fromInfill(
                             backend.infill(OllamaApiSupport.toInfillRequest(request)));
                 } else {
-                    text = OllamaApiSupport.extractCompletionText(
+                    generated = OllamaApiSupport.Generated.fromCompletion(
                             backend.completions(OllamaApiSupport.toOpenAiCompletionRequest(request)));
                 }
             } catch (IllegalArgumentException | InvalidRequestException e) {
@@ -618,15 +624,15 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 return;
             }
             if (OllamaApiSupport.isStreaming(request)) {
-                byte[] bytes =
-                        OllamaApiSupport.toOllamaGenerateStream(text, model).getBytes(StandardCharsets.UTF_8);
+                byte[] bytes = OllamaApiSupport.toOllamaGenerateStream(generated, model)
+                        .getBytes(StandardCharsets.UTF_8);
                 exchange.getResponseHeaders().set("Content-Type", CONTENT_TYPE_NDJSON);
                 exchange.sendResponseHeaders(HTTP_OK, bytes.length);
                 try (OutputStream os = exchange.getResponseBody()) {
                     os.write(bytes);
                 }
             } else {
-                sendJson(exchange, HTTP_OK, OllamaApiSupport.toOllamaGenerateResponse(text, model));
+                sendJson(exchange, HTTP_OK, OllamaApiSupport.toOllamaGenerateResponse(generated, model));
             }
         } finally {
             exchange.close();

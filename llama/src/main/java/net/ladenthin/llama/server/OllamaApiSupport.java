@@ -314,9 +314,7 @@ final class OllamaApiSupport {
             if (ollamaToolCalls.size() > 0) {
                 message.set("tool_calls", ollamaToolCalls);
             }
-            if (choice.path("finish_reason").isTextual()) {
-                doneReason = choice.path("finish_reason").asText();
-            }
+            doneReason = toOllamaDoneReason(choice.path("finish_reason").asText(""));
             JsonNode usage = completion.path("usage");
             if (usage.isObject()) {
                 root.put("prompt_eval_count", usage.path("prompt_tokens").asLong(0));
@@ -387,6 +385,25 @@ final class OllamaApiSupport {
      * @return the final Ollama NDJSON line (with trailing newline)
      */
     static String toOllamaDoneLine(String model, ToolCallDeltaAccumulator accumulator, @Nullable JsonNode usage) {
+        return toOllamaDoneLine(model, accumulator, usage, null);
+    }
+
+    /**
+     * Build the terminating Ollama NDJSON line ({@code "done":true}) with the token counts and the
+     * {@code done_reason} of the stream: {@code "length"} when the last chunk's {@code finish_reason}
+     * says the answer was cut off, else {@code "stop"} (see {@link #toOllamaDoneReason}).
+     *
+     * @param model the model id to echo
+     * @param accumulator the tool-call accumulator fed with the stream's chunks
+     * @param usage the OpenAI {@code usage} object of the stream's trailing chunk, or {@code null}
+     * @param finishReason the OpenAI {@code finish_reason} of the stream, or {@code null} if none came
+     * @return the final Ollama NDJSON line (with trailing newline)
+     */
+    static String toOllamaDoneLine(
+            String model,
+            ToolCallDeltaAccumulator accumulator,
+            @Nullable JsonNode usage,
+            @Nullable String finishReason) {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
         root.put("model", model);
         root.put("created_at", nowIso());
@@ -404,8 +421,40 @@ final class OllamaApiSupport {
             root.put("eval_count", usage.path("completion_tokens").asLong(0));
         }
         root.put("done", true);
-        root.put("done_reason", "stop");
+        root.put("done_reason", toOllamaDoneReason(finishReason));
         return root.toString() + "\n";
+    }
+
+    /**
+     * Ollama's {@code done_reason} for an OpenAI {@code finish_reason}: {@code "length"} for an answer
+     * cut off by the token limit, {@code "stop"} for everything else -- Ollama reports a turn that ends
+     * in tool calls as {@code "stop"}, it has no {@code "tool_calls"}.
+     *
+     * @param openAiFinishReason the OpenAI finish reason, or {@code null} if unknown
+     * @return {@code "length"} or {@code "stop"}
+     */
+    static String toOllamaDoneReason(@Nullable String openAiFinishReason) {
+        return "length".equals(openAiFinishReason) ? "length" : "stop";
+    }
+
+    /**
+     * Read the {@code finish_reason} of a streamed OpenAI chunk (the chunk that ends the answer carries
+     * it), or {@code null} when the chunk has none.
+     *
+     * @param openAiChunkJson one streamed OpenAI chunk
+     * @return the finish reason, or {@code null}
+     */
+    static @Nullable String finishReasonOf(String openAiChunkJson) {
+        try {
+            JsonNode reason = OBJECT_MAPPER
+                    .readTree(openAiChunkJson)
+                    .path("choices")
+                    .path(0)
+                    .path("finish_reason");
+            return reason.isTextual() ? reason.asText() : null;
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     /**
@@ -519,76 +568,115 @@ final class OllamaApiSupport {
     }
 
     /**
-     * Extract the generated text from an OpenAI completion body ({@code choices[0].text}).
-     *
-     * @param openAiCompletionJson the OpenAI {@code /v1/completions} response
-     * @return the completion text, or empty on an unexpected body
+     * What an {@code /api/generate} answer reports: the text, why it stopped and the token counts.
+     * Built from the backend's answer, which is an OpenAI completion or a native infill answer.
      */
-    static String extractCompletionText(String openAiCompletionJson) {
-        try {
-            return OBJECT_MAPPER
-                    .readTree(openAiCompletionJson)
-                    .path("choices")
-                    .path(0)
-                    .path("text")
-                    .asText("");
-        } catch (IOException e) {
-            return "";
+    static final class Generated {
+        final String text;
+        final String doneReason;
+        /** {@code prompt_eval_count}, or {@code -1} when the answer has none. */
+        final long promptEvalCount;
+        /** {@code eval_count}, or {@code -1} when the answer has none. */
+        final long evalCount;
+
+        Generated(String text, String doneReason, long promptEvalCount, long evalCount) {
+            this.text = text;
+            this.doneReason = doneReason;
+            this.promptEvalCount = promptEvalCount;
+            this.evalCount = evalCount;
+        }
+
+        /**
+         * From an OpenAI {@code /v1/completions} answer: {@code choices[0].text}, its
+         * {@code finish_reason} and {@code usage}.
+         *
+         * @param openAiCompletionJson the OpenAI completion answer
+         * @return what the generate answer reports; an empty {@code "stop"} on an unexpected body
+         */
+        static Generated fromCompletion(String openAiCompletionJson) {
+            try {
+                JsonNode completion = OBJECT_MAPPER.readTree(openAiCompletionJson);
+                JsonNode choice = completion.path("choices").path(0);
+                JsonNode usage = completion.path("usage");
+                return new Generated(
+                        choice.path("text").asText(""),
+                        toOllamaDoneReason(choice.path("finish_reason").asText("")),
+                        usage.path("prompt_tokens").asLong(-1L),
+                        usage.path("completion_tokens").asLong(-1L));
+            } catch (IOException e) {
+                return new Generated("", "stop", -1L, -1L);
+            }
+        }
+
+        /**
+         * From a native {@code /infill} answer: {@code content}, its {@code stop_type} ({@code "limit"}
+         * is a cut-off answer) and {@code tokens_evaluated} / {@code tokens_predicted}.
+         *
+         * @param infillJson the native infill answer
+         * @return what the generate answer reports; an empty {@code "stop"} on an unexpected body
+         */
+        static Generated fromInfill(String infillJson) {
+            try {
+                JsonNode infill = OBJECT_MAPPER.readTree(infillJson);
+                return new Generated(
+                        infill.path("content").asText(""),
+                        "limit".equals(infill.path("stop_type").asText("")) ? "length" : "stop",
+                        infill.path("tokens_evaluated").asLong(-1L),
+                        infill.path("tokens_predicted").asLong(-1L));
+            } catch (IOException e) {
+                return new Generated("", "stop", -1L, -1L);
+            }
+        }
+
+        private void putDone(ObjectNode done) {
+            if (promptEvalCount >= 0) {
+                done.put("prompt_eval_count", promptEvalCount);
+            }
+            if (evalCount >= 0) {
+                done.put("eval_count", evalCount);
+            }
+            done.put("done", true);
+            done.put("done_reason", doneReason);
         }
     }
 
     /**
-     * Extract the generated text from a native infill body ({@code content}).
+     * Build a non-streaming Ollama {@code /api/generate} response.
      *
-     * @param infillJson the native {@code /infill} response
-     * @return the infill content, or empty on an unexpected body
-     */
-    static String extractInfillContent(String infillJson) {
-        try {
-            return OBJECT_MAPPER.readTree(infillJson).path("content").asText("");
-        } catch (IOException e) {
-            return "";
-        }
-    }
-
-    /**
-     * Build a non-streaming Ollama {@code /api/generate} response wrapping {@code text}.
-     *
-     * @param text the generated text
+     * @param generated the text, stop reason and token counts of the answer
      * @param model the model id to echo
      * @return the Ollama generate response serialized as JSON
      */
-    static String toOllamaGenerateResponse(String text, String model) {
+    static String toOllamaGenerateResponse(Generated generated, String model) {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
         root.put("model", model);
         root.put("created_at", nowIso());
-        root.put("response", text);
-        root.put("done", true);
-        root.put("done_reason", "stop");
+        root.put("response", generated.text);
+        generated.putDone(root);
         return root.toString();
     }
 
     /**
-     * Build the streamed Ollama {@code /api/generate} NDJSON: a single response line carrying {@code text}
-     * followed by a terminating {@code "done":true} line. (Generation completes before emission, so this
-     * is one content chunk rather than token-by-token streaming.)
+     * Build the streamed Ollama {@code /api/generate} NDJSON: a single response line carrying the text
+     * followed by a terminating {@code "done":true} line with the stop reason and token counts.
+     * (Generation completes before emission, so this is one content chunk rather than token-by-token
+     * streaming.)
      *
-     * @param text the generated text
+     * @param generated the text, stop reason and token counts of the answer
      * @param model the model id to echo
      * @return the two NDJSON lines, concatenated (each with a trailing newline)
      */
-    static String toOllamaGenerateStream(String text, String model) {
+    static String toOllamaGenerateStream(Generated generated, String model) {
         ObjectNode line = OBJECT_MAPPER.createObjectNode();
         line.put("model", model);
         line.put("created_at", nowIso());
-        line.put("response", text);
+        line.put("response", generated.text);
         line.put("done", false);
         ObjectNode done = OBJECT_MAPPER.createObjectNode();
         done.put("model", model);
         done.put("created_at", nowIso());
         done.put("response", "");
-        done.put("done", true);
-        done.put("done_reason", "stop");
+        generated.putDone(done);
         return line + "\n" + done + "\n";
     }
 }
