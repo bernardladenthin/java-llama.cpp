@@ -1210,7 +1210,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `BatchDispatchTest` (8): alle Übergaben vor dem ersten Empfang, Übergabe im Aufrufer-Thread, Freigabe nach gescheiterter Übergabe, Empfang aller trotz Fehler, mehr gleichzeitige Anfragen als der gemeinsame Pool Threads hat (Latch über `commonPool().getParallelism() + 2`), Reihenfolge, Fehler nach den anderen, leere Eingabe.
 - **Rot-Grün-Nachweis:** mit dem alten Mechanismus (`supplyAsync` je Anfrage, keine Freigabe) rot (4 von 8; die übrigen 4 prüfen unverändertes Verhalten), mit dem Fix grün. Ein modellgestützter Lauf (J5-Probe) steht aus: erwartet `maxProcessingSlots=8` auch auf 4 Kernen für `completeBatch`.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** 5b4e409
 
 ## Offene Verdachte ohne Fund-ID
 
