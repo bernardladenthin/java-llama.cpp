@@ -1408,7 +1408,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** Java `OpenAiServerCompletionIntegrationTest#aStreamedCompletionIsUpstreamsStream` (modellgestützt: Token-Prompt, `logprobs`, eine Id, `usage` mit `prompt_tokens` 2, `finish_reason`, `[DONE]`); C++ `CApi.OaiCompletionsStreamDeliversTextCompletionChunksEndingWithUsage` (Zufallsmodell, dazu die Ablehnungen ohne Prompt, mit zwei Prompts und mit Null-Argument); FFM `FfmLlamaModelIntegrationTest#oaiCompletionStreamEndsWithUsage`; `OpenAiRequestMapperTest` umgestellt (33).
 - **Rot-Grün-Nachweis:** Der Java-Integrationstest mit einem Zufallsmodell vor dem Umbau rot (`400` für den Token-Prompt), danach grün; C++ 643/643; `llama-ffm verify` grün (17 + 4 + 9) gegen die neu gebaute Bibliothek; `OpenAiCompatServerHttpTest` 63, `NativeLibraryLoadSmokeTest` 6 grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `d98a6ad`
 
 ## Offene Verdachte ohne Fund-ID
 
