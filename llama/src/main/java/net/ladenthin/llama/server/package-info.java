@@ -42,7 +42,8 @@
  * <ul>
  *   <li><strong>Ollama-native</strong> ({@code GET /api/version}, {@code GET /api/tags},
  *       {@code POST /api/show}, {@code POST /api/chat} with NDJSON streaming, {@code POST /api/generate}
- *       for prompt completion / fill-in-the-middle) — for Copilot's built-in Ollama provider; see
+ *       through the chat template, as the bare prompt with {@code raw}, or fill-in-the-middle with a
+ *       {@code suffix}) — for Copilot's built-in Ollama provider; see
  *       {@link net.ladenthin.llama.server.OllamaApiSupport}.</li>
  *   <li><strong>Anthropic Messages</strong> ({@code POST /v1/messages}, SSE event stream) — see
  *       {@link net.ladenthin.llama.server.AnthropicApiSupport} /

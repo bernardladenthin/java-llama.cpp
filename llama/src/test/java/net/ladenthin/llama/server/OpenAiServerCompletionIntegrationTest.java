@@ -21,8 +21,8 @@ import org.junit.jupiter.api.Test;
 
 /**
  * End-to-end integration test for the completion-family routes — {@code POST /v1/completions},
- * {@code POST /infill} (fill-in-the-middle) and the Ollama {@code POST /api/generate} (plain + FIM via a
- * {@code suffix}) — against a real model over a real socket. Reuses the CI text model (CodeLlama-7B,
+ * {@code POST /infill} (fill-in-the-middle) and the Ollama {@code POST /api/generate} (chat template,
+ * {@code raw} and FIM via a {@code suffix}) — against a real model over a real socket. Reuses the CI text model (CodeLlama-7B,
  * {@link TestConstants#MODEL_PATH}), which is FIM-capable (see {@code LlamaModelTest#testGenerateInfill}).
  * Self-skips when the model file is absent. Assertions are structural (valid response envelopes) rather
  * than value-specific. HTTP plumbing is inherited from {@link OpenAiServerTestSupport}.
@@ -100,6 +100,20 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
         JsonNode json = MAPPER.readTree(response.body);
         assertThat(json.path("response").isTextual(), is(true));
         assertThat(json.path("done").asBoolean(), is(true));
+    }
+
+    @Test
+    public void ollamaGenerateRawRoundTrip() throws IOException {
+        // "raw": true sends the bare prompt to the completion endpoint; without it the request goes
+        // through the chat template, as Ollama does (the test above).
+        String body = "{\"model\":\"" + MODEL_ID + "\",\"stream\":false,\"raw\":true,"
+                + "\"prompt\":\"def add(a, b):\\n    return\",\"options\":{\"num_predict\":16}}";
+        Response response = post(port, "/api/generate", body, "");
+        assertThat(response.code, is(200));
+        JsonNode json = MAPPER.readTree(response.body);
+        assertThat(json.path("response").isTextual(), is(true));
+        assertThat(json.path("done").asBoolean(), is(true));
+        assertThat(json.path("eval_count").asInt(-1) > 0, is(true));
     }
 
     @Test

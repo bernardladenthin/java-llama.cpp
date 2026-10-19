@@ -530,8 +530,6 @@ numbered for reference, the numbers stay when an item is done):
 - **(12)** Anthropic `stop_sequence` is always `null`; upstream sets the matched stop word.
 - **(14)** Streamed `/v1/completions` ends without `usage` (upstream puts it on the last chunk); and a
   `prompt` given as an array is rejected with 400 when streamed, accepted when not.
-- **(16)** Ollama `/api/generate` ignores `raw` and `system`: without `raw: true` Ollama applies the chat
-  template, ours always completes raw.
 
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 

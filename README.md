@@ -998,7 +998,7 @@ path), all supporting tools and streaming:
 
 | Surface | Routes | For |
 |---|---|---|
-| **Ollama-native** | `GET /api/version`, `GET /api/tags`, `POST /api/show`, `POST /api/chat` (NDJSON streaming), `POST /api/generate` (prompt completion / FIM) | Copilot's built-in **Ollama** provider; Ollama-hardcoded tools |
+| **Ollama-native** | `GET /api/version`, `GET /api/tags`, `POST /api/show`, `POST /api/chat` (NDJSON streaming), `POST /api/generate` (through the chat template with `system`, as Ollama does; the bare prompt with `raw: true`; FIM with `suffix`) | Copilot's built-in **Ollama** provider; Ollama-hardcoded tools |
 | **Anthropic Messages** | `POST /v1/messages` (SSE event stream) | Claude-shaped clients (Claude Code); Copilot `messages` apiType |
 | **OpenAI Responses** | `POST /v1/responses` (SSE event stream) | Copilot `responses` apiType; Responses-API clients |
 

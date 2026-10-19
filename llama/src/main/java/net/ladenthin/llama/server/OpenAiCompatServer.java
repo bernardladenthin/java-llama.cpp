@@ -604,16 +604,21 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 return;
             }
             String model = request.path("model").asText(config.getModelId());
-            // Generation runs to completion first (there is no streaming raw-completion path), then the
-            // text is wrapped — as a single NDJSON content line + done line when stream is requested.
+            // Generation runs to completion first, then the text is wrapped -- as a single NDJSON content
+            // line + done line when stream is requested. A suffix is fill-in-the-middle, raw the bare
+            // prompt, anything else goes through the chat template as Ollama does.
             final OllamaApiSupport.Generated generated;
             try {
                 if (OllamaApiSupport.hasSuffix(request)) {
                     generated = OllamaApiSupport.Generated.fromInfill(
                             backend.infill(OllamaApiSupport.toInfillRequest(request)));
-                } else {
+                } else if (OllamaApiSupport.isRaw(request)) {
                     generated = OllamaApiSupport.Generated.fromCompletion(
                             backend.completions(OllamaApiSupport.toOpenAiCompletionRequest(request)));
+                } else {
+                    // Ollama applies the chat template unless raw is true
+                    generated = OllamaApiSupport.Generated.fromChat(
+                            backend.complete(OllamaApiSupport.toOpenAiChatRequestFromGenerate(request)));
                 }
             } catch (IllegalArgumentException | InvalidRequestException e) {
                 sendJson(exchange, HTTP_BAD_REQUEST, ollamaError(message(e)));

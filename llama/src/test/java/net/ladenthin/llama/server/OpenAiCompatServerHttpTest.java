@@ -273,7 +273,8 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     @Test
     public void ollamaGenerateDoneReasonAndCountsFollowTheCompletion() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FinishReasonBackend("length"), config()).start()) {
-            String body = "{\"model\":\"test-model\",\"prompt\":\"once upon\"";
+            // raw: the bare prompt goes to the completion endpoint
+            String body = "{\"model\":\"test-model\",\"prompt\":\"once upon\",\"raw\":true";
             JsonNode blocking =
                     READER.readTree(post(server.getPort(), "/api/generate", body + ",\"stream\":false}", "").body);
             assertThat(blocking.path("done_reason").asText(), is("length"));
@@ -422,6 +423,46 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
             assertThat(response.code, is(200));
             assertThat(response.body, containsString("\"response\":\"hello\"")); // FakeBackend.completions text
             assertThat(response.body, containsString("\"done\":true"));
+        }
+    }
+
+    @Test
+    public void ollamaGenerateWithoutRawAppliesTheChatTemplateLikeOllama() throws IOException {
+        // Ollama's /api/generate applies the model's chat template (with "system" as the system
+        // message) unless "raw" is true; ours always completed the bare prompt, so an instruct model
+        // continued the text instead of answering, and "system" was lost.
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            String body = "{\"model\":\"test-model\",\"prompt\":\"why?\",\"system\":\"be brief\","
+                    + "\"images\":[\"AAAA\"],\"stream\":false}";
+            JsonNode out = READER.readTree(post(server.getPort(), "/api/generate", body, "").body);
+
+            assertThat(backend.called, is("complete"));
+            JsonNode messages = backend.request.path("messages");
+            assertThat(messages.size(), is(2));
+            assertThat(messages.path(0).path("role").asText(), is("system"));
+            assertThat(messages.path(0).path("content").asText(), is("be brief"));
+            assertThat(messages.path(1).path("role").asText(), is("user"));
+            assertThat(messages.path(1).path("content").path(0).path("text").asText(), is("why?"));
+            assertThat(messages.path(1).path("content").path(1).path("type").asText(), is("image_url"));
+            assertThat(out.path("response").asText(), is("because"));
+            assertThat(out.path("thinking").asText(), is("hmm"));
+            assertThat(out.path("eval_count").asInt(-1), is(3));
+        }
+    }
+
+    @Test
+    public void ollamaGenerateWithRawCompletesTheBarePromptAndIgnoresSystem() throws IOException {
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            String body = "{\"model\":\"test-model\",\"prompt\":\"once upon\",\"system\":\"x\","
+                    + "\"raw\":true,\"stream\":false}";
+            JsonNode out = READER.readTree(post(server.getPort(), "/api/generate", body, "").body);
+
+            assertThat(backend.called, is("completions"));
+            assertThat(backend.request.path("prompt").asText(), is("once upon"));
+            assertThat(backend.request.has("messages"), is(false));
+            assertThat(out.path("response").asText(), is("hello"));
         }
     }
 
@@ -840,6 +881,28 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         public String rerank(JsonNode request) {
             return "{\"object\":\"list\",\"results\":[{\"index\":0,\"relevance_score\":0.9}],"
                     + "\"data\":[{\"index\":0,\"relevance_score\":0.9}]}";
+        }
+    }
+
+    /** Backend that records which operation a request reached and with which body. */
+    static final class RecordingBackend extends FakeBackend {
+        volatile String called = "";
+        volatile JsonNode request = READER.createObjectNode();
+
+        @Override
+        public String complete(JsonNode request) {
+            this.called = "complete";
+            this.request = request;
+            return "{\"object\":\"chat.completion\",\"choices\":[{\"index\":0,\"finish_reason\":\"stop\","
+                    + "\"message\":{\"role\":\"assistant\",\"content\":\"because\",\"reasoning_content\":\"hmm\"}}],"
+                    + "\"usage\":{\"prompt_tokens\":9,\"completion_tokens\":3}}";
+        }
+
+        @Override
+        public String completions(JsonNode request) {
+            this.called = "completions";
+            this.request = request;
+            return super.completions(request);
         }
     }
 

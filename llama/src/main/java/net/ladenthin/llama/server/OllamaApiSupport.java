@@ -26,6 +26,9 @@ import org.jspecify.annotations.Nullable;
  */
 final class OllamaApiSupport {
 
+    /** The fields of an {@code /api/generate} request that {@code /api/chat} carries the same way. */
+    private static final String[] GENERATE_CHAT_FIELDS = {"model", "options", "format", "think"};
+
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     /**
@@ -521,8 +524,49 @@ final class OllamaApiSupport {
     }
 
     /**
+     * Whether the {@code /api/generate} request asks for the bare prompt ({@code "raw": true}). Without
+     * it Ollama applies the model's chat template, with {@code system} as the system message.
+     *
+     * @param request the parsed Ollama generate request
+     * @return {@code true} if {@code raw} is {@code true}
+     */
+    static boolean isRaw(JsonNode request) {
+        return request.path("raw").asBoolean(false);
+    }
+
+    /**
+     * Translate an Ollama {@code /api/generate} request without {@code raw} into the internal OpenAI chat
+     * request, as Ollama applies the chat template: {@code system} (when given) as the system message,
+     * {@code prompt} with its {@code images} as the user message, and {@code options}, {@code format}
+     * and {@code think} as {@code /api/chat} carries them.
+     *
+     * @param request the parsed Ollama generate request
+     * @return an OpenAI {@code /v1/chat/completions} request object
+     */
+    static ObjectNode toOpenAiChatRequestFromGenerate(JsonNode request) {
+        ObjectNode chat = OBJECT_MAPPER.createObjectNode();
+        for (String field : GENERATE_CHAT_FIELDS) {
+            if (request.has(field)) {
+                chat.set(field, request.get(field).deepCopy());
+            }
+        }
+        ArrayNode messages = chat.putArray("messages");
+        String system = request.path("system").asText("");
+        if (!system.isEmpty()) {
+            messages.addObject().put("role", "system").put("content", system);
+        }
+        ObjectNode user = messages.addObject()
+                .put("role", "user")
+                .put("content", request.path("prompt").asText(""));
+        if (request.path("images").isArray()) {
+            user.set("images", request.path("images").deepCopy());
+        }
+        return toOpenAiChatRequest(chat);
+    }
+
+    /**
      * Translate an Ollama {@code /api/generate} request into the internal OpenAI {@code /v1/completions}
-     * request shape ({@code prompt} + sampling). Used when there is no {@code suffix}.
+     * request shape ({@code prompt} + sampling). Used for {@code "raw": true} without {@code suffix}.
      *
      * @param request the parsed Ollama generate request
      * @return an OpenAI completion request object
@@ -573,6 +617,9 @@ final class OllamaApiSupport {
      */
     static final class Generated {
         final String text;
+        /** The model's reasoning, or {@code ""} when it gave none. */
+        final String thinking;
+
         final String doneReason;
         /** {@code prompt_eval_count}, or {@code -1} when the answer has none. */
         final long promptEvalCount;
@@ -580,7 +627,12 @@ final class OllamaApiSupport {
         final long evalCount;
 
         Generated(String text, String doneReason, long promptEvalCount, long evalCount) {
+            this(text, "", doneReason, promptEvalCount, evalCount);
+        }
+
+        Generated(String text, String thinking, String doneReason, long promptEvalCount, long evalCount) {
             this.text = text;
+            this.thinking = thinking;
             this.doneReason = doneReason;
             this.promptEvalCount = promptEvalCount;
             this.evalCount = evalCount;
@@ -605,6 +657,38 @@ final class OllamaApiSupport {
                         usage.path("completion_tokens").asLong(-1L));
             } catch (IOException e) {
                 return new Generated("", "stop", -1L, -1L);
+            }
+        }
+
+        /**
+         * From an OpenAI chat answer (the {@code /api/generate} request without {@code raw}): the
+         * message's {@code content} and {@code reasoning_content}, its {@code finish_reason} and
+         * {@code usage}.
+         *
+         * @param openAiChatJson the OpenAI chat completion answer
+         * @return what the generate answer reports; an empty {@code "stop"} on an unexpected body
+         */
+        static Generated fromChat(String openAiChatJson) {
+            try {
+                JsonNode completion = OBJECT_MAPPER.readTree(openAiChatJson);
+                JsonNode choice = completion.path("choices").path(0);
+                JsonNode usage = completion.path("usage");
+                return new Generated(
+                        choice.path("message").path("content").asText(""),
+                        choice.path("message").path("reasoning_content").asText(""),
+                        toOllamaDoneReason(choice.path("finish_reason").asText("")),
+                        usage.path("prompt_tokens").asLong(-1L),
+                        usage.path("completion_tokens").asLong(-1L));
+            } catch (IOException e) {
+                return new Generated("", "stop", -1L, -1L);
+            }
+        }
+
+        /** Put the text and, when there is one, the reasoning into an Ollama generate line. */
+        private void putText(ObjectNode line) {
+            line.put("response", text);
+            if (!thinking.isEmpty()) {
+                line.put("thinking", thinking);
             }
         }
 
@@ -651,7 +735,7 @@ final class OllamaApiSupport {
         ObjectNode root = OBJECT_MAPPER.createObjectNode();
         root.put("model", model);
         root.put("created_at", nowIso());
-        root.put("response", generated.text);
+        generated.putText(root);
         generated.putDone(root);
         return root.toString();
     }
@@ -670,7 +754,7 @@ final class OllamaApiSupport {
         ObjectNode line = OBJECT_MAPPER.createObjectNode();
         line.put("model", model);
         line.put("created_at", nowIso());
-        line.put("response", generated.text);
+        generated.putText(line);
         line.put("done", false);
         ObjectNode done = OBJECT_MAPPER.createObjectNode();
         done.put("model", model);
