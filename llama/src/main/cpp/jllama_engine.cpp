@@ -651,6 +651,18 @@ int completions_stream_request(jllama_context *jctx, const std::string &body_tex
     return streaming_request(jctx, data, type, TASK_RESPONSE_TYPE_NONE);
 }
 
+int completions_oai_stream_request(jllama_context *jctx, const std::string &body_text) {
+    const json body = parse_json_body(body_text);
+    json data;
+    try {
+        data = oaicompat_completion_params_parse(body);
+    } catch (const std::exception &e) {
+        throw jllama_invalid_request(e.what());
+    }
+    data["stream"] = true;
+    return streaming_request(jctx, data, SERVER_TASK_TYPE_COMPLETION, TASK_RESPONSE_TYPE_OAI_CMPL);
+}
+
 std::string completions_stream_receive(jllama_context *jctx, int id_task, bool &stop) {
     stop = false;
     json payload = stream_next(jctx, id_task, stop);

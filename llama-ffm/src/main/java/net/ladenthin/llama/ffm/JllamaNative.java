@@ -98,6 +98,8 @@ final class JllamaNative {
             downcall("jllama_chat_completions_request", json(ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle COMPLETIONS = downcall("jllama_completions", json(ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle COMPLETIONS_OAI = downcall("jllama_completions_oai", json(ADDRESS, ADDRESS, ADDRESS));
+    static final MethodHandle COMPLETIONS_OAI_STREAM_REQUEST =
+            downcall("jllama_completions_oai_stream_request", json(ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle INFILL = downcall("jllama_infill", json(ADDRESS, ADDRESS, ADDRESS));
     static final MethodHandle COMPLETIONS_STREAM_REQUEST =
             downcall("jllama_completions_stream_request", json(ADDRESS, ADDRESS, ADDRESS));

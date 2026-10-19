@@ -229,6 +229,16 @@ jllama_status jllama_completions_stream_request(jllama_model *model, const char 
     });
 }
 
+jllama_status jllama_completions_oai_stream_request(jllama_model *model, const char *request_json, int *task_id) {
+    if (request_json == nullptr || task_id == nullptr) {
+        return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and task_id must not be null");
+    }
+    *task_id = 0;
+    return guarded(model, [&](jllama_context *jctx) {
+        *task_id = jllama::engine::completions_oai_stream_request(jctx, request_json);
+    });
+}
+
 jllama_status jllama_chat_completions_request(jllama_model *model, const char *request_json, int *task_id) {
     if (request_json == nullptr || task_id == nullptr) {
         return fail(JLLAMA_STATUS_INVALID_ARGUMENT, "request_json and task_id must not be null");

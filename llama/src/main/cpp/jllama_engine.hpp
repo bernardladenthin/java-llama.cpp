@@ -154,6 +154,12 @@ void set_log_sink(common_log_callback callback, void *user_data);
  * received with completions_stream_receive(): each result as JSON with a "stop" key added.
  */
 [[nodiscard]] int completions_stream_request(jllama_context *jctx, const std::string &body);
+
+/**
+ * A streaming OpenAI /v1/completions request, parsed as the blocking one is; its task id, received
+ * with chat_completions_stream_receive(): text_completion chunks, the last with usage.
+ */
+[[nodiscard]] int completions_oai_stream_request(jllama_context *jctx, const std::string &body);
 [[nodiscard]] std::string completions_stream_receive(jllama_context *jctx, int id_task, bool &stop);
 
 /** The chat template applied to an OpenAI chat body: the prompt text the model would see. */

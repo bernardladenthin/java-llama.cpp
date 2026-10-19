@@ -33,42 +33,18 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
-    public void completionParamsUpstreamRejectsAreRejectedOnTheStreamedPathToo() throws IOException {
-        // Upstream's oaicompat_completion_params_parse answers 400 for suffix, best_of and echo=true, and
-        // the non-streamed /v1/completions forwards the body to it; the streamed path maps the body here
-        // and must not silently drop them (a streamed FIM request with suffix continued the prefix).
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> mapper.toCompletionParameters(
-                        MAPPER.readTree("{\"prompt\":\"def f(\",\"suffix\":\"return x\"}")));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"best_of\":2}")));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"echo\":true}")));
-        assertThat(
-                MAPPER.readTree(mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"echo\":false}"))
-                                .toJson())
-                        .path("prompt")
-                        .asText(),
-                is("p"));
-    }
-
-    @Test
-    public void logitBiasAndNProbsAreForwardedOnBothPaths() throws IOException {
-        // Upstream reads logit_bias (OpenAI's object form included) and n_probs from the request; both
-        // mappers dropped them, so a client's banned token was generated anyway.
+    public void logitBiasAndNProbsAreForwarded() throws IOException {
+        // Upstream reads logit_bias (OpenAI's object form included) and n_probs from the request; the
+        // mapper dropped them, so a client's banned token was generated anyway.
         JsonNode chat = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
                 + "\"logit_bias\":{\"15043\":-100,\"2\":false},\"n_probs\":3}");
         assertThat(chat.path("logit_bias").path("15043").asInt(), is(-100));
         assertThat(chat.path("logit_bias").path("2").asBoolean(true), is(false));
         assertThat(chat.path("n_probs").asInt(), is(3));
 
-        JsonNode completion = MAPPER.readTree(
-                mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"logit_bias\":[[7,1.5]]}"))
-                        .toJson());
-        assertThat(completion.path("logit_bias").path(0).path(1).asDouble(), closeTo(1.5, 1e-9));
+        JsonNode pairs =
+                mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"logit_bias\":[[7,1.5]]}");
+        assertThat(pairs.path("logit_bias").path(0).path(1).asDouble(), closeTo(1.5, 1e-9));
     }
 
     @Test
@@ -82,26 +58,11 @@ public class OpenAiRequestMapperTest {
 
     @Test
     public void moreThanOneChoiceIsRefusedBecauseOneAnswerComesBack() throws IOException {
-        // Upstream reads "n" as n_cmpl; these paths return one answer, so n > 1 silently gave one.
+        // Upstream reads "n" as n_cmpl; the chat paths return one answer, so n > 1 silently gave one.
         assertThrows(
                 IllegalArgumentException.class,
                 () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"n\":2}"));
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"n\":3}")));
         assertDoesNotThrow(() -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"n\":1}"));
-    }
-
-    @Test
-    public void probabilitiesOnTheStreamedCompletionAreRefused() throws IOException {
-        // The streamed /v1/completions builds its chunks from the generated text and carries no
-        // probabilities; asking for them got none, silently. stream:false forwards to upstream, which has them.
-        for (String field : new String[] {"\"logprobs\":2", "\"n_probs\":2"}) {
-            IllegalArgumentException e = assertThrows(
-                    IllegalArgumentException.class,
-                    () -> mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\"," + field + "}")));
-            assertThat(field, e.getMessage().contains("stream"), is(true));
-        }
     }
 
     @Test
@@ -341,23 +302,21 @@ public class OpenAiRequestMapperTest {
     public void zeroTokenCapOnlyWarmsTheCacheLikeUpstream() throws IOException {
         // upstream: "When 0, no tokens will be generated but the prompt is evaluated into the cache". Dropping
         // a 0 made the mapped routes generate without a cap, unlike the verbatim /v1/completions.
-        JsonNode out =
-                MAPPER.readTree(mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"max_tokens\":0}"))
-                        .toJson());
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":0}");
         assertThat(out.path("n_predict").asInt(-1), is(0));
     }
 
     @Test
-    public void llamaCppSamplingExtensionsReachTheStreamedCompletion() throws IOException {
-        // The non-streamed /v1/completions forwards the body to upstream's schema, which reads these
-        // fields; the streamed path maps the body here and must not answer the same request with
-        // other sampling.
-        JsonNode out = MAPPER.readTree(mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\","
-                        + "\"min_p\":0.05,\"typical_p\":0.9,\"repeat_penalty\":1.1,\"repeat_last_n\":32,"
-                        + "\"top_n_sigma\":1.5,\"xtc_probability\":0.3,\"xtc_threshold\":0.2,"
-                        + "\"dynatemp_range\":0.4,\"dynatemp_exponent\":1.2,\"min_keep\":2,\"n_keep\":8,"
-                        + "\"ignore_eos\":true,\"grammar\":\"root ::= \\\"a\\\"\"}"))
-                .toJson());
+    public void llamaCppSamplingExtensionsReachTheMappedRequest() throws IOException {
+        // Upstream's schema reads these fields from a chat body too; the mapped chat routes must not
+        // answer the same request with other sampling.
+        JsonNode out = MAPPER.readTree(
+                mapper.toInferenceParameters(MAPPER.readTree("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                                + "\"min_p\":0.05,\"typical_p\":0.9,\"repeat_penalty\":1.1,\"repeat_last_n\":32,"
+                                + "\"top_n_sigma\":1.5,\"xtc_probability\":0.3,\"xtc_threshold\":0.2,"
+                                + "\"dynatemp_range\":0.4,\"dynatemp_exponent\":1.2,\"min_keep\":2,\"n_keep\":8,"
+                                + "\"ignore_eos\":true,\"grammar\":\"root ::= \\\"a\\\"\"}"))
+                        .toJson());
         assertThat(out.path("min_p").asDouble(), is(closeTo(0.05, 1e-4)));
         assertThat(out.path("typical_p").asDouble(), is(closeTo(0.9, 1e-4)));
         assertThat(out.path("repeat_penalty").asDouble(), is(closeTo(1.1, 1e-4)));
@@ -376,22 +335,19 @@ public class OpenAiRequestMapperTest {
     @Test
     public void nPredictWinsOverMaxTokensLikeUpstream() throws IOException {
         // upstream reads n_predict with max_completion_tokens and max_tokens as aliases, n_predict first.
-        JsonNode out = MAPPER.readTree(
-                mapper.toCompletionParameters(MAPPER.readTree("{\"prompt\":\"p\",\"max_tokens\":50,\"n_predict\":7}"))
-                        .toJson());
+        JsonNode out = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":50,\"n_predict\":7}");
         assertThat(out.path("n_predict").asInt(), is(7));
     }
 
     @Test
-    public void jsonSchemaReachesTheStreamedCompletionUnlessAGrammarIsGiven() throws IOException {
-        JsonNode schema = MAPPER.readTree(mapper.toCompletionParameters(
-                        MAPPER.readTree("{\"prompt\":\"p\",\"json_schema\":{\"type\":\"object\"}}"))
-                .toJson());
+    public void jsonSchemaReachesTheMappedRequestUnlessAGrammarIsGiven() throws IOException {
+        JsonNode schema = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"json_schema\":{\"type\":\"object\"}}");
         assertThat(schema.path("json_schema").path("type").asText(), is("object"));
         // upstream applies json_schema only without a grammar.
-        JsonNode both = MAPPER.readTree(mapper.toCompletionParameters(MAPPER.readTree(
-                        "{\"prompt\":\"p\",\"grammar\":\"root ::= \\\"a\\\"\",\"json_schema\":{\"type\":\"object\"}}"))
-                .toJson());
+        JsonNode both = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"grammar\":\"root ::= \\\"a\\\"\",\"json_schema\":{\"type\":\"object\"}}");
         assertThat(both.has("json_schema"), is(false));
         assertThat(both.path("grammar").asText(), is("root ::= \"a\""));
     }

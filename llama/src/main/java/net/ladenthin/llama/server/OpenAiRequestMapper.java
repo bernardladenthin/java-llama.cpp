@@ -6,8 +6,6 @@ package net.ladenthin.llama.server;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,14 +35,6 @@ final class OpenAiRequestMapper {
 
     /** Upstream's {@code n_probs} for a chat request with {@code logprobs} but no {@code top_logprobs}. */
     private static final int DEFAULT_TOP_LOGPROBS = 20;
-
-    /** Completion parameters asking for token probabilities, which the streamed completion cannot carry. */
-    private static final List<String> COMPLETION_PROBABILITY_PARAMS =
-            Collections.unmodifiableList(Arrays.asList("logprobs", "n_probs"));
-
-    /** Completion parameters OpenAI defines that upstream rejects ({@code oaicompat_completion_params_parse}). */
-    private static final List<String> UNSUPPORTED_COMPLETION_PARAMS =
-            Collections.unmodifiableList(Arrays.asList("best_of", "suffix"));
 
     OpenAiRequestMapper() {}
 
@@ -99,46 +89,8 @@ final class OpenAiRequestMapper {
     }
 
     /**
-     * Translate an OpenAI {@code /v1/completions} request (a raw {@code prompt} string) into
-     * {@link InferenceParameters} for the streaming {@code generate} path.
-     *
-     * @param request the parsed OpenAI completion request object
-     * @return inference parameters carrying the prompt and mapped sampling options
-     * @throws IllegalArgumentException if {@code prompt} is missing or not a string
-     */
-    InferenceParameters toCompletionParameters(JsonNode request) {
-        JsonNode prompt = request.path("prompt");
-        if (!prompt.isTextual()) {
-            throw new IllegalArgumentException("'prompt' must be a string");
-        }
-        // The non-streamed /v1/completions forwards the body to upstream's oaicompat_completion_params_parse,
-        // which rejects these; reject them here as well instead of silently generating something else.
-        if (request.path("echo").asBoolean(false)) {
-            throw new IllegalArgumentException("Only no echo is supported");
-        }
-        for (String unsupported : UNSUPPORTED_COMPLETION_PARAMS) {
-            if (request.has(unsupported)) {
-                throw new IllegalArgumentException("Unsupported param: " + unsupported);
-            }
-        }
-        // The streamed completion is built from the generated text and carries no probabilities, so a
-        // request for them would get none; the non-streamed path forwards to upstream, which has them.
-        for (String probabilities : COMPLETION_PROBABILITY_PARAMS) {
-            JsonNode value = request.path(probabilities);
-            if (!value.isMissingNode() && !value.isNull() && !(value.isBoolean() && !value.asBoolean())) {
-                throw new IllegalArgumentException(
-                        "'" + probabilities + "' is not supported with stream: true; use stream: false");
-            }
-        }
-        InferenceParameters params =
-                InferenceParameters.empty().withPrompt(prompt.asText()).withCachePrompt(true);
-        return applyCommonFields(params, request);
-    }
-
-    /**
-     * Apply the sampling / KV-cache / output-shaping fields shared by chat and completion requests
-     * (temperature, top_p/top_k, seed, penalties, max tokens, stop, stream_options, response_format,
-     * plus the llama.cpp cache extensions). Tools and messages/prompt are handled by the callers.
+     * Apply the sampling / KV-cache / output-shaping fields of a chat request (temperature, top_p/top_k, seed, penalties, max tokens, stop, stream_options, response_format,
+     * plus the llama.cpp cache extensions). Tools and messages are handled by the caller.
      *
      * @param params the parameters to extend
      * @param request the parsed OpenAI request object

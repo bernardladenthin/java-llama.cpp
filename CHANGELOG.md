@@ -633,6 +633,14 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **A streamed `/v1/completions` is upstream's stream.** `OpenAiCompatServer` built the chunks of a
+  streamed completion itself from the Java generator: no `usage` on the last chunk, no probabilities
+  (since F180 refused with a pointer to `stream: false`), and a prompt given as a token array refused
+  while the same request without `stream` was accepted. The body now goes to llama.cpp verbatim, as
+  the blocking request does, and the chunks are upstream's own `text_completion` events. New
+  `LlamaModel.streamCompletionsOai(String, Consumer<String>)`, the C function
+  `jllama_completions_oai_stream_request` (received with `jllama_chat_completions_stream_receive`)
+  and `FfmLlamaModel.completionsOaiStream`.
 - **OpenAI answers carry an id and the model name.** Every native OpenAI answer and stream chunk had
   `"id": ""` and `"model": ""`; upstream gives each completion a `chatcmpl-` id (one per stream) and
   names the model it runs (the alias, else the model's name). They do now. New

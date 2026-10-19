@@ -137,7 +137,8 @@ JLLAMA_API jllama_status jllama_chat_completions_stream_request(jllama_model *mo
                                                                 int *task_id);
 
 /**
- * The next event of a streaming task, blocking until one is available: *envelope_json is
+ * The next event of a streaming task (a chat one, or one from jllama_completions_oai_stream_request),
+ * blocking until one is available: *envelope_json is
  * `{"data": <chunk object, or the array of final chunks>, "stop": <bool>}` (jllama_string_free),
  * *stop is the same flag. After stop the task is released. JLLAMA_STATUS_ERROR with "Task not
  * found" for an unknown or already released id.
@@ -182,6 +183,15 @@ JLLAMA_API jllama_status jllama_completions(jllama_model *model, const char *req
 
 /** An OpenAI /v1/completions request, blocking; *response_json the text_completion object(s). */
 JLLAMA_API jllama_status jllama_completions_oai(jllama_model *model, const char *request_json, char **response_json);
+
+/**
+ * Starts a streaming OpenAI /v1/completions request (the body as for jllama_completions_oai) and
+ * returns its task id in *task_id. Receive with jllama_chat_completions_stream_receive, whose
+ * envelopes then carry text_completion chunks, the last with usage; release an unfinished task with
+ * jllama_task_release.
+ */
+JLLAMA_API jllama_status jllama_completions_oai_stream_request(jllama_model *model, const char *request_json,
+                                                               int *task_id);
 
 /**
  * A fill-in-the-middle request (`input_prefix`, `input_suffix`, optional `input_extra` and

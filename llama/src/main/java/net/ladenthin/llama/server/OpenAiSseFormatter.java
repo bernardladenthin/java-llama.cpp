@@ -153,37 +153,6 @@ final class OpenAiSseFormatter {
     }
 
     /**
-     * Build one OpenAI {@code text_completion} streaming chunk for {@code POST /v1/completions}.
-     *
-     * @param id the completion id, stable across the whole stream
-     * @param created the creation timestamp in epoch seconds
-     * @param model the served model id
-     * @param text the incremental token text carried by this chunk
-     * @param finishReason the finish reason on the final chunk, or {@code null} for intermediate chunks
-     * @return the chunk serialized as JSON
-     */
-    static String completionChunk(String id, long created, String model, String text, @Nullable String finishReason) {
-        ObjectNode choice = OBJECT_MAPPER.createObjectNode();
-        choice.put("text", text);
-        choice.put("index", 0);
-        choice.putNull("logprobs");
-        if (finishReason == null) {
-            choice.putNull("finish_reason");
-        } else {
-            choice.put("finish_reason", finishReason);
-        }
-        ArrayNode choices = OBJECT_MAPPER.createArrayNode();
-        choices.add(choice);
-        ObjectNode root = OBJECT_MAPPER.createObjectNode();
-        root.put("id", id);
-        root.put("object", "text_completion");
-        root.put("created", created);
-        root.put("model", model);
-        root.set("choices", choices);
-        return root.toString();
-    }
-
-    /**
      * Build the llama.cpp-native {@code GET /props} body. Autocomplete clients (e.g. llama.vscode) read
      * {@code default_generation_settings.n_ctx} from here to size their context window, and newer clients
      * read the {@code modalities} block to gate image input.

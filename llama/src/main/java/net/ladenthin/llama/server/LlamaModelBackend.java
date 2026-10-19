@@ -5,13 +5,10 @@
 package net.ladenthin.llama.server;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
-import java.util.UUID;
-import net.ladenthin.llama.LlamaIterable;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.parameters.InferenceParameters;
-import net.ladenthin.llama.value.LlamaOutput;
-import net.ladenthin.llama.value.StopReason;
 
 /**
  * Production {@link OpenAiBackend} that runs requests against a loaded {@link LlamaModel}.
@@ -92,32 +89,28 @@ final class LlamaModelBackend implements OpenAiBackend {
 
     @Override
     public void streamCompletions(JsonNode request, ChunkSink sink) throws IOException {
-        InferenceParameters params = mapper.toCompletionParameters(request);
-        String modelId = request.path("model").asText("llama");
-        String id = "cmpl-" + UUID.randomUUID().toString().replace("-", "");
-        long created = System.currentTimeMillis() / 1000L;
-        // Relays a sink IOException (client disconnect) out of the token loop; try-with-resources then
-        // cancels the in-flight native task via LlamaIterable.close().
-        IOException sinkFailure = null;
-        try (LlamaIterable it = model.generate(params)) {
-            for (LlamaOutput out : it) {
-                String finishReason = out.stop ? completionFinishReason(out.stopReason) : null;
+        // The native handler parses the OpenAI body itself, as for the blocking request; forward it.
+        ObjectNode body = request.deepCopy();
+        body.put("stream", true);
+        // Holds an IOException thrown by the sink so it can be rethrown after the model API (which
+        // only understands unchecked exceptions) unwinds and cancels the native task.
+        final IOException[] sinkFailure = new IOException[1];
+        try {
+            model.streamCompletionsOai(body.toString(), chunkJson -> {
                 try {
-                    sink.accept(OpenAiSseFormatter.completionChunk(id, created, modelId, out.text, finishReason));
+                    sink.accept(chunkJson);
                 } catch (IOException e) {
-                    sinkFailure = e;
-                    break;
+                    sinkFailure[0] = e;
+                    throw new java.io.UncheckedIOException(e);
                 }
+            });
+        } catch (java.io.UncheckedIOException e) {
+            IOException cause = sinkFailure[0];
+            if (cause != null) {
+                throw cause;
             }
+            throw e;
         }
-        if (sinkFailure != null) {
-            throw sinkFailure;
-        }
-    }
-
-    /** Map a {@link StopReason} to the OpenAI {@code finish_reason} ("length" on the token cap, else "stop"). */
-    private static String completionFinishReason(StopReason reason) {
-        return reason == StopReason.MAX_TOKENS ? "length" : "stop";
     }
 
     @Override

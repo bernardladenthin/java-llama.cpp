@@ -514,13 +514,9 @@ named in each item holds the analysis, the upstream references (b11639) and the 
 delete an item here when it is done.
 
 **Open suspicions without a finding id** (each needs the owner's decision or a model to decide;
-numbered for reference, the numbers stay when an item is done):
-
-- **(14)** Streamed `/v1/completions` ends without `usage` (upstream puts it on the last chunk); and a
-  `prompt` given as an array is rejected with 400 when streamed, accepted when not.
-  Since F180 `logprobs`/`n_probs` are refused on it too (400, pointing to `stream: false`), because
-  its chunks are built from the generated text; streaming through the native completion stream with
-  the raw body would carry them, the remaining fields and `usage`.
+numbered for reference, the numbers stay when an item is done): none left -- the last ones were
+fixed as F181 to F186 on 2026-10-20. What still needs a model to confirm is listed in
+`BUGHUNT-MEASUREMENTS.md` (the brief for a local run).
 
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 

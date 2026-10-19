@@ -196,6 +196,19 @@ public final class FfmLlamaModel implements AutoCloseable {
     }
 
     /**
+     * A streamed OpenAI {@code /v1/completions} request: each {@link FfmTaskStream#next()} is one
+     * {@code {"data": <text_completion chunk>, "stop": <bool>}} envelope, the last chunk with
+     * {@code usage} (as {@code LlamaModel.streamCompletionsOai}).
+     *
+     * @param requestJson the request object, parsed as {@link #completionsOai(String)} parses it
+     * @return the stream; close it to release the task early
+     */
+    public FfmTaskStream completionsOaiStream(String requestJson) {
+        int task = taskOut(JllamaNative.COMPLETIONS_OAI_STREAM_REQUEST, requireNonNull(requestJson, "requestJson"));
+        return new FfmTaskStream(this, task, JllamaNative.CHAT_COMPLETIONS_STREAM_RECEIVE);
+    }
+
+    /**
      * A fill-in-the-middle request, blocking (the model needs FIM tokens).
      *
      * @param requestJson the request object ({@code input_prefix}, {@code input_suffix}, ...)

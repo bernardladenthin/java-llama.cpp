@@ -1066,6 +1066,20 @@ JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestChatCompletion
     });
 }
 
+// Streaming OpenAI /v1/completions: the body parsed as handleCompletionsOai parses it; poll the
+// returned task id with receiveChatCompletionChunk, whose envelopes then carry text_completion
+// chunks, the last with usage.
+JNIEXPORT jint JNICALL Java_net_ladenthin_llama_LlamaModel_requestCompletionOaiStream(JNIEnv *env, jobject obj,
+                                                                                      jstring jparams) {
+    return jni_guard_impl(env, c_llama_error, [&]() -> jint {
+        REQUIRE_SERVER_CONTEXT(0);
+        const std::string body = parse_jstring(env, jparams);
+        int task_id = 0;
+        const jllama_status status = jllama_completions_oai_stream_request(api(jctx), body.c_str(), &task_id);
+        return api_task(env, status, task_id);
+    });
+}
+
 JNIEXPORT jintArray JNICALL Java_net_ladenthin_llama_LlamaModel_encode(JNIEnv *env, jobject obj, jstring jprompt) {
     return jni_guard_impl(env, c_llama_error, [&]() -> jintArray {
         REQUIRE_SERVER_CONTEXT(nullptr);

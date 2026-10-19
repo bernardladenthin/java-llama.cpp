@@ -331,6 +331,46 @@ TEST_F(CApi, SeveralPromptsInOneRequestAreRefusedNotDropped) {
         << jllama_last_error();
 }
 
+// The streamed /v1/completions: the body parsed as the blocking one, upstream's text_completion
+// chunks, one id, the last with usage (TODO (14), F186).
+TEST_F(CApi, OaiCompletionsStreamDeliversTextCompletionChunksEndingWithUsage) {
+    int task = -1;
+    ASSERT_EQ(
+        jllama_completions_oai_stream_request(model_, R"({"prompt":[72,105],"max_tokens":3,"logprobs":1})", &task),
+        JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::vector<json> chunks;
+    bool stop = false;
+    for (int i = 0; i < 20 && !stop; ++i) {
+        Owned envelope;
+        ASSERT_EQ(jllama_chat_completions_stream_receive(model_, task, &envelope.s, &stop), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json data = json::parse(envelope.str()).at("data");
+        for (const json &chunk : data.is_array() ? data : json::array({data})) {
+            chunks.push_back(chunk);
+        }
+    }
+    EXPECT_TRUE(stop);
+    ASSERT_GE(chunks.size(), 2u);
+    std::set<std::string> ids;
+    for (const json &chunk : chunks) {
+        EXPECT_EQ(chunk.at("object").get<std::string>(), "text_completion") << chunk.dump();
+        ids.insert(chunk.at("id").get<std::string>());
+    }
+    EXPECT_EQ(ids.size(), 1u);
+    EXPECT_TRUE(chunks.front().at("choices")[0].at("logprobs").at("content").is_array()) << chunks.front().dump();
+    const json &last = chunks.back();
+    EXPECT_EQ(last.at("usage").at("prompt_tokens").get<int>(), 2) << last.dump();
+    EXPECT_TRUE(last.at("choices")[0].at("finish_reason").is_string());
+
+    // refused before anything runs, as the blocking request is
+    EXPECT_EQ(jllama_completions_oai_stream_request(model_, R"({"max_tokens":2})", &task),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_EQ(jllama_completions_oai_stream_request(model_, R"({"prompt":["Hi","Ho"]})", &task),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_EQ(jllama_completions_oai_stream_request(model_, nullptr, &task), JLLAMA_STATUS_INVALID_ARGUMENT);
+}
+
 TEST_F(CApi, RawStreamingDeliversResultsWithAStopKeyAndReleasesTheTask) {
     int task = -1;
     ASSERT_EQ(jllama_completions_stream_request(

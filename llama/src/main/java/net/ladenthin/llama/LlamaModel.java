@@ -783,6 +783,40 @@ public class LlamaModel implements AutoCloseable {
     }
 
     /**
+     * Stream an OpenAI {@code /v1/completions} request as {@code text_completion} chunk JSON objects,
+     * feeding each chunk's JSON string to {@code chunkSink} as it is produced.
+     * <p>
+     * The body is parsed natively exactly as {@link #handleCompletionsOai(String)} parses it, so a
+     * request means the same streamed and blocking: a prompt as text or as a token array,
+     * {@code logprobs}, the sampling fields upstream reads. Each chunk is upstream's own streaming
+     * event; the last carries the {@code finish_reason} and the {@code usage}. Streaming is forced on.
+     * Forward each chunk as one {@code data:} line and emit {@code data: [DONE]} after this method
+     * returns. If {@code chunkSink} throws, the in-flight native task is cancelled and the exception
+     * propagates to the caller.
+     *
+     * @param requestJson the OpenAI completion body ({@code {"prompt": ..., "max_tokens": ..., ...}})
+     * @param chunkSink receiver for each {@code text_completion} chunk JSON string, in order
+     * @throws net.ladenthin.llama.exception.InvalidRequestException if the request is rejected (no
+     *     {@code prompt}, a parameter upstream refuses, several prompts, a prompt over the context size)
+     * @throws net.ladenthin.llama.exception.LlamaException if inference fails
+     */
+    public void streamCompletionsOai(String requestJson, Consumer<String> chunkSink) {
+        int taskId = requestCompletionOaiStream(requestJson);
+        boolean stopped = false;
+        try {
+            while (!stopped) {
+                String envelope = receiveChatCompletionChunk(taskId);
+                stopped = chatStreamParser.feed(envelope, chunkSink);
+            }
+        } finally {
+            // as in streamChatCompletion: an early exit (chunkSink threw) releases the native task
+            if (!stopped) {
+                cancelCompletion(taskId);
+            }
+        }
+    }
+
+    /**
      * Run a blocking completion and return the full result as a JSON string.
      * This is the JSON-in/JSON-out equivalent of {@link #complete(InferenceParameters)}.
      *
@@ -1151,6 +1185,8 @@ public class LlamaModel implements AutoCloseable {
     native int requestChatCompletion(String params);
 
     native int requestChatCompletionStream(String params);
+
+    native int requestCompletionOaiStream(String requestJson);
 
     native String receiveChatCompletionChunk(int taskId);
 }

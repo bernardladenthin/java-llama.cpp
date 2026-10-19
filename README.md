@@ -965,7 +965,7 @@ built-in WebUI" below). It serves:
 | Method &amp; path | Backed by |
 |---|---|
 | `POST /v1/chat/completions` | `LlamaModel.streamChatCompletion` (streaming SSE) / `chatComplete` (blocking) |
-| `POST /v1/completions` | `LlamaModel.handleCompletionsOai` |
+| `POST /v1/completions` | `LlamaModel.streamCompletionsOai` (streaming SSE) / `handleCompletionsOai` (blocking) |
 | `POST /v1/embeddings` (requires `--embedding`) | `LlamaModel.handleEmbeddings` |
 | `POST /v1/rerank` (requires `--reranking`) | `LlamaModel.handleRerank` (reshaped to `results`/`data`) |
 | `POST /infill` | `LlamaModel.handleInfill` (fill-in-the-middle autocomplete) |

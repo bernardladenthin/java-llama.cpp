@@ -82,6 +82,43 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
         assertThat(MAPPER.readTree(response.body).path("error").path("type").asText(), is("invalid_request_error"));
     }
 
+    // The streamed /v1/completions went through the Java generator and built its own chunks: no usage,
+    // no probabilities, and a prompt given as a token array refused while the same request without
+    // "stream" was accepted. It now streams upstream's own text_completion chunks (TODO (14), F186).
+    @Test
+    public void aStreamedCompletionIsUpstreamsStream() throws IOException {
+        String body = "{\"model\":\"" + MODEL_ID + "\",\"stream\":true,\"max_tokens\":4,\"logprobs\":2,"
+                + "\"prompt\":[72,105]}";
+        Response response = post(port, "/v1/completions", body, "");
+        assertThat(response.body, response.code, is(200));
+        java.util.List<JsonNode> chunks = new java.util.ArrayList<>();
+        for (String line : response.body.split("\n")) {
+            if (line.startsWith("data: ") && !line.equals("data: [DONE]")) {
+                chunks.add(MAPPER.readTree(line.substring("data: ".length())));
+            }
+        }
+        assertThat(response.body, response.body.contains("data: [DONE]"), is(true));
+        assertThat(response.body, chunks.size() >= 2, is(true));
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        boolean probabilities = false;
+        for (JsonNode chunk : chunks) {
+            assertThat(chunk.path("object").asText(), is("text_completion"));
+            ids.add(chunk.path("id").asText());
+            probabilities |= chunk.path("choices")
+                    .path(0)
+                    .path("logprobs")
+                    .path("content")
+                    .isArray();
+        }
+        assertThat("one id per stream: " + ids, ids.size(), is(1));
+        assertThat(ids.iterator().next().isEmpty(), is(false));
+        assertThat("the chunks carry the probabilities asked for", probabilities, is(true));
+        JsonNode last = chunks.get(chunks.size() - 1);
+        assertThat(last.path("usage").path("prompt_tokens").asInt(), is(2));
+        assertThat(last.path("usage").path("completion_tokens").asInt() > 0, is(true));
+        assertThat(last.path("choices").path(0).path("finish_reason").isTextual(), is(true));
+    }
+
     @Test
     public void infillReturnsContent() throws IOException {
         String body = "{\"input_prefix\":\"def add(a, b):\\n    return \",\"input_suffix\":\"\\n\",\"n_predict\":16}";

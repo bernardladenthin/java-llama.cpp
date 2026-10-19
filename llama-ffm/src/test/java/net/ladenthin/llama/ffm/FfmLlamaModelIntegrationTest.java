@@ -123,6 +123,22 @@ class FfmLlamaModelIntegrationTest {
     }
 
     @Test
+    void oaiCompletionStreamEndsWithUsage() throws IOException {
+        JsonNode last = null;
+        try (FfmTaskStream stream =
+                model.completionsOaiStream("{\"prompt\": \"Hello\", \"max_tokens\": 3, \"temperature\": 0}")) {
+            while (stream.hasNext()) {
+                JsonNode data = JSON.readTree(stream.next()).path("data");
+                for (JsonNode chunk : data.isArray() ? data : JSON.createArrayNode().add(data)) {
+                    assertEquals("text_completion", chunk.path("object").asText());
+                    last = chunk;
+                }
+            }
+        }
+        assertTrue(last != null && last.path("usage").path("completion_tokens").asInt() > 0, String.valueOf(last));
+    }
+
+    @Test
     void tokenizeAndDetokenizeRoundTrip() throws IOException {
         int[] tokens = model.tokenize("Hello", false);
         assertThat(tokens.length, greaterThan(0));
