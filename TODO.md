@@ -520,15 +520,8 @@ delete an item here when it is done.
   `ServerMetricsTest`.
 - **F62** The LangChain4j adapter concatenates several `TextContent` without a separator. Proposal:
   join with `\n` as F60/F61 do (or pass them on as parts); the test that pins today's output changes.
-
-**Measured (`BUGHUNT-MEASUREMENTS.md`, J1–J9) and acted on:** J1/J2 → F158 follow-up (`setPredict`
-below -1 rejected; `0` behaves like `1`), J3 → F165, J4 → F166, J5 → F167, J7 → F59, J8 → F168.
-J6 confirmed all six fixes with a model (F64, F71, F77, F90, F93, F128); the CI job
-`test-java-llama-langchain4j-integration` already passes `net.ladenthin.llama.langchain4j.tool.model`,
-so F128 runs there too (the property was missing only from the measurement's local command line).
-Still the owner's decision:
-
-- **F67** confirmed (J9): after `setLoraAdapter(0, 0f)` a slot keeps computing on the prompt cache
+- **F67** confirmed (J9; the measurement brief J1–J9 and its results are `BUGHUNT-MEASUREMENTS.md` in
+  commit `b689d7b`, removed since): after `setLoraAdapter(0, 0f)` a slot keeps computing on the prompt cache
   built under scale 1 and answers neither like the adapter nor like the base model; only `eraseSlot(0)`
   restores a fresh model's behaviour. Proposal: clear the slots in `engine::set_lora_adapters` after a
   change.
@@ -536,46 +529,41 @@ Still the owner's decision:
   'n_predict': Value must be between -1 <= value <= 2147483647", J2a), so a Java-side check would only
   move the same error earlier.
 
-**Open suspicions without a finding id** (each needs the owner's decision or a model to decide):
+**Open suspicions without a finding id** (each needs the owner's decision or a model to decide;
+numbered for reference, the numbers stay when an item is done):
 
-1. *Fixed as F168:* `JllamaNative.takeStrings` frees a non-NULL array also when it is empty.
-2. Ollama `done_reason`: `tool_calls` is passed through (Ollama reports `stop`), the streamed paths
-   always report `stop` even when cut off by `num_predict`, and the streamed final line has no
-   `prompt_eval_count`/`eval_count` (`withUsageChunk` not requested).
-3. `OpenAiCompatServer` sends `200` + SSE headers before the backend runs, so a rejected streaming
-   request arrives as `200` with an `error` event; upstream answers with the error status. Pinned by
-   `OpenAiCompatServerHttpTest#nativeRejectionOfAStreamedChatCompletionIsAnInvalidRequestEvent`;
-   changing it means sending the headers with the first chunk on all five streaming routes.
-4. `RouterClient.findModel`/`awaitModelLoaded` compare `id` only; a model reached by an alias is
-   reported as not listed (`RouterModel` would need `aliases`).
-5. *Fixed as F165:* `OpenAiCompatServer.main` advertises the loaded model's slot `n_ctx` (measured
-   before: 10240 advertised, 2048 real).
-6. JNI shells throw with `ThrowNew(cls, jllama_last_error())` / `NewStringUTF`, which expect Modified
-   UTF-8; a message with a 4-byte character or raw invalid bytes is mangled (Android CheckJNI
-   aborts). Fix in C++: build the message with `utf8_to_jstring_impl` and `Throw` the object.
-7. *Fixed as F166 for the Java API:* `ParameterJsonSerializer.buildMessages` writes `"{}"` for empty
-   tool-call arguments (measured: `""` in the history fails the request with 400). Still open: the
-   server's own translations, `ResponsesApiSupport.java:218` and `AnthropicApiSupport.java:229`
-   (`input` missing), build the history without it and can still write `""`.
-8. Rerank: `top_n: 0` (and negative) returns all results, upstream none; `usage` is missing.
-9. `/props` reports `total_slots` as 1 instead of `n_parallel` (needs a config field).
-10. Request fields still dropped (partly fixed by F95/F123): `logit_bias`, `n_probs`, and `n`
-    (alias of `n_cmpl` upstream; Java has no `RequestField` for it, a request with `n: 3` silently
-    gets one answer). The streamed `/v1/completions` needs a raw-JSON streaming entry point to keep
-    the remaining fields.
-11. Responses `refusal` parts of assistant messages in the history are dropped; upstream turns them
-    into a part its own parser rejects with 400. Taking them as text is the most useful reading.
-12. Anthropic `stop_sequence` is always `null`; upstream sets the matched stop word.
-13. Continue decides FIM support from `.Suffix` in `/api/show`'s `template`; ours is `""`. A
-    placeholder template would be invented.
-14. Streamed `/v1/completions` ends without `usage` (upstream puts it on the last chunk); and a
-    `prompt` given as an array is rejected with 400 when streamed, accepted when not.
-15. *Fixed as F167:* `completeBatch`/`completeBatchWithStats` submit every request on the caller's
-    thread and then receive, `chatBatch` gives each request a thread of its own (measured before: 3
-    of 8 slots on 4 cores). Still open: `rerank(String, String...)` collapses equal documents in its
-    `HashMap`.
-16. Ollama `/api/generate` ignores `raw` and `system`: without `raw: true` Ollama applies the chat
-    template, ours always completes raw.
+- **(2)** Ollama `done_reason`: `tool_calls` is passed through (Ollama reports `stop`), the streamed paths
+  always report `stop` even when cut off by `num_predict`, and the streamed final line has no
+  `prompt_eval_count`/`eval_count` (`withUsageChunk` not requested).
+- **(3)** `OpenAiCompatServer` sends `200` + SSE headers before the backend runs, so a rejected streaming
+  request arrives as `200` with an `error` event; upstream answers with the error status. Pinned by
+  `OpenAiCompatServerHttpTest#nativeRejectionOfAStreamedChatCompletionIsAnInvalidRequestEvent`;
+  changing it means sending the headers with the first chunk on all five streaming routes.
+- **(4)** `RouterClient.findModel`/`awaitModelLoaded` compare `id` only; a model reached by an alias is
+  reported as not listed (`RouterModel` would need `aliases`).
+- **(6)** JNI shells throw with `ThrowNew(cls, jllama_last_error())` / `NewStringUTF`, which expect Modified
+  UTF-8; a message with a 4-byte character or raw invalid bytes is mangled (Android CheckJNI
+  aborts). Fix in C++: build the message with `utf8_to_jstring_impl` and `Throw` the object.
+- **(7)** Empty tool-call arguments (rest of F166): the server's own translations,
+  `ResponsesApiSupport.java:218` and `AnthropicApiSupport.java:229` (`input` missing), build the
+  history without `buildMessages` and can still write `""`, which upstream rejects with 400.
+- **(8)** Rerank: `top_n: 0` (and negative) returns all results, upstream none; `usage` is missing.
+- **(9)** `/props` reports `total_slots` as 1 instead of `n_parallel` (needs a config field).
+- **(10)** Request fields still dropped (partly fixed by F95/F123): `logit_bias`, `n_probs`, and `n`
+  (alias of `n_cmpl` upstream; Java has no `RequestField` for it, a request with `n: 3` silently
+  gets one answer). The streamed `/v1/completions` needs a raw-JSON streaming entry point to keep
+  the remaining fields.
+- **(11)** Responses `refusal` parts of assistant messages in the history are dropped; upstream turns them
+  into a part its own parser rejects with 400. Taking them as text is the most useful reading.
+- **(12)** Anthropic `stop_sequence` is always `null`; upstream sets the matched stop word.
+- **(13)** Continue decides FIM support from `.Suffix` in `/api/show`'s `template`; ours is `""`. A
+  placeholder template would be invented.
+- **(14)** Streamed `/v1/completions` ends without `usage` (upstream puts it on the last chunk); and a
+  `prompt` given as an array is rejected with 400 when streamed, accepted when not.
+- **(15)** `rerank(String, String...)` collapses equal documents in its `HashMap` (the batch part was
+  fixed as F167).
+- **(16)** Ollama `/api/generate` ignores `raw` and `system`: without `raw: true` Ollama applies the chat
+  template, ours always completes raw.
 
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 
