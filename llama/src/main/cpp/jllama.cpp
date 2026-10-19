@@ -196,8 +196,8 @@ static const static_object_binding g_static_object_bindings[] = {
  * Throws the Java exception a failed C API call maps to (jllama_last_error() carries the message).
  */
 static void throw_api_status(JNIEnv *env, jllama_status status) {
-    env->ThrowNew(status == JLLAMA_STATUS_INVALID_REQUEST ? c_llama_invalid_request : c_llama_error,
-                  jllama_last_error());
+    throw_utf8_impl(env, status == JLLAMA_STATUS_INVALID_REQUEST ? c_llama_invalid_request : c_llama_error,
+                    jllama_last_error());
 }
 
 /** The handle a Java field holds, as the C API's opaque model. */
@@ -863,7 +863,7 @@ static void load_model_impl(JNIEnv *env, jobject obj, jobjectArray jparams, jobj
     free_string_array(argv, argc);
     if (status != JLLAMA_STATUS_OK) {
         // An unreachable --rpc server and a refused argv are both LlamaException here, as before.
-        env->ThrowNew(c_llama_error, jllama_last_error());
+        throw_utf8_impl(env, c_llama_error, jllama_last_error());
         return;
     }
     env->SetLongField(obj, f_model_pointer, reinterpret_cast<jlong>(model));

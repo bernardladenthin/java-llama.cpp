@@ -71,7 +71,7 @@ jclass llama_exception_class(JNIEnv *env) { return env->FindClass("net/ladenthin
 void throw_llama_exception(JNIEnv *env, const char *message) {
     jclass exception_class = llama_exception_class(env);
     if (exception_class != nullptr) {
-        env->ThrowNew(exception_class, message);
+        throw_utf8_impl(env, exception_class, message);
     }
 }
 

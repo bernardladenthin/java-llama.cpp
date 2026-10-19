@@ -10,6 +10,7 @@
 #include "rpc_support.hpp"
 #include "train_params.hpp"
 #include "jllama_api.h"
+#include "jni_utf8.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -136,6 +137,9 @@ bool finetune_json(const std::string &config_json, std::string &err) {
 // this TU deliberately keeps its own nlohmann alias and never includes jni_helpers.hpp.
 extern "C" JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaTrainer_finetuneNative(JNIEnv *env, jclass,
                                                                                           jstring jconfig) try {
+    // GetStringUTFChars hands out Modified UTF-8, which differs from UTF-8 only for U+0000 and the
+    // supplementary planes; TrainingParameters.toJson() (Jackson) escapes both, so the JSON read
+    // here is the same in either encoding. LlamaTrainerTest pins that.
     std::string config_json;
     if (jconfig != nullptr) {
         const char *c = env->GetStringUTFChars(jconfig, nullptr);
@@ -147,7 +151,8 @@ extern "C" JNIEXPORT jstring JNICALL Java_net_ladenthin_llama_LlamaTrainer_finet
     if (jllama_finetune(config_json.c_str()) == JLLAMA_STATUS_OK) {
         return env->NewStringUTF(""); // empty == success
     }
-    return env->NewStringUTF(jllama_last_error());
+    // The message quotes paths, so it is standard UTF-8 of any character (see jni_utf8.hpp).
+    return new_string_utf8_impl(env, jllama_last_error());
 } catch (...) {
     return env->NewStringUTF("unknown C++ exception crossed the JNI boundary");
 }

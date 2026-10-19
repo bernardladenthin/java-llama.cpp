@@ -633,6 +633,13 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **Error messages with a 4-byte character reach Java intact.** The JNI shells handed messages to
+  `ThrowNew` and `NewStringUTF`, which read Modified UTF-8; a message quoting a path or request text
+  with a supplementary-plane character (an emoji) was mangled on HotSpot -- a trainer message for
+  `missing-😀.gguf` came back as `missing-`, four wrong characters and `.g` -- and aborts the process under
+  Android's CheckJNI. A non-ASCII message now crosses as bytes through `String(byte[], "UTF-8")`
+  (`jni_utf8.hpp`), on every path that carries llama.cpp's text: the C API status, the model load,
+  the JNI exception boundary, `NativeServer`, `RpcServer` and `LlamaTrainer`.
 - **A LoRA adapter change no longer answers from the old cache** (`patches/0021`). After
   `setLoraAdapter(s)` -- and after a request with its own adapters -- a slot reused the prompt cache it
   had computed under the previous scales and answered like neither adapter set (measured with
