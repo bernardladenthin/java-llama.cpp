@@ -183,37 +183,22 @@ public class LlamaModel implements AutoCloseable {
 
     /**
      * Dispatch a list of completion requests in parallel and return the generated texts
-     * in the same order. Each request is sent immediately; the native scheduler dispatches
-     * tasks across whatever slot count {@link net.ladenthin.llama.parameters.ModelParameters#setParallel(int)} was
-     * configured with. With a default single-slot model the requests still run, but
-     * sequentially.
+     * in the same order. Every request is submitted on the calling thread before the first result
+     * is awaited, so the native scheduler runs as many at once as
+     * {@link net.ladenthin.llama.parameters.ModelParameters#setParallel(int)} gives it slots,
+     * independent of the number of processors. With a default single-slot model the requests
+     * still run, but sequentially. If a submission fails, the requests already submitted are
+     * released before the exception propagates.
      *
      * @param requests the inference parameter blocks (must be distinct instances)
      * @return the generated texts in input order
      */
     public java.util.List<String> completeBatch(java.util.Collection<InferenceParameters> requests) {
-        java.util.List<CompletableFuture<String>> futures =
-                new java.util.ArrayList<CompletableFuture<String>>(requests.size());
-        for (InferenceParameters req : requests) {
-            futures.add(completeAsync(req));
-        }
-        java.util.List<String> out = new java.util.ArrayList<String>(futures.size());
-        RuntimeException failure = null;
-        for (CompletableFuture<String> f : futures) {
-            try {
-                out.add(f.join());
-            } catch (RuntimeException e) {
-                // Keep joining the rest so no sibling request is left running unobserved (a native
-                // slot/reader leak) before propagating the first failure.
-                if (failure == null) {
-                    failure = e;
-                }
-            }
-        }
-        if (failure != null) {
-            throw failure;
-        }
-        return out;
+        return BatchDispatch.submitAllThenReceive(
+                requests,
+                req -> requestCompletion(req.withStream(false).toJson()),
+                taskId -> completionParser.parse(receiveCompletionJson(taskId)).text,
+                this::releaseTask);
     }
 
     /**
@@ -224,57 +209,25 @@ public class LlamaModel implements AutoCloseable {
      * @return parsed completion results in input order
      */
     public java.util.List<CompletionResult> completeBatchWithStats(java.util.Collection<InferenceParameters> requests) {
-        java.util.List<CompletableFuture<CompletionResult>> futures =
-                new java.util.ArrayList<CompletableFuture<CompletionResult>>(requests.size());
-        for (final InferenceParameters req : requests) {
-            futures.add(CompletableFuture.supplyAsync(() -> completeWithStats(req)));
-        }
-        java.util.List<CompletionResult> out = new java.util.ArrayList<CompletionResult>(futures.size());
-        RuntimeException failure = null;
-        for (CompletableFuture<CompletionResult> f : futures) {
-            try {
-                out.add(f.join());
-            } catch (RuntimeException e) {
-                if (failure == null) {
-                    failure = e;
-                }
-            }
-        }
-        if (failure != null) {
-            throw failure;
-        }
-        return out;
+        return BatchDispatch.submitAllThenReceive(
+                requests,
+                req -> requestCompletion(req.withStream(false).toJson()),
+                taskId -> completionParser.parseCompletionResult(receiveCompletionJson(taskId)),
+                this::releaseTask);
     }
 
     /**
      * Dispatch a list of typed chat requests in parallel and return the parsed responses
-     * in the same order. Requires {@link net.ladenthin.llama.parameters.ModelParameters#setParallel(int)} &gt; 1 for
+     * in the same order. Each request runs on a thread of its own (the chat endpoint submits and
+     * waits in one native call), so all of them reach the native scheduler at once. Requires
+     * {@link net.ladenthin.llama.parameters.ModelParameters#setParallel(int)} &gt; 1 for
      * actual parallelism; otherwise the calls run sequentially on the single slot.
      *
      * @param requests the typed chat requests (must be distinct instances)
      * @return parsed responses in input order
      */
     public java.util.List<ChatResponse> chatBatch(java.util.Collection<ChatRequest> requests) {
-        java.util.List<CompletableFuture<ChatResponse>> futures =
-                new java.util.ArrayList<CompletableFuture<ChatResponse>>(requests.size());
-        for (final ChatRequest req : requests) {
-            futures.add(CompletableFuture.supplyAsync(() -> chat(req)));
-        }
-        java.util.List<ChatResponse> out = new java.util.ArrayList<ChatResponse>(futures.size());
-        RuntimeException failure = null;
-        for (CompletableFuture<ChatResponse> f : futures) {
-            try {
-                out.add(f.join());
-            } catch (RuntimeException e) {
-                if (failure == null) {
-                    failure = e;
-                }
-            }
-        }
-        if (failure != null) {
-            throw failure;
-        }
-        return out;
+        return BatchDispatch.runEachOnItsOwnThread(requests, this::chat);
     }
 
     /**

@@ -574,10 +574,10 @@ commands, hypotheses and answer fields, is `BUGHUNT-MEASUREMENTS.md` (J1–J9).*
     placeholder template would be invented.
 14. Streamed `/v1/completions` ends without `usage` (upstream puts it on the last chunk); and a
     `prompt` given as an array is rejected with 400 when streamed, accepted when not.
-15. `completeBatch`/`completeBatchWithStats`/`chatBatch` run on the common `ForkJoinPool`
-    (`availableProcessors() - 1`), so fewer requests run at once than `setParallel` allows; the
-    Javadoc says otherwise. Fix: submit all on the caller's thread, then receive. Also:
-    `rerank(String, String...)` collapses equal documents in its `HashMap`.
+15. *Fixed as F167:* `completeBatch`/`completeBatchWithStats` submit every request on the caller's
+    thread and then receive, `chatBatch` gives each request a thread of its own (measured before: 3
+    of 8 slots on 4 cores). Still open: `rerank(String, String...)` collapses equal documents in its
+    `HashMap`.
 16. Ollama `/api/generate` ignores `raw` and `system`: without `raw: true` Ollama applies the chat
     template, ours always completes raw.
 

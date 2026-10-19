@@ -397,20 +397,43 @@ SPDX-License-Identifier: MIT
     </Match>
 
     <!--
-        LlamaModel.completeBatch / completeBatchWithStats / chatBatch dispatch N async requests, then
-        deliberately join EVERY future before re-throwing the first captured failure (a
-        CompletionException) — so a partial failure never abandons sibling requests running unobserved.
-        Re-throwing the captured RuntimeException is the intended behaviour; fb-contrib flags any
-        `throw <RuntimeException>` as THROWS_METHOD_THROWS_RUNTIMEEXCEPTION.
+        BatchDispatch (behind LlamaModel.completeBatch / completeBatchWithStats / chatBatch) receives or
+        joins EVERY request before re-throwing the first captured failure, and a failed submission
+        re-throws after releasing the tasks already submitted — so a partial failure never abandons
+        sibling requests running unobserved. Re-throwing the captured RuntimeException is the intended
+        behaviour; fb-contrib flags any `throw <RuntimeException>` as THROWS_METHOD_THROWS_RUNTIMEEXCEPTION.
     -->
     <Match>
-        <Class name="net.ladenthin.llama.LlamaModel"/>
+        <Class name="net.ladenthin.llama.BatchDispatch"/>
         <Bug pattern="THROWS_METHOD_THROWS_RUNTIMEEXCEPTION"/>
         <Or>
-            <Method name="completeBatch"/>
-            <Method name="completeBatchWithStats"/>
-            <Method name="chatBatch"/>
+            <Method name="submitAllThenReceive"/>
+            <Method name="runEachOnItsOwnThread"/>
+            <Method name="asRuntimeException"/>
         </Or>
+    </Match>
+
+    <!--
+        BatchDispatch.runEachOnItsOwnThread creates its executor per call on purpose: it is sized to the
+        batch (one thread per request, so all of them reach the native scheduler at once; the common
+        ForkJoinPool capped that at availableProcessors() - 1) and shut down in finally when the call
+        returns. A shared field-held executor would either cap the batch again or keep idle threads.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.BatchDispatch"/>
+        <Bug pattern="HES_LOCAL_EXECUTOR_SERVICE"/>
+        <Method name="runEachOnItsOwnThread"/>
+    </Match>
+
+    <!--
+        BatchDispatch.asRuntimeException unwraps an ExecutionException of a java.util.function.Function,
+        whose cause can only be a RuntimeException or an Error: the two instanceof checks are that
+        unwrapping, not type-based dispatch that polymorphism could replace.
+    -->
+    <Match>
+        <Class name="net.ladenthin.llama.BatchDispatch"/>
+        <Bug pattern="ITC_INHERITANCE_TYPE_CHECKING"/>
+        <Method name="asRuntimeException"/>
     </Match>
 
     <!--

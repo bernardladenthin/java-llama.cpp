@@ -1,0 +1,156 @@
+// SPDX-FileCopyrightText: 2026 Bernard Ladenthin <bernard.ladenthin@gmail.com>
+//
+// SPDX-License-Identifier: MIT
+package net.ladenthin.llama;
+
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import java.util.function.IntConsumer;
+import java.util.function.IntFunction;
+import java.util.function.ToIntFunction;
+import org.jspecify.annotations.Nullable;
+
+/**
+ * How the batch methods of {@link LlamaModel} hand several requests to the native scheduler at once.
+ *
+ * <p>They used to run every request through {@code CompletableFuture.supplyAsync}, i.e. on the common
+ * {@code ForkJoinPool}, whose parallelism is {@code availableProcessors() - 1}. So at most that many
+ * requests were in flight, whatever {@code setParallel} allowed: measured at b11639, 3 of 8 slots on a
+ * 4-core machine. They also shared the pool with whatever else the application ran on it.
+ *
+ * <p>Kept out of {@link LlamaModel}, whose static initializer loads the native library, so both
+ * mechanisms are testable without it.
+ */
+final class BatchDispatch {
+
+    private BatchDispatch() {}
+
+    /**
+     * Submits every request on the calling thread, then receives the results in input order.
+     *
+     * <p>The native scheduler runs as many of the submitted tasks at once as it has slots. When a
+     * submission fails, the tasks already submitted are released before the failure propagates, so no
+     * slot keeps working for a result nobody will read. A failed receive does not stop the others from
+     * being received; the first failure propagates after all of them.
+     *
+     * @param requests the requests in order
+     * @param submit   submits one request and returns its task id
+     * @param receive  receives the result of one task, blocking until it is complete
+     * @param release  releases a submitted task whose result will not be received
+     * @param <R>      the request type
+     * @param <T>      the result type
+     * @return the results in input order
+     */
+    static <R, T> List<T> submitAllThenReceive(
+            Collection<R> requests, ToIntFunction<R> submit, IntFunction<T> receive, IntConsumer release) {
+        final List<Integer> taskIds = new ArrayList<Integer>(requests.size());
+        try {
+            for (R request : requests) {
+                taskIds.add(submit.applyAsInt(request));
+            }
+        } catch (RuntimeException e) {
+            for (int taskId : taskIds) {
+                try {
+                    release.accept(taskId);
+                } catch (RuntimeException suppressed) {
+                    e.addSuppressed(suppressed);
+                }
+            }
+            throw e;
+        }
+        final List<T> out = new ArrayList<T>(taskIds.size());
+        RuntimeException failure = null;
+        for (int taskId : taskIds) {
+            try {
+                out.add(receive.apply(taskId));
+            } catch (RuntimeException e) {
+                // Keep receiving the rest so no sibling task is left unread (a native reader leak)
+                // before propagating the first failure.
+                if (failure == null) {
+                    failure = e;
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
+        return out;
+    }
+
+    /**
+     * Runs every request on a thread of its own and returns the results in input order.
+     *
+     * <p>For calls that submit and wait in one native call (the OpenAI chat endpoint), where the
+     * submission cannot be separated from the wait. One thread per request, so all of them reach the
+     * native scheduler at once; the threads are daemons and end with the call.
+     *
+     * @param requests the requests in order
+     * @param call     runs one request to completion
+     * @param <R>      the request type
+     * @param <T>      the result type
+     * @return the results in input order
+     */
+    static <R, T> List<T> runEachOnItsOwnThread(Collection<R> requests, Function<R, T> call) {
+        if (requests.isEmpty()) {
+            return new ArrayList<T>(0);
+        }
+        final AtomicInteger threadNumber = new AtomicInteger();
+        final ExecutorService executor = Executors.newFixedThreadPool(requests.size(), runnable -> {
+            Thread thread = new Thread(runnable, "jllama-batch-" + threadNumber.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        });
+        try {
+            final List<Future<T>> futures = new ArrayList<Future<T>>(requests.size());
+            for (final R request : requests) {
+                futures.add(executor.submit(() -> call.apply(request)));
+            }
+            final List<T> out = new ArrayList<T>(futures.size());
+            RuntimeException failure = null;
+            boolean interrupted = false;
+            for (Future<T> future : futures) {
+                // The native call behind a future cannot be abandoned, so an interrupt does not end
+                // the wait; it is reported once every result is in.
+                while (true) {
+                    try {
+                        out.add(future.get());
+                        break;
+                    } catch (InterruptedException e) {
+                        interrupted = true;
+                    } catch (ExecutionException e) {
+                        if (failure == null) {
+                            failure = asRuntimeException(e.getCause());
+                        }
+                        break;
+                    }
+                }
+            }
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+            if (failure != null) {
+                throw failure;
+            }
+            return out;
+        } finally {
+            executor.shutdown();
+        }
+    }
+
+    private static RuntimeException asRuntimeException(@Nullable Throwable cause) {
+        if (cause instanceof RuntimeException) {
+            return (RuntimeException) cause;
+        }
+        if (cause instanceof Error) {
+            throw (Error) cause;
+        }
+        return new RuntimeException(cause);
+    }
+}
