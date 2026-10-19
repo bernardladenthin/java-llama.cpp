@@ -534,8 +534,6 @@ numbered for reference, the numbers stay when an item is done):
   (alias of `n_cmpl` upstream; Java has no `RequestField` for it, a request with `n: 3` silently
   gets one answer). The streamed `/v1/completions` needs a raw-JSON streaming entry point to keep
   the remaining fields.
-- **(11)** Responses `refusal` parts of assistant messages in the history are dropped; upstream turns them
-  into a part its own parser rejects with 400. Taking them as text is the most useful reading.
 - **(12)** Anthropic `stop_sequence` is always `null`; upstream sets the matched stop word.
 - **(13)** Continue decides FIM support from `.Suffix` in `/api/show`'s `template`; ours is `""`. A
   placeholder template would be invented.

@@ -279,10 +279,11 @@ final class ResponsesApiSupport {
                             .put("url", url);
                     hasImage = true;
                 }
-            } else if (part.path("text").isTextual()) {
-                parts.addObject()
-                        .put("type", "text")
-                        .put("text", part.path("text").asText());
+            } else {
+                String text = partText(part);
+                if (text != null) {
+                    parts.addObject().put("type", "text").put("text", text);
+                }
             }
         }
         return hasImage ? parts : null;
@@ -407,6 +408,23 @@ final class ResponsesApiSupport {
         assistant.put("reasoning_content", reasoning);
     }
 
+    /**
+     * The text of a content part, or {@code null} for a part without one. A {@code refusal} part of an
+     * assistant message carries its text under {@code refusal}; upstream turns it into a part of type
+     * {@code refusal}, which its own chat parser then rejects with 400 (it accepts text and media only),
+     * so as text it is what the assistant said.
+     */
+    private static @Nullable String partText(JsonNode part) {
+        if (part.path("text").isTextual()) {
+            return part.path("text").asText();
+        }
+        if ("refusal".equals(part.path("type").asText(""))
+                && part.path("refusal").isTextual()) {
+            return part.path("refusal").asText();
+        }
+        return null;
+    }
+
     private static String inputContentText(JsonNode content) {
         if (content.isTextual()) {
             return content.asText();
@@ -414,12 +432,13 @@ final class ResponsesApiSupport {
         if (content.isArray()) {
             StringBuilder sb = new StringBuilder();
             for (JsonNode part : content) {
-                if (part.path("text").isTextual()) {
+                String text = partText(part);
+                if (text != null) {
                     // Joined with a newline, as llama.cpp's concat_content_parts joins text parts.
                     if (sb.length() > 0) {
                         sb.append('\n');
                     }
-                    sb.append(part.path("text").asText());
+                    sb.append(text);
                 }
             }
             return sb.toString();

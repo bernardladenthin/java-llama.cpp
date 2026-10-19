@@ -105,6 +105,39 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void refusalPartsOfTheHistoryAreKeptAsText() throws IOException {
+        // A refusal part carries "refusal", not "text"; it was dropped, so the model never saw that it
+        // had refused. Upstream turns it into a part its own parser rejects with 400 (common/chat.cpp
+        // accepts only text and media markers); as text it is what the assistant said.
+        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                        + "{\"type\":\"message\",\"role\":\"user\",\"content\":\"q\"},"
+                        + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":["
+                        + "{\"type\":\"output_text\",\"text\":\"a\"},"
+                        + "{\"type\":\"refusal\",\"refusal\":\"no\"}]},"
+                        + "{\"type\":\"message\",\"role\":\"user\",\"content\":\"q2\"},"
+                        + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":["
+                        + "{\"type\":\"refusal\",\"refusal\":\"never\"}]}]}"))
+                .path("messages");
+
+        assertThat(messages.path(1).path("content").asText(), is("a\nno"));
+        assertThat(messages.path(3).path("content").asText(), is("never"));
+    }
+
+    @Test
+    public void refusalPartsNextToAnImageAreKeptAsTextParts() throws IOException {
+        JsonNode content = ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                        + "{\"type\":\"message\",\"role\":\"assistant\",\"content\":["
+                        + "{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,AA==\"},"
+                        + "{\"type\":\"refusal\",\"refusal\":\"no\"}]}]}"))
+                .path("messages")
+                .path(0)
+                .path("content");
+
+        assertThat(content.path(1).path("type").asText(), is("text"));
+        assertThat(content.path(1).path("text").asText(), is("no"));
+    }
+
+    @Test
     public void functionCallOutputArrayKeepsItsPartsLikeUpstream() throws IOException {
         // A tool result may be an array of input_text / input_image parts; upstream's
         // convert_responses_to_chatcmpl turns them into text / image_url parts of the tool message.
