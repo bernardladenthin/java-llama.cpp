@@ -158,7 +158,10 @@ public class ParameterJsonSerializer {
                     entry.put("type", "function");
                     ObjectNode function = entry.putObject("function");
                     function.put("name", call.getName());
-                    function.put("arguments", call.getArgumentsJson());
+                    // Upstream parses the arguments of the history with json::parse, so an empty
+                    // string fails the whole request with 400; a call without arguments is "{}".
+                    final String arguments = call.getArgumentsJson();
+                    function.put("arguments", arguments.trim().isEmpty() ? "{}" : arguments);
                 }
             }
             arr.add(msg);

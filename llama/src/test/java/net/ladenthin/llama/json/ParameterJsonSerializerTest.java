@@ -19,8 +19,12 @@ import java.util.List;
 import java.util.Map;
 import net.ladenthin.llama.args.Sampler;
 import net.ladenthin.llama.parameters.ParameterJsonSerializer;
+import net.ladenthin.llama.value.ChatMessage;
 import net.ladenthin.llama.value.Pair;
+import net.ladenthin.llama.value.ToolCall;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * Unit tests for {@link ParameterJsonSerializer}.
@@ -77,6 +81,30 @@ public class ParameterJsonSerializerTest {
     // ------------------------------------------------------------------
     // buildMessages
     // ------------------------------------------------------------------
+
+    /**
+     * Upstream parses every {@code function.arguments} of the history with {@code json::parse}
+     * (templates with object arguments, Qwen and Llama 3 among them), so an empty string failed the
+     * whole follow-up request with 400 "Failed to parse tool call arguments as JSON" (measured at
+     * b11639); {@code "{}"} goes through. An empty string can come from a client or from an
+     * accumulator that saw no argument delta.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "\n"})
+    public void testBuildMessages_emptyToolCallArguments_areWrittenAsAnEmptyObject(String arguments) {
+        ArrayNode arr = serializer.buildMessages(Collections.singletonList(ChatMessage.assistantToolCalls(
+                "", Collections.singletonList(new ToolCall("call_1", "get_time", arguments)))));
+        JsonNode function = arr.get(0).get("tool_calls").get(0).get("function");
+        assertThat(function.get("arguments").asText(), is("{}"));
+    }
+
+    @Test
+    public void testBuildMessages_toolCallArguments_arePassedOnVerbatim() {
+        ArrayNode arr = serializer.buildMessages(Collections.singletonList(ChatMessage.assistantToolCalls(
+                "", Collections.singletonList(new ToolCall("call_1", "get_weather", "{\"city\":\"Berlin\"}")))));
+        JsonNode function = arr.get(0).get("tool_calls").get(0).get("function");
+        assertThat(function.get("arguments").asText(), is("{\"city\":\"Berlin\"}"));
+    }
 
     @Test
     public void testBuildMessages_withSystemMessage() {
