@@ -1518,6 +1518,20 @@ public final class ModelParameters extends CliParameters {
     }
 
     /**
+     * Set the name the model answers to ({@code --alias}): the {@code model} field of every OpenAI
+     * answer and chunk, and the id the embedded server lists under {@code /v1/models}. Unset, llama.cpp
+     * uses the model's own name or file name. Upstream accepts several aliases separated by commas and
+     * answers with the first.
+     *
+     * @param alias the model name, or several separated by commas
+     * @return this builder
+     */
+    public ModelParameters setAlias(String alias) {
+        putString(ModelOption.ALIAS, alias);
+        return this;
+    }
+
+    /**
      * Select the device the multimodal projector runs on ({@code --mmproj-device}, upstream
      * llama.cpp b10541). Independent of {@link #setDevices(String)}, which covers the main model:
      * on a multi-GPU host the projector can be pinned to a different device than the weights.

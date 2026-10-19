@@ -20,6 +20,9 @@ package net.ladenthin.llama.args;
  */
 public enum ModelOption {
 
+    /** CLI option {@code --alias}. */
+    ALIAS("--alias"),
+
     /** CLI option {@code --batch-size}. */
     BATCH_SIZE("--batch-size"),
 

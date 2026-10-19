@@ -34,6 +34,7 @@
 #include <mutex>
 #include <random>
 #include <regex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -257,6 +258,54 @@ TEST_F(CApi, OaiCompletionsReturnATextCompletionObject) {
     EXPECT_TRUE(j.at("choices")[0].at("text").is_string());
     // The OAI layer refuses a body without a prompt before anything reaches the model.
     EXPECT_EQ(jllama_completions_oai(model_, R"({"max_tokens":2})", &response.s), JLLAMA_STATUS_INVALID_REQUEST);
+}
+
+// Upstream gives every completion an id (gen_chatcmplid) and names the model it ran on
+// (model_name: the alias, else the file name); the engine set neither, so every OpenAI answer and
+// chunk carried "id":"" and "model":"" (F185).
+TEST_F(CApi, OpenAiAnswersCarryAnIdAndTheModelName) {
+    Owned meta;
+    ASSERT_EQ(jllama_model_meta(model_, &meta.s), JLLAMA_STATUS_OK) << jllama_last_error();
+    const std::string name = json::parse(meta.str()).at("name").get<std::string>();
+    ASSERT_FALSE(name.empty());
+
+    Owned completion;
+    ASSERT_EQ(jllama_completions_oai(model_, R"({"prompt":"Hi","max_tokens":2})", &completion.s), JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json c = json::parse(completion.str());
+    EXPECT_EQ(c.at("id").get<std::string>().rfind("chatcmpl-", 0), 0u) << c.dump();
+    EXPECT_EQ(c.at("model").get<std::string>(), name);
+
+    Owned chat;
+    ASSERT_EQ(
+        jllama_chat_completions(model_, R"({"messages":[{"role":"user","content":"Hi"}],"max_tokens":2})", &chat.s),
+        JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    const json m = json::parse(chat.str());
+    EXPECT_EQ(m.at("id").get<std::string>().rfind("chatcmpl-", 0), 0u) << m.dump();
+    EXPECT_EQ(m.at("model").get<std::string>(), name);
+    EXPECT_NE(m.at("id"), c.at("id"));
+
+    // every chunk of one stream carries the same id
+    int task = 0;
+    ASSERT_EQ(jllama_chat_completions_stream_request(
+                  model_, R"({"messages":[{"role":"user","content":"Hi"}],"max_tokens":3,"stream":true})", &task),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    std::set<std::string> ids;
+    bool stop = false;
+    for (int i = 0; i < 20 && !stop; ++i) {
+        Owned envelope;
+        ASSERT_EQ(jllama_chat_completions_stream_receive(model_, task, &envelope.s, &stop), JLLAMA_STATUS_OK)
+            << jllama_last_error();
+        const json data = json::parse(envelope.str()).at("data");
+        for (const json &chunk : data.is_array() ? data : json::array({data})) {
+            ids.insert(chunk.at("id").get<std::string>());
+            EXPECT_EQ(chunk.at("model").get<std::string>(), name);
+        }
+    }
+    ASSERT_EQ(ids.size(), 1u);
+    EXPECT_EQ(ids.begin()->rfind("chatcmpl-", 0), 0u);
 }
 
 // Upstream answers several prompts in one request with one choice each; a task here carries one

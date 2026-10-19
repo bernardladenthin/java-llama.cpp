@@ -9,6 +9,8 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.util.Arrays;
+import java.util.List;
 import net.ladenthin.llama.args.CacheType;
 import net.ladenthin.llama.value.RpcEndpoint;
 import org.junit.jupiter.api.Test;
@@ -202,6 +204,22 @@ public class OpenAiServerCliTest {
     public void explicitModelIdOverridesDerivation() {
         OpenAiServerCli.Options options = OpenAiServerCli.parse("-m", "/opt/models/Llama-3.gguf", "--model-id", "x");
         assertThat(options.getModelId(), is("x"));
+    }
+
+    // The answers name the model llama.cpp knows (its alias, else the file); without passing the
+    // advertised id on, /v1/models said "x" while every answer said "Llama-3.gguf" (F185).
+    @Test
+    public void anExplicitModelIdBecomesTheModelsAlias() {
+        List<String> argv = Arrays.asList(OpenAiServerCli.parse("-m", "/opt/models/Llama-3.gguf", "--model-id", "x")
+                .toModelParameters()
+                .toArray());
+        assertThat(argv.get(argv.indexOf("--alias") + 1), is("x"));
+        assertThat(
+                Arrays.asList(OpenAiServerCli.parse("-m", "/opt/models/Llama-3.gguf")
+                                .toModelParameters()
+                                .toArray())
+                        .contains("--alias"),
+                is(false));
     }
 
     @Test

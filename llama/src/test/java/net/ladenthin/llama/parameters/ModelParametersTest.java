@@ -501,6 +501,13 @@ public class ModelParametersTest {
     }
 
     @Test
+    public void testSetAlias() {
+        // the name every OpenAI answer and chunk carries in "model" (F185)
+        ModelParameters p = new ModelParameters().setAlias("local-model");
+        assertThat(p.parameters.get("--alias"), is("local-model"));
+    }
+
+    @Test
     public void testSetMmprojDevice() {
         ModelParameters p = new ModelParameters().setMmprojDevice("CUDA1");
         assertThat(p.parameters.get("--mmproj-device"), is("CUDA1"));

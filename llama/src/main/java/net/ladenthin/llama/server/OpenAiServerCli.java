@@ -641,6 +641,10 @@ public final class OpenAiServerCli {
         public ModelParameters toModelParameters() {
             final ModelParameters params =
                     new ModelParameters().setModel(modelPath).setGpuLayers(gpuLayers);
+            if (modelId != null) {
+                // the answers name the model as llama.cpp knows it; this keeps them equal to /v1/models
+                params.setAlias(modelId);
+            }
             if (mmprojDevice != null) {
                 params.setMmprojDevice(mmprojDevice);
             }

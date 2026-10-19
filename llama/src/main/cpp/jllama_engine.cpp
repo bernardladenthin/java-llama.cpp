@@ -370,6 +370,14 @@ void populate_completion_task(server_task &task, jllama_context *jctx,
     configure_task_slot_impl(task, data);
 }
 
+// The id and the model name every OpenAI answer and chunk carries, set as upstream's
+// handle_completions_impl sets them: a fresh completion id, and the name the server answers to (the
+// alias, else the model's name). Left unset, they were "" in every answer.
+static void name_completion_task(server_task &task, const server_context_meta &meta) {
+    task.params.oaicompat_cmpl_id = gen_chatcmplid();
+    task.params.oaicompat_model = meta.model_name;
+}
+
 // Wake the queue before posting, then post.
 //
 // With ModelParameters.setSleepIdleSeconds(> 0) the queue enters a sleeping state after the
@@ -412,6 +420,7 @@ std::vector<server_task_result_ptr> blocking_completion(jllama_context *jctx, co
     }
     task.apply_chat_session(session);
     task.params.res_type = res_type;
+    name_completion_task(task, meta);
     std::vector<server_task> tasks;
     tasks.push_back(std::move(task));
     wake_and_post(rd, std::move(tasks), session);
@@ -431,6 +440,7 @@ int streaming_request(jllama_context *jctx, const json &data, server_task_type t
         populate_completion_task(task, jctx, meta.logit_bias_eog, data, meta.has_mtmd, std::move(files));
         task.apply_chat_session(session);
         task.params.res_type = res_type;
+        name_completion_task(task, meta);
         std::vector<server_task> tasks;
         tasks.push_back(std::move(task));
         wake_and_post(*rd, std::move(tasks), session);

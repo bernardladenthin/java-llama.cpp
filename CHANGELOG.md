@@ -633,6 +633,11 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **OpenAI answers carry an id and the model name.** Every native OpenAI answer and stream chunk had
+  `"id": ""` and `"model": ""`; upstream gives each completion a `chatcmpl-` id (one per stream) and
+  names the model it runs (the alias, else the model's name). They do now. New
+  `ModelParameters.setAlias(String)` (`--alias`), and `OpenAiCompatServer --model-id` passes the id on
+  as the alias, so the answers name the model `/v1/models` lists.
 - **Several prompts in one request are refused instead of answered with the first.** A task carries
   one prompt, and `/v1/completions` (and `handleCompletions`, the raw stream) took the first of
   `"prompt": ["a", "b"]` and dropped the rest without a word -- two prompts, one choice. Upstream
