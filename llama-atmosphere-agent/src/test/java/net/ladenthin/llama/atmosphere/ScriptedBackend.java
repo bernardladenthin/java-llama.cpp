@@ -11,6 +11,7 @@ import java.util.Collections;
 import java.util.List;
 import net.ladenthin.llama.server.ChunkSink;
 import net.ladenthin.llama.server.OpenAiBackend;
+import org.jspecify.annotations.Nullable;
 
 /**
  * A model-free {@link OpenAiBackend} that answers each streaming chat request with a scripted sequence
@@ -28,10 +29,17 @@ final class ScriptedBackend implements OpenAiBackend {
     }
 
     private final Script script;
+    private final @Nullable RuntimeException afterTheChunks;
     private final List<JsonNode> requests = Collections.synchronizedList(new ArrayList<>());
 
     ScriptedBackend(Script script) {
+        this(script, null);
+    }
+
+    /** A backend that sends the scripted chunks and then fails with {@code afterTheChunks}. */
+    ScriptedBackend(Script script, @Nullable RuntimeException afterTheChunks) {
         this.script = script;
+        this.afterTheChunks = afterTheChunks;
     }
 
     /** Every {@code /v1/chat/completions} body received, in order. */
@@ -44,6 +52,9 @@ final class ScriptedBackend implements OpenAiBackend {
         requests.add(request.deepCopy());
         for (String chunk : script.chunksFor(requests.size(), request)) {
             sink.accept(chunk);
+        }
+        if (afterTheChunks != null) {
+            throw afterTheChunks;
         }
     }
 

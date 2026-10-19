@@ -516,10 +516,6 @@ delete an item here when it is done.
 **Open suspicions without a finding id** (each needs the owner's decision or a model to decide;
 numbered for reference, the numbers stay when an item is done):
 
-- **(3)** `OpenAiCompatServer` sends `200` + SSE headers before the backend runs, so a rejected streaming
-  request arrives as `200` with an `error` event; upstream answers with the error status. Pinned by
-  `OpenAiCompatServerHttpTest#nativeRejectionOfAStreamedChatCompletionIsAnInvalidRequestEvent`;
-  changing it means sending the headers with the first chunk on all five streaming routes.
 - **(12)** Anthropic `stop_sequence` is always `null`; upstream sets the matched stop word.
 - **(14)** Streamed `/v1/completions` ends without `usage` (upstream puts it on the last chunk); and a
   `prompt` given as an array is rejected with 400 when streamed, accepted when not.

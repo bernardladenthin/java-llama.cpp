@@ -633,6 +633,15 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **A streamed request that fails before its first chunk is answered with the error status.**
+  `OpenAiCompatServer` sent `200` and the stream's headers before the engine ran, so a request
+  llama.cpp refused at once arrived as `200` with an error event -- on all five streaming routes
+  (`/v1/chat/completions`, `/v1/completions`, `/api/chat`, `/v1/messages`, `/v1/responses`). Upstream's
+  server reads the first result before it starts a stream; this one now does the same: the response
+  starts with the first write (a chunk, the protocol's opening events or a heartbeat), and a failure
+  before it is `400` or `500` with the route's own error body, as without `stream`. A failure after the
+  stream started is still an event. One visible effect: the Atmosphere agent now reports such a failure
+  instead of ending the turn with an empty answer.
 - **Error messages with a 4-byte character reach Java intact.** The JNI shells handed messages to
   `ThrowNew` and `NewStringUTF`, which read Modified UTF-8; a message quoting a path or request text
   with a supplementary-plane character (an emoji) was mangled on HotSpot -- a trainer message for

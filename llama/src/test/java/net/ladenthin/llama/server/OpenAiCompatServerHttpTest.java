@@ -7,6 +7,7 @@ package net.ladenthin.llama.server;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.startsWith;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.io.IOException;
@@ -563,16 +564,102 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    // Upstream reads the first result before it starts a stream, so a request refused at once is answered
+    // with the error status, as without "stream" (TODO (3), F182). The response starts with the first
+    // write -- a chunk, the protocol's opening events or a heartbeat -- and only a failure after that
+    // travels as an event.
+
+    /** The five streaming routes: path, body, and the error body's distinguishing parts at 400 and 500. */
+    private static final String[][] STREAMING_ROUTES = {
+        {
+            "/v1/chat/completions",
+            "{\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+            "\"type\":\"invalid_request_error\"",
+            "\"type\":\"server_error\""
+        },
+        {
+            "/v1/completions",
+            "{\"stream\":true,\"prompt\":\"hi\"}",
+            "\"type\":\"invalid_request_error\"",
+            "\"type\":\"server_error\""
+        },
+        {
+            "/api/chat",
+            "{\"model\":\"test-model\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+            "{\"error\":",
+            "{\"error\":"
+        },
+        {
+            "/v1/messages",
+            "{\"model\":\"test-model\",\"stream\":true,\"max_tokens\":8,"
+                    + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",
+            "\"error\":{\"type\":\"invalid_request_error\"",
+            "\"error\":{\"type\":\"api_error\""
+        },
+        {
+            "/v1/responses",
+            "{\"model\":\"test-model\",\"stream\":true,\"input\":\"hi\"}",
+            "\"type\":\"invalid_request_error\"",
+            "\"type\":\"server_error\""
+        },
+    };
+
     @Test
-    public void nativeRejectionOfAStreamedChatCompletionIsAnInvalidRequestEvent() throws IOException {
+    public void aRejectionBeforeTheFirstChunkIsA400OnEveryStreamingRoute() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new RejectingBackend(), config()).start()) {
+            for (String[] route : STREAMING_ROUTES) {
+                Response response = post(server.getPort(), route[0], route[1], "");
+                assertThat(route[0], response.code, is(400));
+                assertThat(route[0], response.contentType, startsWith("application/json"));
+                assertThat(route[0], response.body, containsString(route[2]));
+                assertThat(route[0], response.body, containsString(RejectingBackend.REASON_FRAGMENT));
+            }
+        }
+    }
+
+    @Test
+    public void aFailureBeforeTheFirstChunkIsA500OnEveryStreamingRoute() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new StreamFailingBackend(), config()).start()) {
+            for (String[] route : STREAMING_ROUTES) {
+                Response response = post(server.getPort(), route[0], route[1], "");
+                assertThat(route[0], response.code, is(500));
+                assertThat(route[0], response.body, containsString(route[3]));
+                assertThat(route[0], response.body, containsString(StreamFailingBackend.REASON));
+            }
+        }
+    }
+
+    @Test
+    public void aRejectionAfterTheFirstChunkIsAnInvalidRequestEvent() throws IOException {
+        ScriptedStreamBackend backend =
+                new ScriptedStreamBackend(1, 0L, new InvalidRequestException(RejectingBackend.REASON));
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
             String body = "{\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
             Response response = post(server.getPort(), "/v1/chat/completions", body, "");
-            // the headers are out before the backend runs, so the verdict travels as an SSE data event
+            // the stream had started, so the verdict travels as an SSE data event after the chunk
             assertThat(response.code, is(200));
-            assertThat(response.body, containsString("data: "));
+            assertThat(response.body, containsString("\"content\":\"he\""));
             assertThat(response.body, containsString("\"type\":\"invalid_request_error\""));
             assertThat(response.body, containsString(RejectingBackend.REASON_FRAGMENT));
+        }
+    }
+
+    // A heartbeat starts the response too: it is what keeps a client waiting through a long prompt.
+    @Test
+    public void aRejectionAfterAHeartbeatIsAnEvent() throws IOException {
+        OpenAiServerConfig cfg = OpenAiServerConfig.builder()
+                .host("127.0.0.1")
+                .port(0)
+                .heartbeatMillis(50L)
+                .build();
+        ScriptedStreamBackend backend =
+                new ScriptedStreamBackend(0, 300L, new InvalidRequestException(RejectingBackend.REASON));
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, cfg).start()) {
+            String body = "{\"stream\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+            Response response = post(server.getPort(), "/v1/chat/completions", body, "");
+            assertThat(response.code, is(200));
+            assertThat(response.body, containsString(": ping"));
+            assertThat(response.body, containsString("\"type\":\"invalid_request_error\""));
         }
     }
 
@@ -582,7 +669,9 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
 
     @Test
     public void rejectedStreamedResponseEndsWithAResponseFailedEvent() throws IOException {
-        try (OpenAiCompatServer server = new OpenAiCompatServer(new RejectingBackend(), config()).start()) {
+        ScriptedStreamBackend backend =
+                new ScriptedStreamBackend(1, 0L, new InvalidRequestException(RejectingBackend.REASON));
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
             String body = "{\"model\":\"test-model\",\"stream\":true,\"input\":\"hi\"}";
             String events = post(server.getPort(), "/v1/responses", body, "").body;
             assertThat(events, containsString("event: response.failed"));
@@ -596,7 +685,9 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
 
     @Test
     public void failedStreamedResponseEndsWithAResponseFailedEvent() throws IOException {
-        try (OpenAiCompatServer server = new OpenAiCompatServer(new StreamFailingBackend(), config()).start()) {
+        ScriptedStreamBackend backend =
+                new ScriptedStreamBackend(1, 0L, new LlamaException(StreamFailingBackend.REASON));
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
             String body = "{\"model\":\"test-model\",\"stream\":true,\"input\":\"hi\"}";
             String events = post(server.getPort(), "/v1/responses", body, "").body;
             assertThat(events, containsString("event: response.failed"));
@@ -644,7 +735,9 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
 
     @Test
     public void aFailedStreamedAnthropicMessageIsAnApiError() throws IOException {
-        try (OpenAiCompatServer server = new OpenAiCompatServer(new StreamFailingBackend(), config()).start()) {
+        ScriptedStreamBackend backend =
+                new ScriptedStreamBackend(1, 0L, new LlamaException(StreamFailingBackend.REASON));
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
             String body = "{\"model\":\"test-model\",\"stream\":true,\"max_tokens\":8,"
                     + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
             String events = post(server.getPort(), "/v1/messages", body, "").body;
@@ -657,7 +750,9 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
 
     @Test
     public void aRejectedStreamedAnthropicMessageStaysAnInvalidRequestError() throws IOException {
-        try (OpenAiCompatServer server = new OpenAiCompatServer(new RejectingBackend(), config()).start()) {
+        ScriptedStreamBackend backend =
+                new ScriptedStreamBackend(1, 0L, new InvalidRequestException(RejectingBackend.REASON));
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
             String body = "{\"model\":\"test-model\",\"stream\":true,\"max_tokens\":8,"
                     + "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
             String events = post(server.getPort(), "/v1/messages", body, "").body;
@@ -964,6 +1059,11 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
 
         @Override
+        public void streamCompletions(JsonNode request, ChunkSink sink) {
+            throw new InvalidRequestException(REASON);
+        }
+
+        @Override
         public String completions(JsonNode request) {
             throw new InvalidRequestException(REASON);
         }
@@ -989,6 +1089,52 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         @Override
         public void stream(JsonNode request, ChunkSink sink) {
             throw new LlamaException(REASON);
+        }
+
+        @Override
+        public void streamCompletions(JsonNode request, ChunkSink sink) {
+            throw new LlamaException(REASON);
+        }
+    }
+
+    /** Backend whose streams emit {@code chunks} chunks, wait {@code delayMillis}, then fail with {@code failure}. */
+    static final class ScriptedStreamBackend extends FakeBackend {
+        private final int chunks;
+        private final long delayMillis;
+        private final RuntimeException failure;
+
+        ScriptedStreamBackend(int chunks, long delayMillis, RuntimeException failure) {
+            this.chunks = chunks;
+            this.delayMillis = delayMillis;
+            this.failure = failure;
+        }
+
+        @Override
+        public void stream(JsonNode request, ChunkSink sink) throws IOException {
+            for (int i = 0; i < chunks; i++) {
+                sink.accept("{\"object\":\"chat.completion.chunk\",\"choices\":[{\"delta\":{\"content\":\"he\"}}]}");
+            }
+            pause();
+            throw failure;
+        }
+
+        @Override
+        public void streamCompletions(JsonNode request, ChunkSink sink) throws IOException {
+            for (int i = 0; i < chunks; i++) {
+                sink.accept("{\"object\":\"text_completion\",\"choices\":[{\"text\":\"he\",\"finish_reason\":null}]}");
+            }
+            pause();
+            throw failure;
+        }
+
+        private void pause() {
+            if (delayMillis > 0) {
+                try {
+                    Thread.sleep(delayMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
         }
     }
 

@@ -838,7 +838,7 @@ into its answer instead of calling the tool.
 | `GET /v1/models` | yes | optional (best-effort enumeration) | wire | none |
 | API key | `--api-key` → `401` on mismatch | sends `Authorization: Bearer`; a dummy key is fine | wire | none |
 | custom base URL | — | `LLM_BASE_URL` / `AiConfig.configure(...)` | wire + model | none |
-| error before the stream starts (401, 413, 500) | HTTP status + JSON error | surfaced as `session.error` (5xx retried) | wire | none |
+| error before the stream starts (401, 413, 500, and an engine error before the first chunk) | HTTP status + JSON error | surfaced as `session.error` (5xx retried) | wire | none |
 | **engine error after the stream started** | HTTP 200 already sent → `data: {"error":…}`, no `[DONE]` | **ignored**: the SSE parser reads only `choices[0]`, the turn completes with the text so far | wire (pinned as a known gap) | SHOULD, in Atmosphere's `OpenAiCompatibleClient` |
 
 *wire* = `AtmosphereWireContractTest` / `LocalAgentTest`: the **real** `OpenAiCompatServer` (routing,

@@ -87,7 +87,7 @@ abstract class OpenAiServerTestSupport {
         String corsAllowOrigin = conn.getHeaderField("Access-Control-Allow-Origin");
         InputStream is = code < 400 ? conn.getInputStream() : conn.getErrorStream();
         String body = is == null ? "" : readAll(is);
-        return new Response(code, body, corsAllowOrigin);
+        return new Response(code, body, corsAllowOrigin, conn.getContentType());
     }
 
     private static String readAll(InputStream is) throws IOException {
@@ -100,16 +100,21 @@ abstract class OpenAiServerTestSupport {
         return new String(buffer.toByteArray(), UTF_8);
     }
 
-    /** Captured HTTP response: status code, body text, and the {@code Access-Control-Allow-Origin} header. */
+    /**
+     * Captured HTTP response: status code, body text, the {@code Access-Control-Allow-Origin} and the
+     * {@code Content-Type} header.
+     */
     static final class Response {
         final int code;
         final String body;
         final @Nullable String corsAllowOrigin;
+        final @Nullable String contentType;
 
-        Response(int code, String body, @Nullable String corsAllowOrigin) {
+        Response(int code, String body, @Nullable String corsAllowOrigin, @Nullable String contentType) {
             this.code = code;
             this.body = body;
             this.corsAllowOrigin = corsAllowOrigin;
+            this.contentType = contentType;
         }
     }
 }
