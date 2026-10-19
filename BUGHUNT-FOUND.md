@@ -1372,7 +1372,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `AnthropicApiSupportTest#theTranslatedRequestAsksForTheStopWord`, `#theMatchedStopWordIsTheStopSequence`, `#noMatchedStopWordIsANullStopSequence`; `AnthropicStreamTranslatorTest#theMatchedStopWordIsTheStopSequenceOfTheMessageDelta`, `#withoutAStopWordTheStopSequenceIsNull`; `OpenAiRequestMapperTest#verboseIsForwarded`; `InferenceParametersTest` (`withVerbose`); C++ `test_wire_contracts.cpp` (`verbose` im Schema, 5/5).
 - **Rot-Grün-Nachweis:** mit wirkungslosem Platzhalter-Setter rot (5 Tests, die beiden Null-Fälle waren schon grün), mit dem Fix grün (251 Tests der berührten Klassen, `OpenAiCompatServerHttpTest` und `WireNameRegistryTest` eingeschlossen); SpotBugs grün. Zusätzlich Ende-zu-Ende mit einem Zufallsmodell über den echten Server: ohne Stoppwort `max_tokens`/`null`, mit einem Stück der eigenen Greedy-Ausgabe als Stoppwort blockierend und gestreamt `end_turn` mit `stop_sequence: "j%j"`, kein `__verbose` in der Antwort.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `a575714`
 
 ## Offene Verdachte ohne Fund-ID
 
