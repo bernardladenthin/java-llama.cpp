@@ -1264,7 +1264,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest#propsEndpointReportsTheSlotCountOfTheConfiguration` (über HTTP), `OpenAiSseFormatterTest#propsJsonReportsContextLengthAndModalities` (ergänzt), `OpenAiServerConfigTest#totalSlotsDefaultsToOneAndKeepsTheConfiguredCount`, `#totalSlotsBelowOneIsRejected`, `OpenAiServerCliTest#slotCountOfTheLoadedModelIsAdvertised`, `#unknownSlotCountFallsBackToTheParallelArgumentAndThenToOne`.
 - **Rot-Grün-Nachweis:** mit einem Platzhalter, der das alte Verhalten behält (Getter liefert 1, `propsJson` ignoriert den Parameter), rot (5 Tests), mit dem Fix grün (129 Tests der vier Klassen); SpotBugs grün. Der Starter selbst (`main`) braucht ein Modell und ist nur übersetzt.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `569415d`
 
 ## Offene Verdachte ohne Fund-ID
 
