@@ -5,6 +5,7 @@
 package net.ladenthin.llama.json;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
@@ -13,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
+import java.util.Map;
 import net.ladenthin.llama.value.Pair;
 import org.junit.jupiter.api.Test;
 
@@ -136,5 +138,33 @@ public class RerankResponseParserTest {
         List<Pair<String, Float>> result = parser.parse(arr);
         assertThat(result, hasSize(1));
         assertThat(result.get(0).getKey(), is(""));
+    }
+
+    @Test
+    public void toDocumentScores_keepsTheOrderOfTheDocuments() {
+        // rerank(String, String...) collected into a HashMap, so the documents came back in hash
+        // order; the results are in document order and the map keeps it.
+        String json = "[{\"document\":\"zeta\",\"index\":0,\"score\":0.1},"
+                + "{\"document\":\"alpha\",\"index\":1,\"score\":0.2},"
+                + "{\"document\":\"mid\",\"index\":2,\"score\":0.3},"
+                + "{\"document\":\"b\",\"index\":3,\"score\":0.4},"
+                + "{\"document\":\"a\",\"index\":4,\"score\":0.5}]";
+
+        Map<String, Float> scores = parser.toDocumentScores(parser.parse(json));
+
+        assertThat(scores.keySet(), contains("zeta", "alpha", "mid", "b", "a"));
+        assertThat(scores.get("mid"), is(0.3f));
+    }
+
+    @Test
+    public void toDocumentScores_equalDocumentsShareOneEntryAtTheirFirstPosition() {
+        String json = "[{\"document\":\"x\",\"index\":0,\"score\":0.7},"
+                + "{\"document\":\"y\",\"index\":1,\"score\":0.2},"
+                + "{\"document\":\"x\",\"index\":2,\"score\":0.7}]";
+
+        Map<String, Float> scores = parser.toDocumentScores(parser.parse(json));
+
+        assertThat(scores.keySet(), contains("x", "y"));
+        assertThat(scores.get("x"), is(0.7f));
     }
 }

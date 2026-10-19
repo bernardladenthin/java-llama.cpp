@@ -6,7 +6,6 @@ package net.ladenthin.llama;
 
 import java.lang.annotation.Native;
 import java.nio.charset.StandardCharsets;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -556,20 +555,17 @@ public class LlamaModel implements AutoCloseable {
 
     /**
      * Rerank the given documents against the query, returning a {@link net.ladenthin.llama.value.LlamaOutput} with scored documents
-     * in the probabilities map.
+     * in the probabilities map. The map is keyed by document text in the order of the documents, so
+     * equal documents share one entry (they score the same); {@link #rerank(boolean, String, String...)}
+     * returns one pair per document.
      *
      * @param query the query string
      * @param documents the documents to rank
-     * @return a LlamaOutput with document/score pairs in the probabilities map
+     * @return a LlamaOutput with document/score pairs in the probabilities map, in document order
      */
     public LlamaOutput rerank(String query, String... documents) {
         String json = handleRerank(query, documents);
-        List<Pair<String, Float>> results = rerankParser.parse(json);
-        Map<String, Float> probabilities = new HashMap<>(results.size());
-        for (Pair<String, Float> pair : results) {
-            probabilities.put(pair.getKey(), pair.getValue());
-        }
-        return new LlamaOutput(query, probabilities, true, StopReason.EOS);
+        return new LlamaOutput(query, rerankParser.toDocumentScores(rerankParser.parse(json)), true, StopReason.EOS);
     }
 
     /**

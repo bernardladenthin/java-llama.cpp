@@ -536,8 +536,6 @@ numbered for reference, the numbers stay when an item is done):
   placeholder template would be invented.
 - **(14)** Streamed `/v1/completions` ends without `usage` (upstream puts it on the last chunk); and a
   `prompt` given as an array is rejected with 400 when streamed, accepted when not.
-- **(15)** `rerank(String, String...)` collapses equal documents in its `HashMap` (the batch part was
-  fixed as F167).
 - **(16)** Ollama `/api/generate` ignores `raw` and `system`: without `raw: true` Ollama applies the chat
   template, ours always completes raw.
 

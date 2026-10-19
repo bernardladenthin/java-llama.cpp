@@ -1278,6 +1278,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `11c7477`
 
+### F176 – java-llama.cpp: `rerank(String, String...)` liefert die Dokumente in Hash-Reihenfolge
+- **Zeit:** 2026-10-19 22:35 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/LlamaModel.java` (`rerank(String, String...)`), `json/RerankResponseParser.java` (`toDocumentScores`)
+- **Schwere:** niedrig (still: Reihenfolge zufällig; gleiche Dokumente teilen einen Eintrag)
+- **Historie:** Rest von F167 (TODO (15)): F167 behob den Batch-Teil, die Map-Form blieb. Sie sammelte seit jeher in einer `HashMap`, nach Dokumenttext.
+- **Beschreibung:** Die Ergebnisse kommen in Dokumentreihenfolge aus dem Server; die `HashMap` gab sie in Hash-Reihenfolge zurück (gemessen: `zeta, alpha, mid, b, a` → `mid` an zweiter Stelle). Gleiche Dokumente fallen auf einen Eintrag zusammen – ohne Datenverlust, weil gleicher Text gleich bewertet wird, aber undokumentiert.
+- **Fix:** Entscheidung des Nutzers: `LinkedHashMap` in Ergebnisreihenfolge, herausgelöst als `RerankResponseParser.toDocumentScores` (ohne native Bibliothek testbar); Javadoc von `rerank(String, String...)` nennt das Zusammenfallen und verweist für eine Liste auf `rerank(boolean, …)`. Die Signatur bleibt (`LlamaOutput` nimmt eine Map).
+- **Tests:** `RerankResponseParserTest#toDocumentScores_keepsTheOrderOfTheDocuments`, `#toDocumentScores_equalDocumentsShareOneEntryAtTheirFirstPosition`.
+- **Rot-Grün-Nachweis:** mit der `HashMap` rot (1 von 14, `item 1: was "mid"`), mit der `LinkedHashMap` grün (14 von 14); PIT auf `RerankResponseParser` 6/6 getötet; SpotBugs grün (Parameter `Collection`, vorbelegte Größe).
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(niedrig, unsicher, nur beschrieben, 2026-10-17)* java-llama.cpp `server/OllamaApiSupport`: `done_reason` ist zwischen den Pfaden uneinheitlich. Nicht gestreamtes `/api/chat` reicht OpenAIs `finish_reason` durch (`stop`, `length`, aber auch `tool_calls`, das Ollama selbst nicht kennt – es meldet bei Werkzeugaufrufen `stop`). Gestreamtes `/api/chat` (`toOllamaDoneLine`) und beide `/api/generate`-Formen melden immer `stop`, auch wenn `num_predict` die Antwort abgeschnitten hat. Ein Client, der über `done_reason == "length"` Abschneiden erkennt, sieht es im Streaming nie. Ob das relevant ist, hängt vom Client ab; Vorschlag: `tool_calls` → `stop` abbilden und den `finish_reason` des letzten Stream-Chunks an `toOllamaDoneLine` durchreichen. Kein Fix ohne Entscheidung. Nachtrag 2026-10-18 (Tokenzahlen erledigt durch F98, `done_reason` bleibt offen): Die gestreamte Abschlusszeile (`toOllamaDoneLine`) trägt außerdem weder `prompt_eval_count` noch `eval_count`, die nicht gestreamte Antwort schon (`OllamaApiSupport.java:261`). Anders als die Anthropic- und Responses-Routen (`withUsageChunk`, `OpenAiCompatServer.java:653`/`:741`) fordert `streamOllamaChat` den Usage-Chunk auch nicht an; ein Fix wäre `withUsageChunk` plus Erfassen der Zählung im Akkumulator, Clients, die Token/s aus `eval_count` berechnen, sehen sonst nichts.
