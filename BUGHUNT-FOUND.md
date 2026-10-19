@@ -1185,7 +1185,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiServerCliTest#loadedSlotContextIsAdvertisedWithoutContextSize`, `#loadedSlotContextWinsOverTheContextSizeArgument`, `#unknownSlotContextFallsBackToTheContextSizeArgument`.
 - **Rot-Grün-Nachweis:** mit der alten Auswahl (nur `-c`) rot (2 von 3, der Rückfalltest ist beidseitig grün), mit dem Fix grün (`OpenAiServerCliTest`, `OpenAiCompatServer*Test`: 114 Tests). Die Verdrahtung in `main` braucht ein Modell und ist hier nur übersetzt; Prüfung mit dem Befehl aus J3 (erwartet: 2048 in `/props` und `/api/show`).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** 62413a9
 
 ## Offene Verdachte ohne Fund-ID
 
