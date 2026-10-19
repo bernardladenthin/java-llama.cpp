@@ -355,6 +355,13 @@ void populate_completion_task(server_task &task, jllama_context *jctx,
     if (!configure_multimodal_task_impl(task, has_mtmd, data, std::move(files))) {
         auto tokenized_prompts =
             tokenize_input_prompts(jctx->vocab, nullptr, data.at("prompt"), true, true, mtmd_helper_init_opt_default());
+        // A task carries one prompt. Upstream answers several prompts with one choice each; taking the
+        // first here dropped the others without a word, so they are refused instead.
+        if (tokenized_prompts.size() > 1) {
+            throw jllama_invalid_request("a request takes one prompt, this one has " +
+                                         std::to_string(tokenized_prompts.size()) +
+                                         " prompts; send them as separate requests");
+        }
         if (!tokenized_prompts.empty()) {
             task.tokens = std::move(tokenized_prompts[0]);
         }

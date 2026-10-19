@@ -1374,6 +1374,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `a575714`
 
+### F184 – java-llama.cpp: Mehrere Prompts in einer Anfrage: alle außer dem ersten still verworfen
+- **Zeit:** 2026-10-20 02:50 UTC
+- **Datei:** `llama/src/main/cpp/jllama_engine.cpp` (`populate_completion_task`)
+- **Schwere:** mittel (still: zwei Prompts, eine Antwort; ein Client, der nach `index` zuordnet, wartet auf eine Antwort, die nie kommt)
+- **Historie:** Gefunden bei der Arbeit an TODO (14): `populate_completion_task` übernimmt nur `tokenized_prompts[0]`, und alle drei Wege, die es nutzen (blockierendes `/v1/completions` über `completions_oai`, `handleCompletions`, der Roh-Stream), posten genau eine Aufgabe. Upstream (`handle_completions_impl`, b11639) legt pro Prompt eine Aufgabe an und antwortet mit einer Wahl je Prompt.
+- **Beschreibung:** `{"prompt": ["Hi", "Ho"]}` lieferte `200` mit einer einzigen Wahl für `Hi`; `Ho` verschwand ohne Hinweis. Eine Token-Liste (`[72, 105]`) ist dagegen ein einziger Prompt.
+- **Fix:** Mehr als ein Prompt ist eine ungültige Anfrage (`400`, `a request takes one prompt, this one has N prompts; send them as separate requests`). Mehrere Prompts wirklich zu bedienen hieße mehrere Aufgaben je Anfrage und, gestreamt, eine Zusammenführung nach `index` – für keinen Weg hier vorhanden, und keiner der Clients, für die der Server gebaut ist, schickt das.
+- **Tests:** C++ `CApi.SeveralPromptsInOneRequestAreRefusedNotDropped` (`test_c_api.cpp`, Zufallsmodell): zwei Prompts auf allen drei Wegen abgelehnt, mit der Anzahl in der Meldung; eine Token-Liste und ein Array mit einem Prompt angenommen.
+- **Rot-Grün-Nachweis:** vor dem Fix rot (alle drei Wege `JLLAMA_STATUS_OK`), danach grün; ganze C++-Suite 641/641.
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(erledigt 2026-10-19 als F180; offen nur noch, was unter (14) steht)* *(mittel, teilweise gefixt durch F95, 2026-10-18)* **Nachtrag:** Die Sampling-Felder mit vorhandenem Setter übernimmt seit F95 der Mapper (beide Chat-Pfade und das gestreamte Completion); offen bleiben `logit_bias`, `n_probs`/`logprobs` und `n` (Nachtrag: `logprobs`/`top_logprobs` des Chat-Pfads seit F123 übernommen). Ursprünglicher Text: Gestreamtes `/v1/completions` verliert weiter alle Felder außerhalb von `applyCommonFields`, die der nicht gestreamte Weg durchreicht und upstream liest: `n_predict`, `min_p`, `repeat_penalty`, `grammar`, `json_schema`, `logit_bias`, `n_probs`/`logprobs` und weitere. Dieselbe Anfrage erzeugt gestreamt also andere Ausgaben. Ein Fix bräuchte einen Streaming-Einstieg mit rohem JSON (die Natives `requestCompletion`/`receiveCompletionJson` sind paketintern in `net.ladenthin.llama`, `LlamaModelBackend` liegt in `server`) – ein Umbau der API, daher zur Entscheidung des Nutzers. Dasselbe gilt in kleinerem Maß für den Chat-Pfad (blockierend und gestreamt), der seit F77 die Reasoning-Steuerungen übernimmt, aber z. B. `min_p`, `repeat_penalty`, `logprobs` und `n_predict` weiter verwirft. Ebenso `n` (mehrere Antworten): upstream liest es als Alias von `n_cmpl` (`server-schema.cpp:62`, Grenze `n_parallel`), Java kennt das Feld gar nicht (kein `RequestField`, kein Setter), eine Anfrage mit `n: 3` bekommt still eine Antwort. Ein Fix bräuchte einen neuen `RequestField`-Eintrag (C++-Vertragstest `test_wire_contracts.cpp`, CI-Bedarf) und einen Setter – ein API-Zusatz.

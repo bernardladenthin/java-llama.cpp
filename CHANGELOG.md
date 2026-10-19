@@ -633,6 +633,11 @@ the first two items break every existing consumer at upgrade.
   changed meaning accordingly (see Added).
 
 ### Fixed
+- **Several prompts in one request are refused instead of answered with the first.** A task carries
+  one prompt, and `/v1/completions` (and `handleCompletions`, the raw stream) took the first of
+  `"prompt": ["a", "b"]` and dropped the rest without a word -- two prompts, one choice. Upstream
+  answers each; here the request is now an invalid request (`400`) naming the count. A token array is
+  one prompt and stays accepted.
 - **`/v1/messages` reports the matched stop word as `stop_sequence`**, blocking and streamed, as
   upstream does (`stop_reason` stays `end_turn`); it was always `null`. The OpenAI answer the route
   translates from does not carry the word, so the translated request asks for llama.cpp's `verbose`

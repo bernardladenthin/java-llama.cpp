@@ -259,6 +259,29 @@ TEST_F(CApi, OaiCompletionsReturnATextCompletionObject) {
     EXPECT_EQ(jllama_completions_oai(model_, R"({"max_tokens":2})", &response.s), JLLAMA_STATUS_INVALID_REQUEST);
 }
 
+// Upstream answers several prompts in one request with one choice each; a task here carries one
+// prompt, and every prompt after the first was dropped without a word -- two prompts, one answer
+// (F184). They are refused instead; a token array is one prompt and stays accepted.
+TEST_F(CApi, SeveralPromptsInOneRequestAreRefusedNotDropped) {
+    Owned response;
+    EXPECT_EQ(jllama_completions_oai(model_, R"({"prompt":["Hi","Ho"],"max_tokens":2})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("2 prompts"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(jllama_completions(model_, R"({"prompt":["Hi","Ho"],"n_predict":2})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    int task = -1;
+    EXPECT_EQ(jllama_completions_stream_request(model_, R"({"prompt":["Hi","Ho"],"n_predict":2,"stream":true})", &task),
+              JLLAMA_STATUS_INVALID_REQUEST);
+
+    ASSERT_EQ(jllama_completions_oai(model_, R"({"prompt":[72,105],"max_tokens":2,"temperature":0})", &response.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(response.str()).at("choices").size(), 1u);
+    ASSERT_EQ(jllama_completions_oai(model_, R"({"prompt":["Hi"],"max_tokens":2,"temperature":0})", &response.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+}
+
 TEST_F(CApi, RawStreamingDeliversResultsWithAStopKeyAndReleasesTheTask) {
     int task = -1;
     ASSERT_EQ(jllama_completions_stream_request(
