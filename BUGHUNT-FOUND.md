@@ -1288,7 +1288,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `RerankResponseParserTest#toDocumentScores_keepsTheOrderOfTheDocuments`, `#toDocumentScores_equalDocumentsShareOneEntryAtTheirFirstPosition`.
 - **Rot-Grün-Nachweis:** mit der `HashMap` rot (1 von 14, `item 1: was "mid"`), mit der `LinkedHashMap` grün (14 von 14); PIT auf `RerankResponseParser` 6/6 getötet; SpotBugs grün (Parameter `Collection`, vorbelegte Größe).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `3299e6a`
 
 ## Offene Verdachte ohne Fund-ID
 
