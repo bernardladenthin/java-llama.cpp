@@ -1173,7 +1173,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Nachtrag (Entscheidung des Nutzers nach der Messung):** `setPredict` lehnt Werte unter `-1` mit `IllegalArgumentException` ab; Javadoc von `setPredict` und `withNPredict` sagt „`0` verhält sich wie `1`“. Test `ModelParametersExtendedTest#testSetPredictBelowMinusOneIsRejected` (`-2`, `-3`, `Integer.MIN_VALUE`) ersetzt `testSetPredictFillContext`, dazu `testSetPredictZero`.
 - **Rot-Grün-Nachweis:** ohne die Prüfung rot (3 von 3), mit ihr grün (`ModelParametersExtendedTest`, `ModelParametersTest`, `WireNameRegistryTest`: 252 Tests).
 - **Status:** gefixt
-- **Commit:** a977a1e (Doku), (folgt) (Verhalten)
+- **Commit:** a977a1e (Doku), ae07a53 (Verhalten)
 
 ## Offene Verdachte ohne Fund-ID
 
