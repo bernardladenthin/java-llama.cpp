@@ -515,8 +515,21 @@ delete an item here when it is done.
 
 **Open suspicions without a finding id** (each needs the owner's decision or a model to decide;
 numbered for reference, the numbers stay when an item is done): none left -- the last ones were
-fixed as F181 to F186 on 2026-10-20. What still needs a model to confirm is listed in
-`BUGHUNT-MEASUREMENTS.md` (the brief for a local run).
+fixed as F181 to F186 on 2026-10-20. The local measurement run of that brief
+(`BUGHUNT-MEASUREMENTS.md`, M1 … M10, Windows) confirmed all of them with the real models and found
+four more, fixed as F187 … F190. It left two limits, both decided and documented, recorded here so
+they are not rediscovered:
+
+- **`--lora-scaled` / `--control-vector-scaled` cannot carry an absolute Windows path** (F187).
+  Upstream reads `FNAME:SCALE,...` and `string_split` splits on *every* colon, so `X:\a.gguf:1.0`
+  is three parts. `ModelParameters` refuses such a path with the reason and the two ways out (a
+  relative path, or load unscaled and call `LlamaModel.setLoraAdapter`). A candidate for the upstream
+  inventory below (split on the last colon); nothing to do downstream.
+- **The embedded `OpenAiCompatServer(LlamaModel, config)` reports the model's loaded name, not
+  `config.getModelId()`** (F189). An already-loaded model cannot take `--alias` any more; the Javadoc
+  of `OpenAiServerConfig.getModelId()` tells an embedding caller to load with
+  `ModelParameters.setAlias(…)`. Rewriting the `model` field of every answer was rejected (it would
+  claim something the engine did not do, and attach-mode `NativeServer` could not follow it).
 
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 
@@ -1298,6 +1311,13 @@ accepted upstream change deletes a patch from the bump checklist once the pin is
   the hardware AWS rents most cheaply, and it is invisible to anyone who only runs the module their
   own CPU picks. Worth an issue with the table from `docs/local-test-plan.md`; **no patch here** --
   overriding upstream's scoring downstream would be a maintenance burden with no end.
+
+- **A fourth, measured 2026-10-19 (F187): `--lora-scaled` / `--control-vector-scaled` cannot name an
+  absolute Windows path.** `common/arg.cpp` splits each `FNAME:SCALE` item with `string_split(item, ':')`
+  and demands exactly two parts, so `X:\models\a.gguf:1.0` is rejected as three. Measured against the
+  real parser in `BUGHUNT-MEASUREMENTS.md` M6 (of four argv forms only a relative path and plain
+  `--lora` were accepted). The obvious fix is to split on the **last** colon; small enough for a PR,
+  so draft it then. Downstream `ModelParameters` refuses such a path with the reason meanwhile.
 
 (`0009`, `0010`, `0011` and `0013` are gone -- upstream fixed each defect itself -- and recorded in
 `docs/history/dropped-llama-patches.md`.)
