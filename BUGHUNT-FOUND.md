@@ -1396,7 +1396,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** C++ `CApi.OpenAiAnswersCarryAnIdAndTheModelName` (`test_c_api.cpp`, Zufallsmodell: blockierende Completion und Chat mit `chatcmpl-`-Id und dem Modellnamen aus den Meta-Daten, verschiedene Ids, ein Stream mit genau einer Id über alle Chunks); Java `ModelParametersTest#testSetAlias`, `OpenAiServerCliTest#anExplicitModelIdBecomesTheModelsAlias`; `test_model_flags.cpp` (`--alias` im Server-Parser).
 - **Rot-Grün-Nachweis:** C++ vor dem Fix rot (`id` und `model` leer), danach grün, Suite 642/642; Java mit wirkungslosem Platzhalter rot (2), danach grün (304 Tests der Parameter-, CLI- und Registry-Klassen). Ende-zu-Ende über den echten Server mit `--model-id my-model`: `/v1/models` und die Chat-Antwort nennen beide `my-model`.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `0be9b33`
 
 ## Offene Verdachte ohne Fund-ID
 
