@@ -1252,7 +1252,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesApiSupportTest#refusalPartsOfTheHistoryAreKeptAsText` (Text + Ablehnung, nur Ablehnung), `#refusalPartsNextToAnImageAreKeptAsTextParts`.
 - **Rot-Grün-Nachweis:** ohne den Fix rot (2 von 54: `was "a"`, `was ""`), mit ihm grün (54 von 54).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `0fd166f`
 
 ## Offene Verdachte ohne Fund-ID
 
