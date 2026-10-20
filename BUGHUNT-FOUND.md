@@ -138,6 +138,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F213](#f213) — niedrig — *gefixt*
 - [F214](#f214) — niedrig — *gefixt*
 - [F215](#f215) — niedrig — *gefixt*
+- [F216](#f216) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1673,6 +1674,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Handler (mit einem `hasRawConflict`, das `false` liefert) rot: der HTTP-Test mit „Expected: is <400> but: was <200>“ für `{"model":"test-model","prompt":"once upon","system":"x","raw":true,"stream":false}`, der Einheitstest mit „Expected: is <true> but: was <false>“; mit dem Fix grün (`OllamaApiSupportTest` 40, `OpenAiCompatServerHttpTest` 67, `LlamaArchitectureTest` 13), `spotbugs:check` und `javadoc:javadoc` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `d94fbd7`
+
+### F216 – java-llama.cpp: Ollama `/api/chat` ohne Nachrichten (Ollamas Vorladen) wird mit 400 abgewiesen statt mit der Ladeantwort beantwortet
+- **Zeit:** 2026-10-20 20:27 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (neu `isChatLoadOnly`, `toOllamaChatLoadResponse`), `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`handleOllamaChat`)
+- **Schwere:** niedrig (Clients, die über die Chat-Route vorladen — `ollama-python` `chat(model)` ohne Nachrichten, Open WebUI —, bekommen einen Fehler)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J3-1). Das Gegenstück zu F205, das die Ladeantwort nur für `/api/generate` einführte.
+- **Beschreibung:** Ollama beantwortet ein `/api/chat` ohne Nachrichten mit dem Laden des Modells (`ChatHandler`: `if len(req.Messages) == 0` → `message:{role:"assistant",content:""}`, `done: true`, `done_reason "load"`, ein Objekt ohne Blick auf `stream`; in Go ist `len` eines fehlenden oder `null`-Slices 0). Hier übersetzte `handleOllamaChat` die Anfrage zu `messages: []`, und `OpenAiRequestMapper` wies sie mit „'messages' must be a non-empty array“ ab → 400, auch im Streaming-Weg, den ein Body ohne `stream` nimmt.
+- **Fix:** `isChatLoadOnly` (`messages` fehlt, ist `null` oder ein leeres Array; ein `messages` falschen Typs ist kein Vorladen und wird von der Übersetzung abgewiesen, F213) und `toOllamaChatLoadResponse` (Ollamas Form); `handleOllamaChat` antwortet damit vor der Übersetzung und ohne das Backend, auch bei `stream` ein einzelnes Objekt. `keep_alive: 0` (bei Ollama das Entladen) bekommt wie bei F205 die Ladeantwort: das Modell dieses Servers bleibt geladen. `/v1/chat/completions` weist leere `messages` weiter ab.
+- **Tests:** `OpenAiCompatServerHttpTest.ollamaChatWithoutMessagesOnlyReportsTheModelLoaded` (ohne `messages`, `[]`, `null` mit `stream`, `keep_alive: 0`; das Backend wird nicht gerufen — `RecordingBackend` zeichnet dafür jetzt auch `stream` auf), `OllamaApiSupportTest.aChatRequestWithoutMessagesOnlyLoadsTheModel`.
+- **Rot-Grün-Nachweis:** Gegen den unveränderten Handler (mit Stubs, die `false` bzw. `{}` liefern) rot: der HTTP-Test mit „Expected: is <true> but: was <false>“ für `done` bei `{"model":"test-model"}` (das Testbackend streamte eine Antwort; das echte Backend weist die leere Konversation mit 400 ab), der Einheitstest mit „Expected: is <true> but: was <false>“; mit dem Fix grün (`OllamaApiSupportTest` 41, `OpenAiCompatServerHttpTest` 68, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

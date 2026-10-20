@@ -520,4 +520,28 @@ public class OllamaApiSupportTest {
             assertThat(accepted, OllamaApiSupport.hasRawConflict(read(accepted)), is(false));
         }
     }
+
+    /**
+     * Ollama answers an {@code /api/chat} without messages by loading the model ({@code ChatHandler}:
+     * {@code len(req.Messages) == 0}, which absent, {@code null} and {@code []} all are), the chat twin
+     * of the {@code /api/generate} preload.
+     */
+    @Test
+    public void aChatRequestWithoutMessagesOnlyLoadsTheModel() throws IOException {
+        assertThat(OllamaApiSupport.isChatLoadOnly(read("{\"model\":\"m\"}")), is(true));
+        assertThat(OllamaApiSupport.isChatLoadOnly(read("{\"messages\":null}")), is(true));
+        assertThat(OllamaApiSupport.isChatLoadOnly(read("{\"messages\":[]}")), is(true));
+        assertThat(
+                OllamaApiSupport.isChatLoadOnly(read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}")),
+                is(false));
+        // a messages value of the wrong type is no preload; the translation refuses it
+        assertThat(OllamaApiSupport.isChatLoadOnly(read("{\"messages\":\"hi\"}")), is(false));
+        JsonNode answer = read(OllamaApiSupport.toOllamaChatLoadResponse("m"));
+        assertThat(answer.path("model").asText(), is("m"));
+        assertThat(answer.path("done").asBoolean(false), is(true));
+        assertThat(answer.path("done_reason").asText(), is("load"));
+        assertThat(answer.path("message").path("role").asText(), is("assistant"));
+        assertThat(answer.path("message").path("content").asText(null), is(""));
+        assertThat(answer.path("created_at").isTextual(), is(true));
+    }
 }

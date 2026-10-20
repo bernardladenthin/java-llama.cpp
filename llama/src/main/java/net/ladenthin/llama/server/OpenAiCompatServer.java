@@ -552,6 +552,15 @@ public final class OpenAiCompatServer implements AutoCloseable {
             if (request == null) {
                 return;
             }
+            if (OllamaApiSupport.isChatLoadOnly(request)) {
+                // Ollama's preload through the chat route: no messages means "load the model"
+                sendJson(
+                        exchange,
+                        HTTP_OK,
+                        OllamaApiSupport.toOllamaChatLoadResponse(
+                                request.path("model").asText(config.getModelId())));
+                return;
+            }
             final JsonNode openAiRequest;
             try {
                 openAiRequest = OllamaApiSupport.toOpenAiChatRequest(request);

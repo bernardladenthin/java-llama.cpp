@@ -567,6 +567,39 @@ final class OllamaApiSupport {
     }
 
     /**
+     * Whether the {@code /api/chat} request only asks for the model to be loaded: Ollama answers a chat
+     * without messages ({@code messages} absent, {@code null} or empty) with {@code done} at once, which
+     * is how its clients preload a model through the chat route. Ollama unloads instead when
+     * {@code keep_alive} is {@code 0}; the model of this server stays loaded, so that is a load answer
+     * here too, as on {@code /api/generate}.
+     *
+     * @param request the parsed Ollama chat request
+     * @return {@code true} when the request carries no messages
+     */
+    static boolean isChatLoadOnly(JsonNode request) {
+        JsonNode messages = request.path("messages");
+        return messages.isMissingNode() || messages.isNull() || (messages.isArray() && messages.size() == 0);
+    }
+
+    /**
+     * The answer to a load-only {@code /api/chat} request, as Ollama gives it: one object with an empty
+     * assistant message, {@code done} and {@code done_reason "load"}, whether streaming was asked for or
+     * not.
+     *
+     * @param model the model id to echo
+     * @return the answer
+     */
+    static String toOllamaChatLoadResponse(String model) {
+        ObjectNode root = OBJECT_MAPPER.createObjectNode();
+        root.put("model", model);
+        root.put("created_at", nowIso());
+        root.putObject("message").put("role", "assistant").put("content", "");
+        root.put("done", true);
+        root.put("done_reason", "load");
+        return root.toString();
+    }
+
+    /**
      * Whether the {@code /api/generate} request asks for the bare prompt ({@code "raw": true}). Without
      * it Ollama applies the model's chat template, with {@code system} as the system message; with it a
      * {@code system}, {@code template} or {@code context} is refused ({@link #hasRawConflict}).

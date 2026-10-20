@@ -519,6 +519,33 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * Ollama answers an {@code /api/chat} without messages by loading the model, which is how clients
+     * preload one through the chat route; ours ran the empty conversation into the chat mapper, which
+     * refused it with a 400. The answer is one object even when streaming was asked for (or defaulted).
+     */
+    @Test
+    public void ollamaChatWithoutMessagesOnlyReportsTheModelLoaded() throws IOException {
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            for (String body : new String[] {
+                "{\"model\":\"test-model\"}",
+                "{\"model\":\"test-model\",\"messages\":[],\"stream\":false}",
+                "{\"model\":\"test-model\",\"messages\":null,\"stream\":true}",
+                "{\"model\":\"test-model\",\"messages\":[],\"keep_alive\":0}"
+            }) {
+                Response response = post(server.getPort(), "/api/chat", body, "");
+                assertThat(body, response.code, is(200));
+                JsonNode out = READER.readTree(response.body);
+                assertThat(body, out.path("done").asBoolean(false), is(true));
+                assertThat(body, out.path("done_reason").asText(), is("load"));
+                assertThat(body, out.path("message").path("content").asText(null), is(""));
+                assertThat(body, out.path("model").asText(), is("test-model"));
+            }
+            assertThat("nothing was generated", backend.called, is(""));
+        }
+    }
+
     @Test
     public void ollamaGenerateWithSuffixUsesInfill() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {
@@ -1090,6 +1117,13 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
             this.called = "completions";
             this.request = request;
             return super.completions(request);
+        }
+
+        @Override
+        public void stream(JsonNode request, ChunkSink sink) throws IOException {
+            this.called = "stream";
+            this.request = request;
+            super.stream(request, sink);
         }
     }
 
