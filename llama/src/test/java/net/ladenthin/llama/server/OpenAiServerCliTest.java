@@ -231,6 +231,35 @@ public class OpenAiServerCliTest {
         assertThat(argv.get(argv.indexOf("--alias") + 1), is(defaulted.getModelId()));
     }
 
+    // llama.cpp's --alias splits its value at commas and strips each part into a SET of aliases, and
+    // the answers name the first of that set: "my,model" made /v1/models say "my,model" while every
+    // answer said "model". So an id llama.cpp would change is refused, and a file name it would change
+    // is advertised in the form it keeps.
+    @Test
+    public void aModelIdWithACommaIsRefused() {
+        IllegalArgumentException ex = assertThrows(
+                IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", "--model-id", "my,model"));
+        assertThat(ex.getMessage(), containsString("--model-id"));
+        assertThat(ex.getMessage(), containsString("comma"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> OpenAiServerCli.parse("-m", "m.gguf", "--model-alias", "my,model"));
+    }
+
+    @Test
+    public void aModelIdLlamaCppWouldStripIsRefused() {
+        assertThrows(IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", "--model-id", " x"));
+        assertThrows(IllegalArgumentException.class, () -> OpenAiServerCli.parse("-m", "m.gguf", "--model-id", ""));
+    }
+
+    @Test
+    public void aFileNameWithACommaIsAdvertisedAsItsAlias() {
+        OpenAiServerCli.Options options = OpenAiServerCli.parse("-m", "/opt/models/a,b.gguf");
+        assertThat(options.getModelId(), is("a_b.gguf"));
+        List<String> argv = Arrays.asList(options.toModelParameters().toArray());
+        assertThat(argv.get(argv.indexOf("--alias") + 1), is("a_b.gguf"));
+    }
+
     @Test
     public void missingModelThrows() {
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, OpenAiServerCli::parse);

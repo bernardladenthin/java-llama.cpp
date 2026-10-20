@@ -151,7 +151,7 @@ public final class OpenAiServerCli {
                     break;
                 case "--model-id":
                 case "--model-alias":
-                    modelId = nextValue(args, ++i, arg);
+                    modelId = modelIdValue(nextValue(args, ++i, arg), arg);
                     break;
                 case "--api-key":
                     apiKey = nextValue(args, ++i, arg);
@@ -243,7 +243,7 @@ public final class OpenAiServerCli {
                 "  --chat-template-kwargs <j> JSON object of chat-template variables (requires --jinja),",
                 "                             e.g. {\"reasoning_effort\":\"low\"}",
                 "  --parallel <n>             Parallel inference slots (default: llama.cpp default)",
-                "  --model-id <name>          Model id reported by /v1/models (default: file name)",
+                "  --model-id <name>          Model id reported by /v1/models (default: file name; no comma)",
                 "  --api-key <key>            Require an 'Authorization: Bearer <key>' header",
                 "  --mmproj <path>            Multimodal projector for vision models (enables image input)",
                 "  -mmdev, --mmproj-device <d>  Device for the multimodal projector ('none' = keep on CPU)",
@@ -267,6 +267,25 @@ public final class OpenAiServerCli {
             throw error("Missing value for " + flag);
         }
         return args[valueIndex];
+    }
+
+    /**
+     * Reads a model id. It becomes llama.cpp's {@code --alias}, which splits its value at commas and
+     * strips each part into a set of aliases, and the answers name the first of that set; an id it
+     * would change would make {@code /v1/models} and the answers disagree, so it is refused here.
+     *
+     * @param value the id
+     * @param flag the flag the value belongs to, for the message
+     * @return the id
+     */
+    private static String modelIdValue(String value, String flag) {
+        if (value.indexOf(',') >= 0) {
+            throw error(flag + " must not contain a comma (llama.cpp reads it as a list of aliases), got: " + value);
+        }
+        if (value.isEmpty() || !value.equals(value.trim())) {
+            throw error(flag + " must be non-empty without leading or trailing whitespace, got: '" + value + "'");
+        }
+        return value;
     }
 
     private static List<RpcEndpoint> rpcValue(String value, String flag) {
@@ -464,7 +483,8 @@ public final class OpenAiServerCli {
         }
 
         /**
-         * The advertised model id, resolved from {@code --model-id} or derived from the model file name.
+         * The advertised model id, resolved from {@code --model-id} or derived from the model file name
+         * (commas replaced by {@code _}, surrounding whitespace removed: the form llama.cpp's alias keeps).
          *
          * @return the model id reported by {@code GET /v1/models}
          */
@@ -473,7 +493,11 @@ public final class OpenAiServerCli {
                 return modelId;
             }
             final Path name = Paths.get(modelPath).getFileName();
-            return name != null ? name.toString() : OpenAiServerConfig.DEFAULT_MODEL_ID;
+            // the form llama.cpp's --alias keeps (no comma, stripped), so the advertised id and the
+            // name in the answers agree
+            final String derived =
+                    name != null ? name.toString().replace(',', '_').trim() : "";
+            return derived.isEmpty() ? OpenAiServerConfig.DEFAULT_MODEL_ID : derived;
         }
 
         /**

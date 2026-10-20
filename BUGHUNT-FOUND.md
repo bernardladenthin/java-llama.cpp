@@ -1508,6 +1508,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `3e996db`
 
+### F201 – java-llama.cpp: `--model-id` mit Komma (oder abgeleitet aus einem Dateinamen mit Komma) wird zu mehreren llama.cpp-Aliasen; `/v1/models` und die Antworten nennen das Modell verschieden
+- **Zeit:** 2026-10-20 12:00 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiServerCli.java`, `llama/src/test/java/net/ladenthin/llama/server/OpenAiServerCliTest.java`
+- **Schwere:** niedrig (falscher Modellname in den Antworten; Clients, die den Namen aus `/v1/models` vergleichen, verwerfen sie)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20; Folge von F185, das die ID immer als `--alias` weitergibt.
+- **Beschreibung:** Upstreams `--alias` (`common/arg.cpp`, b11639) teilt den Wert an Kommas, strippt jeden Teil und legt ihn in ein `std::set`; die Antworten nennen den ersten Eintrag. `--model-id my,model` meldete in `/v1/models` `my,model`, in jeder Antwort `model`; dasselbe für eine aus `a,b.gguf` abgeleitete ID, und eine ID aus Leerzeichen wurde ganz verworfen (die Antworten nannten wieder den Pfad).
+- **Fix:** `--model-id`/`--model-alias` lehnen ein Komma, einen leeren Wert und Leerraum am Rand mit einer Nutzungsmeldung ab; die aus dem Dateinamen abgeleitete ID ersetzt Kommas durch `_` und wird getrimmt (leer → Default-ID), also genau die Form, die der Alias behält.
+- **Tests:** `OpenAiServerCliTest`: `aModelIdWithACommaIsRefused`, `aModelIdLlamaCppWouldStripIsRefused`, `aFileNameWithACommaIsAdvertisedAsItsAlias`.
+- **Rot-Grün-Nachweis:** Ohne den Fix alle drei rot (keine Ablehnung; abgeleitete ID `a,b.gguf`); mit ihm 54/54 grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(geschlossen 2026-10-19, ohne Fund-ID, Entscheidung des Nutzers: bewusst nicht ändern)* Continue entscheidet die FIM-Fähigkeit eines Ollama-Modells an `{{ .Suffix }}` im `template` von `/api/show`; wir liefern `""`. Ein Platzhalter-Template wäre erfunden (der Server kennt das Prompt-Format des Modells nicht) und für die meisten Modelle falsch. Continue nutzt dann eigene Vorlagen; für die FIM-Token des Modells gibt es `POST /infill` (Continues `llama.cpp`-Provider). README-Hinweis ergänzt.
