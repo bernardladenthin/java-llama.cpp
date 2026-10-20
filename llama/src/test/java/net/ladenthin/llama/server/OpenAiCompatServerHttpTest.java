@@ -829,6 +829,27 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * A {@code max_tokens} that is not a number is refused by the Anthropic translation (F223); the
+     * refusal must reach the client as Anthropic's 400, streamed or not, before any SSE starts and
+     * without generating anything.
+     */
+    @Test
+    public void aStringMaxTokensOnTheAnthropicRouteIsA400InvalidRequestError() throws IOException {
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            for (String stream : new String[] {"false", "true"}) {
+                String body = "{\"model\":\"test-model\",\"max_tokens\":\"100\",\"stream\":" + stream
+                        + ",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}";
+                Response response = post(server.getPort(), "/v1/messages", body, "");
+                assertThat(body, response.code, is(400));
+                assertThat(body, response.body, containsString("\"type\":\"invalid_request_error\""));
+                assertThat(body, response.body, containsString("max_tokens"));
+            }
+            assertThat("nothing was generated", backend.called, is(""));
+        }
+    }
+
     @Test
     public void aPlainLlamaExceptionStaysAServerError() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FailingBackend(), config()).start()) {

@@ -145,6 +145,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F220](#f220) — niedrig — *gefixt*
 - [F221](#f221) — mittel — *gefixt*
 - [F222](#f222) — niedrig — *gefixt*
+- [F223](#f223) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1764,6 +1765,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: a string containing "\"index\":3,\"delta\":{\"type\":\"text_delta\",\"text\":\"d\"}"“ (das Delta „d“ ging an Index 1); mit dem Fix grün (`AnthropicStreamTranslatorTest` 9/9, `AnthropicApiSupportTest` 29/29, `OpenAiCompatServerHttpTest` 68/68). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `e1de898`
+
+### F223 – java-llama.cpp: Anthropic `max_tokens`, das keine Zahl ist, wird still durch die Vorgabe 4096 ersetzt statt abgewiesen
+- **Zeit:** 2026-10-20 22:40 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java` (`toOpenAiChatRequest`), `OpenAiCompatServer.java` (`handleAnthropicMessages`)
+- **Schwere:** niedrig (ein Client mit einem falsch typisierten `max_tokens`, etwa `"100"`, bekam ohne Hinweis eine Obergrenze von 4096 statt seiner)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J4-4). F96 führte die Vorgabe 4096 für ein fehlendes `max_tokens` ein und prüfte dafür „keine Zahl“ statt „fehlt“; vor F96 ließ `copyNumber` einen Nicht-Zahl-Wert ebenso still weg (dann unbegrenzt).
+- **Beschreibung:** Die Messages-API typisiert `max_tokens` als Pflicht-Ganzzahl; upstream (`convert_anthropic_to_oai`, `server-chat.cpp:586-589`, b11639) kopiert den Wert wie er ist, und das Schema (`field_num::eval`, `server-schema.cpp:531-549`) weist einen String oder Boolean mit „Field 'max_tokens': … type must be number“ ab (400), behandelt `null` aber wie ein fehlendes Feld (`has_value`, „clients can send null to request the server default“). Die Übersetzung verzweigte auf `isNumber()`: `"max_tokens": "100"` und `true` liefen still mit 4096. Den Wert einfach durchzureichen hilft hier nicht, weil der Mapper (`OpenAiRequestMapper.readMaxTokens`) eine Nicht-Zahl selbst als -1 (unbegrenzt) liest, bevor upstreams Schema sie sieht. Außerdem rief `handleAnthropicMessages` die Übersetzung außerhalb des `try` auf, das eine `IllegalArgumentException` als 400 beantwortet: Eine Ablehnung wäre als abgebrochene Verbindung angekommen.
+- **Fix:** Eine Zahl wird kopiert, ein fehlendes Feld oder `null` bekommt wie bisher 4096, jeder andere Wert ist eine `IllegalArgumentException` („'max_tokens' must be an integer but was …“). `handleAnthropicMessages` übersetzt in einem eigenen `try` vor der Verzweigung auf `stream` (wie `handleResponses`) und antwortet mit Anthropics 400 `invalid_request_error`, gestreamt wie blockierend, bevor ein SSE-Strom beginnt. Nicht Teil dieses Funds: Dieselbe stille Klasse besteht auf der OpenAI-Route selbst (`OpenAiRequestMapper.readMaxTokens` liest `"100"` als -1 = unbegrenzt, upstream antwortet 400) — eigener Fund.
+- **Tests:** `AnthropicApiSupportTest#aMaxTokensThatIsNotANumberIsRefused` (`"100"` und `true`, Meldung nennt `max_tokens`), als Schutz `#requestWithNullMaxTokensIsCappedLikeAbsent` (vorher und nachher grün) und `#requestWithoutMaxTokensIsCappedLikeUpstream`; `OpenAiCompatServerHttpTest#aStringMaxTokensOnTheAnthropicRouteIsA400InvalidRequestError` (`stream` false und true: 400, `"type":"invalid_request_error"`, nichts generiert).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot: „"100" ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ und „Expected: is <400> but: was <200>“; nur mit der Übersetzungsseite des Fixes scheiterte der HTTP-Test mit „java.net.SocketException: Unexpected end of file from server“ (der Beleg, dass die Ablehnung ohne das verlegte `try` als abgebrochene Verbindung ankäme); mit dem ganzen Fix grün (`AnthropicApiSupportTest` 31/31, `AnthropicStreamTranslatorTest` 9/9, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

@@ -705,7 +705,15 @@ public final class OpenAiCompatServer implements AutoCloseable {
             if (request == null) {
                 return;
             }
-            JsonNode openAiRequest = AnthropicApiSupport.toOpenAiChatRequest(request);
+            final JsonNode openAiRequest;
+            try {
+                openAiRequest = AnthropicApiSupport.toOpenAiChatRequest(request);
+            } catch (IllegalArgumentException e) {
+                // A request the translation refuses (a max_tokens that is not a number), answered before
+                // any stream starts, like upstream.
+                sendJson(exchange, HTTP_BAD_REQUEST, anthropicError(message(e), ANTHROPIC_ERROR_REQUEST));
+                return;
+            }
             String model = request.path("model").asText(config.getModelId());
             if (AnthropicApiSupport.isStreaming(request)) {
                 streamAnthropic(exchange, openAiRequest, model);

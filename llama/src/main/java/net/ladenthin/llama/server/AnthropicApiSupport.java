@@ -62,6 +62,7 @@ final class AnthropicApiSupport {
      *
      * @param request the parsed Anthropic request
      * @return an OpenAI {@code /v1/chat/completions} request object
+     * @throws IllegalArgumentException if {@code max_tokens} is present, not {@code null} and not a number
      */
     static ObjectNode toOpenAiChatRequest(JsonNode request) {
         ObjectNode openAi = OBJECT_MAPPER.createObjectNode();
@@ -108,11 +109,16 @@ final class AnthropicApiSupport {
         }
 
         // As upstream's convert_anthropic_to_oai: the protocol requires max_tokens, a request without
-        // it is capped at upstream's default instead of generating until the context is full.
-        if (request.path("max_tokens").isNumber()) {
+        // it is capped at upstream's default instead of generating until the context is full. null
+        // counts as absent, as in upstream's schema ("clients can send null to request the server
+        // default"); any other value that is not a number upstream's schema refuses, and so does this.
+        JsonNode maxTokens = request.path("max_tokens");
+        if (maxTokens.isNumber()) {
             copyNumber(request, "max_tokens", openAi, "max_tokens");
-        } else {
+        } else if (maxTokens.isMissingNode() || maxTokens.isNull()) {
             openAi.put("max_tokens", DEFAULT_MAX_TOKENS);
+        } else {
+            throw new IllegalArgumentException("'max_tokens' must be an integer but was " + maxTokens);
         }
         copyNumber(request, "temperature", openAi, "temperature");
         copyNumber(request, "top_p", openAi, "top_p");

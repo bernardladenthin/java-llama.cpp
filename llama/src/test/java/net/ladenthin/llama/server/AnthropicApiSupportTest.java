@@ -5,7 +5,9 @@
 package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -156,6 +158,28 @@ public class AnthropicApiSupportTest {
         // generating until the context is full.
         JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
                 read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
+        assertThat(openAi.path("max_tokens").asInt(), is(4096));
+    }
+
+    @Test
+    public void aMaxTokensThatIsNotANumberIsRefused() throws IOException {
+        // The protocol types max_tokens as an integer, and upstream's schema refuses a string or a
+        // boolean (Field 'max_tokens': type must be number). The default for an absent value answered
+        // such a request silently with a 4096 cap (F223).
+        for (String value : new String[] {"\"100\"", "true"}) {
+            JsonNode request =
+                    read("{\"max_tokens\":" + value + ",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}");
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class, () -> AnthropicApiSupport.toOpenAiChatRequest(request), value);
+            assertThat(e.getMessage(), containsString("max_tokens"));
+        }
+    }
+
+    @Test
+    public void requestWithNullMaxTokensIsCappedLikeAbsent() throws IOException {
+        // upstream's schema treats null as absent ("clients can send null to request the server default")
+        JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
+                read("{\"max_tokens\":null,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"));
         assertThat(openAi.path("max_tokens").asInt(), is(4096));
     }
 
