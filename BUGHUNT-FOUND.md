@@ -1750,7 +1750,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `AnthropicApiSupportTest#aMatchedStopWordIsReportedAsStopReasonStopSequence`, `#theMatchedStopWordIsTheStopSequence` (Erwartung von `end_turn` auf `stop_sequence` umgestellt), `#onlyAStopThatAStopWordEndedIsStopSequence` (die drei unveränderten Zweige mit Wort und `stop` ohne Wort), als Schutz `#withoutAStopWordAStopIsStillEndTurn`; `AnthropicStreamTranslatorTest#aMatchedStopWordIsTheStopReasonStopSequenceOfTheMessageDelta`, `#theMatchedStopWordIsTheStopSequenceOfTheMessageDelta` (umgestellt).
 - **Rot-Grün-Nachweis:** Ohne den Fix vier rot: „Expected: is "stop_sequence" but: was "end_turn"“ (beide blockierenden Fälle) und „Expected: a string containing "\"stop_reason\":\"stop_sequence\""“ (beide gestreamten); mit dem Fix grün (`AnthropicApiSupportTest` 29/29, `AnthropicStreamTranslatorTest` 8/8, `OpenAiCompatServerHttpTest` 68/68). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `a1be394`
 
 ## Offene Verdachte ohne Fund-ID
 
