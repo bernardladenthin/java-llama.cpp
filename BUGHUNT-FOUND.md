@@ -1805,7 +1805,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesApiSupportTest#functionCallWithArgumentsThatAreNotAStringIsRejectedLikeUpstream` (Objekt, Array, Zahl, Boolean; Meldung nennt `'arguments'` und die `call_id`); `#functionCallWithoutArgumentsBecomesAnEmptyArgumentsObject` um `"arguments":null` erweitert (vorher und nachher grün, pinnt, dass `null` weiter `"{}"` ist).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („{"city":"Paris"} ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit dem Fix grün (`ResponsesApiSupportTest` 60/60, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `fdc800e`
 
 ## Offene Verdachte ohne Fund-ID
 
