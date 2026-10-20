@@ -1544,6 +1544,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `266d70d`
 
+### F204 – java-llama.cpp: `throw_utf8_impl`/`new_string_utf8_impl` rufen JNI über einer schon anstehenden Java-Exception auf und ersetzen sie
+- **Zeit:** 2026-10-20 12:50 UTC
+- **Datei:** `llama/src/main/cpp/jni_utf8.hpp`, `llama/src/test/cpp/test_jni_helpers.cpp`
+- **Schwere:** niedrig bis mittel (die genauere Exception geht verloren; unter Android-CheckJNI bricht ein `FindClass`/`NewObject` bei anstehender Exception den Prozess ab)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20; `jni_utf8.hpp` entstand mit dem Modified-UTF-8-Fix, `jni_guard_impl` hatte die Regel schon.
+- **Beschreibung:** Nach einem fehlgeschlagenen JNI-Aufruf (z. B. `GetStringUTFChars` mit `OutOfMemoryError`) rief ein Aufrufer `throw_utf8_impl`: der ASCII-Pfad `ThrowNew` ersetzte die anstehende Exception, der Nicht-ASCII-Pfad rief `FindClass`, `GetMethodID` und `NewObject` — laut JNI-Spezifikation bei anstehender Exception verboten. `jni_guard_impl` lässt eine anstehende Exception stehen, diese beiden Helfer nicht.
+- **Fix:** Beide prüfen zuerst `ExceptionCheck()`: `throw_utf8_impl` kehrt zurück und lässt die anstehende Exception stehen, `new_string_utf8_impl` gibt `nullptr` zurück (sein Vertrag: nullptr mit anstehender Exception).
+- **Tests:** C++ `JniUtf8.APendingExceptionIsLeftInPlaceOnBothPaths` (ASCII- und 4-Byte-Pfad, kein `ThrowNew`, kein String gebaut, nichts geworfen; `new_string_utf8_impl` ohne `NewStringUTF`).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot; mit ihm grün, ctest 645/645.
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(geschlossen 2026-10-19, ohne Fund-ID, Entscheidung des Nutzers: bewusst nicht ändern)* Continue entscheidet die FIM-Fähigkeit eines Ollama-Modells an `{{ .Suffix }}` im `template` von `/api/show`; wir liefern `""`. Ein Platzhalter-Template wäre erfunden (der Server kennt das Prompt-Format des Modells nicht) und für die meisten Modelle falsch. Continue nutzt dann eigene Vorlagen; für die FIM-Token des Modells gibt es `POST /infill` (Continues `llama.cpp`-Provider). README-Hinweis ergänzt.

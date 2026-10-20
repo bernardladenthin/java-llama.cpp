@@ -1018,6 +1018,24 @@ TEST(JniUtf8, AFourByteCharacterReachesTheExceptionAsStandardUtf8Bytes) {
     EXPECT_EQ(g_utf8.thrown, kException);
 }
 
+// A pending Java exception is the more precise error, and the JNI spec forbids most calls while one
+// is pending: neither path may replace it, nor call FindClass/NewObject over it.
+TEST(JniUtf8, APendingExceptionIsLeftInPlaceOnBothPaths) {
+    JNIEnv_ fake_env;
+    JNINativeInterface_ iface;
+    JNIEnv *env = make_utf8_env(fake_env, iface);
+    g_utf8.exception_pending = true;
+
+    throw_utf8_impl(env, kExceptionClass, "plain text");
+    throw_utf8_impl(env, kExceptionClass, kEmojiMessage);
+
+    EXPECT_EQ(g_utf8.throw_new_calls, 0) << "ThrowNew got: " << g_utf8.throw_new_message;
+    EXPECT_EQ(g_utf8.bytes, "") << "a String was built over the pending exception";
+    EXPECT_EQ(g_utf8.thrown, nullptr);
+    EXPECT_EQ(new_string_utf8_impl(env, kEmojiMessage), nullptr);
+    EXPECT_EQ(g_utf8.new_string_utf_calls, 0);
+}
+
 // An invalid sequence is not ours to repair either: Java's decoder replaces it with U+FFFD.
 TEST(JniUtf8, AnInvalidByteSequenceIsLeftToJavasDecoder) {
     JNIEnv_ fake_env;

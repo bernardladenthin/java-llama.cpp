@@ -32,7 +32,12 @@
 }
 
 // A java.lang.String from standard UTF-8 bytes; nullptr with a pending Java exception on failure.
+// Called with an exception already pending, it builds nothing (the JNI spec forbids the calls) and
+// leaves that exception in place.
 [[nodiscard]] inline jstring new_string_utf8_impl(JNIEnv *env, const char *utf8) {
+    if (env->ExceptionCheck()) {
+        return nullptr;
+    }
     if (utf8 == nullptr) {
         utf8 = "";
     }
@@ -62,8 +67,12 @@
 
 // Throws a new exception_class(message), message read as standard UTF-8. exception_class must
 // have a (String) constructor; every exception class of this library has one. When the message
-// cannot be built, the exception that stopped it (OutOfMemoryError) is the one left pending.
+// cannot be built, the exception that stopped it (OutOfMemoryError) is the one left pending. An
+// exception already pending is the more precise error and is never replaced, as jni_guard_impl does.
 inline void throw_utf8_impl(JNIEnv *env, jclass exception_class, const char *message) {
+    if (env->ExceptionCheck()) {
+        return;
+    }
     if (message == nullptr) {
         message = "";
     }
