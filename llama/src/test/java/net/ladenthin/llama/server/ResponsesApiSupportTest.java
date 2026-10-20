@@ -574,6 +574,18 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void responseCutOffAtTheTokenLimitIsIncomplete() throws IOException {
+        // finish_reason "length" is a cut-off answer; it was reported as "completed", so a client that hit
+        // max_output_tokens could not tell. The Responses status for it is "incomplete".
+        String openAi = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"hel\"},"
+                + "\"finish_reason\":\"length\"}]}";
+        JsonNode out = read(ResponsesApiSupport.toResponsesResponse(openAi, "m", "resp_1"));
+        assertThat(out.path("status").asText(), is("incomplete"));
+        assertThat(out.path("incomplete_details").path("reason").asText(), is("max_output_tokens"));
+        assertThat(out.path("output").path(0).path("status").asText(), is("incomplete"));
+    }
+
+    @Test
     public void responseWrapsOutputMessageWithOutputTextAndUsage() throws IOException {
         String openAi = "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"hello\"},"
                 + "\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":1,"
@@ -581,6 +593,7 @@ public class ResponsesApiSupportTest {
         JsonNode out = read(ResponsesApiSupport.toResponsesResponse(openAi, "m", "resp_1"));
         assertThat(out.path("object").asText(), is("response"));
         assertThat(out.path("status").asText(), is("completed"));
+        assertThat(out.has("incomplete_details"), is(false));
         JsonNode messageItem = out.path("output").get(0);
         assertThat(messageItem.path("type").asText(), is("message"));
         assertThat(messageItem.path("content").get(0).path("type").asText(), is("output_text"));

@@ -191,24 +191,32 @@ public class OpenAiCompatServerIntegrationTest extends OpenAiServerTestSupport {
         assertThat(response.body, containsString("event: message_stop"));
     }
 
+    /**
+     * An answer that cannot fit into {@code max_output_tokens} ends with finish_reason "length", which the
+     * Responses API reports as {@code incomplete} with reason {@code max_output_tokens} (F229); it was
+     * reported as {@code completed}.
+     */
     @Test
     public void responsesNonStreamingRoundTrip() throws IOException {
-        String body = "{\"model\":\"" + MODEL_ID + "\",\"max_output_tokens\":16,\"input\":\"Say hello in one word.\"}";
+        String body = "{\"model\":\"" + MODEL_ID + "\",\"max_output_tokens\":4,"
+                + "\"input\":\"Count from 1 to 100, one number per line.\"}";
         Response response = post(port, "/v1/responses", body, "");
         assertThat(response.code, is(200));
         JsonNode json = MAPPER.readTree(response.body);
         assertThat(json.path("object").asText(), is("response"));
-        assertThat(json.path("status").asText(), is("completed"));
+        assertThat(json.path("status").asText(), is("incomplete"));
+        assertThat(json.path("incomplete_details").path("reason").asText(), is("max_output_tokens"));
     }
 
     @Test
     public void responsesStreamingRoundTrip() throws IOException {
-        String body = "{\"model\":\"" + MODEL_ID + "\",\"stream\":true,\"max_output_tokens\":16,"
-                + "\"input\":\"Say hello in one word.\"}";
+        String body = "{\"model\":\"" + MODEL_ID + "\",\"stream\":true,\"max_output_tokens\":4,"
+                + "\"input\":\"Count from 1 to 100, one number per line.\"}";
         Response response = post(port, "/v1/responses", body, "");
         assertThat(response.code, is(200));
         assertThat(response.body, containsString("event: response.created"));
-        assertThat(response.body, containsString("event: response.completed"));
+        assertThat(response.body, containsString("event: response.incomplete"));
+        assertThat(response.body, containsString("\"reason\":\"max_output_tokens\""));
     }
 
     @Test

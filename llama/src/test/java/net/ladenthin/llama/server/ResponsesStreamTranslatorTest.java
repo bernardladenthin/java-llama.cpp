@@ -7,6 +7,7 @@ package net.ladenthin.llama.server;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 
 import org.junit.jupiter.api.Test;
 
@@ -85,5 +86,37 @@ public class ResponsesStreamTranslatorTest {
         assertThat(end, containsString("\"type\":\"function_call\""));
         assertThat(end, containsString("event: response.function_call_arguments.done"));
         assertThat(end, containsString("event: response.completed"));
+    }
+
+    @Test
+    public void maxTokensCutOffEndsWithResponseIncomplete() {
+        // finish_reason "length" is a cut-off answer; it was reported as response.completed, so a client
+        // that hit max_output_tokens could not tell. The usage-only chunk the server appends afterwards
+        // ("choices":[]) must not reset the recorded reason.
+        ResponsesStreamTranslator translator = new ResponsesStreamTranslator("m", "resp_1");
+        translator.onChunk("{\"choices\":[{\"delta\":{\"content\":\"hel\"},\"finish_reason\":null}]}");
+        translator.onChunk("{\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}");
+        translator.onChunk("{\"choices\":[],\"usage\":{\"prompt_tokens\":4,\"completion_tokens\":1}}");
+        String end = translator.end();
+
+        assertThat(end, containsString("event: response.incomplete"));
+        assertThat(end, not(containsString("event: response.completed")));
+        String terminal = end.substring(end.indexOf("event: response.incomplete"));
+        assertThat(terminal, containsString("\"status\":\"incomplete\""));
+        assertThat(terminal, containsString("\"incomplete_details\":{\"reason\":\"max_output_tokens\"}"));
+        String messageDone = end.substring(end.indexOf("event: response.output_item.done"));
+        assertThat(
+                messageDone.substring(0, messageDone.indexOf("\n\n")),
+                containsString("\"type\":\"message\",\"id\":\"msg_resp_1\",\"status\":\"incomplete\""));
+    }
+
+    @Test
+    public void aStoppedAnswerStaysCompleted() {
+        ResponsesStreamTranslator translator = new ResponsesStreamTranslator("m", "resp_1");
+        translator.onChunk("{\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}");
+        String end = translator.end();
+
+        assertThat(end, containsString("event: response.completed"));
+        assertThat(end, not(containsString("incomplete")));
     }
 }

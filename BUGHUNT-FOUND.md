@@ -151,6 +151,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F226](#f226) — niedrig — *gefixt*
 - [F227](#f227) — niedrig — *gefixt*
 - [F228](#f228) — niedrig — *gefixt*
+- [F229](#f229) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1847,6 +1848,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit dem Fix grün (`ResponsesApiSupportTest` 67/67, `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `647dd57`
+
+### F229 – java-llama.cpp: Abgeschnittene Responses-Antwort (`finish_reason` `length`) wird als `completed` gemeldet
+- **Zeit:** 2026-10-20 23:33 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesStreamTranslator.java` (`onChunk`, `end`), `ResponsesApiSupport.java` (`toResponsesResponse`, neu `isTruncated`, `markIncomplete`)
+- **Schwere:** niedrig (ein Client, dessen Antwort an `max_output_tokens` abgeschnitten wurde, sah eine vollständige Antwort)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J5-7). Seit es die Responses-Route gibt; upstreams `to_json_oaicompat_resp` (`server-task.cpp:579`, `:688`, b11639) meldet ebenfalls immer `completed`, es ist also Parität mit upstream, keine Regression. Bewusst über upstream hinaus wie F107 (Anthropics `tool_choice` `none`); vLLM verfährt so (PR #24561).
+- **Beschreibung:** `ResponsesStreamTranslator.end()` und `ResponsesApiSupport.toResponsesResponse` bauten die Antwort fest mit `status` `completed`, der Strom endete immer mit `response.completed`; `finish_reason` wurde nie gelesen. Die Übersetzung bildet `max_output_tokens` auf `max_tokens` ab, upstreams Chunks tragen bei `STOP_TYPE_LIMIT` `finish_reason` `"length"`. Die Responses-API definiert dafür `status` `incomplete`, `incomplete_details.reason` `max_output_tokens`, das Ereignis `response.incomplete` und den Nachrichtenstatus `incomplete` (openai-python `Response`, `ResponseIncompleteEvent`, `ResponseOutputMessage`).
+- **Fix:** Der Translator merkt sich das letzte textuelle `finish_reason` (der angehängte reine Usage-Chunk mit `"choices":[]` überschreibt es nicht, `null` der Zwischenchunks ebenso wenig). Bei `"length"` sind die Antwort `incomplete` mit `incomplete_details: {"reason":"max_output_tokens"}`, das Nachrichten-Item (in `response.output_item.done` und im `output`) `incomplete` und das letzte Ereignis `response.incomplete`; Reasoning- und `function_call`-Items bleiben `completed`, `completed_at` wird nicht gesetzt (die Hülle trug es nie). Dasselbe blockierend aus `choices[0].finish_reason`. Die Javadoc von `isTruncated` sagt, dass llama.cpps `"length"` auch einen vollen Kontext ohne Kontextverschiebung, `n_indent` und `t_max_predict_ms` umfasst; `max_output_tokens` ist der nächste der definierten Gründe, die Meldung also grob, nicht still.
+- **Tests:** `ResponsesStreamTranslatorTest#maxTokensCutOffEndsWithResponseIncomplete` (Text, `length`, dann der reine Usage-Chunk; `response.incomplete`, kein `response.completed`, Status und Grund, Nachrichten-Item `incomplete`), `#aStoppedAnswerStaysCompleted`; `ResponsesApiSupportTest#responseCutOffAtTheTokenLimitIsIncomplete`, `#responseWrapsOutputMessageWithOutputTextAndUsage` prüft zusätzlich, dass eine `stop`-Antwort kein `incomplete_details` trägt. Die modellgestützten `OpenAiCompatServerIntegrationTest#responsesNonStreamingRoundTrip`/`#responsesStreamingRoundTrip` erwarteten mit `max_output_tokens` 16 `completed`; sie fragen jetzt eine Antwort ab, die in 4 Token nicht passt („Count from 1 to 100 …“), und erwarten `incomplete`/`response.incomplete` mit dem Grund – deterministisch statt davon abhängig, ob das Modell vor 16 Token aufhört.
+- **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected: is "incomplete" but: was "completed"“ und „Expected: a string containing "event: response.incomplete" but: was "event: response.output_text.done …"“); umgekehrt scheiterten nach dem Fix die unveränderten Integrationstests mit dem lokalen Winzmodell („Expected: is "completed" but: was "incomplete"“, der Beweis, dass der Fix den echten Server erreicht); mit dem Fix und den angepassten Integrationstests grün (`ResponsesApiSupportTest` 68/68, `ResponsesStreamTranslatorTest` 7/7, `OpenAiCompatServerHttpTest` 69/69, `OpenAiCompatServerIntegrationTest` 13/13 mit dem Winzmodell, zweimal). `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

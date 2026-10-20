@@ -20,8 +20,9 @@ import org.jspecify.annotations.Nullable;
  * {@code response.content_part.added} + {@code response.output_text.delta}* +
  * {@code response.output_text.done} + {@code response.content_part.done} +
  * {@code response.output_item.done} → (per tool call) a {@code function_call} item with
- * {@code response.function_call_arguments.done} → {@code response.completed}. Each event carries a
- * monotonic {@code sequence_number}.
+ * {@code response.function_call_arguments.done} → {@code response.completed}, or {@code
+ * response.incomplete} for an answer cut off by a limit ({@code finish_reason} {@code "length"}, see
+ * {@link ResponsesApiSupport#isTruncated}). Each event carries a monotonic {@code sequence_number}.
  *
  * <p>Text deltas are emitted live; tool calls are reconstructed via {@link ToolCallDeltaAccumulator} and
  * emitted as whole {@code function_call} items at the end. Free of JNI / model dependencies;
@@ -49,6 +50,8 @@ final class ResponsesStreamTranslator {
     private long inputTokens;
     private long outputTokens;
     private long cachedTokens;
+    /** The last textual {@code finish_reason} seen; the trailing usage-only chunk carries none. */
+    private String finishReason = "";
 
     ResponsesStreamTranslator(String model, String responseId) {
         this.model = model;
@@ -82,6 +85,10 @@ final class ResponsesStreamTranslator {
             JsonNode chunk = OBJECT_MAPPER.readTree(openAiChunkJson);
             accumulator.accept(chunk);
             captureUsage(chunk.path("usage"));
+            JsonNode chunkFinishReason = chunk.path("choices").path(0).path("finish_reason");
+            if (chunkFinishReason.isTextual()) {
+                finishReason = chunkFinishReason.asText();
+            }
             // Reasoning streams as a reasoning output item, as in upstream's to_json_oaicompat_resp_stream.
             JsonNode deltaNode = chunk.path("choices").path(0).path("delta");
             JsonNode reasoningDelta = deltaNode.path("reasoning_content");
@@ -116,11 +123,13 @@ final class ResponsesStreamTranslator {
 
     /**
      * The closing events: finish the text content part / message item, emit a {@code function_call} item
-     * per accumulated tool call, then {@code response.completed} carrying the assembled output and usage.
+     * per accumulated tool call, then {@code response.completed} carrying the assembled output and usage
+     * ({@code response.incomplete}, with the message item {@code incomplete} too, for a cut-off answer).
      *
      * @return the framed SSE events, concatenated
      */
     String end() {
+        boolean truncated = ResponsesApiSupport.isTruncated(finishReason);
         StringBuilder out = new StringBuilder();
         ArrayNode output = OBJECT_MAPPER.createArrayNode();
 
@@ -154,7 +163,8 @@ final class ResponsesStreamTranslator {
             part.put("text", text.toString());
             out.append(ResponsesApiSupport.sseEvent("response.content_part.done", sequence++, partDone));
 
-            ObjectNode messageItem = completedMessageItem();
+            ObjectNode messageItem = finishedMessageItem(
+                    truncated ? ResponsesApiSupport.STATUS_INCOMPLETE : ResponsesApiSupport.STATUS_COMPLETED);
             output.add(messageItem);
             out.append(outputItemDone(messageOutputIndex, messageItem));
         }
@@ -174,7 +184,11 @@ final class ResponsesStreamTranslator {
         }
 
         ObjectNode completed = ResponsesApiSupport.dataObject();
-        ObjectNode response = ResponsesApiSupport.newResponseShell(model, responseId, "completed");
+        ObjectNode response =
+                ResponsesApiSupport.newResponseShell(model, responseId, ResponsesApiSupport.STATUS_COMPLETED);
+        if (truncated) {
+            ResponsesApiSupport.markIncomplete(response);
+        }
         response.set("output", output);
         ObjectNode usage = response.putObject("usage");
         usage.put("input_tokens", inputTokens);
@@ -182,7 +196,8 @@ final class ResponsesStreamTranslator {
         usage.put("total_tokens", inputTokens + outputTokens);
         usage.putObject("input_tokens_details").put("cached_tokens", cachedTokens);
         completed.set("response", response);
-        out.append(ResponsesApiSupport.sseEvent("response.completed", sequence++, completed));
+        out.append(ResponsesApiSupport.sseEvent(
+                truncated ? "response.incomplete" : "response.completed", sequence++, completed));
         return out.toString();
     }
 
@@ -251,11 +266,11 @@ final class ResponsesStreamTranslator {
         return item;
     }
 
-    private ObjectNode completedMessageItem() {
+    private ObjectNode finishedMessageItem(String status) {
         ObjectNode item = OBJECT_MAPPER.createObjectNode();
         item.put("type", "message");
         item.put("id", messageItemId);
-        item.put("status", "completed");
+        item.put("status", status);
         item.put("role", "assistant");
         ObjectNode textPart = item.putArray("content").addObject();
         textPart.put("type", "output_text");

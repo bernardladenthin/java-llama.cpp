@@ -35,6 +35,12 @@ final class ResponsesApiSupport {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /** The status of a finished response and of its message item. */
+    static final String STATUS_COMPLETED = "completed";
+
+    /** The status of a response (and its message item) cut off by a limit, see {@link #isTruncated}. */
+    static final String STATUS_INCOMPLETE = "incomplete";
+
     /** The keys of a Responses {@code json_schema} format that chat nests under {@code json_schema}. */
     private static final List<String> JSON_SCHEMA_FORMAT_FIELDS =
             Collections.unmodifiableList(Arrays.asList("name", "description", "schema", "strict"));
@@ -515,7 +521,9 @@ final class ResponsesApiSupport {
     }
 
     /**
-     * Translate a non-streaming OpenAI {@code chat.completion} into a Responses API response object.
+     * Translate a non-streaming OpenAI {@code chat.completion} into a Responses API response object. A
+     * cut-off answer ({@code finish_reason} {@code "length"}) is {@code incomplete}, as is its message
+     * item (see {@link #markIncomplete}).
      *
      * @param openAiCompletionJson the OpenAI completion body
      * @param model the model id to echo
@@ -523,7 +531,7 @@ final class ResponsesApiSupport {
      * @return the Responses object serialized as JSON
      */
     static String toResponsesResponse(String openAiCompletionJson, String model, String responseId) {
-        ObjectNode root = newResponseShell(model, responseId, "completed");
+        ObjectNode root = newResponseShell(model, responseId, STATUS_COMPLETED);
         ArrayNode output = root.putArray("output");
         ObjectNode usage = root.putObject("usage");
         usage.put("input_tokens", 0);
@@ -534,6 +542,11 @@ final class ResponsesApiSupport {
         try {
             JsonNode completion = OBJECT_MAPPER.readTree(openAiCompletionJson);
             JsonNode message = completion.path("choices").path(0).path("message");
+            boolean truncated = isTruncated(
+                    completion.path("choices").path(0).path("finish_reason").asText(""));
+            if (truncated) {
+                markIncomplete(root);
+            }
             // As upstream's to_json_oaicompat_resp: the reasoning comes first, as a reasoning item.
             String reasoning = message.path("reasoning_content").asText("");
             if (!reasoning.isEmpty()) {
@@ -553,7 +566,7 @@ final class ResponsesApiSupport {
                 ObjectNode messageItem = output.addObject();
                 messageItem.put("type", "message");
                 messageItem.put("id", "msg_" + responseId);
-                messageItem.put("status", "completed");
+                messageItem.put("status", truncated ? STATUS_INCOMPLETE : STATUS_COMPLETED);
                 messageItem.put("role", "assistant");
                 ArrayNode content = messageItem.putArray("content");
                 ObjectNode textPart = content.addObject();
@@ -599,6 +612,32 @@ final class ResponsesApiSupport {
         item.put("arguments", function.path("arguments").asText(""));
         item.put("status", "completed");
         return item;
+    }
+
+    /**
+     * Whether a chat {@code finish_reason} is a cut-off answer: llama.cpp's {@code "length"}
+     * ({@code STOP_TYPE_LIMIT}). Besides {@code max_output_tokens} it also covers a full context without
+     * context shift and the {@code n_indent} / {@code t_max_predict_ms} limits; {@code
+     * max_output_tokens} is the closest of the reasons the Responses API defines, so the report is
+     * coarse rather than silent. Upstream's {@code to_json_oaicompat_resp} reports every answer as
+     * {@code completed}.
+     *
+     * @param finishReason the chat {@code finish_reason}, {@code ""} if none was seen
+     * @return {@code true} for a truncated answer
+     */
+    static boolean isTruncated(String finishReason) {
+        return "length".equals(finishReason);
+    }
+
+    /**
+     * Mark a response object as cut off: status {@code incomplete} with {@code incomplete_details.reason}
+     * {@code max_output_tokens} (see {@link #isTruncated}).
+     *
+     * @param response the response object to mark
+     */
+    static void markIncomplete(ObjectNode response) {
+        response.put("status", STATUS_INCOMPLETE);
+        response.putObject("incomplete_details").put("reason", "max_output_tokens");
     }
 
     /** A bare Responses API object shell (no output/usage), used by both the final reply and events. */
