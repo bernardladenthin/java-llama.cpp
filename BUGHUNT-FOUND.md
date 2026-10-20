@@ -23,7 +23,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F13](#f13) — mittel — *gefixt*
 - [F16](#f16) — mittel — *gefixt (JNI; die FFM-Hälfte als F198)*
 - [F17](#f17) — mittel — *gefixt*
-- [F18](#f18) — mittel — *gefixt (Fix `c1e5dcd`; roter Regressionstest nachgereicht, bis dahin „nur beschrieben“, siehe `209ee6c`)*
+- [F18](#f18) — mittel — *gefixt (Fix `5df523f`; roter Regressionstest nachgereicht, bis dahin „nur beschrieben“, siehe `d5c2622`)*
 - [F24](#f24) — mittel — *gefixt*
 - [F25](#f25) — mittel — *gefixt*
 - [F26](#f26) — mittel — *gefixt*
@@ -165,7 +165,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** `toJson()` ruft `validate()`: `modelPath`/`outputPath` per `Objects.requireNonNull` mit Feldnamen, genau eins von `trainingText`/`trainingFile`, `epochs >= 1`, `valSplit` in `[0, 1)` (NaN eingeschlossen) – sonst `IllegalArgumentException` vor dem JNI-Aufruf.
 - **Rot-Grün-Nachweis:** ohne Fix rot, 4 von 7 („Expected IllegalArgumentException to be thrown, but nothing was thrown“ bzw. bare NPE ohne Feldnamen); mit Fix grün 7/7 (skipped 0), `WireNameRegistryTest` 8/8; Gegenprobe per `git stash` rot 4/7, nach `stash pop` grün 7/7. `WireNameRegistryTest#everyTrainingFieldIsWrittenByAFullyPopulatedConfiguration` setzte beide Korpus-Felder zugleich und nutzt jetzt zwei Konfigurationen.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `0aa7c94`
+- **Commit:** java-llama.cpp `aaa7b5a`
 - **Doku-Lücke aus diesem Fix (2026-10-17, nur beschrieben):** Seit dem Fix wirft `TrainingParameters.toJson()` – und damit beide `LlamaTrainer.finetune`-Überladungen – bei ungültiger Konfiguration `IllegalArgumentException`; die Javadoc beider `finetune` nennt nur `LlamaException`. Reine Doku, kein Test kann sie rot machen, daher nach der Nutzerregel unverändert.
 
 <a id="f05"></a>
@@ -177,7 +177,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Weitere Beobachtung (nicht geändert):** Ungültiges JSON wird absichtlich als **String** unter `parameters` weitergereicht, `""` und Leerzeichen werden zu `"parameters":null`. Ob eine `IllegalArgumentException` (wie in `JsonParameters`) besser wäre, ist eine API-Entscheidung.
 - **Reproduktion:** `ChatRequestTest$…#buildToolsJsonDoesNotSilentlyTruncateASchemaWithTrailingContent` (vorher rot, danach grün), plus Positivtest `buildToolsJsonEmbedsAValidSchemaAsAnObject`; `ChatRequestTest` 24/24 grün. `spotbugs:check` nicht gelaufen.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `399ff0a`
+- **Commit:** java-llama.cpp `d6a9be5`
 
 <a id="f06"></a>
 ### F06 – java-llama.cpp: `RouterClient.awaitModelLoaded(id, Long.MAX_VALUE)` bricht sofort mit Timeout ab
@@ -187,7 +187,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Beschreibung:** `System.currentTimeMillis() + timeoutMillis` läuft bei `Long.MAX_VALUE` („so lange wie nötig“, eine naheliegende Aufrufform) über und wird negativ. Die Schleife pollt nie und wirft „did not reach LOADED within 9223372036854775807 ms (last status: null)“, auch wenn das Modell längst geladen ist. Fix: Deadline sättigt bei `Long.MAX_VALUE`.
 - **Reproduktion:** `RouterClientTest#awaitModelLoaded_longMaxValueTimeoutStillPolls` (vorher rot mit genau dieser Meldung, danach grün)
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `ec12331`
+- **Commit:** java-llama.cpp `a4e5b22`
 
 <a id="f07"></a>
 ### F07 – java-llama.cpp: `RouterClient` mit IPv6-Literal (`"::1"`) kann nie verbinden
@@ -197,7 +197,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Beschreibung:** Die URL wurde als `"http://" + host + ":" + port` gebaut. Für `new RouterClient("::1", port)` (Router mit `--host ::1`; Javadoc: „host name or address“) entsteht `http://::1:port/models` → `MalformedURLException: Error at index 0 in ":1:8080"` vor jedem Verbindungsversuch. Workaround war `"[::1]"`. Fix: IPv6-Literal wird geklammert, bereits geklammerte Hosts bleiben unverändert. Nicht abgedeckt: Zonen-IDs (`fe80::1%eth0`) bräuchten zusätzlich `%25`-Kodierung. `toString()` zeigt den Host weiterhin ungeklammert.
 - **Reproduktion:** `RouterClientTest#ipv6LiteralHostIsBracketedInTheRequestUrl` (vorher rot: `MalformedURLException`, danach andere `IOException`, weil auf Port 1 nichts lauscht). Der Sandbox fehlt IPv6, ein echter Server auf `::1` war hier nicht testbar.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `0f84984`
+- **Commit:** java-llama.cpp `5b98dc7`
 
 <a id="f09"></a>
 ### F09 – java-llama.cpp: Loader löscht fremde `llama*`/`ggml*`-Einträge im Temp-Verzeichnis, Verzeichnisse rekursiv
@@ -208,7 +208,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `LlamaLoaderTest#staleExtractionLeavesForeignEntriesWithAMatchingPrefixAlone` (vorher rot, danach grün); `LlamaLoaderTest` 63/63, inkl. der bestehenden Fälle `jllama-3f2a.so` / `ggml-metal.metal` (werden weiter gelöscht).
 - **Bitte prüfen:** Die genauen Dateinamen des alten Layouts konnte ich nicht verifizieren, weil der Clone flach ist und keine Historie vor 6.0.0 enthält. Falls es damals auch Endungen wie `.tmp` oder `.lck` gab, bleiben die jetzt liegen. Das ist harmlos, nur Restmüll.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `3ae1b98`
+- **Commit:** java-llama.cpp `61ea8f5`
 
 <a id="f12"></a>
 ### F12 – java-llama.cpp: Ollama-`/api/chat` verwirft Bilder (`images`), obwohl `/api/show` „vision“ meldet
@@ -219,7 +219,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#toOpenAiChatRequestTurnsOllamaImagesIntoImageUrlParts` (vorher rot, danach grün); `OllamaApiSupportTest` 20/20, `OpenAiCompatServerHttpTest` 43/43. Ende-zu-Ende mit echtem Vision-Modell nicht geprüft (kein Modell im Sandbox).
 - **Nebenbefund (nicht geändert):** Die gestreamte Abschlusszeile (`toOllamaDoneLine`) setzt `done_reason` immer auf `"stop"`, auch bei Abbruch durch `length`; die nicht-gestreamte Antwort übernimmt `finish_reason` korrekt.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `d31164b`
+- **Commit:** java-llama.cpp `ef7295c`
 
 <a id="f13"></a>
 ### F13 – java-llama.cpp: `setRopeScaling(UNSPECIFIED | LONGROPE | MAX_VALUE)` macht das Modell unladbar
@@ -230,7 +230,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** `UNSPECIFIED` entfernt die Option (wie `setPoolingType`), `LONGROPE`/`MAX_VALUE` → `IllegalArgumentException` beim Aufruf. Kein vorher funktionierender Pfad geht verloren (diese drei Werte scheiterten ohnehin beim Laden). Die Enum-Konstanten selbst bleiben (API-Kompatibilität) – ob sie gelöscht werden sollen, ist deine Entscheidung (CLAUDE.md: „A name with no counterpart is deleted, never deprecated“).
 - **Reproduktion:** `ModelParametersExtendedTest#testSetRopeScalingUnspecifiedLeavesTheModelDefault`, `#testSetRopeScalingRejectsValuesTheParserDoesNotAccept` (beide vorher rot), `#testSetRopeScalingAllValuesTheParserAccepts` (ersetzt den alten Test). `WireNameRegistryTest`-Treiber nimmt bei Ablehnung die nächste Konstante. Grün: ModelParametersExtendedTest 148, ModelParametersTest 92, WireNameRegistryTest 8, RopeScalingTypeTest 24. Nicht gelaufen: C++-`test_model_flags` (prüft nur Optionsnamen, nicht Werte), `spotbugs:check`.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `8be77fe`
+- **Commit:** java-llama.cpp `abe776c`
 
 <a id="f16"></a>
 ### F16 – java-llama.cpp: `close()` parallel zu `synthesize()` gibt die TTS-Engine frei, während sie läuft (Use-after-free → JVM-Absturz)
@@ -243,7 +243,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** `ReentrantReadWriteLock`: `synthesize` hält die Lesesperre über den ganzen nativen Aufruf, `close` die Schreibsperre. Gleichzeitige Synthesen bleiben möglich (die Engine ordnet sie selbst über `synthesize_mutex`), aber `close` gibt die Engine (samt diesem Mutex) erst frei, wenn keine mehr läuft. Die JNI-Aufrufe laufen über eine paketinterne Naht `Backend`; `LlamaLoader.initialize()` wanderte aus dem static-Block in deren `load`.
 - **Rot-Grün-Nachweis:** Naht zuerst verhaltensneutral eingezogen; dagegen rot 1/4 („the engine was freed while synthesize() still ran in it – Expected: is <false> but: was <true>“). Mit Fix grün 4/4 (skipped 0); Gegenprobe mit dem Stand ohne Fix rot 1/4, wiederhergestellt grün 4/4. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt (JNI; die FFM-Hälfte als F198)
-- **Commit:** java-llama.cpp `128be3a`
+- **Commit:** java-llama.cpp `6ed949e`
 
 <a id="f17"></a>
 ### F17 – java-llama.cpp: Responses-API (`POST /v1/responses`) verwirft `input_image`-Teile → Vision-Modell sieht kein Bild
@@ -255,7 +255,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#requestTurnsInputImagePartsIntoImageUrlParts` (vorher rot, nachher 10/10 grün)
 - **Nachtrag (Branch-Review 2026-10-20):** Der Satz „`file_id`-Bilder (ohne URL) werden weiterhin ignoriert“ gilt nicht mehr: ein `input_image` ohne URL wird seit F224 wie upstream mit 400 abgewiesen.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `4c08a90`
+- **Commit:** java-llama.cpp `558422a`
 
 <a id="f18"></a>
 ### F18 – java-llama.cpp: `NativeServer.close()` nicht atomar → doppeltes Freigeben des nativen Servers bei parallelen Aufrufen
@@ -265,9 +265,9 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Beschreibung:** `close()` las `handle`, prüfte auf 0 und setzte es danach auf 0 – ohne Synchronisation. Zwei gleichzeitige `close()` (Shutdown-Hook + try-with-resources, oder in `NativeServer.main` der Hook und der `finally`-Block, wenn der Worker genau beim Ctrl-C selbst endet) kamen beide durch und riefen `stopNativeServer(h)` doppelt: zweimal `join()` und zweimal `delete` desselben `native_server` → JVM-Absturz. Ebenso konnte `isRunning()` einen Handle abfragen, den ein paralleles `close()` gerade freigab (Use-after-free). Der Kommentar in `main` („the finally and the hook both firing is safe“) gilt nur nacheinander.
 - **Fix:** privates `lifecycleLock` serialisiert `start`, `isRunning` und `close` (keine `synchronized`-Methoden, SpotBugs USO_UNSAFE_METHOD_SYNCHRONIZATION). `spotbugs:check` grün, `NativeServerSmokeTest` + `LlamaArchitectureTest` grün.
 - **Reproduktion:** `NativeServerLifecycleTest` über die neue paketinterne Naht `NativeServer.Backend` (ein Fake statt der JNI-Aufrufe, damit kein erfundener Handle libjllama erreicht): `close_whileIsRunningIsInsideTheNativeCall_stopsOnlyAfterItReturned`, `close_whileStartIsStillStarting_stopsTheServerOnceItStarted`, `close_calledTwice_stopsTheHandleOnce`. Der Fake hält `isRunning` bzw. `start` im „nativen“ Aufruf fest, dadurch sind beide Race-Fenster deterministisch. (Die alte Probe `/home/user/BUGHUNT-2026-10-17-F18-probe.java`: vorher 4 / 20 000 doppelte Stopps, nachher 0 / 20 000.)
-- **Rot-Grün-Nachweis:** Gegen den Lebenszyklus vor `c1e5dcd` (ohne `lifecycleLock`, Naht beibehalten) **rot**, 2 von 3: „the handle was stopped while isRunning() still used it – Expected: is <false> but: was <true>“ und „close() returned while the server was still starting, so it kept running – Expected: is <1> but: was <0>“. Mit Fix **grün** 3/3 (skipped 0), dreimal hintereinander, ebenso `NativeServerSmokeTest` 10/10, `NativeServerWorkerCommandTest` 5/5, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün. Das doppelte `close()` aus zwei Threads selbst ist mit der Naht nicht steuerbar (das Fenster liegt zwischen Lesen und Nullsetzen des Feldes); `close_calledTwice_stopsTheHandleOnce` deckt nur den sequentiellen Fall ab.
-- **Status:** gefixt (Fix `c1e5dcd`; roter Regressionstest nachgereicht, bis dahin „nur beschrieben“, siehe `209ee6c`)
-- **Commit:** java-llama.cpp `c1e5dcd` (Fix), Test und Naht `669a472`
+- **Rot-Grün-Nachweis:** Gegen den Lebenszyklus vor `5df523f` (ohne `lifecycleLock`, Naht beibehalten) **rot**, 2 von 3: „the handle was stopped while isRunning() still used it – Expected: is <false> but: was <true>“ und „close() returned while the server was still starting, so it kept running – Expected: is <1> but: was <0>“. Mit Fix **grün** 3/3 (skipped 0), dreimal hintereinander, ebenso `NativeServerSmokeTest` 10/10, `NativeServerWorkerCommandTest` 5/5, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün. Das doppelte `close()` aus zwei Threads selbst ist mit der Naht nicht steuerbar (das Fenster liegt zwischen Lesen und Nullsetzen des Feldes); `close_calledTwice_stopsTheHandleOnce` deckt nur den sequentiellen Fall ab.
+- **Status:** gefixt (Fix `5df523f`; roter Regressionstest nachgereicht, bis dahin „nur beschrieben“, siehe `d5c2622`)
+- **Commit:** java-llama.cpp `5df523f` (Fix), Test und Naht `8845eca`
 
 <a id="f24"></a>
 ### F24 – java-llama.cpp: `OpenAiServerCli` bewirbt bei kleinem `-c` fast kein Eingabebudget (`-c 2048` → 1 Token)
@@ -278,7 +278,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** `maxInputTokens = max(1, ctx − maxOutputTokens)` mit dem tatsächlich gesetzten Ausgabebudget; 8192 → 2048/6144 unverändert.
 - **Reproduktion:** `OpenAiServerCliTest#smallContextSizeSplitsTheWholeWindowBetweenInputAndOutput` (ctx 1024/2048/3000; vorher `Expected 1024 but was 513`, nachher 38/38 grün).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `b210ca4`
+- **Commit:** java-llama.cpp `2cf3640`
 
 <a id="f25"></a>
 ### F25 – java-llama.cpp: `OpenAiCompatServer` mit `--api-key` lehnt jeden Anthropic-Client ab (`x-api-key`) und `bearer` in Kleinschreibung
@@ -289,7 +289,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** `x-api-key` wird zusätzlich akzeptiert, das Schema case-insensitiv geprüft; beide Vergleiche weiterhin zeitkonstant (`MessageDigest.isEqual`). `spotbugs:check` grün.
 - **Reproduktion:** `OpenAiCompatServerHttpTest#anthropicApiKeyHeaderAndLowercaseBearerSchemeAreAccepted` (vorher 401 statt 200, nachher Klasse 44/44 grün).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `e98e290`
+- **Commit:** java-llama.cpp `78fd0af`
 
 <a id="f26"></a>
 ### F26 – java-llama.cpp: `withTokenIdBias`/`withTokenBias` mit `Float.NEGATIVE_INFINITY` sperrt das Token nicht – wird still ignoriert
@@ -300,7 +300,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** `-Infinity` wird als `false` (llama.cpps Schreibweise für ein Verbot, wie schon bei `withDisabledTokenIds`) gesendet, `NaN`/`+Infinity` werfen `IllegalArgumentException`.
 - **Reproduktion:** `ParameterJsonSerializerTest#testBuildTokenIdBiasArray_negativeInfinityBansTheToken`, `#testBuildTokenIdBiasArray_nanOrPositiveInfinityIsRejected` (vorher rot, nachher 34/34); `InferenceParametersTest` 105/105, `WireNameRegistryTest` 8/8 grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `ea721a2`
+- **Commit:** java-llama.cpp `d38840e`
 
 <a id="f28"></a>
 ### F28 – java-llama.cpp: `InferenceParameters.withMessages(List<ChatMessage>)` verwirft `tool_calls` und `tool_call_id`
@@ -311,7 +311,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** die beiden Felder schreibt jetzt der Serializer; die Duplikat-Schleife in `ChatRequest` entfällt (Ausgabe dort identisch). `spotbugs:check` grün.
 - **Reproduktion:** `InferenceParametersTest#withChatMessagesKeepsToolCallsAndToolCallIds` (vorher rot, nachher 106/106); `ChatRequestTest` 24/24, `ParameterJsonSerializerTest` 34/34, `OpenAiCompatServerHttpTest` 44/44 grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `855d22e`
+- **Commit:** java-llama.cpp `2c32c84`
 
 <a id="f29"></a>
 ### F29 – java-llama.cpp: Anthropic-Messages-API (`POST /v1/messages`) verwirft `image`-Blöcke → Vision-Modell sieht kein Bild
@@ -322,7 +322,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** Bild-Blöcke werden zu OpenAI-`image_url`-Teilen (Data-URL für `base64`, die URL selbst für `url`-Quellen); eine Nachricht mit Bild bekommt Content als Teile-Array in Blockreihenfolge, Tool-Calls bleiben erhalten. Nachrichten ohne Bild unverändert. `spotbugs:check` grün.
 - **Reproduktion:** `AnthropicApiSupportTest#requestTurnsImageBlocksIntoImageUrlParts` (vorher rot, nachher 12/12); `OpenAiCompatServerHttpTest` 44/44 grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `d8c653c`
+- **Commit:** java-llama.cpp `3d38dd0`
 
 <a id="f30"></a>
 ### F30 – java-llama.cpp: Fehlgeschlagener `RpcServer.start` lässt den Server weiterlaufen, wenn der Stopp vor dem Bind kommt
@@ -332,7 +332,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Beschreibung:** Läuft der Start in den Timeout (z. B. langsame Geräte-Initialisierung) oder ist der aufrufende Thread unterbrochen, schickt `start` genau **einen** `stop()` und gibt den Single-Instance-Slot frei. Der native Server (patches/0015) setzt aber beim Binden des Sockets `g_rpc_server_stop = false` – ein Stopp vor dem Bind geht verloren. Der Server lauscht danach als verwaister Daemon-Thread weiter, obwohl `start` eine `LlamaException` geworfen hat; ein zweiter `start` belegt dann denselben globalen Server-Zustand. Beim unterbrochenen Aufrufer kehrte `join` zudem sofort zurück, statt zu warten. Fix: `stopAndJoin` wiederholt den Stopp alle 100 ms, solange der Thread lebt (bis `STOP_TIMEOUT_MILLIS`), und stellt das Interrupt-Flag danach wieder her.
 - **Reproduktion:** `RpcServerLifecycleTest#aStopThatArrivesBeforeTheBindDoesNotLeaveTheServerRunning` (Fake-Backend, das wie der native Server das Stopp-Flag beim Binden zurücksetzt; ohne Fix rot nach 31 s, mit Fix 15/15 grün)
 - **Status:** gefixt
-- **Commit:** 32d465d
+- **Commit:** e824ae5
 
 <a id="f36"></a>
 ### F36 – java-llama.cpp: `LlamaIterator` wird nach `cancel()` aus einem zweiten Thread durch ein spät eintreffendes Ergebnis wiederbelebt
@@ -344,7 +344,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `LlamaIteratorCancelTest#cancel_whileNextWaitsForAResultOnAnotherThread_iteratorStaysFinished` (der Fake hält `receiveCompletionJson` fest, bis `cancel()` gelaufen ist), dazu `#next_untilTheStopResult_releasesTheTaskOnceAndEnds`, `#close_beforeTheStopResult_cancelsTheTaskOnce`
 - **Rot-Grün-Nachweis:** Naht zuerst verhaltensneutral; dagegen rot 1/3 („a result that arrived after cancel() revived the iterator – Expected: is <false> but: was <true>“). Mit Fix grün 3/3 (skipped 0); Gegenprobe mit dem Stand ohne Fix rot, wiederhergestellt grün. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `f4407bb`
+- **Commit:** java-llama.cpp `79fa666`
 
 <a id="f37"></a>
 ### F37 – java-llama.cpp: Ollama-Tool-Call mit leeren Argumenten kommt als `"arguments": null` statt `{}` an
@@ -355,7 +355,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#toOllamaChatResponseTurnsEmptyToolCallArgumentsIntoAnEmptyObject` (Jackson-Verhalten vorab per Probe bestätigt: `readTree("")` → `MissingNode` → `"arguments":null`)
 - **Rot-Grün-Nachweis:** ohne Fix rot 1/21 („Expected: is <true> but: was <false>“: kein Objekt), mit Fix grün 21/21 (skipped 0); Gegenprobe per `git stash` rot, nach `stash pop` grün. `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `6590af2`
+- **Commit:** java-llama.cpp `2940edd`
 
 <a id="f38"></a>
 ### F38 – java-llama.cpp: `JsonParameters` nimmt einen leeren oder nur aus Leerzeichen bestehenden Wert still an und sendet `"key":null`
@@ -367,7 +367,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `JsonParametersTest#withRaw_rejectsEmptyAndBlankValues`
 - **Rot-Grün-Nachweis:** ohne Fix rot 1/25 („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix grün 25/25 (skipped 0); Gegenprobe per `git stash` rot, nach `stash pop` grün. Paket `parameters` plus Server-Mapping- und HTTP-Tests: 775 Tests, 0 Fehler. PIT auf `JsonParameters` (Schwelle 100): alle Mutanten getötet. `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `41b5ad3`
+- **Commit:** java-llama.cpp `2a5c835`
 
 <a id="f39"></a>
 ### F39 – java-llama.cpp: Anthropic-`tool_use` mit leeren Argumenten bekommt `"input": null` statt `{}`
@@ -379,7 +379,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot 1/13 („Expected: is <true> but: was <false>“), mit Fix grün 13/13 (skipped 0); Gegenprobe per `git stash` rot, danach grün. `AnthropicStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Durchsicht der übrigen `readTree`-Aufrufer (2026-10-17):** 35 Aufrufe in 24 Dateien. Betroffen waren nur F37 (Ollama), F38 (`JsonParameters`) und F39. Die übrigen lesen Antworten des eigenen Servers (Completion-/Chat-/Stream-Parser, Rerank, LoRA, Router) und greifen danach über `path(...)` zu, was auf einem `MissingNode` sicher leere/Default-Werte liefert; `ChatRequest.buildToolsJson` liest ein Tool-Schema, das ein leerer String zu `null` macht (bereits als F05-Umfeld bekannt), `StreamingChunkAssembler` wirft bei unparsebarem Chunk bewusst.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `6effd44`
+- **Commit:** java-llama.cpp `6946b77`
 
 <a id="f53"></a>
 ### F53 – java-llama.cpp: leerer Streaming-Umschlag beendet den Chat-Stream nicht
@@ -391,7 +391,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ChatStreamChunkParserTest#feed_emptyOrBlankEnvelope_reportsStop_andEmitsNothing` (`""`, `"   "`, `"\n"`)
 - **Rot-Grün-Nachweis:** ohne Fix rot („envelope '' Expected: is <true> but: was <false>“), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ChatStreamChunkParserTest` 7/7, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `27d6477`
+- **Commit:** java-llama.cpp `4d19a04`
 
 <a id="f54"></a>
 ### F54 – java-llama.cpp: leerer Wert in `chat_template_kwargs` wird zu `null` statt zum Text
@@ -403,7 +403,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ParameterJsonSerializerTest#testBuildRawValueObject_emptyOrBlankValueFallsBackToString`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "{"empty":"","blank":"   "}" but: was "{"empty":null,"blank":null}"“), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ParameterJsonSerializerTest` 35/35, `ModelParametersTest` 92/92, `InferenceParametersTest` 106/106, `WireNameRegistryTest` 8/8, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `37303d0`
+- **Commit:** java-llama.cpp `3eb7a6e`
 
 <a id="f55"></a>
 ### F55 – java-llama.cpp: leeres Tool-Parameterschema wird zu `"parameters": null`
@@ -415,7 +415,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ChatRequestTest#buildToolsJsonKeepsAnEmptySchemaAsTheStringFallbackInsteadOfNull`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: a string containing "\"parameters\":\"\"" but: was "[{"type":"function","function":{"name":"f","description":"d","parameters":null}}]"“), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ChatRequestTest` 25/25, `ToolCallingAgentTest` 6/6, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `ed6236d`
+- **Commit:** java-llama.cpp `8a13aa9`
 
 <a id="f56"></a>
 ### F56 – java-llama.cpp: nicht darstellbarer Offline-Modellpfad ergibt `InvalidPathException` statt `ModelUnavailableException`
@@ -427,7 +427,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `LlamaModelOfflineTest#check_offlineAndUnrepresentablePath_throwsModelUnavailable`
 - **Rot-Grün-Nachweis:** ohne Fix rot („expected: <ModelUnavailableException> but was: <java.nio.file.InvalidPathException>“, Nul character not allowed), mit Fix grün; Gegenprobe per `git stash` rot, nach `stash pop` grün. `LlamaModelOfflineTest` 9/9, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `4f610bd`
+- **Commit:** java-llama.cpp `f3b8aed`
 
 <a id="f57"></a>
 ### F57 – java-llama.cpp: `ServerMetrics.getCumulativeUsage()` liefert ein `Usage` gegen dessen eigenen Vertrag
@@ -440,7 +440,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ServerMetricsTest#cumulativeUsage` (schrieb das alte Verhalten fest, jetzt 800/700/100/1000 aus 100 ausgewerteten + 700 gecachten) und neu `#cumulativeUsage_readsLikeTheUsageOfAChatResponse` (10 + 4 → `new Usage(14, 3, 4)`).
 - **Rot-Grün-Nachweis:** ohne Fix rot (2 von 23), mit Fix grün (23 von 23).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `a529c5c`
+- **Commit:** java-llama.cpp `6853464`
 
 <a id="f59"></a>
 ### F59 – java-llama.cpp: `FfmNativeServer.isRunning()` kann nach einem parallelen `close()` freigegebenen Speicher lesen
@@ -448,13 +448,13 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Datei:** `llama-ffm/src/main/java/net/ladenthin/llama/ffm/FfmNativeServer.java` (`isRunning`, `close`)
 - **Schwere:** niedrig
 - **Beschreibung:** `isRunning()` prüft `closed` und ruft dann `jllama_server_is_running(handle)`. `close()` setzt `closed` und ruft `jllama_server_stop`, das laut `jllama_api.h` den Handle freigibt. Läuft `close()` (etwa aus einem Shutdown-Hook) zwischen der Prüfung und dem nativen Aufruf eines anderen Threads, liest `jllama_server_is_running` einen freigegebenen `jllama_server` – undefiniertes Verhalten im nativen Code, schlimmstenfalls ein JVM-Absturz. Der JNI-Zwilling `server.NativeServer` hält genau deshalb `isRunning()` und `close()` unter einem gemeinsamen `lifecycleLock`; die FFM-Klasse dokumentiert keine Einschränkung. (`FfmLlamaModel` hat dasselbe Muster, schreibt aber ausdrücklich, dass `close()` keinen neuen Aufruf überholen darf – dort ein dokumentierter Vertrag, kein Fund.)
-- **Messung (J7, `BUGHUNT-MEASUREMENTS.md` in `b689d7b`, JDK 25):** mit einer Naht rot – `close()` gab den Handle frei, während `isRunning()` noch im nativen Aufruf war; ohne Naht 862 Mio. Aufrufe in 30 Runden ohne sichtbaren Schaden (das Fenster ist schmal).
+- **Messung (J7, `BUGHUNT-MEASUREMENTS.md` in `4c58e8f`, JDK 25):** mit einer Naht rot – `close()` gab den Handle frei, während `isRunning()` noch im nativen Aufruf war; ohne Naht 862 Mio. Aufrufe in 30 Runden ohne sichtbaren Schaden (das Fenster ist schmal).
 - **Fix:** Entscheidung des Nutzers: das Lock aus `NativeServer`. `isRunning()` und `close()` laufen unter `lifecycleLock`, `closed` ist ein einfaches Feld unter diesem Lock. Die beiden nativen Aufrufe liegen hinter der paketinternen Naht `FfmNativeServer.Backend` (wie `NativeServer.Backend`), statt veränderlicher statischer Method-Handles.
 - **Tests:** `FfmNativeServerTest` (4, ohne Bibliothek): `close()` wartet auf ein `isRunning()` im nativen Aufruf und gibt erst danach frei; `isRunning()` nach `close()` fragt den Handle nicht ab; zweites `close()` ohne Wirkung; `isRunning()` fragt im offenen Zustand.
 - **Rot-Grün-Nachweis:** lokal mit JDK 25 (Temurin 25.0.1, Toolchain): ohne Lock (Naht beibehalten, `AtomicBoolean` wie vorher) rot (1 von 4, `close()` wartete nicht), mit Lock grün.
 - **Nachtrag (Branch-Review 2026-10-20):** Dieselbe Prüfen-dann-Rufen-Lücke hatte `FfmTextToSpeech`; dort mit demselben Lock als F198 behoben.
 - **Status:** gefixt
-- **Commit:** c7c883d
+- **Commit:** bd479b3
 
 <a id="f60"></a>
 ### F60 – java-llama.cpp: Textblöcke einer Anthropic-Nachricht werden ohne Trenner zusammengeklebt
@@ -466,7 +466,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `AnthropicApiSupportTest#requestJoinsTheTextBlocksOfOneMessageWithANewline`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "first\nsecond" but: was "firstsecond"“, 14 Tests, 1 Fehlschlag), mit Fix grün 14/14; Gegenprobe per `git stash` rot, nach `stash pop` grün. `AnthropicStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `76a3370`
+- **Commit:** java-llama.cpp `29ba25c`
 - **Präzisierung (2026-10-17, 22:45 UTC):** Upstream verbindet Text-Parts nur dann mit `\n`, wenn die Chat-Vorlage ausschließlich String-Inhalt annimmt (`messages_inp_normalizer`, Zweig `only_string`, in `common/chat.cpp`); eine Vorlage mit typisiertem Inhalt bekommt die Parts als Array und rendert sie selbst, unter Umständen ohne Trenner. Die Übersetzung reicht aber keine Parts weiter, sondern einen fertigen String – sie muss sich also für einen Trenner entscheiden, und `\n` ist der, den upstream wählt, wenn es selbst verbindet. Der Fix bleibt damit sinnvoll; die frühere Aussage „upstream verbindet mit Zeilenumbruch“ galt nur für String-Vorlagen. Alternative für den Nutzer: Text-Blöcke wie Bilder als Content-Parts weiterreichen und die Entscheidung der Vorlage überlassen.
 
 <a id="f61"></a>
@@ -479,7 +479,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#requestJoinsTheTextPartsOfOneInputItemWithANewline`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "first\nsecond" but: was "firstsecond"“, 11 Tests, 1 Fehlschlag), mit Fix grün 11/11; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ResponsesStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `745fed5`
+- **Commit:** java-llama.cpp `196e76f`
 - **Präzisierung (2026-10-17, 22:45 UTC):** Upstream verbindet Text-Parts nur dann mit `\n`, wenn die Chat-Vorlage ausschließlich String-Inhalt annimmt (`messages_inp_normalizer`, Zweig `only_string`, in `common/chat.cpp`); eine Vorlage mit typisiertem Inhalt bekommt die Parts als Array und rendert sie selbst, unter Umständen ohne Trenner. Die Übersetzung reicht aber keine Parts weiter, sondern einen fertigen String – sie muss sich also für einen Trenner entscheiden, und `\n` ist der, den upstream wählt, wenn es selbst verbindet. Der Fix bleibt damit sinnvoll; die frühere Aussage „upstream verbindet mit Zeilenumbruch“ galt nur für String-Vorlagen. Alternative für den Nutzer: Text-Blöcke wie Bilder als Content-Parts weiterreichen und die Entscheidung der Vorlage überlassen.
 
 <a id="f62"></a>
@@ -492,7 +492,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `UserMessage.from(TextContent.from("Hello"), TextContent.from("world"))` → `getContent()` = `"Helloworld"`.
 - **Rot-Grün-Nachweis:** keiner (kein Fix ohne Entscheidung).
 - **Status:** gefixt als F94 (Duplikat: derselbe Befund wurde in der Musterdurchsicht nach F60/F61 noch einmal aufgenommen und dort behoben; Nachtrag 2026-10-19)
-- **Commit:** java-llama.cpp `ee99d85` (F94)
+- **Commit:** java-llama.cpp `980c48d` (F94)
 
 <a id="f63"></a>
 ### F63 – java-llama.cpp: Responses-API-Objekte tragen `created_at: 0`
@@ -504,7 +504,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#responseCarriesTheCurrentUnixTimeAsCreatedAt`
 - **Rot-Grün-Nachweis:** ohne Fix rot („a value equal to or greater than <1792275470L> <0L> was less than <1792275470L>“, 12 Tests, 1 Fehlschlag), mit Fix grün 12/12; Gegenprobe per `git stash` rot, nach `stash pop` grün. `ResponsesStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `aba327e`
+- **Commit:** java-llama.cpp `fffb318`
 
 <a id="f64"></a>
 ### F64 – java-llama.cpp: Ollama-Werkzeugaufrufe im Verlauf ohne `type` – llama.cpp lehnt die Anfrage ab
@@ -517,7 +517,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "function" but: was """, 22 Tests, 1 Fehlschlag), mit Fix grün 22/22; Gegenprobe per `git stash` rot, nach `stash pop` grün. `OpenAiCompatServerHttpTest` 44/44, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **CI-Bedarf:** der Ende-zu-Ende-Beweis (die 400 von upstream) braucht ein Modell; der modellgebundene `OpenAiCompatServerIntegrationTest` lief hier übersprungen.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `f4c3ed6`
+- **Commit:** java-llama.cpp `39b008b`
 
 <a id="f65"></a>
 ### F65 – java-llama.cpp: CORS-Preflight erlaubt nur `Content-Type, Authorization` – Browser-SDKs werden abgewiesen
@@ -529,7 +529,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiCompatServerHttpTest#optionsPreflightAllowsTheRequestedHeaders` (roher Socket, `OPTIONS /v1/messages` mit `content-type, x-api-key, anthropic-version, x-stainless-os`)
 - **Rot-Grün-Nachweis:** ohne Fix rot (Antwort `access-control-allow-headers: content-type, authorization`, 45 Tests, 1 Fehlschlag), mit Fix grün 45/45; Gegenprobe per `git stash` rot, nach `stash pop` grün. `OllamaApiSupportTest` 22/22, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `f782c7a`
+- **Commit:** java-llama.cpp `9958f31`
 
 <a id="f67"></a>
 ### F67 – java-llama.cpp: `setLoraAdapters` verspricht ein Leeren der KV-Caches, das upstream auf diesem Weg nicht macht
@@ -541,11 +541,11 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** keine lauffähige: es braucht ein Modell und einen dazu passenden LoRA-Adapter (nicht in `models.csv`), und in dieser Sandbox gibt es keine native Bibliothek und kein `gguf-py`. Ein Test würde denselben Prompt vor und nach `setLoraAdapter(0, 0f)` mit Greedy-Sampling schicken und mit einem frisch geladenen Modell ohne Adapter vergleichen.
 - **CI-Bedarf:** ein kleines Modell mit LoRA-Adapter im Modellsatz (oder ein zur Laufzeit erzeugtes Zufallsmodell samt Adapter, wie `test_c_api.cpp` es für das Modell macht) – nur, falls das Verhalten geändert werden soll.
 - **Status:** gefixt (zuerst Dokumentation, seit 2026-10-19 Patch 0021, siehe Nachtrag)
-- **Commit:** a977a1e
-- **Nachtrag 2026-10-19 (Verhalten geändert):** J9 hat F67 bestätigt (`b689d7b`: nach `setLoraAdapter(0, 0f)` lieferte der warme Slot „. He saw a picture of a bird …“ statt „ was a little girl …“ wie ein geleerter Slot). Entscheidung des Nutzers: upstream-fähiger Patch `0021` statt eines Leerens in `engine::set_lora_adapters`, weil upstreams eigene HTTP-Route `POST /lora-adapters` denselben Fehler hat. Der `else`-Zweig von `launch_slot_with_task` wendet jetzt dieselbe Regel an wie LoRA pro Anfrage (`lora_should_clear_cache`, aLoRA behält den Cache). Das deckt auch den zweiten Weg ab, den die Durchsicht fand: eine Anfrage mit eigenen Adaptern füllt den Cache, die nächste ohne läuft mit den Server-Adaptern darauf weiter. Nicht abgedeckt, in Javadoc/README genannt: der Host-RAM-Prompt-Cache (`--cache-ram`, standardmäßig an) speichert Slot-Zustände ohne ihre Adapter. Javadoc `setLoraAdapters`, README, CHANGELOG, CLAUDE.md (Patch- und Testtabelle), `docs/patches.md`. Upstream-master bewusst nicht geprüft (Entscheidung des Nutzers: zeigt sich beim nächsten Bump über den Drop-Check).
+- **Commit:** cb8a3ea
+- **Nachtrag 2026-10-19 (Verhalten geändert):** J9 hat F67 bestätigt (`4c58e8f`: nach `setLoraAdapter(0, 0f)` lieferte der warme Slot „. He saw a picture of a bird …“ statt „ was a little girl …“ wie ein geleerter Slot). Entscheidung des Nutzers: upstream-fähiger Patch `0021` statt eines Leerens in `engine::set_lora_adapters`, weil upstreams eigene HTTP-Route `POST /lora-adapters` denselben Fehler hat. Der `else`-Zweig von `launch_slot_with_task` wendet jetzt dieselbe Regel an wie LoRA pro Anfrage (`lora_should_clear_cache`, aLoRA behält den Cache). Das deckt auch den zweiten Weg ab, den die Durchsicht fand: eine Anfrage mit eigenen Adaptern füllt den Cache, die nächste ohne läuft mit den Server-Adaptern darauf weiter. Nicht abgedeckt, in Javadoc/README genannt: der Host-RAM-Prompt-Cache (`--cache-ram`, standardmäßig an) speichert Slot-Zustände ohne ihre Adapter. Javadoc `setLoraAdapters`, README, CHANGELOG, CLAUDE.md (Patch- und Testtabelle), `docs/patches.md`. Upstream-master bewusst nicht geprüft (Entscheidung des Nutzers: zeigt sich beim nächsten Bump über den Drop-Check).
 - **Tests (Patch):** `src/test/cpp/test_lora_cache.cpp` (4): Zufallsmodell + Zufalls-LoRA auf K, V und FFN-Ausgang, ein Slot, `--cache-ram 0`, greedy; nach Skala 1→0, 0→1 und nach einer Anfrage mit eigenen Adaptern muss der warme Slot wie ein geleerter antworten; ein vierter Fall schließt das leere Bestehen aus (Adapter ändert die Antwort, Wiederholung nutzt den Cache). Das Modellschreiben liegt jetzt in `tiny_llama_gguf.hpp`, gemeinsam mit `test_c_api.cpp`.
 - **Rot-Grün-Nachweis (Patch):** ohne Patch rot (3 von 4; z. B. „mYmq5*mq“ statt „C+oM~kM~“), mit Patch grün (4 von 4, drei Läufe); ganze C++-Suite 633/633; alle 21 Patches wenden sich der Reihe nach sauber auf b11639 an; `check-patches.py` 0 Probleme.
-- **Commit (Patch):** java-llama.cpp `c4a23c5`
+- **Commit (Patch):** java-llama.cpp `e5a3efc`
 
 <a id="f68"></a>
 ### F68 – java-llama.cpp: `RouterClient.awaitModelLoaded` läuft bei einem schlafenden Modell in den Timeout
@@ -557,7 +557,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `RouterClientTest#awaitModelLoaded_sleepingModelIsReady` (Stub-Server liefert `sleeping`)
 - **Rot-Grün-Nachweis:** ohne Fix rot (`IllegalStateException: Model 'qwen' did not reach LOADED within 2000 ms (last status: qwen [sleeping])`), mit Fix grün, `RouterClientTest` 19/19; Gegenprobe per `git stash` rot, nach `stash pop` grün. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `352057b`
+- **Commit:** java-llama.cpp `70833e5`
 
 <a id="f69"></a>
 ### F69 – java-llama.cpp: `withNPredict` dokumentiert `-2 = until context filled`, der Server lehnt `-2` ab
@@ -570,7 +570,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **CI-Bedarf:** ein modellgestützter Java-Test (jedes Modell aus `models.csv` genügt), falls `-2` zusätzlich in Java abgewiesen werden soll.
 - **Nachtrag 2026-10-19 (geschlossen):** J2a hat die Ablehnung gemessen (`InvalidRequestException`, „Field 'n_predict': Value must be between -1 <= value <= 2147483647“). Entscheidung des Nutzers: kein Java-Check (er würde denselben Fehler nur früher melden und upstreams Grenze ein zweites Mal pflegen), dafür die Ablehnung modellgestützt festgeschrieben: `ErrorHandlingTest#testNPredictMinusTwoPerRequestIsAnInvalidRequest` (läuft in jedem `test-java-*`-Job mit dem CI-Modell). Lokal mit einem zufälligen Zwei-Schicht-GGUF geprüft: mit `-2` grün, als Gegenprobe mit `-1` rot („Expected InvalidRequestException to be thrown, but nothing was thrown“).
 - **Status:** gefixt (Dokumentation)
-- **Commit:** a977a1e
+- **Commit:** cb8a3ea
 
 <a id="f70"></a>
 ### F70 – java-llama.cpp: `OpenAiServerCli` bewirbt mit `--parallel N` das ganze `-c` statt des Kontexts je Slot
@@ -582,7 +582,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiServerCliTest#parallelSlotsShareTheContextSoTheBudgetIsPerSlot`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <2048> but: was <8192>“), mit Fix grün, `OpenAiServerCliTest` 39/39; Gegenprobe per `git stash` rot, nach `stash pop` grün. `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `c1eaa50`
+- **Commit:** java-llama.cpp `657e792`
 
 <a id="f71"></a>
 ### F71 – java-llama.cpp: Feintuning scheitert an jedem Zeichen außerhalb der BMP (Emoji) im Trainingstext
@@ -595,7 +595,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <0L> but: was <6L>“ Nicht-ASCII-Zeichen), mit Fix grün, `TrainingParametersTest` 8/8; Gegenprobe per `git stash` rot, nach `stash pop` grün. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **CI-Bedarf:** ein Ende-zu-Ende-Beweis bräuchte `LlamaTrainerIntegrationTest` mit einem Emoji im Trainingstext (Modell `stories260K.gguf` liegt in CI vor).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `ca6ccdf`
+- **Commit:** java-llama.cpp `4867189`
 
 <a id="f72"></a>
 ### F72 – java-llama.cpp: `GgufInspector` liest verschachtelte Arrays rekursiv – `StackOverflowError` statt `IOException`
@@ -607,7 +607,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `GgufInspectorTest#nestedArrayIsRejectedLikeUpstream` (2 Ebenen) und `#deeplyNestedArraysFailWithIOExceptionNotStackOverflow` (100 000 Ebenen)
 - **Rot-Grün-Nachweis:** ohne Fix rot („expected: <java.io.IOException> but was: <java.lang.StackOverflowError>“ bzw. „Expected java.io.IOException to be thrown, but nothing was thrown“), mit Fix grün, `GgufInspectorTest` 14 (1 übersprungen: der bestehende Test mit echtem Modell); Gegenprobe per `git stash` rot, nach `stash pop` grün. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `79f3ee9`
+- **Commit:** java-llama.cpp `5a0b834`
 
 <a id="f74"></a>
 ### F74 – java-llama.cpp: Ollama-`/api/generate` mit `suffix` (FIM) verwirft `stop`, `top_p`, `top_k` und `seed`
@@ -619,7 +619,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#generateWithSuffixKeepsTheSamplingOptionsOfAPlainGenerate`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "\n\n" but: was ""“), mit Fix grün (23/23 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `367592f`
+- **Commit:** java-llama.cpp `b641834`
 
 <a id="f75"></a>
 ### F75 – java-llama.cpp: Responses-API verwirft `reasoning.effort` – `"none"` schaltet das Denken nicht ab
@@ -632,7 +632,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "none" but: was ""“), mit Fix grün (13/13 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Nachtrag (2026-10-18):** wirkt erst zusammen mit [F77](#f77): der Chat-Mapper, durch den jede übersetzte Anfrage läuft, verwarf das erzeugte Feld bis dahin.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `485f153`
+- **Commit:** java-llama.cpp `eeba74d`
 
 <a id="f76"></a>
 ### F76 – java-llama.cpp: Anthropic-`/v1/messages` verwirft `thinking.budget_tokens` – das Modell denkt unbegrenzt
@@ -646,7 +646,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Nicht übernommen:** upstreams Vorgabe `max_tokens` 4096, wenn es fehlt (bei uns unbegrenzt; das Anthropic-Protokoll verlangt das Feld), und das Durchreichen von `chat_template_kwargs` – beide bleiben als offener Verdacht stehen.
 - **Nachtrag (2026-10-18):** wirkt erst zusammen mit [F77](#f77): der Chat-Mapper, durch den jede übersetzte Anfrage läuft, verwarf das erzeugte Feld bis dahin.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `5117413`
+- **Commit:** java-llama.cpp `262b41d`
 
 <a id="f77"></a>
 ### F77 – java-llama.cpp: `OpenAiRequestMapper` verwirft `chat_template_kwargs`, `reasoning_effort` und das Reasoning-Budget jedes Chat-Requests
@@ -659,7 +659,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix alle fünf rot (u. a. „Expected: is <512> but: was <0>“, „Expected: is "low" but: was ""“, „Expected: is <1024> but: was <0>“), mit Fix 21/21 der Klasse grün, skipped 0; Gegenprobe per `git stash` wieder 5 rot, nach `pop` grün. `AnthropicApiSupportTest` 15/15, `ResponsesApiSupportTest` 13/13, `OllamaApiSupportTest` 23/23, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **CI-Bedarf:** ein modellgestützter Lauf (`OpenAiCompatServerIntegrationTest` mit dem Reasoning-Modell) würde zeigen, dass `reasoning_effort: "none"` den Denkblock wirklich unterdrückt; hier gibt es kein Modell.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `60c2b9f`
+- **Commit:** java-llama.cpp `f6057ad`
 
 <a id="f78"></a>
 ### F78 – java-llama.cpp: Ollama-`/api/chat` ignoriert `think` – `"think": false` schaltet das Denken nicht ab
@@ -671,7 +671,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#toOpenAiChatRequestHonoursThinkLikeOllama` (Kette Übersetzer → `OpenAiRequestMapper` → `InferenceParameters.toJson()`)
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <false> but: was <true>“ – `enable_thinking` fehlte), mit Fix grün (24/24 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `OpenAiRequestMapperTest` 21/21, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `d252f84`
+- **Commit:** java-llama.cpp `6374dc8`
 
 <a id="f79"></a>
 ### F79 – java-llama.cpp: gestreamtes `/v1/completions` ignoriert `suffix`, `best_of` und `echo`, die der nicht gestreamte Weg abweist
@@ -683,7 +683,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiRequestMapperTest#completionParamsUpstreamRejectsAreRejectedOnTheStreamedPathToo`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix grün (22/22 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `OpenAiCompatServerHttpTest` 45/45, die drei Übersetzer-Tests, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `7545586`
+- **Commit:** java-llama.cpp `4a40a1d`
 
 <a id="f80"></a>
 ### F80 – java-llama.cpp: Anthropic-Antwort verwirft den Denkinhalt – kein `thinking`-Block
@@ -696,7 +696,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <2> but: was <1>“), mit Fix grün (16/16 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `AnthropicStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Nicht im Fix:** der gestreamte Pfad (`AnthropicStreamTranslator`, upstream `thinking_delta`) und die Responses-Antwort (upstream ein `reasoning`-Item mit `reasoning_text`) – offener Verdacht.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `e709e5f`
+- **Commit:** java-llama.cpp `fdf21f1`
 
 <a id="f81"></a>
 ### F81 – java-llama.cpp: gestreamte Anthropic-Antwort verwirft den Denkinhalt – keine `thinking_delta`s
@@ -708,7 +708,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `AnthropicStreamTranslatorTest#reasoningDeltasStreamAsAThinkingBlockClosedWithASignatureBeforeTheText`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: a string containing "\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}" but: was ""“), mit Fix grün (5/5 der Klasse, skipped 0); Gegenprobe per `git stash` beider Dateien rot, nach `pop` grün. `AnthropicApiSupportTest` 16/16, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `d2afd35`
+- **Commit:** java-llama.cpp `7fdc684`
 
 <a id="f82"></a>
 ### F82 – java-llama.cpp: Responses-Antwort verwirft den Denkinhalt – kein `reasoning`-Item
@@ -720,7 +720,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#responseCarriesTheReasoningAsAReasoningItemFirstLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <2> but: was <1>“), mit Fix grün (14/14 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `ResponsesStreamTranslatorTest` 4/4, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `070dbce`
+- **Commit:** java-llama.cpp `935342c`
 
 <a id="f83"></a>
 ### F83 – java-llama.cpp: gestreamte Responses-Antwort verwirft den Denkinhalt – keine `response.reasoning_text.delta`s
@@ -732,7 +732,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesStreamTranslatorTest#reasoningDeltasStreamAsAReasoningItemLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: a string containing "event: response.output_item.added" but: was ""“), mit Fix grün (5/5 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `ResponsesApiSupportTest` 14/14, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün (erst nach dem Helfer).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `17ad313`
+- **Commit:** java-llama.cpp `f327156`
 
 <a id="f84"></a>
 ### F84 – java-llama.cpp: Anthropic-Verlauf verwirft `thinking`-Blöcke früherer Runden
@@ -744,7 +744,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `AnthropicApiSupportTest#requestKeepsThinkingBlocksOfTheHistoryAsReasoningContentLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "6 times 7" but: was ""“), mit Fix grün (17/17 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `AnthropicStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `fb226b3`
+- **Commit:** java-llama.cpp `638036f`
 
 <a id="f85"></a>
 ### F85 – java-llama.cpp: Responses-`reasoning`-Eingabe wird zur Benutzernachricht
@@ -756,7 +756,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#reasoningInputItemsBecomeAssistantReasoningNotUserTextLikeUpstream` (neue Assistenten-Nachricht nach einem Nutzer, Zusammenführung mit einem `function_call`, verschlüsseltes Item übersprungen)
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "q" but: was "plan"“ – der Denktext als Benutzernachricht), mit Fix grün (15/15 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün (nach Herausziehen zweier doppelter Aufrufe, PRMC).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `7a8b262`
+- **Commit:** java-llama.cpp `ad15d14`
 
 <a id="f86"></a>
 ### F86 – java-llama.cpp: Responses-Werkzeugergebnis als Teil-Array kommt leer beim Modell an
@@ -769,7 +769,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "text" but: was ""“; die erste Fassung des Tests lief über `get(0)` in eine NPE und wurde auf `path(0)` umgestellt, damit der Fehler an der Assertion sichtbar wird), mit Fix grün (16/16 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Nachtrag (Branch-Review 2026-10-20):** Andere Teiltypen, ein Teil ohne `type` und ein Bild ohne URL werden seit F224 wie upstream mit 400 abgewiesen statt übersprungen; die Objektform `{url}` wird wie im Nachrichtenzweig gelesen.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `28054ba`
+- **Commit:** java-llama.cpp `a2f8de1`
 
 <a id="f87"></a>
 ### F87 – java-llama.cpp: Responses-`function_call`-Items werden einzelne Assistenten-Runden statt einer Runde mit mehreren Aufrufen
@@ -781,7 +781,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#consecutiveFunctionCallsJoinThePrecedingAssistantMessageLikeUpstream`; der F85-Test wurde auf eine realistische Werkzeugschleife umgestellt (Denktext, Aufruf, Ergebnis, Denktext, Antwort), weil seine erste Folge die getrennten Nachrichten der alten Variante voraussetzte.
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <4> but: was <6>“, ebenso der umgestellte F85-Test), mit Fix grün (17/17 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2 Fehlschläge), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `77a6903`
+- **Commit:** java-llama.cpp `a4ac92a`
 
 <a id="f88"></a>
 ### F88 – java-llama.cpp: Anthropic-`tool_result` verwirft Bilder
@@ -793,7 +793,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `AnthropicApiSupportTest#toolResultImagesReachTheToolMessageLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "cat.png" but: was ""“ – der Inhalt war ein String), mit Fix grün (18/18 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `AnthropicStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün (nach `new TextNode(...)` statt `textNode(...)`, AI_ANNOTATION_ISSUES_NEEDS_NULLABLE).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `ba93540`
+- **Commit:** java-llama.cpp `3ddf132`
 
 <a id="f89"></a>
 ### F89 – java-llama.cpp: Responses-`input_file` wird still verworfen statt abgewiesen
@@ -805,7 +805,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiCompatServerHttpTest#responsesWithAnInputFileIsRejectedLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <400> but: was <200>“), mit Fix grün (46/46 der Klasse, skipped 0); Gegenprobe per `git stash` beider Dateien rot, nach `pop` grün. `ResponsesApiSupportTest` 17/17, `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `3280821`
+- **Commit:** java-llama.cpp `576a886`
 
 <a id="f90"></a>
 ### F90 – java-llama.cpp: Claude Codes wechselnder `cch`-Stempel im System-Prompt verhindert jeden Prefix-Cache-Treffer
@@ -818,7 +818,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot (Stempel `a5145` unverändert), mit Fix grün (19/19 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `AnthropicStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 46/46, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **CI-Bedarf:** dass der Cache danach tatsächlich trifft (`cached_tokens` > 0 in der zweiten Runde), zeigt nur ein modellgestützter Lauf.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `7d08a0c`
+- **Commit:** java-llama.cpp `70779b3`
 
 <a id="f91"></a>
 ### F91 – java-llama.cpp: Responses-Verlauf spaltet jede Assistenten-Runde in Denk- und Antwortnachricht
@@ -830,7 +830,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#anAssistantMessageJoinsThePrecedingAssistantTurnLikeUpstream`; der F85-Test erwartet seine abschließende Antwort jetzt in der Nachricht mit dem zweiten Denktext.
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <3> but: was <4>“, ebenso der angepasste F85-Test), mit Fix grün (18/18 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2 Fehlschläge), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 46/46, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `04d4cdb`
+- **Commit:** java-llama.cpp `8b0872b`
 
 <a id="f92"></a>
 ### F92 – java-llama.cpp: blockierende LangChain4j-Antwort verliert den Denkinhalt
@@ -842,7 +842,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `LangChain4jMappingTest#blockingResponseCarriesTheThinkingLikeTheStreamedOne`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "6 times 7"“), mit Fix grün (21/21 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün; alle Modultests grün (Integrationstests ohne Modell übersprungen). Das Modul deklariert weder Spotless noch SpotBugs (weder eigene noch Eltern-POM), diese Gates entfallen hier.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `6caa722`
+- **Commit:** java-llama.cpp `7a64dd9`
 
 <a id="f93"></a>
 ### F93 – java-llama.cpp: gestreamte LangChain4j-Antwort hat nie eine Token-Nutzung
@@ -855,7 +855,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <true> but: was <false>“), mit Fix grün (22/22 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1 Fehlschlag), nach `pop` grün; alle Modultests grün (`StreamingChunkAssemblerTest` 7/7, `JsonSchemaElementSerializerTest` 8/8, Integrationstests ohne Modell übersprungen). Spotless/SpotBugs sind im Modul nicht deklariert (siehe F92).
 - **CI-Bedarf:** Der Integrationsjob `test-java-llama-langchain4j-integration` läuft mit Modell; ein Ende-zu-Ende-Nachweis der Zählung im Stream wäre dort möglich, ist aber nicht Voraussetzung.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `cde7159`
+- **Commit:** java-llama.cpp `6c2adf8`
 
 <a id="f94"></a>
 ### F94 – java-llama.cpp: Textteile einer LangChain4j-Nutzernachricht werden ohne Trenner zusammengeklebt
@@ -867,7 +867,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `LangChain4jMappingTest#joinsTextPartsWithANewlineLikeUpstream`, dazu `#flattensMultiTextUserMessageToText`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "first\nsecond" but: was "firstsecond"“, ebenso der angepasste Test), mit Fix grün (23/23 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2 Fehlschläge), nach `pop` grün; alle Modultests grün (Integrationstests ohne Modell übersprungen). Spotless/SpotBugs sind im Modul nicht deklariert (siehe F92).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `ee99d85`
+- **Commit:** java-llama.cpp `980c48d`
 
 <a id="f95"></a>
 ### F95 – java-llama.cpp: gestreamtes `/v1/completions` und der Chat-Pfad verwerfen llama.cpps Sampling-Felder
@@ -880,7 +880,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot (3 Fehlschläge: „Expected: is a numeric value within <1.0E-4> of <0.05> but: <0.0>“, „Expected: is <7> but: was <50>“, „Expected: is "object" but: was ""“), mit Fix grün (25/25 der Klasse, skipped 0); Gegenprobe per `git stash` rot (3), nach `pop` grün. `OpenAiCompatServerHttpTest` 46/46, `AnthropicApiSupportTest` 19/19, `ResponsesApiSupportTest` 18/18, `OllamaApiSupportTest` 24/24, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün (eine erste Fassung mit allen Feldern in einer Methode meldete `CE_CLASS_ENVY`, eine Map-Tabelle `DMC_DUBIOUS_MAP_COLLECTION`; jetzt je Feld ein Aufruf über `withFloat`/`withInt`).
 - **Nachtrag (Branch-Review 2026-10-20):** Das hier „weiter offen“ Genannte ist erledigt: `logit_bias` und `n_probs` mit F180, das gestreamte `/v1/completions` mit F186 (upstreams eigener Stream, Wahrscheinlichkeiten eingeschlossen), `n > 1` mit F180 und auf allen nativen Wegen mit F197.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `8ce9ffc`
+- **Commit:** java-llama.cpp `1149533`
 
 <a id="f96"></a>
 ### F96 – java-llama.cpp: Anthropic-Anfrage ohne `max_tokens` läuft unbegrenzt, `chat_template_kwargs` geht verloren
@@ -890,9 +890,9 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Beschreibung:** Aus dem offenen Verdacht „Anthropic-Rest nach F76“. upstreams `convert_anthropic_to_oai` (`server-chat.cpp:585`, b11639) setzt `max_tokens` 4096, wenn die Anfrage keines trägt, und reicht `chat_template_kwargs` durch. `/v1/messages` übernahm `max_tokens` nur, wenn vorhanden, eine Anfrage ohne generierte also, bis der Kontext voll war; und `chat_template_kwargs` (etwa Qwen3s `enable_thinking`) wurde verworfen, obwohl der nachgeschaltete `OpenAiRequestMapper` es seit F77 liest.
 - **Fix:** Ohne Zahl in `max_tokens` wird `DEFAULT_MAX_TOKENS` (4096) gesetzt; ein Objekt in `chat_template_kwargs` wird kopiert.
 - **Reproduktion:** `AnthropicApiSupportTest#requestWithoutMaxTokensIsCappedLikeUpstream`, `#requestPassesChatTemplateKwargsLikeUpstream` (zunächst ein Sammeltest, nach der Regel „ein Test je Richtung“ aufgeteilt)
-- **Rot-Grün-Nachweis:** gegen die Produktionsdatei vor `d29e084` rot, jeder Teil für sich (2 Fehlschläge: „Expected: is <4096> but: was <0>“, „Expected: is <true> but: was <false>“ für `chat_template_kwargs`), mit Fix grün (21/21 der Klasse, skipped 0). `OpenAiCompatServerHttpTest` 46/46, `AnthropicStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 25/25, `ResponsesApiSupportTest` 18/18, `OllamaApiSupportTest` 24/24, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Rot-Grün-Nachweis:** gegen die Produktionsdatei vor `4b20c57` rot, jeder Teil für sich (2 Fehlschläge: „Expected: is <4096> but: was <0>“, „Expected: is <true> but: was <false>“ für `chat_template_kwargs`), mit Fix grün (21/21 der Klasse, skipped 0). `OpenAiCompatServerHttpTest` 46/46, `AnthropicStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 25/25, `ResponsesApiSupportTest` 18/18, `OllamaApiSupportTest` 24/24, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `d29e084`
+- **Commit:** java-llama.cpp `4b20c57`
 
 <a id="f97"></a>
 ### F97 – java-llama.cpp: Ollama-`/api/chat` verliert den Denkinhalt in beide Richtungen
@@ -902,9 +902,9 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Beschreibung:** Aus dem offenen Verdacht „Ollama-Antworten tragen den Denkinhalt nicht“. Ollama legt den Denkinhalt eines Modells in `message.thinking` ab, blockierend und je Stream-Zeile, und Clients senden ihn im Verlauf zurück. `OllamaApiSupport` übernahm aus OpenAIs Antwort nur `content` und `tool_calls`; im Stream lieferte `toOllamaContentLine` für einen Chunk ohne Text `null`, Denk-Deltas fielen also ganz weg. Seit F78 kann ein Client mit `think` das Denken steuern, sah es aber nie. Im Verlauf blieb `thinking` als unbekannter Schlüssel stehen, den llama.cpps Parser ignoriert (`common/chat.cpp:422` liest `reasoning_content`), wie bei F84 für Anthropic.
 - **Fix:** Blockierend und im Stream wird `reasoning_content` zu `message.thinking` (eine Denk-Zeile trägt `content` leer); im Verlauf wird `thinking` zu `reasoning_content`.
 - **Reproduktion:** `OllamaApiSupportTest#blockingChatAnswerCarriesTheThinkingLikeOllama`, `#streamedThinkingDeltaBecomesAThinkingLineLikeOllama`, `#historyThinkingBecomesReasoningContent` (zunächst ein Sammeltest, nach der Regel „ein Test je Richtung“ aufgeteilt)
-- **Rot-Grün-Nachweis:** gegen die Produktionsdatei vor `9eab6e0` rot, jede Richtung für sich (3 Fehlschläge: „Expected: is "6 times 7" but: was ""“ blockierend und im Verlauf, „Expected: is "6 ti" but: was ""“ im Stream), mit Fix grün (27/27 der Klasse, skipped 0). `OpenAiCompatServerHttpTest` 46/46, `AnthropicApiSupportTest` 20/20, `ResponsesApiSupportTest` 18/18, `OpenAiRequestMapperTest` 25/25, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
+- **Rot-Grün-Nachweis:** gegen die Produktionsdatei vor `fb4dd64` rot, jede Richtung für sich (3 Fehlschläge: „Expected: is "6 times 7" but: was ""“ blockierend und im Verlauf, „Expected: is "6 ti" but: was ""“ im Stream), mit Fix grün (27/27 der Klasse, skipped 0). `OpenAiCompatServerHttpTest` 46/46, `AnthropicApiSupportTest` 20/20, `ResponsesApiSupportTest` 18/18, `OpenAiRequestMapperTest` 25/25, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `9eab6e0`
+- **Commit:** java-llama.cpp `fb4dd64`
 
 <a id="f98"></a>
 ### F98 – java-llama.cpp: gestreamtes Ollama-`/api/chat` meldet keine Tokenzahlen
@@ -916,7 +916,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiCompatServerHttpTest#ollamaChatStreamingDoneLineCarriesTheTokenCountsLikeTheBlockingAnswer` (das `FakeBackend` sendet den Usage-Chunk wie upstream nur bei `include_usage`)
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <12> but: was <-1>“), mit Fix grün (47/47 der Klasse, skipped 0); Gegenprobe per `git stash` beider Produktionsdateien rot (1), nach `pop` grün. `OllamaApiSupportTest` 27/27, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 18/18, `OpenAiRequestMapperTest` 25/25, `AnthropicStreamTranslatorTest` 5/5, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `0cd9f8a`
+- **Commit:** java-llama.cpp `95af953`
 
 <a id="f99"></a>
 ### F99 – java-llama.cpp: blockierende Responses-Antwort trägt ein leeres `message`-Item neben Werkzeugaufrufen
@@ -928,7 +928,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#toolCallOnlyResponseHasNoEmptyMessageItemLikeUpstreamAndTheStream`, dazu `#responseEmitsFunctionCallItemsForToolCalls`
 - **Rot-Grün-Nachweis:** ohne Fix rot (2 Fehlschläge: „Expected: is <1> but: was <2>“, „Expected: is "function_call" but: was "message"“), mit Fix grün (19/19 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `OllamaApiSupportTest` 27/27, `OpenAiRequestMapperTest` 25/25, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `9d0a021`
+- **Commit:** java-llama.cpp `1939435`
 
 <a id="f102"></a>
 ### F102 – java-llama.cpp: Chat-Anfrage mit `id_slot: -1` wird mit 400 abgewiesen
@@ -940,7 +940,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiRequestMapperTest#slotMinusOneMeansAnySlotLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Unexpected exception thrown: java.lang.IllegalArgumentException: slotId must be non-negative but was -1“, als Assertion über `assertDoesNotThrow`), mit Fix grün (26/26 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 19/19, `OllamaApiSupportTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `ded2762`
+- **Commit:** java-llama.cpp `57cbdc0`
 
 <a id="f103"></a>
 ### F103 – java-llama.cpp: `max_tokens: 0` generiert unbegrenzt statt nur den Cache zu füllen
@@ -952,7 +952,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiRequestMapperTest#zeroTokenCapOnlyWarmsTheCacheLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <0> but: was <-1>“), mit Fix grün (27/27 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 19/19, `OllamaApiSupportTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `bcbafbc`
+- **Commit:** java-llama.cpp `d7f91db`
 
 <a id="f104"></a>
 ### F104 – java-llama.cpp: Ollama-Routen verwerfen `repeat_penalty`, `min_p` und weitere Optionen; `num_predict: -2` wird abgewiesen
@@ -964,7 +964,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#chatCopiesTheLlamaCppSamplingOptions`, `#generateCopiesTheLlamaCppSamplingOptions`, `#infillCopiesTheLlamaCppSamplingOptions`, `#numPredictMinusTwoFillsTheContextAsUpstreamsMinusOne`; `#repeatLastNMinusOneIsLeftToTheServerDefault` schützt die Ausnahme (ohne Fix grün, weil gar nichts kopiert wurde)
 - **Rot-Grün-Nachweis:** ohne Fix rot (4 Fehlschläge: dreimal „Expected: is <0.05> but: was <0.0>“, einmal „Expected: is <-1> but: was <-2>“), mit Fix grün (32/32 der Klasse, skipped 0); Gegenprobe per `git stash` rot (4), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 19/19, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `0eba89d`
+- **Commit:** java-llama.cpp `ce983cf`
 
 <a id="f105"></a>
 ### F105 – java-llama.cpp: Responses-Anfrage mit `previous_response_id` wird ohne Verlauf beantwortet
@@ -976,7 +976,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#previousResponseIdIsRejectedLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix grün (20/20 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `b9bfb45`
+- **Commit:** java-llama.cpp `f9e680a`
 
 <a id="f106"></a>
 ### F106 – java-llama.cpp: Responses-Anfrage verliert `top_k`, `seed`, `stop` und llama.cpps Erweiterungen
@@ -988,7 +988,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#requestFieldsTheChatMapperReadsPassThroughLikeUpstream` (parametrisiert, ein Fall je Feld, 27 Fälle)
 - **Rot-Grün-Nachweis:** ohne Fix rot, jeder Fall für sich (27 Fehlschläge, z. B. „Expected: is <0.05> but: was <>“), mit Fix grün (47/47 der Klasse, skipped 0); Gegenprobe per `git stash` rot (27), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `87635b2`
+- **Commit:** java-llama.cpp `b370643`
 
 <a id="f107"></a>
 ### F107 – java-llama.cpp: Anthropic-`tool_choice` `none` läuft als `auto`
@@ -1000,7 +1000,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `AnthropicApiSupportTest#toolChoiceNoneForbidsToolCalls`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "none" but: was ""“), mit Fix grün (22/22 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `AnthropicStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `ResponsesApiSupportTest` 47/47, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `b85eed8`
+- **Commit:** java-llama.cpp `d58662f`
 
 <a id="f108"></a>
 ### F108 – java-llama.cpp: Responses-`text.format` (strukturierte Ausgabe) wird ignoriert
@@ -1012,7 +1012,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ResponsesApiSupportTest#textFormatJsonSchemaBecomesTheChatResponseFormat`, `#textFormatJsonObjectBecomesTheChatResponseFormat`; `#textFormatTextLeavesTheResponseFormatOut` schützt den `text`-Fall (ohne Fix grün)
 - **Rot-Grün-Nachweis:** ohne Fix rot (2 Fehlschläge: „Expected: is "json_schema" but: was ""“, „Expected: is "json_object" but: was ""“), mit Fix grün (50/50 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 22/22, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün (eine erste Fassung mit einem Array-Literal meldete `SACM_STATIC_ARRAY_CREATED_IN_METHOD`, jetzt eine Konstante).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `941357f`
+- **Commit:** java-llama.cpp `8e91168`
 
 <a id="f109"></a>
 ### F109 – java-llama.cpp: `tool_choice`, das eine Funktion benennt, läuft als `auto`
@@ -1026,7 +1026,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Nachtrag (2026-10-18, nur beschrieben):** Zwei Kommentare neben dem Fix sind nicht nachgezogen: die Klassen-Javadoc von `OpenAiRequestMapper` nennt `tool_choice` unter den Feldern, die „verbatim as raw JSON“ weitergehen (galt schon vorher nur für die Textform), und der Kommentar über dem Werkzeugblock in `ResponsesApiSupport.toOpenAiChatRequest` beschreibt nur die Textform. Reine Doku-Abweichung, nach der Nutzerregel ohne Test nicht nachträglich geändert; Vorschlag: `tool_choice` aus der Verbatim-Aufzählung nehmen und „ein benanntes Werkzeug wird zu `required`“ ergänzen.
 - **Nachtrag (Branch-Review 2026-10-20):** Mit mehreren Werkzeugen ließ `required` jeden Aufruf zu; seit F227 geht auf beiden Wegen nur das benannte Werkzeug weiter, ein unbekannter oder fehlender Name ist 400.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `b7151fc`
+- **Commit:** java-llama.cpp `c5823a5`
 
 <a id="f111"></a>
 ### F111 – java-llama.cpp: Rerank im TEI-Format (`texts`) wird mit 400 abgewiesen
@@ -1038,7 +1038,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OaiRerankSupportTest#readDocumentsAcceptsTheTeiTexts`, `#teiRequestGetsTheTeiArrayWithScoreLikeUpstream`, `#teiReturnTextAddsTheDocumentText`
 - **Rot-Grün-Nachweis:** gegen den Stand mit der neutralen Naht rot, jeder Teil für sich (3 Fehlschläge: „Unexpected exception thrown: … 'documents' must be a non-empty array“, „Expected: is <true> but: was <false>“, „Expected: is "b" but: was ""“), mit Fix grün (13/13 der Klasse, skipped 0). Die `git stash`-Gegenprobe ging hier nicht (ohne Naht kompiliert der Test nicht; der danach gelesene Bericht war der alte) und wurde durch den Lauf gegen den Naht-Stand ersetzt. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 22/22, `ResponsesApiSupportTest` 51/51, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 28/28, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `2831610`
+- **Commit:** java-llama.cpp `6ff8eea`
 
 <a id="f112"></a>
 ### F112 – java-llama.cpp: Unterpfade einer Route laufen durch deren Handler (`/v1/messages/count_tokens` erzeugt eine ganze Antwort)
@@ -1051,7 +1051,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <404> but: was <200>“), mit Fix grün (49/49 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1, Bericht vor dem Lauf gelöscht), nach `pop` grün. Alle 25 Testklassen des Pakets `server` grün, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün. Der Agent (`llama-atmosphere-agent`) ruft keine Unterpfade auf.
 - **Offen (nicht geändert):** upstream bietet `/v1/messages/count_tokens` und die `input_tokens`-Routen tatsächlich an; sie hier nachzubauen bräuchte eine Tokenzählung über das Backend (`OpenAiBackend` hat keine) – ein API-Zusatz.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `609b53e`
+- **Commit:** java-llama.cpp `909edc5`
 
 <a id="f113"></a>
 ### F113 – java-llama.cpp: `/v1/models` lässt das Pflichtfeld `created` weg
@@ -1063,7 +1063,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiSseFormatterTest#modelsJsonCarriesTheRequiredCreatedTimestampLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <true> but: was <false>“ für `isIntegralNumber`), mit Fix grün (15/15 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 49/49, `OaiRerankSupportTest` 13/13, `AnthropicApiSupportTest` 22/22, `ResponsesApiSupportTest` 51/51, `OllamaApiSupportTest` 32/32, `OpenAiRequestMapperTest` 28/28, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `9c165a8`
+- **Commit:** java-llama.cpp `b313ad2`
 
 <a id="f114"></a>
 ### F114 – java-llama.cpp: `/api/version` meldet 0.1.0, VS Code Copilots Ollama-Anbieter lehnt den Server ab
@@ -1075,7 +1075,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#versionPassesCopilotsMinimumOllamaVersion` (Copilots Vergleich nachgebildet)
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <true> but: was <false>“), mit Fix grün (33/33 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 49/49, `OpenAiSseFormatterTest` 15/15, `OaiRerankSupportTest` 13/13, `AnthropicApiSupportTest` 22/22, `ResponsesApiSupportTest` 51/51, `OpenAiRequestMapperTest` 28/28, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `fbffef0`
+- **Commit:** java-llama.cpp `03ad149`
 
 <a id="f115"></a>
 ### F115 – java-llama.cpp: `/api/show` verschweigt Continue die Kontextlänge
@@ -1087,7 +1087,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#showParametersCarryTheContextLengthWhereContinueReadsIt` (mit Continues regulärem Ausdruck)
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "4096" but: was null“), mit Fix grün (34/34 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. Breite Liste wie F114 grün, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `4d45be1`
+- **Commit:** java-llama.cpp `3e2f3b5`
 
 <a id="f116"></a>
 ### F116 – java-llama.cpp: Ollama-Werkzeugergebnisse verlieren den Werkzeugnamen
@@ -1099,7 +1099,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OllamaApiSupportTest#toolResultNameBecomesTheNameLlamaCppReads`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "get_weather" but: was ""“), mit Fix grün (35/35 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. Breite Liste wie F114 grün, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `a5e86bf`
+- **Commit:** java-llama.cpp `e4f54a6`
 
 <a id="f117"></a>
 ### F117 – java-llama.cpp: Gestreamte Responses-Fehler erreichen Responses-Clients nicht
@@ -1111,7 +1111,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiCompatServerHttpTest#rejectedStreamedResponseEndsWithAResponseFailedEvent`, `#failedStreamedResponseEndsWithAResponseFailedEvent`
 - **Rot-Grün-Nachweis:** ohne Fix beide rot („Expected: a string containing "event: response.failed" but: was "event: response.created …"“), mit Fix grün (51/51 der Klasse, skipped 0); Gegenprobe per `git stash` beider Produktionsdateien rot (2), nach `pop` grün. Breite Liste (Server-Tests inkl. `ResponsesStreamTranslatorTest`, `LlamaArchitectureTest`) grün, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `011f5c3`
+- **Commit:** java-llama.cpp `bd3db6a`
 
 <a id="f118"></a>
 ### F118 – java-llama.cpp: Anthropic-Serverfehler heißen `invalid_request_error`
@@ -1123,7 +1123,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiCompatServerHttpTest#aFailedAnthropicMessageIsAnApiError`, `#aFailedStreamedAnthropicMessageIsAnApiError` (dazu als Schutz `#aRejectedStreamedAnthropicMessageStaysAnInvalidRequestError`)
 - **Rot-Grün-Nachweis:** ohne Fix beide rot („Expected: a string containing "\"error\":{\"type\":\"api_error\"" but: was "{"type":"error","error":{"type":"invalid_request_error","message":"decoding failed"}}"“), mit Fix grün (54/54 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. Breite Liste wie F117 grün, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `ccba21a`
+- **Commit:** java-llama.cpp `ae72c29`
 
 <a id="f123"></a>
 ### F123 – java-llama.cpp: `logprobs`/`top_logprobs` einer Chat-Anfrage gehen verloren
@@ -1135,7 +1135,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiRequestMapperTest#logprobsWithTopLogprobsBecomesNProbs`, `#logprobsWithoutTopLogprobsDefaultsToTwentyLikeUpstream` (dazu als Schutz `#logprobsFalseLeavesNProbsUnset`)
 - **Rot-Grün-Nachweis:** ohne Fix beide rot („Expected: is <3> but: was <-1>“ bzw. „Expected: is <20> but: was <-1>“), mit Fix grün (31/31 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. Breite Liste wie F117 grün, `spotless:apply` und `spotbugs:check` grün. Der erste Grün-Lauf scheiterte am Compiler (`NotJavadoc`: Konstante zwischen fremde Javadoc und Deklaration eingefügt, wie bei F108) und meldete trotzdem den alten roten Bericht – das Prüfskript löscht den Bericht jetzt auch vor dem Grün-Lauf.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `3e86360`
+- **Commit:** java-llama.cpp `578614c`
 
 <a id="f125"></a>
 ### F125 – java-llama.cpp: `OpenAiServerCli` nimmt einen Port außerhalb von 0..65535 an; der Fehler kommt erst nach dem Modell-Laden
@@ -1147,7 +1147,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiServerCliTest#portOutsideTheTcpRangeThrows` (`-1`, `65536`, `70000`), Grenzen in `#portAtTheEndsOfTheTcpRangeIsAccepted` (0, 1, 65535)
 - **Rot-Grün-Nachweis:** ohne Fix rot in allen drei Fällen („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix grün (45/45 der Klasse, skipped 0); Gegenprobe per `git stash` rot (3), nach `pop` grün. Breite Liste: `OpenAiCompatServerHttpTest` 54/54, `ServerLauncherTest` 7/7, `LlamaArchitectureTest` 13/13; `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `ba26cdc`
+- **Commit:** java-llama.cpp `72cf2ea`
 
 <a id="f128"></a>
 ### F128 – java-llama.cpp: Gestreamte Werkzeugaufrufe in `llama-langchain4j` brechen am ersten Fragment ohne Argumente oder ohne Namen ab
@@ -1160,7 +1160,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne Fix beide rot („Unexpected exception thrown: java.lang.IllegalArgumentException: partialArguments cannot be null or empty“ bzw. „… name cannot be null or blank“), mit Fix grün (2/2, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. Ganzes Modul grün (`StreamingChunkAssemblerTest` 9/9, `LangChain4jMappingTest` 23/23, `JsonSchemaElementSerializerTest` 8/8, `TestModelPathsTest` 8/8; die Integrationstests überspringen sich ohne Modell wie zuvor). Das Modul hat weder Spotless noch SpotBugs.
 - **CI-Bedarf:** `JllamaToolCallingIntegrationTest#streamedRequiredToolCallComesBackAsToolExecutionRequest` (Job `test-java-llama-langchain4j-integration`, kein Release-Gate) im nächsten Lauf ansehen: ob er vor dem Fix rot war, hängt davon ab, ob das CI-Modell den Namen allein in einem Fragment sendet.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `4d599fa`
+- **Commit:** java-llama.cpp `f7f3f0f`
 
 <a id="f133"></a>
 ### F133 – java-llama.cpp: `setPoolingType(UNSPECIFIED)` lässt ein vorher gesetztes `--pooling` stehen
@@ -1172,7 +1172,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `ModelParametersTest#testSetPoolingTypeUnspecifiedRemovesAnEarlierPoolingType`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: not map containing ["--pooling"->ANYTHING] but: was <{--fit=on, --pooling=mean}>“, die übrigen 92 Tests der Klasse grün), mit Fix 93/93 (skipped 0), Gegenprobe per `git stash` rot, danach wieder grün. `LlamaArchitectureTest` 13/13, `WireNameRegistryTest` 8/8, `ModelParametersExtendedTest` 148/148; `spotless:check` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `7231e71`
+- **Commit:** java-llama.cpp `b4630d5`
 
 <a id="f134"></a>
 ### F134 – java-llama.cpp: fünf `InferenceParameters`-Wither „`null` clears“ behalten den alten Wert
@@ -1184,7 +1184,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `InferenceParametersTest#test{Prompt,InputPrefix,InputSuffix,Grammar,ToolChoice}NullClearsAnEarlierValue`, `JsonParametersTest#withOptionalJson_nullRemovesAnEarlierValue`
 - **Rot-Grün-Nachweis:** ohne Fix rot – alle fünf Wither-Tests (z. B. „Expected: not map containing ["grammar"->ANYTHING] but: was <{grammar="x"}>“) und der Basistest („expected: not same but was: <TestBuilder{keys=[grammar], values=redacted}>“); mit Fix `InferenceParametersTest` 111/111 und `JsonParametersTest` 26/26 (skipped 0), Gegenprobe per `git stash` wieder rot. PIT auf `JsonParameters`: 18/18 getötet. `LlamaArchitectureTest` 13/13, `WireNameRegistryTest` 8/8, `OpenAiRequestMapperTest` 31/31; `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `f35e7f2`
+- **Commit:** java-llama.cpp `5bba245`
 
 <a id="f137"></a>
 ### F137 – java-llama.cpp: `Session.fork` prüft eine negative Ziel-Slot-ID erst nach Sichern und Wiederherstellen
@@ -1196,7 +1196,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `SessionTest#forkToANegativeSlotIdRejectedBeforeTheModelIsTouched` (mit `null`-Modell: jeder Modellaufruf zeigt sich als `NullPointerException`)
 - **Rot-Grün-Nachweis:** ohne Fix rot („Unexpected exception type thrown, expected: <java.lang.IllegalArgumentException> but was: <java.lang.NullPointerException>“), mit Fix 3/3 (skipped 0), Gegenprobe per `git stash` rot, danach wieder grün. `SessionStateTest` 13/13, `LlamaArchitectureTest` 13/13; `spotless:apply` und `spotbugs:check` grün. Den nativen Pfad (Datei geschrieben, `LlamaException` aus `restoreSlot`) habe ich nicht laufen lassen: keine native Bibliothek und kein Modell in dieser Umgebung.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `965b540`
+- **Commit:** java-llama.cpp `7f79298`
 
 <a id="f138"></a>
 ### F138 – java-llama.cpp: `OpenAiServerConfig.heartbeatMillis(0)` lässt jeden Streaming-Request als Client-Fehler scheitern
@@ -1208,7 +1208,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiServerConfigTest#heartbeatIntervalOfZeroIsRejected`; das Laufzeitsymptom zeigte eine nicht übernommene Probe in `OpenAiCompatServerHttpTest` (Streaming-Chat gegen `FakeBackend` mit `heartbeatMillis(0)`).
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit Fix 7/7 (skipped 0), Gegenprobe per `git stash` rot, danach wieder grün. `OpenAiCompatServerHttpTest` 54/54, `OpenAiServerCliTest` 45/45, `LlamaArchitectureTest` 13/13; `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `6a13092`
+- **Commit:** java-llama.cpp `806571d`
 
 <a id="f143"></a>
 ### F143 – java-llama.cpp: `RouterClient.awaitModelLoaded(id, 0)` meldet für ein geladenes Modell einen Timeout, ohne abzufragen
@@ -1220,7 +1220,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `RouterClientTest#awaitModelLoaded_zeroTimeoutStillPollsOnce`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Unexpected exception thrown: java.lang.IllegalStateException: Model 'qwen' did not reach LOADED within 0 ms (last status: null)“), mit Fix 20/20 (skipped 0, die Timeout- und Sofort-Fehler-Tests unverändert grün), Gegenprobe per `git stash` rot, danach wieder grün. `LlamaArchitectureTest` 13/13; `spotless:check` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `058153f`
+- **Commit:** java-llama.cpp `017ac95`
 
 <a id="f158"></a>
 ### F158 – java-llama.cpp: `ModelParameters.setPredict(-2)` verspricht „until context filled“, der Server erzeugt damit je Anfrage nur ein Token
@@ -1229,12 +1229,12 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Schwere:** niedrig bis mittel (still: keine Fehlermeldung, nur abgeschnittene Antworten)
 - **Beschreibung:** Gefunden beim Nachprüfen von F69. Upstreams `-n` (`common/arg.cpp:1661`, b11639) nennt „-2 = until context filled“ **nur** für `LLAMA_EXAMPLE_COMPLETION`, für den Server lautet die Beschreibung „-1 = infinity“; der Parser übernimmt jeden Wert. Im Server übernimmt ein Slot `params_base.n_predict`, wenn die Anfrage `-1` sendet oder das Feld weglässt (`server-context.cpp:1964`), und `has_budget()` (`:495`) zählt nur `-1` als unbegrenzt: bei `-2` ist `n_remaining()` negativ, und die Grenzprüfung (`:2040`, `n_gen > 0 && !has_budget()`) beendet die Erzeugung nach dem ersten Token mit `STOP_TYPE_LIMIT`. Aus dem Quelltext abgeleitet, **nicht gemessen**.
 - **Fix:** Dokumentation korrigiert (ohne Test, Nutzerregel): Javadoc nennt nur noch `-1 = infinity` und erklärt, dass `-2` eine Einstellung des Completion-Tools ist und hier nach dem ersten Token stoppt. **Offen, Entscheidung des Nutzers:** `-2` in `ModelParameters.setPredict` mit `IllegalArgumentException` abweisen – modellfrei testbar, ändert aber das Verhalten eines öffentlichen Setters.
-- **Messung (J1, `BUGHUNT-MEASUREMENTS.md` in `b689d7b`):** bestätigt – `-2`: 1 Token, `stop_type="limit"`; `-1`: 2042 Tokens (bis Kontextende); `16`: 16. Dazu J2: `withNPredict(0)` erzeugt ebenfalls 1 Token, nicht 0.
+- **Messung (J1, `BUGHUNT-MEASUREMENTS.md` in `4c58e8f`):** bestätigt – `-2`: 1 Token, `stop_type="limit"`; `-1`: 2042 Tokens (bis Kontextende); `16`: 16. Dazu J2: `withNPredict(0)` erzeugt ebenfalls 1 Token, nicht 0.
 - **Nachtrag (Entscheidung des Nutzers nach der Messung):** `setPredict` lehnt Werte unter `-1` mit `IllegalArgumentException` ab; Javadoc von `setPredict` und `withNPredict` sagt „`0` verhält sich wie `1`“. Test `ModelParametersExtendedTest#testSetPredictBelowMinusOneIsRejected` (`-2`, `-3`, `Integer.MIN_VALUE`) ersetzt `testSetPredictFillContext`, dazu `testSetPredictZero`.
 - **Rot-Grün-Nachweis:** ohne die Prüfung rot (3 von 3), mit ihr grün (`ModelParametersExtendedTest`, `ModelParametersTest`, `WireNameRegistryTest`: 252 Tests).
-- **Nachtrag (Branch-Review 2026-10-20):** Die Übersicht nannte bis zum Branch-Review noch „Doku gefixt, Verhalten offen“; das Verhalten ist seit `ae07a53` geändert (siehe oben).
+- **Nachtrag (Branch-Review 2026-10-20):** Die Übersicht nannte bis zum Branch-Review noch „Doku gefixt, Verhalten offen“; das Verhalten ist seit `be4d4a2` geändert (siehe oben).
 - **Status:** gefixt
-- **Commit:** a977a1e (Doku), ae07a53 (Verhalten)
+- **Commit:** cb8a3ea (Doku), be4d4a2 (Verhalten)
 
 <a id="f165"></a>
 ### F165 – java-llama.cpp: `OpenAiCompatServer` ohne `-c` bewirbt 8192 + 2048 Tokens statt des Fensters des geladenen Modells
@@ -1242,12 +1242,12 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiServerCli.java` (`toServerConfig`), `OpenAiCompatServer.java` (`main`)
 - **Schwere:** mittel (ein Client, der seinen Prompt nach `/props`/`/api/show` bemisst, schickt bis zu 5× zu viel Kontext)
 - **Historie:** Die Budgets kamen nur aus `-c` (seit F70 als ganzes Slot-Fenster aufgeteilt); ohne `-c` blieben die festen Vorgaben stehen.
-- **Messung (J3, `BUGHUNT-MEASUREMENTS.md` in `b689d7b`):** Draft-Modell ohne `-c`: `/props` `n_ctx` 10240, `/api/show` `num_ctx 10240`, `/slots` `n_ctx` 2048 (= `n_ctx_train`).
+- **Messung (J3, `BUGHUNT-MEASUREMENTS.md` in `4c58e8f`):** Draft-Modell ohne `-c`: `/props` `n_ctx` 10240, `/api/show` `num_ctx 10240`, `/slots` `n_ctx` 2048 (= `n_ctx_train`).
 - **Fix:** Entscheidung des Nutzers: das echte `n_ctx` bewerben. Neue Überladung `toServerConfig(supportsVision, modelFtype, slotContextSize)`; `main` übergibt `n_ctx` des ersten Slots aus `getMetricsTyped()`. Ein bekanntes Slot-Fenster geht vor `-c` (die Last kann kleiner ausfallen, etwa durch `--fit`), sonst gilt wie bisher `-c` bzw. die Vorgabe.
 - **Tests:** `OpenAiServerCliTest#loadedSlotContextIsAdvertisedWithoutContextSize`, `#loadedSlotContextWinsOverTheContextSizeArgument`, `#unknownSlotContextFallsBackToTheContextSizeArgument`.
 - **Rot-Grün-Nachweis:** mit der alten Auswahl (nur `-c`) rot (2 von 3, der Rückfalltest ist beidseitig grün), mit dem Fix grün (`OpenAiServerCliTest`, `OpenAiCompatServer*Test`: 114 Tests). Die Verdrahtung in `main` braucht ein Modell und ist hier nur übersetzt; Prüfung mit dem Befehl aus J3 (erwartet: 2048 in `/props` und `/api/show`).
 - **Status:** gefixt
-- **Commit:** 62413a9
+- **Commit:** 490f43b
 
 <a id="f166"></a>
 ### F166 – java-llama.cpp: Leere Werkzeug-Argumente im Verlauf lassen die ganze Folgeanfrage mit 400 scheitern
@@ -1255,13 +1255,13 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/ParameterJsonSerializer.java` (`buildMessages(List<ChatMessage>)`)
 - **Schwere:** niedrig (mit dem gemessenen Modell nicht erreichbar, im Eintrittsfall aber Totalausfall der Folgeanfrage)
 - **Historie:** `buildMessages` schreibt `ToolCall.getArgumentsJson()` seit den Werkzeugaufrufen im Verlauf wörtlich.
-- **Messung (J4, `BUGHUNT-MEASUREMENTS.md` in `b689d7b`):** Qwen2.5-1.5B liefert für ein Werkzeug ohne Parameter 20/20 `"{}"`, nie `""`; mit `""` im Verlauf antwortet der Server `InvalidRequestException: Failed to parse tool call arguments as JSON … attempting to parse an empty input`, mit `"{}"` normal.
+- **Messung (J4, `BUGHUNT-MEASUREMENTS.md` in `4c58e8f`):** Qwen2.5-1.5B liefert für ein Werkzeug ohne Parameter 20/20 `"{}"`, nie `""`; mit `""` im Verlauf antwortet der Server `InvalidRequestException: Failed to parse tool call arguments as JSON … attempting to parse an empty input`, mit `"{}"` normal.
 - **Fix:** Entscheidung des Nutzers: leere (auch nur aus Leerraum bestehende) Argumente als `"{}"` schreiben, alles andere unverändert.
 - **Tests:** `ParameterJsonSerializerTest#testBuildMessages_emptyToolCallArguments_areWrittenAsAnEmptyObject` (`""`, `" "`, `"\n"`), `#testBuildMessages_toolCallArguments_arePassedOnVerbatim`.
 - **Rot-Grün-Nachweis:** ohne den Fix rot (3 von 3), mit ihm grün (186 Tests in den Serializer-, Multimodal-, `InferenceParameters`- und `ChatRequest`-Klassen).
 - **Nicht abgedeckt (offen):** Die Übersetzungen des Servers bauen den Verlauf ohne `buildMessages`: `ResponsesApiSupport.java:218` (`asText("")`) und `AnthropicApiSupport.java:229` (`input` fehlt → `""`) können weiterhin `""` schreiben. **Nachtrag 2026-10-19:** behoben als F172.
 - **Status:** gefixt (Java-API-Pfad; Server-Übersetzungen als F172)
-- **Commit:** afc40be
+- **Commit:** 7f19450
 
 <a id="f167"></a>
 ### F167 – java-llama.cpp: `completeBatch`/`chatBatch` laufen auf dem gemeinsamen `ForkJoinPool` und nutzen auf wenigen Kernen nicht alle Slots
@@ -1269,12 +1269,12 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/LlamaModel.java` (`completeBatch`, `completeBatchWithStats`, `chatBatch`), neu `BatchDispatch.java`
 - **Schwere:** niedrig bis mittel (Durchsatz; die Javadoc versprach die `setParallel`-Slots)
 - **Historie:** Jede Anfrage lief über `CompletableFuture.supplyAsync`, also auf dem gemeinsamen Pool mit `availableProcessors() - 1` Threads, den sie zudem mit der Anwendung teilte.
-- **Messung (J5, `BUGHUNT-MEASUREMENTS.md` in `b689d7b`):** 8 Slots, 8 Anfragen: 16 Kerne → 8 gleichzeitig (3225 ms); 4 Kerne → 3 (14067 ms); 16 Kerne mit Pool-Parallelität 3 → 3.
+- **Messung (J5, `BUGHUNT-MEASUREMENTS.md` in `4c58e8f`):** 8 Slots, 8 Anfragen: 16 Kerne → 8 gleichzeitig (3225 ms); 4 Kerne → 3 (14067 ms); 16 Kerne mit Pool-Parallelität 3 → 3.
 - **Fix:** Entscheidung des Nutzers: `completeBatch`/`completeBatchWithStats` übergeben alle Anfragen im Aufrufer-Thread (`requestCompletion`) und empfangen dann der Reihe nach; scheitert eine Übergabe, werden die bereits übergebenen freigegeben (`releaseTask`). Für `chatBatch` gibt es keine Trennung von Übergabe und Warten (`handleChatCompletions` wartet in einem nativen Aufruf), daher läuft dort jede Anfrage auf einem eigenen Daemon-Thread eines Executors, der genau so groß ist wie der Batch und mit dem Aufruf endet. Beides in `BatchDispatch` (ohne native Bibliothek testbar, `LlamaModel` lädt sie im statischen Initialisierer). Die SpotBugs-Ausnahme für den bewussten Rethrow ist von `LlamaModel` dorthin gezogen, zwei neue mit Begründung (`HES_LOCAL_EXECUTOR_SERVICE`, `ITC_INHERITANCE_TYPE_CHECKING`).
 - **Tests:** `BatchDispatchTest` (8): alle Übergaben vor dem ersten Empfang, Übergabe im Aufrufer-Thread, Freigabe nach gescheiterter Übergabe, Empfang aller trotz Fehler, mehr gleichzeitige Anfragen als der gemeinsame Pool Threads hat (Latch über `commonPool().getParallelism() + 2`), Reihenfolge, Fehler nach den anderen, leere Eingabe.
 - **Rot-Grün-Nachweis:** mit dem alten Mechanismus (`supplyAsync` je Anfrage, keine Freigabe) rot (4 von 8; die übrigen 4 prüfen unverändertes Verhalten), mit dem Fix grün. Ein modellgestützter Lauf (J5-Probe) steht aus: erwartet `maxProcessingSlots=8` auch auf 4 Kernen für `completeBatch`.
 - **Status:** gefixt
-- **Commit:** 5b4e409
+- **Commit:** 8130463
 
 <a id="f168"></a>
 ### F168 – java-llama.cpp: `JllamaNative.takeStrings` gibt ein leeres Nicht-NULL-Array nicht frei
@@ -1282,12 +1282,12 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Datei:** `llama-ffm/src/main/java/net/ladenthin/llama/ffm/JllamaNative.java` (`takeStrings`)
 - **Schwere:** niedrig (8 Byte je Aufruf mit leerem Ergebnis, praktisch unerreichbar)
 - **Historie:** Die Prüfung `pointer == NULL || count == 0` vor dem `try` stammt aus der ersten Fassung der FFM-Bindungen; `jllama_rpc_server_devices` legt auch für 0 Einträge ein Array an.
-- **Messung (J8, `BUGHUNT-MEASUREMENTS.md` in `b689d7b`):** ein absichtlich falsch ausgerichteter Nicht-NULL-Zeiger mit Anzahl 0: `jllama_strings_free` direkt bricht mit `free(): invalid pointer` ab (Exit 134), über `takeStrings` überlebt die JVM – die Freigabe wurde nie gerufen.
+- **Messung (J8, `BUGHUNT-MEASUREMENTS.md` in `4c58e8f`):** ein absichtlich falsch ausgerichteter Nicht-NULL-Zeiger mit Anzahl 0: `jllama_strings_free` direkt bricht mit `free(): invalid pointer` ab (Exit 134), über `takeStrings` überlebt die JVM – die Freigabe wurde nie gerufen.
 - **Fix:** Entscheidung des Nutzers: bei Nicht-NULL immer freigeben. Nur noch `NULL` kehrt früh zurück; die Freigabefunktion ist über eine paketinterne Überladung `takeStrings(out, length, free)` einsetzbar.
 - **Tests:** `JllamaNativeTest#takeStringsFreesANonNullArrayEvenWhenItIsEmpty`, `#takeStringsDoesNotFreeANullArray`.
 - **Rot-Grün-Nachweis:** lokal mit JDK 25 (Toolchain) und einem selbst gebauten `libjllama.so` (b11639, statisch): mit der alten Prüfung rot (1 von 9, der neue Test), mit dem Fix grün; `mvn -f llama-ffm/pom.xml verify` grün (29 Tests, 16 modellgestützte übersprungen, kein Modell).
 - **Status:** gefixt
-- **Commit:** 8269149
+- **Commit:** 631d0ab
 
 <a id="f172"></a>
 ### F172 – java-llama.cpp: Responses- und Anthropic-Übersetzung schreiben leere Tool-Argumente in den Verlauf
@@ -1301,7 +1301,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** ohne den Fix rot (beide, `was ""`), mit ihm grün (75 Tests der beiden Klassen).
 - **Nachtrag (Branch-Review 2026-10-20):** Auf der Responses-Route wurden auch Objekt-`arguments` zu `"{}"` (Jacksons `asText` eines Containers ist `""`); seit F225 ist ein Wert, der weder fehlt noch `null` noch ein String ist, wie upstream eine 400.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `f1bf93b`
+- **Commit:** java-llama.cpp `ce6e5a7`
 
 <a id="f173"></a>
 ### F173 – java-llama.cpp: Responses-Übersetzung verwirft `refusal`-Teile von Assistenten-Nachrichten im Verlauf
@@ -1314,7 +1314,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesApiSupportTest#refusalPartsOfTheHistoryAreKeptAsText` (Text + Ablehnung, nur Ablehnung), `#refusalPartsNextToAnImageAreKeptAsTextParts`.
 - **Rot-Grün-Nachweis:** ohne den Fix rot (2 von 54: `was "a"`, `was ""`), mit ihm grün (54 von 54).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `0fd166f`
+- **Commit:** java-llama.cpp `2db54c9`
 
 <a id="f174"></a>
 ### F174 – java-llama.cpp: `/props` meldet `total_slots` fest als 1
@@ -1327,7 +1327,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest#propsEndpointReportsTheSlotCountOfTheConfiguration` (über HTTP), `OpenAiSseFormatterTest#propsJsonReportsContextLengthAndModalities` (ergänzt), `OpenAiServerConfigTest#totalSlotsDefaultsToOneAndKeepsTheConfiguredCount`, `#totalSlotsBelowOneIsRejected`, `OpenAiServerCliTest#slotCountOfTheLoadedModelIsAdvertised`, `#unknownSlotCountFallsBackToTheParallelArgumentAndThenToOne`.
 - **Rot-Grün-Nachweis:** mit einem Platzhalter, der das alte Verhalten behält (Getter liefert 1, `propsJson` ignoriert den Parameter), rot (5 Tests), mit dem Fix grün (129 Tests der vier Klassen); SpotBugs grün. Der Starter selbst (`main`) braucht ein Modell und ist nur übersetzt.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `569415d`
+- **Commit:** java-llama.cpp `cb21ecf`
 
 <a id="f175"></a>
 ### F175 – java-llama.cpp: `RouterClient.findModel`/`awaitModelLoaded` erkennen einen Alias nicht
@@ -1340,7 +1340,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `RouterClientTest#findModel_matchesByAlias` (Stub-Router, auch `awaitModelLoaded` über den Alias), `RouterModelsResponseParserTest#parsesAliasesAndDefaultsThemToEmpty`, `RouterModelTest#aliasesDefaultToEmptyAndAreKeptUnmodifiable`, `#isNamed_matchesTheIdAndEveryAliasAndNothingElse`.
 - **Rot-Grün-Nachweis:** mit Platzhaltern (`getAliases()` leer, `isNamed` nur Id) rot (4 Tests), mit dem Fix grün (54 Tests, 2 modellgestützte übersprungen); PIT auf `RouterModel` 18/18 getötet; SpotBugs grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `11c7477`
+- **Commit:** java-llama.cpp `0dd5e41`
 
 <a id="f176"></a>
 ### F176 – java-llama.cpp: `rerank(String, String...)` liefert die Dokumente in Hash-Reihenfolge
@@ -1353,7 +1353,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `RerankResponseParserTest#toDocumentScores_keepsTheOrderOfTheDocuments`, `#toDocumentScores_equalDocumentsShareOneEntryAtTheirFirstPosition`.
 - **Rot-Grün-Nachweis:** mit der `HashMap` rot (1 von 14, `item 1: was "mid"`), mit der `LinkedHashMap` grün (14 von 14); PIT auf `RerankResponseParser` 6/6 getötet; SpotBugs grün (Parameter `Collection`, vorbelegte Größe).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `3299e6a`
+- **Commit:** java-llama.cpp `ef443b0`
 
 <a id="f177"></a>
 ### F177 – java-llama.cpp: `/v1/rerank`: `top_n: 0` liefert alle Ergebnisse, ein negatives `top_n` wird durchgereicht, `usage` fehlt
@@ -1366,7 +1366,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** C++: `RerankResultsToJson.TokensEvaluatedArePassedOnAndDefaultToZero`. Java: `OaiRerankSupportTest#negativeTopNIsAnInvalidRequest`, `#topNZeroReturnsNoResultsLikeUpstream`, `#toOaiResponseCarriesTheUsageOfTheEvaluatedTokens`, `#readTopNReturnsValueOrNegativeOne` (um 0 ergänzt).
 - **Rot-Grün-Nachweis:** C++ ohne den Fix rot (`Which is: -1`), mit ihm grün (9/9 der Suite); Java ohne den Fix rot (3 von 16), mit ihm grün (16/16, mit `OpenAiCompatServerHttpTest` 71); SpotBugs grün. Ende zu Ende mit einem Reranker (CI: `OpenAiServerRerankIntegrationTest`) nicht lokal gelaufen.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `232985f`
+- **Commit:** java-llama.cpp `68f81b6`
 
 <a id="f178"></a>
 ### F178 – java-llama.cpp: Ollama-Routen melden `done_reason` falsch und `/api/generate` keine Tokenzahlen
@@ -1379,7 +1379,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest#ollamaChatDoneReasonIsLengthWhenCutOffAndStopForToolCalls` (blockierend und gestreamt, `length`/`tool_calls`/`stop`), `#ollamaGenerateDoneReasonAndCountsFollowTheCompletion` (blockierend und gestreamt), `#ollamaGenerateWithSuffixReadsTheInfillStopType`; `OllamaApiSupportTest#generateTextExtractors` (umgestellt), `#generateWithoutCountsOmitsThemAndToolCallsAreStop`.
 - **Rot-Grün-Nachweis:** ohne den Fix rot (3 HTTP-Tests, `was "stop"`), mit ihm grün (94 Tests der beiden Klassen; Pakete `server`, `json`, `value` 417 grün); SpotBugs grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `6eb8081`
+- **Commit:** java-llama.cpp `887eb93`
 
 <a id="f179"></a>
 ### F179 – java-llama.cpp: Ollama `/api/generate` liest weder `raw` noch `system` und vervollständigt immer roh
@@ -1392,7 +1392,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest#ollamaGenerateWithoutRawAppliesTheChatTemplateLikeOllama` (Aufzeichnungs-Backend: Chat-Weg, `system`, Bild, `thinking`, Zählung), `#ollamaGenerateWithRawCompletesTheBarePromptAndIgnoresSystem`; `OpenAiServerCompletionIntegrationTest#ollamaGenerateRawRoundTrip` (Modell, CI).
 - **Rot-Grün-Nachweis:** ohne den Fix rot (`was "completions"`), mit ihm grün (96 Tests); der F178-Test gab nun explizit `raw: true` an, weil er die Completion-Abbildung prüft; SpotBugs grün. Die modellgestützte Variante läuft nur in CI bzw. beim lokalen Agenten.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `75b3767`
+- **Commit:** java-llama.cpp `f12d970`
 
 <a id="f180"></a>
 ### F180 – java-llama.cpp: OpenAI-Mapper verwerfen `logit_bias`, `n_probs` und `n` still
@@ -1406,7 +1406,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** mit Platzhalter-Setter und unverändertem Mapper rot (4 Tests), mit dem Fix grün (327 Tests der Mapper-, Parameter-, Registry- und Server-Klassen); SpotBugs grün.
 - **Nachtrag (Branch-Review 2026-10-20):** Die Beschreibung stimmte für die Responses-Übersetzung nicht: deren Feldliste `CHAT_PASSTHROUGH_FIELDS` filtert, was den Mapper erreicht, und enthielt `logit_bias`/`n_probs` nicht; nachgezogen mit F226.
 - **Status:** gefixt (der Rest unter (14), Wahrscheinlichkeiten im gestreamten `/v1/completions`, mit F186)
-- **Commit:** java-llama.cpp `3d001d2`
+- **Commit:** java-llama.cpp `cceaaa0`
 
 <a id="f181"></a>
 ### F181 – java-llama.cpp: JNI-Schalen geben Fehlermeldungen als Modified UTF-8 zurück
@@ -1419,7 +1419,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** C++ `JniUtf8.*` (6 in `test_jni_helpers.cpp`: ASCII bleibt bei `ThrowNew`, 4-Byte-Zeichen und ungültiges Byte erreichen den Konstruktor als Originalbytes, dasselbe für `new_string_utf8_impl` und für `jni_guard_impl`); Java `LlamaTrainerTest#aFourByteCharacterInAPathComesBackIntactInTheErrorMessage` (modellfrei, braucht nur `libjllama`; überspringt, wo die Dateinamen-Kodierung den Pfad nicht darstellen kann) und `#aFourByteCharacterInTheTrainingTextReachesTheTrainer` (hält die Jackson-Maskierung fest, von der die Eingabeseite abhängt).
 - **Rot-Grün-Nachweis:** C++: mit durchreichenden Platzhaltern 4 von 6 rot, mit dem Fix 6 von 6 grün, die ganze Suite 640/640. Java gegen die alte Bibliothek rot (`but: was "…/missing-ð.g"`), gegen die neu gebaute grün; `LlamaLoggerTest`, `NativeLibraryLoadSmokeTest`, `RpcServerTest` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `6f530e9`
+- **Commit:** java-llama.cpp `50b45f8`
 
 <a id="f182"></a>
 ### F182 – java-llama.cpp: Gestreamte Anfragen antworten mit 200, bevor das Backend läuft
@@ -1432,7 +1432,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest#aRejectionBeforeTheFirstChunkIsA400OnEveryStreamingRoute`, `#aFailureBeforeTheFirstChunkIsA500OnEveryStreamingRoute`, `#aRejectionAfterTheFirstChunkIsAnInvalidRequestEvent`, `#aRejectionAfterAHeartbeatIsAnEvent`; die vier bestehenden Ereignis-Tests (Responses `response.failed`, Anthropic-Fehlertypen) laufen jetzt mit einem Backend, das nach einem Chunk scheitert (`ScriptedStreamBackend`). Im Agenten `AtmosphereWireContractTest#engineFailureBeforeTheFirstChunkFailsTheTurn` (neu) und `#midStreamEngineFailureCompletesSilentlyRatherThanErroring` (jetzt wirklich nach einem Chunk).
 - **Rot-Grün-Nachweis:** vor dem Umbau rot (die beiden Vor-dem-ersten-Chunk-Tests), danach 63/63 in `OpenAiCompatServerHttpTest` und alle Server-Testklassen grün; der Agent gegen den installierten neuen Kern: vorher rot (`API returned 500: model exploded` statt `null`), nach der Aufteilung `verify` grün (278 Tests, 63 übersprungen, modell- oder bildschirmgebunden); SpotBugs grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `395d9d1`
+- **Commit:** java-llama.cpp `9587087`
 
 <a id="f183"></a>
 ### F183 – java-llama.cpp: Anthropic `stop_sequence` ist immer `null`
@@ -1445,7 +1445,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `AnthropicApiSupportTest#theTranslatedRequestAsksForTheStopWord`, `#theMatchedStopWordIsTheStopSequence`, `#noMatchedStopWordIsANullStopSequence`; `AnthropicStreamTranslatorTest#theMatchedStopWordIsTheStopSequenceOfTheMessageDelta`, `#withoutAStopWordTheStopSequenceIsNull`; `OpenAiRequestMapperTest#verboseIsForwarded`; `InferenceParametersTest` (`withVerbose`); C++ `test_wire_contracts.cpp` (`verbose` im Schema, 5/5).
 - **Rot-Grün-Nachweis:** mit wirkungslosem Platzhalter-Setter rot (5 Tests, die beiden Null-Fälle waren schon grün), mit dem Fix grün (251 Tests der berührten Klassen, `OpenAiCompatServerHttpTest` und `WireNameRegistryTest` eingeschlossen); SpotBugs grün. Zusätzlich Ende-zu-Ende mit einem Zufallsmodell über den echten Server: ohne Stoppwort `max_tokens`/`null`, mit einem Stück der eigenen Greedy-Ausgabe als Stoppwort blockierend und gestreamt `end_turn` mit `stop_sequence: "j%j"`, kein `__verbose` in der Antwort.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `a575714`
+- **Commit:** java-llama.cpp `2b62481`
 
 <a id="f184"></a>
 ### F184 – java-llama.cpp: Mehrere Prompts in einer Anfrage: alle außer dem ersten still verworfen
@@ -1458,7 +1458,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** C++ `CApi.SeveralPromptsInOneRequestAreRefusedNotDropped` (`test_c_api.cpp`, Zufallsmodell): zwei Prompts auf allen drei Wegen abgelehnt, mit der Anzahl in der Meldung; eine Token-Liste und ein Array mit einem Prompt angenommen.
 - **Rot-Grün-Nachweis:** vor dem Fix rot (alle drei Wege `JLLAMA_STATUS_OK`), danach grün; ganze C++-Suite 641/641.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `c4062bd`
+- **Commit:** java-llama.cpp `ffb3a8c`
 
 <a id="f185"></a>
 ### F185 – java-llama.cpp: OpenAI-Antworten ohne `id` und ohne `model`
@@ -1471,7 +1471,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** C++ `CApi.OpenAiAnswersCarryAnIdAndTheModelName` (`test_c_api.cpp`, Zufallsmodell: blockierende Completion und Chat mit `chatcmpl-`-Id und dem Modellnamen aus den Meta-Daten, verschiedene Ids, ein Stream mit genau einer Id über alle Chunks); Java `ModelParametersTest#testSetAlias`, `OpenAiServerCliTest#anExplicitModelIdBecomesTheModelsAlias`; `test_model_flags.cpp` (`--alias` im Server-Parser).
 - **Rot-Grün-Nachweis:** C++ vor dem Fix rot (`id` und `model` leer), danach grün, Suite 642/642; Java mit wirkungslosem Platzhalter rot (2), danach grün (304 Tests der Parameter-, CLI- und Registry-Klassen). Ende-zu-Ende über den echten Server mit `--model-id my-model`: `/v1/models` und die Chat-Antwort nennen beide `my-model`.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `0be9b33`
+- **Commit:** java-llama.cpp `a8faaef`
 
 <a id="f186"></a>
 ### F186 – java-llama.cpp: Das gestreamte `/v1/completions` ist ein selbstgebauter Stream ohne `usage`, Wahrscheinlichkeiten und Token-Prompt
@@ -1484,7 +1484,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** Java `OpenAiServerCompletionIntegrationTest#aStreamedCompletionIsUpstreamsStream` (modellgestützt: Token-Prompt, `logprobs`, eine Id, `usage` mit `prompt_tokens` 2, `finish_reason`, `[DONE]`); C++ `CApi.OaiCompletionsStreamDeliversTextCompletionChunksEndingWithUsage` (Zufallsmodell, dazu die Ablehnungen ohne Prompt, mit zwei Prompts und mit Null-Argument); FFM `FfmLlamaModelIntegrationTest#oaiCompletionStreamEndsWithUsage`; `OpenAiRequestMapperTest` umgestellt (33).
 - **Rot-Grün-Nachweis:** Der Java-Integrationstest mit einem Zufallsmodell vor dem Umbau rot (`400` für den Token-Prompt), danach grün; C++ 643/643; `llama-ffm verify` grün (17 + 4 + 9) gegen die neu gebaute Bibliothek; `OpenAiCompatServerHttpTest` 63, `NativeLibraryLoadSmokeTest` 6 grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `d98a6ad`
+- **Commit:** java-llama.cpp `4fb82c1`
 
 <a id="f187"></a>
 ### F187 – java-llama.cpp: `addLoraScaledAdapter`/`addControlVectorScaled` senden `FNAME,SCALE`, upstream liest `FNAME:SCALE`
@@ -1498,7 +1498,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ModelParametersTest#testAddLoraScaledAdapter` und `#testAddControlVectorScaled` auf `FNAME:SCALE` umgestellt; neu `#aScaledPathContainingAColonIsRefusedWithTheReason` (beide Optionen, Meldung nennt Flag, Format und Pfad, relativer Pfad als Gegenprobe im selben Test).
 - **Rot-Grün-Nachweis:** Vorher scheiterte `new LlamaModel(base().addLoraScaledAdapter(adapter, 1f))` mit `Failed to parse model parameters`. Nachher, end-to-end mit dem Adapterpaar aus M6 (`ggml-org/stories15M_MOE`, Wegwerf-Probe, danach entfernt): `--lora-scaled <rel>:1.0` lädt und liefert denselben Text wie die `--lora`-Referenz, `:0.0` denselben wie ohne Adapter, und der Server meldet `"scale":0.0` zurück — die Skala wirkt also, was über `ModelParameters` vorher gar nicht möglich war. Danach alle Module grün: Kern 2154/0/0/18 (2136 ausgeführt), `ctest` 643/643, SpotBugs 0, Agent 281/0/0/60, `llama-ffm` 30/0/0/0, `llama-langchain4j` 55/0/0/7, `llama-kotlin` 6/0/0/0.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `15f857a`
+- **Commit:** java-llama.cpp `5fff6b8`
 
 <a id="f188"></a>
 ### F188 – java-llama.cpp: Die vier „can be repeated“-Adapteroptionen ersetzen den vorigen Wert statt ihn zu ergänzen
@@ -1511,7 +1511,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ModelParametersTest#theRepeatableAdapterOptionsAccumulateInsteadOfReplacing` (alle vier Optionen, je zwei Aufrufe, mit den erwarteten Listenwerten einschließlich `c.gguf:0.5,d.gguf:1.0`) und `#aValueCarryingACommaOrAQuoteIsWrittenAsAQuotedCsvField` (Komma, Anführungszeichen, und ein einfacher Wert vor einem zu maskierenden).
 - **Rot-Grün-Nachweis:** Die Akkumulationszusicherungen sind gegen `putString` rot (der erste Wert fehlt). Die End-to-end-Probe aus F187 zeigt zwei skalierte Adapter als einen Wert: `--lora-scaled ..\models\moe_shakespeare15M.gguf:0.5,second.gguf:0.25`. Modullaufzahlen wie in F187.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `15f857a`
+- **Commit:** java-llama.cpp `5fff6b8`
 
 <a id="f189"></a>
 ### F189 – java-llama.cpp: Ohne `--model-id` nennen `/v1/models` und die Antworten dasselbe Modell verschieden
@@ -1525,7 +1525,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiServerCliTest#theAdvertisedModelIdBecomesTheModelsAliasWithAndWithoutTheFlag` — ersetzt `anExplicitModelIdBecomesTheModelsAlias`, prüft beide Fälle und dass der Alias und `getModelId()` derselbe String sind.
 - **Rot-Grün-Nachweis:** Der alte Test schrieb das Gegenteil fest und ist gegen den Fix rot. End-to-end (Wegwerf-Probe, danach entfernt), Server ohne `--model-id` über `ServerLauncher`: `/v1/models`, die blockierende Antwort und jeder Stream-Chunk nennen alle `AMD-Llama-135m-code.Q2_K.gguf`, kein absoluter Pfad erreicht eine Antwort, `id` ist `chatcmpl-…` und je Stream eine. Modullaufzahlen wie in F187.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `15f857a`
+- **Commit:** java-llama.cpp `5fff6b8`
 
 <a id="f190"></a>
 ### F190 – java-llama.cpp: Das Skript-Backend des Agenten schreibt unmaskierte Steuerzeichen in seine JSON-Chunks (Modul baut auf Windows nicht grün)
@@ -1538,20 +1538,20 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** Neu `ScriptedBackendTest` (3): jeder Chunk eines Text-Zuges parst als JSON (mit `System.lineSeparator()`, CRLF, LF und einzelnem CR); **jedes** der 32 Steuerzeichen einzeln, also der `default`-Zweig und nicht die vier benannten Fälle; und der Text kommt unverändert aus dem Chunk zurück.
 - **Rot-Grün-Nachweis:** Mit der alten `quote`-Fassung kurz zurückgesetzt: `ScriptedBackendTest` 2 Failures + 1 Error (`System.lineSeparator(): chunk is not JSON`, `U+0000: chunk is not JSON`, `JsonParse Illegal unquoted character ((CTRL-CHAR, code 13))`) und `AgentSessionTest` 1 Failure. Mit dem Fix (Datei danach byte-identisch wiederhergestellt) beide dreimal hintereinander grün, und das ganze Modul 281/0/0/60 — die 60 sind die dokumentierten JLine-Fälle. `spotless:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `3b9d96b`
+- **Commit:** java-llama.cpp `d68aa3d`
 
 <a id="f197"></a>
 ### F197 – java-llama.cpp: `n` > 1 wird auf jedem nativen Completion-Weg still auf eine Antwort reduziert (das gestreamte `/v1/completions` verlor dabei den Schutz aus F180)
 - **Zeit:** 2026-10-20 10:30 UTC
 - **Datei:** `llama/src/main/cpp/jllama_engine.cpp` (`populate_completion_task`), `llama/src/test/cpp/test_c_api.cpp`, `llama/src/test/java/net/ladenthin/llama/server/OpenAiServerCompletionIntegrationTest.java`
 - **Schwere:** mittel (zwei Antworten verlangt, eine geliefert, ohne Hinweis — dieselbe Klasse wie F184)
-- **Historie:** Gefunden beim Review des Branches am 2026-10-20. F180 hatte `n > 1` im Java-Mapper für den gestreamten `/v1/completions` abgelehnt; F186 (`d98a6ad`) verlegte diesen Weg auf den nativen OAI-Pfad und entfernte `toCompletionParameters` und damit die Ablehnung samt ihrer Testzusicherung.
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20. F180 hatte `n > 1` im Java-Mapper für den gestreamten `/v1/completions` abgelehnt; F186 (`4fb82c1`) verlegte diesen Weg auf den nativen OAI-Pfad und entfernte `toCompletionParameters` und damit die Ablehnung samt ihrer Testzusicherung.
 - **Beschreibung:** Upstreams Schema liest `n` als `n_cmpl` mit den harten Grenzen 1 … `n_parallel` (`server-schema.cpp:62`) und beantwortet die weiteren Completions in Kind-Tasks, die der Server anlegt (`server-context.cpp:4888`). Die Engine stellt genau einen Task ein und legt keine Kinder an. Jedes `n` zwischen 2 und der Slot-Zahl wurde also angenommen und mit einer Wahl beantwortet — gemessen vom Reviewer mit dem Zufallsmodell und `setParallel(2)`: `handleCompletionsOai` mit `n:2` eine Wahl, `streamCompletionsOai` ebenso; erst `n:3` scheiterte am Schema. Betroffen: C-API, FFM, `LlamaModel.handle*`, das blockierende `/v1/completions` (leitet den Körper wörtlich weiter) und seit F186 das gestreamte.
 - **Fix:** `populate_completion_task` lehnt `task.params.n_cmpl > 1` nach dem Schema mit `jllama_invalid_request` ab ("a request takes one completion, this one asks for 'n' = N; send separate requests"), wie mehrere Prompts (F184). Das deckt die blockierenden, gestreamten und Chat-Wege an einer Stelle.
 - **Tests:** `CApi.SeveralCompletionsInOneRequestAreRefusedNotDropped` (eigenes Modell mit `-np 2`; `jllama_completions_oai`, `jllama_completions` mit `n_cmpl`, der Stream-Request und `jllama_chat_completions` werden abgelehnt, `n:1` liefert eine Wahl), `OpenAiServerCompletionIntegrationTest#aCompletionAskingForSeveralChoicesIsAnswered400OnBothRoutes` (beide `/v1/completions`-Routen, das Testmodell jetzt mit `setParallel(2)`), `#severalChoicesAreRefusedOnTheModelsOwnCompletionAndChatPaths`.
 - **Rot-Grün-Nachweis:** Der C-API-Test gegen den alten Code rot (alle vier Wege `OK` statt `INVALID_REQUEST`), mit dem Fix grün; `ctest` grün. Die beiden Java-Tests lokal mit dem Zufallsmodell grün (die zwei Infill-Tests der Klasse scheitern dort erwartungsgemäß, das Zufallsmodell hat keine FIM-Tokens); in CI mit dem echten Modell.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `447de71`
+- **Commit:** java-llama.cpp `7a51bbc`
 
 <a id="f198"></a>
 ### F198 – java-llama.cpp: `FfmTextToSpeech.close()` gibt die Engine frei, während `synthesize()` auf einem anderen Thread in ihr läuft (FFM-Hälfte von F16)
@@ -1564,7 +1564,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `FfmTextToSpeechTest` (5, ohne Bibliothek und Modell): `closeWaitsForASynthesisInsideTheNativeCall`, `synthesizeAfterCloseIsRefusedWithoutTouchingTheHandle`, `closeTwiceFreesOnce`, `synthesizeReturnsTheBackendsWav`, `synthesizeWithoutTextIsRefused`.
 - **Rot-Grün-Nachweis:** Mit dem Seam, aber ohne Lock: `closeWaitsForASynthesisInsideTheNativeCall` rot (`close()` kehrte zurück, während die Synthese noch lief); mit dem Lock grün. `llama-ffm` `verify` 35/35 mit dem Zufallsmodell.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `d6be2c5`
+- **Commit:** java-llama.cpp `c07aad0`
 
 <a id="f199"></a>
 ### F199 – java-llama.cpp: Ein Heartbeat vor dem Eröffnungsevent verschluckt `message_start` (Anthropic) bzw. `response.created` (Responses)
@@ -1577,7 +1577,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponseStreamTest` (4, über einen `HttpExchange`-Fake ohne Socket): `theOpeningIsWrittenFirstWhenItIsSetBeforeTheFirstWrite`, `anOpeningSetAfterAHeartbeatStartedTheStreamIsStillWritten`, `anErrorBeforeTheFirstWriteIsAnsweredWithItsStatusAndNoOpening`, `anErrorAfterTheFirstWriteIsLeftToTheStream`.
 - **Rot-Grün-Nachweis:** Ohne den Fix `anOpeningSetAfterAHeartbeatStartedTheStreamIsStillWritten` rot (erwartet `: ping\nOPEN\nDATA\n`, war `: ping\nDATA\n`); mit ihm grün. `OpenAiCompatServerHttpTest` 63/63.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `bbdafda`
+- **Commit:** java-llama.cpp `aa58171`
 
 <a id="f200"></a>
 ### F200 – java-llama.cpp: `chatBatch` startet einen Thread pro Anfrage ohne Obergrenze, und ein `Error` beendet das Warten vor den anderen Anfragen
@@ -1590,7 +1590,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `BatchDispatchTest`: neu `runEachOnItsOwnThread_runsNoMoreRequestsAtOnceThanTheBound` (12 Anfragen, Grenze 3, höchstens 3 gleichzeitig), `runEachOnItsOwnThread_anErrorIsThrownAfterTheOthersFinished`, `runEachOnItsOwnThread_aBoundBelowOneIsRefused`.
 - **Rot-Grün-Nachweis:** Mit der neuen Signatur, aber ohne Grenze und ohne den Error-Pfad: die drei neuen Tests rot (12 gleichzeitig statt 3; zwei statt null fertige Anfragen fehlten beim Wurf; keine Ablehnung von 0); mit dem Fix 11/11 grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `3e996db`
+- **Commit:** java-llama.cpp `a2bfad8`
 
 <a id="f201"></a>
 ### F201 – java-llama.cpp: `--model-id` mit Komma (oder abgeleitet aus einem Dateinamen mit Komma) wird zu mehreren llama.cpp-Aliasen; `/v1/models` und die Antworten nennen das Modell verschieden
@@ -1603,7 +1603,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiServerCliTest`: `aModelIdWithACommaIsRefused`, `aModelIdLlamaCppWouldStripIsRefused`, `aFileNameWithACommaIsAdvertisedAsItsAlias`.
 - **Rot-Grün-Nachweis:** Ohne den Fix alle drei rot (keine Ablehnung; abgeleitete ID `a,b.gguf`); mit ihm 54/54 grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `707f0f2`
+- **Commit:** java-llama.cpp `8e2642f`
 
 <a id="f202"></a>
 ### F202 – java-llama.cpp: Die Anthropic-Route holt für das Stoppwort upstreams ganzes Debug-Objekt samt gerendertem Prompt durch JNI
@@ -1616,7 +1616,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `AnthropicApiSupportTest.theTranslatedRequestAsksForTheStopWord` (erweitert), `OpenAiRequestMapperTest.responseFieldsAreForwarded`, `responseFieldsThatAreNotStringsAreRefused`, `InferenceParametersTest.withResponseFieldsWritesTheProjectionAsAStringArray`, modellgestützt `OpenAiCompatServerIntegrationTest.theDebugObjectTheAnthropicRouteAsksForCarriesOnlyTheStopWord` (`__verbose` hat genau den Schlüssel `stopping_word`); C++ `test_wire_contracts` prüft den neuen Schlüssel gegen upstreams Schema.
 - **Rot-Grün-Nachweis:** Mit `RequestField`/`withResponseFields`, aber dem alten Mapper und der alten Übersetzung: drei Tests rot; mit dem Fix grün (221 Tests der fünf Klassen, Integrationstest 13/13 mit dem Zufallsmodell, ctest Wire 6/6).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `05f356b`
+- **Commit:** java-llama.cpp `29ff8c1`
 
 <a id="f203"></a>
 ### F203 – java-llama.cpp: `chat_template_kwargs`: ein Wert mit mehr als einem JSON-Wert wird still auf den ersten gekürzt
@@ -1629,7 +1629,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ParameterJsonSerializerTest.testBuildRawValueObject_trailingTokensFallBackToString`, `InferenceParametersTest.aChatTemplateKwargHoldingTwoValuesIsKeptAsText` (beide öffentlichen Setter).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot (`{"two":true,…,"object":{"a":1}}`); mit ihm grün (40 + 114).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `266d70d`
+- **Commit:** java-llama.cpp `af84cb5`
 
 <a id="f204"></a>
 ### F204 – java-llama.cpp: `throw_utf8_impl`/`new_string_utf8_impl` rufen JNI über einer schon anstehenden Java-Exception auf und ersetzen sie
@@ -1642,7 +1642,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** C++ `JniUtf8.APendingExceptionIsLeftInPlaceOnBothPaths` (ASCII- und 4-Byte-Pfad, kein `ThrowNew`, kein String gebaut, nichts geworfen; `new_string_utf8_impl` ohne `NewStringUTF`).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot; mit ihm grün, ctest 645/645.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `2611a38`
+- **Commit:** java-llama.cpp `da6fa8e`
 
 <a id="f205"></a>
 ### F205 – java-llama.cpp: Ollama `/api/generate` ohne Prompt (das Vorladen eines Modells) erzeugt eine Antwort auf einen leeren Nutzer-Turn
@@ -1655,7 +1655,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest.ollamaGenerateWithoutAPromptOnlyReportsTheModelLoaded` (drei Formen, das Backend wird nicht gerufen), `OllamaApiSupportTest.aGenerateRequestWithoutAPromptOrSuffixOnlyLoadsTheModel`.
 - **Rot-Grün-Nachweis:** Ohne den Fix der HTTP-Test rot (das Backend generierte); mit ihm grün (64 + 37).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `6c176d5`
+- **Commit:** java-llama.cpp `200cc90`
 
 ### F213 – java-llama.cpp: Ollama `/api/chat` mit einem `messages`-Element, das kein Objekt ist, schließt die Verbindung ohne Antwort
 - **Zeit:** 2026-10-20 19:55 UTC
@@ -1667,7 +1667,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest.aNonObjectOllamaChatMessageIsA400NotADroppedConnection` (ungestreamt und gestreamt, das Backend wird nicht gerufen), `OllamaApiSupportTest.aNonObjectMessageIsRejectedWithItsIndex` (String, `null`, Array), `OllamaApiSupportTest.messagesThatAreNoArrayAreRejected`.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: der HTTP-Test mit `java.net.SocketException: Unexpected end of file from server` aus `getResponseCode()`, `aNonObjectMessageIsRejectedWithItsIndex` mit „Unexpected exception type thrown, expected: <java.lang.IllegalArgumentException> but was: <java.lang.ClassCastException>“, `messagesThatAreNoArrayAreRejected` mit „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“; mit dem Fix grün (`OllamaApiSupportTest` 39, `OpenAiCompatServerHttpTest` 65, `OpenAiRequestMapperTest` 35, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `538cafb`
+- **Commit:** java-llama.cpp `6295831`
 
 ### F214 – java-llama.cpp: Eine `IOException` des Backends vor dem ersten Chunk gilt als Verbindungsabbruch — keine Antwort, nur DEBUG
 - **Zeit:** 2026-10-20 20:09 UTC
@@ -1679,7 +1679,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest.aBackendIOExceptionBeforeTheFirstChunkIsA500OnEveryStreamingRoute` (alle fünf Streaming-Routen, `IoFailingBackend`), `ResponseStreamTest.aStreamWhoseHeadersCouldNotBeWrittenHasStarted`.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: der HTTP-Test mit `java.net.SocketException: Unexpected end of file from server` aus `getResponseCode()`, der `ResponseStream`-Test mit „Expected: is <false> but: was <true>“ (`answerIfNotStarted` nach gescheitertem Kopfzeilen-Schreiben); mit dem Fix grün (`ResponseStreamTest` 5, `OpenAiCompatServerHttpTest` 66, `OllamaApiSupportTest` 39, `LlamaArchitectureTest` 13). Modellgestützt mit dem Winzmodell `OpenAiCompatServerIntegrationTest` 13/13 grün; in `OpenAiServerCompletionIntegrationTest` scheitern nur die beiden Infill-Fälle (500, das Winzmodell hat keine FIM-Token), die keine Streaming-Route berühren. `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `03392c7`
+- **Commit:** java-llama.cpp `d00936b`
 
 ### F215 – java-llama.cpp: Ollama `/api/generate` mit `raw: true` verwirft `system`, `template` und `context` still — Ollama antwortet 400
 - **Zeit:** 2026-10-20 20:20 UTC
@@ -1691,7 +1691,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest.ollamaGenerateWithRawAndASystemPromptIsRejectedLikeOllama` (`system`, `template`, `context`, mit `suffix`, ohne Prompt; das Backend wird nicht gerufen) ersetzt `ollamaGenerateWithRawCompletesTheBarePromptAndIgnoresSystem`; `ollamaGenerateWithRawCompletesTheBarePrompt` (der Weg ohne Konflikt); `OllamaApiSupportTest.rawWithSystemTemplateOrContextConflictsLikeOllama` (vier Konflikte, vier zulässige Formen).
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Handler (mit einem `hasRawConflict`, das `false` liefert) rot: der HTTP-Test mit „Expected: is <400> but: was <200>“ für `{"model":"test-model","prompt":"once upon","system":"x","raw":true,"stream":false}`, der Einheitstest mit „Expected: is <true> but: was <false>“; mit dem Fix grün (`OllamaApiSupportTest` 40, `OpenAiCompatServerHttpTest` 67, `LlamaArchitectureTest` 13), `spotbugs:check` und `javadoc:javadoc` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `d94fbd7`
+- **Commit:** java-llama.cpp `7933eb0`
 
 ### F216 – java-llama.cpp: Ollama `/api/chat` ohne Nachrichten (Ollamas Vorladen) wird mit 400 abgewiesen statt mit der Ladeantwort beantwortet
 - **Zeit:** 2026-10-20 20:27 UTC
@@ -1703,7 +1703,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest.ollamaChatWithoutMessagesOnlyReportsTheModelLoaded` (ohne `messages`, `[]`, `null` mit `stream`, `keep_alive: 0`; das Backend wird nicht gerufen — `RecordingBackend` zeichnet dafür jetzt auch `stream` auf), `OllamaApiSupportTest.aChatRequestWithoutMessagesOnlyLoadsTheModel`.
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Handler (mit Stubs, die `false` bzw. `{}` liefern) rot: der HTTP-Test mit „Expected: is <true> but: was <false>“ für `done` bei `{"model":"test-model"}` (das Testbackend streamte eine Antwort; das echte Backend weist die leere Konversation mit 400 ab), der Einheitstest mit „Expected: is <true> but: was <false>“; mit dem Fix grün (`OllamaApiSupportTest` 41, `OpenAiCompatServerHttpTest` 68, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `d99271c`
+- **Commit:** java-llama.cpp `a4d0604`
 
 ### F217 – java-llama.cpp: Ollamas `think: true` wird verworfen — ein Server mit abgeschaltetem Denken übergeht es still
 - **Zeit:** 2026-10-20 20:31 UTC
@@ -1715,7 +1715,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OllamaApiSupportTest.thinkTrueSwitchesThinkingOnExplicitly` (Übersetzer → `OpenAiRequestMapper` → `InferenceParameters.toJson()`, für `/api/chat` und `/api/generate`).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: is <true> but: was <false>“ (`enable_thinking` fehlte in `chat_template_kwargs`); mit dem Fix grün (`OllamaApiSupportTest` 42, `OpenAiRequestMapperTest` 35, `OpenAiCompatServerHttpTest` 68, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `736d247`
+- **Commit:** java-llama.cpp `eade620`
 
 ### F218 – java-llama.cpp: Chat-Anfrage mit `json_schema` und `grammar` verliert das Schema still statt upstreams 400
 - **Zeit:** 2026-10-20 21:24 UTC
@@ -1727,7 +1727,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiRequestMapperTest#jsonSchemaAndGrammarAreBothForwardedSoUpstreamCanRefuseThePair` (ersetzt die zweite Hälfte von `#jsonSchemaReachesTheMappedRequestUnlessAGrammarIsGiven`, deren erste Hälfte als `#jsonSchemaReachesTheMappedRequest` bleibt); modellgestützt `ErrorHandlingTest#testJsonSchemaWithGrammarInAChatIsAnInvalidRequest` (ein Chat mit beiden Feldern ist eine `InvalidRequestException` mit upstreams Text „Cannot use both json_schema and grammar“ — der Beleg, dass das Durchreichen beim Client als 400 ankommt).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: is "object" but: was ""“ (`json_schema` fehlte im gemappten Körper); mit dem Fix grün (`OpenAiRequestMapperTest` 36/36). `ErrorHandlingTest#testJsonSchemaWithGrammarInAChatIsAnInvalidRequest` grün mit dem lokalen Winzmodell (CPU); in der Klasse scheitert unabhängig davon `#testHandleInfillMissingInputSuffix`, weil das Winzmodell keine FIM-Token hat. `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `6d78c47`
+- **Commit:** java-llama.cpp `fea0a1d`
 
 ### F219 – java-llama.cpp: Chat-Mapper normalisiert `max_tokens` unter -1 und `n` unter 1 still auf die Vorgaben
 - **Zeit:** 2026-10-20 21:30 UTC
@@ -1739,7 +1739,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiRequestMapperTest#tokenCapBelowMinusOneReachesUpstreamsRefusal`, `#zeroOrNegativeChoicesAreRefusedLikeUpstream` (`n` 0 mit Meldung, `n` -1), als Schutz `#explicitTokenCapMinusOneLeavesTheServerDefault`; modellgestützt `ErrorHandlingTest#testNPredictMinusTwoInAChatIsAnInvalidRequest` (ein Chat mit `n_predict` -2 ist eine `InvalidRequestException`, die `n_predict` nennt — der Beleg, dass das Durchreichen beim Client als 400 ankommt).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: is <-2> but: was <-1>“ (`n_predict` fehlte) und „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ (`n: 0`); mit dem Fix grün (`OpenAiRequestMapperTest` 39/39, `OpenAiCompatServerHttpTest` 68/68, `AnthropicApiSupportTest` 26/26, `ResponsesApiSupportTest` 54/54, `OllamaApiSupportTest` 42/42). `ErrorHandlingTest#testNPredictMinusTwoInAChatIsAnInvalidRequest` grün mit dem lokalen Winzmodell (CPU); `#testHandleInfillMissingInputSuffix` scheitert unabhängig davon am Winzmodell ohne FIM-Token. `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `1817210`
+- **Commit:** java-llama.cpp `63f05e1`
 
 ### F220 – java-llama.cpp: Chat-Mapper verwirft `top_logprobs` ohne `logprobs` still und liest ein ganzzahliges `logprobs` als `n_probs` 20
 - **Zeit:** 2026-10-20 21:40 UTC
@@ -1751,7 +1751,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiRequestMapperTest#topLogprobsWithoutLogprobsIsRefusedLikeUpstream` (ohne, mit `false`, mit `null` und neben einer Zahl), `#anIntegerLogprobsMapsToNProbsLikeUpstreamsSchemaAlias`, `#nProbsWinsOverAnIntegerLogprobsLikeUpstream`, `#aLogprobsThatIsNeitherBooleanNorNumberIsRefused` (mit `n_probs` daneben keine Ablehnung, wie upstream); als Schutz `#topLogprobsNullWithoutLogprobsIsTheDefault`, die drei F123-Tests unverändert grün.
 - **Rot-Grün-Nachweis:** Ohne den Fix vier rot: „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ (`top_logprobs: 3` allein bzw. `logprobs: "true"`), „Expected: is <2> but: was <20>“ (`logprobs: 2`), „Expected: is <5> but: was <20>“ (`n_probs: 5` neben `logprobs: 2`); mit dem Fix grün (`OpenAiRequestMapperTest` 44/44, `OpenAiCompatServerHttpTest` 68/68, `AnthropicApiSupportTest` 26/26, `ResponsesApiSupportTest` 54/54, `OllamaApiSupportTest` 42/42, `LlamaArchitectureTest` 13/13). `spotless:apply` grün; `spotbugs:check` meldete zuerst zweimal `WEM_WEAK_EXCEPTION_MESSAGING` für die festen Texte, mit der Unterdrückung grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `ededfc5`
+- **Commit:** java-llama.cpp `ca1baa9`
 
 ### F221 – java-llama.cpp: Anthropic meldet ein getroffenes Stoppwort als `stop_reason` `end_turn` statt `stop_sequence`
 - **Zeit:** 2026-10-20 22:30 UTC
@@ -1763,7 +1763,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `AnthropicApiSupportTest#aMatchedStopWordIsReportedAsStopReasonStopSequence`, `#theMatchedStopWordIsTheStopSequence` (Erwartung von `end_turn` auf `stop_sequence` umgestellt), `#onlyAStopThatAStopWordEndedIsStopSequence` (die drei unveränderten Zweige mit Wort und `stop` ohne Wort), als Schutz `#withoutAStopWordAStopIsStillEndTurn`; `AnthropicStreamTranslatorTest#aMatchedStopWordIsTheStopReasonStopSequenceOfTheMessageDelta`, `#theMatchedStopWordIsTheStopSequenceOfTheMessageDelta` (umgestellt).
 - **Rot-Grün-Nachweis:** Ohne den Fix vier rot: „Expected: is "stop_sequence" but: was "end_turn"“ (beide blockierenden Fälle) und „Expected: a string containing "\"stop_reason\":\"stop_sequence\""“ (beide gestreamten); mit dem Fix grün (`AnthropicApiSupportTest` 29/29, `AnthropicStreamTranslatorTest` 8/8, `OpenAiCompatServerHttpTest` 68/68). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `a1be394`
+- **Commit:** java-llama.cpp `7e965d9`
 
 ### F222 – java-llama.cpp: Gestreamte Anthropic-Antwort öffnet bei Denkinhalt nach Text einen zweiten Thinking-Block, während der Textblock offen bleibt
 - **Zeit:** 2026-10-20 22:35 UTC
@@ -1775,7 +1775,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `AnthropicStreamTranslatorTest#reasoningAfterTextClosesTheTextBlockBeforeANewThinkingBlock` (zweiter Thinking-Start an Index 2, letztes Textdelta an Index 3, Stopp von 1 vor dem zweiten Thinking-Start, kein Delta an 1 nach dessen Stopp, `end()` schließt genau einen Block, Index 3); die übrigen Tests der Klasse unverändert grün.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: a string containing "\"index\":3,\"delta\":{\"type\":\"text_delta\",\"text\":\"d\"}"“ (das Delta „d“ ging an Index 1); mit dem Fix grün (`AnthropicStreamTranslatorTest` 9/9, `AnthropicApiSupportTest` 29/29, `OpenAiCompatServerHttpTest` 68/68). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `e1de898`
+- **Commit:** java-llama.cpp `cb123a9`
 
 ### F223 – java-llama.cpp: Anthropic `max_tokens`, das keine Zahl ist, wird still durch die Vorgabe 4096 ersetzt statt abgewiesen
 - **Zeit:** 2026-10-20 22:40 UTC
@@ -1787,7 +1787,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `AnthropicApiSupportTest#aMaxTokensThatIsNotANumberIsRefused` (`"100"` und `true`, Meldung nennt `max_tokens`), als Schutz `#requestWithNullMaxTokensIsCappedLikeAbsent` (vorher und nachher grün) und `#requestWithoutMaxTokensIsCappedLikeUpstream`; `OpenAiCompatServerHttpTest#aStringMaxTokensOnTheAnthropicRouteIsA400InvalidRequestError` (`stream` false und true: 400, `"type":"invalid_request_error"`, nichts generiert).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „"100" ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ und „Expected: is <400> but: was <200>“; nur mit der Übersetzungsseite des Fixes scheiterte der HTTP-Test mit „java.net.SocketException: Unexpected end of file from server“ (der Beleg, dass die Ablehnung ohne das verlegte `try` als abgebrochene Verbindung ankäme); mit dem ganzen Fix grün (`AnthropicApiSupportTest` 31/31, `AnthropicStreamTranslatorTest` 9/9, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `4849673`
+- **Commit:** java-llama.cpp `82bef4a`
 
 ### F224 – java-llama.cpp: Responses `input_image` ohne URL und fremde Werkzeugergebnis-Teile werden still verworfen statt abgewiesen
 - **Zeit:** 2026-10-20 23:05 UTC
@@ -1799,7 +1799,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesApiSupportTest#inputImageWithoutAUrlIsRejectedLikeUpstream`, `#toolOutputPartOfAnotherTypeIsRejectedLikeUpstream`, `#toolOutputPartWithoutATypeIsRejectedLikeUpstream`, `#toolOutputImageWithoutAUrlIsRejectedLikeUpstream`, `#toolOutputImageInObjectFormKeepsItsUrl`; die 400-Abbildung pinnt schon `OpenAiCompatServerHttpTest#responsesWithAnInputFileIsRejectedLikeUpstream`.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot (5 Fehlschläge: viermal „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“, einmal „Expected: is "image_url" but: was ""“), mit dem Fix grün (`ResponsesApiSupportTest` 59/59, `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `ffd3ae4`
+- **Commit:** java-llama.cpp `e372019`
 
 ### F225 – java-llama.cpp: Responses `function_call` mit Objekt-`arguments` wird still zu `"{}"`
 - **Zeit:** 2026-10-20 23:07 UTC
@@ -1811,19 +1811,19 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesApiSupportTest#functionCallWithArgumentsThatAreNotAStringIsRejectedLikeUpstream` (Objekt, Array, Zahl, Boolean; Meldung nennt `'arguments'` und die `call_id`); `#functionCallWithoutArgumentsBecomesAnEmptyArgumentsObject` um `"arguments":null` erweitert (vorher und nachher grün, pinnt, dass `null` weiter `"{}"` ist).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („{"city":"Paris"} ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit dem Fix grün (`ResponsesApiSupportTest` 60/60, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `fdc800e`
+- **Commit:** java-llama.cpp `4913acf`
 
 ### F226 – java-llama.cpp: Responses-Route verwirft `logit_bias` und `n_probs` still, obwohl der Chat-Mapper sie liest
 - **Zeit:** 2026-10-20 23:12 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`CHAT_PASSTHROUGH_FIELDS` und seine Javadoc)
 - **Schwere:** niedrig (ein per `logit_bias` gesperrtes Token wurde auf `/v1/responses` trotzdem erzeugt, ohne Hinweis)
-- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J5-3). Die Liste entstand mit F106 (`87635b2`) gegen den damaligen Mapper; F180 (`3d001d2`) brachte dem Mapper `logit_bias` und `n_probs` bei und vermerkte, das erreiche auch die Responses-Übersetzung – die Liste filtert aber, was kopiert wird, und wurde nicht nachgezogen. F183/F202 fügten `verbose` und `response_fields` hinzu, ebenfalls ohne die Liste.
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J5-3). Die Liste entstand mit F106 (`b370643`) gegen den damaligen Mapper; F180 (`cceaaa0`) brachte dem Mapper `logit_bias` und `n_probs` bei und vermerkte, das erreiche auch die Responses-Übersetzung – die Liste filtert aber, was kopiert wird, und wurde nicht nachgezogen. F183/F202 fügten `verbose` und `response_fields` hinzu, ebenfalls ohne die Liste.
 - **Beschreibung:** Upstreams `convert_responses_to_chatcmpl` (`server-chat.cpp:15`, b11639) beginnt mit `json chatcmpl_body = response_body;` und kopiert damit jedes Feld; ein `logit_bias` auf upstreams `/v1/responses` erreicht das Schema (`server-schema.cpp:382`) und wirkt. Hier kopierte die Übersetzung nur die Felder ihrer Liste, deren Javadoc behauptete, es seien die, die der Chat-Mapper liest; `logit_bias` und `n_probs` fehlten, die Anfrage lief ohne sie. Der parametrisierte Test zählte nur die Felder der Liste auf und konnte eine Lücke nicht sehen. Auch die CHANGELOG-Zeile zu F180 (alle Chat-Routen einschließlich Responses reichen `logit_bias`/`n_probs` weiter) stimmte damit nicht.
 - **Fix:** `logit_bias` und `n_probs` stehen in der Liste (`n_probs` aus Parität mit upstreams Annahme, sichtbar wird es nicht: die Responses-Ausgabe trägt hier wie upstream keine Wahrscheinlichkeiten). Die Javadoc sagt jetzt, was die Liste ist (die vom Mapper gelesenen Felder, deren Wirkung einen Responses-Client erreichen kann) und nennt die bewussten Auslassungen: die oben übersetzten Strukturfelder, `verbose`/`response_fields` (die Responses-Ausgabe trägt weder das Debug-Objekt noch eine Projektion; weitergereicht zöge `verbose` nur upstreams Debug-Objekt durch JNI, um es zu verwerfen, die Kosten, die F202 auf der Anthropic-Route entfernte) und chats `logprobs`/`top_logprobs` (die Responses-Form ist `top_logprobs` mit `include`, die Ausgabe trägt keine Wahrscheinlichkeiten). Der vorgeschlagene reflektive Wächter über die `request.path(…)`-Literale des Mappers wurde nicht gebaut (er müsste Quelltext lesen und eine große Ausnahmeliste pflegen); die Ausnahmeliste der Javadoc ist der Vertrag.
 - **Tests:** `ResponsesApiSupportTest#requestFieldsTheChatMapperReadsPassThroughLikeUpstream` um die Zeilen `logit_bias|{"42":-100}` und `n_probs|3` erweitert.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected: is <{"42":-100}> but: was <>“ und „Expected: is <3> but: was <>“), mit dem Fix grün (`ResponsesApiSupportTest` 62/62, `OpenAiCompatServerHttpTest` 69/69, `OpenAiRequestMapperTest` 44/44). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `365fcdb`
+- **Commit:** java-llama.cpp `88f823e`
 
 ### F227 – java-llama.cpp: `tool_choice`, das eine Funktion benennt, lässt bei mehreren Werkzeugen jedes zu
 - **Zeit:** 2026-10-20 23:21 UTC
@@ -1835,7 +1835,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesApiSupportTest#toolChoiceNamingAFunctionForwardsOnlyThatTool`, `#toolChoiceNamingAnUnknownFunctionIsRejected`, `#toolChoiceOfTypeFunctionWithoutANameIsRejected` und dieselben drei in `OpenAiRequestMapperTest`; die F109-Tests `#toolChoiceNamingAFunctionRequiresAToolCall` (ein Werkzeug) beider Klassen bleiben grün.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot (6 Fehlschläge: je Klasse „Expected: is <1> but: was <2>“ und zweimal „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit dem Fix grün (`ResponsesApiSupportTest` 65/65, `OpenAiRequestMapperTest` 47/47, `OpenAiCompatServerHttpTest` 69/69, `AnthropicApiSupportTest` 31/31, `OllamaApiSupportTest` 42/42, `LlamaArchitectureTest` 13/13). `spotless:apply` und `spotbugs:check` grün (eine erste Fassung mit fester Meldung ohne Namen fiel bei SpotBugs als `WEM_WEAK_EXCEPTION_MESSAGING` durch; die Meldung nennt jetzt das `tool_choice`).
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `f888bde`
+- **Commit:** java-llama.cpp `740938d`
 
 ### F228 – java-llama.cpp: Responses-Eingabe-Items unbekannten Typs werden zu leeren Nutzernachrichten statt abgewiesen
 - **Zeit:** 2026-10-20 23:26 UTC
@@ -1847,7 +1847,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesApiSupportTest#inputItemOfAnUnknownTypeIsRejectedLikeUpstream` (Meldung nennt upstreams Text und `custom_tool_call`), als Schutz `#inputItemWithoutATypeStillMapsToAMessage` (vorher und nachher grün).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit dem Fix grün (`ResponsesApiSupportTest` 67/67, `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `647dd57`
+- **Commit:** java-llama.cpp `beaffcc`
 
 ### F229 – java-llama.cpp: Abgeschnittene Responses-Antwort (`finish_reason` `length`) wird als `completed` gemeldet
 - **Zeit:** 2026-10-20 23:33 UTC
@@ -1859,7 +1859,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesStreamTranslatorTest#maxTokensCutOffEndsWithResponseIncomplete` (Text, `length`, dann der reine Usage-Chunk; `response.incomplete`, kein `response.completed`, Status und Grund, Nachrichten-Item `incomplete`), `#aStoppedAnswerStaysCompleted`; `ResponsesApiSupportTest#responseCutOffAtTheTokenLimitIsIncomplete`, `#responseWrapsOutputMessageWithOutputTextAndUsage` prüft zusätzlich, dass eine `stop`-Antwort kein `incomplete_details` trägt. Die modellgestützten `OpenAiCompatServerIntegrationTest#responsesNonStreamingRoundTrip`/`#responsesStreamingRoundTrip` erwarteten mit `max_output_tokens` 16 `completed`; sie fragen jetzt eine Antwort ab, die in 4 Token nicht passt („Count from 1 to 100 …“), und erwarten `incomplete`/`response.incomplete` mit dem Grund – deterministisch statt davon abhängig, ob das Modell vor 16 Token aufhört.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected: is "incomplete" but: was "completed"“ und „Expected: a string containing "event: response.incomplete" but: was "event: response.output_text.done …"“); umgekehrt scheiterten nach dem Fix die unveränderten Integrationstests mit dem lokalen Winzmodell („Expected: is "completed" but: was "incomplete"“, der Beweis, dass der Fix den echten Server erreicht); mit dem Fix und den angepassten Integrationstests grün (`ResponsesApiSupportTest` 68/68, `ResponsesStreamTranslatorTest` 7/7, `OpenAiCompatServerHttpTest` 69/69, `OpenAiCompatServerIntegrationTest` 13/13 mit dem Winzmodell, zweimal). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** java-llama.cpp `69a0791`
+- **Commit:** java-llama.cpp `ad8b0b1`
 
 ## Offene Verdachte ohne Fund-ID
 

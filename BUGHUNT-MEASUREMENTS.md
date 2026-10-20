@@ -15,7 +15,7 @@ Auftrag. Hintergrund in `BUGHUNT-FOUND.md` (die Fund-IDs) und `CHANGELOG.md` (�
 
 - **Nur messen und berichten.** Keine Produktionsänderung, keine Fixes. Wegwerf-Proben (Testklassen,
   kleine `main`-Programme) nach dem Lauf entfernen; committet wird nur diese Datei mit den Ergebnissen.
-- Arbeitsstand: Branch `ccr-90fc5f6a-vs4s0f` (mindestens `13ddf17`). Pin: llama.cpp b11639.
+- Arbeitsstand: Branch `ccr-90fc5f6a-vs4s0f` (mindestens `573619a`). Pin: llama.cpp b11639.
 - Dateien aus `.github/shared-files.sha256` nicht verändern.
 - Jeder Punkt wird beantwortet, auch wenn er nicht ausführbar war (mit Grund). Zu jedem Ergebnis die
   Umgebung (CPU, Kerne, RAM, GPU, OS, JDK) und die wörtlichen Ausgaben, die das Ergebnis tragen.
@@ -82,7 +82,7 @@ backend=cpu
 kind=library
 classifier=cpu-windows-x86-64
 jllama.version=6.0.0-SNAPSHOT
-jllama.commit=c56982b2823210075dd0bcecf0c042051b91d002
+jllama.commit=86d0f8a8746feb4accc998c67c80e44ffd63874f
 patches=0001,0002,0003,0006,0007,0008,0014,0015,0016,0017,0018,0019,0020,0021
 patches.sha256=0176a9b12e147b97027b393ca107f559bc9c997f6076b5a94390957bf10106b8
 compiler=MSVC 19.44.35229.0
@@ -90,7 +90,7 @@ toolkit=none
 signed=no
 ```
 
-Arbeitsstand also `c56982b2` auf `ccr-90fc5f6a-vs4s0f` (die verlangte Mindesthöhe `13ddf17` ist
+Arbeitsstand also `86d0f8a8` auf `ccr-90fc5f6a-vs4s0f` (die verlangte Mindesthöhe `573619a` ist
 enthalten), Pin b11639, alle 14 Patches angewandt.
 
 **Modelle.** Die elf Zeilen aus `.github/models.csv` lagen bereits vollständig in `models/`; nichts
