@@ -135,6 +135,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F203](#f203) — niedrig — *gefixt*
 - [F204](#f204) — niedrig bis mittel — *gefixt*
 - [F205](#f205) — niedrig — *gefixt*
+- [F213](#f213) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1634,6 +1635,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix der HTTP-Test rot (das Backend generierte); mit ihm grün (64 + 37).
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `6c176d5`
+
+### F213 – java-llama.cpp: Ollama `/api/chat` mit einem `messages`-Element, das kein Objekt ist, schließt die Verbindung ohne Antwort
+- **Zeit:** 2026-10-20 19:55 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (`toOpenAiChatRequest`), `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`handleOllamaChat`)
+- **Schwere:** niedrig (eine Anfrage mit falscher Form bekommt statt 400 eine geschlossene Verbindung; sichtbar nur auf TRACE)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J1-1). Dieselbe Klasse wie F89 (`handleResponses` rief den Übersetzer außerhalb der Fehlerbehandlung auf); `/api/chat` war die letzte Ollama-Route mit diesem Aufbau.
+- **Beschreibung:** `handleOllamaChat` rief `OllamaApiSupport.toOpenAiChatRequest` vor dem `try` auf, das Ablehnungen auf 400 und Fehler auf 500 abbildet. Der Übersetzer kopiert jedes Element von `messages` mit `ObjectNode message = ollamaMessage.deepCopy()`; für einen String, `null` oder ein Array wirft der vom Compiler eingefügte Cast eine `ClassCastException`. Sie verließ den Handler über `finally { exchange.close(); }` ohne gesendete Kopfzeilen, der JDK-Server schloss die Verbindung ohne Statuszeile und protokollierte nur auf TRACE — gestreamt wie ungestreamt (die Übersetzung liegt vor der Verzweigung). Ein `messages`, das kein Array ist, wurde zudem still als „keine Nachrichten“ gelesen. upstream (`common/chat.cpp`, b11639) lehnt beides mit `std::invalid_argument` ab, also 400.
+- **Fix:** Der Übersetzer prüft die Form und wirft eine `IllegalArgumentException` mit upstreams Wortlaut plus Index (`Expected 'messages[1]' to be an object, got "hi"`, `Expected 'messages' to be an array, got "hi"`); fehlendes und `null` bleiben „keine Nachrichten“. `handleOllamaChat` fasst nur den Übersetzer in ein `try` und beantwortet die `IllegalArgumentException` mit 400 und Ollamas Fehlerkörper, wie `handleResponses` seit F89; eine andere `RuntimeException` bleibt ein protokollierter Serverfehler.
+- **Tests:** `OpenAiCompatServerHttpTest.aNonObjectOllamaChatMessageIsA400NotADroppedConnection` (ungestreamt und gestreamt, das Backend wird nicht gerufen), `OllamaApiSupportTest.aNonObjectMessageIsRejectedWithItsIndex` (String, `null`, Array), `OllamaApiSupportTest.messagesThatAreNoArrayAreRejected`.
+- **Rot-Grün-Nachweis:** Ohne den Fix rot: der HTTP-Test mit `java.net.SocketException: Unexpected end of file from server` aus `getResponseCode()`, `aNonObjectMessageIsRejectedWithItsIndex` mit „Unexpected exception type thrown, expected: <java.lang.IllegalArgumentException> but was: <java.lang.ClassCastException>“, `messagesThatAreNoArrayAreRejected` mit „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“; mit dem Fix grün (`OllamaApiSupportTest` 39, `OpenAiCompatServerHttpTest` 65, `OpenAiRequestMapperTest` 35, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

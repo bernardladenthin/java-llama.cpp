@@ -542,7 +542,14 @@ public final class OpenAiCompatServer implements AutoCloseable {
             if (request == null) {
                 return;
             }
-            JsonNode openAiRequest = OllamaApiSupport.toOpenAiChatRequest(request);
+            final JsonNode openAiRequest;
+            try {
+                openAiRequest = OllamaApiSupport.toOpenAiChatRequest(request);
+            } catch (IllegalArgumentException e) {
+                // A request the translation rejects (a message that is no object), answered like upstream.
+                sendJson(exchange, HTTP_BAD_REQUEST, ollamaError(message(e)));
+                return;
+            }
             String model = request.path("model").asText(config.getModelId());
             if (OllamaApiSupport.isStreaming(request)) {
                 streamOllamaChat(exchange, openAiRequest, model);

@@ -5,7 +5,9 @@
 package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -454,5 +456,42 @@ public class OllamaApiSupportTest {
         assertThat(answer.path("done_reason").asText(), is("load"));
         assertThat(answer.path("done").asBoolean(false), is(true));
         assertThat(answer.path("response").asText(null), is(""));
+    }
+
+    /**
+     * A {@code messages} element that is not an object (a string, {@code null}, an array) failed the
+     * translator's cast to an object with a {@link ClassCastException}, which left the HTTP handler
+     * without an answer. Upstream refuses it as {@code "Expected 'message' to be an object"}
+     * ({@code common/chat.cpp}); the translator now does the same and names the element.
+     */
+    @Test
+    public void aNonObjectMessageIsRejectedWithItsIndex() throws IOException {
+        for (String element : new String[] {"\"hi\"", "null", "[1]"}) {
+            JsonNode request = read("{\"messages\":[{\"role\":\"user\",\"content\":\"a\"}," + element + "]}");
+            IllegalArgumentException e =
+                    assertThrows(IllegalArgumentException.class, () -> OllamaApiSupport.toOpenAiChatRequest(request));
+            assertThat(
+                    element, e.getMessage(), containsString("Expected 'messages[1]' to be an object, got " + element));
+        }
+    }
+
+    /** A {@code messages} that is present but no array was read as no messages at all. */
+    @Test
+    public void messagesThatAreNoArrayAreRejected() throws IOException {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> OllamaApiSupport.toOpenAiChatRequest(read("{\"messages\":\"hi\"}")));
+        assertThat(e.getMessage(), is("Expected 'messages' to be an array, got \"hi\""));
+        // absent and null stay "no messages", which the caller decides about
+        assertThat(
+                OllamaApiSupport.toOpenAiChatRequest(read("{}"))
+                        .path("messages")
+                        .size(),
+                is(0));
+        assertThat(
+                OllamaApiSupport.toOpenAiChatRequest(read("{\"messages\":null}"))
+                        .path("messages")
+                        .size(),
+                is(0));
     }
 }

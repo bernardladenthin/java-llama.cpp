@@ -736,6 +736,28 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * A non-object {@code messages} element made the Ollama chat translation throw a
+     * {@link ClassCastException} outside the handler's error handling: the connection was closed
+     * without a status line. It is a request the server refuses, so it is a 400, streamed or not.
+     */
+    @Test
+    public void aNonObjectOllamaChatMessageIsA400NotADroppedConnection() throws IOException {
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            for (String body : new String[] {
+                "{\"model\":\"test-model\",\"messages\":[\"hi\"],\"stream\":false}",
+                "{\"model\":\"test-model\",\"messages\":[\"hi\"]}"
+            }) {
+                Response response = post(server.getPort(), "/api/chat", body, "");
+                assertThat(body, response.code, is(400));
+                assertThat(body, response.body, containsString("{\"error\":"));
+                assertThat(body, response.body, containsString("messages[0]"));
+            }
+            assertThat("nothing was generated", backend.called, is(""));
+        }
+    }
+
     @Test
     public void aPlainLlamaExceptionStaysAServerError() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FailingBackend(), config()).start()) {

@@ -127,6 +127,8 @@ final class OllamaApiSupport {
      *
      * @param ollamaRequest the parsed Ollama request
      * @return an OpenAI {@code /v1/chat/completions} request object
+     * @throws IllegalArgumentException when {@code messages} is present but not an array, or one of its
+     *     elements is not an object (upstream's {@code common/chat.cpp} refuses both the same way)
      */
     static ObjectNode toOpenAiChatRequest(JsonNode ollamaRequest) {
         ObjectNode openAi = OBJECT_MAPPER.createObjectNode();
@@ -137,7 +139,15 @@ final class OllamaApiSupport {
         // Messages: copy through, converting any assistant tool_calls.arguments object to the OpenAI
         // JSON-encoded string form.
         ArrayNode messages = openAi.putArray("messages");
-        for (JsonNode message : ollamaRequest.path("messages")) {
+        JsonNode ollamaMessages = ollamaRequest.path("messages");
+        if (!ollamaMessages.isArray() && !ollamaMessages.isMissingNode() && !ollamaMessages.isNull()) {
+            throw new IllegalArgumentException("Expected 'messages' to be an array, got " + ollamaMessages);
+        }
+        for (int i = 0; i < ollamaMessages.size(); i++) {
+            JsonNode message = ollamaMessages.get(i);
+            if (!message.isObject()) {
+                throw new IllegalArgumentException("Expected 'messages[" + i + "]' to be an object, got " + message);
+            }
             messages.add(toOpenAiMessage(message));
         }
 
