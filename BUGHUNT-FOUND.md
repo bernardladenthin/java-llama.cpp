@@ -1470,7 +1470,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `CApi.SeveralCompletionsInOneRequestAreRefusedNotDropped` (eigenes Modell mit `-np 2`; `jllama_completions_oai`, `jllama_completions` mit `n_cmpl`, der Stream-Request und `jllama_chat_completions` werden abgelehnt, `n:1` liefert eine Wahl), `OpenAiServerCompletionIntegrationTest#aCompletionAskingForSeveralChoicesIsAnswered400OnBothRoutes` (beide `/v1/completions`-Routen, das Testmodell jetzt mit `setParallel(2)`), `#severalChoicesAreRefusedOnTheModelsOwnCompletionAndChatPaths`.
 - **Rot-Grün-Nachweis:** Der C-API-Test gegen den alten Code rot (alle vier Wege `OK` statt `INVALID_REQUEST`), mit dem Fix grün; `ctest` grün. Die beiden Java-Tests lokal mit dem Zufallsmodell grün (die zwei Infill-Tests der Klasse scheitern dort erwartungsgemäß, das Zufallsmodell hat keine FIM-Tokens); in CI mit dem echten Modell.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `447de71`
 
 ## Offene Verdachte ohne Fund-ID
 
