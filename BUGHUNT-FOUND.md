@@ -1776,7 +1776,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `AnthropicApiSupportTest#aMaxTokensThatIsNotANumberIsRefused` (`"100"` und `true`, Meldung nennt `max_tokens`), als Schutz `#requestWithNullMaxTokensIsCappedLikeAbsent` (vorher und nachher grün) und `#requestWithoutMaxTokensIsCappedLikeUpstream`; `OpenAiCompatServerHttpTest#aStringMaxTokensOnTheAnthropicRouteIsA400InvalidRequestError` (`stream` false und true: 400, `"type":"invalid_request_error"`, nichts generiert).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „"100" ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ und „Expected: is <400> but: was <200>“; nur mit der Übersetzungsseite des Fixes scheiterte der HTTP-Test mit „java.net.SocketException: Unexpected end of file from server“ (der Beleg, dass die Ablehnung ohne das verlegte `try` als abgebrochene Verbindung ankäme); mit dem ganzen Fix grün (`AnthropicApiSupportTest` 31/31, `AnthropicStreamTranslatorTest` 9/9, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `4849673`
 
 ## Offene Verdachte ohne Fund-ID
 
