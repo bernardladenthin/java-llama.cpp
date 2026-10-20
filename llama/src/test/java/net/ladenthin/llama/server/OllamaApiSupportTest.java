@@ -544,4 +544,25 @@ public class OllamaApiSupportTest {
         assertThat(answer.path("message").path("content").asText(null), is(""));
         assertThat(answer.path("created_at").isTextual(), is(true));
     }
+
+    /**
+     * Ollama's {@code "think": true} asks the model to think. It was dropped, so a server whose thinking
+     * is off by default ({@code --reasoning off}) ignored it silently, while upstream lets a request's
+     * {@code chat_template_kwargs.enable_thinking: true} switch thinking on over that default
+     * ({@code server-common.cpp}). The value must stay a JSON boolean: upstream refuses a string.
+     */
+    @Test
+    public void thinkTrueSwitchesThinkingOnExplicitly() throws IOException {
+        OpenAiRequestMapper mapper = new OpenAiRequestMapper();
+        for (JsonNode openAi : new JsonNode[] {
+            OllamaApiSupport.toOpenAiChatRequest(
+                    read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"think\":true}")),
+            OllamaApiSupport.toOpenAiChatRequestFromGenerate(read("{\"prompt\":\"hi\",\"think\":true}"))
+        }) {
+            JsonNode kwargs =
+                    read(mapper.toInferenceParameters(openAi).toJson()).path("chat_template_kwargs");
+            assertThat(openAi.toString(), kwargs.path("enable_thinking").isBoolean(), is(true));
+            assertThat(openAi.toString(), kwargs.path("enable_thinking").asBoolean(), is(true));
+        }
+    }
 }

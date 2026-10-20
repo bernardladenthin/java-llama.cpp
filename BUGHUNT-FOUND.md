@@ -139,6 +139,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F214](#f214) — niedrig — *gefixt*
 - [F215](#f215) — niedrig — *gefixt*
 - [F216](#f216) — niedrig — *gefixt*
+- [F217](#f217) — niedrig — *gefixt*
 
 ## Funde
 
@@ -653,7 +654,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java:143` (`toOpenAiChatRequest`)
 - **Schwere:** mittel
 - **Beschreibung:** Ollamas Chat-API steuert das Denken eines Modells mit dem Top-Level-Feld `think`: `false` schaltet es ab, `true` an, ein String wählt bei gpt-oss eine Stufe (`"low"`, `"medium"`, `"high"`). `OllamaApiSupport.toOpenAiChatRequest` las das Feld nicht. Ein Ollama-Client, der für schnelle Antworten `think: false` schickt (Open WebUI, ollama-python), bekam trotzdem einen vollen Denkblock samt seiner Token und Latenz. Gefunden in der Musterdurchsicht nach F77.
-- **Fix:** `think: false` wird zu `reasoning_effort: "none"`, ein nicht leerer String zu `reasoning_effort: <Stufe>`; `true` bleibt bei der Vorgabe der Vorlage. Der Chat-Mapper wendet `reasoning_effort` seit F77 nach upstreams Regeln an (`enable_thinking: false` bzw. Template-Variable).
+- **Fix:** `think: false` wird zu `reasoning_effort: "none"`, ein nicht leerer String zu `reasoning_effort: <Stufe>`; `true` bleibt bei der Vorgabe der Vorlage (**korrigiert in F217:** `true` wird zu `chat_template_kwargs.enable_thinking: true`, sonst überging ein Server mit abgeschaltetem Denken die Anfrage still). Der Chat-Mapper wendet `reasoning_effort` seit F77 nach upstreams Regeln an (`enable_thinking: false` bzw. Template-Variable).
 - **Reproduktion:** `OllamaApiSupportTest#toOpenAiChatRequestHonoursThinkLikeOllama` (Kette Übersetzer → `OpenAiRequestMapper` → `InferenceParameters.toJson()`)
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <false> but: was <true>“ – `enable_thinking` fehlte), mit Fix grün (24/24 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `OpenAiRequestMapperTest` 21/21, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
 - **Status:** gefixt
@@ -1686,6 +1687,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Handler (mit Stubs, die `false` bzw. `{}` liefern) rot: der HTTP-Test mit „Expected: is <true> but: was <false>“ für `done` bei `{"model":"test-model"}` (das Testbackend streamte eine Antwort; das echte Backend weist die leere Konversation mit 400 ab), der Einheitstest mit „Expected: is <true> but: was <false>“; mit dem Fix grün (`OllamaApiSupportTest` 41, `OpenAiCompatServerHttpTest` 68, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `d99271c`
+
+### F217 – java-llama.cpp: Ollamas `think: true` wird verworfen — ein Server mit abgeschaltetem Denken übergeht es still
+- **Zeit:** 2026-10-20 20:31 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (`toOpenAiChatRequest`; über `GENERATE_CHAT_FIELDS` auch `/api/generate`)
+- **Schwere:** niedrig (nur bei einem Server, der das Denken per Vorgabe abschaltet; keine Regression — vor F78 wurde `think` ganz ignoriert)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J3-4). F78 übersetzte `think: false` und die Stufen, ließ `true` aber „bei der Vorgabe der Vorlage“; die Fix-Zeile von F78 ist korrigiert.
+- **Beschreibung:** upstream (`server-common.cpp`, b11639) setzt `inputs.enable_thinking` zuerst auf die Vorgabe des Servers (`--reasoning off` schaltet sie ab, ebenso das veraltete `--chat-template-kwargs '{"enable_thinking":false}'`) und lässt dann ein `enable_thinking: true` der Anfrage darüber gewinnen. Ein OpenAI-Client kann das Denken also ausdrücklich einschalten; Ollamas `think: true` („should the model think before responding“) wurde dagegen verworfen und von einem solchen Server still übergangen. (`--reasoning-budget 0` ist ein Sampler-Budget, das `enable_thinking` nicht aufhebt; das bleibt unverändert.)
+- **Fix:** `think: true` wird zu `chat_template_kwargs: {"enable_thinking": true}` als JSON-Boolean (upstream weist einen String ab); `false` und die Stufen bleiben wie mit F78. Auf einer Vorlage ohne Denken ist der Schalter wie bei upstreams OpenAI-Route eine wirkungslose Template-Variable, kein Fehler (Ollama selbst antwortet dort 400) — bewusst wie die OpenAI-Oberfläche, über die die Übersetzung läuft.
+- **Tests:** `OllamaApiSupportTest.thinkTrueSwitchesThinkingOnExplicitly` (Übersetzer → `OpenAiRequestMapper` → `InferenceParameters.toJson()`, für `/api/chat` und `/api/generate`).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: is <true> but: was <false>“ (`enable_thinking` fehlte in `chat_template_kwargs`); mit dem Fix grün (`OllamaApiSupportTest` 42, `OpenAiRequestMapperTest` 35, `OpenAiCompatServerHttpTest` 68, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

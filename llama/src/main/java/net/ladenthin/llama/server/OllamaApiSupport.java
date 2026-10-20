@@ -159,11 +159,15 @@ final class OllamaApiSupport {
             openAi.set("tools", tools.deepCopy());
         }
 
-        // Ollama's "think": false switches a model's thinking off, a string picks a level (gpt-oss);
-        // true leaves the template's default. The chat mapper applies reasoning_effort as upstream does.
+        // Ollama's "think": false switches a model's thinking off, a string picks a level (gpt-oss); the
+        // chat mapper applies reasoning_effort as upstream does. "think": true switches it on, also over
+        // a server whose thinking is off by default (--reasoning off): upstream lets a request's
+        // enable_thinking override that, and it must stay a JSON boolean (a string is refused there).
         JsonNode think = ollamaRequest.path("think");
         if (think.isBoolean() && !think.asBoolean()) {
             openAi.put("reasoning_effort", "none");
+        } else if (think.isBoolean()) {
+            openAi.putObject("chat_template_kwargs").put("enable_thinking", true);
         } else if (think.isTextual() && !think.asText().isEmpty()) {
             openAi.put("reasoning_effort", think.asText());
         }
