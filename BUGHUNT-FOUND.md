@@ -1791,7 +1791,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesApiSupportTest#inputImageWithoutAUrlIsRejectedLikeUpstream`, `#toolOutputPartOfAnotherTypeIsRejectedLikeUpstream`, `#toolOutputPartWithoutATypeIsRejectedLikeUpstream`, `#toolOutputImageWithoutAUrlIsRejectedLikeUpstream`, `#toolOutputImageInObjectFormKeepsItsUrl`; die 400-Abbildung pinnt schon `OpenAiCompatServerHttpTest#responsesWithAnInputFileIsRejectedLikeUpstream`.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot (5 Fehlschläge: viermal „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“, einmal „Expected: is "image_url" but: was ""“), mit dem Fix grün (`ResponsesApiSupportTest` 59/59, `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `ffd3ae4`
 
 ## Offene Verdachte ohne Fund-ID
 
