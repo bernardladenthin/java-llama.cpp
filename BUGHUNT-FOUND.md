@@ -1484,6 +1484,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `d6be2c5`
 
+### F199 – java-llama.cpp: Ein Heartbeat vor dem Eröffnungsevent verschluckt `message_start` (Anthropic) bzw. `response.created` (Responses)
+- **Zeit:** 2026-10-20 11:30 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`ResponseStream`, `streamAnthropic`, `streamResponses`), neu `llama/src/test/java/net/ladenthin/llama/server/ResponseStreamTest.java`
+- **Schwere:** mittel (Client erhält einen Stream ohne Eröffnungsevent; Anthropic-SDKs verwerfen ihn)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20.
+- **Beschreibung:** Beide Routen planten den Heartbeat-Timer **vor** `out.startWith(translator.begin())`. Feuerte der Heartbeat dazwischen (oder kam die Antwort erst nach einem Heartbeat in Gang), startete er den Stream mit leerem Prelude; `startWith` setzte danach nur noch das Feld, das `body()` nur beim Start schreibt — das Eröffnungsevent ging still verloren.
+- **Fix:** `startWith` schreibt den Text sofort, wenn der Stream schon läuft (ein Heartbeat ist ein SSE-Kommentar, kein Event, also bleibt das Eröffnungsevent das erste Event); beide Routen setzen die Eröffnung zudem vor dem Planen des Heartbeats.
+- **Tests:** `ResponseStreamTest` (4, über einen `HttpExchange`-Fake ohne Socket): `theOpeningIsWrittenFirstWhenItIsSetBeforeTheFirstWrite`, `anOpeningSetAfterAHeartbeatStartedTheStreamIsStillWritten`, `anErrorBeforeTheFirstWriteIsAnsweredWithItsStatusAndNoOpening`, `anErrorAfterTheFirstWriteIsLeftToTheStream`.
+- **Rot-Grün-Nachweis:** Ohne den Fix `anOpeningSetAfterAHeartbeatStartedTheStreamIsStillWritten` rot (erwartet `: ping\nOPEN\nDATA\n`, war `: ping\nDATA\n`); mit ihm grün. `OpenAiCompatServerHttpTest` 63/63.
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(geschlossen 2026-10-19, ohne Fund-ID, Entscheidung des Nutzers: bewusst nicht ändern)* Continue entscheidet die FIM-Fähigkeit eines Ollama-Modells an `{{ .Suffix }}` im `template` von `/api/show`; wir liefern `""`. Ein Platzhalter-Template wäre erfunden (der Server kennt das Prompt-Format des Modells nicht) und für die meisten Modelle falsch. Continue nutzt dann eigene Vorlagen; für die FIM-Token des Modells gibt es `POST /infill` (Continues `llama.cpp`-Provider). README-Hinweis ergänzt.

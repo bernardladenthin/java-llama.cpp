@@ -694,12 +694,14 @@ public final class OpenAiCompatServer implements AutoCloseable {
         try (ResponseStream out = new ResponseStream(exchange, CONTENT_TYPE_SSE)) {
             ScheduledFuture<?> heartbeat = null;
             try {
+                // the opening first: a heartbeat starts the stream, and the opening event must precede
+                // every other event
+                out.startWith(translator.begin());
                 heartbeat = heartbeatExecutor.scheduleAtFixedRate(
                         () -> out.writeQuietly(OpenAiSseFormatter.heartbeat()),
                         config.getHeartbeatMillis(),
                         config.getHeartbeatMillis(),
                         TimeUnit.MILLISECONDS);
-                out.startWith(translator.begin());
                 backend.stream(withUsageChunk(openAiRequest), chunkJson -> {
                     String events = translator.onChunk(chunkJson);
                     if (!events.isEmpty()) {
@@ -792,12 +794,14 @@ public final class OpenAiCompatServer implements AutoCloseable {
         try (ResponseStream out = new ResponseStream(exchange, CONTENT_TYPE_SSE)) {
             ScheduledFuture<?> heartbeat = null;
             try {
+                // the opening first: a heartbeat starts the stream, and the opening event must precede
+                // every other event
+                out.startWith(translator.begin());
                 heartbeat = heartbeatExecutor.scheduleAtFixedRate(
                         () -> out.writeQuietly(OpenAiSseFormatter.heartbeat()),
                         config.getHeartbeatMillis(),
                         config.getHeartbeatMillis(),
                         TimeUnit.MILLISECONDS);
-                out.startWith(translator.begin());
                 backend.stream(withUsageChunk(openAiRequest), chunkJson -> {
                     String events = translator.onChunk(chunkJson);
                     if (!events.isEmpty()) {
@@ -1063,7 +1067,8 @@ public final class OpenAiCompatServer implements AutoCloseable {
      * {@link #answerIfNotStarted(int, String)} can still answer the request with an error status and a
      * JSON body, which is what upstream's server does with a request it refuses before the first result.
      */
-    private static final class ResponseStream implements AutoCloseable {
+    // package-private for ResponseStreamTest
+    static final class ResponseStream implements AutoCloseable {
 
         private final HttpExchange exchange;
         private final String contentType;
@@ -1077,10 +1082,22 @@ public final class OpenAiCompatServer implements AutoCloseable {
             this.contentType = contentType;
         }
 
-        /** Text the stream opens with once it starts (a protocol's opening events). */
+        /**
+         * Text the stream opens with once it starts (a protocol's opening events). Set after the stream
+         * already started (a heartbeat came first), it is written at once, so it is never lost.
+         */
         void startWith(String text) {
             synchronized (lock) {
                 prelude = text;
+                OutputStream out = os;
+                if (out != null && !answered && !text.isEmpty()) {
+                    try {
+                        out.write(text.getBytes(StandardCharsets.UTF_8));
+                        out.flush();
+                    } catch (IOException e) {
+                        LOG.trace("stream write failed (client likely disconnected)", e);
+                    }
+                }
             }
         }
 
