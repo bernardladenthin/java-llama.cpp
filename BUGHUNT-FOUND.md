@@ -142,6 +142,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F217](#f217) — niedrig — *gefixt*
 - [F218](#f218) — mittel — *gefixt*
 - [F219](#f219) — niedrig — *gefixt*
+- [F220](#f220) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1118,7 +1119,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java:72` (`toInferenceParameters`)
 - **Schwere:** niedrig
 - **Beschreibung:** Eine OpenAI-Chat-Anfrage mit `"logprobs":true` (und optional `"top_logprobs":N`) bekam keine Token-Wahrscheinlichkeiten: Der Mapper übernahm keins der beiden Felder, `InferenceParameters` trug also kein `n_probs`. Upstream bildet sie in `oaicompat_chat_params_parse` (`server-common.cpp:1456`, b11639) auf `n_probs = top_logprobs` ab, Standard 20, und die nativen Chat-Ergebnisse tragen die Wahrscheinlichkeiten dann von selbst (blockierend und im OAI-Chunk-Pfad). Teil des offenen F95-Verdachts („`n_probs`/`logprobs`“), der als Blocker eine API-Erweiterung nannte – `withNProbs` gab es aber schon (Erkenntnis F95: Verdacht in Teile zerlegen). Gefunden per Probe-Klasse über den Mapper.
-- **Fix:** Bei `logprobs: true` setzt der Chat-Mapper `withNProbs(top_logprobs)`, ohne `top_logprobs` 20 wie upstream. Nur im Chat-Pfad: Das `logprobs` des alten `/v1/completions` ist eine Zahl mit anderer Bedeutung. Nicht übernommen: upstreams zwei Ablehnungen (`top_logprobs` ohne `logprobs`; `logprobs` mit Werkzeugen im Stream).
+- **Fix:** Bei `logprobs: true` setzt der Chat-Mapper `withNProbs(top_logprobs)`, ohne `top_logprobs` 20 wie upstream. Nur im Chat-Pfad: Das `logprobs` des alten `/v1/completions` ist eine Zahl mit anderer Bedeutung. Nicht übernommen: upstreams zwei Ablehnungen (`top_logprobs` ohne `logprobs`; `logprobs` mit Werkzeugen im Stream). (**Korrigiert in F220:** die erste Ablehnung gilt jetzt mit upstreams Text, und ein ganzzahliges `logprobs` ist wie bei upstream der Alias von `n_probs` statt der Chat-Form; die zweite bleibt offen.)
 - **Reproduktion:** `OpenAiRequestMapperTest#logprobsWithTopLogprobsBecomesNProbs`, `#logprobsWithoutTopLogprobsDefaultsToTwentyLikeUpstream` (dazu als Schutz `#logprobsFalseLeavesNProbsUnset`)
 - **Rot-Grün-Nachweis:** ohne Fix beide rot („Expected: is <3> but: was <-1>“ bzw. „Expected: is <20> but: was <-1>“), mit Fix grün (31/31 der Klasse, skipped 0); Gegenprobe per `git stash` rot (2), nach `pop` grün. Breite Liste wie F117 grün, `spotless:apply` und `spotbugs:check` grün. Der erste Grün-Lauf scheiterte am Compiler (`NotJavadoc`: Konstante zwischen fremde Javadoc und Deklaration eingefügt, wie bei F108) und meldete trotzdem den alten roten Bericht – das Prüfskript löscht den Bericht jetzt auch vor dem Grün-Lauf.
 - **Status:** gefixt
@@ -1725,6 +1726,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: is <-2> but: was <-1>“ (`n_predict` fehlte) und „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ (`n: 0`); mit dem Fix grün (`OpenAiRequestMapperTest` 39/39, `OpenAiCompatServerHttpTest` 68/68, `AnthropicApiSupportTest` 26/26, `ResponsesApiSupportTest` 54/54, `OllamaApiSupportTest` 42/42). `ErrorHandlingTest#testNPredictMinusTwoInAChatIsAnInvalidRequest` grün mit dem lokalen Winzmodell (CPU); `#testHandleInfillMissingInputSuffix` scheitert unabhängig davon am Winzmodell ohne FIM-Token. `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `1817210`
+
+### F220 – java-llama.cpp: Chat-Mapper verwirft `top_logprobs` ohne `logprobs` still und liest ein ganzzahliges `logprobs` als `n_probs` 20
+- **Zeit:** 2026-10-20 21:40 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java` (`applyLogprobs`, neu; vorher in `toInferenceParameters`)
+- **Schwere:** niedrig
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J2-4). F123 übernahm `logprobs: true` → `n_probs`, ließ upstreams zwei Ablehnungen aber bewusst weg und las `logprobs` mit Jacksons `asBoolean`.
+- **Beschreibung:** upstreams `oaicompat_chat_params_parse` (`server-common.cpp:1456-1473`, b11639) liest `logprobs` nur als Boolean (`json_value` liefert für eine Zahl oder einen String den Standard `false`), setzt bei `true` `n_probs = top_logprobs` (20 ohne), weist sonst ein nicht-null `top_logprobs` mit „top_logprobs requires logprobs to be set to true“ ab (400; die OpenAI-Spezifikation verlangt dasselbe) und kopiert den Rest des Körpers durch — das Schema liest `logprobs` dann als Alias von `n_probs` (`server-schema.cpp:179-180`, nur ohne `n_probs`). Der Mapper dagegen (a) verwarf ein `top_logprobs` ohne `logprobs` still, weil das gemappte JSON es nicht mehr trug, und (b) las mit `asBoolean` jede von 0 verschiedene Zahl und den String `"true"` als die Chat-Form: `"logprobs": 2` ergab `n_probs` 20 statt upstreams 2, `"n_probs": 5` daneben wurde überschrieben, und ein String, den upstreams Schema mit 400 abweist, lief durch.
+- **Fix:** `applyLogprobs` folgt upstream: `logprobs: true` → `n_probs = top_logprobs` (eine Zahl, sonst 20 wie upstreams `json_value`); ein nicht-null `top_logprobs` ohne `logprobs: true` ist eine ungültige Anfrage mit upstreams Text wörtlich (die WEM-Unterdrückung in `spotbugs-exclude.xml` nennt die Methode deshalb); ohne `n_probs` wird eine Zahl als `n_probs` übernommen, jeder andere nicht-null, nicht-boolesche Wert ist eine ungültige Anfrage („'logprobs' must be a boolean or a number“), wie das Schema ihn abweist. `logprobs: false` lässt `n_probs` weiter ungesetzt (upstreams Alias läse 0, die Vorgabe). Weiter offen, nicht Teil dieses Funds: upstreams zweite Ablehnung („logprobs is not supported with tools + stream“) bleibt unerreichbar, weil der Mapper `logprobs` in `n_probs` übersetzt; die Fix-Zeile von F123 ist berichtigt.
+- **Tests:** `OpenAiRequestMapperTest#topLogprobsWithoutLogprobsIsRefusedLikeUpstream` (ohne, mit `false`, mit `null` und neben einer Zahl), `#anIntegerLogprobsMapsToNProbsLikeUpstreamsSchemaAlias`, `#nProbsWinsOverAnIntegerLogprobsLikeUpstream`, `#aLogprobsThatIsNeitherBooleanNorNumberIsRefused` (mit `n_probs` daneben keine Ablehnung, wie upstream); als Schutz `#topLogprobsNullWithoutLogprobsIsTheDefault`, die drei F123-Tests unverändert grün.
+- **Rot-Grün-Nachweis:** Ohne den Fix vier rot: „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ (`top_logprobs: 3` allein bzw. `logprobs: "true"`), „Expected: is <2> but: was <20>“ (`logprobs: 2`), „Expected: is <5> but: was <20>“ (`n_probs: 5` neben `logprobs: 2`); mit dem Fix grün (`OpenAiRequestMapperTest` 44/44, `OpenAiCompatServerHttpTest` 68/68, `AnthropicApiSupportTest` 26/26, `ResponsesApiSupportTest` 54/54, `OllamaApiSupportTest` 42/42, `LlamaArchitectureTest` 13/13). `spotless:apply` grün; `spotbugs:check` meldete zuerst zweimal `WEM_WEAK_EXCEPTION_MESSAGING` für die festen Texte, mit der Unterdrückung grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

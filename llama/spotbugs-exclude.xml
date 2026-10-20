@@ -552,7 +552,9 @@ SPDX-License-Identifier: MIT
         ("'query' must be a string", "'messages' must be a non-empty array", ...). There is no
         additional state-dependent context worth adding at these guards: the value is malformed or
         absent by definition at the throw point. Same rationale as the ChatMessage.requireNonNull WEM
-        suppression above.
+        suppression above. OpenAiRequestMapper.applyLogprobs additionally keeps upstream's message
+        verbatim ("top_logprobs requires logprobs to be set to true", oaicompat_chat_params_parse), so
+        a client sees the same 400 text from both server modes.
     -->
     <Match>
         <Class name="net.ladenthin.llama.server.OaiRerankSupport"/>
@@ -568,6 +570,7 @@ SPDX-License-Identifier: MIT
         <Or>
             <Method name="toInferenceParameters"/>
             <Method name="toCompletionParameters"/>
+            <Method name="applyLogprobs"/>
         </Or>
     </Match>
 

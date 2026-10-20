@@ -61,11 +61,7 @@ final class OpenAiRequestMapper {
         params = applyCommonFields(params, request);
         params = applyReasoningControls(params, request);
 
-        // Chat logprobs, as upstream's oaicompat_chat_params_parse maps them (the legacy completions
-        // "logprobs" is an integer and means something else, so this stays on the chat path).
-        if (request.path("logprobs").asBoolean(false)) {
-            params = params.withNProbs(request.path("top_logprobs").asInt(DEFAULT_TOP_LOGPROBS));
-        }
+        params = applyLogprobs(params, request);
 
         // Tools are chat-only.
         JsonNode tools = request.path("tools");
@@ -86,6 +82,42 @@ final class OpenAiRequestMapper {
         }
 
         return params;
+    }
+
+    /**
+     * Apply {@code logprobs} / {@code top_logprobs} as upstream's chat parser and request schema read
+     * them ({@code oaicompat_chat_params_parse} and {@code server-schema.cpp}, b11639): {@code logprobs:
+     * true} is the chat form and becomes {@code n_probs = top_logprobs} (20 without it); a
+     * {@code top_logprobs} without it is refused with upstream's message; a number is the schema's alias
+     * of {@code n_probs} (the legacy completions form), read only without an {@code n_probs}, and any
+     * other non-null value read there is refused, as upstream's schema refuses it.
+     *
+     * @param params the parameters to extend
+     * @param request the parsed OpenAI request object
+     * @return a new instance with the probabilities applied
+     * @throws IllegalArgumentException for a request upstream refuses
+     */
+    private static InferenceParameters applyLogprobs(InferenceParameters params, JsonNode request) {
+        JsonNode logprobs = request.path("logprobs");
+        JsonNode topLogprobs = request.path("top_logprobs");
+        if (logprobs.isBoolean() && logprobs.asBoolean()) {
+            return params.withNProbs(topLogprobs.isNumber() ? topLogprobs.asInt() : DEFAULT_TOP_LOGPROBS);
+        }
+        if (!topLogprobs.isMissingNode() && !topLogprobs.isNull()) {
+            throw new IllegalArgumentException("top_logprobs requires logprobs to be set to true");
+        }
+        JsonNode nProbs = request.path("n_probs");
+        if (logprobs.isMissingNode()
+                || logprobs.isNull()
+                || logprobs.isBoolean()
+                || (!nProbs.isMissingNode() && !nProbs.isNull())) {
+            // the schema reads n_probs first, its alias only without it
+            return params;
+        }
+        if (!logprobs.isNumber()) {
+            throw new IllegalArgumentException("'logprobs' must be a boolean or a number");
+        }
+        return params.withNProbs(logprobs.asInt());
     }
 
     /**

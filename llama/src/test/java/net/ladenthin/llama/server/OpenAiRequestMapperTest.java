@@ -241,6 +241,66 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void topLogprobsWithoutLogprobsIsRefusedLikeUpstream() {
+        // upstream's chat parser: "top_logprobs requires logprobs to be set to true" (400); the mapper
+        // dropped top_logprobs, so that refusal could never fire.
+        IllegalArgumentException absent = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"top_logprobs\":3}"));
+        assertThat(absent.getMessage(), is("top_logprobs requires logprobs to be set to true"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":false,\"top_logprobs\":3}"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":null,\"top_logprobs\":3}"));
+        // an integer logprobs is not the chat form, so upstream refuses top_logprobs next to it too
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":2,\"top_logprobs\":3}"));
+    }
+
+    @Test
+    public void topLogprobsNullWithoutLogprobsIsTheDefault() throws IOException {
+        // upstream refuses only a non-null top_logprobs
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"top_logprobs\":null}");
+        assertThat(out.has("n_probs"), is(false));
+    }
+
+    @Test
+    public void anIntegerLogprobsMapsToNProbsLikeUpstreamsSchemaAlias() throws IOException {
+        // upstream's chat parser reads only a boolean logprobs, copies the rest of the body through, and its
+        // schema reads "logprobs" as an alias of n_probs: an integer is n_probs, not the chat form's 20.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":2}");
+        assertThat(out.path("n_probs").asInt(-1), is(2));
+    }
+
+    @Test
+    public void nProbsWinsOverAnIntegerLogprobsLikeUpstream() throws IOException {
+        // the schema reads n_probs first and its alias only without it
+        JsonNode out =
+                mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"n_probs\":5,\"logprobs\":2}");
+        assertThat(out.path("n_probs").asInt(-1), is(5));
+    }
+
+    @Test
+    public void aLogprobsThatIsNeitherBooleanNorNumberIsRefused() throws IOException {
+        // upstream's schema reads the copied "logprobs" as a number and answers 400 for anything else;
+        // Jackson's asBoolean read the string "true" as the chat form.
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":\"true\"}"));
+        assertThat(e.getMessage(), is("'logprobs' must be a boolean or a number"));
+        // with n_probs the schema never reads the alias, so upstream does not refuse it either
+        JsonNode out = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"n_probs\":4,\"logprobs\":\"true\"}");
+        assertThat(out.path("n_probs").asInt(-1), is(4));
+    }
+
+    @Test
     public void maxCompletionTokensPreferredOverMaxTokens() throws IOException {
         JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
                 + "\"max_tokens\":50,\"max_completion_tokens\":200}");
