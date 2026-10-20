@@ -1711,7 +1711,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiRequestMapperTest#jsonSchemaAndGrammarAreBothForwardedSoUpstreamCanRefuseThePair` (ersetzt die zweite Hälfte von `#jsonSchemaReachesTheMappedRequestUnlessAGrammarIsGiven`, deren erste Hälfte als `#jsonSchemaReachesTheMappedRequest` bleibt); modellgestützt `ErrorHandlingTest#testJsonSchemaWithGrammarInAChatIsAnInvalidRequest` (ein Chat mit beiden Feldern ist eine `InvalidRequestException` mit upstreams Text „Cannot use both json_schema and grammar“ — der Beleg, dass das Durchreichen beim Client als 400 ankommt).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: is "object" but: was ""“ (`json_schema` fehlte im gemappten Körper); mit dem Fix grün (`OpenAiRequestMapperTest` 36/36). `ErrorHandlingTest#testJsonSchemaWithGrammarInAChatIsAnInvalidRequest` grün mit dem lokalen Winzmodell (CPU); in der Klasse scheitert unabhängig davon `#testHandleInfillMissingInputSuffix`, weil das Winzmodell keine FIM-Token hat. `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `6d78c47`
 
 ## Offene Verdachte ohne Fund-ID
 
