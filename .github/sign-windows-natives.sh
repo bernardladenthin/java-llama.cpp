@@ -25,8 +25,8 @@
 set -euo pipefail
 
 ROOT="${1:?natives root}"
-JSIGN_VERSION="7.2"
-JSIGN_SHA256="9a99673bb011cc1d7faf00bc840a6b333fc8a9b596098da2f92946b68297f067"
+JSIGN_VERSION="7.6"
+JSIGN_SHA256="6cf58aa080e7ff82656f320cff8d4a3bff30408df8766806dcba3740dd839fa5"
 TSA_URL="http://ts.ssl.com"
 ES_ENDPOINT="${ES_ENDPOINT:-https://cs.ssl.com}"
 
