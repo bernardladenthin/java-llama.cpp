@@ -1542,7 +1542,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ParameterJsonSerializerTest.testBuildRawValueObject_trailingTokensFallBackToString`, `InferenceParametersTest.aChatTemplateKwargHoldingTwoValuesIsKeptAsText` (beide öffentlichen Setter).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot (`{"two":true,…,"object":{"a":1}}`); mit ihm grün (40 + 114).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `266d70d`
 
 ## Offene Verdachte ohne Fund-ID
 
