@@ -141,6 +141,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F216](#f216) — niedrig — *gefixt*
 - [F217](#f217) — niedrig — *gefixt*
 - [F218](#f218) — mittel — *gefixt*
+- [F219](#f219) — niedrig — *gefixt*
 
 ## Funde
 
@@ -935,7 +936,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java:164` (`applyCommonFields`)
 - **Schwere:** niedrig
 - **Beschreibung:** Musterdurchsicht nach F102 (Werte, die der Mapper anders behandelt als upstream). upstreams Schema (`server-schema.cpp`, `n_predict` mit den Aliasen `max_completion_tokens`/`max_tokens`, Grenzen -1..INT32_MAX, b11639): „When 0, no tokens will be generated but the prompt is evaluated into the cache“. Der Mapper übernahm die Obergrenze nur bei `> 0`; ein Client, der mit `0` den Cache vorwärmt, bekam auf den gemappten Wegen (beide Chat-Pfade, gestreamtes `/v1/completions`, und damit Anthropic/Responses/Ollama) eine Generierung ohne Obergrenze bis zum Kontextende, das wörtlich durchgereichte `/v1/completions` dagegen keine.
-- **Fix:** Die Obergrenze wird bei `>= 0` gesetzt; `-1` bzw. kein Feld lässt upstreams Standard (unbegrenzt).
+- **Fix:** Die Obergrenze wird bei `>= 0` gesetzt; `-1` bzw. kein Feld lässt upstreams Standard (unbegrenzt). (**Ergänzt in F219:** jeder Wert außer -1 wird durchgereicht, damit upstream -2 und darunter mit 400 abweist.)
 - **Reproduktion:** `OpenAiRequestMapperTest#zeroTokenCapOnlyWarmsTheCacheLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is <0> but: was <-1>“), mit Fix grün (27/27 der Klasse, skipped 0); Gegenprobe per `git stash` rot (1), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 21/21, `ResponsesApiSupportTest` 19/19, `OllamaApiSupportTest` 27/27, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
@@ -1712,6 +1713,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: is "object" but: was ""“ (`json_schema` fehlte im gemappten Körper); mit dem Fix grün (`OpenAiRequestMapperTest` 36/36). `ErrorHandlingTest#testJsonSchemaWithGrammarInAChatIsAnInvalidRequest` grün mit dem lokalen Winzmodell (CPU); in der Klasse scheitert unabhängig davon `#testHandleInfillMissingInputSuffix`, weil das Winzmodell keine FIM-Token hat. `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `6d78c47`
+
+### F219 – java-llama.cpp: Chat-Mapper normalisiert `max_tokens` unter -1 und `n` unter 1 still auf die Vorgaben
+- **Zeit:** 2026-10-20 21:30 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java` (`applyCommonFields`)
+- **Schwere:** niedrig
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J2-3). Dieselbe Form wie F102/F103 (der Mapper behandelt einen Wert anders als upstream), nur auf der anderen Seite des Wertebereichs: F103 übernahm die Obergrenze ab `>= 0`, F180 lehnte `n > 1` ab.
+- **Beschreibung:** upstreams Schema (`server-schema.cpp`, b11639) deklariert `n_predict` (Aliase `max_completion_tokens`, `max_tokens`) mit den harten Grenzen -1 … INT32_MAX und `n_cmpl` (Alias `n`) mit 1 … `n_parallel`; eine Verletzung ist `std::invalid_argument` → `InvalidRequestException` → 400. Der Mapper setzte `n_predict` nur ab `>= 0`: `"max_tokens": -2` (ebenso `n_predict`/`max_completion_tokens`) lief auf den gemappten Wegen ohne Obergrenze, das wörtlich durchgereichte `/v1/completions` antwortet 400. `"n"` erreicht upstream von hier nie (es ist kein `RequestField`), und der Mapper lehnte nur `> 1` ab — `"n": 0` und `-1` liefen still mit einer Antwort. Betroffen: beide Chat-Wege, damit auch Anthropic `/v1/messages` und Responses `/v1/responses` (sie kopieren die Obergrenze, wie der Client sie schickt); Ollama normalisiert `num_predict < -1` schon vorher auf -1 (F104).
+- **Fix:** Jede Obergrenze außer -1 wird durchgereicht, upstreams Schema weist -2 und darunter mit seinem eigenen Text ab; ein ausdrückliches -1 bleibt wie ein fehlendes Feld ungesetzt (upstream nimmt dann `--predict` des Servers, `server-context.cpp`). `n` ungleich 1 ist eine ungültige Anfrage (`IllegalArgumentException` → 400, „'n' must be 1 (one answer is returned) but was N“); die Ablehnung bleibt im Mapper, weil `n` upstream von hier nicht erreicht. Der Kommentar über `0` („generate nothing“) ist aus dem Mapper entfernt, weil er `withNPredict` widersprach; die übrigen Stellen zu `0` gehören zu einem eigenen Fund.
+- **Tests:** `OpenAiRequestMapperTest#tokenCapBelowMinusOneReachesUpstreamsRefusal`, `#zeroOrNegativeChoicesAreRefusedLikeUpstream` (`n` 0 mit Meldung, `n` -1), als Schutz `#explicitTokenCapMinusOneLeavesTheServerDefault`; modellgestützt `ErrorHandlingTest#testNPredictMinusTwoInAChatIsAnInvalidRequest` (ein Chat mit `n_predict` -2 ist eine `InvalidRequestException`, die `n_predict` nennt — der Beleg, dass das Durchreichen beim Client als 400 ankommt).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: is <-2> but: was <-1>“ (`n_predict` fehlte) und „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ (`n: 0`); mit dem Fix grün (`OpenAiRequestMapperTest` 39/39, `OpenAiCompatServerHttpTest` 68/68, `AnthropicApiSupportTest` 26/26, `ResponsesApiSupportTest` 54/54, `OllamaApiSupportTest` 42/42). `ErrorHandlingTest#testNPredictMinusTwoInAChatIsAnInvalidRequest` grün mit dem lokalen Winzmodell (CPU); `#testHandleInfillMissingInputSuffix` scheitert unabhängig davon am Winzmodell ohne FIM-Token. `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

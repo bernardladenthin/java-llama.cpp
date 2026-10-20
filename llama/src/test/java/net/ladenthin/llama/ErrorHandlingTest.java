@@ -221,6 +221,20 @@ public class ErrorHandlingTest {
     }
 
     @Test
+    public void testNPredictMinusTwoInAChatIsAnInvalidRequest() {
+        // The OpenAI chat mapper forwards a token cap below -1 (F219); the chat path runs the same request
+        // schema, so the client gets upstream's 400 naming the field instead of an uncapped answer.
+        InferenceParameters request = InferenceParameters.empty()
+                .withMessagesJson("[{\"role\":\"user\",\"content\":\"hi\"}]")
+                .withNPredict(-2);
+
+        InvalidRequestException e =
+                assertThrows(InvalidRequestException.class, () -> modelNoEmbed.chatComplete(request));
+
+        assertTrue(e.getMessage().contains("n_predict"), "Error should name n_predict but was: " + e.getMessage());
+    }
+
+    @Test
     public void testJsonSchemaWithGrammarInAChatIsAnInvalidRequest() {
         // The OpenAI chat mapper forwards both fields and leaves the verdict to upstream's chat parser,
         // which refuses the pair (server-common.cpp, b11639) -- the 400 llama-server answers.

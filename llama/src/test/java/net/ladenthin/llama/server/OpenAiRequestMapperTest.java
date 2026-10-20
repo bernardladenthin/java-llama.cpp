@@ -89,6 +89,19 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void zeroOrNegativeChoicesAreRefusedLikeUpstream() {
+        // upstream's n_cmpl (alias "n") has the hard limits [1, n_parallel] (server-schema.cpp, b11639);
+        // "n" never reaches it from here, so 0 and -1 ran silently with one answer.
+        IllegalArgumentException zero = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"n\":0}"));
+        assertThat(zero.getMessage(), is("'n' must be 1 (one answer is returned) but was 0"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"n\":-1}"));
+    }
+
+    @Test
     public void chatTemplateKwargsAreForwarded() throws IOException {
         // Qwen3 clients switch thinking off with chat_template_kwargs; upstream's chat parser merges the
         // request's kwargs into the template variables.
@@ -330,6 +343,21 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void tokenCapBelowMinusOneReachesUpstreamsRefusal() throws IOException {
+        // upstream's n_predict has the hard limits [-1, INT32_MAX] and refuses -2 with 400, as the verbatim
+        // /v1/completions does; dropping it here ran the mapped routes without a cap.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":-2}");
+        assertThat(out.path("n_predict").asInt(-1), is(-2));
+    }
+
+    @Test
+    public void explicitTokenCapMinusOneLeavesTheServerDefault() throws IOException {
+        // upstream treats -1 as "use the server's --predict" (server-context.cpp), the same as no field.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"max_tokens\":-1}");
+        assertThat(out.has("n_predict"), is(false));
+    }
+
+    @Test
     public void llamaCppSamplingExtensionsReachTheMappedRequest() throws IOException {
         // Upstream's schema reads these fields from a chat body too; the mapped chat routes must not
         // answer the same request with other sampling.
@@ -383,7 +411,7 @@ public class OpenAiRequestMapperTest {
     @Test
     public void unknownFieldsIgnored() throws IOException {
         JsonNode out = mapAndSerialize(
-                // "n" is not unknown: more than one answer is refused (moreThanOneChoiceIsRefused...)
+                // "n" is not unknown: anything but one answer is refused (moreThanOneChoiceIsRefused...)
                 "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}]," + "\"some_future_field\":true}");
         assertThat(out.path("messages").isArray(), is(true));
         assertThat(out.has("some_future_field"), is(false));

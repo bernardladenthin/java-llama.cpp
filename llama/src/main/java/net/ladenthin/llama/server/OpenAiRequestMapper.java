@@ -97,12 +97,12 @@ final class OpenAiRequestMapper {
      * @return a new instance with the recognised fields applied
      */
     private InferenceParameters applyCommonFields(InferenceParameters params, JsonNode request) {
-        // Upstream reads "n" as n_cmpl (several answers); these paths return one, so more is refused
-        // rather than silently answered once.
+        // Upstream reads "n" as n_cmpl (several answers, hard limits [1, n_parallel]); these paths return
+        // one and "n" never reaches upstream from here, so every other value is refused rather than
+        // silently answered once.
         JsonNode choices = request.path("n");
-        if (choices.isNumber() && choices.asInt() > 1) {
-            throw new IllegalArgumentException(
-                    "'n' greater than 1 is not supported (one answer is returned) but was " + choices.asInt());
+        if (choices.isNumber() && choices.asInt() != 1) {
+            throw new IllegalArgumentException("'n' must be 1 (one answer is returned) but was " + choices.asInt());
         }
         // logit_bias as upstream's schema reads it: [token, bias] pairs or OpenAI's object form.
         JsonNode logitBias = request.path("logit_bias");
@@ -161,9 +161,11 @@ final class OpenAiRequestMapper {
             params = params.withFrequencyPenalty((float) frequencyPenalty.asDouble());
         }
 
-        // 0 is a valid cap upstream (evaluate the prompt into the cache, generate nothing); -1 is its default.
+        // -1 is upstream's default (the server's --predict), the same as no field, so it stays unset. Every
+        // other value is forwarded: upstream's hard limits [-1, INT32_MAX] refuse -2 and below with 400, as
+        // on the verbatim /v1/completions.
         int maxTokens = readMaxTokens(request);
-        if (maxTokens >= 0) {
+        if (maxTokens != -1) {
             params = params.withNPredict(maxTokens);
         }
 
