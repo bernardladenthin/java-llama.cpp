@@ -238,6 +238,13 @@ the first two items break every existing consumer at upgrade.
   core's; `check-natives.py` fails when they differ.
 
 ### Changed
+- Dependencies and build tooling bumped in step with the sibling repositories: Jackson 2.22.3 ->
+  2.22.4 (`jackson.version`, which the `jackson-bom` and the AAR pom follow), LogCaptor 2.12.7 ->
+  2.13.0 (test; still requests log4j 2.26.1, so the log4j floor guard is unchanged); in the agent
+  Atmosphere 4.0.72 -> 4.0.75 and central-publishing-maven-plugin 0.11.0 -> 0.12.0 (the reactor
+  already had it); jsign 7.2 -> 7.6 for the Windows code signing (`sign-windows-natives.sh`, new
+  SHA-256; same options, same eSigner authentication path); Gradle 9.8.1 -> 9.8.2 (`GRADLE_VERSION`
+  and the shared `verify-signing-key-gradle` job); `anthropics/claude-code-action` v1.0.255.
 - **`libjllama` exports only its interface.** Hidden visibility for the project's own translation
   units, a version script on ELF and an exported-symbols list on macOS keep the statically linked
   llama, llama-common, mtmd, cpp-httplib and BoringSSL symbols local: the Linux library exported

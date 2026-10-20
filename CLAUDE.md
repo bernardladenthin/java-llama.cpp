@@ -3136,7 +3136,7 @@ certificate and the secrets exist.
   tolerates its skip (`!cancelled() && !contains(needs.*.result, 'failure') && ...`): skipped means
   no switch, run and failed (wrong secrets, the environment refusing the branch) means `package`
   is skipped too, because the signature was asked for.
-- **How**: `.github/sign-windows-natives.sh` -- **jsign** (`net.jsign:jsign:7.2` from Maven Central,
+- **How**: `.github/sign-windows-natives.sh` -- **jsign** (`net.jsign:jsign:7.6` from Maven Central,
   pinned by version and SHA-256; Java, runs on the Linux runner, no signtool) with
   `--storetype ESIGNER --keystore <endpoint> --storepass "<username>|<password>" --alias
   <credential id> --keypass <TOTP secret>` (read from jsign's `KeyStoreType`: the store password must
