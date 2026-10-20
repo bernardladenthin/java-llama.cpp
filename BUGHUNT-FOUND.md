@@ -1530,7 +1530,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `AnthropicApiSupportTest.theTranslatedRequestAsksForTheStopWord` (erweitert), `OpenAiRequestMapperTest.responseFieldsAreForwarded`, `responseFieldsThatAreNotStringsAreRefused`, `InferenceParametersTest.withResponseFieldsWritesTheProjectionAsAStringArray`, modellgestützt `OpenAiCompatServerIntegrationTest.theDebugObjectTheAnthropicRouteAsksForCarriesOnlyTheStopWord` (`__verbose` hat genau den Schlüssel `stopping_word`); C++ `test_wire_contracts` prüft den neuen Schlüssel gegen upstreams Schema.
 - **Rot-Grün-Nachweis:** Mit `RequestField`/`withResponseFields`, aber dem alten Mapper und der alten Übersetzung: drei Tests rot; mit dem Fix grün (221 Tests der fünf Klassen, Integrationstest 13/13 mit dem Zufallsmodell, ctest Wire 6/6).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `05f356b`
 
 ## Offene Verdachte ohne Fund-ID
 
