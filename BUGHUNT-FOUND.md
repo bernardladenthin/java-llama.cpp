@@ -1685,7 +1685,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest.ollamaChatWithoutMessagesOnlyReportsTheModelLoaded` (ohne `messages`, `[]`, `null` mit `stream`, `keep_alive: 0`; das Backend wird nicht gerufen — `RecordingBackend` zeichnet dafür jetzt auch `stream` auf), `OllamaApiSupportTest.aChatRequestWithoutMessagesOnlyLoadsTheModel`.
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Handler (mit Stubs, die `false` bzw. `{}` liefern) rot: der HTTP-Test mit „Expected: is <true> but: was <false>“ für `done` bei `{"model":"test-model"}` (das Testbackend streamte eine Antwort; das echte Backend weist die leere Konversation mit 400 ab), der Einheitstest mit „Expected: is <true> but: was <false>“; mit dem Fix grün (`OllamaApiSupportTest` 41, `OpenAiCompatServerHttpTest` 68, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `d99271c`
 
 ## Offene Verdachte ohne Fund-ID
 
