@@ -1506,7 +1506,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `BatchDispatchTest`: neu `runEachOnItsOwnThread_runsNoMoreRequestsAtOnceThanTheBound` (12 Anfragen, Grenze 3, höchstens 3 gleichzeitig), `runEachOnItsOwnThread_anErrorIsThrownAfterTheOthersFinished`, `runEachOnItsOwnThread_aBoundBelowOneIsRefused`.
 - **Rot-Grün-Nachweis:** Mit der neuen Signatur, aber ohne Grenze und ohne den Error-Pfad: die drei neuen Tests rot (12 gleichzeitig statt 3; zwei statt null fertige Anfragen fehlten beim Wurf; keine Ablehnung von 0); mit dem Fix 11/11 grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `3e996db`
 
 ## Offene Verdachte ohne Fund-ID
 
