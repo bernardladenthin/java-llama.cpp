@@ -6,6 +6,7 @@ package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.closeTo;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -330,6 +331,42 @@ public class OpenAiRequestMapperTest {
                 + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
                 + "\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"f\"}}}");
         assertThat(out.path("tool_choice").asText(), is("required"));
+    }
+
+    @Test
+    public void toolChoiceNamingAFunctionForwardsOnlyThatTool() throws IOException {
+        // "required" over every tool let the model call another one than the one named; llama.cpp knows
+        // only auto/none/required, so the named function is enforced by forwarding it alone.
+        JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}},"
+                + "{\"type\":\"function\",\"function\":{\"name\":\"g\",\"description\":\"gee\"}}],"
+                + "\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"g\"}}}");
+        assertThat(out.path("tools").size(), is(1));
+        assertThat(out.path("tools").path(0).path("function").path("name").asText(), is("g"));
+        assertThat(
+                out.path("tools").path(0).path("function").path("description").asText(), is("gee"));
+        assertThat(out.path("tool_choice").asText(), is("required"));
+    }
+
+    @Test
+    public void toolChoiceNamingAnUnknownFunctionIsRejected() {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                        + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                        + "\"tool_choice\":{\"type\":\"function\",\"function\":{\"name\":\"g\"}}}"));
+        assertThat(e.getMessage(), containsString("tool_choice names unknown tool 'g'"));
+    }
+
+    @Test
+    public void toolChoiceOfTypeFunctionWithoutANameIsRejected() {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                        + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
+                        + "\"tool_choice\":{\"type\":\"function\"}}"));
+        assertThat(e.getMessage(), containsString("tool_choice"));
+        assertThat(e.getMessage(), containsString("name"));
     }
 
     @Test

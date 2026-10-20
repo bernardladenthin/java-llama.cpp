@@ -149,6 +149,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F224](#f224) — niedrig — *gefixt*
 - [F225](#f225) — niedrig — *gefixt*
 - [F226](#f226) — niedrig — *gefixt*
+- [F227](#f227) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1021,6 +1022,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `OpenAiRequestMapperTest#toolChoiceNamingAFunctionRequiresAToolCall`, `ResponsesApiSupportTest#toolChoiceNamingAFunctionRequiresAToolCall`
 - **Rot-Grün-Nachweis:** ohne Fix rot, je Weg für sich (2 Fehlschläge, je „Expected: is "required" but: was ""“), mit Fix grün (28/28 und 51/51, skipped 0); Gegenprobe per `git stash` beider Produktionsdateien rot (1 + 1), nach `pop` grün. `OpenAiCompatServerHttpTest` 47/47, `AnthropicApiSupportTest` 22/22, `ResponsesStreamTranslatorTest` 5/5, `OllamaApiSupportTest` 32/32, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün.
 - **Nachtrag (2026-10-18, nur beschrieben):** Zwei Kommentare neben dem Fix sind nicht nachgezogen: die Klassen-Javadoc von `OpenAiRequestMapper` nennt `tool_choice` unter den Feldern, die „verbatim as raw JSON“ weitergehen (galt schon vorher nur für die Textform), und der Kommentar über dem Werkzeugblock in `ResponsesApiSupport.toOpenAiChatRequest` beschreibt nur die Textform. Reine Doku-Abweichung, nach der Nutzerregel ohne Test nicht nachträglich geändert; Vorschlag: `tool_choice` aus der Verbatim-Aufzählung nehmen und „ein benanntes Werkzeug wird zu `required`“ ergänzen.
+- **Nachtrag (Branch-Review 2026-10-20):** Mit mehreren Werkzeugen ließ `required` jeden Aufruf zu; seit F227 geht auf beiden Wegen nur das benannte Werkzeug weiter, ein unbekannter oder fehlender Name ist 400.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `b7151fc`
 
@@ -1820,6 +1822,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected: is <{"42":-100}> but: was <>“ und „Expected: is <3> but: was <>“), mit dem Fix grün (`ResponsesApiSupportTest` 62/62, `OpenAiCompatServerHttpTest` 69/69, `OpenAiRequestMapperTest` 44/44). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `365fcdb`
+
+### F227 – java-llama.cpp: `tool_choice`, das eine Funktion benennt, lässt bei mehreren Werkzeugen jedes zu
+- **Zeit:** 2026-10-20 23:21 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`toOpenAiChatRequest`, Werkzeugblock), `OpenAiRequestMapper.java` (`toInferenceParameters`, neu `namedToolChoice`)
+- **Schwere:** niedrig (mit mehreren Werkzeugen durfte das Modell statt des verlangten ein anderes aufrufen)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J5-4). F109 bildete `{"type":"function","name":…}` (Responses) und `{"type":"function","function":{"name":…}}` (Chat) auf `required` ab und vermerkte, das sei nur „mit einem einzigen Werkzeug genau das verlangte“.
+- **Beschreibung:** llama.cpp kennt für `tool_choice` nur `auto`/`none`/`required` (`common_chat_tool_choice_parse_oaicompat`, `common/chat.cpp:314-325`, b11639) und baut die Werkzeug-Grammatik über alle übergebenen Werkzeuge. `required` über die ganze Liste ließ deshalb jeden Aufruf zu; die OpenAI-Semantik („force the model to call a specific function“, `ToolChoiceFunctionParam`) galt nur bei genau einem Werkzeug. Ein unbekannter Name und ein `{"type":"function"}` ohne Namen liefen still als `required` über alle Werkzeuge; OpenAI weist einen unbekannten Namen mit 400 ab. upstream selbst liest das Objekt gar nicht (`json_value(body, "tool_choice", "auto")` fällt auf `auto` zurück), die Übersetzung war upstream also schon voraus.
+- **Fix:** Ein benanntes `tool_choice` wird durch Einengen der weitergereichten Werkzeugliste erzwungen: nur das genannte Funktionswerkzeug geht weiter, dazu `required`; so lässt die Grammatik keinen anderen Aufruf zu. Ein Name, den kein Funktionswerkzeug trägt, ist eine `IllegalArgumentException` („tool_choice names unknown tool 'g'“), ein Objekt vom Typ `function` ohne Namen ebenso (beides 400). Beide Wege nutzen denselben Helfer `OpenAiRequestMapper.namedToolChoice`; die Responses-Übersetzung filtert schon beim Kopieren der Werkzeuge. Folge, in der Javadoc genannt: die Chat-Vorlage zeigt dem Modell die anderen Werkzeugdefinitionen nicht mehr (OpenAI lässt sie sichtbar und beschränkt nur die Ausgabe) – mit llama.cpps dreiwertigem `tool_choice` der Preis der Genauigkeit. Die Klassen-Javadoc des Mappers nennt `tool_choice` nur noch in seiner String-Form als unverändert weitergereicht. Nicht Teil dieses Funds: Anthropics `{"type":"tool","name":…}` wird weiter zu `required` über alle Werkzeuge, und ein `tool_choice`-Objekt anderen Typs (`allowed_tools`, `mcp`, …) fällt auf beiden Wegen weiter still auf `auto`.
+- **Tests:** `ResponsesApiSupportTest#toolChoiceNamingAFunctionForwardsOnlyThatTool`, `#toolChoiceNamingAnUnknownFunctionIsRejected`, `#toolChoiceOfTypeFunctionWithoutANameIsRejected` und dieselben drei in `OpenAiRequestMapperTest`; die F109-Tests `#toolChoiceNamingAFunctionRequiresAToolCall` (ein Werkzeug) beider Klassen bleiben grün.
+- **Rot-Grün-Nachweis:** Ohne den Fix rot (6 Fehlschläge: je Klasse „Expected: is <1> but: was <2>“ und zweimal „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit dem Fix grün (`ResponsesApiSupportTest` 65/65, `OpenAiRequestMapperTest` 47/47, `OpenAiCompatServerHttpTest` 69/69, `AnthropicApiSupportTest` 31/31, `OllamaApiSupportTest` 42/42, `LlamaArchitectureTest` 13/13). `spotless:apply` und `spotbugs:check` grün (eine erste Fassung mit fester Meldung ohne Namen fiel bei SpotBugs als `WEM_WEAK_EXCEPTION_MESSAGING` durch; die Meldung nennt jetzt das `tool_choice`).
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

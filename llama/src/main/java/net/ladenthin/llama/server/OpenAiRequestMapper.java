@@ -5,21 +5,25 @@
 package net.ladenthin.llama.server;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 import net.ladenthin.llama.parameters.InferenceParameters;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Pure mapping from an OpenAI {@code /v1/chat/completions} request body to {@link InferenceParameters}.
  *
- * <p>The structural fields — {@code messages}, {@code tools}, {@code tool_choice}, and
+ * <p>The structural fields — {@code messages}, {@code tools}, the string form of {@code tool_choice}, and
  * {@code parallel_tool_calls} — are forwarded
  * <em>verbatim</em> as raw JSON so the full OpenAI shape (assistant {@code tool_calls},
  * {@code role:"tool"} results with {@code tool_call_id}, and vision {@code image_url} content parts)
- * round-trips untouched into the native chat-template parser. Sampling fields are translated to the
+ * round-trips untouched into the native chat-template parser. A {@code tool_choice} naming one function
+ * becomes {@code required} with only that tool forwarded (see {@link #namedToolChoice}). Sampling fields are translated to the
  * matching {@code InferenceParameters.with*} setter, as are the llama.cpp sampling extensions upstream's
  * request schema reads ({@code min_p}, {@code repeat_penalty}, {@code grammar}, ...) and the reasoning
  * controls upstream's chat
@@ -66,13 +70,26 @@ final class OpenAiRequestMapper {
         // Tools are chat-only.
         JsonNode tools = request.path("tools");
         if (tools.isArray() && tools.size() > 0) {
-            params = params.withToolsJson(tools.toString());
             JsonNode toolChoice = request.path("tool_choice");
+            String namedTool =
+                    namedToolChoice(toolChoice, toolChoice.path("function").path("name"));
+            if (namedTool == null) {
+                params = params.withToolsJson(tools.toString());
+            } else {
+                ArrayNode named = JsonNodeFactory.instance.arrayNode();
+                for (JsonNode tool : tools) {
+                    if (namedTool.equals(tool.path("function").path("name").asText(""))) {
+                        named.add(tool);
+                    }
+                }
+                if (named.size() == 0) {
+                    throw new IllegalArgumentException("tool_choice names unknown tool '" + namedTool + "'");
+                }
+                params = params.withToolsJson(named.toString());
+            }
             if (toolChoice.isTextual()) {
                 params = params.withToolChoice(toolChoice.asText());
-            } else if ("function".equals(toolChoice.path("type").asText(""))) {
-                // A named function: llama.cpp's chat parser reads tool_choice only as a string and would
-                // fall back to "auto"; "required" is the closest it allows.
+            } else if (namedTool != null) {
                 params = params.withToolChoice("required");
             }
             JsonNode parallelToolCalls = request.path("parallel_tool_calls");
@@ -82,6 +99,31 @@ final class OpenAiRequestMapper {
         }
 
         return params;
+    }
+
+    /**
+     * The function a {@code tool_choice} object of type {@code function} names, or {@code null} for any
+     * other {@code tool_choice}. llama.cpp's chat parser reads {@code tool_choice} only as {@code auto},
+     * {@code none} or {@code required}; a named function is enforced by forwarding that tool alone with
+     * {@code required}, so the grammar admits no other call. The chat template then does not render the
+     * other tool definitions either, which the model may not call anyway (OpenAI keeps them visible and
+     * constrains only the output). Shared by the chat mapping ({@code tool_choice.function.name}) and
+     * the Responses translation ({@code tool_choice.name}).
+     *
+     * @param toolChoice the request's {@code tool_choice}
+     * @param name the node holding the function name in that request shape
+     * @return the named function, or {@code null}
+     * @throws IllegalArgumentException for a {@code tool_choice} of type {@code function} without a name
+     */
+    static @Nullable String namedToolChoice(JsonNode toolChoice, JsonNode name) {
+        if (!"function".equals(toolChoice.path("type").asText(""))) {
+            return null;
+        }
+        if (!name.isTextual() || name.asText().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "tool_choice of type 'function' needs the function's 'name' (got " + toolChoice + ")");
+        }
+        return name.asText();
     }
 
     /**

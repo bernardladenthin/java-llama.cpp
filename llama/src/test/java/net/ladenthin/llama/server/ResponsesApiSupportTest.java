@@ -399,6 +399,48 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void toolChoiceNamingAFunctionForwardsOnlyThatTool() throws IOException {
+        // "required" over every tool let the model call another one than the one named; llama.cpp knows
+        // only auto/none/required, so the named function is enforced by forwarding it alone.
+        JsonNode openAi = ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
+                + "\"tools\":[{\"type\":\"function\",\"name\":\"f\",\"parameters\":{\"type\":\"object\"}},"
+                + "{\"type\":\"function\",\"name\":\"g\",\"description\":\"gee\","
+                + "\"parameters\":{\"type\":\"object\"}}],"
+                + "\"tool_choice\":{\"type\":\"function\",\"name\":\"g\"}}"));
+        assertThat(openAi.path("tools").size(), is(1));
+        assertThat(openAi.path("tools").path(0).path("function").path("name").asText(), is("g"));
+        assertThat(
+                openAi.path("tools")
+                        .path(0)
+                        .path("function")
+                        .path("description")
+                        .asText(),
+                is("gee"));
+        assertThat(openAi.path("tool_choice").asText(), is("required"));
+    }
+
+    @Test
+    public void toolChoiceNamingAnUnknownFunctionIsRejected() throws IOException {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
+                        + "\"tools\":[{\"type\":\"function\",\"name\":\"f\"}],"
+                        + "\"tool_choice\":{\"type\":\"function\",\"name\":\"g\"}}")));
+        assertThat(e.getMessage(), containsString("tool_choice names unknown tool 'g'"));
+    }
+
+    @Test
+    public void toolChoiceOfTypeFunctionWithoutANameIsRejected() throws IOException {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
+                        + "\"tools\":[{\"type\":\"function\",\"name\":\"f\"}],"
+                        + "\"tool_choice\":{\"type\":\"function\"}}")));
+        assertThat(e.getMessage(), containsString("tool_choice"));
+        assertThat(e.getMessage(), containsString("name"));
+    }
+
+    @Test
     public void previousResponseIdIsRejectedLikeUpstream() throws IOException {
         // There is no response store: answering a turn that continues by previous_response_id without
         // its history would silently answer something else. upstream rejects it with a 400.

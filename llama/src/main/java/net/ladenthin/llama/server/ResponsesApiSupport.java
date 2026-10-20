@@ -100,7 +100,8 @@ final class ResponsesApiSupport {
      *
      * @param request the parsed Responses request
      * @return an OpenAI {@code /v1/chat/completions} request object
-     * @throws IllegalArgumentException if the request continues an earlier response by {@code previous_response_id}
+     * @throws IllegalArgumentException if the request continues an earlier response by {@code previous_response_id},
+     *     names an unknown tool in {@code tool_choice}, or carries input this translation refuses as upstream does
      */
     static ObjectNode toOpenAiChatRequest(JsonNode request) {
         // As upstream's convert_responses_to_chatcmpl: there is no response store, so a turn that refers
@@ -125,9 +126,15 @@ final class ResponsesApiSupport {
 
         JsonNode tools = request.path("tools");
         if (tools.isArray() && tools.size() > 0) {
+            JsonNode toolChoice = request.path("tool_choice");
+            // {"type":"function","name":...}: llama.cpp knows only auto/none/required, so the named
+            // function is forwarded alone with "required" (see OpenAiRequestMapper.namedToolChoice).
+            String namedTool = OpenAiRequestMapper.namedToolChoice(toolChoice, toolChoice.path("name"));
             ArrayNode openAiTools = openAi.putArray("tools");
             for (JsonNode tool : tools) {
-                if (!"function".equals(tool.path("type").asText(""))) {
+                if (!"function".equals(tool.path("type").asText(""))
+                        || (namedTool != null
+                                && !namedTool.equals(tool.path("name").asText("")))) {
                     continue;
                 }
                 ObjectNode openAiTool = openAiTools.addObject();
@@ -141,14 +148,15 @@ final class ResponsesApiSupport {
                     function.set("parameters", tool.path("parameters").deepCopy());
                 }
             }
+            if (namedTool != null && openAiTools.size() == 0) {
+                throw new IllegalArgumentException("tool_choice names unknown tool '" + namedTool + "'");
+            }
             // The Responses API uses the same tool_choice + parallel_tool_calls fields as chat; forward
             // them so the shared chat core honors them. The mapper consumes the string form of
             // tool_choice ("auto"/"none"/"required"), which is what we forward here.
-            JsonNode toolChoice = request.path("tool_choice");
             if (toolChoice.isTextual()) {
                 openAi.put("tool_choice", toolChoice.asText());
-            } else if ("function".equals(toolChoice.path("type").asText(""))) {
-                // {"type":"function","name":...}: the chat side knows only strings, "required" is closest.
+            } else if (namedTool != null) {
                 openAi.put("tool_choice", "required");
             }
             if (request.path("parallel_tool_calls").isBoolean()) {
