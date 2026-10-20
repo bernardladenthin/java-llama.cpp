@@ -17,6 +17,13 @@ import org.jspecify.annotations.Nullable;
  * {@code content_block_delta}s + {@code content_block_stop}) → one {@code tool_use} block per tool call
  * (start + {@code input_json_delta} + stop) → {@code message_delta} (stop reason) → {@code message_stop}.
  *
+ * <p>The blocks follow one another, at most one is open at a time: reasoning that arrives after text
+ * closes the text block and opens a new thinking block, and text after it a new text block (a parser
+ * that interleaves thinking and text, e.g. GPT-OSS or Gemma 4, gives thinking, text, thinking, text), as
+ * Claude streams several thinking blocks. The non-streamed {@link AnthropicApiSupport#toAnthropicResponse}
+ * cannot mirror that, because the chat message carries the reasoning as one concatenated string; an
+ * interleaved generation therefore has more blocks streamed than blocking, deliberately.
+ *
  * <p>Text deltas are emitted live; tool calls are reconstructed via {@link ToolCallDeltaAccumulator} and
  * emitted as whole blocks at the end (Anthropic expects each tool_use block's input as one
  * {@code input_json_delta}). Free of JNI / model dependencies; unit-testable by feeding chunk JSON.
@@ -85,6 +92,7 @@ final class AnthropicStreamTranslator {
             // Reasoning streams as a thinking block, as in upstream's to_json_anthropic_stream.
             JsonNode reasoning = choice.path("delta").path("reasoning_content");
             if (reasoning.isTextual() && !reasoning.asText().isEmpty()) {
+                closeTextBlock(out);
                 if (!thinkingBlockOpen) {
                     thinkingBlockIndex = nextIndex++;
                     out.append(AnthropicApiSupport.thinkingBlockStartEvent(thinkingBlockIndex));
@@ -120,10 +128,7 @@ final class AnthropicStreamTranslator {
     String end() {
         StringBuilder out = new StringBuilder();
         closeThinkingBlock(out);
-        if (textBlockOpen) {
-            out.append(AnthropicApiSupport.blockStopEvent(textBlockIndex));
-            textBlockOpen = false;
-        }
+        closeTextBlock(out);
         if (accumulator.hasToolCalls()) {
             for (JsonNode toolCall : accumulator.toOpenAiToolCalls()) {
                 int index = nextIndex++;
@@ -151,6 +156,14 @@ final class AnthropicStreamTranslator {
             out.append(AnthropicApiSupport.signatureDeltaEvent(thinkingBlockIndex));
             out.append(AnthropicApiSupport.blockStopEvent(thinkingBlockIndex));
             thinkingBlockOpen = false;
+        }
+    }
+
+    /** Close an open text block, so the next text delta opens a new one after the block in between. */
+    private void closeTextBlock(StringBuilder out) {
+        if (textBlockOpen) {
+            out.append(AnthropicApiSupport.blockStopEvent(textBlockIndex));
+            textBlockOpen = false;
         }
     }
 }

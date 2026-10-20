@@ -144,6 +144,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F219](#f219) — niedrig — *gefixt*
 - [F220](#f220) — niedrig — *gefixt*
 - [F221](#f221) — mittel — *gefixt*
+- [F222](#f222) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1751,6 +1752,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix vier rot: „Expected: is "stop_sequence" but: was "end_turn"“ (beide blockierenden Fälle) und „Expected: a string containing "\"stop_reason\":\"stop_sequence\""“ (beide gestreamten); mit dem Fix grün (`AnthropicApiSupportTest` 29/29, `AnthropicStreamTranslatorTest` 8/8, `OpenAiCompatServerHttpTest` 68/68). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `a1be394`
+
+### F222 – java-llama.cpp: Gestreamte Anthropic-Antwort öffnet bei Denkinhalt nach Text einen zweiten Thinking-Block, während der Textblock offen bleibt
+- **Zeit:** 2026-10-20 22:35 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicStreamTranslator.java` (`onChunk`, `end`, `closeTextBlock` neu)
+- **Schwere:** niedrig (braucht einen Parser, der den Denkinhalt nach begonnenem Text verlängert; die SDK-Akkumulatoren sammeln nach Index und setzen den Inhalt trotzdem zusammen, ein sequenziell darstellender Client hängt Text an einen Block, der sichtbar hinter einem späteren Thinking-Block liegt)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J4-3). F81 führte die Thinking-Blöcke im Stream ein, mit dem erklärten Ziel, dass die Blöcke einander folgen, statt wie bei upstream bis zum Ende offen zu bleiben; der Textpfad schloss dafür einen offenen Thinking-Block, der Reasoning-Pfad den Textblock nicht.
+- **Beschreibung:** `common_chat_msg_diff::compute_diffs` (`common/chat.cpp:236-252`, b11639) sendet ein `reasoning_content`-Delta, wann immer der geparste Denkinhalt wächst, unabhängig davon, ob schon Text kam, und die PEG-Mapper hängen jeden Reasoning-Knoten an (`chat-peg-parser.cpp:321`, „GPT OSS can have more than 1 reasoning block“; Gemma 4: `message = thought + content`, mehrfach). Für Denken „a“, Text „b“, Denken „c“, Text „d“ lieferte der Übersetzer: Thinking 0 (Start, Delta, Signatur, Stopp), Text 1 (Start, Delta „b“), Thinking 2 (Start, Delta „c“) bei noch offenem Text 1, Signatur und Stopp von 2, dann das Delta „d“ wieder an Index 1 und erst in `end()` den Stopp von 1 — zwei Blöcke gleichzeitig offen, ein Delta an einen Block nach dem Stopp des späteren. Die Streaming-Doku beschreibt „a series of content blocks, each of which has a content_block_start, one or more content_block_delta events, and a content_block_stop event“.
+- **Fix:** `closeTextBlock` (Gegenstück zu `closeThinkingBlock`) schließt einen offenen Textblock, bevor ein Thinking-Block geöffnet wird; `end()` nutzt dieselbe Methode. Höchstens ein Block ist offen, das Beispiel ergibt 0 Thinking, 1 Text, 2 Thinking, 3 Text, wie Claude selbst mehrere Thinking-Blöcke streamt. Die Klassen-Javadoc nennt die Regel und die bewusste Asymmetrie: `toAnthropicResponse` kann die Verschränkung nicht abbilden, weil die Chat-Nachricht den Denkinhalt als einen verketteten String trägt.
+- **Tests:** `AnthropicStreamTranslatorTest#reasoningAfterTextClosesTheTextBlockBeforeANewThinkingBlock` (zweiter Thinking-Start an Index 2, letztes Textdelta an Index 3, Stopp von 1 vor dem zweiten Thinking-Start, kein Delta an 1 nach dessen Stopp, `end()` schließt genau einen Block, Index 3); die übrigen Tests der Klasse unverändert grün.
+- **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: a string containing "\"index\":3,\"delta\":{\"type\":\"text_delta\",\"text\":\"d\"}"“ (das Delta „d“ ging an Index 1); mit dem Fix grün (`AnthropicStreamTranslatorTest` 9/9, `AnthropicApiSupportTest` 29/29, `OpenAiCompatServerHttpTest` 68/68). `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

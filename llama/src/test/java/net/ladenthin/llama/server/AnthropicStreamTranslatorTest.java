@@ -105,6 +105,41 @@ public class AnthropicStreamTranslatorTest {
     }
 
     @Test
+    public void reasoningAfterTextClosesTheTextBlockBeforeANewThinkingBlock() {
+        // A parser can grow the reasoning after the content started (interleaved thinking: GPT-OSS,
+        // Gemma 4). The blocks must still follow one another, each start, deltas, stop, as Claude itself
+        // streams several thinking blocks: 0 thinking, 1 text, 2 thinking, 3 text (F222).
+        AnthropicStreamTranslator translator = new AnthropicStreamTranslator("msg_1", "m");
+        String events = translator.onChunk("{\"choices\":[{\"delta\":{\"reasoning_content\":\"a\"}}]}")
+                + translator.onChunk("{\"choices\":[{\"delta\":{\"content\":\"b\"}}]}")
+                + translator.onChunk("{\"choices\":[{\"delta\":{\"reasoning_content\":\"c\"}}]}")
+                + translator.onChunk("{\"choices\":[{\"delta\":{\"content\":\"d\"}}]}");
+        String end = translator.end();
+        events += end;
+
+        assertThat(events, containsString("\"index\":2,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}"));
+        assertThat(events, containsString("\"index\":3,\"delta\":{\"type\":\"text_delta\",\"text\":\"d\"}"));
+        int textStop = events.indexOf("\"type\":\"content_block_stop\",\"index\":1");
+        int secondThinkingStart =
+                events.indexOf("{\"type\":\"thinking\",\"thinking\":\"\"}", events.indexOf("\"text\":\"b\""));
+        assertThat(
+                "the text block stops before the second thinking block starts",
+                textStop >= 0 && textStop < secondThinkingStart,
+                is(true));
+        assertThat(
+                "no delta reaches the text block after its stop",
+                events.lastIndexOf("\"index\":1,\"delta\"") < textStop,
+                is(true));
+        int messageDelta = end.indexOf("event: message_delta");
+        String closing = end.substring(0, messageDelta);
+        assertThat(
+                "end() closes exactly one block, the last text block",
+                closing.split("event: content_block_stop", -1).length - 1,
+                is(1));
+        assertThat(closing, containsString("\"type\":\"content_block_stop\",\"index\":3"));
+    }
+
+    @Test
     public void accumulatedToolCallsBecomeToolUseBlocksAtEnd() {
         AnthropicStreamTranslator translator = new AnthropicStreamTranslator("msg_1", "m");
         translator.onChunk("{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\","
