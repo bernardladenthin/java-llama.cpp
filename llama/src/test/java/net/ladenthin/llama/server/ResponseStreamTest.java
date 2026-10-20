@@ -5,6 +5,7 @@ package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpContext;
@@ -12,6 +13,7 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpPrincipal;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
@@ -32,6 +34,10 @@ public class ResponseStreamTest {
         final Headers responseHeaders = new Headers();
         final ByteArrayOutputStream body = new ByteArrayOutputStream();
         int status = -1;
+        int headerWrites;
+        /** When set, writing the headers fails like a client that has gone away. */
+        @Nullable
+        IOException headerFailure;
 
         @Override
         public Headers getRequestHeaders() {
@@ -72,7 +78,12 @@ public class ResponseStreamTest {
         }
 
         @Override
-        public void sendResponseHeaders(int rCode, long responseLength) {
+        public void sendResponseHeaders(int rCode, long responseLength) throws IOException {
+            headerWrites++;
+            IOException failure = headerFailure;
+            if (failure != null) {
+                throw failure;
+            }
             status = rCode;
         }
 
@@ -175,5 +186,25 @@ public class ResponseStreamTest {
         }
 
         assertThat(exchange.status, is(200));
+    }
+
+    /**
+     * A client that went away is often noticed only when the headers are written. The stream had
+     * started then, so the route must not take it for a failure before the first write: it would
+     * answer the request a second time (which fails as well) and log a disconnect as a server error.
+     */
+    @Test
+    void aStreamWhoseHeadersCouldNotBeWrittenHasStarted() throws Exception {
+        RecordingExchange exchange = new RecordingExchange();
+        exchange.headerFailure = new IOException("Broken pipe");
+        try (OpenAiCompatServer.ResponseStream out =
+                new OpenAiCompatServer.ResponseStream(exchange, "text/event-stream")) {
+            assertThrows(IOException.class, () -> out.writeStrict("DATA\n"));
+            assertThat(out.answerIfNotStarted(500, "{\"error\":\"x\"}"), is(false));
+            out.writeQuietly(": ping\n");
+            assertThrows(IOException.class, () -> out.writeStrict("DATA\n"));
+        }
+
+        assertThat("the headers were written once", exchange.headerWrites, is(1));
     }
 }

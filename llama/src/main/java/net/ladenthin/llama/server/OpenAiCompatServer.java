@@ -381,7 +381,12 @@ public final class OpenAiCompatServer implements AutoCloseable {
                             OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null)));
                 }
             } catch (IOException e) {
-                LOG.debug("client disconnected during stream", e);
+                if (out.answerIfNotStarted(
+                        HTTP_SERVER_ERROR, OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null))) {
+                    LOG.warn("streaming completion failed before the first chunk", e);
+                } else {
+                    LOG.debug("client disconnected during stream", e);
+                }
             } catch (RuntimeException e) {
                 LOG.warn("streaming completion failed", e);
                 if (!out.answerIfNotStarted(
@@ -475,7 +480,12 @@ public final class OpenAiCompatServer implements AutoCloseable {
                             OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_REQUEST, null)));
                 }
             } catch (IOException e) {
-                LOG.debug("client disconnected during stream", e);
+                if (out.answerIfNotStarted(
+                        HTTP_SERVER_ERROR, OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null))) {
+                    LOG.warn("streaming chat completion failed before the first chunk", e);
+                } else {
+                    LOG.debug("client disconnected during stream", e);
+                }
             } catch (RuntimeException e) {
                 LOG.warn("streaming chat completion failed", e);
                 if (!out.answerIfNotStarted(
@@ -603,7 +613,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     out.writeQuietly(ollamaError(message(e)) + "\n");
                 }
             } catch (IOException e) {
-                LOG.debug("ollama client disconnected during stream", e);
+                if (out.answerIfNotStarted(HTTP_SERVER_ERROR, ollamaError(message(e)))) {
+                    LOG.warn("ollama streaming chat failed before the first chunk", e);
+                } else {
+                    LOG.debug("ollama client disconnected during stream", e);
+                }
             } catch (RuntimeException e) {
                 LOG.warn("ollama streaming chat failed", e);
                 if (!out.answerIfNotStarted(HTTP_SERVER_ERROR, ollamaError(message(e)))) {
@@ -728,7 +742,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
                     out.writeQuietly(AnthropicApiSupport.sseEvent("error", error));
                 }
             } catch (IOException e) {
-                LOG.debug("anthropic client disconnected during stream", e);
+                if (out.answerIfNotStarted(HTTP_SERVER_ERROR, anthropicError(message(e), ANTHROPIC_ERROR_SERVER))) {
+                    LOG.warn("anthropic streaming failed before the first event", e);
+                } else {
+                    LOG.debug("anthropic client disconnected during stream", e);
+                }
             } catch (RuntimeException e) {
                 LOG.warn("anthropic streaming failed", e);
                 String error = anthropicError(message(e), ANTHROPIC_ERROR_SERVER);
@@ -829,7 +847,12 @@ public final class OpenAiCompatServer implements AutoCloseable {
                             + "\n\n");
                 }
             } catch (IOException e) {
-                LOG.debug("responses client disconnected during stream", e);
+                if (out.answerIfNotStarted(
+                        HTTP_SERVER_ERROR, OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null))) {
+                    LOG.warn("responses streaming failed before the first event", e);
+                } else {
+                    LOG.debug("responses client disconnected during stream", e);
+                }
             } catch (RuntimeException e) {
                 LOG.warn("responses streaming failed", e);
                 String error = OpenAiSseFormatter.errorJson(message(e), ERROR_TYPE_SERVER, null);
@@ -1088,6 +1111,12 @@ public final class OpenAiCompatServer implements AutoCloseable {
         private final Object lock = new Object();
         private String prelude = "";
         private @Nullable OutputStream os;
+        /**
+         * Set before the headers are written: once a start was attempted the request cannot be answered
+         * any more, even when the header write failed (a client that went away is often noticed there).
+         */
+        private boolean started;
+
         private boolean answered;
 
         ResponseStream(HttpExchange exchange, String contentType) {
@@ -1121,6 +1150,10 @@ public final class OpenAiCompatServer implements AutoCloseable {
             }
             OutputStream out = os;
             if (out == null) {
+                if (started) {
+                    throw new IOException("the " + contentType + " stream failed to start");
+                }
+                started = true;
                 exchange.getResponseHeaders().set("Content-Type", contentType);
                 exchange.getResponseHeaders().set("Cache-Control", "no-cache");
                 exchange.sendResponseHeaders(HTTP_OK, 0);
@@ -1165,12 +1198,13 @@ public final class OpenAiCompatServer implements AutoCloseable {
          * Answer the request with {@code status} and a JSON body instead of a stream, if the stream has
          * not started yet.
          *
-         * @return {@code false} when the stream had already started; the caller then reports the error
-         *     as an event of the stream
+         * @return {@code false} when the stream had already started (or failed to start), or the request
+         *     was already answered; the caller then reports the error as an event of the stream, which is
+         *     dropped once the request was answered
          */
         boolean answerIfNotStarted(int status, String json) {
             synchronized (lock) {
-                if (os != null) {
+                if (started || answered) {
                     return false;
                 }
                 answered = true;

@@ -655,6 +655,24 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * {@link OpenAiBackend} lets a backend report a generation failure as an {@link IOException}. Since
+     * the response starts with its first write, such a failure before it left the request without any
+     * response: the route took it for a client that had gone away. It is a 500 with the route's error
+     * body, as without {@code stream}.
+     */
+    @Test
+    public void aBackendIOExceptionBeforeTheFirstChunkIsA500OnEveryStreamingRoute() throws IOException {
+        try (OpenAiCompatServer server = new OpenAiCompatServer(new IoFailingBackend(), config()).start()) {
+            for (String[] route : STREAMING_ROUTES) {
+                Response response = post(server.getPort(), route[0], route[1], "");
+                assertThat(route[0], response.code, is(500));
+                assertThat(route[0], response.body, containsString(route[3]));
+                assertThat(route[0], response.body, containsString(IoFailingBackend.REASON));
+            }
+        }
+    }
+
     @Test
     public void aRejectionAfterTheFirstChunkIsAnInvalidRequestEvent() throws IOException {
         ScriptedStreamBackend backend =
@@ -1142,6 +1160,21 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         @Override
         public void streamCompletions(JsonNode request, ChunkSink sink) {
             throw new LlamaException(REASON);
+        }
+    }
+
+    /** Backend whose streamed generation fails with an {@link IOException}, which the backend contract allows. */
+    static final class IoFailingBackend extends FakeBackend {
+        static final String REASON = "disk full";
+
+        @Override
+        public void stream(JsonNode request, ChunkSink sink) throws IOException {
+            throw new IOException(REASON);
+        }
+
+        @Override
+        public void streamCompletions(JsonNode request, ChunkSink sink) throws IOException {
+            throw new IOException(REASON);
         }
     }
 

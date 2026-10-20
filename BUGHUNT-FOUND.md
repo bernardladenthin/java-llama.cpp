@@ -136,6 +136,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F204](#f204) — niedrig bis mittel — *gefixt*
 - [F205](#f205) — niedrig — *gefixt*
 - [F213](#f213) — niedrig — *gefixt*
+- [F214](#f214) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1647,6 +1648,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: der HTTP-Test mit `java.net.SocketException: Unexpected end of file from server` aus `getResponseCode()`, `aNonObjectMessageIsRejectedWithItsIndex` mit „Unexpected exception type thrown, expected: <java.lang.IllegalArgumentException> but was: <java.lang.ClassCastException>“, `messagesThatAreNoArrayAreRejected` mit „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“; mit dem Fix grün (`OllamaApiSupportTest` 39, `OpenAiCompatServerHttpTest` 65, `OpenAiRequestMapperTest` 35, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `538cafb`
+
+### F214 – java-llama.cpp: Eine `IOException` des Backends vor dem ersten Chunk gilt als Verbindungsabbruch — keine Antwort, nur DEBUG
+- **Zeit:** 2026-10-20 20:15 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`ResponseStream`; die `IOException`-Zweige von `streamCompletions`, `streamChat`, `streamOllamaChat`, `streamAnthropic`, `streamResponses`)
+- **Schwere:** niedrig (nur über die öffentliche Schnittstelle `OpenAiBackend` erreichbar; `LlamaModelBackend` reicht nur die `IOException` der Senke weiter)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J1-2). Eine Folge von F182: vorher sendete jede Streaming-Route die Kopfzeilen vor dem Backend-Aufruf, der Client sah wenigstens ein 200 mit leerem Stream.
+- **Beschreibung:** `OpenAiBackend.stream`/`streamCompletions` dürfen laut Javadoc eine `IOException` werfen, wenn „generation fails“; der ungestreamte Pfad beantwortet sie mit 500. Die fünf Streaming-Routen fingen sie mit `LOG.debug("client disconnected during stream", e)` und schrieben nichts. Seit F182 beginnt die Antwort erst mit dem ersten Schreiben, also endete eine solche Anfrage mit `exchange.close()` ohne Kopfzeilen — der JDK-Server schloss die Verbindung ohne Statuszeile, entgegen dem CHANGELOG-Eintrag zu F182 („a failure before it is `400` or `500` with the route's own error body“). Dazu: Ein Client, der gegangen ist, fällt oft erst beim Schreiben der Kopfzeilen auf; `answerIfNotStarted` sah dann `os == null` und hätte die Anfrage ein zweites Mal beantworten wollen.
+- **Fix:** Die fünf `IOException`-Zweige beantworten die Anfrage mit 500 und dem Fehlerkörper der Route, solange der Stream nicht begonnen hat (WARN), und bleiben sonst beim DEBUG für den Abbruch. `ResponseStream` merkt sich den Start vor dem Schreiben der Kopfzeilen (`started`), sodass ein dort gescheiterter Start als begonnen gilt: `answerIfNotStarted` gibt `false`, ein weiteres Schreiben wirft, statt die Kopfzeilen erneut zu senden. `answerIfNotStarted` beantwortet eine schon beantwortete Anfrage nicht ein zweites Mal.
+- **Tests:** `OpenAiCompatServerHttpTest.aBackendIOExceptionBeforeTheFirstChunkIsA500OnEveryStreamingRoute` (alle fünf Streaming-Routen, `IoFailingBackend`), `ResponseStreamTest.aStreamWhoseHeadersCouldNotBeWrittenHasStarted`.
+- **Rot-Grün-Nachweis:** Ohne den Fix rot: der HTTP-Test mit `java.net.SocketException: Unexpected end of file from server` aus `getResponseCode()`, der `ResponseStream`-Test mit „Expected: is <false> but: was <true>“ (`answerIfNotStarted` nach gescheitertem Kopfzeilen-Schreiben); mit dem Fix grün (`ResponseStreamTest` 5, `OpenAiCompatServerHttpTest` 66, `OllamaApiSupportTest` 39, `LlamaArchitectureTest` 13). Modellgestützt mit dem Winzmodell `OpenAiCompatServerIntegrationTest` 13/13 grün; in `OpenAiServerCompletionIntegrationTest` scheitern nur die beiden Infill-Fälle (500, das Winzmodell hat keine FIM-Token), die keine Streaming-Route berühren. `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
