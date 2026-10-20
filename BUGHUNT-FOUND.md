@@ -1494,7 +1494,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponseStreamTest` (4, über einen `HttpExchange`-Fake ohne Socket): `theOpeningIsWrittenFirstWhenItIsSetBeforeTheFirstWrite`, `anOpeningSetAfterAHeartbeatStartedTheStreamIsStillWritten`, `anErrorBeforeTheFirstWriteIsAnsweredWithItsStatusAndNoOpening`, `anErrorAfterTheFirstWriteIsLeftToTheStream`.
 - **Rot-Grün-Nachweis:** Ohne den Fix `anOpeningSetAfterAHeartbeatStartedTheStreamIsStillWritten` rot (erwartet `: ping\nOPEN\nDATA\n`, war `: ping\nDATA\n`); mit ihm grün. `OpenAiCompatServerHttpTest` 63/63.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `bbdafda`
 
 ## Offene Verdachte ohne Fund-ID
 
