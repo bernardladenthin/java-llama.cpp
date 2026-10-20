@@ -1833,7 +1833,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesApiSupportTest#toolChoiceNamingAFunctionForwardsOnlyThatTool`, `#toolChoiceNamingAnUnknownFunctionIsRejected`, `#toolChoiceOfTypeFunctionWithoutANameIsRejected` und dieselben drei in `OpenAiRequestMapperTest`; die F109-Tests `#toolChoiceNamingAFunctionRequiresAToolCall` (ein Werkzeug) beider Klassen bleiben grün.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot (6 Fehlschläge: je Klasse „Expected: is <1> but: was <2>“ und zweimal „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit dem Fix grün (`ResponsesApiSupportTest` 65/65, `OpenAiRequestMapperTest` 47/47, `OpenAiCompatServerHttpTest` 69/69, `AnthropicApiSupportTest` 31/31, `OllamaApiSupportTest` 42/42, `LlamaArchitectureTest` 13/13). `spotless:apply` und `spotbugs:check` grün (eine erste Fassung mit fester Meldung ohne Namen fiel bei SpotBugs als `WEM_WEAK_EXCEPTION_MESSAGING` durch; die Meldung nennt jetzt das `tool_choice`).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `f888bde`
 
 ## Offene Verdachte ohne Fund-ID
 
