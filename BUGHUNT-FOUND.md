@@ -1482,7 +1482,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `FfmTextToSpeechTest` (5, ohne Bibliothek und Modell): `closeWaitsForASynthesisInsideTheNativeCall`, `synthesizeAfterCloseIsRefusedWithoutTouchingTheHandle`, `closeTwiceFreesOnce`, `synthesizeReturnsTheBackendsWav`, `synthesizeWithoutTextIsRefused`.
 - **Rot-Grün-Nachweis:** Mit dem Seam, aber ohne Lock: `closeWaitsForASynthesisInsideTheNativeCall` rot (`close()` kehrte zurück, während die Synthese noch lief); mit dem Lock grün. `llama-ffm` `verify` 35/35 mit dem Zufallsmodell.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `d6be2c5`
 
 ## Offene Verdachte ohne Fund-ID
 
