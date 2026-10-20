@@ -1672,7 +1672,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest.ollamaGenerateWithRawAndASystemPromptIsRejectedLikeOllama` (`system`, `template`, `context`, mit `suffix`, ohne Prompt; das Backend wird nicht gerufen) ersetzt `ollamaGenerateWithRawCompletesTheBarePromptAndIgnoresSystem`; `ollamaGenerateWithRawCompletesTheBarePrompt` (der Weg ohne Konflikt); `OllamaApiSupportTest.rawWithSystemTemplateOrContextConflictsLikeOllama` (vier Konflikte, vier zulässige Formen).
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Handler (mit einem `hasRawConflict`, das `false` liefert) rot: der HTTP-Test mit „Expected: is <400> but: was <200>“ für `{"model":"test-model","prompt":"once upon","system":"x","raw":true,"stream":false}`, der Einheitstest mit „Expected: is <true> but: was <false>“; mit dem Fix grün (`OllamaApiSupportTest` 40, `OpenAiCompatServerHttpTest` 67, `LlamaArchitectureTest` 13), `spotbugs:check` und `javadoc:javadoc` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `d94fbd7`
 
 ## Offene Verdachte ohne Fund-ID
 
