@@ -13,7 +13,7 @@ import static net.ladenthin.llama.ffm.JllamaNative.takeBytes;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import net.ladenthin.llama.exception.LlamaException;
 
 /**
@@ -22,11 +22,81 @@ import net.ladenthin.llama.exception.LlamaException;
  */
 public final class FfmTextToSpeech implements AutoCloseable {
 
+    /** The two native calls on a loaded pair's handle; a seam so the locking is testable without it. */
+    interface Backend {
+
+        /**
+         * Synthesises {@code text} on {@code handle}.
+         *
+         * @param handle the loaded pair
+         * @param text the text to speak
+         * @param speakerReferencePath a WAV to clone the voice from, or {@code null}
+         * @param language the language, or {@code null}
+         * @param maxFrames the bound on the generated frames
+         * @param topK the sampling top-k
+         * @param seed the sampling seed
+         * @return the WAV bytes
+         */
+        byte[] synthesize(MemorySegment handle, String text, String speakerReferencePath, String language,
+                int maxFrames, int topK, int seed);
+
+        /**
+         * Frees {@code handle}, the engine with it.
+         *
+         * @param handle the loaded pair
+         */
+        void free(MemorySegment handle);
+    }
+
+    /** The real calls into the library. */
+    private static final Backend NATIVE = new Backend() {
+        @Override
+        public byte[] synthesize(MemorySegment handle, String text, String speakerReferencePath, String language,
+                int maxFrames, int topK, int seed) {
+            try (Arena arena = Arena.ofConfined()) {
+                MemorySegment wav = pointerSlot(arena);
+                MemorySegment length = longSlot(arena);
+                JllamaNative.call(JllamaNative.TTS_SYNTHESIZE, handle, cString(arena, text),
+                        cString(arena, speakerReferencePath), cString(arena, language), maxFrames, topK, seed, wav,
+                        length);
+                return takeBytes(wav, length);
+            }
+        }
+
+        @Override
+        public void free(MemorySegment handle) {
+            invoke(JllamaNative.TTS_FREE, handle);
+        }
+    };
+
     private final MemorySegment handle;
-    private final AtomicBoolean closed = new AtomicBoolean();
+    private final Backend backend;
+
+    /**
+     * Serializes {@link #close()} against {@link #synthesize}, as in the JNI {@code TextToSpeech}
+     * (F16): the native free deletes the engine, and nothing on the native side counts the threads
+     * still inside a call on it, so a free during a synthesis left that synthesis on freed memory.
+     * Syntheses share the read lock (the engine serializes them itself); close takes the write lock
+     * and so waits for every synthesis in progress.
+     */
+    private final ReentrantReadWriteLock lifecycleLock = new ReentrantReadWriteLock();
+
+    /** Set by {@link #close()} under the write lock. */
+    private boolean closed;
 
     private FfmTextToSpeech(MemorySegment handle) {
+        this(handle, NATIVE);
+    }
+
+    /**
+     * A pair over {@code handle} that calls {@code backend}; for tests.
+     *
+     * @param handle the loaded pair
+     * @param backend the native calls
+     */
+    FfmTextToSpeech(MemorySegment handle, Backend backend) {
         this.handle = handle;
+        this.backend = backend;
     }
 
     /**
@@ -65,24 +135,28 @@ public final class FfmTextToSpeech implements AutoCloseable {
     public byte[] synthesize(String text, String speakerReferencePath, String language, int maxFrames, int topK,
             int seed) {
         Objects.requireNonNull(text, "text");
-        if (closed.get()) {
-            throw new IllegalStateException("the model is closed");
-        }
-        try (Arena arena = Arena.ofConfined()) {
-            MemorySegment wav = pointerSlot(arena);
-            MemorySegment length = longSlot(arena);
-            JllamaNative.call(JllamaNative.TTS_SYNTHESIZE, handle, cString(arena, text),
-                    cString(arena, speakerReferencePath), cString(arena, language), maxFrames, topK, seed, wav,
-                    length);
-            return takeBytes(wav, length);
+        lifecycleLock.readLock().lock();
+        try {
+            if (closed) {
+                throw new IllegalStateException("the model is closed");
+            }
+            return backend.synthesize(handle, text, speakerReferencePath, language, maxFrames, topK, seed);
+        } finally {
+            lifecycleLock.readLock().unlock();
         }
     }
 
-    /** Frees the model pair; a second call is a no-op. */
+    /** Frees the model pair once every synthesis in progress has returned; a second call is a no-op. */
     @Override
     public void close() {
-        if (closed.compareAndSet(false, true)) {
-            invoke(JllamaNative.TTS_FREE, handle);
+        lifecycleLock.writeLock().lock();
+        try {
+            if (!closed) {
+                closed = true;
+                backend.free(handle);
+            }
+        } finally {
+            lifecycleLock.writeLock().unlock();
         }
     }
 }

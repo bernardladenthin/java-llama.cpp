@@ -193,7 +193,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Reproduktion:** `TextToSpeechLifecycleTest#close_whileSynthesizeIsInsideTheEngine_freesItOnlyAfterSynthesizeReturned` (Fake über die neue paketinterne Naht `TextToSpeech.Backend` hält `synthesize` im „nativen“ Aufruf fest), dazu `#synthesize_afterClose_throwsIllegalState`, `#close_calledTwice_freesTheEngineOnce`, `#synthesize_whileOpen_returnsTheBackendsWav`
 - **Fix:** `ReentrantReadWriteLock`: `synthesize` hält die Lesesperre über den ganzen nativen Aufruf, `close` die Schreibsperre. Gleichzeitige Synthesen bleiben möglich (die Engine ordnet sie selbst über `synthesize_mutex`), aber `close` gibt die Engine (samt diesem Mutex) erst frei, wenn keine mehr läuft. Die JNI-Aufrufe laufen über eine paketinterne Naht `Backend`; `LlamaLoader.initialize()` wanderte aus dem static-Block in deren `load`.
 - **Rot-Grün-Nachweis:** Naht zuerst verhaltensneutral eingezogen; dagegen rot 1/4 („the engine was freed while synthesize() still ran in it – Expected: is <false> but: was <true>“). Mit Fix grün 4/4 (skipped 0); Gegenprobe mit dem Stand ohne Fix rot 1/4, wiederhergestellt grün 4/4. `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
-- **Status:** gefixt
+- **Status:** gefixt für JNI; die FFM-Hälfte (`FfmTextToSpeech`, in „Datei“ genannt) blieb ungeändert und ist erst mit F198 behoben (Branch-Review 2026-10-20)
 - **Commit:** java-llama.cpp `128be3a`
 
 <a id="f17"></a>
@@ -1471,6 +1471,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Der C-API-Test gegen den alten Code rot (alle vier Wege `OK` statt `INVALID_REQUEST`), mit dem Fix grün; `ctest` grün. Die beiden Java-Tests lokal mit dem Zufallsmodell grün (die zwei Infill-Tests der Klasse scheitern dort erwartungsgemäß, das Zufallsmodell hat keine FIM-Tokens); in CI mit dem echten Modell.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `447de71`
+
+### F198 – java-llama.cpp: `FfmTextToSpeech.close()` gibt die Engine frei, während `synthesize()` auf einem anderen Thread in ihr läuft (FFM-Hälfte von F16)
+- **Zeit:** 2026-10-20 11:00 UTC
+- **Datei:** `llama-ffm/src/main/java/net/ladenthin/llama/ffm/FfmTextToSpeech.java`, neu `llama-ffm/src/test/java/net/ladenthin/llama/ffm/FfmTextToSpeechTest.java`
+- **Schwere:** mittel (Use-after-free → JVM-Absturz, nur bei `close()` parallel zu einer laufenden Synthese)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20: F16 nennt die Datei als betroffen, auf dem Branch war sie aber unverändert, und F16 stand auf „gefixt“.
+- **Beschreibung:** `synthesize()` prüfte `closed.get()` und rief dann ohne Lock `jllama_tts_synthesize`; `close()` setzte das Flag per CAS und rief `jllama_tts_free` → `engine_free` → `delete engine`. Die native Seite zählt keine Nutzer (`jllama_api.cpp`), also löschte ein `close()` von einem anderen Thread die Engine samt ihrem `synthesize_mutex` unter einer laufenden Synthese — dieselbe Prüfen-dann-Rufen-Lücke wie F59 bei `FfmNativeServer`.
+- **Fix:** Ein `ReentrantReadWriteLock` wie im JNI-`TextToSpeech`: Synthesen halten das Lese-Lock (die Engine serialisiert sie selbst), `close()` nimmt das Schreib-Lock und wartet so auf jede laufende Synthese; das `closed`-Flag steht unter dem Lock. Die zwei nativen Aufrufe liegen hinter einem `Backend`-Seam, wie bei `FfmNativeServer`, damit die Sperre ohne Bibliothek testbar ist.
+- **Tests:** `FfmTextToSpeechTest` (5, ohne Bibliothek und Modell): `closeWaitsForASynthesisInsideTheNativeCall`, `synthesizeAfterCloseIsRefusedWithoutTouchingTheHandle`, `closeTwiceFreesOnce`, `synthesizeReturnsTheBackendsWav`, `synthesizeWithoutTextIsRefused`.
+- **Rot-Grün-Nachweis:** Mit dem Seam, aber ohne Lock: `closeWaitsForASynthesisInsideTheNativeCall` rot (`close()` kehrte zurück, während die Synthese noch lief); mit dem Lock grün. `llama-ffm` `verify` 35/35 mit dem Zufallsmodell.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
