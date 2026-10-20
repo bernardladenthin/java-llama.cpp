@@ -1646,7 +1646,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest.aNonObjectOllamaChatMessageIsA400NotADroppedConnection` (ungestreamt und gestreamt, das Backend wird nicht gerufen), `OllamaApiSupportTest.aNonObjectMessageIsRejectedWithItsIndex` (String, `null`, Array), `OllamaApiSupportTest.messagesThatAreNoArrayAreRejected`.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: der HTTP-Test mit `java.net.SocketException: Unexpected end of file from server` aus `getResponseCode()`, `aNonObjectMessageIsRejectedWithItsIndex` mit „Unexpected exception type thrown, expected: <java.lang.IllegalArgumentException> but was: <java.lang.ClassCastException>“, `messagesThatAreNoArrayAreRejected` mit „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“; mit dem Fix grün (`OllamaApiSupportTest` 39, `OpenAiCompatServerHttpTest` 65, `OpenAiRequestMapperTest` 35, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `538cafb`
 
 ## Offene Verdachte ohne Fund-ID
 
