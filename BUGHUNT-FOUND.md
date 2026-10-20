@@ -148,6 +148,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F223](#f223) — niedrig — *gefixt*
 - [F224](#f224) — niedrig — *gefixt*
 - [F225](#f225) — niedrig — *gefixt*
+- [F226](#f226) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1399,6 +1400,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** Entscheidung des Nutzers: `logit_bias` (Objekt oder Array) wird unverändert über die neue öffentliche `InferenceParameters.withLogitBiasJson` weitergereicht (ein JSON-Wert, wie die anderen Fragment-Setter geprüft), `n_probs` über `withNProbs`; `n > 1` ist eine ungültige Anfrage (400), weil diese Wege eine Antwort liefern; auf dem gestreamten `/v1/completions` sind `logprobs`/`n_probs` eine ungültige Anfrage mit dem Hinweis auf `stream: false`, bis (14) den Stream nativ macht.
 - **Tests:** `OpenAiRequestMapperTest#logitBiasAndNProbsAreForwardedOnBothPaths`, `#moreThanOneChoiceIsRefusedBecauseOneAnswerComesBack`, `#probabilitiesOnTheStreamedCompletionAreRefused`, `#unknownFieldsIgnored` (ohne `n`); `InferenceParametersTest#withLogitBiasJson_storesTheValueAndRefusesASecondOne`.
 - **Rot-Grün-Nachweis:** mit Platzhalter-Setter und unverändertem Mapper rot (4 Tests), mit dem Fix grün (327 Tests der Mapper-, Parameter-, Registry- und Server-Klassen); SpotBugs grün.
+- **Nachtrag (Branch-Review 2026-10-20):** Die Beschreibung stimmte für die Responses-Übersetzung nicht: deren Feldliste `CHAT_PASSTHROUGH_FIELDS` filtert, was den Mapper erreicht, und enthielt `logit_bias`/`n_probs` nicht; nachgezogen mit F226.
 - **Status:** gefixt (der Rest unter (14), Wahrscheinlichkeiten im gestreamten `/v1/completions`, mit F186)
 - **Commit:** java-llama.cpp `3d001d2`
 
@@ -1806,6 +1808,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („{"city":"Paris"} ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit dem Fix grün (`ResponsesApiSupportTest` 60/60, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `fdc800e`
+
+### F226 – java-llama.cpp: Responses-Route verwirft `logit_bias` und `n_probs` still, obwohl der Chat-Mapper sie liest
+- **Zeit:** 2026-10-20 23:12 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`CHAT_PASSTHROUGH_FIELDS` und seine Javadoc)
+- **Schwere:** niedrig (ein per `logit_bias` gesperrtes Token wurde auf `/v1/responses` trotzdem erzeugt, ohne Hinweis)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J5-3). Die Liste entstand mit F106 (`87635b2`) gegen den damaligen Mapper; F180 (`3d001d2`) brachte dem Mapper `logit_bias` und `n_probs` bei und vermerkte, das erreiche auch die Responses-Übersetzung – die Liste filtert aber, was kopiert wird, und wurde nicht nachgezogen. F183/F202 fügten `verbose` und `response_fields` hinzu, ebenfalls ohne die Liste.
+- **Beschreibung:** Upstreams `convert_responses_to_chatcmpl` (`server-chat.cpp:15`, b11639) beginnt mit `json chatcmpl_body = response_body;` und kopiert damit jedes Feld; ein `logit_bias` auf upstreams `/v1/responses` erreicht das Schema (`server-schema.cpp:382`) und wirkt. Hier kopierte die Übersetzung nur die Felder ihrer Liste, deren Javadoc behauptete, es seien die, die der Chat-Mapper liest; `logit_bias` und `n_probs` fehlten, die Anfrage lief ohne sie. Der parametrisierte Test zählte nur die Felder der Liste auf und konnte eine Lücke nicht sehen. Auch die CHANGELOG-Zeile zu F180 (alle Chat-Routen einschließlich Responses reichen `logit_bias`/`n_probs` weiter) stimmte damit nicht.
+- **Fix:** `logit_bias` und `n_probs` stehen in der Liste (`n_probs` aus Parität mit upstreams Annahme, sichtbar wird es nicht: die Responses-Ausgabe trägt hier wie upstream keine Wahrscheinlichkeiten). Die Javadoc sagt jetzt, was die Liste ist (die vom Mapper gelesenen Felder, deren Wirkung einen Responses-Client erreichen kann) und nennt die bewussten Auslassungen: die oben übersetzten Strukturfelder, `verbose`/`response_fields` (die Responses-Ausgabe trägt weder das Debug-Objekt noch eine Projektion; weitergereicht zöge `verbose` nur upstreams Debug-Objekt durch JNI, um es zu verwerfen, die Kosten, die F202 auf der Anthropic-Route entfernte) und chats `logprobs`/`top_logprobs` (die Responses-Form ist `top_logprobs` mit `include`, die Ausgabe trägt keine Wahrscheinlichkeiten). Der vorgeschlagene reflektive Wächter über die `request.path(…)`-Literale des Mappers wurde nicht gebaut (er müsste Quelltext lesen und eine große Ausnahmeliste pflegen); die Ausnahmeliste der Javadoc ist der Vertrag.
+- **Tests:** `ResponsesApiSupportTest#requestFieldsTheChatMapperReadsPassThroughLikeUpstream` um die Zeilen `logit_bias|{"42":-100}` und `n_probs|3` erweitert.
+- **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected: is <{"42":-100}> but: was <>“ und „Expected: is <3> but: was <>“), mit dem Fix grün (`ResponsesApiSupportTest` 62/62, `OpenAiCompatServerHttpTest` 69/69, `OpenAiRequestMapperTest` 44/44). `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

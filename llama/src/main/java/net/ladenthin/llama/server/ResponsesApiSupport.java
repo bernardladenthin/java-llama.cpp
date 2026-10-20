@@ -40,9 +40,17 @@ final class ResponsesApiSupport {
 
     /**
      * Request fields handed on to the chat request unchanged. Upstream's {@code
-     * convert_responses_to_chatcmpl} copies the whole body; these are the ones the shared chat mapper
-     * reads (OpenAI sampling and llama.cpp's extensions). The structural fields ({@code input}, {@code
-     * tools}, {@code tool_choice}) are translated above, not copied.
+     * convert_responses_to_chatcmpl} copies the whole body; these are the fields the shared chat mapper
+     * reads (OpenAI sampling and llama.cpp's extensions) whose effect can reach a Responses client.
+     * Left out on purpose: the structural fields translated in {@link #toOpenAiChatRequest} ({@code
+     * input}, {@code instructions}, {@code tools}, {@code tool_choice}, {@code parallel_tool_calls},
+     * {@code max_output_tokens}, {@code reasoning}, {@code text.format}); {@code verbose} and {@code
+     * response_fields}, because the Responses output (here as upstream's {@code to_json_oaicompat_resp})
+     * carries neither the debug object nor a projection, so forwarding them would only pull the debug
+     * object through JNI to be discarded; and chat's {@code logprobs} / {@code top_logprobs}, because
+     * the Responses form of probabilities ({@code top_logprobs} with {@code include}) is not produced:
+     * the output carries no logprobs, here or upstream. {@code n_probs} is forwarded as upstream would
+     * accept it, although the output does not show the probabilities either.
      */
     private static final List<String> CHAT_PASSTHROUGH_FIELDS = Collections.unmodifiableList(Arrays.asList(
             "top_k",
@@ -71,7 +79,9 @@ final class ResponsesApiSupport {
             "json_schema",
             "n_predict",
             "reasoning_budget_tokens",
-            "thinking_budget_tokens"));
+            "thinking_budget_tokens",
+            "logit_bias",
+            "n_probs"));
 
     private ResponsesApiSupport() {}
 

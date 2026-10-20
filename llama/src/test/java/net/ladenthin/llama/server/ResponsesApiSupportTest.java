@@ -346,7 +346,9 @@ public class ResponsesApiSupportTest {
                 "json_schema|{\"type\":\"object\"}",
                 "n_predict|16",
                 "reasoning_budget_tokens|100",
-                "thinking_budget_tokens|100"
+                "thinking_budget_tokens|100",
+                "logit_bias|{\"42\":-100}",
+                "n_probs|3"
             })
     public void requestFieldsTheChatMapperReadsPassThroughLikeUpstream(String field, String json) throws IOException {
         // upstream's convert_responses_to_chatcmpl copies the whole body into the chat request; the
