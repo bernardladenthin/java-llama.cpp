@@ -1659,7 +1659,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest.aBackendIOExceptionBeforeTheFirstChunkIsA500OnEveryStreamingRoute` (alle fünf Streaming-Routen, `IoFailingBackend`), `ResponseStreamTest.aStreamWhoseHeadersCouldNotBeWrittenHasStarted`.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: der HTTP-Test mit `java.net.SocketException: Unexpected end of file from server` aus `getResponseCode()`, der `ResponseStream`-Test mit „Expected: is <false> but: was <true>“ (`answerIfNotStarted` nach gescheitertem Kopfzeilen-Schreiben); mit dem Fix grün (`ResponseStreamTest` 5, `OpenAiCompatServerHttpTest` 66, `OllamaApiSupportTest` 39, `LlamaArchitectureTest` 13). Modellgestützt mit dem Winzmodell `OpenAiCompatServerIntegrationTest` 13/13 grün; in `OpenAiServerCompletionIntegrationTest` scheitern nur die beiden Infill-Fälle (500, das Winzmodell hat keine FIM-Token), die keine Streaming-Route berühren. `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `03392c7`
 
 ## Offene Verdachte ohne Fund-ID
 
