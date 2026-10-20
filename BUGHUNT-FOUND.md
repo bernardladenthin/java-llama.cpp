@@ -1554,7 +1554,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** C++ `JniUtf8.APendingExceptionIsLeftInPlaceOnBothPaths` (ASCII- und 4-Byte-Pfad, kein `ThrowNew`, kein String gebaut, nichts geworfen; `new_string_utf8_impl` ohne `NewStringUTF`).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot; mit ihm grün, ctest 645/645.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `2611a38`
 
 ## Offene Verdachte ohne Fund-ID
 
