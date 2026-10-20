@@ -147,6 +147,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F222](#f222) — niedrig — *gefixt*
 - [F223](#f223) — niedrig — *gefixt*
 - [F224](#f224) — niedrig — *gefixt*
+- [F225](#f225) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1293,6 +1294,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** Entscheidung des Nutzers: dieselbe Regel wie F166 – leere oder nur aus Leerraum bestehende Argumente (Responses) bzw. fehlender oder `null`-`input` (Anthropic) werden `"{}"`.
 - **Tests:** `ResponsesApiSupportTest#functionCallWithoutArgumentsBecomesAnEmptyArgumentsObject` (fehlend, `""`, Leerraum), `AnthropicApiSupportTest#toolUseWithoutInputBecomesAnEmptyArgumentsObject` (fehlend, `null`).
 - **Rot-Grün-Nachweis:** ohne den Fix rot (beide, `was ""`), mit ihm grün (75 Tests der beiden Klassen).
+- **Nachtrag (Branch-Review 2026-10-20):** Auf der Responses-Route wurden auch Objekt-`arguments` zu `"{}"` (Jacksons `asText` eines Containers ist `""`); seit F225 ist ein Wert, der weder fehlt noch `null` noch ein String ist, wie upstream eine 400.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `f1bf93b`
 
@@ -1792,6 +1794,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot (5 Fehlschläge: viermal „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“, einmal „Expected: is "image_url" but: was ""“), mit dem Fix grün (`ResponsesApiSupportTest` 59/59, `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ffd3ae4`
+
+### F225 – java-llama.cpp: Responses `function_call` mit Objekt-`arguments` wird still zu `"{}"`
+- **Zeit:** 2026-10-20 23:07 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`appendInput`, Fall `function_call`)
+- **Schwere:** niedrig (ein Client, der die Argumente eines früheren Aufrufs als Objekt statt als JSON-Text zurückschickt, bekam einen Verlauf, in dem der Aufruf ohne Argumente gemacht wurde)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J5-2). F172 machte fehlende, leere und nur aus Leerraum bestehende `arguments` zu `"{}"` (Entscheidung des Nutzers, wie F166); vor F172 ergab ein Objekt `""`, das upstreams `json::parse` mit 400 abwies.
+- **Beschreibung:** Die Übersetzung las `item.path("arguments").asText("")`. Für ein Objekt, ein Array, eine Zahl oder einen Wahrheitswert liefert Jacksons `asText` bei Containern `""` (Zahlen und Booleans als ihren Text), also wurde `"arguments": {"city":"Paris"}` zu `"{}"` – das Modell sah einen Aufruf, den es so nie gemacht hatte, ohne jeden Hinweis. Der OpenAI-Typ (`ResponseFunctionToolCallParam`) verlangt einen JSON-String, und upstream (`convert_responses_to_chatcmpl`, `server-chat.cpp:163-168, 256-257`, b11639) nimmt ein `function_call`-Item nur mit String-`arguments` an und antwortet sonst 400 („Cannot determine type of 'item'“). F172s Entscheidung deckte nur fehlende/leere Argumente, nicht diesen Fall.
+- **Fix:** Ein `arguments`-Wert, der weder fehlt noch `null` noch ein String ist, ist eine `IllegalArgumentException` („'arguments' of a function_call must be a JSON string (got OBJECT, call_id c1)“), die `handleResponses` als 400 beantwortet. Fehlend, `null` und leer bleiben nach F172 `"{}"`, ein String geht unverändert weiter. Die verlustfreie Alternative (das Objekt als JSON-Text weiterreichen) wurde nicht gewählt: sie ginge über den OpenAI-Typ und upstream hinaus.
+- **Tests:** `ResponsesApiSupportTest#functionCallWithArgumentsThatAreNotAStringIsRejectedLikeUpstream` (Objekt, Array, Zahl, Boolean; Meldung nennt `'arguments'` und die `call_id`); `#functionCallWithoutArgumentsBecomesAnEmptyArgumentsObject` um `"arguments":null` erweitert (vorher und nachher grün, pinnt, dass `null` weiter `"{}"` ist).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot („{"city":"Paris"} ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit dem Fix grün (`ResponsesApiSupportTest` 60/60, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

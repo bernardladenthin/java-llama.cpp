@@ -87,7 +87,8 @@ public class ResponsesApiSupportTest {
     public void functionCallWithoutArgumentsBecomesAnEmptyArgumentsObject() throws IOException {
         // Upstream parses every function.arguments of the history with json::parse, so an empty string
         // fails the whole request with 400; a call without arguments is "{}" (F166).
-        for (String arguments : new String[] {"", ",\"arguments\":\"\"", ",\"arguments\":\"  \""}) {
+        for (String arguments :
+                new String[] {"", ",\"arguments\":\"\"", ",\"arguments\":\"  \"", ",\"arguments\":null"}) {
             JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
                             + "{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"now\""
                             + arguments + "}]}"))
@@ -101,6 +102,23 @@ public class ResponsesApiSupportTest {
                             .path("arguments")
                             .asText(),
                     is("{}"));
+        }
+    }
+
+    @Test
+    public void functionCallWithArgumentsThatAreNotAStringIsRejectedLikeUpstream() throws IOException {
+        // arguments is a JSON string; an object read as text was "" and became "{}", so the model saw a
+        // call without the arguments it was made with. upstream accepts a function_call only with string
+        // arguments and answers 400 otherwise.
+        for (String arguments : new String[] {"{\"city\":\"Paris\"}", "[1]", "3", "true"}) {
+            IllegalArgumentException e = assertThrows(
+                    IllegalArgumentException.class,
+                    () -> ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                            + "{\"type\":\"function_call\",\"call_id\":\"c1\",\"name\":\"f\",\"arguments\":"
+                            + arguments + "}]}")),
+                    arguments);
+            assertThat(arguments, e.getMessage(), containsString("'arguments'"));
+            assertThat(arguments, e.getMessage(), containsString("c1"));
         }
     }
 

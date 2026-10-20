@@ -216,8 +216,16 @@ final class ResponsesApiSupport {
                     ObjectNode function = toolCall.putObject("function");
                     function.put("name", item.path("name").asText(""));
                     // upstream json::parse()s every arguments string of the history, so an empty one
-                    // fails the whole request; a call without arguments is "{}" (F166)
-                    String arguments = item.path("arguments").asText("");
+                    // fails the whole request; a call without arguments is "{}" (F166). Arguments are a
+                    // JSON string: upstream answers 400 for any other value, and read as text an object
+                    // was "" and became "{}", a call the model never made that way.
+                    JsonNode argumentsNode = item.path("arguments");
+                    if (!argumentsNode.isMissingNode() && !argumentsNode.isNull() && !argumentsNode.isTextual()) {
+                        throw new IllegalArgumentException("'arguments' of a function_call must be a JSON string (got "
+                                + argumentsNode.getNodeType() + ", call_id "
+                                + item.path("call_id").asText("") + ")");
+                    }
+                    String arguments = argumentsNode.asText("");
                     function.put("arguments", arguments.trim().isEmpty() ? "{}" : arguments);
                     break;
                 case "function_call_output":
