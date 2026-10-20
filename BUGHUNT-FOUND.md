@@ -1859,7 +1859,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesStreamTranslatorTest#maxTokensCutOffEndsWithResponseIncomplete` (Text, `length`, dann der reine Usage-Chunk; `response.incomplete`, kein `response.completed`, Status und Grund, Nachrichten-Item `incomplete`), `#aStoppedAnswerStaysCompleted`; `ResponsesApiSupportTest#responseCutOffAtTheTokenLimitIsIncomplete`, `#responseWrapsOutputMessageWithOutputTextAndUsage` prüft zusätzlich, dass eine `stop`-Antwort kein `incomplete_details` trägt. Die modellgestützten `OpenAiCompatServerIntegrationTest#responsesNonStreamingRoundTrip`/`#responsesStreamingRoundTrip` erwarteten mit `max_output_tokens` 16 `completed`; sie fragen jetzt eine Antwort ab, die in 4 Token nicht passt („Count from 1 to 100 …“), und erwarten `incomplete`/`response.incomplete` mit dem Grund – deterministisch statt davon abhängig, ob das Modell vor 16 Token aufhört.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected: is "incomplete" but: was "completed"“ und „Expected: a string containing "event: response.incomplete" but: was "event: response.output_text.done …"“); umgekehrt scheiterten nach dem Fix die unveränderten Integrationstests mit dem lokalen Winzmodell („Expected: is "completed" but: was "incomplete"“, der Beweis, dass der Fix den echten Server erreicht); mit dem Fix und den angepassten Integrationstests grün (`ResponsesApiSupportTest` 68/68, `ResponsesStreamTranslatorTest` 7/7, `OpenAiCompatServerHttpTest` 69/69, `OpenAiCompatServerIntegrationTest` 13/13 mit dem Winzmodell, zweimal). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `69a0791`
 
 ## Offene Verdachte ohne Fund-ID
 
