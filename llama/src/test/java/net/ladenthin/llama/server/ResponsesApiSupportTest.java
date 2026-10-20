@@ -123,6 +123,32 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void inputItemOfAnUnknownTypeIsRejectedLikeUpstream() throws IOException {
+        // An item type the translation does not know (Codex's custom_tool_call, item_reference, ...)
+        // became an empty user message, so the model saw empty turns where its own calls had been.
+        // upstream's convert_responses_to_chatcmpl answers 400 "Cannot determine type of 'item'".
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                        + "{\"type\":\"message\",\"role\":\"user\",\"content\":\"q\"},"
+                        + "{\"type\":\"custom_tool_call\",\"call_id\":\"c1\",\"name\":\"apply_patch\","
+                        + "\"input\":\"*** Begin Patch\"}]}")));
+        assertThat(e.getMessage(), containsString("Cannot determine type of 'item'"));
+        assertThat(e.getMessage(), containsString("custom_tool_call"));
+    }
+
+    @Test
+    public void inputItemWithoutATypeStillMapsToAMessage() throws IOException {
+        // An input message may leave out its type (EasyInputMessage); it stays a chat message.
+        JsonNode messages = ResponsesApiSupport.toOpenAiChatRequest(
+                        read("{\"input\":[{\"role\":\"user\",\"content\":\"q\"}]}"))
+                .path("messages");
+        assertThat(messages.size(), is(1));
+        assertThat(messages.path(0).path("role").asText(), is("user"));
+        assertThat(messages.path(0).path("content").asText(), is("q"));
+    }
+
+    @Test
     public void refusalPartsOfTheHistoryAreKeptAsText() throws IOException {
         // A refusal part carries "refusal", not "text"; it was dropped, so the model never saw that it
         // had refused. Upstream turns it into a part its own parser rejects with 400 (common/chat.cpp

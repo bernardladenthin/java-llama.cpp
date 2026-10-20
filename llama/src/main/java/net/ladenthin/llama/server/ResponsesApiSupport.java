@@ -21,8 +21,9 @@ import org.jspecify.annotations.Nullable;
  * newer Responses protocol (e.g. Copilot's {@code responses} apiType) drive the local model.
  *
  * <p>Request mapping: {@code instructions} becomes a system message; {@code input} (a string, or an array
- * of {@code message} / {@code function_call} / {@code function_call_output} items) is flattened to OpenAI
- * messages; Responses function tools ({@code {type:"function",name,description,parameters}}) become OpenAI
+ * of {@code message} / {@code function_call} / {@code function_call_output} / {@code reasoning} items; an
+ * item without {@code type} is a message, any other type is refused with 400 as upstream refuses it) is
+ * flattened to OpenAI messages; Responses function tools ({@code {type:"function",name,description,parameters}}) become OpenAI
  * function tools. Responses replies wrap the assistant turn in a {@code response} object whose
  * {@code output} array holds a {@code message} item (with {@code output_text} content) and one
  * {@code function_call} item per tool call.
@@ -263,7 +264,6 @@ final class ResponsesApiSupport {
                     appendReasoningItem(messages, item);
                     break;
                 case "message":
-                default:
                     rejectInputFiles(item.path("content"));
                     String role = item.path("role").asText("user");
                     JsonNode imageContent = inputContentWithImages(item.path("content"));
@@ -278,6 +278,10 @@ final class ResponsesApiSupport {
                         message.set("content", content);
                     }
                     break;
+                default:
+                    // As upstream's convert_responses_to_chatcmpl: an item this translation cannot
+                    // serve (custom_tool_call, item_reference, mcp_call, ...) became an empty user turn.
+                    throw new IllegalArgumentException("Cannot determine type of 'item' (" + type + ")");
             }
         }
     }

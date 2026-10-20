@@ -150,6 +150,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F225](#f225) — niedrig — *gefixt*
 - [F226](#f226) — niedrig — *gefixt*
 - [F227](#f227) — niedrig — *gefixt*
+- [F228](#f228) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1834,6 +1835,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot (6 Fehlschläge: je Klasse „Expected: is <1> but: was <2>“ und zweimal „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit dem Fix grün (`ResponsesApiSupportTest` 65/65, `OpenAiRequestMapperTest` 47/47, `OpenAiCompatServerHttpTest` 69/69, `AnthropicApiSupportTest` 31/31, `OllamaApiSupportTest` 42/42, `LlamaArchitectureTest` 13/13). `spotless:apply` und `spotbugs:check` grün (eine erste Fassung mit fester Meldung ohne Namen fiel bei SpotBugs als `WEM_WEAK_EXCEPTION_MESSAGING` durch; die Meldung nennt jetzt das `tool_choice`).
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `f888bde`
+
+### F228 – java-llama.cpp: Responses-Eingabe-Items unbekannten Typs werden zu leeren Nutzernachrichten statt abgewiesen
+- **Zeit:** 2026-10-20 23:26 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`appendInput`, `switch` über den Item-Typ; Klassen-Javadoc)
+- **Schwere:** niedrig (ein Verlauf mit z. B. Codex' `custom_tool_call`/`custom_tool_call_output` oder einem `item_reference` erreichte das Modell mit leeren Nutzerzügen an Stelle der Aufrufe, ohne Hinweis)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J5-5). Der gemeinsame `case "message": default:`-Zweig stammt aus der Zeit vor dem Branch; der Branch schrieb den `switch` um (Reasoning, Zusammenführung, Werkzeugteile, `input_file`, F17/F86/F89/F99) und kündigt im CHANGELOG an, was nicht bedient werden kann, werde mit 400 abgewiesen.
+- **Beschreibung:** `appendInput` las `item.path("type").asText("message")` und führte jeden unbekannten Typ durch den Nachrichtenzweig. Ohne `role` und meist ohne `content` wurde daraus `{"role":"user","content":""}`; die OpenAI-Union `ResponseInputItemParam` kennt über 30 Item-Typen (`custom_tool_call`, `custom_tool_call_output`, `item_reference`, `mcp_call`, `apply_patch_call`, …). upstream (`convert_responses_to_chatcmpl`, `server-chat.cpp:256-257`, b11639) beendet jedes nicht erkannte Item mit „Cannot determine type of 'item'“ (400).
+- **Fix:** Der `message`-Fall endet mit `break`; `default` wirft eine `IllegalArgumentException` mit upstreams Text und dem Typ („Cannot determine type of 'item' (custom_tool_call)“), die `handleResponses` als 400 beantwortet. Ein Item ohne `type` (die EasyInputMessage-Form, deren `type` optional ist) landet wie bisher über den Vorgabewert `"message"` im Nachrichtenzweig. Die Klassen-Javadoc nennt die Item-Typen und die Abweisung. Bewusst lockerer als upstream geblieben: eine Nachricht mit einer Rolle außerhalb von user/system/developer/assistant und eine Assistenten-Nachricht ohne `type` werden weiter angenommen (vom Fund nicht verlangt).
+- **Tests:** `ResponsesApiSupportTest#inputItemOfAnUnknownTypeIsRejectedLikeUpstream` (Meldung nennt upstreams Text und `custom_tool_call`), als Schutz `#inputItemWithoutATypeStillMapsToAMessage` (vorher und nachher grün).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit dem Fix grün (`ResponsesApiSupportTest` 67/67, `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
