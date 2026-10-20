@@ -1698,7 +1698,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OllamaApiSupportTest.thinkTrueSwitchesThinkingOnExplicitly` (Übersetzer → `OpenAiRequestMapper` → `InferenceParameters.toJson()`, für `/api/chat` und `/api/generate`).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: is <true> but: was <false>“ (`enable_thinking` fehlte in `chat_template_kwargs`); mit dem Fix grün (`OllamaApiSupportTest` 42, `OpenAiRequestMapperTest` 35, `OpenAiCompatServerHttpTest` 68, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `736d247`
 
 ## Offene Verdachte ohne Fund-ID
 
