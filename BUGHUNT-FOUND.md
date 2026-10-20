@@ -1520,6 +1520,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `707f0f2`
 
+### F202 – java-llama.cpp: Die Anthropic-Route holt für das Stoppwort upstreams ganzes Debug-Objekt samt gerendertem Prompt durch JNI
+- **Zeit:** 2026-10-20 12:20 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java`, `OpenAiRequestMapper.java`, `parameters/InferenceParameters.java` (neu `withResponseFields`), `parameters/RequestField.java` (`RESPONSE_FIELDS`), `parameters/ParameterJsonSerializer.java`
+- **Schwere:** niedrig (Aufwand: jede Anthropic-Antwort trug den vollständigen Prompt, die Token-Liste und die Generierungseinstellungen zusätzlich, um sie danach zu verwerfen)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20; Folge von F183, das `verbose` setzt, um `stop_sequence` zu füllen.
+- **Beschreibung:** `verbose: true` hängt an die OpenAI-Antwort `__verbose` = `to_json_non_oaicompat()` des Endergebnisses: Inhalt, Tokens, `prompt` (der ganze gerenderte Prompt), `generation_settings`, `timings` … Gebraucht wird nur `stopping_word`. Upstreams `response_fields` projiziert genau dieses Objekt (`json_get_nested_values`), war aber weder ein `RequestField` noch vom Mapper durchgereicht.
+- **Fix:** `RequestField.RESPONSE_FIELDS` (SCHEMA-Vertrag, gegen `make_llama_cmpl_schema` geprüft) mit `InferenceParameters.withResponseFields(String...)`; der Mapper reicht `response_fields` durch und lehnt alles außer einem String-Array mit 400 ab; die Anthropic-Übersetzung setzt `response_fields: ["stopping_word"]`.
+- **Tests:** `AnthropicApiSupportTest.theTranslatedRequestAsksForTheStopWord` (erweitert), `OpenAiRequestMapperTest.responseFieldsAreForwarded`, `responseFieldsThatAreNotStringsAreRefused`, `InferenceParametersTest.withResponseFieldsWritesTheProjectionAsAStringArray`, modellgestützt `OpenAiCompatServerIntegrationTest.theDebugObjectTheAnthropicRouteAsksForCarriesOnlyTheStopWord` (`__verbose` hat genau den Schlüssel `stopping_word`); C++ `test_wire_contracts` prüft den neuen Schlüssel gegen upstreams Schema.
+- **Rot-Grün-Nachweis:** Mit `RequestField`/`withResponseFields`, aber dem alten Mapper und der alten Übersetzung: drei Tests rot; mit dem Fix grün (221 Tests der fünf Klassen, Integrationstest 13/13 mit dem Zufallsmodell, ctest Wire 6/6).
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(geschlossen 2026-10-19, ohne Fund-ID, Entscheidung des Nutzers: bewusst nicht ändern)* Continue entscheidet die FIM-Fähigkeit eines Ollama-Modells an `{{ .Suffix }}` im `template` von `/api/show`; wir liefern `""`. Ein Platzhalter-Template wäre erfunden (der Server kennt das Prompt-Format des Modells nicht) und für die meisten Modelle falsch. Continue nutzt dann eigene Vorlagen; für die FIM-Token des Modells gibt es `POST /infill` (Continues `llama.cpp`-Provider). README-Hinweis ergänzt.

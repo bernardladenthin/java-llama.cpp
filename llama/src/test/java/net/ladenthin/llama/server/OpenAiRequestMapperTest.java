@@ -57,6 +57,29 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
+    public void responseFieldsAreForwarded() throws IOException {
+        // upstream's projection of the native result, which also narrows __verbose
+        JsonNode chat = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"response_fields\":[\"stopping_word\"]}");
+        assertThat(chat.path("response_fields").size(), is(1));
+        assertThat(chat.path("response_fields").path(0).asText(), is("stopping_word"));
+        JsonNode without = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}");
+        assertThat(without.has("response_fields"), is(false));
+    }
+
+    @Test
+    public void responseFieldsThatAreNotStringsAreRefused() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"response_fields\":[1]}"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"response_fields\":\"stopping_word\"}"));
+    }
+
+    @Test
     public void moreThanOneChoiceIsRefusedBecauseOneAnswerComesBack() throws IOException {
         // Upstream reads "n" as n_cmpl; the chat paths return one answer, so n > 1 silently gave one.
         assertThrows(

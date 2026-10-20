@@ -133,6 +133,9 @@ enum RequestField {
     /** Request key {@code repeat_penalty}. */
     REPEAT_PENALTY("repeat_penalty"),
 
+    /** Request key {@code response_fields}. */
+    RESPONSE_FIELDS("response_fields"),
+
     /** Request key {@code response_format}, consumed by the OAI/task layer. */
     RESPONSE_FORMAT("response_format", RequestContract.OAI_LAYER),
 

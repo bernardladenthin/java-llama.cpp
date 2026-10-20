@@ -122,7 +122,10 @@ final class AnthropicApiSupport {
         }
         // Upstream answers with the matched stop word as stop_sequence; the OpenAI answer this route
         // translates from does not carry it, upstream's debug object does (__verbose.stopping_word).
+        // Only that word: the whole object echoes the rendered prompt and the generation settings
+        // through JNI with every answer, to be dropped here.
         openAi.put("verbose", true);
+        openAi.putArray("response_fields").add("stopping_word");
         // Passed through like upstream; the chat mapper hands it to the template.
         JsonNode templateKwargs = request.path("chat_template_kwargs");
         if (templateKwargs.isObject()) {

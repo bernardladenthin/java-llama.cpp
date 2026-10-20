@@ -104,6 +104,18 @@ public class InferenceParametersTest {
     }
 
     @Test
+    public void withResponseFieldsWritesTheProjectionAsAStringArray() {
+        assertThat(
+                InferenceParameters.empty()
+                        .withResponseFields("stopping_word", "timings.predicted_n")
+                        .parameters
+                        .get("response_fields"),
+                is("[\"stopping_word\",\"timings.predicted_n\"]"));
+        InferenceParameters empty = InferenceParameters.empty();
+        assertThat(empty.withResponseFields(), is(empty));
+    }
+
+    @Test
     public void testSetCacheReuse() {
         InferenceParameters params = InferenceParameters.empty().withCacheReuse(256);
         assertThat(params.parameters.get("n_cache_reuse"), is("256"));

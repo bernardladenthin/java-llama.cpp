@@ -268,6 +268,10 @@ public class AnthropicApiSupportTest {
         JsonNode openAi = AnthropicApiSupport.toOpenAiChatRequest(
                 read("{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"stop_sequences\":[\"X\"]}"));
         assertThat(openAi.path("verbose").asBoolean(false), is(true));
+        // ... and only for it: the whole debug object echoes the rendered prompt and the generation
+        // settings through JNI with every answer, to be dropped here
+        assertThat(openAi.path("response_fields").size(), is(1));
+        assertThat(openAi.path("response_fields").path(0).asText(), is("stopping_word"));
     }
 
     @Test

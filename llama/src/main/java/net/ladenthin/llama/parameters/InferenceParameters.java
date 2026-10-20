@@ -903,6 +903,25 @@ public final class InferenceParameters extends JsonParameters {
     }
 
     /**
+     * Returns a new request projecting llama.cpp's native result onto the given fields
+     * ({@code response_fields}; dot-separated paths such as {@code timings.predicted_n}). It applies to
+     * the native answer, and with {@link #withVerbose(boolean)} to the {@code __verbose} object of an
+     * OpenAI answer, which then carries only these fields instead of the prompt and the generation
+     * settings. Empty input is a no-op.
+     *
+     * @param fields the fields to keep
+     * @return a new instance with the projection set, or {@code this} if {@code fields} is empty
+     */
+    public InferenceParameters withResponseFields(String... fields) {
+        if (fields.length == 0) {
+            return this;
+        }
+        return withRaw(
+                RequestField.RESPONSE_FIELDS,
+                serializer.buildStringArray(fields).toString());
+    }
+
+    /**
      * Returns a new request toggling raw token-id output ({@code return_tokens}, default false).
      * When true, the response includes the generated token ids alongside the decoded text.
      *

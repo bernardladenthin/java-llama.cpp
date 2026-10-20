@@ -174,6 +174,18 @@ public class ParameterJsonSerializer {
     // ------------------------------------------------------------------
 
     /**
+     * Build a JSON array of strings.
+     *
+     * @param values the strings
+     * @return a Jackson {@link ArrayNode} of the strings
+     */
+    public ArrayNode buildStringArray(String... values) {
+        ArrayNode arr = OBJECT_MAPPER.createArrayNode();
+        for (String value : values) arr.add(value);
+        return arr;
+    }
+
+    /**
      * Build a JSON string array from the given stop strings
      * (e.g. {@code ["<|endoftext|>", "\n"]}).
      *

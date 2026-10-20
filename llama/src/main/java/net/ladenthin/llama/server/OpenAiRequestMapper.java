@@ -117,6 +117,10 @@ final class OpenAiRequestMapper {
         if (verbose.isBoolean()) {
             params = params.withVerbose(verbose.asBoolean());
         }
+        JsonNode responseFields = request.path("response_fields");
+        if (!responseFields.isMissingNode() && !responseFields.isNull()) {
+            params = params.withResponseFields(stringArray(responseFields, "response_fields"));
+        }
         // Preserve llama.cpp extensions when advanced clients opt into them.
         JsonNode cachePrompt = request.path("cache_prompt");
         if (cachePrompt.isBoolean()) {
@@ -237,6 +241,28 @@ final class OpenAiRequestMapper {
             BiFunction<InferenceParameters, Float, InferenceParameters> setter) {
         JsonNode value = request.path(field);
         return value.isNumber() ? setter.apply(params, (float) value.asDouble()) : params;
+    }
+
+    /**
+     * Read a field that must be an array of strings, as upstream's schema reads it; anything else is
+     * an invalid request rather than a field silently left out.
+     *
+     * @param value the field's value
+     * @param field the field name, for the message
+     * @return the strings
+     */
+    private static String[] stringArray(JsonNode value, String field) {
+        if (!value.isArray()) {
+            throw new IllegalArgumentException("'" + field + "' must be an array of strings");
+        }
+        List<String> strings = new ArrayList<>(value.size());
+        for (JsonNode entry : value) {
+            if (!entry.isTextual()) {
+                throw new IllegalArgumentException("'" + field + "' must be an array of strings");
+            }
+            strings.add(entry.asText());
+        }
+        return strings.toArray(new String[0]);
     }
 
     /**

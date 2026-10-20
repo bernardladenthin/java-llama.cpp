@@ -164,6 +164,23 @@ public class OpenAiCompatServerIntegrationTest extends OpenAiServerTestSupport {
         assertThat(json.path("role").asText(), is("assistant"));
     }
 
+    /**
+     * The Anthropic route asks for upstream's debug object only for the matched stop word; with the
+     * projection it carries just that word, not the rendered prompt and the generation settings it
+     * used to bring through JNI with every answer.
+     */
+    @Test
+    public void theDebugObjectTheAnthropicRouteAsksForCarriesOnlyTheStopWord() throws IOException {
+        JsonNode answer = MAPPER.readTree(model.handleChatCompletions("{\"max_tokens\":4,\"verbose\":true,"
+                + "\"response_fields\":[\"stopping_word\"],"
+                + "\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one word.\"}]}"));
+        JsonNode debug = answer.path("__verbose");
+        assertThat(answer.toString(), debug.isObject(), is(true));
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        debug.fieldNames().forEachRemaining(keys::add);
+        assertThat(keys, is(java.util.Collections.singletonList("stopping_word")));
+    }
+
     @Test
     public void anthropicMessagesStreamingRoundTrip() throws IOException {
         String body = "{\"model\":\"" + MODEL_ID + "\",\"stream\":true,\"max_tokens\":16,"
