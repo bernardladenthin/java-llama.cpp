@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -125,7 +126,7 @@ public class BatchDispatchTest {
             input.add(i);
         }
 
-        List<Boolean> results = BatchDispatch.runEachOnItsOwnThread(input, request -> {
+        List<Boolean> results = BatchDispatch.runEachOnItsOwnThread(input, requests, request -> {
             allStarted.countDown();
             try {
                 return allStarted.await(AWAIT_SECONDS, TimeUnit.SECONDS);
@@ -140,7 +141,7 @@ public class BatchDispatchTest {
 
     @Test
     public void runEachOnItsOwnThread_keepsTheInputOrder() {
-        List<String> results = BatchDispatch.runEachOnItsOwnThread(Arrays.asList(3, 1, 2), request -> {
+        List<String> results = BatchDispatch.runEachOnItsOwnThread(Arrays.asList(3, 1, 2), 3, request -> {
             try {
                 Thread.sleep(request * 20L);
             } catch (InterruptedException e) {
@@ -159,7 +160,7 @@ public class BatchDispatchTest {
 
         IllegalArgumentException thrown = assertThrows(
                 IllegalArgumentException.class,
-                () -> BatchDispatch.runEachOnItsOwnThread(Arrays.asList(1, 2, 3), request -> {
+                () -> BatchDispatch.runEachOnItsOwnThread(Arrays.asList(1, 2, 3), 3, request -> {
                     if (request == 1) {
                         throw failure;
                     }
@@ -174,6 +175,66 @@ public class BatchDispatchTest {
     @Test
     public void runEachOnItsOwnThread_noRequests_returnsAnEmptyList() {
         assertThat(
-                BatchDispatch.runEachOnItsOwnThread(Collections.<Integer>emptyList(), request -> request), is(empty()));
+                BatchDispatch.runEachOnItsOwnThread(Collections.<Integer>emptyList(), 1, request -> request),
+                is(empty()));
+    }
+
+    @Test
+    public void runEachOnItsOwnThread_runsNoMoreRequestsAtOnceThanTheBound() {
+        // One thread per request made the pool as large as the batch: ten thousand requests were ten
+        // thousand threads, although the native scheduler runs only as many as it has slots.
+        AtomicInteger running = new AtomicInteger();
+        AtomicInteger mostAtOnce = new AtomicInteger();
+        List<Integer> input = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            input.add(i);
+        }
+
+        List<Integer> results = BatchDispatch.runEachOnItsOwnThread(input, 3, request -> {
+            mostAtOnce.accumulateAndGet(running.incrementAndGet(), Math::max);
+            try {
+                Thread.sleep(20L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            running.decrementAndGet();
+            return request;
+        });
+
+        assertThat(results, is(input));
+        assertThat(mostAtOnce.get(), is(3));
+    }
+
+    @Test
+    public void runEachOnItsOwnThread_anErrorIsThrownAfterTheOthersFinished() {
+        // An Error used to be rethrown at the first future that held it, so the call returned while
+        // the requests after it were still running.
+        AssertionError error = new AssertionError("native failure");
+        List<Integer> finished = Collections.synchronizedList(new ArrayList<>());
+
+        AssertionError thrown = assertThrows(
+                AssertionError.class,
+                () -> BatchDispatch.runEachOnItsOwnThread(Arrays.asList(1, 2, 3), 3, request -> {
+                    if (request == 1) {
+                        throw error;
+                    }
+                    try {
+                        Thread.sleep(100L);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    finished.add(request);
+                    return request;
+                }));
+
+        assertThat(thrown, is(error));
+        assertThat(finished.size(), is(2));
+    }
+
+    @Test
+    public void runEachOnItsOwnThread_aBoundBelowOneIsRefused() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> BatchDispatch.runEachOnItsOwnThread(Arrays.asList(1), 0, request -> request));
     }
 }

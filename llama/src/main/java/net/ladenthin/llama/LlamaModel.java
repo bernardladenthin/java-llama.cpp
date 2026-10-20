@@ -218,7 +218,7 @@ public class LlamaModel implements AutoCloseable {
     /**
      * Dispatch a list of typed chat requests in parallel and return the parsed responses
      * in the same order. Each request runs on a thread of its own (the chat endpoint submits and
-     * waits in one native call), so all of them reach the native scheduler at once. Requires
+     * waits in one native call), up to 64 at once; the rest start as threads free up. Requires
      * {@link net.ladenthin.llama.parameters.ModelParameters#setParallel(int)} &gt; 1 for
      * actual parallelism; otherwise the calls run sequentially on the single slot.
      *
@@ -226,7 +226,7 @@ public class LlamaModel implements AutoCloseable {
      * @return parsed responses in input order
      */
     public java.util.List<ChatResponse> chatBatch(java.util.Collection<ChatRequest> requests) {
-        return BatchDispatch.runEachOnItsOwnThread(requests, this::chat);
+        return BatchDispatch.runEachOnItsOwnThread(requests, BatchDispatch.MAX_CHAT_THREADS, this::chat);
     }
 
     /**

@@ -15,7 +15,6 @@ import java.util.function.Function;
 import java.util.function.IntConsumer;
 import java.util.function.IntFunction;
 import java.util.function.ToIntFunction;
-import org.jspecify.annotations.Nullable;
 
 /**
  * How the batch methods of {@link LlamaModel} hand several requests to the native scheduler at once.
@@ -29,6 +28,13 @@ import org.jspecify.annotations.Nullable;
  * mechanisms are testable without it.
  */
 final class BatchDispatch {
+
+    /**
+     * The most threads {@link LlamaModel#chatBatch} runs at once. More requests than the model has
+     * slots only wait in the native scheduler, so a larger pool buys nothing but threads; 64 covers
+     * every slot count this project has seen configured. Requests beyond it start as threads free up.
+     */
+    static final int MAX_CHAT_THREADS = 64;
 
     private BatchDispatch() {}
 
@@ -88,32 +94,39 @@ final class BatchDispatch {
      * Runs every request on a thread of its own and returns the results in input order.
      *
      * <p>For calls that submit and wait in one native call (the OpenAI chat endpoint), where the
-     * submission cannot be separated from the wait. One thread per request, so all of them reach the
-     * native scheduler at once; the threads are daemons and end with the call.
+     * submission cannot be separated from the wait. One thread per request up to {@code maxThreads},
+     * so that many reach the native scheduler at once and the rest start as threads free up; the
+     * threads are daemons and end with the call. A failure, an {@link Error} included, propagates once
+     * every request has finished, the first one first.
      *
-     * @param requests the requests in order
-     * @param call     runs one request to completion
+     * @param requests   the requests in order
+     * @param maxThreads the most requests run at once, at least 1
+     * @param call       runs one request to completion
      * @param <R>      the request type
      * @param <T>      the result type
      * @return the results in input order
      */
-    static <R, T> List<T> runEachOnItsOwnThread(Collection<R> requests, Function<R, T> call) {
+    static <R, T> List<T> runEachOnItsOwnThread(Collection<R> requests, int maxThreads, Function<R, T> call) {
+        if (maxThreads < 1) {
+            throw new IllegalArgumentException("maxThreads must be at least 1, was " + maxThreads);
+        }
         if (requests.isEmpty()) {
             return new ArrayList<T>(0);
         }
         final AtomicInteger threadNumber = new AtomicInteger();
-        final ExecutorService executor = Executors.newFixedThreadPool(requests.size(), runnable -> {
-            Thread thread = new Thread(runnable, "jllama-batch-" + threadNumber.incrementAndGet());
-            thread.setDaemon(true);
-            return thread;
-        });
+        final ExecutorService executor =
+                Executors.newFixedThreadPool(Math.min(requests.size(), maxThreads), runnable -> {
+                    Thread thread = new Thread(runnable, "jllama-batch-" + threadNumber.incrementAndGet());
+                    thread.setDaemon(true);
+                    return thread;
+                });
         try {
             final List<Future<T>> futures = new ArrayList<Future<T>>(requests.size());
             for (final R request : requests) {
                 futures.add(executor.submit(() -> call.apply(request)));
             }
             final List<T> out = new ArrayList<T>(futures.size());
-            RuntimeException failure = null;
+            Throwable failure = null;
             boolean interrupted = false;
             for (Future<T> future : futures) {
                 // The native call behind a future cannot be abandoned, so an interrupt does not end
@@ -126,7 +139,8 @@ final class BatchDispatch {
                         interrupted = true;
                     } catch (ExecutionException e) {
                         if (failure == null) {
-                            failure = asRuntimeException(e.getCause());
+                            Throwable cause = e.getCause();
+                            failure = cause != null ? cause : e;
                         }
                         break;
                     }
@@ -136,7 +150,7 @@ final class BatchDispatch {
                 Thread.currentThread().interrupt();
             }
             if (failure != null) {
-                throw failure;
+                throw asRuntimeException(failure);
             }
             return out;
         } finally {
@@ -144,7 +158,7 @@ final class BatchDispatch {
         }
     }
 
-    private static RuntimeException asRuntimeException(@Nullable Throwable cause) {
+    private static RuntimeException asRuntimeException(Throwable cause) {
         if (cause instanceof RuntimeException) {
             return (RuntimeException) cause;
         }
