@@ -220,6 +220,24 @@ public class ErrorHandlingTest {
         assertTrue(e.getMessage().contains("n_predict"), "Error should name n_predict but was: " + e.getMessage());
     }
 
+    @Test
+    public void testJsonSchemaWithGrammarInAChatIsAnInvalidRequest() {
+        // The OpenAI chat mapper forwards both fields and leaves the verdict to upstream's chat parser,
+        // which refuses the pair (server-common.cpp, b11639) -- the 400 llama-server answers.
+        InferenceParameters request = InferenceParameters.empty()
+                .withMessagesJson("[{\"role\":\"user\",\"content\":\"hi\"}]")
+                .withGrammar("root ::= \"a\"")
+                .withJsonSchema("{\"type\":\"object\"}")
+                .withNPredict(1);
+
+        InvalidRequestException e =
+                assertThrows(InvalidRequestException.class, () -> modelNoEmbed.chatComplete(request));
+
+        assertTrue(
+                e.getMessage().contains("Cannot use both json_schema and grammar"),
+                "Error should be upstream's refusal but was: " + e.getMessage());
+    }
+
     // -------------------------------------------------------------------------
     // configureParallelInference validation
     // -------------------------------------------------------------------------

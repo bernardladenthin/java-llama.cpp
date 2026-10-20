@@ -364,14 +364,19 @@ public class OpenAiRequestMapperTest {
     }
 
     @Test
-    public void jsonSchemaReachesTheMappedRequestUnlessAGrammarIsGiven() throws IOException {
+    public void jsonSchemaReachesTheMappedRequest() throws IOException {
         JsonNode schema = mapAndSerialize(
                 "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"json_schema\":{\"type\":\"object\"}}");
         assertThat(schema.path("json_schema").path("type").asText(), is("object"));
-        // upstream applies json_schema only without a grammar.
+    }
+
+    @Test
+    public void jsonSchemaAndGrammarAreBothForwardedSoUpstreamCanRefuseThePair() throws IOException {
+        // upstream's chat parser answers a body carrying both with 400 "Cannot use both json_schema and
+        // grammar" (server-common.cpp, b11639); dropping the schema here answered 200 without it.
         JsonNode both = mapAndSerialize(
                 "{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],\"grammar\":\"root ::= \\\"a\\\"\",\"json_schema\":{\"type\":\"object\"}}");
-        assertThat(both.has("json_schema"), is(false));
+        assertThat(both.path("json_schema").path("type").asText(), is("object"));
         assertThat(both.path("grammar").asText(), is("root ::= \"a\""));
     }
 

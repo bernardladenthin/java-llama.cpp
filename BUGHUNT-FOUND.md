@@ -140,6 +140,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F215](#f215) — niedrig — *gefixt*
 - [F216](#f216) — niedrig — *gefixt*
 - [F217](#f217) — niedrig — *gefixt*
+- [F218](#f218) — mittel — *gefixt*
 
 ## Funde
 
@@ -861,7 +862,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java:200` (`applyLlamaCppSampling`, neu; `readMaxTokens`)
 - **Schwere:** mittel
 - **Beschreibung:** Aus dem offenen Verdacht vom 2026-10-18 (gestreamtes `/v1/completions`). Das nicht gestreamte `/v1/completions` reicht den Körper an upstreams Schema durch (`server-schema.cpp`, b11639), das gestreamte baut `InferenceParameters` im `OpenAiRequestMapper` aus einer festen Feldliste. Alles außerhalb dieser Liste ging verloren: `min_p`, `typical_p`, `repeat_penalty`, `repeat_last_n`, `top_n_sigma`, `xtc_*`, `dynatemp_*`, `min_keep`, `n_keep`, `ignore_eos`, `grammar`/`json_schema`, und `n_predict` (upstreams Name, `max_tokens`/`max_completion_tokens` sind seine Aliase und verlieren gegen ihn). Dieselbe Anfrage erzeugte gestreamt also andere Ausgaben, eine Grammatik wirkte nur ohne `stream`. Derselbe Mapper bedient beide Chat-Pfade, die Felder fehlten dort ebenso. Alle Felder haben bereits einen Setter; anders als im Verdacht befürchtet, braucht dieser Teil keinen API-Umbau.
-- **Fix:** `applyLlamaCppSampling` (aus `applyCommonFields`) übernimmt die Felder mit den vorhandenen Settern; `json_schema` nur ohne `grammar`, wie upstream. `readMaxTokens` liest zuerst `n_predict`. Weiter offen (Verdacht bleibt): `logit_bias`, `n_probs`/`logprobs` (im gestreamten Completion-Chunk ohnehin nicht ausgegeben) und `n`.
+- **Fix:** `applyLlamaCppSampling` (aus `applyCommonFields`) übernimmt die Felder mit den vorhandenen Settern; `json_schema` nur ohne `grammar`, wie upstream (**korrigiert in F218:** das gilt nur für upstreams Completion-Schema; der Chat-Parser, den der Mapper seit F186 allein bedient, weist das Paar mit 400 ab, also werden beide Felder durchgereicht). `readMaxTokens` liest zuerst `n_predict`. Weiter offen (Verdacht bleibt): `logit_bias`, `n_probs`/`logprobs` (im gestreamten Completion-Chunk ohnehin nicht ausgegeben) und `n`.
 - **Reproduktion:** `OpenAiRequestMapperTest#llamaCppSamplingExtensionsReachTheStreamedCompletion`, `#nPredictWinsOverMaxTokensLikeUpstream`, `#jsonSchemaReachesTheStreamedCompletionUnlessAGrammarIsGiven`
 - **Rot-Grün-Nachweis:** ohne Fix rot (3 Fehlschläge: „Expected: is a numeric value within <1.0E-4> of <0.05> but: <0.0>“, „Expected: is <7> but: was <50>“, „Expected: is "object" but: was ""“), mit Fix grün (25/25 der Klasse, skipped 0); Gegenprobe per `git stash` rot (3), nach `pop` grün. `OpenAiCompatServerHttpTest` 46/46, `AnthropicApiSupportTest` 19/19, `ResponsesApiSupportTest` 18/18, `OllamaApiSupportTest` 24/24, `LlamaArchitectureTest` 13/13, `spotless:apply` und `spotbugs:check` grün (eine erste Fassung mit allen Feldern in einer Methode meldete `CE_CLASS_ENVY`, eine Map-Tabelle `DMC_DUBIOUS_MAP_COLLECTION`; jetzt je Feld ein Aufruf über `withFloat`/`withInt`).
 - **Nachtrag (Branch-Review 2026-10-20):** Das hier „weiter offen“ Genannte ist erledigt: `logit_bias` und `n_probs` mit F180, das gestreamte `/v1/completions` mit F186 (upstreams eigener Stream, Wahrscheinlichkeiten eingeschlossen), `n > 1` mit F180 und auf allen nativen Wegen mit F197.
@@ -1699,6 +1700,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: is <true> but: was <false>“ (`enable_thinking` fehlte in `chat_template_kwargs`); mit dem Fix grün (`OllamaApiSupportTest` 42, `OpenAiRequestMapperTest` 35, `OpenAiCompatServerHttpTest` 68, `LlamaArchitectureTest` 13), `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `736d247`
+
+### F218 – java-llama.cpp: Chat-Anfrage mit `json_schema` und `grammar` verliert das Schema still statt upstreams 400
+- **Zeit:** 2026-10-20 21:24 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java` (`applyLlamaCppSampling`)
+- **Schwere:** mittel (stiller Fallback: der Client bekommt 200 und eine Antwort ohne sein Schema)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J2-1). F95 führte die Regel „`json_schema` nur ohne `grammar`, wie upstream“ ein; das stimmte für das Completion-Schema, das der Mapper damals auch für das gestreamte `/v1/completions` bediente (`server-schema.cpp`, der Alias-Handler lässt die Grammatik gewinnen). Seit F186 reicht `/v1/completions` den Körper wörtlich durch, der Mapper bedient nur noch die beiden Chat-Wege, und deren Parser entscheidet anders.
+- **Beschreibung:** Beide Chat-Wege übergeben das gemappte JSON an upstreams `oaicompat_chat_params_parse` (`jllama_engine.cpp`, `parse_oai_chat_params`). Der weist einen Körper mit beiden Feldern ab: `throw std::runtime_error("Cannot use both json_schema and grammar")` (`server-common.cpp:1300-1304`, b11639) → `jllama_invalid_request` → `InvalidRequestException` → 400, so wie llama-server selbst antwortet. Der Mapper ließ das Schema neben einer Grammatik aber fallen, die Ablehnung konnte nie greifen, und `#jsonSchemaReachesTheMappedRequestUnlessAGrammarIsGiven` pinnte das Verwerfen. Nicht betroffen: `response_format` + `grammar` weist upstream nicht ab (`common/chat.cpp` lässt das Schema gewinnen); `response_format` reicht der Mapper ohnehin wörtlich durch.
+- **Fix:** `grammar` und `json_schema` werden unabhängig voneinander übernommen; über das Paar entscheidet upstreams Chat-Parser mit seinem eigenen Text. Keine Ablehnung im Mapper, damit die Regel bei einem llama.cpp-Bump nicht auseinanderläuft. Javadoc von `applyLlamaCppSampling` berichtigt, die Fix-Zeile von F95 ebenso.
+- **Tests:** `OpenAiRequestMapperTest#jsonSchemaAndGrammarAreBothForwardedSoUpstreamCanRefuseThePair` (ersetzt die zweite Hälfte von `#jsonSchemaReachesTheMappedRequestUnlessAGrammarIsGiven`, deren erste Hälfte als `#jsonSchemaReachesTheMappedRequest` bleibt); modellgestützt `ErrorHandlingTest#testJsonSchemaWithGrammarInAChatIsAnInvalidRequest` (ein Chat mit beiden Feldern ist eine `InvalidRequestException` mit upstreams Text „Cannot use both json_schema and grammar“ — der Beleg, dass das Durchreichen beim Client als 400 ankommt).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: is "object" but: was ""“ (`json_schema` fehlte im gemappten Körper); mit dem Fix grün (`OpenAiRequestMapperTest` 36/36). `ErrorHandlingTest#testJsonSchemaWithGrammarInAChatIsAnInvalidRequest` grün mit dem lokalen Winzmodell (CPU); in der Klasse scheitert unabhängig davon `#testHandleInfillMissingInputSuffix`, weil das Winzmodell keine FIM-Token hat. `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

@@ -195,8 +195,10 @@ final class OpenAiRequestMapper {
      * Apply the llama.cpp sampling extensions upstream's request schema ({@code server-schema.cpp},
      * b11639) reads next to the OpenAI fields. {@code /v1/completions} forwards its body to that schema
      * verbatim, streamed or not; the chat paths are built here, so without these fields a chat request
-     * would sample differently from a completion carrying the same fields. {@code json_schema} applies
-     * only without a {@code grammar}, as upstream decides.
+     * would sample differently from a completion carrying the same fields. {@code json_schema} and
+     * {@code grammar} are both forwarded: upstream's chat parser refuses a request carrying both
+     * ({@code Cannot use both json_schema and grammar}, 400), the answer llama-server gives, so the mapper
+     * does not decide for it.
      *
      * @param params the parameters to extend
      * @param request the parsed request object
@@ -220,7 +222,7 @@ final class OpenAiRequestMapper {
         }
         JsonNode grammar = request.path("grammar");
         if (grammar.isTextual()) {
-            return params.withGrammar(grammar.asText());
+            params = params.withGrammar(grammar.asText());
         }
         JsonNode jsonSchema = request.path("json_schema");
         return jsonSchema.isObject() ? params.withJsonSchema(jsonSchema.toString()) : params;
