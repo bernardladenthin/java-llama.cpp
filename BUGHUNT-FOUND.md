@@ -1846,7 +1846,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesApiSupportTest#inputItemOfAnUnknownTypeIsRejectedLikeUpstream` (Meldung nennt upstreams Text und `custom_tool_call`), als Schutz `#inputItemWithoutATypeStillMapsToAMessage` (vorher und nachher grün).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit dem Fix grün (`ResponsesApiSupportTest` 67/67, `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `647dd57`
 
 ## Offene Verdachte ohne Fund-ID
 
