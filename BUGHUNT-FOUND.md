@@ -1724,7 +1724,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiRequestMapperTest#tokenCapBelowMinusOneReachesUpstreamsRefusal`, `#zeroOrNegativeChoicesAreRefusedLikeUpstream` (`n` 0 mit Meldung, `n` -1), als Schutz `#explicitTokenCapMinusOneLeavesTheServerDefault`; modellgestützt `ErrorHandlingTest#testNPredictMinusTwoInAChatIsAnInvalidRequest` (ein Chat mit `n_predict` -2 ist eine `InvalidRequestException`, die `n_predict` nennt — der Beleg, dass das Durchreichen beim Client als 400 ankommt).
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: is <-2> but: was <-1>“ (`n_predict` fehlte) und „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ (`n: 0`); mit dem Fix grün (`OpenAiRequestMapperTest` 39/39, `OpenAiCompatServerHttpTest` 68/68, `AnthropicApiSupportTest` 26/26, `ResponsesApiSupportTest` 54/54, `OllamaApiSupportTest` 42/42). `ErrorHandlingTest#testNPredictMinusTwoInAChatIsAnInvalidRequest` grün mit dem lokalen Winzmodell (CPU); `#testHandleInfillMissingInputSuffix` scheitert unabhängig davon am Winzmodell ohne FIM-Token. `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `1817210`
 
 ## Offene Verdachte ohne Fund-ID
 
