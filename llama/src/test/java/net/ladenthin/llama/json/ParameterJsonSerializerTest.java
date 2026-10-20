@@ -353,6 +353,22 @@ public class ParameterJsonSerializerTest {
         assertThat(node.path("key").asText(), is("not-valid-json{{{"));
     }
 
+    /**
+     * A value holding more than one JSON value is no JSON value either. The plain readTree parsed the
+     * first and dropped the rest without a word: "true false" became true, "1, 2" became 1.
+     */
+    @Test
+    public void testBuildRawValueObject_trailingTokensFallBackToString() {
+        Map<String, String> map = new LinkedHashMap<>();
+        map.put("two", "true false");
+        map.put("list", "1, 2");
+        map.put("object", "{\"a\":1} {\"b\":2}");
+        ObjectNode node = serializer.buildRawValueObject(map);
+        assertThat(
+                node.toString(),
+                is("{\"two\":\"true false\",\"list\":\"1, 2\",\"object\":\"{\\\"a\\\":1} {\\\"b\\\":2}\"}"));
+    }
+
     /** Jackson parses an empty or blank text to MissingNode, which would be written as null. */
     @Test
     public void testBuildRawValueObject_emptyOrBlankValueFallsBackToString() {

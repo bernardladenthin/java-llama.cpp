@@ -357,6 +357,21 @@ public class InferenceParametersTest {
     }
 
     @Test
+    public void aChatTemplateKwargHoldingTwoValuesIsKeptAsText() {
+        // used to become its first value: "true false" reached the template as true
+        java.util.Map<String, String> kwargs = java.util.Collections.singletonMap("enable_thinking", "true false");
+        assertThat(
+                new InferenceParameters("")
+                        .withChatTemplateKwargs(kwargs)
+                        .parameters
+                        .get("chat_template_kwargs"),
+                is("{\"enable_thinking\":\"true false\"}"));
+        assertThat(
+                new ModelParameters().setChatTemplateKwargs(kwargs).parameters.get("--chat-template-kwargs"),
+                is("{\"enable_thinking\":\"true false\"}"));
+    }
+
+    @Test
     public void testSetChatTemplateKwargsEmpty() {
         java.util.Map<String, String> kwargs = new java.util.LinkedHashMap<>();
         InferenceParameters params = new InferenceParameters("").withChatTemplateKwargs(kwargs);

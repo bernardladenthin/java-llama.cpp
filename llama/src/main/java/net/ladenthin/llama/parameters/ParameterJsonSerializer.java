@@ -5,8 +5,10 @@
 package net.ladenthin.llama.parameters;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
@@ -42,6 +44,13 @@ public class ParameterJsonSerializer {
     /** Shared Jackson mapper; thread-safe and reused across all instances. */
     public static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /**
+     * Reads exactly one JSON value: {@code FAIL_ON_TRAILING_TOKENS} refuses text after it, which a plain
+     * {@code readTree} parses past and drops ({@code "true false"} would become {@code true}).
+     */
+    private static final ObjectReader SINGLE_VALUE_READER =
+            OBJECT_MAPPER.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+
     // ------------------------------------------------------------------
     // String escaping
     // ------------------------------------------------------------------
@@ -58,6 +67,7 @@ public class ParameterJsonSerializer {
      */
     public String toJsonString(String value) {
         if (value == null) return "null";
+
         try {
             return OBJECT_MAPPER.writeValueAsString(value);
         } catch (JsonProcessingException e) {
@@ -319,7 +329,7 @@ public class ParameterJsonSerializer {
      * produces {@code {"enable_thinking": true}}, not {@code {"enable_thinking": "true"}}.
      *
      * <p>Used for {@code chat_template_kwargs} which stores raw JSON values.
-     * If a value cannot be parsed as JSON, it is stored as a JSON string literal.
+     * If a value is not exactly one JSON value, it is stored as a JSON string literal.
      *
      * @param map map of key to pre-serialized JSON value strings
      * @return a Jackson {@link ObjectNode} with each value embedded as a parsed JSON node
@@ -328,7 +338,7 @@ public class ParameterJsonSerializer {
         ObjectNode node = OBJECT_MAPPER.createObjectNode();
         for (Map.Entry<String, String> entry : map.entrySet()) {
             try {
-                JsonNode val = OBJECT_MAPPER.readTree(entry.getValue());
+                JsonNode val = SINGLE_VALUE_READER.readTree(entry.getValue());
                 // An empty or blank value is no JSON either, but Jackson returns MissingNode (written as null).
                 if (val.isMissingNode()) {
                     node.put(entry.getKey(), entry.getValue());

@@ -1532,6 +1532,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `05f356b`
 
+### F203 – java-llama.cpp: `chat_template_kwargs`: ein Wert mit mehr als einem JSON-Wert wird still auf den ersten gekürzt
+- **Zeit:** 2026-10-20 12:35 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/parameters/ParameterJsonSerializer.java` (`buildRawValueObject`; betrifft `InferenceParameters.withChatTemplateKwargs` und `ModelParameters.setChatTemplateKwargs`)
+- **Schwere:** niedrig (falscher Template-Parameter ohne Meldung)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20; dieselbe Klasse wie die `FAIL_ON_TRAILING_TOKENS`-Fixes in `JsonParameters` und `ChatRequest`, hier übersehen.
+- **Beschreibung:** `OBJECT_MAPPER.readTree(value)` liest den ersten JSON-Wert und ignoriert den Rest: `"true false"` wurde `true`, `{"a":1} {"b":2}` wurde `{"a":1}`. Die dokumentierte Regel (kein JSON → als String-Literal) griff dadurch nicht.
+- **Fix:** Ein `ObjectReader` mit `FAIL_ON_TRAILING_TOKENS`; ein Wert, der nicht genau ein JSON-Wert ist, wird wie dokumentiert zum String-Literal.
+- **Tests:** `ParameterJsonSerializerTest.testBuildRawValueObject_trailingTokensFallBackToString`, `InferenceParametersTest.aChatTemplateKwargHoldingTwoValuesIsKeptAsText` (beide öffentlichen Setter).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot (`{"two":true,…,"object":{"a":1}}`); mit ihm grün (40 + 114).
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(geschlossen 2026-10-19, ohne Fund-ID, Entscheidung des Nutzers: bewusst nicht ändern)* Continue entscheidet die FIM-Fähigkeit eines Ollama-Modells an `{{ .Suffix }}` im `template` von `/api/show`; wir liefern `""`. Ein Platzhalter-Template wäre erfunden (der Server kennt das Prompt-Format des Modells nicht) und für die meisten Modelle falsch. Continue nutzt dann eigene Vorlagen; für die FIM-Token des Modells gibt es `POST /infill` (Continues `llama.cpp`-Provider). README-Hinweis ergänzt.
