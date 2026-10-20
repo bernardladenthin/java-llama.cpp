@@ -1518,7 +1518,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiServerCliTest`: `aModelIdWithACommaIsRefused`, `aModelIdLlamaCppWouldStripIsRefused`, `aFileNameWithACommaIsAdvertisedAsItsAlias`.
 - **Rot-Grün-Nachweis:** Ohne den Fix alle drei rot (keine Ablehnung; abgeleitete ID `a,b.gguf`); mit ihm 54/54 grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `707f0f2`
 
 ## Offene Verdachte ohne Fund-ID
 
