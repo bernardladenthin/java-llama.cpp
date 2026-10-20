@@ -1566,7 +1566,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest.ollamaGenerateWithoutAPromptOnlyReportsTheModelLoaded` (drei Formen, das Backend wird nicht gerufen), `OllamaApiSupportTest.aGenerateRequestWithoutAPromptOrSuffixOnlyLoadsTheModel`.
 - **Rot-Grün-Nachweis:** Ohne den Fix der HTTP-Test rot (das Backend generierte); mit ihm grün (64 + 37).
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `6c176d5`
 
 ## Offene Verdachte ohne Fund-ID
 
