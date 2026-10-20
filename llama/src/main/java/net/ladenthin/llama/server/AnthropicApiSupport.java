@@ -417,7 +417,8 @@ final class AnthropicApiSupport {
                     content.add(toolUseBlock(toolCall));
                 }
             }
-            stopReason = anthropicStopReason(choice.path("finish_reason").asText("stop"));
+            stopSequence = stopSequenceOf(completion);
+            stopReason = anthropicStopReason(choice.path("finish_reason").asText("stop"), stopSequence);
             JsonNode openAiUsage = completion.path("usage");
             if (openAiUsage.isObject()) {
                 long promptTokens = openAiUsage.path("prompt_tokens").asLong(0);
@@ -429,7 +430,6 @@ final class AnthropicApiSupport {
                 usage.put("cache_read_input_tokens", cachedTokens);
                 usage.put("output_tokens", openAiUsage.path("completion_tokens").asLong(0));
             }
-            stopSequence = stopSequenceOf(completion);
         } catch (IOException e) {
             stopReason = "end_turn";
         }
@@ -473,7 +473,8 @@ final class AnthropicApiSupport {
     }
 
     /**
-     * The stop word that ended the answer, as upstream reports it in {@code stop_sequence}: read from the
+     * The stop word that ended the answer, as upstream reports it in {@code stop_sequence} (the stop
+     * reason that goes with it is {@link #anthropicStopReason(String, String)}'s): read from the
      * {@code __verbose} object the translated request asks for, {@code null} when generation ended
      * otherwise or the object is absent.
      *
@@ -485,7 +486,32 @@ final class AnthropicApiSupport {
         return word.isEmpty() ? null : word;
     }
 
-    /** Map an OpenAI finish_reason to an Anthropic stop_reason. */
+    /**
+     * Map an OpenAI finish_reason and the matched stop word to an Anthropic stop_reason: a {@code stop}
+     * that a stop word ended is {@code stop_sequence}, as the Messages API specifies ("If the model
+     * encounters one of the custom sequences, the response stop_reason value will be "stop_sequence""),
+     * every other case is {@link #anthropicStopReason(String)}'s.
+     *
+     * <p>This departs from upstream llama.cpp on purpose: its {@code to_json_anthropic} and
+     * {@code to_json_anthropic_stream} (b11639 and master) answer {@code end_turn} for
+     * {@code STOP_TYPE_WORD} as for the end-of-generation token, which leaves a client that branches on
+     * {@code stop_reason} unable to tell a stop-word stop from a natural end. The word is non-null
+     * exactly for a stop-word stop (upstream sets {@code stopping_word} only then), and such a stop
+     * always has the finish reason {@code stop}, so {@code tool_use} and {@code max_tokens} stay as they
+     * are.
+     *
+     * @param openAiFinishReason the OpenAI finish reason
+     * @param stopSequence the matched stop word ({@link #stopSequenceOf(JsonNode)}), or {@code null}
+     * @return the Anthropic stop reason
+     */
+    static String anthropicStopReason(String openAiFinishReason, @Nullable String stopSequence) {
+        if (stopSequence != null && "stop".equals(openAiFinishReason)) {
+            return "stop_sequence";
+        }
+        return anthropicStopReason(openAiFinishReason);
+    }
+
+    /** Map an OpenAI finish_reason to an Anthropic stop_reason, without regard to a stop word. */
     static String anthropicStopReason(String openAiFinishReason) {
         switch (openAiFinishReason) {
             case "length":

@@ -143,6 +143,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F218](#f218) — mittel — *gefixt*
 - [F219](#f219) — niedrig — *gefixt*
 - [F220](#f220) — niedrig — *gefixt*
+- [F221](#f221) — mittel — *gefixt*
 
 ## Funde
 
@@ -1738,6 +1739,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix vier rot: „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ (`top_logprobs: 3` allein bzw. `logprobs: "true"`), „Expected: is <2> but: was <20>“ (`logprobs: 2`), „Expected: is <5> but: was <20>“ (`n_probs: 5` neben `logprobs: 2`); mit dem Fix grün (`OpenAiRequestMapperTest` 44/44, `OpenAiCompatServerHttpTest` 68/68, `AnthropicApiSupportTest` 26/26, `ResponsesApiSupportTest` 54/54, `OllamaApiSupportTest` 42/42, `LlamaArchitectureTest` 13/13). `spotless:apply` grün; `spotbugs:check` meldete zuerst zweimal `WEM_WEAK_EXCEPTION_MESSAGING` für die festen Texte, mit der Unterdrückung grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ededfc5`
+
+### F221 – java-llama.cpp: Anthropic meldet ein getroffenes Stoppwort als `stop_reason` `end_turn` statt `stop_sequence`
+- **Zeit:** 2026-10-20 22:30 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/AnthropicApiSupport.java` (`toAnthropicResponse`, `anthropicStopReason(String, String)` neu), `AnthropicStreamTranslator.java` (`end`)
+- **Schwere:** mittel (ein Client, der auf `stop_reason` verzweigt — die Anthropic-SDKs typisieren es als Aufzählung, Agentenschleifen setzen bei `end_turn` fort —, konnte einen Stopp durch das Wort nicht von einem natürlichen Ende unterscheiden)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J4-1). Folge von F183, das das Wort über `__verbose.stopping_word` erst verfügbar macht und `stop_reason` dabei bewusst wie upstream auf `end_turn` ließ. upstream (`server-task.cpp:723-726`/`:792-795`, b11639 und master) bildet `STOP_TYPE_WORD` wie `STOP_TYPE_EOS` auf `end_turn`/`tool_use` ab und testet den Wert der Spezifikation nirgends.
+- **Beschreibung:** Die Messages-API legt fest: „If the model encounters one of the custom sequences, the response stop_reason value will be "stop_sequence" and the response stop_sequence value will contain the matched stop sequence.“ `toAnthropicResponse` und `AnthropicStreamTranslator.end()` bildeten den OpenAI-`finish_reason` unabhängig vom Wort ab, `anthropicStopReason` kannte kein `stop_sequence`: Eine Anfrage mit `stop_sequences: ["X"]`, deren Generierung an `X` endete, bekam das widersprüchliche Paar `stop_reason: "end_turn"`, `stop_sequence: "X"` — blockierend wie gestreamt.
+- **Fix:** Neue Überladung `anthropicStopReason(finishReason, stopSequence)`: `stop` mit einem Wort ist `stop_sequence`, alles andere die bisherige Abbildung (`length` → `max_tokens`, `tool_calls` → `tool_use`, sonst `end_turn`). `toAnthropicResponse` liest das Wort jetzt vor dem Stoppgrund, der Stream-Übersetzer übergibt sein gesammeltes Wort. Das Wort ist genau bei einem Wortstopp nicht leer (upstream setzt `stopping_word` nur dort, `server-context.cpp:630`), und ein solcher Stopp hat immer `finish_reason` `stop`, also bleiben `tool_use` und `max_tokens` unberührt. Die Javadoc der Überladung zitiert die Spezifikation und nennt die bewusste Abweichung von upstream. Nicht Teil dieses Commits: `CHANGELOG.md` (dort steht noch „stop_reason stays end_turn“, wird in einem späteren Durchgang nachgezogen); upstream-tauglich als Einzeiler in beiden `to_json_anthropic*`.
+- **Tests:** `AnthropicApiSupportTest#aMatchedStopWordIsReportedAsStopReasonStopSequence`, `#theMatchedStopWordIsTheStopSequence` (Erwartung von `end_turn` auf `stop_sequence` umgestellt), `#onlyAStopThatAStopWordEndedIsStopSequence` (die drei unveränderten Zweige mit Wort und `stop` ohne Wort), als Schutz `#withoutAStopWordAStopIsStillEndTurn`; `AnthropicStreamTranslatorTest#aMatchedStopWordIsTheStopReasonStopSequenceOfTheMessageDelta`, `#theMatchedStopWordIsTheStopSequenceOfTheMessageDelta` (umgestellt).
+- **Rot-Grün-Nachweis:** Ohne den Fix vier rot: „Expected: is "stop_sequence" but: was "end_turn"“ (beide blockierenden Fälle) und „Expected: a string containing "\"stop_reason\":\"stop_sequence\""“ (beide gestreamten); mit dem Fix grün (`AnthropicApiSupportTest` 29/29, `AnthropicStreamTranslatorTest` 8/8, `OpenAiCompatServerHttpTest` 68/68). `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

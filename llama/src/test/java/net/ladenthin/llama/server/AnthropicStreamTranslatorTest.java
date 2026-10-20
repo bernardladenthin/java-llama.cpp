@@ -44,8 +44,20 @@ public class AnthropicStreamTranslatorTest {
                 + "\"__verbose\":{\"stopping_word\":\"END\"}}");
         assertThat(last.contains("__verbose"), is(false));
         String end = translator.end();
-        assertThat(end, containsString("\"stop_reason\":\"end_turn\""));
+        assertThat(end, containsString("\"stop_reason\":\"stop_sequence\""));
         assertThat(end, containsString("\"stop_sequence\":\"END\""));
+    }
+
+    @Test
+    public void aMatchedStopWordIsTheStopReasonStopSequenceOfTheMessageDelta() {
+        // As the Messages API specifies for a matched stop sequence; upstream says end_turn (F221).
+        AnthropicStreamTranslator translator = new AnthropicStreamTranslator("msg_1", "m");
+        translator.onChunk("{\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}");
+        translator.onChunk("{\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],"
+                + "\"__verbose\":{\"stopping_word\":\"END\"}}");
+        String end = translator.end();
+        assertThat(end, containsString("\"stop_reason\":\"stop_sequence\""));
+        assertThat(end.contains("\"stop_reason\":\"end_turn\""), is(false));
     }
 
     @Test

@@ -136,7 +136,7 @@ final class AnthropicStreamTranslator {
             }
         }
         out.append(AnthropicApiSupport.messageDeltaEvent(
-                AnthropicApiSupport.anthropicStopReason(finishReason),
+                AnthropicApiSupport.anthropicStopReason(finishReason, stopSequence),
                 stopSequence,
                 inputTokens,
                 outputTokens,

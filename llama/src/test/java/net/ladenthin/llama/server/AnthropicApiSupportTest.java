@@ -259,9 +259,10 @@ public class AnthropicApiSupportTest {
         assertThat(openAi.path("stop").get(0).asText(), is("X"));
     }
 
-    // Upstream reports the matched stop word as stop_sequence (stop_reason stays end_turn). The OpenAI
-    // answer the route translates from does not carry it, so the translation asks for upstream's
-    // "verbose" answer, whose __verbose.stopping_word does (F183).
+    // The matched stop word is the stop_sequence, and stop_reason is "stop_sequence" as the Messages API
+    // specifies (upstream reports end_turn, F221). The OpenAI answer the route translates from does not
+    // carry the word, so the translation asks for upstream's "verbose" answer, whose
+    // __verbose.stopping_word does (F183).
 
     @Test
     public void theTranslatedRequestAsksForTheStopWord() throws IOException {
@@ -280,9 +281,31 @@ public class AnthropicApiSupportTest {
                 "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"a\"},"
                         + "\"finish_reason\":\"stop\"}],\"__verbose\":{\"stopping_word\":\"X\",\"prompt\":\"p\"}}",
                 "m"));
-        assertThat(response.path("stop_reason").asText(), is("end_turn"));
+        assertThat(response.path("stop_reason").asText(), is("stop_sequence"));
         assertThat(response.path("stop_sequence").asText(), is("X"));
         assertThat("the debug object stays inside", response.has("__verbose"), is(false));
+    }
+
+    @Test
+    public void aMatchedStopWordIsReportedAsStopReasonStopSequence() throws IOException {
+        // The Messages API: "If the model encounters one of the custom sequences, the response
+        // stop_reason value will be "stop_sequence"". end_turn made a stop-word stop look like a natural
+        // end to a client that branches on stop_reason.
+        JsonNode response = read(AnthropicApiSupport.toAnthropicResponse(
+                "{\"choices\":[{\"message\":{\"content\":\"a\"},\"finish_reason\":\"stop\"}],"
+                        + "\"__verbose\":{\"stopping_word\":\"X\"}}",
+                "m"));
+        assertThat(response.path("stop_reason").asText(), is("stop_sequence"));
+        assertThat(response.path("stop_sequence").asText(), is("X"));
+    }
+
+    @Test
+    public void withoutAStopWordAStopIsStillEndTurn() throws IOException {
+        JsonNode response = read(AnthropicApiSupport.toAnthropicResponse(
+                "{\"choices\":[{\"message\":{\"content\":\"a\"},\"finish_reason\":\"stop\"}],"
+                        + "\"__verbose\":{\"stopping_word\":\"\"}}",
+                "m"));
+        assertThat(response.path("stop_reason").asText(), is("end_turn"));
     }
 
     @Test
@@ -373,6 +396,14 @@ public class AnthropicApiSupportTest {
         assertThat(AnthropicApiSupport.anthropicStopReason("stop"), is("end_turn"));
         assertThat(AnthropicApiSupport.anthropicStopReason("length"), is("max_tokens"));
         assertThat(AnthropicApiSupport.anthropicStopReason("tool_calls"), is("tool_use"));
+    }
+
+    @Test
+    public void onlyAStopThatAStopWordEndedIsStopSequence() {
+        assertThat(AnthropicApiSupport.anthropicStopReason("stop", "X"), is("stop_sequence"));
+        assertThat(AnthropicApiSupport.anthropicStopReason("stop", null), is("end_turn"));
+        assertThat(AnthropicApiSupport.anthropicStopReason("tool_calls", "X"), is("tool_use"));
+        assertThat(AnthropicApiSupport.anthropicStopReason("length", "X"), is("max_tokens"));
     }
 
     @Test
