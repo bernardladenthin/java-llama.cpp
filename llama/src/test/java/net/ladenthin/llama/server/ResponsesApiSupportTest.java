@@ -158,6 +158,68 @@ public class ResponsesApiSupportTest {
     }
 
     @Test
+    public void inputImageWithoutAUrlIsRejectedLikeUpstream() throws IOException {
+        // An input_image given by file_id carries no URL; it used to be dropped, so the model answered
+        // the text as if no image had been sent. upstream's convert_responses_to_chatcmpl answers 400.
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                        + "{\"type\":\"message\",\"role\":\"user\",\"content\":["
+                        + "{\"type\":\"input_text\",\"text\":\"what\"},"
+                        + "{\"type\":\"input_image\",\"file_id\":\"file-1\"}]}]}")));
+        assertThat(e.getMessage(), containsString("'image_url' is required"));
+        assertThat(e.getMessage(), containsString("file-1"));
+    }
+
+    @Test
+    public void toolOutputPartOfAnotherTypeIsRejectedLikeUpstream() throws IOException {
+        // A tool result part other than input_text / input_image was skipped, so the tool message
+        // reached the model empty; upstream refuses it with 400.
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                        + "{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":["
+                        + "{\"type\":\"output_text\",\"text\":\"x\"}]}]}")));
+        assertThat(e.getMessage(), containsString("Output of tool call should be 'Input text' or 'Input image'"));
+        assertThat(e.getMessage(), containsString("output_text"));
+    }
+
+    @Test
+    public void toolOutputPartWithoutATypeIsRejectedLikeUpstream() throws IOException {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                        + "{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":["
+                        + "{\"text\":\"x\"}]}]}")));
+        assertThat(e.getMessage(), containsString("Output of tool call missing 'type' field"));
+    }
+
+    @Test
+    public void toolOutputImageWithoutAUrlIsRejectedLikeUpstream() throws IOException {
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                        + "{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":["
+                        + "{\"type\":\"input_image\",\"file_id\":\"file-2\"}]}]}")));
+        assertThat(e.getMessage(), containsString("'image_url' is required"));
+        assertThat(e.getMessage(), containsString("file-2"));
+    }
+
+    @Test
+    public void toolOutputImageInObjectFormKeepsItsUrl() throws IOException {
+        // The message branch reads image_url as a string or as {url}; the tool-output branch read only
+        // the string and dropped the object form. Both read it the same way now.
+        JsonNode content = ResponsesApiSupport.toOpenAiChatRequest(read("{\"input\":["
+                        + "{\"type\":\"function_call_output\",\"call_id\":\"c1\",\"output\":["
+                        + "{\"type\":\"input_image\",\"image_url\":{\"url\":\"data:image/png;base64,AA==\"}}]}]}"))
+                .path("messages")
+                .path(0)
+                .path("content");
+        assertThat(content.path(0).path("type").asText(), is("image_url"));
+        assertThat(content.path(0).path("image_url").path("url").asText(), is("data:image/png;base64,AA=="));
+    }
+
+    @Test
     public void consecutiveFunctionCallsJoinThePrecedingAssistantMessageLikeUpstream() throws IOException {
         // Parallel tool calls follow the assistant's text as separate items; upstream's
         // convert_responses_to_chatcmpl appends each to the preceding assistant message (merge_prev),

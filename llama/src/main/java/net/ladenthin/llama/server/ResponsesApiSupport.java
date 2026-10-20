@@ -226,7 +226,9 @@ final class ResponsesApiSupport {
                     toolMessage.put("tool_call_id", item.path("call_id").asText(""));
                     JsonNode output = item.path("output");
                     if (output.isArray()) {
-                        toolMessage.set("content", toolOutputParts(output));
+                        toolMessage.set(
+                                "content",
+                                toolOutputParts(output, item.path("call_id").asText("")));
                     } else {
                         toolMessage.put("content", output.asText(""));
                     }
@@ -258,7 +260,10 @@ final class ResponsesApiSupport {
      * The OpenAI content-part array for a Responses content array that carries {@code input_image}
      * parts, or {@code null} when it carries none. The OpenAI parser reads images only from
      * {@code image_url} parts, so flattening such a message to its text dropped the image and a
-     * vision model answered as if none had been sent.
+     * vision model answered as if none had been sent. An {@code input_image} without a URL (one given
+     * by {@code file_id}) is refused as upstream refuses it; dropping it answered the text alone.
+     *
+     * @throws IllegalArgumentException for an {@code input_image} part without a URL
      */
     private static @Nullable ArrayNode inputContentWithImages(JsonNode content) {
         if (!content.isArray()) {
@@ -268,17 +273,16 @@ final class ResponsesApiSupport {
         boolean hasImage = false;
         for (JsonNode part : content) {
             if ("input_image".equals(part.path("type").asText(""))) {
-                JsonNode imageUrl = part.path("image_url");
-                String url = imageUrl.isTextual()
-                        ? imageUrl.asText()
-                        : imageUrl.path("url").asText("");
-                if (!url.isEmpty()) {
-                    parts.addObject()
-                            .put("type", "image_url")
-                            .putObject("image_url")
-                            .put("url", url);
-                    hasImage = true;
+                String url = imageUrl(part);
+                if (url.isEmpty()) {
+                    throw new IllegalArgumentException("'image_url' is required (input_image with file_id "
+                            + part.path("file_id").asText("") + " is not supported)");
                 }
+                parts.addObject()
+                        .put("type", "image_url")
+                        .putObject("image_url")
+                        .put("url", url);
+                hasImage = true;
             } else {
                 String text = partText(part);
                 if (text != null) {
@@ -311,24 +315,51 @@ final class ResponsesApiSupport {
      * The content parts of a {@code function_call_output} whose {@code output} is an array: {@code
      * input_text} becomes a {@code text} part, {@code input_image} an {@code image_url} part, as in
      * upstream's {@code convert_responses_to_chatcmpl}. Reading such an output as text gave the tool
-     * message an empty content. Other part types are skipped (upstream rejects them).
+     * message an empty content. A part without a type, of another type, or an image without a URL is
+     * refused with upstream's messages; skipping it handed the model an incomplete tool result.
+     *
+     * @param output the {@code output} array
+     * @param callId the {@code call_id} of the item, named in a refusal
+     * @return the content parts of the tool message
+     * @throws IllegalArgumentException for a part upstream refuses
      */
-    private static ArrayNode toolOutputParts(JsonNode output) {
+    private static ArrayNode toolOutputParts(JsonNode output, String callId) {
         ArrayNode parts = OBJECT_MAPPER.createArrayNode();
         for (JsonNode part : output) {
+            if (!part.has("type")) {
+                throw new IllegalArgumentException("Output of tool call missing 'type' field (call_id " + callId + ")");
+            }
             String type = part.path("type").asText("");
             if ("input_text".equals(type)) {
                 parts.addObject()
                         .put("type", "text")
                         .put("text", part.path("text").asText(""));
-            } else if ("input_image".equals(type) && part.path("image_url").isTextual()) {
+            } else if ("input_image".equals(type)) {
+                String url = imageUrl(part);
+                if (url.isEmpty()) {
+                    throw new IllegalArgumentException(
+                            "'image_url' is required (call_id " + callId + ", input_image with file_id "
+                                    + part.path("file_id").asText("") + " is not supported)");
+                }
                 parts.addObject()
                         .put("type", "image_url")
                         .putObject("image_url")
-                        .put("url", part.path("image_url").asText());
+                        .put("url", url);
+            } else {
+                throw new IllegalArgumentException("Output of tool call should be 'Input text' or 'Input image' (got '"
+                        + type + "', call_id " + callId + ")");
             }
         }
         return parts;
+    }
+
+    /**
+     * The URL of an {@code input_image} part: {@code image_url} as the string the Responses API defines,
+     * or as {@code {"url": ...}} (accepted on both paths alike); {@code ""} when there is none.
+     */
+    private static String imageUrl(JsonNode part) {
+        JsonNode imageUrl = part.path("image_url");
+        return imageUrl.isTextual() ? imageUrl.asText() : imageUrl.path("url").asText("");
     }
 
     /** The last message if it is an assistant message, else {@code null} (upstream's {@code merge_prev}). */

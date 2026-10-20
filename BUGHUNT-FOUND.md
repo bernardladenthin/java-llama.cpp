@@ -146,6 +146,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F221](#f221) — mittel — *gefixt*
 - [F222](#f222) — niedrig — *gefixt*
 - [F223](#f223) — niedrig — *gefixt*
+- [F224](#f224) — niedrig — *gefixt*
 
 ## Funde
 
@@ -247,6 +248,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Beschreibung:** Der Translator flachte jedes Content-Array einer `message` auf seinen Text ab (`inputContentText` liest nur `text`). Ein `{"type":"input_image","image_url":"data:…"}`-Teil kam nie im Chat-Kern an; ein Vision-Modell antwortete, als wäre kein Bild geschickt worden – still, ohne Fehler. Gleiche Fehlerklasse wie der Ollama-`images`-Fund oben.
 - **Fix:** Enthält das Array `input_image`-Teile, wird ein OpenAI-Content-Part-Array gebaut (`text`-Teile + `image_url`-Teile; `image_url` als String oder `{url}`). Reine Text-Nachrichten bleiben unverändert ein String. `file_id`-Bilder (ohne URL) werden weiterhin ignoriert.
 - **Reproduktion:** `ResponsesApiSupportTest#requestTurnsInputImagePartsIntoImageUrlParts` (vorher rot, nachher 10/10 grün)
+- **Nachtrag (Branch-Review 2026-10-20):** Der Satz „`file_id`-Bilder (ohne URL) werden weiterhin ignoriert“ gilt nicht mehr: ein `input_image` ohne URL wird seit F224 wie upstream mit 400 abgewiesen.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `4c08a90`
 
@@ -760,6 +762,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** ein Array-`output` wird zu Inhaltsteilen (`input_text` → `text`, `input_image` → `image_url`), andere Teiltypen werden übersprungen (upstream weist sie ab); ein String bleibt wie bisher.
 - **Reproduktion:** `ResponsesApiSupportTest#functionCallOutputArrayKeepsItsPartsLikeUpstream`
 - **Rot-Grün-Nachweis:** ohne Fix rot („Expected: is "text" but: was ""“; die erste Fassung des Tests lief über `get(0)` in eine NPE und wurde auf `path(0)` umgestellt, damit der Fehler an der Assertion sichtbar wird), mit Fix grün (16/16 der Klasse, skipped 0); Gegenprobe per `git stash` rot, nach `pop` grün. `ResponsesStreamTranslatorTest` 5/5, `OpenAiRequestMapperTest` 22/22, `OpenAiCompatServerHttpTest` 45/45, `LlamaArchitectureTest` 13/13, `spotbugs:check` grün.
+- **Nachtrag (Branch-Review 2026-10-20):** Andere Teiltypen, ein Teil ohne `type` und ein Bild ohne URL werden seit F224 wie upstream mit 400 abgewiesen statt übersprungen; die Objektform `{url}` wird wie im Nachrichtenzweig gelesen.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `28054ba`
 
@@ -1777,6 +1780,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „"100" ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ und „Expected: is <400> but: was <200>“; nur mit der Übersetzungsseite des Fixes scheiterte der HTTP-Test mit „java.net.SocketException: Unexpected end of file from server“ (der Beleg, dass die Ablehnung ohne das verlegte `try` als abgebrochene Verbindung ankäme); mit dem ganzen Fix grün (`AnthropicApiSupportTest` 31/31, `AnthropicStreamTranslatorTest` 9/9, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `4849673`
+
+### F224 – java-llama.cpp: Responses `input_image` ohne URL und fremde Werkzeugergebnis-Teile werden still verworfen statt abgewiesen
+- **Zeit:** 2026-10-20 23:05 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/ResponsesApiSupport.java` (`inputContentWithImages`, `toolOutputParts`, neu `imageUrl`)
+- **Schwere:** niedrig (ein Bild per `file_id` oder ein Werkzeugergebnis mit einem `output_text`-Teil kam ohne Hinweis nicht beim Modell an; es antwortete, als wäre es nicht geschickt worden)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J5-1). F17 ließ `file_id`-Bilder bewusst weg („werden weiterhin ignoriert“), F86 übersprang fremde Teiltypen eines Werkzeugergebnisses („upstream weist sie ab“); F89 hatte dieselbe Klasse für `input_file` schon in eine 400 verwandelt.
+- **Beschreibung:** `inputContentWithImages` nahm einen `input_image`-Teil nur mit einer nicht leeren URL auf; `{"type":"input_image","file_id":"file-1"}` (nach dem OpenAI-Typ `ResponseInputImageParam` gültig, `image_url` und `file_id` sind beide optional) fiel weg, die Nachricht ging als reiner Text ans Modell. `toolOutputParts` übernahm nur `input_text` und ein `input_image` mit einem String-`image_url`; jeder andere Teil, ein Teil ohne `type` und die Objektform `{"url": …}` (die der Nachrichtenzweig annimmt) fielen weg, ein `[{"type":"output_text",…}]` ergab eine Werkzeugnachricht mit leerem Inhalt. upstream (`convert_responses_to_chatcmpl`, `server-chat.cpp:83-85, 207-216`, b11639) antwortet in jedem dieser Fälle 400: „'image_url' is required“, „Output of tool call missing 'type' field“, „Output of tool call should be 'Input text' or 'Input image'“.
+- **Fix:** Ein gemeinsamer Helfer `imageUrl` liest die URL auf beiden Wegen gleich (String oder `{url}`, eine bewusst beibehaltene Erweiterung von F17). Ein `input_image` ohne URL ist eine `IllegalArgumentException` mit upstreams Text plus der `file_id`; im Werkzeugergebnis ebenso ein Teil ohne `type` und ein Teil eines anderen Typs, jeweils mit upstreams Text, dem Typ und der `call_id`. `handleResponses` beantwortet die Ausnahme schon als 400 (F89). Bewusst schärfer als upstream: ein leerer `image_url`-String gilt als fehlend (upstream scheitert daran später in `handle_media`). Nicht geändert: unbekannte Teiltypen einer `message` bleiben Text bzw. werden übergangen, weil derselbe Zweig Assistenten-Nachrichten mit `output_text`/`refusal` trägt (F173).
+- **Tests:** `ResponsesApiSupportTest#inputImageWithoutAUrlIsRejectedLikeUpstream`, `#toolOutputPartOfAnotherTypeIsRejectedLikeUpstream`, `#toolOutputPartWithoutATypeIsRejectedLikeUpstream`, `#toolOutputImageWithoutAUrlIsRejectedLikeUpstream`, `#toolOutputImageInObjectFormKeepsItsUrl`; die 400-Abbildung pinnt schon `OpenAiCompatServerHttpTest#responsesWithAnInputFileIsRejectedLikeUpstream`.
+- **Rot-Grün-Nachweis:** Ohne den Fix rot (5 Fehlschläge: viermal „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“, einmal „Expected: is "image_url" but: was ""“), mit dem Fix grün (`ResponsesApiSupportTest` 59/59, `ResponsesStreamTranslatorTest` 5/5, `OpenAiCompatServerHttpTest` 69/69). `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 
