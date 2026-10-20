@@ -495,9 +495,9 @@ Everything the bug hunt left open, so nothing is lost when the session ends. The
 named in each item holds the analysis, the upstream references (b11639) and the reproduction;
 delete an item here when it is done.
 
-**Open suspicions without a finding id** (each needs the owner's decision or a model to decide;
-numbered for reference, the numbers stay when an item is done): none left -- the last ones were
-fixed as F181 to F186 on 2026-10-20. The local measurement run of that brief
+**Open suspicions without a finding id**: none left -- the last ones, numbered (1) to (16) while they
+were open (comments and ledger entries still cite those numbers), were fixed as F181 to F186 on
+2026-10-20. The local measurement run of that brief
 (`BUGHUNT-MEASUREMENTS.md`, M1 … M10, Windows) confirmed all of them with the real models and found
 four more, fixed as F187 … F190. It left two limits, both decided and documented, recorded here so
 they are not rediscovered:
@@ -512,6 +512,14 @@ they are not rediscovered:
   of `OpenAiServerConfig.getModelId()` tells an embedding caller to load with
   `ModelParameters.setAlias(…)`. Rewriting the `model` field of every answer was rejected (it would
   claim something the engine did not do, and attach-mode `NativeServer` could not follow it).
+- **`POST /v1/messages/count_tokens` and the Responses `input_tokens` route answer 404** (F112).
+  Upstream serves both; F112 stopped them from running as a full generation under the parent
+  route's handler, but counting tokens needs a tokenizer call through `OpenAiBackend`, which has
+  none -- an API addition (`OpenAiBackend.countTokens(JsonNode)` over `LlamaModel.encode` after the
+  chat template). Claude Code falls back to its own estimate on a 404, so nothing breaks; open
+  until a client needs the exact count.
+- **`OpenAiCompatServer` cannot unload a model**: an Ollama `/api/generate` with `keep_alive: 0`
+  and no prompt gets the "load" answer (F205), the model stays resident (one model per server).
 
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 

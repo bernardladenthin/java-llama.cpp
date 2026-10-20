@@ -177,11 +177,15 @@ JLLAMA_API jllama_status jllama_model_meta(jllama_model *model, char **response_
 
 /**
  * A raw completion (llama.cpp's /completion body: `{"prompt": ..., "n_predict": ..., ...}`),
- * blocking; *response_json is the array of result objects.
+ * blocking; *response_json is the result object. A request takes one prompt and one completion:
+ * several prompts or "n" > 1 are JLLAMA_STATUS_INVALID_REQUEST (send separate requests).
  */
 JLLAMA_API jllama_status jllama_completions(jllama_model *model, const char *request_json, char **response_json);
 
-/** An OpenAI /v1/completions request, blocking; *response_json the text_completion object(s). */
+/**
+ * An OpenAI /v1/completions request, blocking; *response_json the text_completion object. One prompt
+ * and one choice, as for jllama_completions.
+ */
 JLLAMA_API jllama_status jllama_completions_oai(jllama_model *model, const char *request_json, char **response_json);
 
 /**

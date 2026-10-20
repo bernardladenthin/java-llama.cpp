@@ -20,8 +20,11 @@
  *       comes straight from the native OpenAI chunk formatter (see
  *       {@link net.ladenthin.llama.LlamaModel#streamChatCompletion(net.ladenthin.llama.parameters.InferenceParameters, java.util.function.Consumer)}),
  *       so streamed {@code delta.tool_calls} are preserved for agent-mode tool use.</li>
- *   <li>{@code POST /v1/completions} and {@code POST /v1/embeddings} — non-streaming, forwarding the
- *       request body to the matching {@code LlamaModel.handle*} method.</li>
+ *   <li>{@code POST /v1/completions} — the request body forwarded verbatim, to
+ *       {@code LlamaModel.handleCompletionsOai} or, streamed, to
+ *       {@code LlamaModel.streamCompletionsOai} (upstream's own {@code text_completion} chunks).</li>
+ *   <li>{@code POST /v1/embeddings} — non-streaming, forwarding the request body to
+ *       {@code LlamaModel.handleEmbeddings}.</li>
  *   <li>{@code POST /v1/rerank} — document reranking for RAG (requires the model loaded in reranking
  *       mode); the native result array is reshaped to {@code results}/{@code data} of
  *       {@code {index, relevance_score}}.</li>

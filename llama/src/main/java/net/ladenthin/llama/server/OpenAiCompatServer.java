@@ -47,8 +47,9 @@ import org.slf4j.LoggerFactory;
  *   <li>{@code POST /v1/chat/completions} — streaming (Server-Sent Events) and non-streaming chat
  *       completions, forwarded faithfully (messages/tools verbatim; streamed {@code delta.tool_calls}
  *       preserved).</li>
- *   <li>{@code POST /v1/completions} — text completion, streaming (Server-Sent Events, token by token
- *       via {@code generate(...)}) when {@code stream:true} and non-streaming otherwise.</li>
+ *   <li>{@code POST /v1/completions} — text completion, the body forwarded to llama.cpp verbatim:
+ *       streaming (Server-Sent Events, upstream's own {@code text_completion} chunks with {@code usage}
+ *       on the last) when {@code stream:true} and non-streaming otherwise.</li>
  *   <li>{@code POST /v1/embeddings} — embeddings (requires the model to be loaded in embedding
  *       mode).</li>
  *   <li>{@code GET /v1/models} — advertises the single configured model.</li>

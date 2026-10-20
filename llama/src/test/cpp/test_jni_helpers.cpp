@@ -896,7 +896,7 @@ TEST(JniGuard, DoesNotThrowWithoutAnExceptionClass) {
 }
 
 // ============================================================
-// jni_utf8.hpp — message text to Java as standard UTF-8 (TODO (6), F181)
+// jni_utf8.hpp — message text to Java as standard UTF-8 (F181)
 //
 // ThrowNew and NewStringUTF read Modified UTF-8, where a 4-byte sequence is invalid input:
 // HotSpot mangles it, Android's CheckJNI aborts. An error message quotes paths and request text,

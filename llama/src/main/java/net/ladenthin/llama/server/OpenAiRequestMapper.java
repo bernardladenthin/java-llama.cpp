@@ -193,9 +193,10 @@ final class OpenAiRequestMapper {
 
     /**
      * Apply the llama.cpp sampling extensions upstream's request schema ({@code server-schema.cpp},
-     * b11639) reads next to the OpenAI fields. The non-streamed {@code /v1/completions} forwards the body
-     * to that schema, so without them the streamed form of the same request would sample differently.
-     * {@code json_schema} applies only without a {@code grammar}, as upstream decides.
+     * b11639) reads next to the OpenAI fields. {@code /v1/completions} forwards its body to that schema
+     * verbatim, streamed or not; the chat paths are built here, so without these fields a chat request
+     * would sample differently from a completion carrying the same fields. {@code json_schema} applies
+     * only without a {@code grammar}, as upstream decides.
      *
      * @param params the parameters to extend
      * @param request the parsed request object

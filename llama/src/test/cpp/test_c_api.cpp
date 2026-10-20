@@ -369,7 +369,7 @@ TEST_F(CApi, SeveralCompletionsInOneRequestAreRefusedNotDropped) {
 }
 
 // The streamed /v1/completions: the body parsed as the blocking one, upstream's text_completion
-// chunks, one id, the last with usage (TODO (14), F186).
+// chunks, one id, the last with usage (F186).
 TEST_F(CApi, OaiCompletionsStreamDeliversTextCompletionChunksEndingWithUsage) {
     int task = -1;
     ASSERT_EQ(

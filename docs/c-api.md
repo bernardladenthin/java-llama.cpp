@@ -78,6 +78,12 @@ And the `jllama_api.h` header ships in every natives directory, so a consumer of
   or out-parameter), `INTERRUPTED` (the model was freed under the call). On anything but `OK`,
   `jllama_last_error()` has the message. The Java side maps `INVALID_REQUEST` to
   `InvalidRequestException` and the rest to `LlamaException`, the same rule as before.
+- **One request, one answer.** A completion or chat request takes one prompt and asks for one
+  choice: several prompts in one request (an array of strings or of token arrays) and `"n"` greater
+  than 1 are `INVALID_REQUEST` on the blocking, raw and streamed paths. llama.cpp's HTTP server
+  answers them with several choices from child tasks, which this engine does not create; answering
+  with one would drop the rest silently. Send separate requests (several slots, `-np`, run them at
+  once).
 - **Logging.** `jllama_set_log_callback(cb, user_data)` is process-wide and routes *every* line
   (llama.cpp, ggml, the server's `srv`/`slot` lines) to `cb` instead of the console, on the logger's
   worker thread. `jllama_set_log_callback(NULL, NULL)` drains the lines queued for the previous

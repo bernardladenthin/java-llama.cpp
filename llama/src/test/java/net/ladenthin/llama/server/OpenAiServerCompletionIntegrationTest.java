@@ -88,7 +88,7 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
 
     // The streamed /v1/completions went through the Java generator and built its own chunks: no usage,
     // no probabilities, and a prompt given as a token array refused while the same request without
-    // "stream" was accepted. It now streams upstream's own text_completion chunks (TODO (14), F186).
+    // "stream" was accepted. It now streams upstream's own text_completion chunks (F186).
     @Test
     public void aStreamedCompletionIsUpstreamsStream() throws IOException {
         String body = "{\"model\":\"" + MODEL_ID + "\",\"stream\":true,\"max_tokens\":4,\"logprobs\":2,"

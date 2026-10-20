@@ -998,7 +998,7 @@ path), all supporting tools and streaming:
 
 | Surface | Routes | For |
 |---|---|---|
-| **Ollama-native** | `GET /api/version`, `GET /api/tags`, `POST /api/show`, `POST /api/chat` (NDJSON streaming), `POST /api/generate` (through the chat template with `system`, as Ollama does; the bare prompt with `raw: true`; FIM with `suffix`) | Copilot's built-in **Ollama** provider; Ollama-hardcoded tools |
+| **Ollama-native** | `GET /api/version`, `GET /api/tags`, `POST /api/show`, `POST /api/chat` (NDJSON streaming), `POST /api/generate` (through the chat template with `system`, as Ollama does; the bare prompt with `raw: true`; FIM with `suffix`; without a prompt Ollama's "model loaded" answer) | Copilot's built-in **Ollama** provider; Ollama-hardcoded tools |
 | **Anthropic Messages** | `POST /v1/messages` (SSE event stream) | Claude-shaped clients (Claude Code); Copilot `messages` apiType |
 | **OpenAI Responses** | `POST /v1/responses` (SSE event stream) | Copilot `responses` apiType; Responses-API clients |
 
@@ -1010,7 +1010,9 @@ clients such as llama.vscode read to size their context window.
 Embed it in your app:
 
 ```java
-ModelParameters modelParams = new ModelParameters().setModel("models/model.gguf").setParallel(2);
+// the alias is the name llama.cpp puts into every answer; set it to the id /v1/models advertises
+ModelParameters modelParams =
+        new ModelParameters().setModel("models/model.gguf").setParallel(2).setAlias("local-model");
 OpenAiServerConfig config = OpenAiServerConfig.builder().port(8080).modelId("local-model").build();
 try (LlamaModel model = new LlamaModel(modelParams);
      OpenAiCompatServer server = new OpenAiCompatServer(model, config).start()) {

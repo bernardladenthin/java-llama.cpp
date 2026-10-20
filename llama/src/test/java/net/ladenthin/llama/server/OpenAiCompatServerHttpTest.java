@@ -591,7 +591,7 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     // Upstream reads the first result before it starts a stream, so a request refused at once is answered
-    // with the error status, as without "stream" (TODO (3), F182). The response starts with the first
+    // with the error status, as without "stream" (F182). The response starts with the first
     // write -- a chunk, the protocol's opening events or a heartbeat -- and only a failure after that
     // travels as an event.
 
