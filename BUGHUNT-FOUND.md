@@ -1737,7 +1737,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiRequestMapperTest#topLogprobsWithoutLogprobsIsRefusedLikeUpstream` (ohne, mit `false`, mit `null` und neben einer Zahl), `#anIntegerLogprobsMapsToNProbsLikeUpstreamsSchemaAlias`, `#nProbsWinsOverAnIntegerLogprobsLikeUpstream`, `#aLogprobsThatIsNeitherBooleanNorNumberIsRefused` (mit `n_probs` daneben keine Ablehnung, wie upstream); als Schutz `#topLogprobsNullWithoutLogprobsIsTheDefault`, die drei F123-Tests unverändert grün.
 - **Rot-Grün-Nachweis:** Ohne den Fix vier rot: „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ (`top_logprobs: 3` allein bzw. `logprobs: "true"`), „Expected: is <2> but: was <20>“ (`logprobs: 2`), „Expected: is <5> but: was <20>“ (`n_probs: 5` neben `logprobs: 2`); mit dem Fix grün (`OpenAiRequestMapperTest` 44/44, `OpenAiCompatServerHttpTest` 68/68, `AnthropicApiSupportTest` 26/26, `ResponsesApiSupportTest` 54/54, `OllamaApiSupportTest` 42/42, `LlamaArchitectureTest` 13/13). `spotless:apply` grün; `spotbugs:check` meldete zuerst zweimal `WEM_WEAK_EXCEPTION_MESSAGING` für die festen Texte, mit der Unterdrückung grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `ededfc5`
 
 ## Offene Verdachte ohne Fund-ID
 
