@@ -1819,7 +1819,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `ResponsesApiSupportTest#requestFieldsTheChatMapperReadsPassThroughLikeUpstream` um die Zeilen `logit_bias|{"42":-100}` und `n_probs|3` erweitert.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected: is <{"42":-100}> but: was <>“ und „Expected: is <3> but: was <>“), mit dem Fix grün (`ResponsesApiSupportTest` 62/62, `OpenAiCompatServerHttpTest` 69/69, `OpenAiRequestMapperTest` 44/44). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `365fcdb`
 
 ## Offene Verdachte ohne Fund-ID
 
