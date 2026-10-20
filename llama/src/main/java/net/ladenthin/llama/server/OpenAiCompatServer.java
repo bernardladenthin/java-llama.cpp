@@ -612,6 +612,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
                 return;
             }
             String model = request.path("model").asText(config.getModelId());
+            if (OllamaApiSupport.isLoadOnly(request)) {
+                // Ollama's preload: no prompt means "load the model", answered at once
+                sendJson(exchange, HTTP_OK, OllamaApiSupport.toOllamaLoadResponse(model));
+                return;
+            }
             // Generation runs to completion first, then the text is wrapped -- as a single NDJSON content
             // line + done line when stream is requested. A suffix is fill-in-the-middle, raw the bare
             // prompt, anything else goes through the chat template as Ollama does.

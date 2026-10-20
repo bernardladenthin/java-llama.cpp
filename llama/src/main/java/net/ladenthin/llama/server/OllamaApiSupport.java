@@ -524,6 +524,36 @@ final class OllamaApiSupport {
     }
 
     /**
+     * Whether the {@code /api/generate} request only asks for the model to be loaded: Ollama answers a
+     * request without a prompt (and without a {@code suffix}) with {@code done} at once, which is how
+     * its clients preload a model. The model of this server is always loaded, so there is nothing to do.
+     *
+     * @param request the parsed Ollama generate request
+     * @return {@code true} when the request carries no prompt and no suffix
+     */
+    static boolean isLoadOnly(JsonNode request) {
+        return request.path("prompt").asText("").isEmpty() && !hasSuffix(request);
+    }
+
+    /**
+     * The answer to a load-only {@code /api/generate} request, as Ollama gives it: one object, empty
+     * {@code response}, {@code done} and {@code done_reason "load"}, whether streaming was asked for
+     * or not.
+     *
+     * @param model the model id to echo
+     * @return the answer
+     */
+    static String toOllamaLoadResponse(String model) {
+        ObjectNode root = OBJECT_MAPPER.createObjectNode();
+        root.put("model", model);
+        root.put("created_at", nowIso());
+        root.put("response", "");
+        root.put("done", true);
+        root.put("done_reason", "load");
+        return root.toString();
+    }
+
+    /**
      * Whether the {@code /api/generate} request asks for the bare prompt ({@code "raw": true}). Without
      * it Ollama applies the model's chat template, with {@code system} as the system message.
      *

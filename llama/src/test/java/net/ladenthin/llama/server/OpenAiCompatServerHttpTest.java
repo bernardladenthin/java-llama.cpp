@@ -467,6 +467,32 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * Ollama answers an {@code /api/generate} without a prompt by loading the model, which is how its
+     * clients preload one: {@code done} at once, empty text, {@code done_reason "load"}. Ours sent an
+     * empty user turn through the chat template and generated an answer nobody asked for.
+     */
+    @Test
+    public void ollamaGenerateWithoutAPromptOnlyReportsTheModelLoaded() throws IOException {
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            for (String body : new String[] {
+                "{\"model\":\"test-model\"}",
+                "{\"model\":\"test-model\",\"prompt\":\"\",\"stream\":false}",
+                "{\"model\":\"test-model\",\"prompt\":\"\",\"raw\":true,\"stream\":true}"
+            }) {
+                Response response = post(server.getPort(), "/api/generate", body, "");
+                assertThat(body, response.code, is(200));
+                JsonNode out = READER.readTree(response.body);
+                assertThat(body, out.path("done").asBoolean(false), is(true));
+                assertThat(body, out.path("done_reason").asText(), is("load"));
+                assertThat(body, out.path("response").asText(null), is(""));
+                assertThat(body, out.path("model").asText(), is("test-model"));
+            }
+            assertThat("nothing was generated", backend.called, is(""));
+        }
+    }
+
     @Test
     public void ollamaGenerateWithSuffixUsesInfill() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FakeBackend(), config()).start()) {

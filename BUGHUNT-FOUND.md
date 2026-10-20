@@ -1556,6 +1556,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `2611a38`
 
+### F205 – java-llama.cpp: Ollama `/api/generate` ohne Prompt (das Vorladen eines Modells) erzeugt eine Antwort auf einen leeren Nutzer-Turn
+- **Zeit:** 2026-10-20 13:05 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (neu `isLoadOnly`, `toOllamaLoadResponse`), `OpenAiCompatServer.java` (`handleOllamaGenerate`)
+- **Schwere:** niedrig (unnötige Generierung bis `num_predict`/Kontextende bei jedem Vorladen; Clients erwarten `done_reason "load"`)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20; vorher erzeugte der Pfad ohne `raw` (Chat-Template seit diesem Branch) bzw. der `raw`-Pfad eine Antwort auf einen leeren Prompt.
+- **Beschreibung:** Ollama beantwortet ein `/api/generate` ohne Prompt mit dem Laden des Modells (`done: true`, leere `response`, `done_reason "load"`) — so laden Clients ein Modell vor. Hier lief ein leerer Nutzer-Turn durch das Chat-Template und wurde beantwortet.
+- **Fix:** Ohne Prompt und ohne `suffix` (ein leerer Prompt mit `suffix` bleibt FIM am Dateianfang) antwortet die Route sofort mit Ollamas Ladeantwort, ohne das Backend zu rufen — auch bei `stream` ein einzelnes Objekt, wie Ollama. Entladen (`keep_alive: 0`) gibt es hier nicht; das Modell bleibt geladen.
+- **Tests:** `OpenAiCompatServerHttpTest.ollamaGenerateWithoutAPromptOnlyReportsTheModelLoaded` (drei Formen, das Backend wird nicht gerufen), `OllamaApiSupportTest.aGenerateRequestWithoutAPromptOrSuffixOnlyLoadsTheModel`.
+- **Rot-Grün-Nachweis:** Ohne den Fix der HTTP-Test rot (das Backend generierte); mit ihm grün (64 + 37).
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(geschlossen 2026-10-19, ohne Fund-ID, Entscheidung des Nutzers: bewusst nicht ändern)* Continue entscheidet die FIM-Fähigkeit eines Ollama-Modells an `{{ .Suffix }}` im `template` von `/api/show`; wir liefern `""`. Ein Platzhalter-Template wäre erfunden (der Server kennt das Prompt-Format des Modells nicht) und für die meisten Modelle falsch. Continue nutzt dann eigene Vorlagen; für die FIM-Token des Modells gibt es `POST /infill` (Continues `llama.cpp`-Provider). README-Hinweis ergänzt.

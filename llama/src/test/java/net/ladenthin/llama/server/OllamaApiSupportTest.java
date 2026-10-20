@@ -442,4 +442,17 @@ public class OllamaApiSupportTest {
         assertThat(arguments.isObject(), is(true));
         assertThat(arguments.path("a").asInt(), is(1));
     }
+
+    @Test
+    public void aGenerateRequestWithoutAPromptOrSuffixOnlyLoadsTheModel() throws IOException {
+        assertThat(OllamaApiSupport.isLoadOnly(read("{\"model\":\"m\"}")), is(true));
+        assertThat(OllamaApiSupport.isLoadOnly(read("{\"prompt\":\"\"}")), is(true));
+        assertThat(OllamaApiSupport.isLoadOnly(read("{\"prompt\":\"hi\"}")), is(false));
+        // an empty prompt with a suffix is fill-in-the-middle at the start of a file, not a preload
+        assertThat(OllamaApiSupport.isLoadOnly(read("{\"prompt\":\"\",\"suffix\":\"x\"}")), is(false));
+        JsonNode answer = read(OllamaApiSupport.toOllamaLoadResponse("m"));
+        assertThat(answer.path("done_reason").asText(), is("load"));
+        assertThat(answer.path("done").asBoolean(false), is(true));
+        assertThat(answer.path("response").asText(null), is(""));
+    }
 }
