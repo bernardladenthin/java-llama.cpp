@@ -1763,7 +1763,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `AnthropicStreamTranslatorTest#reasoningAfterTextClosesTheTextBlockBeforeANewThinkingBlock` (zweiter Thinking-Start an Index 2, letztes Textdelta an Index 3, Stopp von 1 vor dem zweiten Thinking-Start, kein Delta an 1 nach dessen Stopp, `end()` schließt genau einen Block, Index 3); die übrigen Tests der Klasse unverändert grün.
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: „Expected: a string containing "\"index\":3,\"delta\":{\"type\":\"text_delta\",\"text\":\"d\"}"“ (das Delta „d“ ging an Index 1); mit dem Fix grün (`AnthropicStreamTranslatorTest` 9/9, `AnthropicApiSupportTest` 29/29, `OpenAiCompatServerHttpTest` 68/68). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `e1de898`
 
 ## Offene Verdachte ohne Fund-ID
 
