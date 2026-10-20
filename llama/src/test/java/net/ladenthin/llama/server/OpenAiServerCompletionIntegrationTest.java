@@ -6,6 +6,7 @@ package net.ladenthin.llama.server;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -13,6 +14,7 @@ import java.io.File;
 import java.io.IOException;
 import net.ladenthin.llama.LlamaModel;
 import net.ladenthin.llama.TestConstants;
+import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.parameters.ModelParameters;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
@@ -45,6 +47,8 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
         model = new LlamaModel(new ModelParameters()
                 .setModel(TestConstants.MODEL_PATH)
                 .setCtxSize(512)
+                // two slots, so that "n": 2 passes upstream's schema and reaches the engine's own refusal
+                .setParallel(2)
                 .setGpuLayers(gpuLayers));
         server = new OpenAiCompatServer(
                         model,
@@ -117,6 +121,40 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
         assertThat(last.path("usage").path("prompt_tokens").asInt(), is(2));
         assertThat(last.path("usage").path("completion_tokens").asInt() > 0, is(true));
         assertThat(last.path("choices").path(0).path("finish_reason").isTextual(), is(true));
+    }
+
+    /**
+     * Several completions of one prompt ({@code "n": 2}) are refused, not answered with one: upstream
+     * creates the other completions as child tasks, which the engine does not. The streamed route lost
+     * this refusal when it moved onto the native OAI path (F186) and got it back in the engine; the
+     * blocking route forwards the body to the same engine.
+     */
+    @Test
+    public void aCompletionAskingForSeveralChoicesIsAnswered400OnBothRoutes() throws IOException {
+        String streamed =
+                "{\"model\":\"" + MODEL_ID + "\",\"stream\":true,\"max_tokens\":2,\"n\":2," + "\"prompt\":\"Hi\"}";
+        Response streamedResponse = post(port, "/v1/completions", streamed, "");
+        assertThat(streamedResponse.body, streamedResponse.code, is(400));
+        assertThat(streamedResponse.body, streamedResponse.body.contains("'n'"), is(true));
+
+        String blocking = "{\"model\":\"" + MODEL_ID + "\",\"max_tokens\":2,\"n\":2,\"prompt\":\"Hi\"}";
+        Response blockingResponse = post(port, "/v1/completions", blocking, "");
+        assertThat(blockingResponse.body, blockingResponse.code, is(400));
+    }
+
+    /** The same refusal for a caller of the model itself, on every native completion path. */
+    @Test
+    public void severalChoicesAreRefusedOnTheModelsOwnCompletionAndChatPaths() {
+        assertThrows(
+                InvalidRequestException.class,
+                () -> model.handleCompletionsOai("{\"prompt\":\"Hi\",\"n\":2,\"max_tokens\":2}"));
+        assertThrows(
+                InvalidRequestException.class,
+                () -> model.streamCompletionsOai("{\"prompt\":\"Hi\",\"n\":2,\"max_tokens\":2}", chunk -> {}));
+        assertThrows(
+                InvalidRequestException.class,
+                () -> model.handleChatCompletions(
+                        "{\"messages\":[{\"role\":\"user\",\"content\":\"Hi\"}],\"n\":2,\"max_tokens\":2}"));
     }
 
     @Test

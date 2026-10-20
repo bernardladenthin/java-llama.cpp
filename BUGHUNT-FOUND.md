@@ -1460,6 +1460,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `3b9d96b`
 
+### F197 – java-llama.cpp: `n` > 1 wird auf jedem nativen Completion-Weg still auf eine Antwort reduziert (das gestreamte `/v1/completions` verlor dabei den Schutz aus F180)
+- **Zeit:** 2026-10-20 10:30 UTC
+- **Datei:** `llama/src/main/cpp/jllama_engine.cpp` (`populate_completion_task`), `llama/src/test/cpp/test_c_api.cpp`, `llama/src/test/java/net/ladenthin/llama/server/OpenAiServerCompletionIntegrationTest.java`
+- **Schwere:** mittel (zwei Antworten verlangt, eine geliefert, ohne Hinweis — dieselbe Klasse wie F184)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20. F180 hatte `n > 1` im Java-Mapper für den gestreamten `/v1/completions` abgelehnt; F186 (`d98a6ad`) verlegte diesen Weg auf den nativen OAI-Pfad und entfernte `toCompletionParameters` und damit die Ablehnung samt ihrer Testzusicherung.
+- **Beschreibung:** Upstreams Schema liest `n` als `n_cmpl` mit den harten Grenzen 1 … `n_parallel` (`server-schema.cpp:62`) und beantwortet die weiteren Completions in Kind-Tasks, die der Server anlegt (`server-context.cpp:4888`). Die Engine stellt genau einen Task ein und legt keine Kinder an. Jedes `n` zwischen 2 und der Slot-Zahl wurde also angenommen und mit einer Wahl beantwortet — gemessen vom Reviewer mit dem Zufallsmodell und `setParallel(2)`: `handleCompletionsOai` mit `n:2` eine Wahl, `streamCompletionsOai` ebenso; erst `n:3` scheiterte am Schema. Betroffen: C-API, FFM, `LlamaModel.handle*`, das blockierende `/v1/completions` (leitet den Körper wörtlich weiter) und seit F186 das gestreamte.
+- **Fix:** `populate_completion_task` lehnt `task.params.n_cmpl > 1` nach dem Schema mit `jllama_invalid_request` ab ("a request takes one completion, this one asks for 'n' = N; send separate requests"), wie mehrere Prompts (F184). Das deckt die blockierenden, gestreamten und Chat-Wege an einer Stelle.
+- **Tests:** `CApi.SeveralCompletionsInOneRequestAreRefusedNotDropped` (eigenes Modell mit `-np 2`; `jllama_completions_oai`, `jllama_completions` mit `n_cmpl`, der Stream-Request und `jllama_chat_completions` werden abgelehnt, `n:1` liefert eine Wahl), `OpenAiServerCompletionIntegrationTest#aCompletionAskingForSeveralChoicesIsAnswered400OnBothRoutes` (beide `/v1/completions`-Routen, das Testmodell jetzt mit `setParallel(2)`), `#severalChoicesAreRefusedOnTheModelsOwnCompletionAndChatPaths`.
+- **Rot-Grün-Nachweis:** Der C-API-Test gegen den alten Code rot (alle vier Wege `OK` statt `INVALID_REQUEST`), mit dem Fix grün; `ctest` grün. Die beiden Java-Tests lokal mit dem Zufallsmodell grün (die zwei Infill-Tests der Klasse scheitern dort erwartungsgemäß, das Zufallsmodell hat keine FIM-Tokens); in CI mit dem echten Modell.
+- **Status:** gefixt
+- **Commit:** (folgt)
+
 ## Offene Verdachte ohne Fund-ID
 
 - *(geschlossen 2026-10-19, ohne Fund-ID, Entscheidung des Nutzers: bewusst nicht ändern)* Continue entscheidet die FIM-Fähigkeit eines Ollama-Modells an `{{ .Suffix }}` im `template` von `/api/show`; wir liefern `""`. Ein Platzhalter-Template wäre erfunden (der Server kennt das Prompt-Format des Modells nicht) und für die meisten Modelle falsch. Continue nutzt dann eigene Vorlagen; für die FIM-Token des Modells gibt es `POST /infill` (Continues `llama.cpp`-Provider). README-Hinweis ergänzt.

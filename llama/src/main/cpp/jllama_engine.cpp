@@ -367,6 +367,13 @@ void populate_completion_task(server_task &task, jllama_context *jctx,
         }
     }
     task.params = server_schema::eval_llama_cmpl_schema(jctx->vocab, jctx->params, logit_bias_eog, data);
+    // Several completions of one prompt ("n", upstream's n_cmpl): upstream answers them in child tasks
+    // the server creates, the engine posts this one task alone, so the others were dropped without a
+    // word. Refused like several prompts.
+    if (task.params.n_cmpl > 1) {
+        throw jllama_invalid_request("a request takes one completion, this one asks for 'n' = " +
+                                     std::to_string(task.params.n_cmpl) + "; send separate requests");
+    }
     configure_task_slot_impl(task, data);
 }
 

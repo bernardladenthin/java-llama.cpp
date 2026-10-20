@@ -331,6 +331,43 @@ TEST_F(CApi, SeveralPromptsInOneRequestAreRefusedNotDropped) {
         << jllama_last_error();
 }
 
+// The same for several completions of one prompt: upstream's schema accepts "n" (n_cmpl) up to the
+// slot count and answers each in a child task the server creates; the engine posts one task and
+// creates none, so "n": 2 came back as one choice without a word. Needs two slots: with one, the
+// schema itself refuses "n": 2. Covers the blocking, the streamed and the chat path, which all go
+// through populate_completion_task.
+TEST_F(CApi, SeveralCompletionsInOneRequestAreRefusedNotDropped) {
+    const std::vector<std::string> args = {"jllama", "-m",   path_, "-c",          "128", "-np",
+                                           "2",      "-ngl", "0",   "--no-warmup", "-t",  "2"};
+    std::vector<const char *> argv;
+    for (const auto &a : args) {
+        argv.push_back(a.c_str());
+    }
+    jllama_model *two_slots = nullptr;
+    ASSERT_EQ(jllama_model_load(static_cast<int>(argv.size()), argv.data(), nullptr, nullptr, &two_slots),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+
+    Owned response;
+    EXPECT_EQ(jllama_completions_oai(two_slots, R"({"prompt":"Hi","n":2,"max_tokens":2})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_NE(std::string(jllama_last_error()).find("'n'"), std::string::npos) << jllama_last_error();
+    EXPECT_EQ(jllama_completions(two_slots, R"({"prompt":"Hi","n_cmpl":2,"n_predict":2})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    int task = -1;
+    EXPECT_EQ(jllama_completions_oai_stream_request(two_slots, R"({"prompt":"Hi","n":2,"max_tokens":2})", &task),
+              JLLAMA_STATUS_INVALID_REQUEST);
+    EXPECT_EQ(jllama_chat_completions(
+                  two_slots, R"({"messages":[{"role":"user","content":"Hi"}],"n":2,"max_tokens":2})", &response.s),
+              JLLAMA_STATUS_INVALID_REQUEST);
+
+    ASSERT_EQ(jllama_completions_oai(two_slots, R"({"prompt":"Hi","n":1,"max_tokens":2,"temperature":0})", &response.s),
+              JLLAMA_STATUS_OK)
+        << jllama_last_error();
+    EXPECT_EQ(json::parse(response.str()).at("choices").size(), 1u);
+    jllama_model_free(two_slots);
+}
+
 // The streamed /v1/completions: the body parsed as the blocking one, upstream's text_completion
 // chunks, one id, the last with usage (TODO (14), F186).
 TEST_F(CApi, OaiCompletionsStreamDeliversTextCompletionChunksEndingWithUsage) {
