@@ -330,12 +330,13 @@ the first two items break every existing consumer at upgrade.
   at once, and throws the first failure of any kind only after every request has finished (an
   `Error` used to end the wait while other requests still ran).
 - **Ollama `/api/generate` follows Ollama's semantics.** It completed every prompt raw; now a request
-  with `suffix` is fill-in-the-middle as before, one with `"raw": true` a bare completion (`system`
-  ignored, as in Ollama), and any other goes through the model's chat template with `system` as the
-  system message and the prompt's `images`, `format` and `think` honoured, answering `thinking` next
-  to `response`. A request with neither a prompt nor a suffix -- how clients preload a model -- is
-  answered at once with Ollama's load response (`done: true`, empty `response`, `done_reason`
-  `"load"`; a single object even when streamed) instead of answering an empty user turn.
+  with `suffix` is fill-in-the-middle as before, one with `"raw": true` a bare completion (a `system`,
+  `template` or `context` next to it is refused with 400, as Ollama does), and any other goes through
+  the model's chat template with `system` as the system message and the prompt's `images`, `format`
+  and `think` honoured, answering `thinking` next to `response`. A request with neither a prompt nor
+  a suffix -- how clients preload a model -- is answered at once with Ollama's load response
+  (`done: true`, empty `response`, `done_reason` `"load"`; a single object even when streamed)
+  instead of answering an empty user turn.
 - **`OpenAiCompatServer --model-id` / `--model-alias` take a value llama.cpp keeps as one alias.**
   llama.cpp splits `--alias` at commas and strips every part, so `--model-id my,model` was advertised
   as `my,model` in `/v1/models` and named `model` in every answer, and a blank id fell back to the

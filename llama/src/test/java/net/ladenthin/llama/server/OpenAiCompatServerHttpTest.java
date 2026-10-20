@@ -453,17 +453,43 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
     }
 
     @Test
-    public void ollamaGenerateWithRawCompletesTheBarePromptAndIgnoresSystem() throws IOException {
+    public void ollamaGenerateWithRawCompletesTheBarePrompt() throws IOException {
         RecordingBackend backend = new RecordingBackend();
         try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
-            String body = "{\"model\":\"test-model\",\"prompt\":\"once upon\",\"system\":\"x\","
-                    + "\"raw\":true,\"stream\":false}";
+            String body = "{\"model\":\"test-model\",\"prompt\":\"once upon\",\"raw\":true,\"stream\":false}";
             JsonNode out = READER.readTree(post(server.getPort(), "/api/generate", body, "").body);
 
             assertThat(backend.called, is("completions"));
             assertThat(backend.request.path("prompt").asText(), is("once upon"));
             assertThat(backend.request.has("messages"), is(false));
             assertThat(out.path("response").asText(), is("hello"));
+        }
+    }
+
+    /**
+     * Ollama refuses {@code "raw": true} next to a {@code system}, {@code template} or {@code context}
+     * with a 400, before its load answer and before fill-in-the-middle. The server dropped them silently
+     * and completed the bare prompt.
+     */
+    @Test
+    public void ollamaGenerateWithRawAndASystemPromptIsRejectedLikeOllama() throws IOException {
+        RecordingBackend backend = new RecordingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            for (String body : new String[] {
+                "{\"model\":\"test-model\",\"prompt\":\"once upon\",\"system\":\"x\",\"raw\":true,\"stream\":false}",
+                "{\"model\":\"test-model\",\"prompt\":\"once upon\",\"template\":\"t\",\"raw\":true}",
+                "{\"model\":\"test-model\",\"prompt\":\"once upon\",\"context\":[1],\"raw\":true,\"stream\":false}",
+                "{\"model\":\"test-model\",\"prompt\":\"def f():\",\"suffix\":\"\",\"system\":\"x\",\"raw\":true}",
+                "{\"model\":\"test-model\",\"system\":\"x\",\"raw\":true}"
+            }) {
+                Response response = post(server.getPort(), "/api/generate", body, "");
+                assertThat(body, response.code, is(400));
+                assertThat(
+                        body,
+                        response.body,
+                        is("{\"error\":\"raw mode does not support template, system, or context\"}"));
+            }
+            assertThat("nothing was generated", backend.called, is(""));
         }
     }
 

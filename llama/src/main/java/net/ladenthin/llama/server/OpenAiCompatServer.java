@@ -633,6 +633,11 @@ public final class OpenAiCompatServer implements AutoCloseable {
             if (request == null) {
                 return;
             }
+            if (OllamaApiSupport.hasRawConflict(request)) {
+                // refused before the load answer and fill-in-the-middle, in Ollama's order
+                sendJson(exchange, HTTP_BAD_REQUEST, ollamaError(OllamaApiSupport.RAW_CONFLICT_MESSAGE));
+                return;
+            }
             String model = request.path("model").asText(config.getModelId());
             if (OllamaApiSupport.isLoadOnly(request)) {
                 // Ollama's preload: no prompt means "load the model", answered at once

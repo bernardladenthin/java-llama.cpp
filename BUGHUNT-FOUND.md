@@ -137,6 +137,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F205](#f205) — niedrig — *gefixt*
 - [F213](#f213) — niedrig — *gefixt*
 - [F214](#f214) — niedrig — *gefixt*
+- [F215](#f215) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1369,7 +1370,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Schwere:** niedrig (still: ein Instruct-Modell setzt den Text fort statt zu antworten, `system` und Bilder gingen verloren)
 - **Historie:** Offener Verdacht vom 2026-10-18 (TODO (16)). Die Route war seit ihrer Einführung „prompt completion / FIM“. Ollama wendet ohne `"raw": true` die Chat-Vorlage des Modells an, mit `system` als Systemnachricht; Continue (`Ollama.ts`) setzt `raw` nur, wenn der Aufrufer es verlangt.
 - **Beschreibung:** Jede Anfrage ohne `suffix` ging als roher Prompt an `/v1/completions`; `system`, `images`, `format` und `think` wurden ignoriert.
-- **Fix:** Entscheidung des Nutzers: Ollamas Semantik. Mit `suffix` wie bisher Infill, mit `raw: true` wie bisher die rohe Completion (`system` ignoriert, wie bei Ollama), sonst der Chat-Weg: aus der Anfrage wird eine `/api/chat`-Anfrage (`system` + Nutzer-`prompt` mit `images`, dazu `options`, `format`, `think`) und über die vorhandene Übersetzung geschickt; die Antwort trägt `response`, `thinking` (aus `reasoning_content`), `done_reason` und die Zählungen. README und `package-info` beschreiben die drei Wege; der modellgestützte `OpenAiServerCompletionIntegrationTest` bekam eine `raw`-Variante.
+- **Fix:** Entscheidung des Nutzers: Ollamas Semantik. Mit `suffix` wie bisher Infill, mit `raw: true` wie bisher die rohe Completion (`system` ignoriert — **korrigiert in F215:** Ollama ignoriert es nicht, sondern lehnt `raw` mit `system`, `template` oder `context` mit 400 ab; so jetzt auch hier), sonst der Chat-Weg: aus der Anfrage wird eine `/api/chat`-Anfrage (`system` + Nutzer-`prompt` mit `images`, dazu `options`, `format`, `think`) und über die vorhandene Übersetzung geschickt; die Antwort trägt `response`, `thinking` (aus `reasoning_content`), `done_reason` und die Zählungen. README und `package-info` beschreiben die drei Wege; der modellgestützte `OpenAiServerCompletionIntegrationTest` bekam eine `raw`-Variante.
 - **Tests:** `OpenAiCompatServerHttpTest#ollamaGenerateWithoutRawAppliesTheChatTemplateLikeOllama` (Aufzeichnungs-Backend: Chat-Weg, `system`, Bild, `thinking`, Zählung), `#ollamaGenerateWithRawCompletesTheBarePromptAndIgnoresSystem`; `OpenAiServerCompletionIntegrationTest#ollamaGenerateRawRoundTrip` (Modell, CI).
 - **Rot-Grün-Nachweis:** ohne den Fix rot (`was "completions"`), mit ihm grün (96 Tests); der F178-Test gab nun explizit `raw: true` an, weil er die Completion-Abbildung prüft; SpotBugs grün. Die modellgestützte Variante läuft nur in CI bzw. beim lokalen Agenten.
 - **Status:** gefixt
@@ -1650,7 +1651,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Commit:** java-llama.cpp `538cafb`
 
 ### F214 – java-llama.cpp: Eine `IOException` des Backends vor dem ersten Chunk gilt als Verbindungsabbruch — keine Antwort, nur DEBUG
-- **Zeit:** 2026-10-20 20:15 UTC
+- **Zeit:** 2026-10-20 20:09 UTC
 - **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`ResponseStream`; die `IOException`-Zweige von `streamCompletions`, `streamChat`, `streamOllamaChat`, `streamAnthropic`, `streamResponses`)
 - **Schwere:** niedrig (nur über die öffentliche Schnittstelle `OpenAiBackend` erreichbar; `LlamaModelBackend` reicht nur die `IOException` der Senke weiter)
 - **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J1-2). Eine Folge von F182: vorher sendete jede Streaming-Route die Kopfzeilen vor dem Backend-Aufruf, der Client sah wenigstens ein 200 mit leerem Stream.
@@ -1660,6 +1661,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot: der HTTP-Test mit `java.net.SocketException: Unexpected end of file from server` aus `getResponseCode()`, der `ResponseStream`-Test mit „Expected: is <false> but: was <true>“ (`answerIfNotStarted` nach gescheitertem Kopfzeilen-Schreiben); mit dem Fix grün (`ResponseStreamTest` 5, `OpenAiCompatServerHttpTest` 66, `OllamaApiSupportTest` 39, `LlamaArchitectureTest` 13). Modellgestützt mit dem Winzmodell `OpenAiCompatServerIntegrationTest` 13/13 grün; in `OpenAiServerCompletionIntegrationTest` scheitern nur die beiden Infill-Fälle (500, das Winzmodell hat keine FIM-Token), die keine Streaming-Route berühren. `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `03392c7`
+
+### F215 – java-llama.cpp: Ollama `/api/generate` mit `raw: true` verwirft `system`, `template` und `context` still — Ollama antwortet 400
+- **Zeit:** 2026-10-20 20:20 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OllamaApiSupport.java` (neu `hasRawConflict`, `RAW_CONFLICT_MESSAGE`; Javadoc von `isRaw`), `llama/src/main/java/net/ladenthin/llama/server/OpenAiCompatServer.java` (`handleOllamaGenerate`)
+- **Schwere:** niedrig (der Client bekommt eine plausible Antwort, die seinen Systemprompt nie gesehen hat)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Funde J1-3, J3-2, J16-1 — derselbe Fehler). Eingeführt mit F179, dessen Fix-Zeile, der CHANGELOG-Eintrag und der Test `ollamaGenerateWithRawCompletesTheBarePromptAndIgnoresSystem` das stille Verwerfen als Ollamas Verhalten beschrieben bzw. festschrieben.
+- **Beschreibung:** Der `raw`-Zweig von `handleOllamaGenerate` schickte `toOpenAiCompletionRequest` an das Backend, das nur `prompt`, Sampling und `stop` übernimmt; `system`, `template` und `context` gingen ohne Meldung verloren. Ollamas `GenerateHandler` (`server/routes.go`, seit v0.3.0 unverändert) prüft zuerst `if req.Raw && (req.Template != "" || req.System != "" || len(req.Context) > 0)` und antwortet 400 `{"error":"raw mode does not support template, system, or context"}` — vor der Ladeantwort und vor dem Suffix-Weg.
+- **Fix:** `OllamaApiSupport.hasRawConflict` prüft genau Ollamas Bedingung (nicht leeres `system`/`template`, nicht leeres `context`-Array; leere Werte sind kein Konflikt); `handleOllamaGenerate` beantwortet einen Konflikt direkt nach dem Einlesen, vor Ladeantwort und FIM, mit 400 und Ollamas Wortlaut, ohne das Backend zu rufen — gestreamt wie ungestreamt. CHANGELOG-Zeile und die Fix-Zeile von F179 sind korrigiert. Nicht Teil dieses Fixes: `format` und `images` im `raw`-Weg (Ollama behält sie, hier fallen sie weg) und `template`/`context` im Weg ohne `raw` (Ollama wendet sie an) — beides offen.
+- **Tests:** `OpenAiCompatServerHttpTest.ollamaGenerateWithRawAndASystemPromptIsRejectedLikeOllama` (`system`, `template`, `context`, mit `suffix`, ohne Prompt; das Backend wird nicht gerufen) ersetzt `ollamaGenerateWithRawCompletesTheBarePromptAndIgnoresSystem`; `ollamaGenerateWithRawCompletesTheBarePrompt` (der Weg ohne Konflikt); `OllamaApiSupportTest.rawWithSystemTemplateOrContextConflictsLikeOllama` (vier Konflikte, vier zulässige Formen).
+- **Rot-Grün-Nachweis:** Gegen den unveränderten Handler (mit einem `hasRawConflict`, das `false` liefert) rot: der HTTP-Test mit „Expected: is <400> but: was <200>“ für `{"model":"test-model","prompt":"once upon","system":"x","raw":true,"stream":false}`, der Einheitstest mit „Expected: is <true> but: was <false>“; mit dem Fix grün (`OllamaApiSupportTest` 40, `OpenAiCompatServerHttpTest` 67, `LlamaArchitectureTest` 13), `spotbugs:check` und `javadoc:javadoc` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

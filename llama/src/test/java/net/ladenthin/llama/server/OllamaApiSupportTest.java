@@ -494,4 +494,30 @@ public class OllamaApiSupportTest {
                         .size(),
                 is(0));
     }
+
+    /**
+     * Ollama refuses {@code "raw": true} together with a {@code system}, a {@code template} or a
+     * {@code context} ({@code GenerateHandler}: "raw mode does not support template, system, or
+     * context"); empty values are no conflict, as {@code req.System != ""} and {@code len(req.Context) > 0}
+     * read them there. The server dropped them silently and answered as if they had not been sent.
+     */
+    @Test
+    public void rawWithSystemTemplateOrContextConflictsLikeOllama() throws IOException {
+        for (String conflict : new String[] {
+            "{\"prompt\":\"p\",\"raw\":true,\"system\":\"x\"}",
+            "{\"prompt\":\"p\",\"raw\":true,\"template\":\"{{ .Prompt }}\"}",
+            "{\"prompt\":\"p\",\"raw\":true,\"context\":[1,2]}",
+            "{\"raw\":true,\"system\":\"x\"}"
+        }) {
+            assertThat(conflict, OllamaApiSupport.hasRawConflict(read(conflict)), is(true));
+        }
+        for (String accepted : new String[] {
+            "{\"prompt\":\"p\",\"raw\":true}",
+            "{\"prompt\":\"p\",\"raw\":true,\"system\":\"\",\"template\":\"\",\"context\":[]}",
+            "{\"prompt\":\"p\",\"raw\":false,\"system\":\"x\",\"context\":[1]}",
+            "{\"prompt\":\"p\",\"system\":\"x\"}"
+        }) {
+            assertThat(accepted, OllamaApiSupport.hasRawConflict(read(accepted)), is(false));
+        }
+    }
 }

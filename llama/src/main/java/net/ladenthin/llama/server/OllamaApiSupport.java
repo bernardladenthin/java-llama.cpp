@@ -31,6 +31,9 @@ final class OllamaApiSupport {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /** Ollama's answer to {@code "raw": true} with a {@code system}, {@code template} or {@code context}. */
+    static final String RAW_CONFLICT_MESSAGE = "raw mode does not support template, system, or context";
+
     /**
      * Advertised Ollama API version. Clients gate on it: VS Code Copilot's Ollama provider refuses a server
      * below 0.6.4. 0.9.0 is the first Ollama with {@code think}, the newest request feature these routes
@@ -565,13 +568,33 @@ final class OllamaApiSupport {
 
     /**
      * Whether the {@code /api/generate} request asks for the bare prompt ({@code "raw": true}). Without
-     * it Ollama applies the model's chat template, with {@code system} as the system message.
+     * it Ollama applies the model's chat template, with {@code system} as the system message; with it a
+     * {@code system}, {@code template} or {@code context} is refused ({@link #hasRawConflict}).
      *
      * @param request the parsed Ollama generate request
      * @return {@code true} if {@code raw} is {@code true}
      */
     static boolean isRaw(JsonNode request) {
         return request.path("raw").asBoolean(false);
+    }
+
+    /**
+     * Whether the {@code /api/generate} request combines {@code "raw": true} with a non-empty
+     * {@code system} or {@code template} or a non-empty {@code context}, which Ollama refuses with
+     * {@value #RAW_CONFLICT_MESSAGE} before anything else (its {@code GenerateHandler}): a raw prompt
+     * goes to the model unformatted, so there is nothing to apply them to.
+     *
+     * @param request the parsed Ollama generate request
+     * @return {@code true} if the request must be refused
+     */
+    static boolean hasRawConflict(JsonNode request) {
+        if (!isRaw(request)) {
+            return false;
+        }
+        JsonNode context = request.path("context");
+        return !request.path("system").asText("").isEmpty()
+                || !request.path("template").asText("").isEmpty()
+                || (context.isArray() && context.size() > 0);
     }
 
     /**
