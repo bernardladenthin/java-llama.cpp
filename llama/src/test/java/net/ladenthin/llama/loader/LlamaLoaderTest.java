@@ -52,13 +52,22 @@ public class LlamaLoaderTest {
 
     private String previousTmpDir;
 
+    /**
+     * What {@link LlamaLoader#getBuildInfo()} reported before the current test. The loadFromDirectory
+     * tests report a load through a fake loader, which publishes the fixture's build file (or none);
+     * putting the record back keeps a real library loaded earlier in the same fork described as itself.
+     */
+    private java.util.Map<String, String> previousBuildInfo;
+
     @BeforeEach
     public void saveTmpDirProp() {
         previousTmpDir = System.getProperty(TMPDIR_PROP);
+        previousBuildInfo = LlamaLoader.getBuildInfo();
     }
 
     @AfterEach
     public void restoreTmpDirProp() {
+        LlamaLoader.restoreBuildInfo(previousBuildInfo);
         if (previousTmpDir == null) {
             System.clearProperty(TMPDIR_PROP);
         } else {
@@ -264,8 +273,8 @@ public class LlamaLoaderTest {
         java.util.Map<String, String> build = LlamaLoader.getBuildInfo();
         assertNotNull(build);
         // Unmodifiable either way: a consumer must not be able to edit the loader's record. (Which
-        // build it names depends on what this JVM loaded last -- a real library or a fake directory
-        // of the loadFromDirectory tests; NativeLibraryLoadSmokeTest pins the real keys.)
+        // build it names depends on what this JVM loaded before; the fake loads of the
+        // loadFromDirectory tests put it back afterwards. NativeLibraryLoadSmokeTest pins the real keys.)
         assertThrows(UnsupportedOperationException.class, () -> build.put("x", "y"));
     }
 

@@ -240,8 +240,10 @@ public class LlamaLoader {
 
     /**
      * The parsed {@link #BACKEND_BUILD_FILE} of the library that was loaded, empty before a load and
-     * for a library loaded from a directory that carries none. Set once by the branch that loaded
-     * it, read by {@link #getBuildInfo()}.
+     * for a library loaded from a directory that carries none. Set by the branch that loaded it --
+     * only after its {@code System.load} succeeded, so a refused or failed start leaves it as it was --
+     * on every successful load (a later {@link #initialize()} runs the search again), read by {@link
+     * #getBuildInfo()}.
      */
     private static volatile Map<String, String> loadedBuild = Collections.emptyMap();
 
@@ -771,6 +773,19 @@ public class LlamaLoader {
      */
     public static Map<String, String> getBuildInfo() {
         return loadedBuild;
+    }
+
+    /**
+     * Puts back a record {@link #getBuildInfo()} returned earlier. For the loader tests only: their
+     * fixtures load a dummy library through {@link #initialize()} or report a load through a fake
+     * {@link LibraryLoader}, and both publish the fixture's build file, which in a shared Surefire fork
+     * would then stand for the real library a test before them loaded. Each such test class takes the
+     * record before a test and puts it back after it.
+     *
+     * @param build a map {@link #getBuildInfo()} returned (copied)
+     */
+    static void restoreBuildInfo(Map<String, String> build) {
+        loadedBuild = Collections.unmodifiableMap(new LinkedHashMap<>(build));
     }
 
     /**
