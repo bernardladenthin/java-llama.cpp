@@ -978,6 +978,27 @@ public class OpenAiCompatServerHttpTest extends OpenAiServerTestSupport {
         }
     }
 
+    /**
+     * Upstream refuses {@code logprobs} on a streamed chat request with tools; the chat route answers
+     * the same {@code 400} before the stream starts, and the blocking request still generates.
+     */
+    @Test
+    public void logprobsWithToolsOnAStreamedChatIsA400LikeUpstream() throws IOException {
+        MappingBackend backend = new MappingBackend();
+        try (OpenAiCompatServer server = new OpenAiCompatServer(backend, config()).start()) {
+            String body = "{\"stream\":true,\"logprobs\":true,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}],"
+                    + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}]}";
+            Response response = post(server.getPort(), "/v1/chat/completions", body, "");
+            assertThat(response.code, is(400));
+            assertThat(response.body, containsString("logprobs is not supported with tools + stream"));
+            assertThat("nothing was generated", backend.called, is(""));
+            Response blocking = post(
+                    server.getPort(), "/v1/chat/completions", body.replace("\"stream\":true", "\"stream\":false"), "");
+            assertThat(blocking.code, is(200));
+            assertThat(backend.called, is("complete"));
+        }
+    }
+
     @Test
     public void aPlainLlamaExceptionStaysAServerError() throws IOException {
         try (OpenAiCompatServer server = new OpenAiCompatServer(new FailingBackend(), config()).start()) {

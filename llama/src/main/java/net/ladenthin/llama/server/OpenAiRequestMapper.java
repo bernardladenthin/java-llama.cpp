@@ -38,8 +38,10 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>The {@code stream} flag is intentionally not mapped here — streaming is selected by the caller
  * ({@link net.ladenthin.llama.LlamaModel#chatComplete} forces it off,
- * {@link net.ladenthin.llama.LlamaModel#streamChatCompletion} forces it on). Stateless and free of JNI
- * and model dependencies, so it is unit-testable with JSON literals alone.
+ * {@link net.ladenthin.llama.LlamaModel#streamChatCompletion} forces it on). It is read for one check
+ * only, read the way the server picks the streaming path: upstream's refusal of {@code logprobs} on a
+ * streamed request with tools (see {@link #applyLogprobs}). Stateless and free of JNI and model
+ * dependencies, so it is unit-testable with JSON literals alone.
  */
 final class OpenAiRequestMapper {
 
@@ -150,7 +152,8 @@ final class OpenAiRequestMapper {
      * true} is the chat form and becomes {@code n_probs = top_logprobs} (20 without it); a
      * {@code top_logprobs} without it is refused with upstream's message; a number is the schema's alias
      * of {@code n_probs} (the legacy completions form), read only without an {@code n_probs}, and any
-     * other non-null value read there is refused, as upstream's schema refuses it.
+     * other non-null value read there is refused, as upstream's schema refuses it. {@code logprobs: true}
+     * on a streamed request with tools is refused with upstream's message, as upstream refuses it.
      *
      * @param params the parameters to extend
      * @param request the parsed OpenAI request object
@@ -161,6 +164,10 @@ final class OpenAiRequestMapper {
         JsonNode logprobs = request.path("logprobs");
         JsonNode topLogprobs = request.path("top_logprobs");
         if (logprobs.isBoolean() && logprobs.asBoolean()) {
+            JsonNode tools = request.path("tools");
+            if (tools.isArray() && tools.size() > 0 && request.path("stream").asBoolean(false)) {
+                throw new IllegalArgumentException("logprobs is not supported with tools + stream");
+            }
             JsonNode count = optionalNumber(request, "top_logprobs");
             return params.withNProbs(count != null ? count.asInt() : DEFAULT_TOP_LOGPROBS);
         }

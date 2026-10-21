@@ -177,6 +177,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F252](#f252) — niedrig bis mittel — *gefixt*
 - [F253](#f253) — niedrig bis mittel — *gefixt*
 - [F254](#f254) — niedrig — *gefixt*
+- [F255](#f255) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1845,6 +1846,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Fix:** `applyLogprobs` folgt upstream: `logprobs: true` → `n_probs = top_logprobs` (eine Zahl, sonst 20 wie upstreams `json_value`); ein nicht-null `top_logprobs` ohne `logprobs: true` ist eine ungültige Anfrage mit upstreams Text wörtlich (die WEM-Unterdrückung in `spotbugs-exclude.xml` nennt die Methode deshalb); ohne `n_probs` wird eine Zahl als `n_probs` übernommen, jeder andere nicht-null, nicht-boolesche Wert ist eine ungültige Anfrage („'logprobs' must be a boolean or a number“), wie das Schema ihn abweist. `logprobs: false` lässt `n_probs` weiter ungesetzt (upstreams Alias läse 0, die Vorgabe). Weiter offen, nicht Teil dieses Funds: upstreams zweite Ablehnung („logprobs is not supported with tools + stream“) bleibt unerreichbar, weil der Mapper `logprobs` in `n_probs` übersetzt; die Fix-Zeile von F123 ist berichtigt.
 - **Tests:** `OpenAiRequestMapperTest#topLogprobsWithoutLogprobsIsRefusedLikeUpstream` (ohne, mit `false`, mit `null` und neben einer Zahl), `#anIntegerLogprobsMapsToNProbsLikeUpstreamsSchemaAlias`, `#nProbsWinsOverAnIntegerLogprobsLikeUpstream`, `#aLogprobsThatIsNeitherBooleanNorNumberIsRefused` (mit `n_probs` daneben keine Ablehnung, wie upstream); als Schutz `#topLogprobsNullWithoutLogprobsIsTheDefault`, die drei F123-Tests unverändert grün.
 - **Rot-Grün-Nachweis:** Ohne den Fix vier rot: „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ (`top_logprobs: 3` allein bzw. `logprobs: "true"`), „Expected: is <2> but: was <20>“ (`logprobs: 2`), „Expected: is <5> but: was <20>“ (`n_probs: 5` neben `logprobs: 2`); mit dem Fix grün (`OpenAiRequestMapperTest` 44/44, `OpenAiCompatServerHttpTest` 68/68, `AnthropicApiSupportTest` 26/26, `ResponsesApiSupportTest` 54/54, `OllamaApiSupportTest` 42/42, `LlamaArchitectureTest` 13/13). `spotless:apply` grün; `spotbugs:check` meldete zuerst zweimal `WEM_WEAK_EXCEPTION_MESSAGING` für die festen Texte, mit der Unterdrückung grün.
+- **Nachtrag (Branch-Review 2026-10-21, Abschluss vor 6.0.0):** Upstreams dritte `logprobs`-Regel („logprobs is not supported with tools + stream“) ist mit F255 übernommen; der Mapper liest `stream` dafür so, wie der Server den Streaming-Weg wählt.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ca1baa9`
 
@@ -2294,6 +2296,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot (8 Fehlschläge): „AnthropicApiSupportTest.toolChoiceNamingAToolForcesThatTool:483 Expected: is "function" but: was """, „toolChoiceOfAnotherTypeIsRefused:510 allowed_tools ==> Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“, ebenso `toolChoiceToolWithoutANameIsRefused`, `toolChoiceThatIsNoObjectIsRefused`, die beiden Mapper- und der Responses-Test, und „OpenAiCompatServerHttpTest.anUnsupportedAnthropicToolChoiceIsA400:972 … Expected: is <400> but: was <200>“; mit dem Fix grün (`AnthropicApiSupportTest` 42/42, `OpenAiRequestMapperTest` 55/55, `ResponsesApiSupportTest` 70/70, `OpenAiCompatServerHttpTest` 72/72, `OllamaApiSupportTest` 49/49, `AnthropicStreamTranslatorTest` 11/11, `LlamaModelBackendTest` 4/4). `spotless:apply` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `cb0b97f`
+
+### F255 – java-llama.cpp: upstreams Abweisung „logprobs is not supported with tools + stream“ ist über den Chat-Mapper unerreichbar
+- **Zeit:** 2026-10-21 14:40 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OpenAiRequestMapper.java` (`applyLogprobs`, Klassen-Javadoc), `llama/spotbugs-exclude.xml` (Kommentar der WEM-Unterdrückung), `README.md`
+- **Schwere:** niedrig (ein gestreamter Chat mit Werkzeugen und `logprobs: true` lief mit `n_probs` 20 weiter, wo llama-server 400 antwortet; ob die Wahrscheinlichkeiten in den Werkzeug-Chunks dann stimmen, ist nirgends gemessen)
+- **Historie:** Offener Punkt aus dem Branch-Review 2026-10-20/21 (TODO.md „Chat mapper“, dritter Punkt; Brief JR-8), umgesetzt am 2026-10-21 nach der Entscheidung des Eigentümers, alle offenen Punkte vor 6.0.0 zu schließen. F220 hatte upstreams zwei übrige `logprobs`-Regeln übernommen; diese dritte blieb offen, weil der Mapper `stream` nicht liest.
+- **Beschreibung:** upstreams `oaicompat_chat_params_parse` (`server-common.cpp:1457-1461`, b11639) weist bei `json_value(body, "logprobs", false)` mit nicht leeren `tools` (`has_tools`, `:1280`) und `stream` mit `std::invalid_argument("logprobs is not supported with tools + stream")` ab (400). Der Mapper machte `logprobs: true` immer zu `n_probs`; `stream` liest er nicht, weil der Server den Transport wählt. Nur die OpenAI-Chat-Route kann die drei zusammenbringen: Anthropic und Ollama kennen kein `logprobs`, Responses reicht es nicht weiter (F226).
+- **Fix:** `applyLogprobs` wirft bei `logprobs: true`, nicht leerem `tools`-Array und `stream` die `IllegalArgumentException` mit upstreams Text wörtlich, die der Server als 400 beantwortet, bevor ein SSE-Strom beginnt. `stream` wird dafür so gelesen, wie `OpenAiCompatServer.handleChatCompletions` den Streaming-Weg wählt (`asBoolean(false)`), damit Prüfung und Transport übereinstimmen; die Klassen-Javadoc sagt, dass `stream` sonst nicht gemappt wird. Wie upstream nur für das boolesche `logprobs`: eine Zahl (der Schema-Alias von `n_probs`) und ein blockierender oder werkzeugloser Request bleiben erlaubt. Abweichung vom Brief: der Brief nannte „bool true oder Zahl“; upstreams Prüfung greift nur bei `true`, und die stabile Wahl ist, genau sie zu spiegeln.
+- **Tests:** `OpenAiRequestMapperTest#logprobsWithToolsAndStreamIsRefusedLikeUpstream` (Meldung wörtlich), `#logprobsWithToolsOrStreamAloneIsAccepted` (ohne `stream`, ohne `tools`, mit leerem `tools`, mit ganzzahligem `logprobs`; vorher und nachher grün); `OpenAiCompatServerHttpTest#logprobsWithToolsOnAStreamedChatIsA400LikeUpstream` (gestreamt 400 mit der Meldung und nichts generiert, derselbe Body blockierend 200 über `complete`).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot: „OpenAiRequestMapperTest.logprobsWithToolsAndStreamIsRefusedLikeUpstream:310 Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“ und „OpenAiCompatServerHttpTest.logprobsWithToolsOnAStreamedChatIsA400LikeUpstream:992 Expected: is <400> but: was <200>“; mit dem Fix grün (`OpenAiRequestMapperTest` 57/57, `OpenAiCompatServerHttpTest` 73/73, `AnthropicApiSupportTest` 42/42, `ResponsesApiSupportTest` 70/70, `OllamaApiSupportTest` 49/49). `spotless:apply` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

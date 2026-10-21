@@ -556,10 +556,6 @@ scope, is listed here; the ledger entry in brackets holds the analysis. Delete a
   instead of a silent end, as the rerank and tool-schema readers now do (F232, F233). Decide, then either pin the
   current contract or change it with a red/green test.
 
-**Chat mapper (`OpenAiRequestMapper`, every chat route)**
-- **Upstream's "logprobs is not supported with tools + stream" refusal is unreachable** (F220): the
-  mapper turns `logprobs` into `n_probs` and does not see `stream`.
-
 **Anthropic Messages**
 - **The image source `file` (Files API) is dropped without a word**, here and upstream (F29;
   `server-chat.cpp:417-441`/`:478-494`, b11639). Pinned and documented since the branch review by

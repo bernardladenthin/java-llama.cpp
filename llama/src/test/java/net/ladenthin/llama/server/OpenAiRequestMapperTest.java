@@ -301,6 +301,37 @@ public class OpenAiRequestMapperTest {
         assertThat(out.path("n_probs").asInt(-1), is(4));
     }
 
+    private static final String TOOLS = "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}]";
+
+    @Test
+    public void logprobsWithToolsAndStreamIsRefusedLikeUpstream() {
+        // upstream's oaicompat_chat_params_parse (server-common.cpp:1457-1461, b11639): "logprobs is not
+        // supported with tools + stream" (400); the mapper turned logprobs into n_probs and never refused it.
+        IllegalArgumentException e = assertThrows(
+                IllegalArgumentException.class,
+                () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stream\":true,"
+                        + "\"logprobs\":true," + TOOLS + "}"));
+        assertThat(e.getMessage(), is("logprobs is not supported with tools + stream"));
+    }
+
+    @Test
+    public void logprobsWithToolsOrStreamAloneIsAccepted() throws IOException {
+        // the refusal needs all three, as upstream's: without stream, without tools, or with an integer
+        // logprobs (the schema's n_probs alias, which upstream's chat parser does not read as the chat form)
+        JsonNode blocking = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"logprobs\":true," + TOOLS + "}");
+        assertThat(blocking.path("n_probs").asInt(-1), is(20));
+        JsonNode noTools = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stream\":true,\"logprobs\":true}");
+        assertThat(noTools.path("n_probs").asInt(-1), is(20));
+        JsonNode emptyTools = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
+                + "\"stream\":true,\"logprobs\":true,\"tools\":[]}");
+        assertThat(emptyTools.path("n_probs").asInt(-1), is(20));
+        JsonNode alias = mapAndSerialize(
+                "{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],\"stream\":true,\"logprobs\":2," + TOOLS + "}");
+        assertThat(alias.path("n_probs").asInt(-1), is(2));
+    }
+
     @Test
     public void maxCompletionTokensPreferredOverMaxTokens() throws IOException {
         JsonNode out = mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
