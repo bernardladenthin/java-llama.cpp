@@ -107,10 +107,10 @@ public class InferenceParametersTest {
     public void withResponseFieldsWritesTheProjectionAsAStringArray() {
         assertThat(
                 InferenceParameters.empty()
-                        .withResponseFields("stopping_word", "timings.predicted_n")
+                        .withResponseFields("stopping_word", "timings/predicted_n")
                         .parameters
                         .get("response_fields"),
-                is("[\"stopping_word\",\"timings.predicted_n\"]"));
+                is("[\"stopping_word\",\"timings/predicted_n\"]"));
         InferenceParameters empty = InferenceParameters.empty();
         assertThat(empty.withResponseFields(), is(empty));
     }

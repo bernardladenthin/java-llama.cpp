@@ -181,6 +181,33 @@ public class OpenAiCompatServerIntegrationTest extends OpenAiServerTestSupport {
         assertThat(keys, is(java.util.Collections.singletonList("stopping_word")));
     }
 
+    /**
+     * {@code response_fields} names nested values with a slash, as upstream's
+     * {@code json_get_nested_values} splits them ({@code server-common.cpp}, b11639), and the projected
+     * key is the whole path. A dotted path is one key the result does not have, which upstream drops
+     * without an error.
+     */
+    @Test
+    public void aNestedResponseFieldIsNamedWithASlashAndKeepsThePathAsItsKey() throws IOException {
+        JsonNode debug = MAPPER.readTree(model.handleChatCompletions("{\"max_tokens\":4,\"verbose\":true,"
+                        + "\"response_fields\":[\"timings/predicted_n\"],"
+                        + "\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one word.\"}]}"))
+                .path("__verbose");
+        assertThat(debug.toString(), debug.isObject(), is(true));
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        debug.fieldNames().forEachRemaining(keys::add);
+        assertThat(keys, is(java.util.Collections.singletonList("timings/predicted_n")));
+        assertThat(debug.toString(), debug.path("timings/predicted_n").isIntegralNumber(), is(true));
+        assertThat(debug.path("timings/predicted_n").asInt(), greaterThan(0));
+
+        JsonNode dotted = MAPPER.readTree(model.handleChatCompletions("{\"max_tokens\":4,\"verbose\":true,"
+                        + "\"response_fields\":[\"timings.predicted_n\"],"
+                        + "\"messages\":[{\"role\":\"user\",\"content\":\"Say hello in one word.\"}]}"))
+                .path("__verbose");
+        assertThat(dotted.toString(), dotted.isObject(), is(true));
+        assertThat(dotted.toString(), dotted.size(), is(0));
+    }
+
     @Test
     public void anthropicMessagesStreamingRoundTrip() throws IOException {
         String body = "{\"model\":\"" + MODEL_ID + "\",\"stream\":true,\"max_tokens\":16,"
