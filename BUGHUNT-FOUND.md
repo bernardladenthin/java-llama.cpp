@@ -2405,7 +2405,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `OpenAiCompatServerHttpTest#aBackendIOExceptionAfterTheFirstChunkIsAnErrorEventOnEveryStreamingRoute` (alle fünf Streaming-Routen, `IoFailingAfterFirstChunkBackend`: ein Chunk, dann `IOException("generation failed")`; Status 200, der Chunk, das Fehler-Event der Route mit der Meldung, WARN mit `IOException` per LogCaptor), `ResponseStreamTest#theFailureOfAStrictWriteIsRecognisedAsTheStreamsOwn` (auch als `UncheckedIOException` eingewickelt; eine andere `IOException` nicht), `#noFailureIsTheStreamsOwnBeforeAStrictWriteFailed`.
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Server rot: „OpenAiCompatServerHttpTest.aBackendIOExceptionAfterTheFirstChunkIsAnErrorEventOnEveryStreamingRoute:944 /v1/chat/completions Expected: a string containing "\"type\":\"server_error\"" but: was "data: {"object":"chat.completion.chunk","choices":[{"delta":{"content":"he"}}]}“ (der Stream endete nach dem Chunk, ohne Fehler-Event und ohne `[DONE]`); mit dem Fix grün: `OpenAiCompatServerHttpTest` 80/80, `ResponseStreamTest` 7/7.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `359b6d0`
 
 ## Offene Verdachte ohne Fund-ID
 
