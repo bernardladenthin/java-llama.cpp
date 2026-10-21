@@ -2435,7 +2435,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Tests:** `BackendLoadTest#aSecondInitializeAfterASuccessfulLoadLoadsNothingAndSaysWhatItIgnores` (Linux x86-64: erster Aufruf mit Filter `cpu` lädt die Dummy-Bibliothek, zweiter mit `cuda13,vulkan` extrahiert nichts und nennt die Änderung auf stderr); `#theDummyLoadsLeaveTheBuildInfoOfThisJvmAsTheyFoundIt` prüft den wiederhergestellten Zustand.
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Loader rot: „BackendLoadTest.aSecondInitializeAfterASuccessfulLoadLoadsNothingAndSaysWhatItIgnores:284 a second start extracted again ==> expected: <[…/jllama-backend-cpu-1a146e4d916-3aa8]> but was: <[…/jllama-backend-cpu-1a146e4d916-3aa8, …/jllama-backend-cpu-1a146e4d916-3aa8-me7c14cbc]>“; mit dem Fix grün: `BackendLoadTest` 10/10, `LlamaLoaderTest` 67/67, `NativeLibraryLoadSmokeTest` 7/7, `LlamaArchitectureTest` 13/13, dazu `BackendLoadTest,LlamaLoggerTest,NativeLibraryLoadSmokeTest` in einer gemeinsamen Fork in beiden Reihenfolgen (`-Dsurefire.runOrder=alphabetical` und `reversealphabetical`) grün — die echte Bibliothek wird nach den Fixture-Läufen weiter geladen bzw. bleibt geladen.
 - **Status:** gefixt
-- **Commit:** (folgt)
+- **Commit:** java-llama.cpp `93be4df`
 
 ## Offene Verdachte ohne Fund-ID
 
