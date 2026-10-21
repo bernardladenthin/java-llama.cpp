@@ -7,6 +7,9 @@ package net.ladenthin.llama;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.UUID;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
 import net.ladenthin.llama.parameters.InferenceParameters;
@@ -15,6 +18,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 /**
  * Tests for error handling paths in the JNI layer. Verifies that:
@@ -34,6 +38,10 @@ import org.junit.jupiter.api.Test;
                 + "and configureParallelInference validation.",
         model = "claude-opus-4-6")
 public class ErrorHandlingTest {
+
+    /** The engine's refusal of a slot file without {@code --slot-save-path} (upstream answers 501 there). */
+    private static final String SLOT_DIRECTORY_MISSING = "Saving or restoring a slot needs a slot directory: load the "
+            + "model with --slot-save-path <dir> (ModelParameters.setSlotSavePath)";
 
     private static LlamaModel model;
     private static LlamaModel modelNoEmbed;
@@ -392,16 +400,28 @@ public class ErrorHandlingTest {
     /**
      * Without {@code --slot-save-path} a slot cannot be saved or restored, as upstream's slots route
      * answers {@code 501} there: a {@link LlamaException} naming the option, not an
-     * {@link InvalidRequestException}, and before the file name is looked at. Erasing needs no file.
+     * {@link InvalidRequestException}, and before the file name is looked at -- a bare name, a name
+     * with {@code ..} and an absolute path alike, none of which is written (before F251 the name was
+     * the path). The file name is unique to the run, so a file another run left in the working
+     * directory cannot decide the test. Erasing needs no file.
      */
     @Test
-    public void testSaveSlotWithoutSlotSavePathIsRefused() {
-        LlamaException save = assertThrows(LlamaException.class, () -> model.saveSlot(0, "slot.bin"));
+    public void testSaveSlotWithoutSlotSavePathIsRefused(@TempDir Path elsewhere) {
+        String name = "slot-" + UUID.randomUUID() + ".bin";
+        File inWorkingDirectory = new File(name);
+        Path absolute = elsewhere.resolve(name);
+
+        LlamaException save = assertThrows(LlamaException.class, () -> model.saveSlot(0, name));
         assertFalse(save instanceof InvalidRequestException, save.getMessage());
-        assertTrue(save.getMessage().contains("--slot-save-path"), save.getMessage());
-        LlamaException restore = assertThrows(LlamaException.class, () -> model.restoreSlot(0, "../slot.bin"));
+        assertEquals(SLOT_DIRECTORY_MISSING, save.getMessage());
+        LlamaException saveAbsolute = assertThrows(LlamaException.class, () -> model.saveSlot(0, absolute.toString()));
+        assertEquals(SLOT_DIRECTORY_MISSING, saveAbsolute.getMessage());
+        LlamaException restore = assertThrows(LlamaException.class, () -> model.restoreSlot(0, "../" + name));
         assertFalse(restore instanceof InvalidRequestException, restore.getMessage());
-        assertFalse(new File("slot.bin").exists());
+        assertEquals(SLOT_DIRECTORY_MISSING, restore.getMessage());
+
+        assertFalse(inWorkingDirectory.exists(), inWorkingDirectory.getAbsolutePath());
+        assertFalse(Files.exists(absolute), absolute.toString());
         assertNotNull(model.eraseSlot(0));
     }
 }

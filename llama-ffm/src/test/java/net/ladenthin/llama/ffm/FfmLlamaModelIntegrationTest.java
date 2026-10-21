@@ -20,6 +20,7 @@ import java.net.ServerSocket;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
@@ -207,11 +208,14 @@ class FfmLlamaModelIntegrationTest {
             assertTrue(Files.exists(slotDir.resolve("slot0.bin")), saved);
             assertEquals("slot0.bin", JSON.readTree(saved).path("filename").asText(), saved);
             assertEquals(0, JSON.readTree(withSlots.slotAction(SlotOp.RESTORE, 0, "slot0.bin")).path("id_slot").asInt());
-            assertThrows(InvalidRequestException.class, () -> withSlots.slotAction(SlotOp.SAVE, 0, "../escaped.bin"));
+            // unique to the run, so a file another run left next to the temp directory cannot decide it
+            String escapedName = "escaped-" + UUID.randomUUID() + ".bin";
+            assertThrows(
+                    InvalidRequestException.class, () -> withSlots.slotAction(SlotOp.SAVE, 0, "../" + escapedName));
             assertThrows(
                     InvalidRequestException.class,
                     () -> withSlots.slotAction(SlotOp.RESTORE, 0, slotDir.resolve("slot0.bin").toString()));
-            assertFalse(Files.exists(slotDir.getParent().resolve("escaped.bin")));
+            assertFalse(Files.exists(slotDir.getParent().resolve(escapedName)));
         }
     }
 

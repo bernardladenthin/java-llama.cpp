@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import net.ladenthin.llama.args.PoolingType;
 import net.ladenthin.llama.exception.InvalidRequestException;
 import net.ladenthin.llama.exception.LlamaException;
@@ -604,25 +605,28 @@ public class ChatScenarioTest {
     public void testSaveAndRestoreSlot() throws IOException {
         // Prime the slot with a short generation so there is state to save
         model.complete(new InferenceParameters("Hello").withNPredict(5).withSeed(42));
-        File stray = new File("chat-scenario-slot.bin");
+        // Names unique to the run: a file another run left in the working directory or next to the
+        // slot directory cannot decide the test, and the clean-up below never removes one.
+        String name = "chat-scenario-slot-" + UUID.randomUUID() + ".bin";
+        String escapedName = "escaped-" + UUID.randomUUID() + ".bin";
+        File stray = new File(name);
 
         try {
-            String saveResult = model.saveSlot(0, "chat-scenario-slot.bin");
+            String saveResult = model.saveSlot(0, name);
             assertTrue(saveResult.contains("\"id_slot\""), "saveSlot result must contain id_slot");
-            assertTrue(Files.exists(slotDir.resolve("chat-scenario-slot.bin")), saveResult);
+            assertTrue(Files.exists(slotDir.resolve(name)), saveResult);
             assertFalse(stray.exists(), "the slot file must not land in the working directory");
 
-            String restoreResult = model.restoreSlot(0, "chat-scenario-slot.bin");
+            String restoreResult = model.restoreSlot(0, name);
             assertTrue(restoreResult.contains("\"id_slot\""), "restoreSlot result must contain id_slot");
 
             InvalidRequestException escaped =
-                    assertThrows(InvalidRequestException.class, () -> model.saveSlot(0, "../escaped.bin"));
+                    assertThrows(InvalidRequestException.class, () -> model.saveSlot(0, "../" + escapedName));
             assertTrue(escaped.getMessage().contains("--slot-save-path"), escaped.getMessage());
             assertThrows(
                     InvalidRequestException.class,
-                    () -> model.restoreSlot(
-                            0, slotDir.resolve("chat-scenario-slot.bin").toString()));
-            assertFalse(Files.exists(slotDir.getParent().resolve("escaped.bin")));
+                    () -> model.restoreSlot(0, slotDir.resolve(name).toString()));
+            assertFalse(Files.exists(slotDir.getParent().resolve(escapedName)));
         } finally {
             Files.deleteIfExists(stray.toPath()); // only written by the defect this test pins
         }
