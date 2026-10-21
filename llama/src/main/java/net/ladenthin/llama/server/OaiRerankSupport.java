@@ -75,14 +75,22 @@ final class OaiRerankSupport {
      * Read the optional {@code top_n} cap. {@code 0} keeps no result, as upstream's {@code
      * format_response_rerank} does ({@code min(top_n, n)} entries).
      *
+     * <p>A JSON number is read as upstream reads it ({@code get<int>()}, a {@code static_cast}): a float
+     * is truncated toward zero, so {@code 2.0} and {@code 2.7} keep 2. Two deliberate differences: a
+     * value that is no number (a string, or a boolean, which upstream would convert to 1 or 0) keeps
+     * all, and so does a number outside the {@code int} range, which upstream's cast wraps (and the
+     * request then fails or keeps nothing in the server).
+     *
      * @param request the parsed rerank request
-     * @return the requested cap, or {@code -1} when absent or not an integer
-     * @throws IllegalArgumentException if {@code top_n} is negative (upstream resizes its result vector
-     *     to {@code min(top_n, n)}, a huge size for a negative value, and fails inside the server)
+     * @return the requested cap, or {@code -1} when absent, not a number or outside the {@code int}
+     *     range
+     * @throws IllegalArgumentException if {@code top_n} is negative, integer or float (upstream resizes
+     *     its result vector to {@code min(top_n, n)}, a huge size for a negative value, and fails inside
+     *     the server)
      */
     static int readTopN(JsonNode request) {
         JsonNode topN = request.path("top_n");
-        if (!topN.isInt()) {
+        if (!topN.isNumber() || !topN.canConvertToInt()) {
             return -1;
         }
         final int value = topN.asInt();

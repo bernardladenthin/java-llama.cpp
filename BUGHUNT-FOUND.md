@@ -152,6 +152,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F227](#f227) — niedrig — *gefixt*
 - [F228](#f228) — niedrig — *gefixt*
 - [F229](#f229) — niedrig — *gefixt*
+- [F230](#f230) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1367,6 +1368,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** C++ ohne den Fix rot (`Which is: -1`), mit ihm grün (9/9 der Suite); Java ohne den Fix rot (3 von 16), mit ihm grün (16/16, mit `OpenAiCompatServerHttpTest` 71); SpotBugs grün. Ende zu Ende mit einem Reranker (CI: `OpenAiServerRerankIntegrationTest`) nicht lokal gelaufen.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `68f81b6`
+- **Nachtrag (Branch-Review 2026-10-20):** Die Abweisung eines negativen `top_n` griff nur für die ganzzahlige Schreibweise; ein `-1.5` galt als „fehlt“. Seit F230 liest `readTopN` jede Zahl, die Abweisung deckt auch die Gleitkomma-Schreibweise ab (`OaiRerankSupportTest#negativeFloatTopNIsAnInvalidRequest`).
 
 <a id="f178"></a>
 ### F178 – java-llama.cpp: Ollama-Routen melden `done_reason` falsch und `/api/generate` keine Tokenzahlen
@@ -1860,6 +1862,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected: is "incomplete" but: was "completed"“ und „Expected: a string containing "event: response.incomplete" but: was "event: response.output_text.done …"“); umgekehrt scheiterten nach dem Fix die unveränderten Integrationstests mit dem lokalen Winzmodell („Expected: is "completed" but: was "incomplete"“, der Beweis, dass der Fix den echten Server erreicht); mit dem Fix und den angepassten Integrationstests grün (`ResponsesApiSupportTest` 68/68, `ResponsesStreamTranslatorTest` 7/7, `OpenAiCompatServerHttpTest` 69/69, `OpenAiCompatServerIntegrationTest` 13/13 mit dem Winzmodell, zweimal). `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `ad8b0b1`
+
+### F230 – java-llama.cpp: `/v1/rerank`: ein `top_n` als Gleitkommazahl gilt als „fehlt“, ein negatives (`-1.5`) umgeht die Abweisung
+- **Zeit:** 2026-10-21 00:14 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OaiRerankSupport.java` (`readTopN`)
+- **Schwere:** niedrig (still abweichend von upstream; die Abweisung aus F177 griff für die Gleitkomma-Schreibweise nicht)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J6-1). Die Hälfte „Gleitkommazahl = fehlt“ ist älter als der Branch (`return topN.isInt() ? topN.asInt() : -1;`); F177 setzte die Prüfung auf negative Werte hinter dieselbe `isInt()`-Bedingung, daher erreichte ein negativer Gleitkommawert sie nie.
+- **Beschreibung:** `readTopN` gab für jeden Nicht-`IntNode` `-1` (= alle) zurück. Jackson liest `2.0` als `DoubleNode`, also behielt `"top_n": 2.0` alle Ergebnisse und `"top_n": -1.5` wurde nicht abgewiesen. Upstream liest `json_value(body, "top_n", (int)documents.size())` (`server-context.cpp:5760`, b11639) über nlohmanns `get<int>()`, das eine Gleitkommazahl per `static_cast` umwandelt: `2.0` und `2.7` behalten dort 2, `-1.0` lässt das `resize` in `format_response_rerank` scheitern. Ein Python-Client mit `top_n = len(docs) / 2` serialisiert `2.0`.
+- **Fix:** `readTopN` liest jede JSON-Zahl im `int`-Bereich (`isNumber() && canConvertToInt()`, dann `asInt()`, das wie upstreams Cast zur Null hin abschneidet); ein negativer Wert ist danach in beiden Schreibweisen eine ungültige Anfrage (400). Zwei bewusste Abweichungen stehen in der Javadoc: ein Wert, der keine Zahl ist (Zeichenkette, Boolean – upstream wandelt `true` in 1), und eine Zahl außerhalb des `int`-Bereichs (upstream: der Cast läuft über) behalten alle Ergebnisse.
+- **Tests:** `OaiRerankSupportTest#readTopNConvertsAFloatLikeUpstream` (`2.0` und `2.7` → 2), `#negativeFloatTopNIsAnInvalidRequest` (`-1.5`), `#readTopNKeepsAllForANonNumberOrAValueOutsideTheIntRange` (`"2"`, `true`, `4294967296` → -1, pinnt die dokumentierten Abweichungen).
+- **Rot-Grün-Nachweis:** Ohne den Fix rot („Expected: is <2> but: was <-1>“ und „Expected java.lang.IllegalArgumentException to be thrown, but nothing was thrown.“), mit ihm grün (`OaiRerankSupportTest` 19/19, `OpenAiCompatServerHttpTest` 69/69); `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

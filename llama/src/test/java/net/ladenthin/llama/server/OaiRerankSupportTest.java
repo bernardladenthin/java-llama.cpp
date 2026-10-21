@@ -86,6 +86,33 @@ public class OaiRerankSupportTest {
     }
 
     @Test
+    public void readTopNConvertsAFloatLikeUpstream() throws IOException {
+        // Upstream reads top_n with nlohmann's get<int>(), which static_casts a JSON float: 2.0 and 2.7
+        // keep 2 there. Ours treated any float as absent and kept every result.
+        assertThat(OaiRerankSupport.readTopN(read("{\"top_n\":2.0}")), is(2));
+        assertThat(OaiRerankSupport.readTopN(read("{\"top_n\":2.7}")), is(2));
+    }
+
+    @Test
+    public void negativeFloatTopNIsAnInvalidRequest() throws IOException {
+        // The float spelling of a negative top_n reached the native call as "keep all" before.
+        JsonNode request = read("{\"top_n\":-1.5}");
+        IllegalArgumentException e =
+                assertThrows(IllegalArgumentException.class, () -> OaiRerankSupport.readTopN(request));
+        assertThat(e.getMessage(), containsString("top_n"));
+    }
+
+    @Test
+    public void readTopNKeepsAllForANonNumberOrAValueOutsideTheIntRange() throws IOException {
+        // Deliberate: a string or boolean is no number (upstream: a type error, i.e. its default = all;
+        // it would convert true to 1), and a value outside the int range keeps all rather than wrapping
+        // as upstream's static_cast does.
+        assertThat(OaiRerankSupport.readTopN(read("{\"top_n\":\"2\"}")), is(-1));
+        assertThat(OaiRerankSupport.readTopN(read("{\"top_n\":true}")), is(-1));
+        assertThat(OaiRerankSupport.readTopN(read("{\"top_n\":4294967296}")), is(-1));
+    }
+
+    @Test
     public void topNZeroReturnsNoResultsLikeUpstream() throws IOException {
         // format_response_rerank keeps min(top_n, n) entries, so 0 keeps none; ours kept all.
         String nativeJson = "[{\"index\":0,\"score\":0.2},{\"index\":1,\"score\":0.9}]";
