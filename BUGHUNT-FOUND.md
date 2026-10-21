@@ -154,6 +154,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - [F229](#f229) — niedrig — *gefixt*
 - [F230](#f230) — niedrig — *gefixt*
 - [F231](#f231) — niedrig — *gefixt*
+- [F232](#f232) — niedrig — *gefixt*
 
 ## Funde
 
@@ -1887,6 +1888,18 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix rot („Unexpected exception thrown: java.lang.IllegalArgumentException: 'documents' (or TEI's 'texts') must be a non-empty array“), mit ihm grün (`OaiRerankSupportTest` 21/21, `OpenAiCompatServerHttpTest` 69/69); `spotless:apply` und `spotbugs:check` grün.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `893ede3`
+
+### F232 – java-llama.cpp: `/v1/rerank`: ein nativer Antwortkörper, der kein JSON-Array ist, wird still zu einer leeren Ergebnisliste (200)
+- **Zeit:** 2026-10-21 00:35 UTC
+- **Datei:** `llama/src/main/java/net/ladenthin/llama/server/OaiRerankSupport.java` (`toTeiResponse`, `toOaiResponse`, neu `readNativeArray`), `LlamaModelBackend.java` (`rerank`)
+- **Schwere:** niedrig (in der Praxis nicht erreichbar: der native Körper ist immer `safe_json_to_str(rerank_results_to_json(...))`, ein Fehler im nativen Aufruf wird vorher zur `LlamaException`; ein Vertrags- und Konsistenzfix, kein für Nutzer sichtbarer Fehler)
+- **Historie:** Gefunden beim Review des Branches am 2026-10-20 (Fund J6-5). Der Rückfall in `toOaiResponse` (samt `toOaiResponseOnMalformedNativeBodyYieldsEmptyResults`, der ihn festschrieb) ist älter als der Branch; F111 hat ihn in das neue `toTeiResponse` kopiert, ohne Test.
+- **Beschreibung:** Beide Methoden fingen die `IOException` des Parsers ab und antworteten mit leeren Ergebnissen, ohne Log – für den Client ununterscheidbar von „nichts passt“. Zwei weitere stille Wege gingen nie durch den `catch`: Jackson liest einen leeren Körper als `MissingNode`, und ein Nicht-Array (`{}`) fiel durch `if (arr.isArray())`; beide ergaben ebenso `[]`. Der LangChain4j-Adapter (`LangChain4jMapping.parseRerankScores`) wirft im selben Fall.
+- **Fix:** Ein Helfer `readNativeArray` für beide Methoden: ein Parserfehler, ein leerer Körper und ein Nicht-Array werfen eine `IOException` mit einem Ausschnitt des Körpers (höchstens 80 Zeichen) und der Ursache. `IOException` statt der im Fund vorgeschlagenen `IllegalStateException`, weil `OpenAiBackend.rerank` genau diesen Typ für einen Serverfehler deklariert (`LlamaModelBackend.rerank` deklariert ihn jetzt) und SpotBugs die Umwandlung in eine ungeprüfte Ausnahme ohne Unterdrückung nicht hinnimmt (`EXS_EXCEPTION_SOFTENING_NO_CONSTRAINTS`). `completeNonStreaming` antwortet darauf mit 500 `server_error` und einer WARN-Zeile. `json.RerankResponseParser.parse(String)` (dokumentierter Rückfall der typisierten API, PIT-gesichert) bleibt unverändert.
+- **Tests:** `OaiRerankSupportTest#toOaiResponseRefusesANativeBodyThatIsNotAJsonArray` (ersetzt `#toOaiResponseOnMalformedNativeBodyYieldsEmptyResults`), `#toTeiResponseRefusesANativeBodyThatIsNotAJsonArray`; je `"not json"`, `""` und `"{}"`, und die Meldung zitiert den Körper.
+- **Rot-Grün-Nachweis:** Ohne den Fix rot („not json ==> Expected java.io.IOException to be thrown, but nothing was thrown.“, in beiden Tests); eine Zwischenfassung, die nur im `catch` warf, blieb für den leeren Körper rot („Expected java.lang.IllegalStateException to be thrown, but nothing was thrown.“) – die zusätzlichen Fälle pinnen also den ganzen Fix. Mit dem Fix grün (`OaiRerankSupportTest` 22/22, `OpenAiCompatServerHttpTest` 69/69, `LlamaArchitectureTest` 13/13); `spotless:apply` und `spotbugs:check` grün.
+- **Status:** gefixt
+- **Commit:** (folgt)
 
 ## Offene Verdachte ohne Fund-ID
 

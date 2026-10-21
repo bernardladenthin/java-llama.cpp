@@ -127,7 +127,7 @@ final class LlamaModelBackend implements OpenAiBackend {
     }
 
     @Override
-    public String rerank(JsonNode request) {
+    public String rerank(JsonNode request) throws IOException {
         final String query = OaiRerankSupport.readQuery(request);
         final String[] documents = OaiRerankSupport.readDocuments(request);
         OaiRerankSupport.readTopN(request); // a negative top_n is refused before anything is evaluated

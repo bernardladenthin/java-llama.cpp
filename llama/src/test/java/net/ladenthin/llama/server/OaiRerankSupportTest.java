@@ -209,9 +209,24 @@ public class OaiRerankSupportTest {
     }
 
     @Test
-    public void toOaiResponseOnMalformedNativeBodyYieldsEmptyResults() throws IOException {
-        JsonNode out = read(OaiRerankSupport.toOaiResponse("not json", "m", -1));
-        assertThat(out.path("results").size(), is(0));
-        assertThat(out.path("data").size(), is(0));
+    public void toOaiResponseRefusesANativeBodyThatIsNotAJsonArray() {
+        // An unparsable body used to become 200 with empty results, indistinguishable from "nothing
+        // matched". An empty body is no exception to Jackson (it reads a MissingNode) and an object is
+        // valid JSON, so both are checked as well as the parse failure.
+        for (String body : new String[] {"not json", "", "{}"}) {
+            IOException e = assertThrows(IOException.class, () -> OaiRerankSupport.toOaiResponse(body, "m", -1), body);
+            assertThat(e.getMessage(), containsString("native rerank response"));
+            assertThat(e.getMessage(), containsString("'" + body + "'"));
+        }
+    }
+
+    @Test
+    public void toTeiResponseRefusesANativeBodyThatIsNotAJsonArray() {
+        for (String body : new String[] {"not json", "", "{}"}) {
+            IOException e =
+                    assertThrows(IOException.class, () -> OaiRerankSupport.toTeiResponse(body, -1, false), body);
+            assertThat(e.getMessage(), containsString("native rerank response"));
+            assertThat(e.getMessage(), containsString("'" + body + "'"));
+        }
     }
 }

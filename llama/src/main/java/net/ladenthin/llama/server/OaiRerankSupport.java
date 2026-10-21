@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Pure request-parsing and response-shaping helpers for the {@code POST /v1/rerank} route.
@@ -26,6 +27,9 @@ import java.util.List;
 final class OaiRerankSupport {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    /** How much of an unexpected native body a refusal quotes. */
+    private static final int NATIVE_BODY_EXCERPT = 80;
 
     private OaiRerankSupport() {}
 
@@ -108,14 +112,46 @@ final class OaiRerankSupport {
     }
 
     /**
+     * Parse the native rerank body, which must be a JSON array. Anything else is a broken result, not
+     * an empty one: answering it with no results would read as "nothing matched". An empty body is
+     * checked as well, since Jackson reads it as a missing node rather than failing. The failure is an
+     * {@link IOException}, the type {@link OpenAiBackend#rerank} declares for a server error.
+     *
+     * @param nativeArrayJson the native {@code [{document,index,score}]} array as JSON
+     * @return the parsed array
+     * @throws IOException if the body is not a JSON array
+     */
+    private static JsonNode readNativeArray(String nativeArrayJson) throws IOException {
+        final JsonNode arr;
+        try {
+            arr = OBJECT_MAPPER.readTree(nativeArrayJson);
+        } catch (IOException e) {
+            throw notANativeArray(nativeArrayJson, e);
+        }
+        if (!arr.isArray()) {
+            throw notANativeArray(nativeArrayJson, null);
+        }
+        return arr;
+    }
+
+    private static IOException notANativeArray(String nativeArrayJson, @Nullable IOException cause) {
+        final String excerpt = nativeArrayJson.length() <= NATIVE_BODY_EXCERPT
+                ? nativeArrayJson
+                : nativeArrayJson.substring(0, NATIVE_BODY_EXCERPT) + "...";
+        return new IOException(
+                "Failed to parse the native rerank response, expected a JSON array but got: '" + excerpt + "'", cause);
+    }
+
+    /**
      * Shape the native rerank array as the response the request's format expects.
      *
      * @param request the parsed rerank request
      * @param nativeArrayJson the native {@code [{document,index,score}]} array as JSON
      * @param model the model id to echo (omitted when empty)
      * @return the rerank response JSON
+     * @throws IOException if {@code nativeArrayJson} is not a JSON array
      */
-    static String toResponse(JsonNode request, String nativeArrayJson, String model) {
+    static String toResponse(JsonNode request, String nativeArrayJson, String model) throws IOException {
         if (request.has("texts")) {
             return toTeiResponse(
                     nativeArrayJson,
@@ -135,25 +171,18 @@ final class OaiRerankSupport {
      *     keep all
      * @param returnText whether to include each document's text
      * @return the TEI rerank response JSON
+     * @throws IOException if {@code nativeArrayJson} is not a JSON array
      */
-    static String toTeiResponse(String nativeArrayJson, int topN, boolean returnText) {
+    static String toTeiResponse(String nativeArrayJson, int topN, boolean returnText) throws IOException {
         final List<ObjectNode> entries = new ArrayList<>();
-        try {
-            JsonNode arr = OBJECT_MAPPER.readTree(nativeArrayJson);
-            if (arr.isArray()) {
-                for (JsonNode entry : arr) {
-                    ObjectNode result = OBJECT_MAPPER.createObjectNode();
-                    result.put("index", entry.path("index").asInt());
-                    result.put("score", entry.path("score").asDouble());
-                    if (returnText) {
-                        result.put("text", entry.path("document").asText(""));
-                    }
-                    entries.add(result);
-                }
+        for (JsonNode entry : readNativeArray(nativeArrayJson)) {
+            ObjectNode result = OBJECT_MAPPER.createObjectNode();
+            result.put("index", entry.path("index").asInt());
+            result.put("score", entry.path("score").asDouble());
+            if (returnText) {
+                result.put("text", entry.path("document").asText(""));
             }
-        } catch (IOException e) {
-            // The native call already succeeded; an unexpected body just yields an empty array.
-            entries.clear();
+            entries.add(result);
         }
         entries.sort((a, b) ->
                 Double.compare(b.path("score").asDouble(), a.path("score").asDouble()));
@@ -174,25 +203,17 @@ final class OaiRerankSupport {
      *     keep all
      * @return the rerank response JSON with sorted {@code results}, a {@code data} alias and the
      *     {@code usage} of the evaluated tokens
+     * @throws IOException if {@code nativeArrayJson} is not a JSON array
      */
-    static String toOaiResponse(String nativeArrayJson, String model, int topN) {
+    static String toOaiResponse(String nativeArrayJson, String model, int topN) throws IOException {
         final List<ObjectNode> entries = new ArrayList<>();
         long promptTokens = 0;
-        try {
-            JsonNode arr = OBJECT_MAPPER.readTree(nativeArrayJson);
-            if (arr.isArray()) {
-                for (JsonNode entry : arr) {
-                    ObjectNode result = OBJECT_MAPPER.createObjectNode();
-                    result.put("index", entry.path("index").asInt());
-                    result.put("relevance_score", entry.path("score").asDouble());
-                    entries.add(result);
-                    promptTokens += entry.path("tokens_evaluated").asLong(0L);
-                }
-            }
-        } catch (IOException e) {
-            // The native call already succeeded; an unexpected body just yields empty results.
-            entries.clear();
-            promptTokens = 0;
+        for (JsonNode entry : readNativeArray(nativeArrayJson)) {
+            ObjectNode result = OBJECT_MAPPER.createObjectNode();
+            result.put("index", entry.path("index").asInt());
+            result.put("relevance_score", entry.path("score").asDouble());
+            entries.add(result);
+            promptTokens += entry.path("tokens_evaluated").asLong(0L);
         }
         entries.sort((a, b) -> Double.compare(
                 b.path("relevance_score").asDouble(), a.path("relevance_score").asDouble()));
