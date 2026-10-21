@@ -365,8 +365,7 @@ public class OpenAiRequestMapperTest {
                 () -> mapAndSerialize("{\"messages\":[{\"role\":\"user\",\"content\":\"x\"}],"
                         + "\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"f\"}}],"
                         + "\"tool_choice\":{\"type\":\"function\"}}"));
-        assertThat(e.getMessage(), containsString("tool_choice"));
-        assertThat(e.getMessage(), containsString("name"));
+        assertThat(e.getMessage(), containsString("tool_choice of type 'function' needs the function's 'name'"));
     }
 
     @Test

@@ -462,8 +462,7 @@ public class ResponsesApiSupportTest {
                 () -> ResponsesApiSupport.toOpenAiChatRequest(read("{\"model\":\"m\",\"input\":\"hi\","
                         + "\"tools\":[{\"type\":\"function\",\"name\":\"f\"}],"
                         + "\"tool_choice\":{\"type\":\"function\"}}")));
-        assertThat(e.getMessage(), containsString("tool_choice"));
-        assertThat(e.getMessage(), containsString("name"));
+        assertThat(e.getMessage(), containsString("tool_choice of type 'function' needs the function's 'name'"));
     }
 
     @Test
