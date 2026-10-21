@@ -1377,7 +1377,8 @@ public final class OpenAiCompatServer implements AutoCloseable {
     private static void failStream(
             ResponseStream out, Exception e, String what, String errorBody, Supplier<String> errorEvent) {
         if (out.isOwnWriteFailure(e)) {
-            LOG.debug("{}: the client went away", what, e);
+            // the same line for every route, which operators and the integration tests look for
+            LOG.debug("client disconnected during stream", e);
             return;
         }
         LOG.warn("{} failed: {}: {}", what, e.getClass().getSimpleName(), message(e), e);

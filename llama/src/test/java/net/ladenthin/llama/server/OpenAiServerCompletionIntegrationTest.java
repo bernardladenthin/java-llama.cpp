@@ -47,7 +47,7 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
     private static final long IDLE_TIMEOUT_MILLIS = 30_000L;
     /** The server's log line for a client that went away during a stream. */
     private static final String DISCONNECT_LOG = "client disconnected during stream";
-    /** The server's log line for a stream that failed for any other reason. */
+    /** The start of the server's log line for a stream that failed for any other reason. */
     private static final String FAILURE_LOG = "streaming completion failed";
 
     private static LlamaModel model;
@@ -229,7 +229,7 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
             }
             List<String> disconnects = awaitStreamOutcome(captor);
             assertThat(disconnects.toString(), disconnects.size(), is(1));
-            assertThat(captor.getWarnLogs().toString(), captor.getWarnLogs().contains(FAILURE_LOG), is(false));
+            assertThat(captor.getWarnLogs().toString(), anyFailure(captor), is(false));
         }
         awaitIdleSlots();
     }
@@ -247,8 +247,7 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
      */
     private static List<String> awaitStreamOutcome(LogCaptor captor) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(IDLE_TIMEOUT_MILLIS);
-        while (!captor.getDebugLogs().contains(DISCONNECT_LOG)
-                && !captor.getWarnLogs().contains(FAILURE_LOG)) {
+        while (!captor.getDebugLogs().contains(DISCONNECT_LOG) && !anyFailure(captor)) {
             if (System.nanoTime() > deadline) {
                 throw new AssertionError("the server logged no end of the stream after " + IDLE_TIMEOUT_MILLIS
                         + " ms; debug: " + captor.getDebugLogs() + ", warn: " + captor.getWarnLogs());
@@ -258,6 +257,11 @@ public class OpenAiServerCompletionIntegrationTest extends OpenAiServerTestSuppo
         List<String> disconnects = new java.util.ArrayList<>(captor.getDebugLogs());
         disconnects.removeIf(message -> !message.equals(DISCONNECT_LOG));
         return disconnects;
+    }
+
+    /** Whether the server logged a failed stream (the line names the exception after the prefix). */
+    private static boolean anyFailure(LogCaptor captor) {
+        return captor.getWarnLogs().stream().anyMatch(message -> message.startsWith(FAILURE_LOG));
     }
 
     /** Polls the metrics until no slot is processing, for at most {@link #IDLE_TIMEOUT_MILLIS}. */

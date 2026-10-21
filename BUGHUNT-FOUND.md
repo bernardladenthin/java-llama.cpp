@@ -2406,6 +2406,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Gegen den unveränderten Server rot: „OpenAiCompatServerHttpTest.aBackendIOExceptionAfterTheFirstChunkIsAnErrorEventOnEveryStreamingRoute:944 /v1/chat/completions Expected: a string containing "\"type\":\"server_error\"" but: was "data: {"object":"chat.completion.chunk","choices":[{"delta":{"content":"he"}}]}“ (der Stream endete nach dem Chunk, ohne Fehler-Event und ohne `[DONE]`); mit dem Fix grün: `OpenAiCompatServerHttpTest` 80/80, `ResponseStreamTest` 7/7.
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `359b6d0`
+- **Nachtrag (2026-10-21):** Der erste Stand schrieb die DEBUG-Zeile des Abbruchs als „<Route>: the client went away“; `OpenAiServerCompletionIntegrationTest#aClientThatDisconnectsMidStreamIsADisconnectAndFreesTheSlot` (modellgestützt, Winzmodell) wartet auf die feste Zeile „client disconnected during stream“ und lief dadurch nach 30 s rot („the server logged no end of the stream after 30000 ms; debug: [streaming completion: the client went away]“). Die Zeile ist wieder die alte, für alle Routen gleiche; der Test erkennt die WARN-Zeile eines gescheiterten Streams jetzt am Präfix „streaming completion failed“, weil sie seit F262 die Ausnahme nennt (mit dem exakten Listenvergleich hätte seine Negativprüfung nie mehr angeschlagen). Danach grün: `OpenAiServerCompletionIntegrationTest` 12 (2 übersprungen, FIM), `OpenAiCompatServerHttpTest` 80, `ResponseStreamTest` 7.
 
 ## Offene Verdachte ohne Fund-ID
 
