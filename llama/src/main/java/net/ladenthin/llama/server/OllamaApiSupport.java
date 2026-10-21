@@ -542,8 +542,16 @@ final class OllamaApiSupport {
 
     /**
      * Whether the {@code /api/generate} request only asks for the model to be loaded: Ollama answers a
-     * request without a prompt (and without a {@code suffix}) with {@code done} at once, which is how
-     * its clients preload a model. The model of this server is always loaded, so there is nothing to do.
+     * request without a prompt with {@code done} at once ({@code done_reason "load"}), which is how its
+     * clients preload a model. The model of this server is always loaded, so there is nothing to do.
+     *
+     * <p>Two deliberate differences from Ollama, whose check reads the prompt alone. A request with an
+     * empty prompt and a {@code suffix} is not load-only here but fill-in-the-middle at the start of a
+     * file, a request editors send; Ollama answers it with the load answer. That includes an empty
+     * {@code suffix} ({@link #hasSuffix} only asks for a string), which Ollama would not treat as
+     * fill-in-the-middle either. And {@code keep_alive} is not read: Ollama unloads the model on a
+     * {@code keep_alive} of {@code 0} without a prompt and answers {@code done_reason "unload"}, while
+     * this server keeps its one model loaded and gives the load answer.
      *
      * @param request the parsed Ollama generate request
      * @return {@code true} when the request carries no prompt and no suffix
@@ -553,9 +561,11 @@ final class OllamaApiSupport {
     }
 
     /**
-     * The answer to a load-only {@code /api/generate} request, as Ollama gives it: one object, empty
-     * {@code response}, {@code done} and {@code done_reason "load"}, whether streaming was asked for
-     * or not.
+     * The answer to a load-only {@code /api/generate} request, in the form of Ollama's load answer: one
+     * object, empty {@code response}, {@code done} and {@code done_reason "load"}, whether streaming was
+     * asked for or not. It is also the answer to a {@code keep_alive} of {@code 0}, which Ollama answers
+     * with {@code done_reason "unload"}: nothing is unloaded here, so the server does not claim it (see
+     * {@link #isLoadOnly}).
      *
      * @param model the model id to echo
      * @return the answer

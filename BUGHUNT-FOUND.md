@@ -1705,6 +1705,7 @@ Repos plus eins. Geprüfte Klassen ohne Fund stehen in [`BUGHUNT-CHECKED.md`](BU
 - **Rot-Grün-Nachweis:** Ohne den Fix der HTTP-Test rot (das Backend generierte); mit ihm grün (64 + 37).
 - **Status:** gefixt
 - **Commit:** java-llama.cpp `200cc90`
+- **Nachtrag (Branch-Review 2026-10-20, Funde J1-4, J3-3, J16-2):** Beide Regeln sind bewusste Abweichungen von Ollama, nicht Ollamas Verhalten: Ollamas `GenerateHandler` prüft nur `req.Prompt == ""` (der `suffix` fügt dort nur `CapabilityInsert` hinzu), beantwortet also einen leeren Prompt mit `suffix` mit der Ladeantwort, und antwortet bei `keep_alive: 0` ohne Prompt mit `done_reason "unload"`. Hier bleibt der leere Prompt mit `suffix` FIM am Dateianfang (auch bei `"suffix":""`, `hasSuffix` fragt nur nach einem String), und `keep_alive: 0` bekommt die Ladeantwort, weil nichts entladen wird — ein „unload“ wäre eine Meldung über eine Aktion, die nicht stattfand. Die Javadoc von `isLoadOnly`/`toOllamaLoadResponse`, die README-Zeile der Ollama-Routen und `TODO.md` sagen das jetzt; vorher schrieb die Javadoc die `suffix`-Bedingung Ollama zu. Reine Doku, kein Test.
 
 ### F213 – java-llama.cpp: Ollama `/api/chat` mit einem `messages`-Element, das kein Objekt ist, schließt die Verbindung ohne Antwort
 - **Zeit:** 2026-10-20 19:55 UTC

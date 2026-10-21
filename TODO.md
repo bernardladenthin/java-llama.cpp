@@ -520,6 +520,8 @@ they are not rediscovered:
   until a client needs the exact count.
 - **`OpenAiCompatServer` cannot unload a model**: an Ollama `/api/generate` with `keep_alive: 0`
   and no prompt gets the "load" answer (F205), the model stays resident (one model per server).
+  Ollama itself unloads there and answers `done_reason "unload"`; this server does not claim an
+  unload it did not do.
 
 ### The release: 6.0.0, with an "Upgrading from 5.1" section (decided 2026-10-15; roadmap item 9)
 
